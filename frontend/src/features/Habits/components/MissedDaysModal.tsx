@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import { Calendar, type DateData } from 'react-native-calendars';
 
+import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { MissedDaysModalProps } from '../Habits.types';
@@ -66,7 +67,7 @@ const useResetFlow = (
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const onPick = (date: DateData) => {
-    const picked = new Date(date.dateString);
+    const picked = parseISODate(date.dateString);
     setSelectedDate(picked);
     setPendingDate(picked);
   };
@@ -105,7 +106,7 @@ const MissedDaysBody = ({
     }
   };
 
-  const selectedDateString = reset.selectedDate.toISOString().split('T')[0]!;
+  const selectedDateString = toISODate(reset.selectedDate);
 
   return (
     <View style={styles.missedDaysContent}>

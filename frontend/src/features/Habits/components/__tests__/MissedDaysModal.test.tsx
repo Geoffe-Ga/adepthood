@@ -29,6 +29,7 @@ jest.mock('react-native-calendars', () => {
   return { Calendar };
 });
 
+import * as DatePicker from '../../../../components/DatePicker';
 import type { Habit, MissedDaysModalProps } from '../../Habits.types';
 import { MissedDaysModal, ResetConfirmation } from '../MissedDaysModal';
 
@@ -226,5 +227,25 @@ describe('MissedDaysModal reset-start-date flow', () => {
     expect(habitId).toBe(7);
     expect(newDate.toISOString().slice(0, 10)).toBe('2026-08-10');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Jest pins TZ=UTC, where `new Date('2026-08-10')` and the tz-safe
+  // `parseISODate('2026-08-10')` coincide, so a numeric day assertion cannot
+  // distinguish the bug. Instead verify the pick is routed through the
+  // tz-safe parser (local midnight) rather than the UTC-parsing `new Date`.
+  it('persists the tapped day via the timezone-safe parser, not UTC new Date', () => {
+    const spy = jest.spyOn(DatePicker, 'parseISODate');
+    try {
+      const { getByText, getByTestId, onNewStartDate } = renderMissedDaysModal();
+      fireEvent.press(getByText('Set new start date'));
+      fireEvent.press(getByTestId('calendar-mock-day'));
+      fireEvent.press(getByTestId('reset-confirm-yes'));
+
+      expect(spy).toHaveBeenCalledWith('2026-08-10');
+      const [, newDate] = onNewStartDate.mock.calls[0] as [number, Date];
+      expect(newDate.getTime()).toBe(DatePicker.parseISODate('2026-08-10').getTime());
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -155,6 +155,71 @@ export const addDaysInTZ = (dayKey: string, days: number, _tz: string): string =
   return shifted.toISOString().slice(0, 10);
 };
 
+/** Wall-clock hour used to anchor a day-key instant clear of DST shoulders. */
+const NOON_HOUR = 12;
+
+/**
+ * The zone's UTC offset (local minus UTC) in milliseconds at `instant`,
+ * derived from the formatted wall-clock parts. DST-correct for that instant.
+ */
+const zoneOffsetMs = (instant: Date, tz: string): number => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(instant);
+  const field: Record<string, number> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') field[part.type] = Number.parseInt(part.value, 10);
+  }
+  // Intl can render midnight as hour 24; normalise it to 0.
+  const hour = field.hour === 24 ? 0 : field.hour!;
+  const wallAsUTC = Date.UTC(
+    field.year!,
+    field.month! - 1,
+    field.day!,
+    hour,
+    field.minute!,
+    field.second!,
+  );
+  return wallAsUTC - instant.getTime();
+};
+
+/**
+ * Convert a `YYYY-MM-DD` day key into a UTC instant that falls on that day in
+ * `tz`, anchored at local noon.
+ *
+ * The inverse of `dayKeyInTZ`: `dayKeyInTZ(dayKeyToInstant(k, tz), tz) === k`
+ * for every real zone offset (UTC-12..UTC+14). Anchoring at local noon (rather
+ * than the naive `${k}T00:00:00Z`, which lands on the previous day for
+ * negative-offset zones and the next day for far-eastern ones) keeps the
+ * instant unambiguously inside the target calendar day and clear of DST
+ * shoulders. Use it when a day key must round-trip through a `Date` that later
+ * gets re-bucketed in the same zone (e.g. persisted completion timestamps).
+ */
+export const dayKeyToInstant = (dayKey: string, tz: string): Date => {
+  const [year, month, day] = dayKey.split('-').map((part) => Number.parseInt(part, 10));
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    Number.isNaN(year) ||
+    Number.isNaN(month) ||
+    Number.isNaN(day)
+  ) {
+    return new Date(`${dayKey}T00:00:00Z`);
+  }
+  const zone = resolveZone(tz);
+  const wallNoonAsUTC = Date.UTC(year, month - 1, day, NOON_HOUR, 0, 0);
+  const offsetMs = zoneOffsetMs(new Date(wallNoonAsUTC), zone);
+  return new Date(wallNoonAsUTC - offsetMs);
+};
+
 /**
  * Compute the user's current streak from completion timestamps.
  *

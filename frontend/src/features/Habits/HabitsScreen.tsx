@@ -247,40 +247,44 @@ interface HabitModalsProps {
 export const missedDaysFor = (
   open: boolean,
   habit: Habit | null,
-): ReturnType<typeof calculateMissedDays> => (open && habit ? calculateMissedDays(habit) : []);
+  tz?: string,
+): ReturnType<typeof calculateMissedDays> => (open && habit ? calculateMissedDays(habit, tz) : []);
 
 const HabitDataModals = ({
   modals,
   selectedHabit,
   habitStats,
   actions,
-}: Omit<HabitModalsProps, 'habits' | 'onAddHabit'>) => (
-  <>
-    <GoalModal
-      visible={modals.goal}
-      habit={selectedHabit}
-      onClose={() => modals.close('goal')}
-      onUpdateGoal={actions.updateGoal}
-      onUpdateGoalUnits={actions.updateGoalUnits}
-      onLogUnit={actions.logUnit}
-      onUpdateHabit={actions.updateHabit}
-    />
-    <StatsModal
-      visible={modals.stats}
-      habit={selectedHabit}
-      stats={habitStats}
-      onClose={() => modals.close('stats')}
-    />
-    <MissedDaysModal
-      visible={modals.missedDays}
-      habit={selectedHabit}
-      missedDays={missedDaysFor(modals.missedDays, selectedHabit)}
-      onClose={() => modals.close('missedDays')}
-      onBackfill={actions.backfillMissedDays}
-      onNewStartDate={actions.setNewStartDate}
-    />
-  </>
-);
+}: Omit<HabitModalsProps, 'habits' | 'onAddHabit'>) => {
+  const { userTimezone } = useAuth();
+  return (
+    <>
+      <GoalModal
+        visible={modals.goal}
+        habit={selectedHabit}
+        onClose={() => modals.close('goal')}
+        onUpdateGoal={actions.updateGoal}
+        onUpdateGoalUnits={actions.updateGoalUnits}
+        onLogUnit={actions.logUnit}
+        onUpdateHabit={actions.updateHabit}
+      />
+      <StatsModal
+        visible={modals.stats}
+        habit={selectedHabit}
+        stats={habitStats}
+        onClose={() => modals.close('stats')}
+      />
+      <MissedDaysModal
+        visible={modals.missedDays}
+        habit={selectedHabit}
+        missedDays={missedDaysFor(modals.missedDays, selectedHabit, userTimezone)}
+        onClose={() => modals.close('missedDays')}
+        onBackfill={actions.backfillMissedDays}
+        onNewStartDate={actions.setNewStartDate}
+      />
+    </>
+  );
+};
 
 const HabitWriteModals = ({
   modals,

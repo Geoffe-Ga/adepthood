@@ -6,7 +6,9 @@ import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/t
 import {
   DEFAULT_TIMEZONE,
   MS_PER_DAY,
+  addDaysInTZ,
   dayKeyInTZ,
+  dayKeyToInstant,
   streakFromCompletions,
   subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
@@ -297,12 +299,9 @@ const emptyStats = (): HabitStatsData => ({
 });
 
 /**
- * UTC day key kept for legacy call sites that have not yet threaded a TZ
- * parameter (e.g. `logHabitUnits`, `calculateMissedDays`).  These are
- * called from optimistic-update paths that operate on `Date` objects
- * that have no notion of user TZ; UTC bucketing matches the historical
- * behavior, and Wave 4 (frontend feature screens) will migrate them as
- * part of its `useOptimisticMutation` work.
+ * UTC day key for `logHabitUnits`, whose optimistic-update path operates on
+ * bare `Date` objects with no notion of user TZ. UTC bucketing matches the
+ * historical de-dupe behavior for logging a completion once per calendar day.
  */
 const utcDayKey = (d: Date): string => dayKeyInTZ(d, DEFAULT_TIMEZONE);
 
@@ -528,35 +527,40 @@ export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
   completionDates: api.completion_dates,
 });
 
+// A gap needs at least a first and a last day to bound it.
+const MIN_KEYS_TO_BOUND_GAP = 2;
+// Day step used when walking the range between first and last completion.
+const NEXT_DAY_OFFSET = 1;
+
 /**
- * Calculate days without completions between the first and last completion.
+ * Calculate days without completions between the first and last completion,
+ * bucketing each completion into the user's local day via `dayKeyInTZ`.
+ *
+ * Walking the gap purely on `YYYY-MM-DD` day keys (which sort and compare
+ * lexicographically in chronological order) keeps the arithmetic in one
+ * timezone, so consecutive local days that straddle the UTC boundary no
+ * longer register a phantom missed day.
  */
-export const calculateMissedDays = (habit: Habit): Date[] => {
+export const calculateMissedDays = (habit: Habit, tz: string = DEFAULT_TIMEZONE): Date[] => {
   const completions = habit.completions;
   if (!completions || completions.length === 0) return [];
 
-  const completedDates = new Set<string>();
+  const completedKeys = new Set<string>();
   for (const c of completions) {
-    completedDates.add(utcDayKey(new Date(c.timestamp)));
+    completedKeys.add(dayKeyInTZ(c.timestamp, tz));
   }
+  if (completedKeys.size < MIN_KEYS_TO_BOUND_GAP) return [];
 
-  const sorted = Array.from(completedDates)
-    .map((s) => new Date(s + 'T00:00:00Z'))
-    .sort((a, b) => a.getTime() - b.getTime());
-
-  if (sorted.length < 2) return [];
+  const sortedKeys = Array.from(completedKeys).sort();
+  const lastKey = sortedKeys[sortedKeys.length - 1]!;
 
   const missed: Date[] = [];
-  const first = sorted[0]!;
-  const last = sorted[sorted.length - 1]!;
-  const cursor = new Date(first);
-  cursor.setDate(cursor.getDate() + 1);
-
-  while (cursor < last) {
-    if (!completedDates.has(utcDayKey(cursor))) {
-      missed.push(new Date(cursor));
+  let cursorKey = addDaysInTZ(sortedKeys[0]!, NEXT_DAY_OFFSET, tz);
+  while (cursorKey < lastKey) {
+    if (!completedKeys.has(cursorKey)) {
+      missed.push(dayKeyToInstant(cursorKey, tz));
     }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    cursorKey = addDaysInTZ(cursorKey, NEXT_DAY_OFFSET, tz);
   }
 
   return missed;
