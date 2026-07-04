@@ -17,6 +17,7 @@ import {
   isEarlyUnlocked,
   isGoalAchieved,
   isHabitLockedToday,
+  isHabitUnlockedAtStage,
   isSubtractiveHabit,
   goalsAreSubtractive,
   logHabitUnits,
@@ -973,6 +974,50 @@ describe('isHabitLockedToday', () => {
     expect(isHabitLockedToday(make({ revealed: false, start_date: iso('2000-01-01') }), NOW)).toBe(
       false,
     );
+  });
+});
+
+describe('isHabitUnlockedAtStage', () => {
+  const make = (overrides: Partial<Habit>): Habit =>
+    ({
+      id: 1,
+      name: 'H',
+      icon: '🔒',
+      stage: 'Purple',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date('2020-01-01T00:00:00Z'),
+      goals: [],
+      completions: [],
+      revealed: false,
+      ...overrides,
+    }) as Habit;
+
+  test('unlocked when index is below currentStage regardless of revealed/start_date', () => {
+    const habit = make({
+      revealed: false,
+      start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    });
+    expect(isHabitUnlockedAtStage(habit, 0, 3)).toBe(true);
+  });
+
+  test('locked when index is at or beyond currentStage for a plain locked habit', () => {
+    const habit = make({ revealed: false, start_date: new Date('2020-01-01T00:00:00Z') });
+    expect(isHabitUnlockedAtStage(habit, 5, 3)).toBe(false);
+  });
+
+  test('unlocked when index is at or beyond currentStage but the habit is early-unlocked', () => {
+    const habit = make({
+      revealed: true,
+      start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    });
+    expect(isHabitUnlockedAtStage(habit, 5, 3)).toBe(true);
+  });
+
+  test('locked at the exact boundary index === currentStage with no early unlock', () => {
+    const habit = make({ revealed: false, start_date: new Date('2020-01-01T00:00:00Z') });
+    expect(isHabitUnlockedAtStage(habit, 3, 3)).toBe(false);
   });
 });
 

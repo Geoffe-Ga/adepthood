@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { jest, afterEach, describe, it, expect } from '@jest/globals';
 
-import { countDoneToday, unlockedToday } from '../habitCounts';
+import { countDoneToday, unlockedAtStage } from '../habitCounts';
 import type { Habit } from '../Habits.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,41 +64,49 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-describe('unlockedToday', () => {
-  it('drops a habit that is unrevealed with a future start_date', () => {
-    const locked = makeHabit({
-      id: 2,
-      revealed: false,
-      start_date: new Date(Date.now() + 7 * DAY_MS),
-    });
-    expect(unlockedToday([locked])).toEqual([]);
+describe('unlockedAtStage', () => {
+  it('returns only the first habit at stage 1', () => {
+    const habit0 = makeHabit({ id: 10 });
+    const habit1 = makeHabit({ id: 11 });
+    expect(unlockedAtStage([habit0, habit1], 1)).toEqual([habit0]);
   });
 
-  it('keeps a revealed habit even with a future start_date', () => {
-    const unlocked = makeHabit({
-      id: 3,
-      revealed: true,
-      start_date: new Date(Date.now() + 7 * DAY_MS),
-    });
-    expect(unlockedToday([unlocked])).toEqual([unlocked]);
+  it('returns the first three habits at stage 3 regardless of revealed/start_date', () => {
+    const habits = [
+      makeHabit({ id: 20, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({ id: 21, revealed: false, start_date: new Date(Date.now() + 7 * DAY_MS) }),
+      makeHabit({ id: 22 }),
+    ];
+    expect(unlockedAtStage(habits, 3)).toEqual(habits);
   });
 
-  it('keeps an unrevealed habit whose start_date has already passed', () => {
-    const unlocked = makeHabit({
-      id: 4,
-      revealed: false,
-      start_date: new Date('2020-01-01T00:00:00Z'),
-    });
-    expect(unlockedToday([unlocked])).toEqual([unlocked]);
+  it('excludes a locked habit with a past start_date at an index beyond currentStage', () => {
+    const habits = [
+      makeHabit({ id: 30 }),
+      makeHabit({ id: 31 }),
+      makeHabit({ id: 32 }),
+      makeHabit({ id: 33 }),
+      makeHabit({ id: 34 }),
+      makeHabit({ id: 35, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
+    ];
+    const result = unlockedAtStage(habits, 3);
+    expect(result).toEqual(habits.slice(0, 3));
+    expect(result).not.toContain(habits[5]);
   });
 
-  it('filters a mixed list down to only the unlocked habits', () => {
-    const locked = makeHabit({
-      id: 5,
-      revealed: false,
-      start_date: new Date(Date.now() + 7 * DAY_MS),
-    });
-    const unlocked = makeHabit({ id: 6, revealed: true });
-    expect(unlockedToday([locked, unlocked])).toEqual([unlocked]);
+  it('includes an early-unlocked habit at an index at or beyond currentStage', () => {
+    const habits = [
+      makeHabit({ id: 40 }),
+      makeHabit({
+        id: 41,
+        revealed: true,
+        start_date: new Date(Date.now() + 7 * DAY_MS),
+      }),
+    ];
+    expect(unlockedAtStage(habits, 1)).toEqual(habits);
+  });
+
+  it('returns an empty array for an empty habit list', () => {
+    expect(unlockedAtStage([], 3)).toEqual([]);
   });
 });

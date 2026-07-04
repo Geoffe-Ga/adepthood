@@ -593,6 +593,18 @@ export const isEarlyUnlocked = (habit: Habit): boolean => {
   return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
 };
 
+/**
+ * A habit is unlocked once the user's current stage has reached its cumulative
+ * position — one habit unlocks per stage, so the habit at `index` is available
+ * when `index < currentStage`. It is also unlocked when manually revealed ahead
+ * of its start_date (early unlock), regardless of position.
+ */
+export const isHabitUnlockedAtStage = (
+  habit: Habit,
+  index: number,
+  currentStage: number,
+): boolean => index < currentStage || isEarlyUnlocked(habit);
+
 /** Locked today iff unrevealed AND its calendar-anchored `start_date` is still in the future; once that date arrives the habit unlocks regardless of a stale `revealed` flag (which only gates manual early-unlock). */
 export const isHabitLockedToday = (habit: Habit, now: number = Date.now()): boolean => {
   return habit.revealed === false && new Date(habit.start_date).getTime() > now;
