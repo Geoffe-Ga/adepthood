@@ -65,40 +65,56 @@ afterEach(() => {
 });
 
 describe('unlockedAtStage', () => {
-  it('returns only the first habit at stage 1', () => {
-    const habit0 = makeHabit({ id: 10 });
-    const habit1 = makeHabit({ id: 11 });
+  it('returns only the first-stage habit at stage 1', () => {
+    const habit0 = makeHabit({ id: 10, stage: 'Beige' });
+    const habit1 = makeHabit({ id: 11, stage: 'Purple' });
     expect(unlockedAtStage([habit0, habit1], 1)).toEqual([habit0]);
   });
 
-  it('returns the first three habits at stage 3 regardless of revealed/start_date', () => {
+  it('returns the first three stages at stage 3 regardless of revealed/start_date', () => {
     const habits = [
-      makeHabit({ id: 20, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 21, revealed: false, start_date: new Date(Date.now() + 7 * DAY_MS) }),
-      makeHabit({ id: 22 }),
+      makeHabit({
+        id: 20,
+        stage: 'Beige',
+        revealed: false,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 21,
+        stage: 'Purple',
+        revealed: false,
+        start_date: new Date(Date.now() + 7 * DAY_MS),
+      }),
+      makeHabit({ id: 22, stage: 'Red' }),
     ];
     expect(unlockedAtStage(habits, 3)).toEqual(habits);
   });
 
-  it('excludes a locked habit with a past start_date at an index beyond currentStage', () => {
+  it('excludes a habit whose stage is above currentStage even with a past start_date', () => {
     const habits = [
-      makeHabit({ id: 30 }),
-      makeHabit({ id: 31 }),
-      makeHabit({ id: 32 }),
-      makeHabit({ id: 33 }),
-      makeHabit({ id: 34 }),
-      makeHabit({ id: 35, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({ id: 30, stage: 'Beige' }),
+      makeHabit({ id: 31, stage: 'Purple' }),
+      makeHabit({ id: 32, stage: 'Red' }),
+      makeHabit({ id: 33, stage: 'Blue' }),
+      makeHabit({ id: 34, stage: 'Orange' }),
+      makeHabit({
+        id: 35,
+        stage: 'Green',
+        revealed: false,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     ];
     const result = unlockedAtStage(habits, 3);
     expect(result).toEqual(habits.slice(0, 3));
     expect(result).not.toContain(habits[5]);
   });
 
-  it('includes an early-unlocked habit at an index at or beyond currentStage', () => {
+  it('includes an early-unlocked habit whose stage is at or above currentStage', () => {
     const habits = [
-      makeHabit({ id: 40 }),
+      makeHabit({ id: 40, stage: 'Beige' }),
       makeHabit({
         id: 41,
+        stage: 'Purple',
         revealed: true,
         start_date: new Date(Date.now() + 7 * DAY_MS),
       }),

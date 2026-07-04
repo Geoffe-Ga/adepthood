@@ -25,9 +25,10 @@ export function countDoneToday(habits: readonly Habit[], tz: string = DEFAULT_TI
 }
 
 /**
- * The subset of habits unlocked at the user's current stage — the habit at each
- * index unlocks once `currentStage` reaches its cumulative position, plus any
- * habit manually revealed ahead of its start_date.
+ * The subset of habits unlocked at the user's current stage — a habit unlocks
+ * once `currentStage` reaches its own Spiral-Dynamics stage (list position is
+ * only a fallback for stage-less habits), plus any habit manually revealed
+ * ahead of its start_date. See {@link isHabitUnlockedAtStage}.
  */
 export function unlockedAtStage(habits: readonly Habit[], currentStage: number): Habit[] {
   return habits.filter((h, i) => isHabitUnlockedAtStage(h, i, currentStage));

@@ -994,29 +994,43 @@ describe('isHabitUnlockedAtStage', () => {
       ...overrides,
     }) as Habit;
 
-  test('unlocked when index is below currentStage regardless of revealed/start_date', () => {
-    const habit = make({
-      revealed: false,
-      start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
-    });
-    expect(isHabitUnlockedAtStage(habit, 0, 3)).toBe(true);
+  test('unlocked when the habit stage sits at or below currentStage', () => {
+    // Purple is the 2nd stage (STAGE_ORDER index 1 -> threshold 2).
+    const habit = make({ stage: 'Purple' });
+    expect(isHabitUnlockedAtStage(habit, 0, 2)).toBe(true);
   });
 
-  test('locked when index is at or beyond currentStage for a plain locked habit', () => {
-    const habit = make({ revealed: false, start_date: new Date('2020-01-01T00:00:00Z') });
-    expect(isHabitUnlockedAtStage(habit, 5, 3)).toBe(false);
+  test('locked when the habit stage sits above currentStage', () => {
+    // Red is the 3rd stage (threshold 3) and currentStage is 2.
+    const habit = make({ stage: 'Red' });
+    expect(isHabitUnlockedAtStage(habit, 0, 2)).toBe(false);
   });
 
-  test('unlocked when index is at or beyond currentStage but the habit is early-unlocked', () => {
+  test('unlock follows the habit stage, not list position, after a reorder', () => {
+    // A Red habit dragged to the top of the list (index 0) stays locked at
+    // currentStage 2, while the lower-stage habits below it stay unlocked.
+    const red = make({ stage: 'Red' });
+    const beige = make({ stage: 'Beige' });
+    const purple = make({ stage: 'Purple' });
+    expect(isHabitUnlockedAtStage(red, 0, 2)).toBe(false);
+    expect(isHabitUnlockedAtStage(beige, 1, 2)).toBe(true);
+    expect(isHabitUnlockedAtStage(purple, 2, 2)).toBe(true);
+  });
+
+  test('unlocked regardless of stage when the habit is early-unlocked', () => {
     const habit = make({
+      stage: 'Clear Light',
       revealed: true,
       start_date: new Date(Date.now() + 1000 * 60 * 60 * 24),
     });
-    expect(isHabitUnlockedAtStage(habit, 5, 3)).toBe(true);
+    expect(isHabitUnlockedAtStage(habit, 9, 1)).toBe(true);
   });
 
-  test('locked at the exact boundary index === currentStage with no early unlock', () => {
-    const habit = make({ revealed: false, start_date: new Date('2020-01-01T00:00:00Z') });
+  test('falls back to list position when the stage is unknown or missing', () => {
+    const habit = make({ stage: '' });
+    // index 0 -> threshold 1, unlocked at currentStage 1.
+    expect(isHabitUnlockedAtStage(habit, 0, 1)).toBe(true);
+    // index 3 -> threshold 4, locked at currentStage 3.
     expect(isHabitUnlockedAtStage(habit, 3, 3)).toBe(false);
   });
 });

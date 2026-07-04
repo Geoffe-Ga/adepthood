@@ -50,6 +50,10 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+// Ascending Spiral-Dynamics stages so each habit's own stage (not its list
+// position) drives its unlock threshold — see isHabitUnlockedAtStage.
+const STAGES = ['Beige', 'Purple', 'Red', 'Blue', 'Orange', 'Green', 'Yellow'] as const;
+
 const makeStage = (stageNumber: number): StageData => ({
   id: stageNumber,
   title: `Stage ${stageNumber}`,
@@ -120,7 +124,12 @@ describe('HabitsStatTile', () => {
 
   it('anchors the denominator to currentStage, not the raw habit count', () => {
     const habits = Array.from({ length: 7 }, (_, i) =>
-      makeHabit({ id: 100 + i, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 100 + i,
+        stage: STAGES[i],
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     );
     useHabitStore.setState({ loading: false, habits });
     useStageStore.setState({ currentStage: 3 });
@@ -130,9 +139,24 @@ describe('HabitsStatTile', () => {
 
   it('shows "0/1 done" at stage 1 Beige with a single habit', () => {
     const habits = [
-      makeHabit({ id: 200, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 201, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 202, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 200,
+        stage: 'Beige',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 201,
+        stage: 'Purple',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 202,
+        stage: 'Red',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     ];
     useHabitStore.setState({ loading: false, habits });
     useStageStore.setState({ currentStage: 1 });
@@ -144,12 +168,23 @@ describe('HabitsStatTile', () => {
     const habits = [
       makeHabit({
         id: 210,
+        stage: 'Beige',
         revealed: true,
         start_date: new Date('2020-01-01T00:00:00Z'),
         completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
       }),
-      makeHabit({ id: 211, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 212, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 211,
+        stage: 'Purple',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 212,
+        stage: 'Red',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     ];
     useHabitStore.setState({ loading: false, habits });
     useStageStore.setState({ currentStage: 1 });
@@ -159,10 +194,31 @@ describe('HabitsStatTile', () => {
 
   it('never counts a locked habit with a past start_date toward the denominator', () => {
     const habits = [
-      makeHabit({ id: 220, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 221, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 222, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 223, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 220,
+        stage: 'Beige',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 221,
+        stage: 'Purple',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 222,
+        stage: 'Red',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      // Blue sits above currentStage 3, so a past start_date can't unlock it.
+      makeHabit({
+        id: 223,
+        stage: 'Blue',
+        revealed: false,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     ];
     useHabitStore.setState({ loading: false, habits });
     useStageStore.setState({ currentStage: 3 });
@@ -170,13 +226,30 @@ describe('HabitsStatTile', () => {
     expect(getByText('0/3 done')).toBeTruthy();
   });
 
-  it('counts an early-unlocked habit at a high index toward the denominator', () => {
+  it('counts an early-unlocked habit at a high stage toward the denominator', () => {
     const habits = [
-      makeHabit({ id: 230, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 231, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 232, revealed: false, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 230,
+        stage: 'Beige',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 231,
+        stage: 'Purple',
+        revealed: false,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 232,
+        stage: 'Red',
+        revealed: false,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      // Blue is above currentStage 1, so only its early-unlock reveal counts it.
       makeHabit({
         id: 233,
+        stage: 'Blue',
         revealed: true,
         start_date: new Date(Date.now() + 30 * DAY_MS),
       }),
@@ -199,12 +272,23 @@ describe('HabitsStatTile', () => {
     const habits = [
       makeHabit({
         id: 310,
+        stage: 'Beige',
         revealed: true,
         start_date: new Date('2020-01-01T00:00:00Z'),
         completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
       }),
-      makeHabit({ id: 311, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
-      makeHabit({ id: 312, revealed: true, start_date: new Date('2020-01-01T00:00:00Z') }),
+      makeHabit({
+        id: 311,
+        stage: 'Purple',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
+      makeHabit({
+        id: 312,
+        stage: 'Red',
+        revealed: true,
+        start_date: new Date('2020-01-01T00:00:00Z'),
+      }),
     ];
     useHabitStore.setState({ loading: false, habits });
     // currentStage 5 is a stale value from a prior session; the error means it must not be trusted.

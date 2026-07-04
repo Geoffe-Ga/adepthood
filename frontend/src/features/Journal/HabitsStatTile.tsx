@@ -46,7 +46,8 @@ interface HabitsDescriptor {
 /**
  * Resolve the tile's stat line, cue, loading flag, and a11y label from plain
  * counts. `loading` is the caller's precomputed "show skeleton" flag (habits or
- * stages still resolving), so this stays pure and flat.
+ * stages still resolving) — not the raw habit-store `loading` — so this stays
+ * pure and flat.
  */
 export function describeHabits(
   loading: boolean,
