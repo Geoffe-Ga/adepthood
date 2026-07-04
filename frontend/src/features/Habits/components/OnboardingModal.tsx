@@ -388,7 +388,6 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderPro
       <DatePicker
         value={toISODate(startDate)}
         minDate={toISODate(new Date())}
-        mode="scaffoldingStart"
         onChange={onDateChange}
       />
     </View>
