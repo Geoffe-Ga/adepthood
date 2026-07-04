@@ -17,6 +17,8 @@ import {
   isEarlyUnlocked,
   isGoalAchieved,
   isHabitLockedToday,
+  isSubtractiveHabit,
+  goalsAreSubtractive,
   logHabitUnits,
   calculateHabitStartDate,
   stageAtIndex,
@@ -1128,5 +1130,194 @@ describe('progress percentage, bar color, and clamp scenarios', () => {
       expect(typeof stageAtIndex(0)).toBe('string');
       expect(typeof stageAtIndex(STAGE_ORDER.length * 2)).toBe('string');
     });
+  });
+});
+
+describe('mixed-polarity goal set (any-non-additive rule)', () => {
+  const base = {
+    id: 1,
+    name: 'Test',
+    icon: '🔥',
+    stage: 'Beige',
+    streak: 0,
+    energy_cost: 0,
+    energy_return: 0,
+    start_date: new Date(),
+  } as const;
+
+  // Low is additive but clear/stretch are not: the single-tier probes each
+  // helper used to run (low for markers, currentGoal for progress, clear for
+  // bar color) disagree with each other on this set, while the any-non-additive
+  // rule resolves all of them to subtractive.
+  const mixedGoals: Goal[] = [
+    {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 10,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    },
+    {
+      id: 2,
+      tier: 'clear',
+      title: 'clear',
+      target: 5,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+    {
+      id: 3,
+      tier: 'stretch',
+      title: 'stretch',
+      target: 2,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: false,
+    },
+  ];
+  const [mixedLow, mixedClear, mixedStretch] = mixedGoals;
+
+  test('getMarkerPositions resolves a low-additive/clear-stretch-non-additive set as subtractive', () => {
+    const pos = getMarkerPositions(mixedLow, mixedClear, mixedStretch);
+    // (10-5)/(10-2) * 100 = 62.5, low-anchored scale.
+    expect(pos.low).toBe(0);
+    expect(pos.clear).toBeCloseTo(62.5, 1);
+    expect(pos.stretch).toBe(100);
+  });
+
+  test('getProgressPercentage resolves polarity from the goal set, not the passed-in currentGoal', () => {
+    const habit: Habit = {
+      ...base,
+      goals: mixedGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 6 }],
+    };
+    // Passing the additive-flagged low goal as currentGoal: the additive
+    // formula would clamp to 100; the subtractive formula (range 10-2=8,
+    // progress 6) gives 100 - ((6-2)/8)*100 = 50.
+    expect(getProgressPercentage(habit, mixedLow!, 'UTC')).toBe(50);
+  });
+
+  test('getProgressBarColor resolves polarity from the goal set even when the probed clear goal is additive', () => {
+    const additiveClearGoals: Goal[] = [
+      {
+        id: 1,
+        tier: 'low',
+        title: 'low',
+        target: 10,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+      {
+        id: 2,
+        tier: 'clear',
+        title: 'clear',
+        target: 5,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+      {
+        id: 3,
+        tier: 'stretch',
+        title: 'stretch',
+        target: 2,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: false,
+      },
+    ];
+    const habit: Habit = {
+      ...base,
+      goals: additiveClearGoals,
+      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 6 }],
+    };
+    // Progress (6) is >= clear target (5) so the additive branch would
+    // brighten; it is also > stretch target (2) so the subtractive branch
+    // reports plain stage color. The set is subtractive (low/stretch non-additive).
+    expect(getProgressBarColor(habit, 'UTC')).toBe(STAGE_COLORS.Beige);
+  });
+
+  test('getGoalTier and the three visual helpers agree on subtractive polarity for a mixed-polarity goal set', () => {
+    const habit: Habit = { ...base, goals: mixedGoals, completions: [] };
+    const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+    expect(completedAllGoals).toBe(true);
+    expect(currentGoal.tier).toBe('stretch');
+
+    const positions = getMarkerPositions(mixedLow, mixedClear, mixedStretch);
+    expect(positions.low).toBe(0);
+    expect(positions.clear).toBeCloseTo(62.5, 1);
+    expect(positions.stretch).toBe(100);
+
+    expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(100);
+    expect(getProgressBarColor(habit, 'UTC')).toBe(brightenColor(STAGE_COLORS.Beige!));
+  });
+});
+
+describe('isSubtractiveHabit and goalsAreSubtractive (any-non-additive rule)', () => {
+  const additiveGoal: Goal = {
+    id: 1,
+    tier: 'low',
+    title: 'low',
+    target: 1,
+    target_unit: 'u',
+    frequency: 1,
+    frequency_unit: 'per_day',
+    is_additive: true,
+  };
+  const nonAdditiveGoal: Goal = {
+    id: 2,
+    tier: 'clear',
+    title: 'clear',
+    target: 1,
+    target_unit: 'u',
+    frequency: 1,
+    frequency_unit: 'per_day',
+    is_additive: false,
+  };
+
+  test('goalsAreSubtractive is false when every goal is additive', () => {
+    expect(goalsAreSubtractive([additiveGoal, { ...additiveGoal, id: 3, tier: 'stretch' }])).toBe(
+      false,
+    );
+  });
+
+  test('goalsAreSubtractive is true when one goal among additive goals is non-additive', () => {
+    expect(goalsAreSubtractive([additiveGoal, nonAdditiveGoal])).toBe(true);
+  });
+
+  test('goalsAreSubtractive is true when every goal is non-additive', () => {
+    expect(
+      goalsAreSubtractive([nonAdditiveGoal, { ...nonAdditiveGoal, id: 3, tier: 'stretch' }]),
+    ).toBe(true);
+  });
+
+  test('goalsAreSubtractive is false for an empty goal list', () => {
+    expect(goalsAreSubtractive([])).toBe(false);
+  });
+
+  test('isSubtractiveHabit delegates to goalsAreSubtractive over habit.goals', () => {
+    const habit: Habit = {
+      id: 1,
+      name: 'Test',
+      icon: '🔥',
+      stage: 'Beige',
+      streak: 0,
+      energy_cost: 0,
+      energy_return: 0,
+      start_date: new Date(),
+      goals: [additiveGoal, nonAdditiveGoal],
+      completions: [],
+    };
+    expect(isSubtractiveHabit(habit)).toBe(true);
   });
 });

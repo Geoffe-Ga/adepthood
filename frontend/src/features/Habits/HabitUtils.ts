@@ -78,6 +78,19 @@ export const isGoalAchieved = (
   return goal.is_additive ? todayProgress >= targetValue : todayProgress <= targetValue;
 };
 
+/**
+ * A goal set is subtractive iff **any** goal is non-additive. This
+ * any-non-additive rule is the single shared source of habit polarity for the
+ * "Achieved" badge, the visual helpers (markers/progress/color), and the
+ * backend's `_subtractive_context`, so none of them can disagree. Probing a
+ * single tier let them diverge when the tiers were not perfectly consistent.
+ */
+export const goalsAreSubtractive = (goals: ReadonlyArray<Goal>): boolean =>
+  goals.some((g) => !g.is_additive);
+
+/** Habit-level polarity: delegates to {@link goalsAreSubtractive} over `habit.goals`. */
+export const isSubtractiveHabit = (habit: Habit): boolean => goalsAreSubtractive(habit.goals);
+
 /** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
 export const getMarkerPositions = (
   lowGoal?: Goal,
@@ -92,7 +105,7 @@ export const getMarkerPositions = (
   const clearTarget = getGoalTarget(clearGoal);
   const stretchTarget = getGoalTarget(stretchGoal);
 
-  if (lowGoal.is_additive) {
+  if (!goalsAreSubtractive([lowGoal, clearGoal, stretchGoal])) {
     if (stretchTarget <= 0) return { low: 0, clear: 50, stretch: 100 };
     return {
       low: clampPercentage((lowTarget / stretchTarget) * 100),
@@ -207,11 +220,7 @@ export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTi
   }
 
   const todayProgress = calculateTodaysProgress(habit, tz);
-  // A habit is subtractive iff ANY of its goals is non-additive — the same rule
-  // the backend's _subtractive_context uses, so the "Achieved" badge and the
-  // server-computed streak can never disagree (#768). Probing a single tier let
-  // them diverge when the tiers were not perfectly consistent.
-  const isSubtractive = habit.goals.some((g) => !g.is_additive);
+  const isSubtractive = isSubtractiveHabit(habit);
   return isSubtractive
     ? resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
     : resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
@@ -227,7 +236,7 @@ export const getProgressPercentage = (
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 
-  if (currentGoal.is_additive) {
+  if (!isSubtractiveHabit(habit)) {
     if (stretchTarget <= 0) return 100;
     return clampPercentage((todayProgress / stretchTarget) * 100);
   }
@@ -260,7 +269,7 @@ export const getProgressBarColor = (
 
   const todayProgress = calculateTodaysProgress(habit, tz);
 
-  if (clearGoal.is_additive) {
+  if (!isSubtractiveHabit(habit)) {
     return todayProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
   }
 
