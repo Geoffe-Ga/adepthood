@@ -588,33 +588,12 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
   return returnValue - cost;
 };
 
-/** A habit is "early unlocked" if it has been manually revealed before its start_date. */
-export const isEarlyUnlocked = (habit: Habit): boolean => {
-  return habit.revealed === true && new Date(habit.start_date).getTime() > Date.now();
-};
-
 /**
- * A habit is unlocked once the user's current stage has reached the habit's own
- * Spiral-Dynamics stage — the threshold is derived from `habit.stage` (its
- * position in `STAGE_ORDER`, 1-based) so drag-and-drop reordering of the list
- * never changes which habits are unlocked. When `habit.stage` is missing or
- * unrecognized, we fall back to the list position (`index`), preserving the
- * legacy `index < currentStage` behavior for stage-less habits. A habit is also
- * unlocked when manually revealed ahead of its start_date (early unlock),
- * regardless of stage.
+ * A habit is UNLOCKED iff `revealed === true` — the single source of truth for
+ * the lock state. Habits are locked by default (new and seeded); the user opts
+ * each one in. Neither the Spiral-Dynamics stage nor the calendar `start_date`
+ * participates: nothing auto-unlocks over time, so a future or past start_date
+ * never changes the result. Re-locking flips `revealed` back to `false` while
+ * preserving the habit's logged completions.
  */
-export const isHabitUnlockedAtStage = (
-  habit: Habit,
-  index: number,
-  currentStage: number,
-): boolean => {
-  if (isEarlyUnlocked(habit)) return true;
-  const stageIndex = STAGE_ORDER.indexOf(habit.stage);
-  const threshold = stageIndex >= 0 ? stageIndex + 1 : index + 1;
-  return threshold <= currentStage;
-};
-
-/** Locked today iff unrevealed AND its calendar-anchored `start_date` is still in the future; once that date arrives the habit unlocks regardless of a stale `revealed` flag (which only gates manual early-unlock). */
-export const isHabitLockedToday = (habit: Habit, now: number = Date.now()): boolean => {
-  return habit.revealed === false && new Date(habit.start_date).getTime() > now;
-};
+export const isHabitUnlocked = (habit: Habit): boolean => habit.revealed === true;

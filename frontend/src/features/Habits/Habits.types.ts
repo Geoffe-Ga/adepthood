@@ -205,7 +205,7 @@ export interface HabitsActions {
   iconPress: (_index: number) => void;
   emojiSelect: (_emoji: string) => void;
   revealAllHabits: () => void;
-  lockUnstartedHabits: () => void;
+  lockUntouchedHabits: () => void;
   unlockHabit: (_habitId: number) => void;
 }
 

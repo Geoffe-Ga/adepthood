@@ -5,7 +5,6 @@ import renderer from 'react-test-renderer';
 
 import type { Habit } from '../Habits.types';
 import { HabitTile } from '../HabitTile';
-import { isEarlyUnlocked } from '../HabitUtils';
 
 const makeGoals = () => [
   {
@@ -61,54 +60,31 @@ const makeFutureHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
-describe('isEarlyUnlocked', () => {
-  it('returns true when revealed is true but start_date is in the future', () => {
-    const habit = makeFutureHabit({ revealed: true });
-    expect(isEarlyUnlocked(habit)).toBe(true);
-  });
-
-  it('returns false when revealed is true and start_date is in the past', () => {
-    const habit = makePastHabit({ revealed: true });
-    expect(isEarlyUnlocked(habit)).toBe(false);
-  });
-
-  it('returns false when revealed is false', () => {
-    const habit = makeFutureHabit({ revealed: false });
-    expect(isEarlyUnlocked(habit)).toBe(false);
-  });
-
-  it('returns false when revealed is undefined', () => {
-    const habit = makeFutureHabit({ revealed: undefined });
-    expect(isEarlyUnlocked(habit)).toBe(false);
-  });
-});
-
-describe('HabitTile early-unlock visual indicator', () => {
-  it('renders with dotted border when early unlocked', () => {
-    const habit = makeFutureHabit({ revealed: true });
-    const component = renderer.create(
-      <HabitTile habit={habit} onOpenGoals={() => {}} onLongPress={() => {}} />,
-    );
-    const tile = component.root.findByProps({ testID: 'habit-tile' });
-    expect(tile.props.style.borderStyle).toBe('dashed');
-  });
-
-  it('renders with solid border when naturally unlocked', () => {
-    const habit = makePastHabit({ revealed: true });
-    const component = renderer.create(
-      <HabitTile habit={habit} onOpenGoals={() => {}} onLongPress={() => {}} />,
-    );
-    const tile = component.root.findByProps({ testID: 'habit-tile' });
-    expect(tile.props.style.borderStyle).toBeUndefined();
+describe('HabitTile unlocked visual style (no early/natural distinction)', () => {
+  // The old model drew a dashed border for a "manually early-unlocked"
+  // habit (revealed ahead of its calendar start_date) versus a solid border
+  // for one "naturally" reached by the calendar. Since the calendar no
+  // longer participates in unlock at all, every revealed habit is unlocked
+  // the same way — there is nothing left to distinguish visually.
+  it('renders with a solid border for any revealed habit, regardless of start_date', () => {
+    const future = makeFutureHabit({ revealed: true });
+    const past = makePastHabit({ revealed: true });
+    for (const habit of [future, past]) {
+      const component = renderer.create(
+        <HabitTile habit={habit} onOpenGoals={() => {}} onLongPress={() => {}} />,
+      );
+      const tile = component.root.findByProps({ testID: 'habit-tile' });
+      expect(tile.props.style.borderStyle).toBeUndefined();
+    }
   });
 });
 
 describe('HabitTile locked tile long-press', () => {
   // ConfirmDialog (#786) replaces Alert.alert, which is a no-op on RN Web mobile.
-  const mentionsHabit = (component: ReturnType<typeof renderer.create>, name: string): boolean =>
+  const mentionsText = (component: ReturnType<typeof renderer.create>, text: string): boolean =>
     component.root.findAll(
       (n: { props: { children?: unknown } }) =>
-        typeof n.props.children === 'string' && n.props.children.includes(name),
+        typeof n.props.children === 'string' && n.props.children.includes(text),
     ).length > 0;
 
   it('shows unlock confirmation on long-press of a locked (unrevealed) tile', () => {
@@ -124,12 +100,14 @@ describe('HabitTile locked tile long-press', () => {
     // The rendered dialog appears (not a silently-dropped Alert) and names the habit.
     expect(component.root.findByProps({ testID: 'unlock-habit-confirm' })).toBeTruthy();
     expect(component.root.findByProps({ testID: 'unlock-habit-confirm-button' })).toBeTruthy();
-    expect(mentionsHabit(component, 'Future Habit')).toBe(true);
+    expect(mentionsText(component, 'Future Habit')).toBe(true);
   });
 
-  it('calls onUnlockHabit when unlock is confirmed', () => {
+  it('confirms unlock with non-"early" copy for a habit whose stage sits far ahead of any current stage', () => {
     const onUnlockHabit = jest.fn();
-    const habit = makeFutureHabit({ revealed: false });
+    // A Clear Light (final-stage) habit unlocking out of order — the calendar
+    // and stage gates are both gone, so nothing blocks the manual unlock.
+    const habit = makeFutureHabit({ revealed: false, stage: 'Clear Light' });
     const component = renderer.create(
       <HabitTile habit={habit} locked onUnlockHabit={onUnlockHabit} />,
     );
@@ -137,6 +115,12 @@ describe('HabitTile locked tile long-press', () => {
     renderer.act(() => {
       tile.props.onLongPress();
     });
+    // New tone: a plain "Unlock \"<name>\"?" question, no "early" framing and
+    // no mention of a "recommended start date" (the calendar no longer unlocks).
+    expect(mentionsText(component, `Unlock "${habit.name}"?`)).toBe(true);
+    expect(mentionsText(component, 'Early')).toBe(false);
+    expect(mentionsText(component, 'recommended start date')).toBe(false);
+
     const confirmButton = component.root.findByProps({ testID: 'unlock-habit-confirm-button' });
     renderer.act(() => {
       confirmButton.props.onPress();
@@ -159,7 +143,7 @@ describe('HabitTile locked tile long-press', () => {
   });
 });
 
-describe('Reveal All / Lock Unstarted actions', () => {
+describe('Reveal All / Lock Untouched actions', () => {
   it('revealAllHabits sets all habits to revealed: true', () => {
     const habits: Habit[] = [
       makePastHabit({ id: 1, revealed: true }),
@@ -170,19 +154,21 @@ describe('Reveal All / Lock Unstarted actions', () => {
     expect(result.every((h) => h.revealed)).toBe(true);
   });
 
-  it('lockUnstartedHabits resets future habits to revealed: false', () => {
-    const now = Date.now();
-    const habits: Habit[] = [
-      makePastHabit({ id: 1, revealed: true }),
-      makeFutureHabit({ id: 2, revealed: true }),
-      makeFutureHabit({ id: 3, revealed: true }),
-    ];
+  it('lockUntouchedHabits re-locks only habits with zero completions, regardless of start_date', () => {
+    const untouchedPast = makePastHabit({ id: 1, revealed: true, completions: [] });
+    const touchedFuture = makeFutureHabit({
+      id: 2,
+      revealed: true,
+      completions: [{ id: 'c1', timestamp: new Date(), completed_units: 1 }],
+    });
+    const untouchedFuture = makeFutureHabit({ id: 3, revealed: true, completions: [] });
+    const habits: Habit[] = [untouchedPast, touchedFuture, untouchedFuture];
     const result = habits.map((h) => ({
       ...h,
-      revealed: new Date(h.start_date).getTime() <= now,
+      revealed: (h.completions?.length ?? 0) > 0,
     }));
-    expect(result[0]?.revealed).toBe(true);
-    expect(result[1]?.revealed).toBe(false);
+    expect(result[0]?.revealed).toBe(false);
+    expect(result[1]?.revealed).toBe(true);
     expect(result[2]?.revealed).toBe(false);
   });
 });

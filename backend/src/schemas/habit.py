@@ -41,6 +41,7 @@ class Habit(OwnedResourcePublic):
     sort_order: int | None = None
     stage: str = ""
     streak: int = 0
+    revealed: bool = False
 
 
 class HabitWithGoals(Habit):
@@ -67,3 +68,4 @@ class HabitCreate(BaseModel):
     milestone_notifications: bool = False
     sort_order: int | None = None
     stage: str = Field(default="", max_length=HABIT_STAGE_MAX_LENGTH)
+    revealed: bool = False
