@@ -163,9 +163,19 @@ jobs:
             # rather than leaving an unlabeled, picker-invisible issue.
             gh issue edit "$issue_num" --repo "$REPO" \
               --add-label dependencies || true
-            if ! gh issue view "$issue_num" --repo "$REPO" --json labels \
-              --jq '.labels[].name' | grep -qx dependencies; then
-              echo "::error::Could not apply the 'dependencies' label to issue #$issue_num; check the token's Issues/triage permissions." >&2
+
+            # Verify the label stuck. Capture the read call's own success
+            # separately from the label match so the two failure modes stay
+            # distinct: a failed read is a transient API flake (retry), while a
+            # successful read that omits the label is a real permission gap.
+            local labels
+            if ! labels="$(gh issue view "$issue_num" --repo "$REPO" \
+              --json labels --jq '.labels[].name')"; then
+              echo "::error::Could not verify labels on issue #$issue_num (transient GitHub API error); re-run the reconciler to retry." >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$labels" | grep -qx dependencies; then
+              echo "::error::The 'dependencies' label is absent on issue #$issue_num after re-apply; check the token's Issues/triage permissions." >&2
               exit 1
             fi
           }
