@@ -19,6 +19,8 @@ import {
   isHabitLockedToday,
   logHabitUnits,
   calculateHabitStartDate,
+  stageAtIndex,
+  STAGE_ORDER,
   STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
 
@@ -1108,5 +1110,23 @@ describe('progress percentage, bar color, and clamp scenarios', () => {
   test('clamps percentage values between 0 and 100', () => {
     expect(clampPercentage(150)).toBe(100);
     expect(clampPercentage(-20)).toBe(0);
+  });
+
+  describe('stageAtIndex', () => {
+    test('returns the stage at each in-range index', () => {
+      for (let i = 0; i < STAGE_ORDER.length; i++) {
+        expect(stageAtIndex(i)).toBe(STAGE_ORDER[i]);
+      }
+    });
+
+    test('wraps deterministically at the array length', () => {
+      expect(stageAtIndex(STAGE_ORDER.length)).toBe(STAGE_ORDER[0]);
+      expect(stageAtIndex(STAGE_ORDER.length + 3)).toBe(STAGE_ORDER[3]);
+    });
+
+    test('always returns a defined stage string', () => {
+      expect(typeof stageAtIndex(0)).toBe('string');
+      expect(typeof stageAtIndex(STAGE_ORDER.length * 2)).toBe('string');
+    });
   });
 });

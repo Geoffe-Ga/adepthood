@@ -25,7 +25,7 @@ import type {
 import { formatApiError } from '../../../api/errorMessages';
 import { flattenGoalCompletions } from '../../../api/flattenGoalCompletions';
 import type { ToastConfig } from '../../../components/Toast';
-import { colors, STAGE_ORDER } from '../../../design/tokens';
+import { colors } from '../../../design/tokens';
 import {
   saveHabits as persistHabits,
   loadHabits as loadCachedHabits,
@@ -38,7 +38,13 @@ import { useProgramStore } from '../../../store/useProgramStore';
 import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
-import { getGoalTier, getGoalTarget, calculateTodaysProgress, logHabitUnits } from '../HabitUtils';
+import {
+  getGoalTier,
+  getGoalTarget,
+  calculateTodaysProgress,
+  logHabitUnits,
+  stageAtIndex,
+} from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
 export type ShowToast = (_config: ToastConfig) => void;
@@ -274,7 +280,7 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
  * server round-trip succeeds and `loadHabits` rehydrates from the API.
  */
 const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => {
-  const stage = STAGE_ORDER[existingCount % STAGE_ORDER.length] ?? 'Clear Light';
+  const stage = stageAtIndex(existingCount);
   const tempId = -Date.now();
   return {
     id: tempId,

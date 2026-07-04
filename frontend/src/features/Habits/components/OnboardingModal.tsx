@@ -25,7 +25,7 @@ import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
-import { STAGE_ORDER, calculateHabitStartDate, calculateNetEnergy } from '../HabitUtils';
+import { calculateHabitStartDate, calculateNetEnergy, stageAtIndex } from '../HabitUtils';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
@@ -61,7 +61,7 @@ const assignDatesAndStages = (habits: OnboardingHabit[], startDate: Date): Onboa
   habits.map((habit, index) => ({
     ...habit,
     start_date: calculateHabitStartDate(startDate, index),
-    stage: STAGE_ORDER[index] ?? 'Clear Light',
+    stage: stageAtIndex(index),
   }));
 
 interface HabitChipProps {
@@ -127,8 +127,7 @@ interface ReorderItemProps {
 }
 
 const ReorderItem = ({ item, index, drag, isActive, onEditIcon }: ReorderItemProps) => {
-  const stage = (STAGE_ORDER[index] ??
-    STAGE_ORDER[STAGE_ORDER.length - 1]) as keyof typeof STAGE_COLORS;
+  const stage = stageAtIndex(index);
   const color = STAGE_COLORS[stage] || '#ccc';
   const startDrag = Gesture.Pan().onBegin(() => drag());
 

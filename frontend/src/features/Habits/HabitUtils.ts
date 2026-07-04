@@ -20,6 +20,16 @@ export { STAGE_ORDER };
 export { STAGE_DURATIONS_DAYS };
 
 /**
+ * Map a habit's zero-based list index to its Spiral-Dynamics stage. Wraps with
+ * `% STAGE_ORDER.length` so positions past the tenth cycle back to Beige, and
+ * falls back to the final stage when the index cannot resolve — the single
+ * source of truth for the index-based stage coloring shared by the Habits
+ * screen, the reorder modals, and the onboarding flow.
+ */
+export const stageAtIndex = (index: number): string =>
+  STAGE_ORDER[index % STAGE_ORDER.length] ?? STAGE_ORDER[STAGE_ORDER.length - 1]!;
+
+/**
  * Calculate the start date for a habit based on its order in the onboarding
  * flow. Habits 1–8 begin 21 days apart while habits 9–10 begin 42 days apart.
  *
