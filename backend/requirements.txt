@@ -22,5 +22,5 @@ pytest-asyncio
 httpx
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
-openai==2.41.1
-anthropic==0.109.1
+openai==2.44.0
+anthropic==0.116.0
