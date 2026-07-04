@@ -161,21 +161,26 @@ jobs:
             # label with a dedicated call (that endpoint errors instead of
             # dropping) and verify it stuck, so a permission gap fails loudly
             # rather than leaving an unlabeled, picker-invisible issue.
+            # Swallow this call's own error: the read-back verification below is
+            # the authoritative diagnosis, so a failure here would be redundant.
             gh issue edit "$issue_num" --repo "$REPO" \
               --add-label dependencies || true
 
             # Verify the label stuck. Capture the read call's own success
-            # separately from the label match so the two failure modes stay
-            # distinct: a failed read is a transient API flake (retry), while a
-            # successful read that omits the label is a real permission gap.
+            # separately from the label match so the two failure modes keep
+            # distinct diagnoses: a failed read is a transient API flake, while
+            # a successful read that omits the label is a real permission gap.
+            # A re-run cannot re-reach this check (the PR body now links the
+            # issue, so `body_links_issue` short-circuits), so both branches
+            # point to the same one-time manual fix: add the label by hand.
             local labels
             if ! labels="$(gh issue view "$issue_num" --repo "$REPO" \
               --json labels --jq '.labels[].name')"; then
-              echo "::error::Could not verify labels on issue #$issue_num (transient GitHub API error); re-run the reconciler to retry." >&2
+              echo "::error::Could not verify the label on issue #$issue_num (transient GitHub API error); the re-apply may have succeeded — if the issue is missing the label, add it once: gh issue edit $issue_num --add-label dependencies" >&2
               exit 1
             fi
             if ! printf '%s\n' "$labels" | grep -qx dependencies; then
-              echo "::error::The 'dependencies' label is absent on issue #$issue_num after re-apply; check the token's Issues/triage permissions." >&2
+              echo "::error::The 'dependencies' label is absent on issue #$issue_num after re-apply (the token likely lacks Issues/triage permission); add it once by hand: gh issue edit $issue_num --add-label dependencies" >&2
               exit 1
             fi
           }
