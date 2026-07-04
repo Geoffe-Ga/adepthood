@@ -48,6 +48,23 @@ describe('HabitsEmptyState', () => {
   });
 });
 
+describe('HabitsEmptyState second-lap invite (stages 11-20)', () => {
+  it('renders range-aware copy naming the stage bounds when stageStart/stageEnd are supplied', () => {
+    const { getByTestId, getByText } = render(<HabitsEmptyState stageStart={11} stageEnd={20} />);
+    expect(getByTestId('habits-empty-state')).toBeTruthy();
+    expect(getByText(/11[\s\S]*20/)).toBeTruthy();
+  });
+
+  it('still renders the Add CTA and fires onAdd when lap-context props are supplied', () => {
+    const onAdd = jest.fn();
+    const { getByTestId } = render(
+      <HabitsEmptyState stageStart={11} stageEnd={20} onAdd={onAdd} />,
+    );
+    fireEvent.press(getByTestId('habits-empty-add'));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+});
+
 const sampleHabit = { id: 1, name: 'Meditate' } as unknown as Habit;
 const renderTile = () => (<></>) as unknown as React.ReactElement;
 const baseProps = {

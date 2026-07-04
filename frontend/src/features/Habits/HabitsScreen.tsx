@@ -39,6 +39,7 @@ import {
   calculateMissedDays,
   isHabitUnlocked,
   stageAtIndex,
+  stageRangeForPage,
 } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
@@ -440,12 +441,29 @@ interface PaginationBarProps {
   onPrev: () => void;
   onNext: () => void;
   scale: number;
+  stageStart?: number;
+  stageEnd?: number;
 }
 
-export const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: PaginationBarProps) => {
+export const PaginationBar = ({
+  page,
+  pageCount,
+  onPrev,
+  onNext,
+  scale,
+  stageStart,
+  stageEnd,
+}: PaginationBarProps) => {
   const canPrev = page > 0;
   const canNext = page < pageCount - 1;
   const textSize = { fontSize: spacing(1.75, scale) };
+  // The visible label names the stage range this page covers; the page position
+  // (redundant for sighted users who read the range) is folded into this same
+  // Text's accessibility label so screen readers announce where they are. The
+  // label lives on the Text — an accessibility element — rather than the
+  // container, whose own accessibleLabel would be swallowed by its focusable
+  // children.
+  const positionLabel = `Stages ${stageStart} to ${stageEnd}, page ${page + 1} of ${pageCount}`;
   return (
     <View style={styles.paginationBar} testID="habits-pagination">
       <TouchableOpacity
@@ -459,8 +477,12 @@ export const PaginationBar = ({ page, pageCount, onPrev, onNext, scale }: Pagina
       >
         <Text style={[styles.paginationButtonText, textSize]}>Prev</Text>
       </TouchableOpacity>
-      <Text style={[styles.paginationLabel, textSize]}>
-        Page {page + 1} of {pageCount}
+      <Text
+        style={[styles.paginationLabel, textSize]}
+        testID="pagination-label"
+        accessibilityLabel={positionLabel}
+      >
+        Stages {stageStart}–{stageEnd}
       </Text>
       <TouchableOpacity
         testID="pagination-next"
@@ -566,8 +588,11 @@ const useHabitTileRenderer = (
       // default, opened only when the user chooses. Stage/calendar never gate it.
       const isLocked = !isHabitUnlocked(item);
       const globalIndex = pageOffset + index;
-      // index is page-relative, so each page restarts the Beige → Clear Light gradient.
-      const stageColor = STAGE_COLORS[stageAtIndex(index)]!;
+      // Anchor the tile color to its global position, not the page-relative one:
+      // the mod-wrap inside stageAtIndex (over STAGE_ORDER's length) is what
+      // restarts the Beige → Clear Light gradient on each lap, so a full first
+      // lap and the second lap paint identically without page math here.
+      const stageColor = STAGE_COLORS[stageAtIndex(globalIndex)]!;
       return (
         <HabitTile
           habit={item}
@@ -657,7 +682,62 @@ interface HabitsContentProps {
   onRetry: () => void;
   onAddHabit: () => void;
   pagination: PaginationBarProps | null;
+  /** Stage bounds for the current lap's empty state; omitted on the first-run page. */
+  emptyStageStart?: number;
+  emptyStageEnd?: number;
 }
+
+interface HabitsBodyProps {
+  showEmpty: boolean;
+  habits: Habit[];
+  columns: number;
+  gridGutter: number;
+  renderItem: (_info: { item: Habit; index: number }) => React.ReactElement;
+  onAddHabit: () => void;
+  pagination: PaginationBarProps | null;
+  emptyStageStart?: number;
+  emptyStageEnd?: number;
+}
+
+// Empty state and list swap on showEmpty, but the pagination bar renders
+// alongside either so a full lap's trailing invite page is never stranded
+// without a way back to the populated laps.
+const HabitsBody = ({
+  showEmpty,
+  habits,
+  columns,
+  gridGutter,
+  renderItem,
+  onAddHabit,
+  pagination,
+  emptyStageStart,
+  emptyStageEnd,
+}: HabitsBodyProps) => (
+  <>
+    {showEmpty && (
+      <HabitsEmptyState onAdd={onAddHabit} stageStart={emptyStageStart} stageEnd={emptyStageEnd} />
+    )}
+    {!showEmpty && (
+      <HabitList
+        habits={habits}
+        columns={columns}
+        gridGutter={gridGutter}
+        renderItem={renderItem}
+      />
+    )}
+    {pagination && (
+      <PaginationBar
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        onPrev={pagination.onPrev}
+        onNext={pagination.onNext}
+        scale={pagination.scale}
+        stageStart={pagination.stageStart}
+        stageEnd={pagination.stageEnd}
+      />
+    )}
+  </>
+);
 
 export const HabitsContent = ({
   habits,
@@ -669,6 +749,8 @@ export const HabitsContent = ({
   onRetry,
   onAddHabit,
   pagination,
+  emptyStageStart,
+  emptyStageEnd,
 }: HabitsContentProps) => {
   // First-run guidance; suppressed during loading/error (audit-ux-07).
   const showEmpty = !loading && !error && habits.length === 0;
@@ -676,26 +758,18 @@ export const HabitsContent = ({
     <>
       {error && <ErrorBanner error={error} onRetry={onRetry} />}
       {loading && <LoadingSpinner />}
-      {showEmpty && <HabitsEmptyState onAdd={onAddHabit} />}
-      {/* List co-renders under the error banner (unchanged); only loading/empty replace it. */}
-      {!loading && !showEmpty && (
-        <>
-          <HabitList
-            habits={habits}
-            columns={columns}
-            gridGutter={gridGutter}
-            renderItem={renderItem}
-          />
-          {pagination && (
-            <PaginationBar
-              page={pagination.page}
-              pageCount={pagination.pageCount}
-              onPrev={pagination.onPrev}
-              onNext={pagination.onNext}
-              scale={pagination.scale}
-            />
-          )}
-        </>
+      {!loading && (
+        <HabitsBody
+          showEmpty={showEmpty}
+          habits={habits}
+          columns={columns}
+          gridGutter={gridGutter}
+          renderItem={renderItem}
+          onAddHabit={onAddHabit}
+          pagination={pagination}
+          emptyStageStart={emptyStageStart}
+          emptyStageEnd={emptyStageEnd}
+        />
       )}
     </>
   );
@@ -708,6 +782,12 @@ const useHabitsScreenState = () => {
   const responsive = useResponsive();
   const { userTimezone } = useAuth();
   const pagination = usePagination(habitsReturn.habits.length, HABITS_PER_PAGE);
+  // Lap-aware empty-state copy applies only beyond the first page: page 0 keeps
+  // the plain first-run guidance, while a trailing invite page names its stages.
+  const isLapInvitePage = pagination.page > 0;
+  const lapRange = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
+  const emptyStageStart = isLapInvitePage ? lapRange.start : undefined;
+  const emptyStageEnd = isLapInvitePage ? lapRange.end : undefined;
   const pageOffset = pagination.page * HABITS_PER_PAGE;
   const pagedHabits = useMemo(
     () => habitsReturn.habits.slice(pageOffset, pageOffset + HABITS_PER_PAGE),
@@ -742,6 +822,8 @@ const useHabitsScreenState = () => {
     responsive,
     pagination,
     pagedHabits,
+    emptyStageStart,
+    emptyStageEnd,
     handleSelectMode,
     renderHabitTile,
     handleAddHabit,
@@ -752,21 +834,51 @@ const useHabitsScreenState = () => {
 const buildPaginationProps = (
   pagination: ReturnType<typeof usePagination>,
   scale: number,
-): PaginationBarProps | null =>
-  pagination.pageCount > 1
-    ? {
-        page: pagination.page,
-        pageCount: pagination.pageCount,
-        onPrev: pagination.goPrev,
-        onNext: pagination.goNext,
-        scale,
-      }
-    : null;
+): PaginationBarProps | null => {
+  if (pagination.pageCount <= 1) return null;
+  const { start, end } = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
+  return {
+    page: pagination.page,
+    pageCount: pagination.pageCount,
+    onPrev: pagination.goPrev,
+    onNext: pagination.goNext,
+    scale,
+    stageStart: start,
+    stageEnd: end,
+  };
+};
+
+interface HabitsContentSectionProps {
+  state: ReturnType<typeof useHabitsScreenState>;
+  columns: number;
+  gridGutter: number;
+  paginationProps: PaginationBarProps | null;
+}
+
+const HabitsContentSection = ({
+  state,
+  columns,
+  gridGutter,
+  paginationProps,
+}: HabitsContentSectionProps) => (
+  <HabitsContent
+    habits={state.pagedHabits}
+    loading={state.loading}
+    error={state.error}
+    columns={columns}
+    gridGutter={gridGutter}
+    renderItem={state.renderHabitTile}
+    onRetry={() => void state.actions.loadHabits()}
+    onAddHabit={() => state.modals.open('addHabit')}
+    pagination={paginationProps}
+    emptyStageStart={state.emptyStageStart}
+    emptyStageEnd={state.emptyStageEnd}
+  />
+);
 
 const HabitsScreen = () => {
   const state = useHabitsScreenState();
-  const { habits, loading, error, modals, actions, ui, responsive, pagination, pagedHabits } =
-    state;
+  const { habits, modals, actions, ui, responsive, pagination } = state;
   const { columns, gridGutter, scale, isLG, isXL } = responsive;
   const paginationProps = buildPaginationProps(pagination, scale);
   return (
@@ -783,16 +895,11 @@ const HabitsScreen = () => {
           onToggleReveal={state.handleToggleReveal}
         />
       </View>
-      <HabitsContent
-        habits={pagedHabits}
-        loading={loading}
-        error={error}
+      <HabitsContentSection
+        state={state}
         columns={columns}
         gridGutter={gridGutter}
-        renderItem={state.renderHabitTile}
-        onRetry={() => void actions.loadHabits()}
-        onAddHabit={() => modals.open('addHabit')}
-        pagination={paginationProps}
+        paginationProps={paginationProps}
       />
       <EnergyFooter
         showCTA={ui.showEnergyCTA}

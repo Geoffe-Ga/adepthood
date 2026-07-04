@@ -111,6 +111,42 @@ describe('HabitsScreen chrome accessibility', () => {
       expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: false });
       expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: false });
     });
+
+    it('shows the stage range as the visible label, moving the page position into the accessibility label', () => {
+      const { getByText, getByTestId } = render(
+        <PaginationBar
+          page={0}
+          pageCount={2}
+          onPrev={noop}
+          onNext={noop}
+          scale={1}
+          stageStart={1}
+          stageEnd={10}
+        />,
+      );
+      const rangeLabel = getByText(/Stages\s*1[\s\S]*10/);
+      expect(rangeLabel).toBeTruthy();
+      // The page position is announced on the visible range Text (an
+      // accessibility element), not the container whose label a screen reader
+      // would skip past its focusable children.
+      expect(rangeLabel.props.accessibilityLabel).toMatch(/page 1 of 2/i);
+      expect(getByTestId('habits-pagination')).toBeTruthy();
+    });
+
+    it('shows the second-lap stage range for page 2', () => {
+      const { getByText } = render(
+        <PaginationBar
+          page={1}
+          pageCount={2}
+          onPrev={noop}
+          onNext={noop}
+          scale={1}
+          stageStart={11}
+          stageEnd={20}
+        />,
+      );
+      expect(getByText(/Stages\s*11[\s\S]*20/)).toBeTruthy();
+    });
   });
 
   describe('EnergyCTA', () => {

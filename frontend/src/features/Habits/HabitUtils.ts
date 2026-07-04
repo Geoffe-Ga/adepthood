@@ -30,6 +30,19 @@ export const stageAtIndex = (index: number): string =>
   STAGE_ORDER[index % STAGE_ORDER.length] ?? STAGE_ORDER[STAGE_ORDER.length - 1]!;
 
 /**
+ * 1-based inclusive stage bounds for a habits page/lap: page 0 → stages 1..10,
+ * page 1 → 11..20, and so on. Drives the pagination bar's stage-range label and
+ * the second-lap invite copy so both name the stretch of stages a page covers.
+ */
+export const stageRangeForPage = (
+  page: number,
+  pageSize: number,
+): { start: number; end: number } => ({
+  start: page * pageSize + 1,
+  end: (page + 1) * pageSize,
+});
+
+/**
  * Calculate the start date for a habit based on its order in the onboarding
  * flow. Habits 1–8 begin 21 days apart while habits 9–10 begin 42 days apart.
  *

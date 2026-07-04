@@ -7,6 +7,7 @@ import renderer from 'react-test-renderer';
 import { STAGE_COLORS } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { HabitTile } from '../HabitTile';
+import type * as HabitUtilsModule from '../HabitUtils';
 
 const makeApiHabit = (id: number, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -86,6 +87,14 @@ jest.mock('../components/StatsModal', () => ({
   __esModule: true,
   default: jest.fn(() => null),
 }));
+
+// Wrap the real stageAtIndex in a jest.fn so page-2 tests can assert which
+// index (page-relative vs global) HabitsScreen actually calls it with, while
+// every other test in this file still gets the real coloring behavior.
+jest.mock('../HabitUtils', () => {
+  const actual: typeof HabitUtilsModule = jest.requireActual('../HabitUtils');
+  return { ...actual, stageAtIndex: jest.fn(actual.stageAtIndex) };
+});
 
 const { habits: habitsApi } = require('../../../api');
 const HabitsScreen = require('../HabitsScreen').default;
@@ -192,7 +201,12 @@ describe('HabitsScreen position-based stage colors', () => {
     expect(tileBorderAt(tree, 9)).toBe(STAGE_COLORS['Clear Light']);
   });
 
-  it('restarts the Beige → Clear Light sequence on page 2', async () => {
+  it('re-anchors the Beige → Clear Light sequence on page 2 via the global-index mod-wrap', async () => {
+    // page 2 restarts the gradient because HABITS_PER_PAGE equals
+    // STAGE_ORDER.length, so global indices 10/11 mod-wrap back to 0/1 --
+    // pixel-identical to the old page-relative coloring, which is why this
+    // test cannot tell the two apart on its own (see the spy-based test below
+    // for the semantic assertion that the global index is what's used).
     const testRenderer = await renderScreen(buildApiHabits(12));
     const tree = testRenderer.root;
     expect(tileBorderAt(tree, 0)).toBe(STAGE_COLORS.Beige);
@@ -202,6 +216,20 @@ describe('HabitsScreen position-based stage colors', () => {
     });
     expect(tileBorderAt(tree, 0)).toBe(STAGE_COLORS.Beige);
     expect(tileBorderAt(tree, 1)).toBe(STAGE_COLORS.Purple);
+  });
+
+  it('calls stageAtIndex with global indices (10, 11), not page-relative ones, for page-2 tiles', async () => {
+    const { stageAtIndex: stageAtIndexMock } = require('../HabitUtils');
+    const testRenderer = await renderScreen(buildApiHabits(12));
+    const tree = testRenderer.root;
+    const nextButton = tree.findByProps({ testID: 'pagination-next' });
+    stageAtIndexMock.mockClear();
+    await renderer.act(async () => {
+      nextButton.props.onPress();
+    });
+    const calledWithIndices = stageAtIndexMock.mock.calls.map((args: unknown[]) => args[0]);
+    expect(calledWithIndices).toContain(10);
+    expect(calledWithIndices).toContain(11);
   });
 
   it('colors tiles by list position regardless of habit.stage', async () => {

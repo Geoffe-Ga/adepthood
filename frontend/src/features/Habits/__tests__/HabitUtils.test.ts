@@ -21,6 +21,7 @@ import {
   logHabitUnits,
   calculateHabitStartDate,
   stageAtIndex,
+  stageRangeForPage,
   STAGE_ORDER,
   STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
@@ -1332,5 +1333,37 @@ describe('isSubtractiveHabit and goalsAreSubtractive (any-non-additive rule)', (
       completions: [],
     };
     expect(isSubtractiveHabit(habit)).toBe(true);
+  });
+});
+
+describe('stageRangeForPage', () => {
+  test('page 0 covers stages 1 through 10', () => {
+    expect(stageRangeForPage(0, 10)).toEqual({ start: 1, end: 10 });
+  });
+
+  test('page 1 covers stages 11 through 20 (second habit set)', () => {
+    expect(stageRangeForPage(1, 10)).toEqual({ start: 11, end: 20 });
+  });
+
+  test('page 2 covers stages 21 through 30', () => {
+    expect(stageRangeForPage(2, 10)).toEqual({ start: 21, end: 30 });
+  });
+
+  test('generalizes to a non-default pageSize', () => {
+    expect(stageRangeForPage(1, 5)).toEqual({ start: 6, end: 10 });
+  });
+});
+
+describe('stageAtIndex global anchoring contract for the second habit set', () => {
+  // HABITS_PER_PAGE equals STAGE_ORDER.length, so a global index into the
+  // second lap (10, 11, ...) must mod-wrap back to the start of the gradient
+  // -- the same anchor the first tile of page 2 needs to reuse Beige/Purple
+  // instead of continuing past Clear Light.
+  test('index 10 anchors to the first stage, matching the first tile of the second lap', () => {
+    expect(stageAtIndex(10)).toBe(STAGE_ORDER[0]);
+  });
+
+  test('index 11 anchors to the second stage, matching the second tile of the second lap', () => {
+    expect(stageAtIndex(11)).toBe(STAGE_ORDER[1]);
   });
 });

@@ -78,3 +78,75 @@ describe('usePagination', () => {
     expect(result.current.page).toBe(1);
   });
 });
+
+// Second habit set (stages 11-20): a trailing invite page appears once every
+// slot on the current lap is filled, inviting the user into the next lap.
+describe('usePagination trailing invite page', () => {
+  it('adds a trailing invite page when count is an exact multiple of pageSize', () => {
+    expect(renderHook(() => usePagination(10, PAGE_SIZE)).result.current.pageCount).toBe(2);
+    expect(renderHook(() => usePagination(20, PAGE_SIZE)).result.current.pageCount).toBe(3);
+    expect(renderHook(() => usePagination(30, PAGE_SIZE)).result.current.pageCount).toBe(4);
+  });
+
+  it('does not add a spurious invite page for a partial last lap or an empty list', () => {
+    expect(renderHook(() => usePagination(15, PAGE_SIZE)).result.current.pageCount).toBe(2);
+    expect(renderHook(() => usePagination(0, PAGE_SIZE)).result.current.pageCount).toBe(1);
+  });
+
+  it('goNext can advance into the trailing invite page once the last content page is full', () => {
+    const { result } = renderHook(() => usePagination(10, PAGE_SIZE));
+    expect(result.current.page).toBe(0);
+    act(() => result.current.goNext());
+    expect(result.current.page).toBe(1);
+  });
+
+  it('goLast retargets to the last content page, not the invite page, when count exactly fills whole pages', () => {
+    const ten = renderHook(() => usePagination(10, PAGE_SIZE));
+    expect(ten.result.current.pageCount).toBe(2);
+    act(() => ten.result.current.goLast());
+    expect(ten.result.current.page).toBe(0);
+
+    const twenty = renderHook(() => usePagination(20, PAGE_SIZE));
+    expect(twenty.result.current.pageCount).toBe(3);
+    act(() => twenty.result.current.goLast());
+    expect(twenty.result.current.page).toBe(1);
+  });
+
+  it('goLast still lands on the last content page for counts that do not exactly fill a page', () => {
+    const eleven = renderHook(() => usePagination(11, PAGE_SIZE));
+    act(() => eleven.result.current.goLast());
+    expect(eleven.result.current.page).toBe(1);
+
+    const twentyOne = renderHook(() => usePagination(21, PAGE_SIZE));
+    act(() => twentyOne.result.current.goLast());
+    expect(twentyOne.result.current.page).toBe(2);
+  });
+
+  it('growing from a partial page to an exact multiple adds the invite page, and goLast stays on the content page', () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) => usePagination(count, PAGE_SIZE),
+      { initialProps: { count: 9 } },
+    );
+    expect(result.current.pageCount).toBe(1);
+    rerender({ count: 10 });
+    expect(result.current.pageCount).toBe(2);
+    act(() => result.current.goLast());
+    expect(result.current.page).toBe(0);
+  });
+
+  it('a goLast captured before an append lands on the appended row, not the stale last page', () => {
+    // Reproduces the add flow: the screen captures goLast at count=10 (last
+    // content page 0), the append raises the count to 11 (new row on page 1),
+    // and only then does the captured callback run. It must target the row the
+    // user just created, so goLast reads the live count rather than the render
+    // it was created in.
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) => usePagination(count, PAGE_SIZE),
+      { initialProps: { count: 10 } },
+    );
+    const capturedGoLast = result.current.goLast;
+    rerender({ count: 11 });
+    act(() => capturedGoLast());
+    expect(result.current.page).toBe(1);
+  });
+});
