@@ -125,7 +125,7 @@ const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): Reac
   // showing the stale text -- and a pending debounce would then re-fire
   // ``onSearch(stale)`` and clobber the parent's reset.
   useEffect(() => {
-    setText((current) => (current === (searchQuery ?? '') ? current : searchQuery ?? ''));
+    setText((current) => (current === (searchQuery ?? '') ? current : (searchQuery ?? '')));
   }, [searchQuery]);
 
   useEffect(() => {

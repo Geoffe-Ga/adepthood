@@ -51,9 +51,7 @@ export const createNewHabit = (name: string): OnboardingHabit => ({
 // Three-way discriminated union by ``kind`` makes the call site easier
 // to read than the prior mixed shape.
 export type ValidateAddHabitResult =
-  | { kind: 'noop' }
-  | { kind: 'error'; message: string }
-  | { kind: 'add'; habit: OnboardingHabit };
+  { kind: 'noop' } | { kind: 'error'; message: string } | { kind: 'add'; habit: OnboardingHabit };
 
 export const validateAndAddHabit = (
   raw: string,

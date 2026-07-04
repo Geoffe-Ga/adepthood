@@ -51,7 +51,7 @@ function countDoneToday(habits: readonly Habit[]): number {
 const TodayHero = ({ week, stage }: { week: number | null; stage: number | null }) => {
   const entrance = useEntrance(0);
   const position = week === null ? 'Your journey awaits' : `Week ${week} of ${TOTAL_PROGRAM_WEEKS}`;
-  const stageName = stage === null ? null : STAGE_ORDER[stage - 1] ?? null;
+  const stageName = stage === null ? null : (STAGE_ORDER[stage - 1] ?? null);
   return (
     <Animated.View style={entrance}>
       <ShowcaseCard testID="today-hero">
