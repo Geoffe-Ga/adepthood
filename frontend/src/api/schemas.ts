@@ -101,9 +101,6 @@ export const loginAuthResponseSchema = authResponseSchema.extend({
   user_id: z.number().int().positive(),
 });
 
-export type AuthResponseT = z.infer<typeof authResponseSchema>;
-export type LoginAuthResponseT = z.infer<typeof loginAuthResponseSchema>;
-
 /**
  * Response for ``PUT /users/me/timezone`` (issue #261): the IANA zone the
  * server now has on record for the caller.  Validated at the boundary so a
@@ -206,10 +203,6 @@ export const habitWithGoalsSchema = habitSchema.extend({
   goals: z.array(goalSchema),
 });
 
-export type HabitSchemaT = z.infer<typeof habitSchema>;
-export type HabitWithGoalsSchemaT = z.infer<typeof habitWithGoalsSchema>;
-export type GoalSchemaT = z.infer<typeof goalSchema>;
-
 /** One weekly prompt + the user's response state (mirrors backend ``PromptDetail``). */
 export const promptDetailSchema = z.object({
   week_number: z.number().int(),
@@ -229,8 +222,6 @@ export const promptListResponseSchema = z.object({
   total: z.number().int().nullable(),
   has_more: z.boolean(),
 });
-
-export type PromptListResponseSchemaT = z.infer<typeof promptListResponseSchema>;
 
 export const journalTagSchema = z.enum([
   'freeform',
@@ -280,8 +271,6 @@ export const journalListResponseSchema = z.object({
   total: z.number().int(),
   has_more: z.boolean(),
 });
-
-export type JournalListResponseSchemaT = z.infer<typeof journalListResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
@@ -593,7 +582,6 @@ export const mettaReturnStateSchema = z.object({
   offer_dismissed: z.boolean(),
 });
 
-export type MettaFocusT = z.infer<typeof mettaFocusSchema>;
 export type ReturnWeekT = z.infer<typeof returnWeekSchema>;
 export type ReturnArcT = z.infer<typeof returnArcSchema>;
 export type MettaReturnStateT = z.infer<typeof mettaReturnStateSchema>;
@@ -696,7 +684,6 @@ export type CareResourceT = z.infer<typeof careResourceSchema>;
 export type CareResponseT = z.infer<typeof careResponseSchema>;
 export type ContractionVariantT = z.infer<typeof contractionVariantSchema>;
 export type ContractionReflectionT = z.infer<typeof contractionReflectionSchema>;
-export type ResonanceResponseT = z.infer<typeof resonanceResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Depth preferences (you-choose-your-depth ring toggles)

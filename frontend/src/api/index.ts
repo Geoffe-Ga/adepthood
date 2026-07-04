@@ -2454,32 +2454,3 @@ export const depthPreferences = {
     });
   },
 };
-
-// Energy plan client
-export default {
-  habits,
-  goalCompletions,
-  goalGroups,
-  goals,
-  journal,
-  prompts,
-  stages,
-  course,
-  practices,
-  practiceShare,
-  practiceRecipes,
-  practiceTags,
-  userPractices,
-  frequency,
-  practiceSessions,
-  auth,
-  users,
-  depthPreferences,
-  wheel,
-  setTokenGetter,
-  setOnUnauthorized,
-  setOnTokenRefreshed,
-  setLlmApiKeyGetter,
-  setNetworkOnlineGetter,
-  LLM_API_KEY_HEADER,
-};
