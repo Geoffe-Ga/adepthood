@@ -13,16 +13,13 @@ import { registerStoreReset } from './registry';
  * Unlike an optimistic toggle, ``update`` waits for the server's echoed full
  * state before mutating: the four flags interact (a backend rule may force a
  * dependent ring off), so the authoritative post-update snapshot is the only
- * safe thing to store. A failed call leaves the current flags untouched and
- * surfaces a string ``error`` for the UI to render.
+ * safe thing to store. A failed call leaves the current flags untouched.
  */
 export interface DepthPreferencesStoreState {
   enable_habits: boolean;
   enable_practices: boolean;
   enable_course: boolean;
   enable_sangha: boolean;
-  loading: boolean;
-  error: string | null;
 
   /** Fetch the current ring toggles and replace local state with the result. */
   load: (_token?: string) => Promise<void>;
@@ -37,8 +34,6 @@ const INITIAL_STATE = {
   enable_practices: true,
   enable_course: true,
   enable_sangha: true,
-  loading: false,
-  error: null as string | null,
 };
 
 /** Narrow the four toggle flags out of a full API response. */
@@ -49,32 +44,25 @@ const toToggles = (prefs: DepthPreferences) => ({
   enable_sangha: prefs.enable_sangha,
 });
 
-/** Human-readable message for an unknown rejection value. */
-const messageFor = (err: unknown): string =>
-  err instanceof Error ? err.message : 'Failed to load depth preferences';
-
 export const useDepthPreferencesStore = create<DepthPreferencesStoreState>((set) => ({
   ...INITIAL_STATE,
 
   load: async (token) => {
-    set({ loading: true, error: null });
     try {
       const prefs = await depthPreferences.get(token);
-      set({ ...toToggles(prefs), loading: false });
-    } catch (err: unknown) {
+      set({ ...toToggles(prefs) });
+    } catch {
       // Leave the existing flags intact — a failed read must not flip a ring.
-      set({ loading: false, error: messageFor(err) });
     }
   },
 
   update: async (partial, token) => {
-    set({ loading: true, error: null });
     try {
       const prefs = await depthPreferences.update(partial, token);
       // Non-optimistic: state comes only from the server's echoed full snapshot.
-      set({ ...toToggles(prefs), loading: false });
-    } catch (err: unknown) {
-      set({ loading: false, error: messageFor(err) });
+      set({ ...toToggles(prefs) });
+    } catch {
+      // Leave the existing flags intact — a failed update must not flip a ring.
     }
   },
 
@@ -114,7 +102,3 @@ export const selectEnableCourse = (state: DepthPreferencesStoreState): boolean =
   state.enable_course;
 export const selectEnableSangha = (state: DepthPreferencesStoreState): boolean =>
   state.enable_sangha;
-export const selectDepthPreferencesLoading = (state: DepthPreferencesStoreState): boolean =>
-  state.loading;
-export const selectDepthPreferencesError = (state: DepthPreferencesStoreState): string | null =>
-  state.error;

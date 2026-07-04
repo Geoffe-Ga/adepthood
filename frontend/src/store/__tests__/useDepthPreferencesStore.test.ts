@@ -51,7 +51,7 @@ describe('useDepthPreferencesStore', () => {
     });
   });
 
-  it('initial state is all-on with loading false and error null', () => {
+  it('initial state is all-on', () => {
     const { useDepthPreferencesStore } = require('../useDepthPreferencesStore');
     const state = useDepthPreferencesStore.getState();
 
@@ -59,11 +59,9 @@ describe('useDepthPreferencesStore', () => {
     expect(state.enable_practices).toBe(true);
     expect(state.enable_course).toBe(true);
     expect(state.enable_sangha).toBe(true);
-    expect(state.loading).toBe(false);
-    expect(state.error).toBeNull();
   });
 
-  it('load() sets loading true during fetch then stores returned booleans', async () => {
+  it('load() stores the returned booleans', async () => {
     const { useDepthPreferencesStore } = require('../useDepthPreferencesStore');
 
     const serverResponse = {
@@ -72,32 +70,17 @@ describe('useDepthPreferencesStore', () => {
       enable_course: true,
       enable_sangha: false,
     };
-
-    // Single mock: captures mid-flight loading state AND resolves the response
-    let midFlightLoading: boolean | undefined;
-    mockApi.depthPreferences.get.mockImplementationOnce(
-      () =>
-        new Promise<DepthPreferences>((resolve) => {
-          // Record loading state synchronously before the promise settles
-          midFlightLoading = useDepthPreferencesStore.getState().loading;
-          resolve(serverResponse);
-        }),
-    );
+    mockApi.depthPreferences.get.mockResolvedValueOnce(serverResponse);
 
     await act(async () => {
       await useDepthPreferencesStore.getState().load('tok');
     });
-
-    // loading was true mid-flight
-    expect(midFlightLoading).toBe(true);
 
     const state = useDepthPreferencesStore.getState();
     expect(state.enable_habits).toBe(true);
     expect(state.enable_practices).toBe(false);
     expect(state.enable_course).toBe(true);
     expect(state.enable_sangha).toBe(false);
-    expect(state.loading).toBe(false);
-    expect(state.error).toBeNull();
   });
 
   it('load() calls depthPreferences.get with the supplied token', async () => {
@@ -163,38 +146,36 @@ describe('useDepthPreferencesStore', () => {
     expect(useDepthPreferencesStore.getState().enable_sangha).toBe(false);
   });
 
-  it('load() error sets error string, restores loading to false, leaves defaults intact', async () => {
+  it('load() failure resolves quietly and leaves the flags intact', async () => {
     const { useDepthPreferencesStore } = require('../useDepthPreferencesStore');
 
     mockApi.depthPreferences.get.mockRejectedValueOnce(new Error('network failure'));
 
     await act(async () => {
-      await useDepthPreferencesStore.getState().load('tok');
+      await expect(useDepthPreferencesStore.getState().load('tok')).resolves.toBeUndefined();
     });
 
     const state = useDepthPreferencesStore.getState();
-    expect(typeof state.error).toBe('string');
-    expect(state.error).not.toBeNull();
-    expect(state.loading).toBe(false);
-    // Defaults remain all-on
+    // A failed read must not flip a ring — defaults remain all-on.
     expect(state.enable_habits).toBe(true);
     expect(state.enable_practices).toBe(true);
     expect(state.enable_course).toBe(true);
     expect(state.enable_sangha).toBe(true);
   });
 
-  it('update() error sets error string and restores loading to false', async () => {
+  it('update() failure resolves quietly and leaves the flags intact', async () => {
     const { useDepthPreferencesStore } = require('../useDepthPreferencesStore');
 
     mockApi.depthPreferences.update.mockRejectedValueOnce(new Error('server error'));
 
     await act(async () => {
-      await useDepthPreferencesStore.getState().update({ enable_habits: false }, 'tok');
+      await expect(
+        useDepthPreferencesStore.getState().update({ enable_habits: false }, 'tok'),
+      ).resolves.toBeUndefined();
     });
 
-    const state = useDepthPreferencesStore.getState();
-    expect(typeof state.error).toBe('string');
-    expect(state.loading).toBe(false);
+    // A failed update must not flip a ring.
+    expect(useDepthPreferencesStore.getState().enable_habits).toBe(true);
   });
 
   it('reset() returns state to the all-on defaults', () => {
@@ -207,8 +188,6 @@ describe('useDepthPreferencesStore', () => {
         enable_practices: false,
         enable_course: false,
         enable_sangha: false,
-        loading: true,
-        error: 'some error',
       });
     });
 
@@ -221,8 +200,6 @@ describe('useDepthPreferencesStore', () => {
     expect(state.enable_practices).toBe(true);
     expect(state.enable_course).toBe(true);
     expect(state.enable_sangha).toBe(true);
-    expect(state.loading).toBe(false);
-    expect(state.error).toBeNull();
   });
 
   it('selectors return their slices from state', () => {
@@ -232,8 +209,6 @@ describe('useDepthPreferencesStore', () => {
       selectEnablePractices,
       selectEnableCourse,
       selectEnableSangha,
-      selectDepthPreferencesLoading,
-      selectDepthPreferencesError,
     } = require('../useDepthPreferencesStore');
 
     act(() => {
@@ -242,8 +217,6 @@ describe('useDepthPreferencesStore', () => {
         enable_practices: false,
         enable_course: true,
         enable_sangha: false,
-        loading: true,
-        error: 'oops',
       });
     });
 
@@ -252,8 +225,6 @@ describe('useDepthPreferencesStore', () => {
     expect(selectEnablePractices(state)).toBe(false);
     expect(selectEnableCourse(state)).toBe(true);
     expect(selectEnableSangha(state)).toBe(false);
-    expect(selectDepthPreferencesLoading(state)).toBe(true);
-    expect(selectDepthPreferencesError(state)).toBe('oops');
   });
 
   it('registers its reset with the shared store registry', () => {
