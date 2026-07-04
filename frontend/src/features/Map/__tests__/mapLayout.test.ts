@@ -3,7 +3,6 @@
 import { ink, surface } from '../../../design/tokens';
 import {
   fittedTitleFontSize,
-  GRID_COLUMN_FLEX,
   labelCorner,
   MAP_ROWS,
   MAP_TITLE_LINES,
@@ -12,6 +11,7 @@ import {
   TITLE_MIN_FONT_SIZE,
 } from '../mapLayout';
 import { isLeftReturning, STAGE_COUNT } from '../stageData';
+import { centerColumnBounds } from '../waveGeometry';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
@@ -114,7 +114,16 @@ describe('mapLayout', () => {
   });
 
   it('keeps the shared column-flex weights the wave geometry also depends on', () => {
-    expect(GRID_COLUMN_FLEX).toEqual({ left: 2, center: 2, right: 1 });
+    // 2:2:1 ratio: center column matches the left gutter; right gutter is half that.
+    const width = 500;
+    const bounds = centerColumnBounds(width);
+    const centerWidth = bounds.right - bounds.left;
+    const rightGutter = width - bounds.right;
+
+    expect(bounds.left).toBeCloseTo(200);
+    expect(bounds.right).toBeCloseTo(400);
+    expect(bounds.left).toBeCloseTo(centerWidth);
+    expect(rightGutter).toBeCloseTo(centerWidth / 2);
   });
 
   it('renames stage 3 arrow label from Self-Interest to Self-Love', () => {
