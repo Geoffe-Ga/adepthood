@@ -128,4 +128,45 @@ describe('JournalEntryScreen load error', () => {
       jest.useRealTimers();
     }
   });
+
+  it('does not PATCH the privacy tier when the user taps a tier after a failed load', async () => {
+    mockGet.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId } = renderScreen({ entryId: 7 });
+    await findByTestId('journal-load-error');
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not PATCH the chord when the user taps the chord control after a failed load', async () => {
+    mockGet.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId, queryByTestId } = renderScreen({ entryId: 7 });
+    await findByTestId('journal-load-error');
+    fireEvent.press(getByTestId('aspect-chord-trigger'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(queryByTestId('aspect-primary-5')).toBeNull();
+  });
+
+  // Regression pin; full successful-load PATCH matrix lives in JournalEntryScreenPrivacy.test.tsx
+  it('still PATCHes the tier normally after a successful load (gate does not over-block)', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, classification: 'intimate' }));
+    const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+    await waitFor(() => {
+      expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+    });
+    mockUpdate.mockClear();
+    fireEvent.press(getByTestId('privacy-tier-personal'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdate).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ classification: 'personal' }),
+    );
+  });
 });

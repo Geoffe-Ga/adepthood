@@ -46,6 +46,8 @@ export interface AspectChordControlProps {
   value?: AspectChordValue;
   /** Called with the next chord whenever a chip or the clear affordance fires. */
   onChange: (_next: AspectChordValue) => void;
+  /** When true, the trigger won't expand and changes are inert (failed load). */
+  disabled?: boolean;
 }
 
 interface AspectChipRowProps {
@@ -82,7 +84,13 @@ function AspectChipRow({
 }
 
 /** The collapsed state: a single warm trigger that reveals the chooser. */
-function CollapsedTrigger({ onExpand }: { onExpand: () => void }): React.JSX.Element {
+function CollapsedTrigger({
+  onExpand,
+  disabled,
+}: {
+  onExpand: () => void;
+  disabled: boolean;
+}): React.JSX.Element {
   return (
     <View style={styles.aspectChordControl}>
       <TouchableOpacity
@@ -90,6 +98,7 @@ function CollapsedTrigger({ onExpand }: { onExpand: () => void }): React.JSX.Ele
         onPress={onExpand}
         accessibilityRole="button"
         accessibilityLabel={TRIGGER_LABEL}
+        accessibilityState={{ disabled }}
         testID="aspect-chord-trigger"
       >
         <Text style={styles.aspectChordTriggerLabel}>{TRIGGER_LABEL}</Text>
@@ -102,7 +111,7 @@ function CollapsedTrigger({ onExpand }: { onExpand: () => void }): React.JSX.Ele
 function ExpandedChooser({
   value,
   onChange,
-}: Required<AspectChordControlProps>): React.JSX.Element {
+}: Required<Pick<AspectChordControlProps, 'value' | 'onChange'>>): React.JSX.Element {
   const primary = value.primary;
   return (
     <View style={styles.aspectChordControl} accessibilityLabel="Aspect chord">
@@ -144,6 +153,7 @@ function ExpandedChooser({
 function AspectChordControl({
   value = EMPTY_CHORD,
   onChange,
+  disabled = false,
 }: AspectChordControlProps): React.JSX.Element {
   // Derive expansion from the value so a loaded (pre-tagged) entry opens on its
   // chips instead of the "optional" trigger — even when the chord arrives after
@@ -151,12 +161,17 @@ function AspectChordControl({
   const [userExpanded, setUserExpanded] = useState(false);
   const expanded = userExpanded || value.primary !== null;
   if (!expanded) {
-    return <CollapsedTrigger onExpand={() => setUserExpanded(true)} />;
+    // A disabled control (failed load) never reveals its chips on tap.
+    const onExpand = (): void => {
+      if (!disabled) setUserExpanded(true);
+    };
+    return <CollapsedTrigger onExpand={onExpand} disabled={disabled} />;
   }
   // Latch the control open once the writer acts inside it, so pressing Clear on
   // an edit-loaded chord leaves them on the chips to re-pick rather than snapping
-  // back to the collapsed "optional" trigger mid-edit.
+  // back to the collapsed "optional" trigger mid-edit. Inert while disabled.
   const handleChange = (next: AspectChordValue): void => {
+    if (disabled) return;
     setUserExpanded(true);
     onChange(next);
   };

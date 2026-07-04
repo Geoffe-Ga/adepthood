@@ -217,10 +217,14 @@ interface ClassificationPersist {
  */
 function useClassificationPersist(
   entryIdRef: React.MutableRefObject<number | null>,
+  loadFailedRef: React.MutableRefObject<boolean>,
 ): ClassificationPersist {
   const classificationRef = useRef<JournalClassification>(DEFAULT_TIER);
   const changeClassification = useCallback(
     async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      // Never PATCH against an entry that failed to load — the ref is stale and a
+      // write here could silently downgrade the stored (unseen) privacy tier.
+      if (loadFailedRef.current) return null;
       const previous = classificationRef.current;
       classificationRef.current = tier;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
@@ -237,7 +241,7 @@ function useClassificationPersist(
         return previous;
       }
     },
-    [entryIdRef],
+    [entryIdRef, loadFailedRef],
   );
   const seedClassification = useCallback((tier: JournalClassification): void => {
     classificationRef.current = tier;
@@ -267,10 +271,16 @@ interface ChordPersist {
  * A failed PATCH resolves to the prior chord so the control reverts to the
  * truth, mirroring the sibling privacy-tier control's revert-on-failure path.
  */
-function useChordPersist(entryIdRef: React.MutableRefObject<number | null>): ChordPersist {
+function useChordPersist(
+  entryIdRef: React.MutableRefObject<number | null>,
+  loadFailedRef: React.MutableRefObject<boolean>,
+): ChordPersist {
   const chordRef = useRef<AspectChordValue>(EMPTY_CHORD);
   const changeChord = useCallback(
     async (next: AspectChordValue): Promise<AspectChordValue | null> => {
+      // Never PATCH against an entry that failed to load — the ref is stale and a
+      // write here could overwrite the stored (unseen) chord.
+      if (loadFailedRef.current) return null;
       const previous = chordRef.current;
       chordRef.current = next;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
@@ -290,7 +300,7 @@ function useChordPersist(entryIdRef: React.MutableRefObject<number | null>): Cho
         return previous;
       }
     },
-    [entryIdRef],
+    [entryIdRef, loadFailedRef],
   );
   const seedChord = useCallback((next: AspectChordValue): void => {
     chordRef.current = next;
@@ -438,10 +448,13 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
 function usePersistControls(
   entryIdRef: React.MutableRefObject<number | null>,
   setSaveState: (_state: SaveState) => void,
+  loadFailedRef: React.MutableRefObject<boolean>,
 ) {
-  const { classificationRef, changeClassification, seedClassification } =
-    useClassificationPersist(entryIdRef);
-  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef);
+  const { classificationRef, changeClassification, seedClassification } = useClassificationPersist(
+    entryIdRef,
+    loadFailedRef,
+  );
+  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef, loadFailedRef);
   const seedPersist = useCallback(
     (tier: JournalClassification, chord: AspectChordValue): void => {
       seedClassification(tier);
@@ -475,13 +488,14 @@ function useDebouncedSave(
   // A weekly-prompt response is write-once; this guards against the debounce or
   // flush submitting it twice (the backend 409s on a duplicate week).
   const respondedRef = useRef(false);
-  const persist = usePersistControls(entryIdRef, setSaveState);
   // Refs so non-memoised inputs don't churn the save callbacks below.
   const onSavedRef = useRef(onSaved);
   const ctxRef = useRef(ctx);
   // A failed load leaves entryIdRef pointing at the real, unloaded entry with a
-  // blank body — so any save here would overwrite it. Gate on the latest flag.
+  // blank body — so any save (or tier/chord PATCH) here would overwrite it. Gate
+  // on the latest flag; declared before the persisters so they can read it too.
   const loadFailedRef = useRef(loadFailed);
+  const persist = usePersistControls(entryIdRef, setSaveState, loadFailedRef);
   useEffect(() => {
     onSavedRef.current = onSaved;
     ctxRef.current = ctx;
@@ -730,6 +744,8 @@ interface WritingColumnProps {
   onChangeChord: (_next: AspectChordValue) => void;
   onFinish?: () => void;
   bodyPlaceholder?: string;
+  /** Disables the tier + chord controls while an entry's load has failed. */
+  controlsDisabled: boolean;
 }
 
 /** Quiet control to mark a draft finished. */
@@ -745,28 +761,41 @@ function FinishControl({ onFinish }: { onFinish: () => void }) {
   );
 }
 
-/** The scrollable writing column (title + growing body + save hint). */
-function WritingColumn({
-  title,
-  body,
-  saveState,
+/** The privacy-tier + Aspect-chord choosers, both gated off when load failed. */
+function EntryTagControls({
   classification,
   chord,
-  onChangeTitle,
-  onChangeBody,
   onChangeClassification,
   onChangeChord,
-  onFinish,
-  bodyPlaceholder = 'Begin writing…',
-}: WritingColumnProps) {
+  controlsDisabled,
+}: Pick<
+  WritingColumnProps,
+  'classification' | 'chord' | 'onChangeClassification' | 'onChangeChord' | 'controlsDisabled'
+>) {
   return (
-    <ScrollView
-      style={styles.writingColumn}
-      contentContainerStyle={styles.writingColumnContent}
-      keyboardShouldPersistTaps="handled"
-    >
-      <PrivacyTierControl value={classification} onChange={onChangeClassification} />
-      <AspectChordControl value={chord} onChange={onChangeChord} />
+    <>
+      <PrivacyTierControl
+        value={classification}
+        onChange={onChangeClassification}
+        disabled={controlsDisabled}
+      />
+      <AspectChordControl value={chord} onChange={onChangeChord} disabled={controlsDisabled} />
+    </>
+  );
+}
+
+/** The title + growing body inputs (the raw editable text of the entry). */
+function WritingFields({
+  title,
+  body,
+  onChangeTitle,
+  onChangeBody,
+  bodyPlaceholder,
+}: Pick<WritingColumnProps, 'title' | 'body' | 'onChangeTitle' | 'onChangeBody'> & {
+  bodyPlaceholder: string;
+}) {
+  return (
+    <>
       <TextInput
         style={styles.titleInput}
         value={title}
@@ -790,6 +819,45 @@ function WritingColumn({
         scrollEnabled={false}
         accessibilityLabel="Entry body"
         testID="journal-body-input"
+      />
+    </>
+  );
+}
+
+/** The scrollable writing column (title + growing body + save hint). */
+function WritingColumn({
+  title,
+  body,
+  saveState,
+  classification,
+  chord,
+  onChangeTitle,
+  onChangeBody,
+  onChangeClassification,
+  onChangeChord,
+  onFinish,
+  bodyPlaceholder = 'Begin writing…',
+  controlsDisabled,
+}: WritingColumnProps) {
+  return (
+    <ScrollView
+      style={styles.writingColumn}
+      contentContainerStyle={styles.writingColumnContent}
+      keyboardShouldPersistTaps="handled"
+    >
+      <EntryTagControls
+        classification={classification}
+        chord={chord}
+        onChangeClassification={onChangeClassification}
+        onChangeChord={onChangeChord}
+        controlsDisabled={controlsDisabled}
+      />
+      <WritingFields
+        title={title}
+        body={body}
+        onChangeTitle={onChangeTitle}
+        onChangeBody={onChangeBody}
+        bodyPlaceholder={bodyPlaceholder}
       />
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
@@ -1105,6 +1173,8 @@ type Controller = ReturnType<typeof useJournalEntryController>;
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
+  // A failed load leaves the controls bound to an unseen entry, so disable them.
+  const controlsDisabled = ctl.autosave.loadError != null;
   return editMode ? (
     <WritingColumn
       title={title}
@@ -1118,6 +1188,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onChangeChord={ctl.autosave.onChangeChord}
       onFinish={canFinish ? markFinished : undefined}
       bodyPlaceholder={bodyPlaceholder}
+      controlsDisabled={controlsDisabled}
     />
   ) : (
     <ReadColumn
