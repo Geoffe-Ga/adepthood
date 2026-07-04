@@ -57,6 +57,32 @@ const touch = (pageX: number, pageY: number, timestamp = 0) => ({
   nativeEvent: { pageX, pageY, timestamp },
 });
 
+/** A settle/glide `Animated.timing` config: an easing curve over an XY target. */
+interface CenterGlideConfig {
+  toValue: { x: number; y: number };
+  easing: (_t: number) => number;
+}
+
+/** Pull the center-driving `Animated.timing` configs (XY toValue) from a spy. */
+const centerGlideConfigs = (timing: jest.SpyInstance): CenterGlideConfig[] =>
+  timing.mock.calls
+    .map(([, config]) => config as CenterGlideConfig)
+    .filter(
+      (config) =>
+        typeof config?.toValue === 'object' &&
+        config.toValue !== null &&
+        'x' in config.toValue &&
+        'y' in config.toValue,
+    );
+
+/** The single center glide a settle/focus change is expected to start. */
+const soleCenterGlide = (timing: jest.SpyInstance): CenterGlideConfig => {
+  const [glide, ...rest] = centerGlideConfigs(timing);
+  expect(rest).toHaveLength(0);
+  if (!glide) throw new Error('expected exactly one center glide');
+  return glide;
+};
+
 /** Drive a full grant → move → release drag on the lens. */
 const drag = (
   tree: ReturnType<typeof create>,
@@ -317,6 +343,103 @@ describe('MagnifierLens', () => {
       });
       expect(onSettleStage).toHaveBeenCalledWith(3);
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('coasts to a stop after a fast swipe: the settle decelerates, never restarting from rest', () => {
+    reducedMotionState.value = false;
+    jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
+    try {
+      const { tree } = renderLens({ focusedStage: 1 });
+      act(() => {
+        jest.advanceTimersByTime(2000); // let the mount glide finish
+      });
+      timing.mockClear();
+
+      const lens = lensNode(tree);
+      const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+      const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+      act(() => {
+        lens.props.onResponderGrant(touch(150, start.y, 0));
+        lens.props.onResponderMove(touch(150, stage3Y + 28, 80));
+        lens.props.onResponderMove(touch(150, stage3Y, 100));
+        lens.props.onResponderRelease(touch(150, stage3Y, 100));
+      });
+
+      const settle = soleCenterGlide(timing);
+      // Ease-out spends most of its travel early, then slows to the stage: the
+      // lens keeps the finger's speed and decelerates. An ease-in-out settle
+      // would sit near zero here (a dead stop before re-accelerating) — the jerk.
+      expect(settle.easing(0.1)).toBeGreaterThan(0.2);
+    } finally {
+      timing.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('locks exactly on a stage after a swipe: the settle target is that stage anchor', () => {
+    reducedMotionState.value = false;
+    jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
+    try {
+      const { tree, onSettleStage } = renderLens({ focusedStage: 1 });
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      timing.mockClear();
+
+      const lens = lensNode(tree);
+      const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+      const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+      act(() => {
+        lens.props.onResponderGrant(touch(150, start.y, 0));
+        lens.props.onResponderMove(touch(150, stage3Y + 28, 80));
+        lens.props.onResponderMove(touch(150, stage3Y, 100));
+        lens.props.onResponderRelease(touch(150, stage3Y, 100));
+      });
+
+      expect(onSettleStage).toHaveBeenCalledWith(6);
+      const settle = soleCenterGlide(timing);
+      expect(settle.toValue.y).toBeCloseTo(stageWavePoint(6).y * GRID_HEIGHT);
+    } finally {
+      timing.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('a stage-focus glide still gathers speed from rest (ease-in-out, not a snap)', () => {
+    reducedMotionState.value = false;
+    jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
+    try {
+      const { tree } = renderLens({ focusedStage: 1 });
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      timing.mockClear();
+
+      act(() => {
+        tree.update(
+          <MagnifierLens
+            gridWidth={GRID_WIDTH}
+            gridHeight={GRID_HEIGHT}
+            anchors={{}}
+            focusedStage={6}
+            currentStage={1}
+            onSettleStage={jest.fn()}
+            onOpenStage={jest.fn()}
+          />,
+        );
+      });
+
+      const glide = soleCenterGlide(timing);
+      // A tap/focus change starts from a standstill, so it must ease in — near
+      // zero early travel — rather than lurching off at full speed.
+      expect(glide.easing(0.1)).toBeLessThan(0.05);
+    } finally {
+      timing.mockRestore();
       jest.useRealTimers();
     }
   });
