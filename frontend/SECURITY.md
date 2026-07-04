@@ -6,7 +6,10 @@ sanitization, JWT signing, rate limiting, CORS) — those are in `backend/`.
 
 ## Auth token persistence
 
-**File:** `src/storage/authStorage.ts`
+**File:** `src/storage/secureStringStore.ts` (the shared factory that owns
+the web `localStorage` branch). The auth token and BYOK LLM key reach it
+through two thin wrappers: `src/storage/authStorage.ts` and
+`src/storage/llmKeyStorage.ts`.
 **Bug ID:** BUG-FE-AUTH-007
 **Status:** Accepted risk on web; migration tracked.
 
@@ -21,9 +24,9 @@ sanitization, JWT signing, rate limiting, CORS) — those are in `backend/`.
 
 `expo-secure-store` v55 has no web implementation (its web bundle is
 literally `export default {}`), so calling `SecureStore.setItemAsync` on
-web throws `TypeError`. The platform branch in `authStorage.ts` exists to
-prevent that crash; the alternative would be the auth flow failing
-end-to-end on every web load.
+web throws `TypeError`. The platform branch in `secureStringStore.ts`
+exists to prevent that crash; the alternative would be the auth flow
+failing end-to-end on every web load.
 
 ### The XSS-window risk
 
@@ -36,14 +39,20 @@ the probability of XSS but do not bound the impact once it happens.
 ### What we do today to compensate
 
 1. The JS path that uses `localStorage` is isolated to a single file
-   (`src/storage/authStorage.ts`) and a single platform branch
-   (`Platform.OS === 'web'`). No other module reaches into
+   (`src/storage/secureStringStore.ts`) and a single platform branch
+   (`Platform.OS === 'web'`). `authStorage.ts` and `llmKeyStorage.ts`
+   are thin wrappers over that factory; they do not reach into
+   `localStorage` themselves, and no other module reaches into
    `localStorage` for the token.
-2. The file carries a header comment block describing the risk so any
-   diff that touches it shows the warning in PR review.
-3. The web branch carries a per-line `BUG-FE-AUTH-007` reference so
-   `git grep BUG-FE-AUTH-007` finds every accepted-risk site in one
-   command.
+2. The factory file carries a header comment block describing the risk
+   so any diff that touches it shows the warning in PR review.
+3. The web branch in the factory carries a per-line `BUG-FE-AUTH-007`
+   reference, and the `authStorage.ts` wrapper repeats it at its
+   factory-instantiation site, so `git grep BUG-FE-AUTH-007` finds
+   every token accepted-risk site in one command. The `llmKeyStorage.ts`
+   wrapper carries its own `BUG-FE-STORAGE-001` marker at its
+   instantiation site (its `localStorage` writes ride the same
+   factory branch), so a full audit greps both IDs.
 
 ### The migration plan
 
@@ -71,10 +80,12 @@ reviewed default.
 - **Adding new web persistence code** that puts secrets, tokens, or
   user-identifying data in `localStorage`, `sessionStorage`,
   `IndexedDB`, or any global JS-readable surface, without coming through
-  `authStorage.ts` (or reading this doc and updating it).
-- **Removing the `BUG-FE-AUTH-007` markers** in `authStorage.ts`
-  without simultaneously deleting the `isWeb` branch and replacing it
-  with a cookie-based flow.
+  the shared `secureStringStore.ts` factory (or reading this doc and
+  updating it).
+- **Removing the `BUG-FE-AUTH-007` markers** in `secureStringStore.ts`
+  (or the pointer markers at the `authStorage.ts` / `llmKeyStorage.ts`
+  factory-instantiation sites) without simultaneously deleting the
+  `isWeb` branch and replacing it with a cookie-based flow.
 - **Loosening Content-Security-Policy** in a way that adds new XSS
   surface without compensating for the elevated-impact fact above.
 
