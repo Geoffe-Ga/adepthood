@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
+import { Animated } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import { lensCenterForStage, lensFrame } from '../magnifierGeometry';
@@ -245,6 +246,54 @@ describe('MagnifierLens', () => {
       });
       expect(tree.root.findByProps({ testID: 'magnifier-frost' })).toBeTruthy();
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('starts one uninterrupted settling glide after a swipe changes stages', () => {
+    reducedMotionState.value = false;
+    jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
+
+    const Harness = (): React.JSX.Element => {
+      const [focusedStage, setFocusedStage] = React.useState(1);
+      return (
+        <MagnifierLens
+          gridWidth={GRID_WIDTH}
+          gridHeight={GRID_HEIGHT}
+          anchors={{}}
+          focusedStage={focusedStage}
+          currentStage={1}
+          onSettleStage={setFocusedStage}
+          onOpenStage={jest.fn()}
+        />
+      );
+    };
+
+    try {
+      let tree!: ReturnType<typeof create>;
+      act(() => {
+        tree = create(<Harness />);
+        jest.advanceTimersByTime(2000); // let the mount glide finish
+      });
+      timing.mockClear();
+
+      const lens = lensNode(tree);
+      const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+      const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
+      act(() => {
+        lens.props.onResponderGrant(touch(150, start.y, 0));
+        lens.props.onResponderMove(touch(150, stage3Y, 100));
+        lens.props.onResponderRelease(touch(150, stage3Y, 100));
+      });
+
+      const centerGlides = timing.mock.calls.filter(([, config]) => {
+        const toValue = (config as { toValue?: unknown }).toValue;
+        return typeof toValue === 'object' && toValue !== null && 'x' in toValue && 'y' in toValue;
+      });
+      expect(centerGlides).toHaveLength(1);
+    } finally {
+      timing.mockRestore();
       jest.useRealTimers();
     }
   });

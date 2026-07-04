@@ -103,12 +103,16 @@ interface DragOrigin {
   velocityY: number;
 }
 
-/** Run one glide: ease the center over, then clear the frost on arrival. */
+/** Centers are identical when a parent focus update asks for the glide already in flight. */
+const sameLensCenter = (a: LensCenter | null, b: LensCenter): boolean =>
+  a !== null && a.x === b.x && a.y === b.y;
+
 const runGlide = (
   center: Animated.ValueXY,
   frost: Animated.Value,
   target: LensCenter,
   distance: number,
+  onDone: () => void,
 ): void => {
   Animated.timing(center, {
     toValue: target,
@@ -123,6 +127,7 @@ const runGlide = (
         useNativeDriver: false,
       }).start();
     }
+    onDone();
   });
 };
 
@@ -147,6 +152,7 @@ const useLensMotion = (
   const center = centerRef.current;
   const frost = useRef(new Animated.Value(0)).current;
   const dragging = useRef(false);
+  const activeGlideTarget = useRef<LensCenter | null>(null);
 
   useEffect(() => {
     const id = center.addListener((value) => {
@@ -161,14 +167,20 @@ const useLensMotion = (
 
   const glideTo = useCallback(
     (target: LensCenter) => {
+      if (sameLensCenter(activeGlideTarget.current, target)) return;
+
       if (reducedMotion) {
+        activeGlideTarget.current = null;
         center.setValue(target);
         frost.setValue(0);
         return;
       }
+      activeGlideTarget.current = target;
       const distance = Math.hypot(target.x - lastCenter.current.x, target.y - lastCenter.current.y);
       raiseFrost();
-      runGlide(center, frost, target, distance);
+      runGlide(center, frost, target, distance, () => {
+        activeGlideTarget.current = null;
+      });
     },
     [center, frost, raiseFrost, reducedMotion],
   );
@@ -303,6 +315,9 @@ const useLensDrag = (params: LensDragParams): LensDragHandlers => {
     onResponderTerminationRequest: () => false,
     onResponderGrant: (event) => {
       motion.dragging.current = false;
+      motion.center.stopAnimation((value: LensCenter) => {
+        motion.lastCenter.current = value;
+      });
       dragOrigin.current = newDragOrigin(event, motion.lastCenter.current);
     },
     onResponderMove: handleMove,
