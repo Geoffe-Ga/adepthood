@@ -143,6 +143,20 @@ jobs:
 
             echo "Filed issue #$issue_num for PR #$pr."
 
+            # The REST create endpoint silently drops labels when the token
+            # lacks push/triage access — which would break the marker dedup
+            # above (it filters on the `dependencies` label). Re-apply the
+            # label with a dedicated call (that endpoint errors instead of
+            # dropping) and verify it stuck, so a permission gap fails loudly
+            # rather than filing an unlabeled, dedup-invisible issue.
+            gh issue edit "$issue_num" --repo "$REPO" \
+              --add-label dependencies || true
+            if ! gh issue view "$issue_num" --repo "$REPO" --json labels \
+              --jq '.labels[].name' | grep -qx dependencies; then
+              echo "::error::Could not apply the 'dependencies' label to issue #$issue_num; check the token's Issues/triage permissions." >&2
+              exit 1
+            fi
+
             # Append `Closes #<issue>` so the Dependabot PR becomes Ralph's
             # in-flight PR and auto-closes the issue on merge into main.
             gh pr edit "$pr" --repo "$REPO" \
