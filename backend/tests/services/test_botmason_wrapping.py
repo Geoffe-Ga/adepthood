@@ -19,18 +19,26 @@ system prompt and an operator-supplied ``BOTMASON_SYSTEM_PROMPT``.
 from __future__ import annotations
 
 import re
+from unittest.mock import AsyncMock, patch
 
+import httpx
+import openai
 import pytest
+from fastapi import HTTPException
 
+import services.botmason as botmason_mod
 from domain.care import MEDICATION_GUARDRAIL
 from services.botmason import (
     _DEFAULT_SYSTEM_PROMPT,
+    LLMProviderError,
     _augment_system_prompt,
     _build_anthropic_messages,
     _build_messages,
     _get_model,
+    _import_optional,
     _make_nonce,
     _wrap_user_input,
+    generate_response,
 )
 
 # Regex for a 16-hex-char nonce as produced by ``_make_nonce``.
@@ -386,3 +394,140 @@ class TestMedicationGuardrailInSystemPrompt:
         assert MEDICATION_GUARDRAIL in augmented_system
         # Sanity: no system role leaks into the Anthropic messages list.
         assert all(m["role"] in {"user", "assistant"} for m in _messages)
+
+
+_TEST_OPENAI_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+
+
+def _configure_openai_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", _TEST_OPENAI_KEY)
+
+
+class TestGenerateResponseExceptionContract:
+    """``generate_response`` unwraps genuine bugs but still normalizes provider failures."""
+
+    @pytest.mark.asyncio
+    async def test_type_error_propagates_unwrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``TypeError`` bug in the call path must surface as itself, not LLMProviderError."""
+        _configure_openai_env(monkeypatch)
+        broken_call = AsyncMock(side_effect=TypeError("injected bug"))
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(TypeError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert not isinstance(excinfo.value, LLMProviderError)
+
+    @pytest.mark.asyncio
+    async def test_key_error_propagates_unwrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``KeyError`` bug in the call path must surface as itself, not LLMProviderError."""
+        _configure_openai_env(monkeypatch)
+        broken_call = AsyncMock(side_effect=KeyError("missing_field"))
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(KeyError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert not isinstance(excinfo.value, LLMProviderError)
+
+    @pytest.mark.asyncio
+    async def test_unrelated_runtime_error_propagates_unwrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bare ``RuntimeError`` bug must surface as itself, not LLMProviderError.
+
+        This pins the exact boundary the narrowed taxonomy hinges on: reverting
+        to a blanket catch (or listing ``RuntimeError`` in the provider tuple)
+        would mask this genuine bug as provider degradation.
+        """
+        _configure_openai_env(monkeypatch)
+        broken_call = AsyncMock(side_effect=RuntimeError("boom"))
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(RuntimeError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert not isinstance(excinfo.value, LLMProviderError)
+
+    @pytest.mark.asyncio
+    async def test_openai_connection_error_wraps_to_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A real SDK connection error still normalizes to LLMProviderError."""
+        _configure_openai_env(monkeypatch)
+        request = httpx.Request("POST", "https://api.openai.com")
+        original = openai.APIConnectionError(request=request)
+        broken_call = AsyncMock(side_effect=original)
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(LLMProviderError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert excinfo.value.__cause__ is original
+
+    @pytest.mark.asyncio
+    async def test_os_error_wraps_to_provider_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A transport-level ``OSError`` still normalizes to LLMProviderError."""
+        _configure_openai_env(monkeypatch)
+        original = OSError("network down")
+        broken_call = AsyncMock(side_effect=original)
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(LLMProviderError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert excinfo.value.__cause__ is original
+
+    @pytest.mark.asyncio
+    async def test_http_exception_passes_through_unwrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A client-facing ``HTTPException`` must propagate as itself, never wrapped."""
+        _configure_openai_env(monkeypatch)
+        broken_call = AsyncMock(side_effect=HTTPException(status_code=402, detail="x"))
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(HTTPException) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert excinfo.value.status_code == 402
+
+    @pytest.mark.asyncio
+    async def test_existing_provider_error_is_not_double_wrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A provider error raised deeper in the stack must propagate as the same instance."""
+        _configure_openai_env(monkeypatch)
+        original = LLMProviderError("orig")
+        broken_call = AsyncMock(side_effect=original)
+        with (
+            patch.object(botmason_mod, "_call_openai", broken_call),
+            pytest.raises(LLMProviderError) as excinfo,
+        ):
+            await generate_response("hi", [])
+        assert excinfo.value is original
+        assert excinfo.value.args[0] == "orig"
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_raises_llm_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing ``LLM_API_KEY`` normalizes to LLMProviderError, not a bare RuntimeError."""
+        monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        with pytest.raises(LLMProviderError, match="LLM_API_KEY"):
+            await generate_response("hi", [])
+
+    def test_import_optional_missing_sdk_raises_llm_provider_error(self) -> None:
+        """An uninstalled optional SDK normalizes to LLMProviderError, not a bare RuntimeError."""
+        with pytest.raises(LLMProviderError):
+            _import_optional("nonexistent_sdk_xyz_zzqq", "Test")
+
+    def test_get_model_bad_model_raises_llm_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unvetted ``LLM_MODEL`` normalizes to LLMProviderError, not a bare RuntimeError."""
+        monkeypatch.setenv("LLM_MODEL", "gpt-99-turbo-megamax")
+        with pytest.raises(LLMProviderError):
+            _get_model("openai")
