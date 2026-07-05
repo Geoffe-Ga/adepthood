@@ -16,10 +16,13 @@ The helper strips three classes of input:
   ``\t`` / ``\n`` / ``\r`` are kept because journal entries legitimately
   contain newlines and tabs.
 * **DEL** (``0x7F``) — invisible, easily smuggled past visual review.
-* **Zero-width and bidirectional override codepoints** (``U+200B``-``U+200F``,
-  ``U+202A``-``U+202E``, ``U+2060``-``U+206F``, ``U+FEFF``) — invisible
-  characters used for visual spoofing (Trojan Source) and ``RIGHT-TO-LEFT
-  OVERRIDE`` attacks that flip rendered text direction.
+* **Zero-width, bidirectional-override, and Tags-block codepoints**
+  (``U+200B``-``U+200F``, ``U+202A``-``U+202E``, ``U+2060``-``U+206F``,
+  ``U+FEFF``, ``U+E0000``-``U+E007F``) — invisible characters used for visual
+  spoofing (Trojan Source) and ``RIGHT-TO-LEFT OVERRIDE`` attacks that flip
+  rendered text direction.  The Unicode Tags block (``U+E0000``-``U+E007F``)
+  is an invisible ASCII-smuggling / prompt-injection channel that would
+  otherwise reach the LLM prompt sink verbatim.
 
 It also normalises to NFC so combining-character variants (e.g. ``e`` plus
 combining-acute vs. precomposed ``é``) hash and compare identically downstream.
@@ -63,6 +66,10 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 #   * U+2060-U+206F — word joiner, function application, invisible math ops,
 #     and four reserved deprecated formatting codes.
 #   * U+FEFF — BOM / zero-width no-break space when not at file start.
+#   * U+E0000-U+E007F — Unicode Tags block: invisible supplementary-plane
+#     codepoints that tag-encode ASCII, an invisible smuggling channel to the
+#     LLM prompt sink.  Bounded at U+E007F so the variation-selector
+#     supplement (U+E0100+) survives.
 #
 # The pattern is built from codepoint constants so the source file itself
 # contains no invisible characters (Trojan-Source defense).  Ranges expand to
@@ -72,6 +79,7 @@ _ZERO_WIDTH_RANGES = (
     (0x200B, 0x200F),
     (0x202A, 0x202E),
     (0x2060, 0x206F),
+    (0xE0000, 0xE007F),
 )
 _ZERO_WIDTH_SINGLES = (0xFEFF,)
 _ZERO_WIDTH = re.compile(
