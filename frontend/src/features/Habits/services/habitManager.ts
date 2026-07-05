@@ -15,6 +15,7 @@ import {
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
   goals as goalsApi,
+  toLocalHabit,
 } from '../../../api';
 import type {
   CheckInResult,
@@ -23,7 +24,6 @@ import type {
   HabitCreatePayload,
 } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
-import { flattenGoalCompletions } from '../../../api/flattenGoalCompletions';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
@@ -111,40 +111,11 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   revealed: h.revealed ?? false,
 });
 
+// Delegate field mapping + tier/notification-frequency sanitizing to the
+// canonical ``toLocalHabit`` boundary; ``sort_order`` is the one Habits-only
+// field it does not carry, so preserve it via the spread override.
 const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>): Habit[] =>
-  apiHabits.map((h) => ({
-    id: h.id,
-    stage: h.stage ?? '',
-    name: h.name,
-    icon: h.icon,
-    streak: h.streak ?? 0,
-    energy_cost: h.energy_cost,
-    energy_return: h.energy_return,
-    start_date: new Date(h.start_date),
-    goals: (h.goals ?? []).map((g) => ({
-      id: g.id,
-      title: g.title,
-      tier: g.tier as 'low' | 'clear' | 'stretch',
-      target: g.target,
-      target_unit: g.target_unit,
-      frequency: g.frequency,
-      frequency_unit: g.frequency_unit,
-      is_additive: g.is_additive,
-      goal_group_id: g.goal_group_id ?? null,
-      days_of_week: g.days_of_week ?? undefined,
-    })),
-    // Shared with ``toLocalHabit`` -- single-source dedupe + Date rehydration.
-    completions: flattenGoalCompletions(h.goals ?? []),
-    // The server owns the unlock flag now; mirror it instead of forcing every
-    // fetched habit unlocked (which would defeat locked-by-default).
-    revealed: h.revealed,
-    notificationTimes: h.notification_times ?? undefined,
-    notificationFrequency:
-      (h.notification_frequency as Habit['notificationFrequency']) ?? undefined,
-    notificationDays: h.notification_days ?? undefined,
-    milestoneNotifications: h.milestone_notifications,
-    sort_order: h.sort_order ?? null,
-  }));
+  apiHabits.map((h) => ({ ...toLocalHabit(h), sort_order: h.sort_order ?? null }));
 
 // is_additive is propagated so single-tier flips can't leave the store half-additive (normalizeGoalTiers keys off low.is_additive).
 const normalizeGoalUnits = (goals: Goal[], updatedGoal: Goal): void => {

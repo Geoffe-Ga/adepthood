@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+// Keep the real ``toLocalHabit`` mapper (the load path now delegates to it and
+// these tests assert its tier/notification sanitizing) while stubbing only the
+// network namespaces habitManager calls.
 jest.mock('../../../../api', () => ({
+  ...jest.requireActual<typeof ApiModule>('../../../../api'),
   habits: {
     listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() => Promise.resolve({})),
@@ -44,6 +48,7 @@ jest.mock('react-native', () => ({
   StyleSheet: { create: (s: Record<string, unknown>) => s },
 }));
 
+import type * as ApiModule from '../../../../api';
 import {
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
@@ -520,10 +525,13 @@ describe('habitManager', () => {
           start_date: '2025-01-01',
           energy_cost: 1,
           energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
           notification_times: null,
           notification_frequency: null,
           notification_days: null,
           milestone_notifications: false,
+          goals: [],
         },
       ] as never);
 
@@ -839,6 +847,111 @@ describe('habitManager', () => {
       expect(anchor!.getFullYear()).toBe(2026);
       expect(anchor!.getMonth()).toBe(1);
       expect(anchor!.getDate()).toBe(15);
+    });
+
+    it('narrows an unknown goal tier to the safe "clear" default instead of leaking the raw string', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 6,
+          name: 'Tier Test',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: true,
+          goals: [
+            {
+              id: 1,
+              title: 'Odd',
+              tier: 'bogus',
+              target: 1,
+              target_unit: 'units',
+              frequency: 1,
+              frequency_unit: 'per_day',
+              is_additive: true,
+            },
+          ],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.goals[0]!.tier).toBe('clear');
+    });
+
+    it('drops an unknown notification_frequency instead of casting it through', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 7,
+          name: 'Notif Test',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: true,
+          notification_frequency: 'sometimes' as never,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.notificationFrequency).toBeUndefined();
+    });
+
+    it('carries a numeric sort_order from the API onto the stored habit', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 8,
+          name: 'Ordered',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: true,
+          sort_order: 3,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.sort_order).toBe(3);
+    });
+
+    it('defaults sort_order to null when the API omits it', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 9,
+          name: 'Unordered',
+          icon: '\u{1F9D8}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Beige',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: true,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.sort_order).toBeNull();
     });
   });
 
