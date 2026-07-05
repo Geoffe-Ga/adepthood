@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from fastapi import HTTPException
+import anthropic
+import httpx
+import openai
 
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required
@@ -148,13 +150,26 @@ _INJECTION_PATTERNS = re.compile(
 class LLMProviderError(RuntimeError):
     """A provider/config failure that callers should degrade gracefully on.
 
-    Raised by :func:`generate_response` for any provider, network, SDK, or
+    Raised by :func:`generate_response` for a provider, network, SDK, or
     LLM-config failure — giving the caller a single, SDK-agnostic type to catch
     (it never needs to know which provider SDK is installed). Subclasses
-    ``RuntimeError`` for back-compat, but callers catch *this* type specifically
-    so an unrelated internal ``RuntimeError`` (a genuine bug) still propagates
-    instead of being masked as provider degradation.
+    ``RuntimeError`` for back-compat, but only genuine provider/transport/config
+    failures normalize to this type. An unrelated internal bug (a ``TypeError``,
+    ``KeyError``, or unrelated ``RuntimeError``) is NOT wrapped: it propagates
+    unchanged so the real defect surfaces instead of masquerading as provider
+    degradation.
     """
+
+
+# Genuine provider/transport failures normalized to LLMProviderError; OSError
+# covers ConnectionError/TimeoutError and mirrors what ``_is_retryable`` treats
+# as transient, while the two SDK base classes give an SDK-agnostic catch.
+_PROVIDER_ERROR_TYPES: tuple[type[Exception], ...] = (
+    anthropic.AnthropicError,
+    httpx.HTTPError,
+    openai.OpenAIError,
+    OSError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,8 +325,8 @@ def get_system_prompt() -> str:
     back to the built-in default prompt.
 
     Raises:
-        RuntimeError: If the file path resolves outside the allowed directory
-            or exceeds the maximum file size.
+        LLMProviderError: If the file path resolves outside the allowed
+            directory or exceeds the maximum file size.
     """
     prompt_config = os.getenv("BOTMASON_SYSTEM_PROMPT", "")
     if not prompt_config:
@@ -324,7 +339,7 @@ def get_system_prompt() -> str:
             prompt_path.relative_to(_ALLOWED_PROMPT_DIR.resolve())
         except ValueError:
             msg = f"BOTMASON_SYSTEM_PROMPT path must be within {_ALLOWED_PROMPT_DIR}"
-            raise RuntimeError(msg) from None
+            raise LLMProviderError(msg) from None
 
         file_size = prompt_path.stat().st_size
         if file_size > _MAX_PROMPT_FILE_SIZE:
@@ -332,7 +347,7 @@ def get_system_prompt() -> str:
                 f"BOTMASON_SYSTEM_PROMPT file exceeds maximum size "
                 f"({file_size} > {_MAX_PROMPT_FILE_SIZE} bytes)"
             )
-            raise RuntimeError(msg)
+            raise LLMProviderError(msg)
 
         return prompt_path.read_text().strip()
 
@@ -501,7 +516,7 @@ def _get_model(provider: str) -> str:
             "add it to the PROVIDER_REGISTRY entry in services.botmason only "
             "after a pricing row exists in services.llm_pricing."
         )
-        raise RuntimeError(msg)
+        raise LLMProviderError(msg)
     return requested
 
 
@@ -605,9 +620,11 @@ async def generate_response(
     Returns an :class:`LLMResponse` carrying both the generated text and the
     token counts needed to log usage downstream.
     """
-    # Any provider/config/SDK failure is normalised to LLMProviderError so the
-    # chat layer can catch one SDK-agnostic type; HTTPException (BYOK key / quota
-    # errors) is a client error and passes through unchanged.
+    # Provider/network/SDK/config failures normalize to LLMProviderError so the
+    # chat layer can catch one SDK-agnostic type. A genuine internal bug
+    # (TypeError/KeyError/unrelated RuntimeError) is not in the tuple, so it
+    # propagates unwrapped and surfaces as the real defect; HTTPException (BYOK
+    # key / quota client errors) likewise passes through unchanged.
     try:
         resolved_prompt = system_prompt or get_system_prompt()
         provider = _provider_for_request(api_key)
@@ -623,9 +640,7 @@ async def generate_response(
         result: LLMResponse = await caller(
             user_message, conversation_history, resolved_prompt, api_key
         )
-    except (HTTPException, LLMProviderError):
-        raise
-    except Exception as exc:
+    except _PROVIDER_ERROR_TYPES as exc:
         raise LLMProviderError(str(exc)) from exc
     return result
 
@@ -651,7 +666,12 @@ def _stub_response(user_message: str) -> LLMResponse:
 
 
 def _import_optional(module_name: str, provider_label: str) -> ModuleType:
-    """Import an optional SDK, raising a clear error if not installed."""
+    """Import an optional SDK, raising LLMProviderError if not installed.
+
+    openai and anthropic are pinned production dependencies, so this guard is
+    defensive. The dynamically imported :class:`ModuleType` is the mypy-strict
+    seam for the provider clients — keep it rather than inlining typed SDK calls.
+    """
     try:
         return importlib.import_module(module_name)
     except ImportError as exc:
@@ -659,7 +679,7 @@ def _import_optional(module_name: str, provider_label: str) -> ModuleType:
             f"{module_name} package is required for the {provider_label} provider. "
             f"Install it with: pip install {module_name}"
         )
-        raise RuntimeError(msg) from exc
+        raise LLMProviderError(msg) from exc
 
 
 def _get_llm_api_key() -> str:
@@ -670,7 +690,7 @@ def _get_llm_api_key() -> str:
     api_key = os.getenv("LLM_API_KEY", "")
     if not api_key:
         msg = "LLM_API_KEY environment variable must be set for non-stub providers"
-        raise RuntimeError(msg)
+        raise LLMProviderError(msg)
     return api_key
 
 
