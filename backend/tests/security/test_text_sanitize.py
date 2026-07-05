@@ -44,6 +44,24 @@ INVISIBLE_TIMES = "\u2062"
 INVISIBLE_PLUS = "\u2064"
 BOM = "\ufeff"
 
+# Unicode Tags block (U+E0000-U+E007F) -- invisible ASCII-smuggling channel.
+# Range bounds as named constants so the smuggling helper below carries no
+# magic numbers.
+TAG_BLOCK_START = 0xE0000
+TAG_BLOCK_END = 0xE007F
+TAG = "\U000e0000"  # TAG -- range start
+TAG_LANGUAGE = "\U000e0001"  # LANGUAGE TAG
+TAG_A = "\U000e0041"  # tag-encoded ASCII "A"
+TAG_B = "\U000e0042"  # tag-encoded ASCII "B"
+CANCEL_TAG = "\U000e007f"  # CANCEL TAG -- range end
+VS17 = "\U000e0100"  # first variation-selector-supplement codepoint, one past the tag block
+IVS_BASE = "\u4e2d"  # CJK base char paired with VS17 in the scope-guard test
+
+
+def _tag_encode(word: str) -> str:
+    """Encode an ASCII word as invisible Unicode Tags-block codepoints."""
+    return "".join(chr(TAG_BLOCK_START + ord(char)) for char in word)
+
 
 class TestPreservesLegitimateContent:
     """Legitimate user text -- including HTML-ish characters -- survives intact."""
@@ -171,6 +189,52 @@ class TestStripsZeroWidthAndDirectionalOverrides:
     def test_bom_stripped(self) -> None:
         """U+FEFF (BOM / zero-width no-break space) goes when embedded."""
         assert sanitize_user_text(f"hello{BOM}world") == "helloworld"
+
+
+class TestStripsUnicodeTagsBlock:
+    """Unicode Tags block (U+E0000-U+E007F) is invisible ASCII-smuggling."""
+
+    def test_invisible_tag_encoded_directive_stripped(self) -> None:
+        """A tag-encoded invisible "IGNORE" payload is removed; visible text survives."""
+        payload = "hello" + _tag_encode("IGNORE")
+        cleaned = sanitize_user_text(payload)
+        assert cleaned == "hello"
+        assert not any(TAG_BLOCK_START <= ord(char) <= TAG_BLOCK_END for char in cleaned)
+
+    def test_acceptance_example_stripped(self) -> None:
+        """Matches the literal acceptance example: tag-encoded "AB" disappears."""
+        assert sanitize_user_text("hello" + TAG_A + TAG_B) == "hello"
+
+    def test_tag_range_start_stripped(self) -> None:
+        """U+E0000 (TAG), the range start, is removed."""
+        assert sanitize_user_text(f"a{TAG}b") == "ab"
+
+    def test_language_tag_stripped(self) -> None:
+        """U+E0001 (LANGUAGE TAG) is removed."""
+        assert sanitize_user_text(f"a{TAG_LANGUAGE}b") == "ab"
+
+    def test_cancel_tag_range_end_stripped(self) -> None:
+        """U+E007F (CANCEL TAG), the range end, is removed."""
+        assert sanitize_user_text(f"a{CANCEL_TAG}b") == "ab"
+
+    def test_variation_selector_supplement_preserved(self) -> None:
+        """U+E0100 (VS17), one past the tag block, must survive -- pins the upper edge."""
+        text = IVS_BASE + VS17
+        result = sanitize_user_text(text)
+        assert result == unicodedata.normalize("NFC", text)
+        assert VS17 in result
+
+    def test_idempotent_with_tag_block_payload(self) -> None:
+        """Sanitizing twice equals sanitizing once, even with tag-block chars present."""
+        raw = "start" + TAG_LANGUAGE + "middle" + CANCEL_TAG + "end"
+        once = sanitize_user_text(raw)
+        twice = sanitize_user_text(once)
+        assert once == twice
+
+    def test_tag_block_stripped_before_length_cap(self) -> None:
+        """Tag chars are stripped before the max_len cap, like the control-strip cap test."""
+        with_tags = "a" * 100 + TAG_LANGUAGE * 50
+        assert sanitize_user_text(with_tags, max_len=100) == "a" * 100
 
 
 class TestUnicodeNormalization:
