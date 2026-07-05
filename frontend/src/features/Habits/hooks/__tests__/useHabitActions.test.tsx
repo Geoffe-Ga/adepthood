@@ -373,5 +373,78 @@ describe('useHabitActions.addHabit', () => {
   });
 });
 
+describe('useHabitActions — referential stability', () => {
+  let stableShowToast: jest.Mock;
+
+  beforeEach(() => {
+    stableShowToast = jest.fn();
+  });
+
+  const renderActionsStable = () =>
+    renderHook(() => {
+      const ui = useHabitUI();
+      const actions = useHabitActions(ui, stableShowToast, 'UTC');
+      return { ui, actions };
+    });
+
+  it('keeps the same actions reference across an unrelated re-render', async () => {
+    const { result, rerender } = renderActionsStable();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const first = result.current.actions;
+    rerender({});
+
+    expect(result.current.actions).toBe(first);
+  });
+
+  it('keeps the same actions reference when emojiHabitIndex changes', async () => {
+    const { result } = renderActionsStable();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const first = result.current.actions;
+    act(() => {
+      result.current.actions.iconPress(0);
+    });
+
+    expect(result.current.actions).toBe(first);
+  });
+
+  it('emojiSelect commits against the emoji-picker target set on a later render', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    const { result } = renderActionsStable();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const emojiSelect = result.current.actions.emojiSelect;
+    act(() => {
+      result.current.actions.iconPress(0);
+    });
+    act(() => {
+      emojiSelect('X');
+    });
+
+    expect(useHabitStore.getState().habits[0]!.icon).toBe('X');
+    expect(result.current.ui.emojiHabitIndex).toBeNull();
+  });
+
+  it('keeps logUnit and onboardingSave stable across a re-render', async () => {
+    const { result, rerender } = renderActionsStable();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const { logUnit, onboardingSave } = result.current.actions;
+    rerender({});
+
+    expect(result.current.actions.logUnit).toBe(logUnit);
+    expect(result.current.actions.onboardingSave).toBe(onboardingSave);
+  });
+});
+
 // Quiet React's "unused import" concerns when `act` covers the renders.
 void React;

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { ApiError, ApiValidationError } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
@@ -103,7 +103,7 @@ const useLogUnitMutation = (
   showToast: ShowToast,
   tz: string,
 ): ((_habitId: number, _amount: number, _date?: Date) => void) => {
-  const mutation = useOptimisticMutation<LogUnitContext, unknown>({
+  const { mutate } = useOptimisticMutation<LogUnitContext, unknown>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
@@ -119,9 +119,9 @@ const useLogUnitMutation = (
       // Fire-and-forget: rollback runs inside the hook before the re-throw
       // and has already surfaced the failure to the user via ``showToast``,
       // so swallow the rejection here to keep UI handlers tidy.
-      mutation.mutate(ctx).catch(() => {});
+      mutate(ctx).catch(() => {});
     },
-    [mutation, tz],
+    [mutate, tz],
   );
 };
 
@@ -137,14 +137,22 @@ export const useHabitActions = (
 ): HabitsActions => {
   const logUnit = useLogUnitMutation(showToast, tz);
 
-  const iconPress = useCallback((index: number) => ui.setEmojiHabitIndex(index), [ui]);
+  const { setEmojiHabitIndex } = ui;
+
+  const iconPress = useCallback((index: number) => setEmojiHabitIndex(index), [setEmojiHabitIndex]);
+
+  // Latest-ref keeps emojiSelect referentially stable while it reads the
+  // current picker target at call time.
+  const emojiHabitIndexRef = useRef(ui.emojiHabitIndex);
+  emojiHabitIndexRef.current = ui.emojiHabitIndex;
 
   const emojiSelect = useCallback(
     (emoji: string) => {
-      if (ui.emojiHabitIndex !== null) habitManager.setEmojiForHabit(ui.emojiHabitIndex, emoji);
-      ui.setEmojiHabitIndex(null);
+      const index = emojiHabitIndexRef.current;
+      if (index !== null) habitManager.setEmojiForHabit(index, emoji);
+      setEmojiHabitIndex(null);
     },
-    [ui],
+    [setEmojiHabitIndex],
   );
 
   const onboardingSave = useCallback(
