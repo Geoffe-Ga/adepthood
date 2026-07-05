@@ -4,6 +4,7 @@ import { jest, describe, afterEach, it, expect } from '@jest/globals';
 import React from 'react';
 import renderer from 'react-test-renderer';
 
+import type * as ApiModule from '../../../api';
 import { STAGE_COLORS } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { HabitTile } from '../HabitTile';
@@ -37,25 +38,31 @@ const makeApiHabit = (id: number, overrides: Record<string, unknown> = {}) => ({
 const buildApiHabits = (count: number) =>
   Array.from({ length: count }, (_, i) => makeApiHabit(i + 1, { sort_order: i }));
 
-jest.mock('../../../api', () => ({
-  habits: {
-    listAll: jest.fn() as any,
-    create: jest.fn() as any,
-    update: jest.fn() as any,
-    delete: jest.fn() as any,
-    getStats: (jest.fn() as any).mockResolvedValue({
-      day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-      values: [0, 0, 0, 0, 0, 0, 0],
-      completions_by_day: [0, 0, 0, 0, 0, 0, 0],
-      longest_streak: 0,
-      current_streak: 0,
-      total_completions: 0,
-      completion_rate: 0,
-      completion_dates: [],
-    }),
-  },
-  goalCompletions: { create: jest.fn() as any },
-}));
+jest.mock('../../../api', () => {
+  // Keep the real ``toLocalHabit`` mapper the load path delegates to; stub only
+  // the network namespaces this screen exercises.
+  const actual: typeof ApiModule = jest.requireActual('../../../api');
+  return {
+    ...actual,
+    habits: {
+      listAll: jest.fn() as any,
+      create: jest.fn() as any,
+      update: jest.fn() as any,
+      delete: jest.fn() as any,
+      getStats: (jest.fn() as any).mockResolvedValue({
+        day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        values: [0, 0, 0, 0, 0, 0, 0],
+        completions_by_day: [0, 0, 0, 0, 0, 0, 0],
+        longest_streak: 0,
+        current_streak: 0,
+        total_completions: 0,
+        completion_rate: 0,
+        completion_dates: [],
+      }),
+    },
+    goalCompletions: { create: jest.fn() as any },
+  };
+});
 
 jest.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({ token: 'test-token' }),
