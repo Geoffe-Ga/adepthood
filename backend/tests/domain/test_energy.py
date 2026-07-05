@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date
 
 from domain.energy import PLAN_DURATION_DAYS, EnergyPlanItem, Habit, generate_plan
@@ -21,3 +22,8 @@ def test_generate_plan_creates_21_day_schedule() -> None:
     expected_net = habits[0].net_energy * 11 + habits[1].net_energy * 10
     assert plan.net_energy == expected_net
     assert plan.items[0] == EnergyPlanItem(habit_id=1, date=start)
+
+
+def test_habit_has_no_calendar_start_date_field() -> None:
+    """The planner's Habit carries no calendar gate; unlock is user-driven."""
+    assert "start_date" not in {field.name for field in dataclasses.fields(Habit)}
