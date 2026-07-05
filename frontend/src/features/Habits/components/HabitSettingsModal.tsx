@@ -1,17 +1,10 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  Platform,
-  ScrollView,
-  Switch,
-} from 'react-native';
+import { View, Text, TouchableOpacity, Modal, Platform, ScrollView, Switch } from 'react-native';
 
-import { STAGE_COLORS } from '../../../design/tokens';
+import { Button } from '../../../components/Button';
+import { TextField } from '../../../components/TextField';
+import { STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
@@ -63,7 +56,9 @@ const DayPickerGrid = ({
         style={[styles.dayOption, days.includes(day) && styles.selectedDayOption]}
         onPress={() => onToggleDay(day)}
       >
-        <Text style={styles.dayOptionText}>{day.substring(0, 3)}</Text>
+        <Text style={[styles.dayOptionText, days.includes(day) && styles.dayOptionTextSelected]}>
+          {day.substring(0, 3)}
+        </Text>
       </TouchableOpacity>
     ))}
   </View>
@@ -81,8 +76,9 @@ const NotifFrequencySection = ({
 }: NotifFrequencyProps) => (
   <>
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Frequency:</Text>
+      <Text style={styles.editSettingLabel}>Frequency:</Text>
       <TouchableOpacity
+        testID="habit-settings-frequency"
         style={styles.frequencyButton}
         onPress={() =>
           onChange('notificationFrequency', cycleFrequency(habit.notificationFrequency))
@@ -93,7 +89,7 @@ const NotifFrequencySection = ({
     </View>
     {habit.notificationFrequency === 'custom' && (
       <View style={styles.settingRow}>
-        <Text style={styles.settingLabel}>Days:</Text>
+        <Text style={styles.editSettingLabel}>Days:</Text>
         <TouchableOpacity
           style={styles.daysButton}
           onPress={() => setShowDaysPicker(!showDaysPicker)}
@@ -155,7 +151,7 @@ const NotifTimeSection = ({
 }: NotifTimeProps) => (
   <>
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Time:</Text>
+      <Text style={styles.editSettingLabel}>Time:</Text>
       <View style={styles.timeInputContainer}>
         <TouchableOpacity style={styles.timeButton} onPress={() => setShowTimePicker(true)}>
           <Text style={styles.timeButtonText}>{notificationTime}</Text>
@@ -186,7 +182,7 @@ const NotifToggleRow = ({
   onChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
 }) => (
   <View style={styles.settingRow}>
-    <Text style={styles.settingLabel}>Notifications:</Text>
+    <Text style={styles.editSettingLabel}>Notifications:</Text>
     <Switch
       value={isEnabled}
       onValueChange={(value) => onChange('notificationFrequency', value ? 'daily' : 'off')}
@@ -230,7 +226,7 @@ const NotificationSettings = ({
       </>
     )}
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Milestone Notifications:</Text>
+      <Text style={styles.editSettingLabel}>Milestone Notifications:</Text>
       <Switch
         value={habit.milestoneNotifications || false}
         onValueChange={(value) => onChange('milestoneNotifications', value)}
@@ -278,15 +274,15 @@ const BasicFields = ({
 }: BasicFieldsProps) => (
   <>
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Name:</Text>
-      <TextInput
-        style={styles.settingInput}
+      <Text style={styles.editSettingLabel}>Name:</Text>
+      <TextField
         value={editedHabit.name}
         onChangeText={(text) => handleChange('name', text)}
+        style={styles.settingFieldFlex}
       />
     </View>
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Icon:</Text>
+      <Text style={styles.editSettingLabel}>Icon:</Text>
       <TouchableOpacity onPress={() => setShowEmojiSelector(!showEmojiSelector)}>
         <Text style={styles.currentIcon}>{editedHabit.icon}</Text>
       </TouchableOpacity>
@@ -300,12 +296,16 @@ const BasicFields = ({
       onClose={() => setShowEmojiSelector(false)}
     />
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Stage:</Text>
+      <Text style={styles.editSettingLabel}>Stage:</Text>
       <Text style={styles.settingValue}>{editedHabit.stage}</Text>
     </View>
-    <TouchableOpacity style={styles.reorderButton} onPress={() => onOpenReorderModal(allHabits)}>
-      <Text style={styles.reorderButtonText}>Reorder Habits</Text>
-    </TouchableOpacity>
+    <Button
+      label="Reorder Habits"
+      variant="secondary"
+      onPress={() => onOpenReorderModal(allHabits)}
+      testID="habit-settings-reorder"
+      style={{ marginVertical: SPACING.md }}
+    />
   </>
 );
 
@@ -318,7 +318,7 @@ const EnergyAndDateSection = ({
 }) => (
   <>
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Energy Rating:</Text>
+      <Text style={styles.editSettingLabel}>Energy Rating:</Text>
     </View>
     <EnergyCostReturnEditor
       cost={editedHabit.energy_cost}
@@ -327,7 +327,7 @@ const EnergyAndDateSection = ({
       onCommitReturn={(value) => handleChange('energy_return', value)}
     />
     <View style={styles.settingRow}>
-      <Text style={styles.settingLabel}>Start Date:</Text>
+      <Text style={styles.editSettingLabel}>Start Date:</Text>
       <DateTimePicker
         value={new Date(editedHabit.start_date)}
         mode="date"
@@ -340,10 +340,8 @@ const EnergyAndDateSection = ({
 
 const FormActionButtons = ({ onSave, onDelete }: { onSave: () => void; onDelete: () => void }) => (
   <View style={styles.buttonGroup}>
-    <TouchableOpacity style={styles.saveButton} onPress={onSave}>
-      <Text style={styles.saveButtonText}>Save Changes</Text>
-    </TouchableOpacity>
-    <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
+    <Button label="Save Changes" variant="primary" onPress={onSave} testID="habit-settings-save" />
+    <TouchableOpacity testID="habit-settings-delete" style={styles.deleteButton} onPress={onDelete}>
       <Text style={styles.deleteButtonText}>Delete Habit</Text>
     </TouchableOpacity>
   </View>
@@ -508,7 +506,8 @@ const SettingsModalBody = ({
 }: SettingsBodyProps) => (
   <View style={styles.modalOverlay}>
     <View
-      style={[styles.settingsModalContent, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
+      testID="habit-settings-card"
+      style={[styles.editModalCard, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
     >
       <ModalHeader title="Edit Habit" onClose={onClose} />
       <SettingsForm

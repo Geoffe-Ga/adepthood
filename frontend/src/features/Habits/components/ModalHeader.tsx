@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { colors as COLORS, SPACING } from '../../../design/tokens';
+import { editorialType, ink, SPACING, surface } from '../../../design/tokens';
 
 interface ModalHeaderProps {
   title: React.ReactNode;
@@ -30,15 +30,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderColor: '#eee',
+    borderColor: surface.hairline,
     paddingBottom: SPACING.md,
     marginBottom: SPACING.md,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    ...editorialType.title,
+    color: ink.primary,
     flex: 1,
-    color: COLORS.text.primary,
   },
   closeButton: {
     padding: SPACING.xs,
@@ -47,7 +46,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 28,
     fontWeight: '300',
-    color: COLORS.text.secondary,
+    color: ink.soft,
   },
 });
 

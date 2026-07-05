@@ -3,8 +3,9 @@ import type { ComponentType } from 'react';
 import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
+import { Button } from '../../../components/Button';
 import { parseISODate, toISODate } from '../../../components/DatePicker';
-import { STAGE_COLORS } from '../../../design/tokens';
+import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
@@ -40,7 +41,7 @@ interface ReorderItemProps {
 
 const ReorderHabitItem = ({ item, index, drag, isActive }: ReorderItemProps) => {
   const stage = stageAtIndex(index);
-  const color = STAGE_COLORS[stage] ?? '#ccc';
+  const color = STAGE_COLORS[stage] ?? colors.neutral;
   return (
     <TouchableOpacity
       onLongPress={drag}
@@ -225,7 +226,7 @@ const ReorderBody = ({
   onDragEnd,
   onSave,
 }: ReorderBodyProps) => (
-  <View style={styles.reorderModalContent}>
+  <View testID="reorder-modal-card" style={styles.reorderModalContent}>
     <ModalHeader title="Reorder Habits" onClose={onClose} />
     <ReorderDateButton
       startDate={startDate}
@@ -236,9 +237,13 @@ const ReorderBody = ({
       Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
     </Text>
     <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
-    <TouchableOpacity style={styles.saveOrderButton} onPress={onSave}>
-      <Text style={styles.saveOrderButtonText}>Save Order</Text>
-    </TouchableOpacity>
+    <Button
+      label="Save Order"
+      variant="primary"
+      onPress={onSave}
+      testID="reorder-save-order"
+      style={{ marginTop: SPACING.lg, alignSelf: 'stretch' }}
+    />
   </View>
 );
 

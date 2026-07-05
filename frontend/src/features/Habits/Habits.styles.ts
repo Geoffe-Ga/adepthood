@@ -1,11 +1,16 @@
 import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
 import {
+  accent,
   colors as COLORS,
+  fonts,
+  ink,
   shadows as SHADOWS,
   SPACING,
   BORDER_RADIUS,
   surface,
+  surfaceShadow,
+  touchTarget,
 } from '../../design/tokens';
 
 const JUSTIFY_SPACE_BETWEEN = 'space-between' as const;
@@ -53,31 +58,24 @@ export const styles = StyleSheet.create({
     borderTopWidth: 5,
     ...SHADOWS.large,
   },
-  // ===== Goal Items =====
-  saveButton: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    backgroundColor: COLORS.success,
-    borderRadius: BORDER_RADIUS.xs,
-  },
-  saveButtonText: {
-    color: COLORS.text.light,
-    fontWeight: '600',
-  },
-
   // ===== Days Selector =====
   dayOption: {
-    backgroundColor: COLORS.background.accent,
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
     padding: SPACING.sm,
     borderRadius: BORDER_RADIUS.xs,
     margin: 2,
   },
   selectedDayOption: {
-    backgroundColor: '#aed581',
+    backgroundColor: accent.primary,
   },
   dayOptionText: {
     fontSize: 12,
-    color: COLORS.text.primary,
+    color: ink.primary,
+  },
+  dayOptionTextSelected: {
+    color: accent.onPrimary,
   },
 
   // ===== Action Buttons =====
@@ -125,13 +123,22 @@ export const styles = StyleSheet.create({
     borderTopWidth: 5,
     ...SHADOWS.large,
   },
+  editModalCard: {
+    width: '90%',
+    maxHeight: '90%',
+    backgroundColor: surface.raised,
+    borderRadius: BORDER_RADIUS.xl,
+    padding: SPACING.lg,
+    borderTopWidth: 5,
+    ...surfaceShadow.raised,
+  },
   settingsContainer: {
     marginTop: SPACING.md,
   },
   settingGroup: {
     marginVertical: SPACING.md,
     borderBottomWidth: 1,
-    borderColor: '#eee',
+    borderColor: surface.hairline,
     paddingBottom: SPACING.md,
   },
   settingRow: {
@@ -146,15 +153,27 @@ export const styles = StyleSheet.create({
     flex: 1,
     color: COLORS.text.primary,
   },
+  editSettingLabel: {
+    fontWeight: '600',
+    fontSize: 15,
+    flex: 1,
+    color: ink.primary,
+    fontFamily: fonts.sans,
+  },
   settingValue: {
     fontSize: 15,
-    color: COLORS.text.secondary,
+    color: ink.soft,
+    fontFamily: fonts.sans,
   },
   settingInput: {
     borderWidth: 1,
     borderColor: '#ccc',
     padding: SPACING.sm,
     borderRadius: BORDER_RADIUS.xs,
+    flex: 1,
+    marginLeft: SPACING.md,
+  },
+  settingFieldFlex: {
     flex: 1,
     marginLeft: SPACING.md,
   },
@@ -166,22 +185,6 @@ export const styles = StyleSheet.create({
   iconButtonText: {
     color: COLORS.secondary,
     fontWeight: '500',
-  },
-
-  // ===== Reorder Button =====
-  reorderButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.lg,
-    borderRadius: BORDER_RADIUS.xs,
-    marginVertical: SPACING.md,
-    alignItems: 'center',
-    ...SHADOWS.medium,
-  },
-  reorderButtonText: {
-    color: COLORS.text.light,
-    fontWeight: '600',
-    fontSize: 16,
   },
 
   // ===== Energy Container =====
@@ -238,28 +241,31 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   timeButton: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
+    justifyContent: 'center',
   },
   timeButtonText: {
-    color: COLORS.text.light,
+    color: ink.primary,
+    fontFamily: fonts.sans,
     fontSize: 16,
   },
   addTimeButton: {
-    backgroundColor: COLORS.success,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    backgroundColor: accent.primary,
+    width: touchTarget.minimum,
+    height: touchTarget.minimum,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: SPACING.sm,
-    ...SHADOWS.small,
   },
   addTimeButtonText: {
-    color: COLORS.text.light,
+    color: accent.onPrimary,
     fontSize: 20,
     fontWeight: 'bold',
   },
@@ -270,7 +276,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
-    backgroundColor: COLORS.background.accent,
+    backgroundColor: surface.sunken,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xs,
@@ -278,34 +284,39 @@ export const styles = StyleSheet.create({
   },
   timeText: {
     fontSize: 16,
-    color: COLORS.text.primary,
+    color: ink.primary,
+    fontFamily: fonts.sans,
   },
   removeTimeButton: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: COLORS.danger,
+    backgroundColor: COLORS.destructive.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
   removeTimeButtonText: {
-    color: COLORS.text.light,
+    color: COLORS.destructive.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
 
   // ===== Days Button =====
   daysButton: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xs,
     flex: 1,
     marginLeft: SPACING.md,
-    ...SHADOWS.small,
+    justifyContent: 'center',
   },
   daysButtonText: {
-    color: COLORS.text.light,
+    color: ink.primary,
+    fontFamily: fonts.sans,
     fontSize: 14,
   },
   daysPicker: {
@@ -320,32 +331,39 @@ export const styles = StyleSheet.create({
     marginVertical: SPACING.lg,
   },
   deleteButton: {
-    backgroundColor: COLORS.danger,
+    backgroundColor: surface.raised,
+    borderWidth: 1,
+    borderColor: COLORS.destructive.border,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.xs,
     marginTop: SPACING.md,
     alignItems: 'center',
-    ...SHADOWS.medium,
+    justifyContent: 'center',
   },
   deleteButtonText: {
-    color: COLORS.text.light,
+    color: COLORS.destructive.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
 
   // ===== Frequency Button =====
   frequencyButton: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xs,
     flex: 1,
     marginLeft: SPACING.md,
-    ...SHADOWS.small,
+    justifyContent: 'center',
   },
   frequencyButtonText: {
-    color: COLORS.text.light,
+    color: ink.primary,
+    fontFamily: fonts.sans,
     fontSize: 16,
   },
 
@@ -427,10 +445,10 @@ export const styles = StyleSheet.create({
   reorderModalContent: {
     width: '90%',
     height: '85%',
-    backgroundColor: COLORS.background.card,
+    backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.lg,
-    ...SHADOWS.large,
+    ...surfaceShadow.raised,
   },
   datePickerContainer: {
     flexDirection: 'row',
@@ -441,22 +459,27 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginRight: SPACING.md,
-    color: COLORS.text.primary,
+    color: ink.primary,
+    fontFamily: fonts.sans,
   },
   datePickerButton: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
+    justifyContent: 'center',
   },
   datePickerButtonText: {
-    color: COLORS.text.light,
+    color: ink.primary,
+    fontFamily: fonts.sans,
     fontSize: 16,
   },
   reorderInstructions: {
     fontSize: 14,
-    color: COLORS.text.secondary,
+    color: ink.muted,
     marginBottom: SPACING.lg,
     textAlign: 'center',
     fontStyle: 'italic',
@@ -468,12 +491,12 @@ export const styles = StyleSheet.create({
   reorderItem: {
     padding: SPACING.lg,
     borderBottomWidth: 1,
-    borderColor: '#eee',
-    backgroundColor: COLORS.background.card,
+    borderColor: surface.hairline,
+    backgroundColor: surface.raised,
   },
   reorderItemActive: {
-    backgroundColor: COLORS.background.accent,
-    ...SHADOWS.medium,
+    backgroundColor: surface.sunken,
+    ...surfaceShadow.card,
   },
   reorderItemContent: {
     flexDirection: 'row',
@@ -483,24 +506,12 @@ export const styles = StyleSheet.create({
   reorderItemText: {
     fontSize: 16,
     fontWeight: '500',
-    color: COLORS.text.primary,
+    color: ink.primary,
+    fontFamily: fonts.sans,
   },
   reorderItemDate: {
     fontSize: 14,
-    color: COLORS.text.secondary,
-  },
-  saveOrderButton: {
-    backgroundColor: COLORS.success,
-    paddingVertical: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    marginTop: SPACING.lg,
-    alignItems: 'center',
-    ...SHADOWS.medium,
-  },
-  saveOrderButtonText: {
-    color: COLORS.text.light,
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: ink.soft,
   },
 
   // ===== Missed Days Modal =====
