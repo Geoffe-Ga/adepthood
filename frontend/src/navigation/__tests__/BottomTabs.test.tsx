@@ -37,8 +37,6 @@ type MockStoreState = {
   enable_practices: boolean;
   enable_course: boolean;
   enable_sangha: boolean;
-  loading: boolean;
-  error: string | null;
 };
 
 const DEFAULT_STORE_STATE: MockStoreState = {
@@ -46,8 +44,6 @@ const DEFAULT_STORE_STATE: MockStoreState = {
   enable_practices: true,
   enable_course: true,
   enable_sangha: true,
-  loading: false,
-  error: null,
 };
 
 let mockStoreState: MockStoreState = { ...DEFAULT_STORE_STATE };
@@ -66,8 +62,6 @@ jest.mock('@/store/useDepthPreferencesStore', () => ({
   selectEnablePractices: (s: MockStoreState): boolean => s.enable_practices,
   selectEnableCourse: (s: MockStoreState): boolean => s.enable_course,
   selectEnableSangha: (s: MockStoreState): boolean => s.enable_sangha,
-  selectDepthPreferencesLoading: (s: MockStoreState): boolean => s.loading,
-  selectDepthPreferencesError: (s: MockStoreState): string | null => s.error,
   get load() {
     return mockLoad;
   },
