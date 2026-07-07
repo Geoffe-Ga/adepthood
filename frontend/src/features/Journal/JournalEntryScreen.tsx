@@ -763,6 +763,12 @@ interface WritingColumnProps {
    * (still in flight or failed), so they never write against an unseen entry.
    */
   controlsDisabled: boolean;
+  /**
+   * In weekly-prompt compose the title is fixed program context the respond
+   * endpoint cannot persist, so it is read-only rather than a lying editable
+   * affordance that silently discards a rename.
+   */
+  titleReadOnly: boolean;
 }
 
 /** Quiet control to mark a draft finished. */
@@ -808,7 +814,11 @@ function WritingFields({
   onChangeTitle,
   onChangeBody,
   bodyPlaceholder,
-}: Pick<WritingColumnProps, 'title' | 'body' | 'onChangeTitle' | 'onChangeBody'> & {
+  titleReadOnly,
+}: Pick<
+  WritingColumnProps,
+  'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'titleReadOnly'
+> & {
   bodyPlaceholder: string;
 }) {
   return (
@@ -820,6 +830,8 @@ function WritingFields({
         placeholder="Title"
         placeholderTextColor={colors.paper.inkSoft}
         accessibilityLabel="Entry title"
+        editable={!titleReadOnly}
+        accessibilityState={{ disabled: titleReadOnly }}
         testID="journal-title-input"
       />
       <View style={styles.hairline} />
@@ -855,6 +867,7 @@ function WritingColumn({
   onFinish,
   bodyPlaceholder = 'Begin writing…',
   controlsDisabled,
+  titleReadOnly,
 }: WritingColumnProps) {
   return (
     <ScrollView
@@ -875,6 +888,7 @@ function WritingColumn({
         onChangeTitle={onChangeTitle}
         onChangeBody={onChangeBody}
         bodyPlaceholder={bodyPlaceholder}
+        titleReadOnly={titleReadOnly}
       />
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
@@ -1161,6 +1175,7 @@ function useJournalEntryController(
   });
 
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
+  // Weekly-prompt compose gates resonance and makes the title read-only.
   const gate = deriveResonanceGate({
     isIdle,
     isLoading: resonance.loading,
@@ -1181,6 +1196,7 @@ function useJournalEntryController(
     handleBody,
     modal,
     editGate,
+    titleReadOnly: ctx.weekNumber != null,
   };
 }
 
@@ -1207,6 +1223,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onFinish={canFinish ? markFinished : undefined}
       bodyPlaceholder={bodyPlaceholder}
       controlsDisabled={controlsDisabled}
+      titleReadOnly={ctl.titleReadOnly}
     />
   ) : (
     <ReadColumn
