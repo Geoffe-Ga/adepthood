@@ -87,7 +87,7 @@ describe('scheduledCues — metronome', () => {
 });
 
 describe('scheduledCues — interval_bell', () => {
-  it('expands interval_minutes=5 over duration=20 into 4 intervals + start + end', () => {
+  it('expands interval_minutes=5 over duration=20 into 4 intervals + start + end, tagging the bell tone', () => {
     const config: IntervalBellConfig = {
       mode: 'interval_bell',
       duration_minutes: 20,
@@ -95,31 +95,38 @@ describe('scheduledCues — interval_bell', () => {
       bell_tone: 'bowl',
     };
     const cues = scheduledCues(config);
-    expect(cues.filter((c) => c.kind === 'interval_bell').map((c) => c.atMs)).toEqual([
-      5 * MIN,
-      10 * MIN,
-      15 * MIN,
-      20 * MIN,
-    ]);
+    const intervalCues = cues.filter((c) => c.kind === 'interval_bell');
+    expect(intervalCues.map((c) => c.atMs)).toEqual([5 * MIN, 10 * MIN, 15 * MIN, 20 * MIN]);
     expect(cues.filter((c) => c.kind === 'start_bell')).toHaveLength(1);
     expect(cues.filter((c) => c.kind === 'end_bell')).toHaveLength(1);
+    // Interval cues carry the configured bell tone; boundary cues carry none.
+    expect(intervalCues.every((c) => c.tone === 'bowl')).toBe(true);
+    const boundaryCues = cues.filter((c) => c.kind !== 'interval_bell');
+    expect(boundaryCues.every((c) => c.tone === undefined)).toBe(true);
   });
 
-  it('uses cue_offsets_minutes verbatim and degrades to start+end when neither set', () => {
+  it('uses cue_offsets_minutes verbatim, tagging the tone (chime), and degrades to untoned start+end when neither offset field is set (gong)', () => {
+    const offsetCues = scheduledCues({
+      mode: 'interval_bell',
+      duration_minutes: 15,
+      cue_offsets_minutes: [3, 7, 12],
+      bell_tone: 'chime',
+    });
+    expect(offsetCues).toHaveLength(5);
     expect(
-      scheduledCues({
-        mode: 'interval_bell',
-        duration_minutes: 15,
-        cue_offsets_minutes: [3, 7, 12],
-        bell_tone: 'chime',
-      }),
-    ).toHaveLength(5);
-    expect(
-      scheduledCues({ mode: 'interval_bell', duration_minutes: 10, bell_tone: 'gong' }),
-    ).toEqual([
+      offsetCues.filter((c) => c.kind === 'interval_bell').every((c) => c.tone === 'chime'),
+    ).toBe(true);
+
+    const gongCues = scheduledCues({
+      mode: 'interval_bell',
+      duration_minutes: 10,
+      bell_tone: 'gong',
+    });
+    expect(gongCues).toEqual([
       { atMs: 0, kind: 'start_bell' },
       { atMs: 10 * MIN, kind: 'end_bell' },
     ]);
+    expect(gongCues.every((c) => c.tone === undefined)).toBe(true);
   });
 });
 

@@ -63,7 +63,7 @@ function cuesForIntervalBell(config: IntervalBellConfig): readonly Cue[] {
   const offsets = computeIntervalOffsets(config, totalMs);
   return sortCues([
     { atMs: 0, kind: 'start_bell' },
-    ...offsets.map((atMs): Cue => ({ atMs, kind: 'interval_bell' })),
+    ...offsets.map((atMs): Cue => ({ atMs, kind: 'interval_bell', tone: config.bell_tone })),
     { atMs: totalMs, kind: 'end_bell' },
   ]);
 }

@@ -72,13 +72,72 @@ describe('createExpoAudioAdapter', () => {
     expect(replayMock).not.toHaveBeenCalled();
   });
 
+  describe('interval bell tone selection', () => {
+    interface LoadedEntry {
+      asset: unknown;
+      replayAsync: jest.Mock<() => Promise<void>>;
+    }
+
+    function mockDistinctSoundsPerLoad(): LoadedEntry[] {
+      const created: LoadedEntry[] = [];
+      mockedCreateAsync.mockImplementation((asset) => {
+        const entry: LoadedEntry = {
+          asset: asset as unknown,
+          replayAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        };
+        created.push(entry);
+        return Promise.resolve({
+          sound: {
+            replayAsync: entry.replayAsync,
+            unloadAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+          },
+        } as unknown as Awaited<ReturnType<typeof Audio.Sound.createAsync>>);
+      });
+      return created;
+    }
+
+    it('replays a distinct sound instance per interval_bell tone, loaded from distinct assets', async () => {
+      const created = mockDistinctSoundsPerLoad();
+      const adapter = createExpoAudioAdapter();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      await adapter.play('interval_bell', 'chime');
+      const chimeEntry = created.find((entry) => entry.replayAsync.mock.calls.length > 0);
+      expect(chimeEntry).toBeDefined();
+
+      await adapter.play('interval_bell', 'gong');
+      const gongEntry = created.find(
+        (entry) => entry !== chimeEntry && entry.replayAsync.mock.calls.length > 0,
+      );
+      expect(gongEntry).toBeDefined();
+      expect(gongEntry?.asset).not.toBe(chimeEntry?.asset);
+    });
+
+    it('defaults a toneless interval_bell play to the bowl asset, distinct from other tones', async () => {
+      const created = mockDistinctSoundsPerLoad();
+      const adapter = createExpoAudioAdapter();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      await adapter.play('interval_bell');
+      const bowlEntry = created.find((entry) => entry.replayAsync.mock.calls.length > 0);
+      expect(bowlEntry).toBeDefined();
+
+      await adapter.play('interval_bell', 'chime');
+      const chimeEntry = created.find(
+        (entry) => entry !== bowlEntry && entry.replayAsync.mock.calls.length > 0,
+      );
+      expect(chimeEntry).toBeDefined();
+      expect(chimeEntry).not.toBe(bowlEntry);
+    });
+  });
+
   it('disposes by unloading every loaded sound', async () => {
     const adapter = createExpoAudioAdapter();
     await new Promise((resolve) => setImmediate(resolve));
 
     adapter.dispose?.();
-    // Four cues bundle real assets; metronome_tick was never loaded.
-    expect(unloadMock).toHaveBeenCalledTimes(4);
+    // Six cues bundle real assets (start, halfway, bowl, chime, gong, end); metronome_tick was never loaded.
+    expect(unloadMock).toHaveBeenCalledTimes(6);
   });
 
   it('marks a cue as failed if replayAsync rejects, suppressing further warns', async () => {

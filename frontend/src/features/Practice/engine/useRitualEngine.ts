@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { getTotalMs, initialState, ritualReducer } from './reducer';
 import type {
   AudioAdapter,
+  Cue,
   EngineAction,
   EngineDeps,
   EngineState,
@@ -64,6 +65,27 @@ function buildControls(
     tap: () => dispatch({ type: 'TAP' }),
     advanceStep: () => dispatch({ type: 'ADVANCE_STEP' }),
   };
+}
+
+/**
+ * Play + buzz every cue in the half-open range `[from, to)`. Interval bells
+ * carry a tone and pass it through; boundary/tick cues stay single-arg so
+ * their adapter call signature is unchanged.
+ */
+function emitCues(
+  cues: readonly Cue[],
+  from: number,
+  to: number,
+  audio: AudioAdapter,
+  haptics: HapticsAdapter,
+): void {
+  for (let i = from; i < to; i++) {
+    const cue = cues[i];
+    if (!cue) continue;
+    if (cue.tone) audio.play(cue.kind, cue.tone);
+    else audio.play(cue.kind);
+    haptics.cue(cue.kind);
+  }
 }
 
 /**
@@ -128,12 +150,7 @@ export function useRitualEngine(
     const prev = prevCueIndexRef.current;
     if (state.cueIndex > prev) {
       const { audio, haptics } = depsRef.current;
-      for (let i = prev; i < state.cueIndex; i++) {
-        const cue = state.cues[i];
-        if (!cue) continue;
-        audio.play(cue.kind);
-        haptics.cue(cue.kind);
-      }
+      emitCues(state.cues, prev, state.cueIndex, audio, haptics);
     }
     prevCueIndexRef.current = state.cueIndex;
   }, [state.cueIndex, state.cues]);

@@ -9,6 +9,8 @@ export type CueKind =
 export interface Cue {
   readonly atMs: number;
   readonly kind: CueKind;
+  /** Bell tone for `interval_bell` cues; absent on boundary/tick cues. */
+  readonly tone?: IntervalBellTone;
 }
 
 export interface MeditationTimerConfig {
@@ -223,7 +225,8 @@ export interface RitualControls {
 }
 
 export interface AudioAdapter {
-  play: (kind: CueKind) => void | Promise<void>;
+  /** Play a cue; `interval_bell` honours `tone`, other kinds ignore it. */
+  play: (kind: CueKind, tone?: IntervalBellTone) => void | Promise<void>;
   /** Free any loaded sound resources. Optional; safe to omit for no-op adapters. */
   dispose?: () => void;
 }
