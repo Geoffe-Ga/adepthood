@@ -8,6 +8,8 @@
  * here. Stage *content* is fetched from the backend API.
  */
 
+export { STAGE_COUNT } from '../../domain/stageProgression';
+
 export interface StageData {
   id: number;
   title: string;
@@ -26,9 +28,6 @@ export interface StageData {
   freeWillDescription: string;
   overviewUrl: string;
 }
-
-/** Total number of APTITUDE stages. */
-export const STAGE_COUNT = 10;
 
 /**
  * Which way a stage's spiral arrow winds. Even (Divine-Feminine) stages return
