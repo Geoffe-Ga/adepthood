@@ -183,17 +183,6 @@ describe('stageWavePoint', () => {
       expect(y).toBeLessThanOrEqual(UNIT_MAX);
     }
   });
-
-  it('reports pole -1 for even stages and +1 for odd stages, 1-8', () => {
-    for (let stage = 1; stage <= 8; stage += 1) {
-      const expected = isLeftReturning(stage) ? -1 : 1;
-      expect(stageWavePoint(stage).pole).toBe(expected);
-    }
-  });
-
-  it('reports pole 0 at the converged top, stage 10', () => {
-    expect(stageWavePoint(10).pole).toBe(0);
-  });
 });
 
 describe('waveSegments', () => {

@@ -3,7 +3,6 @@
 
 import {
   clampLensCenter,
-  contentOffset,
   DRAG_TAP_SLOP,
   glideDurationMs,
   inertialStageTarget,
@@ -141,7 +140,7 @@ describe('inertialStageTarget', () => {
   });
 });
 
-describe('magnifierTransform + contentOffset', () => {
+describe('magnifierTransform', () => {
   it('maps the lens-center grid point onto the pill center for any center', () => {
     const frame = lensFrame(GRID_WIDTH, GRID_HEIGHT);
     const transform = magnifierTransform(frame, GRID_WIDTH, GRID_HEIGHT);
@@ -151,7 +150,8 @@ describe('magnifierTransform + contentOffset', () => {
       { x: 240, y: 300 },
     ];
     for (const center of centers) {
-      const { tx, ty } = contentOffset(center, transform);
+      const tx = transform.kx - MAGNIFICATION * center.x;
+      const ty = transform.ky - MAGNIFICATION * center.y;
       // RN scales about the content's own midpoint, then translates.
       const contentMidX = GRID_WIDTH / 2;
       const contentMidY = GRID_HEIGHT / 2;
