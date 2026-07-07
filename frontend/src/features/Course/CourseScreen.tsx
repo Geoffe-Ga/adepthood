@@ -19,10 +19,10 @@ import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
 import { resolveStageColor } from '../../design/tokens';
+import { deriveCurrentStage } from '../../domain/stageProgression';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
-import { deriveCurrentStage } from '../Map/services/stageService';
 
 import ChapterReader from './ChapterReader';
 import ContentCard from './ContentCard';
