@@ -254,21 +254,43 @@ async def test_content_body_404_for_locked_stage(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("content_dir")
-async def test_content_body_404_for_unreleased_day(
+async def test_content_body_404_for_drip_locked_chapter(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """An item whose release_day is in the future returns 404 (BUG-COURSE-004)."""
+    """A chapter still behind the proportional drip returns 404 (BUG-COURSE-004).
+
+    On day 2 of a 21-day stage only the first chapters have dripped, so a
+    high-ordinal chapter (filled behind several earlier ones) is locked and
+    its body must not leak — masked as ``content_not_found``.
+    """
     headers, user_id = await _signup_with_id(async_client, "early")
-    _, item = await _seed_stage_with_content(
-        db_session,
-        stage_number=1,
-        url=content_ref("beige-10"),
-        release_day=9,
-        title="Late Chapter",
+    stage, _first = await _seed_stage_with_content(
+        db_session, stage_number=1, release_day=0, title="Opening"
     )
+    # Fill earlier ordinals so "Late Chapter" sits near the end of the stage.
+    for day in (1, 2, 3):
+        db_session.add(
+            StageContent(
+                course_stage_id=stage.id,
+                title=f"Chapter {day}",
+                content_type="chapter",
+                release_day=day,
+                url=content_ref(f"beige-{day}"),
+            )
+        )
+    late = StageContent(
+        course_stage_id=stage.id,
+        title="Late Chapter",
+        content_type="chapter",
+        release_day=9,
+        url=content_ref("beige-10"),
+    )
+    db_session.add(late)
+    await db_session.commit()
+    await db_session.refresh(late)
     await _set_user_stage(db_session, user_id, stage_number=1, days_ago=2)
 
-    body_resp = await async_client.get(f"/course/content/{item.id}/body", headers=headers)
+    body_resp = await async_client.get(f"/course/content/{late.id}/body", headers=headers)
     assert body_resp.status_code == HTTPStatus.NOT_FOUND
 
 

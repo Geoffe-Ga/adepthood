@@ -7,13 +7,22 @@ from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from content_config import CONTENT_REF_SCHEME, content_ref
 from database import get_session
-from domain.course import compute_days_elapsed, filter_content_for_user, next_unlock_day
+from domain.constants import STAGE_DURATIONS_DAYS
+from domain.course import (
+    compute_days_elapsed,
+    enrich_content_item,
+    filter_content_for_user,
+    next_unlock_day,
+    unlocked_chapter_count,
+)
+from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
@@ -46,9 +55,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/course", tags=["course"])
 
-# When a user is past a stage, all drip-feed content should be accessible.
-# We use a large sentinel so ``release_day > days_elapsed`` is always False.
-_PAST_STAGE_DAYS_SENTINEL = 999_999
+
+def _stage_duration_days(stage_number: int) -> int:
+    """Days the given 1-based stage lasts (the app-owned drip window).
+
+    ``STAGE_DURATIONS_DAYS`` is app-owned on purpose (issue #386): the
+    content package deliberately does not know stage durations, so the
+    proportional drip denominator has to come from here.  Out-of-range
+    numbers clamp to the curriculum so a stray value can never
+    ``IndexError``.
+    """
+    index = min(max(stage_number, 1), len(STAGE_DURATIONS_DAYS)) - 1
+    return STAGE_DURATIONS_DAYS[index]
 
 
 async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> CourseStage:
@@ -62,26 +80,81 @@ async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> Cour
     return stage
 
 
-async def _days_for_user_stage(session: AsyncSession, user_id: int, stage_number: int) -> int:
-    """Compute how many days the user has been on the given stage.
+async def _day_in_stage_for_user(session: AsyncSession, user_id: int, stage_number: int) -> int:
+    """The 1-based day the user is on within ``stage_number`` for the drip.
 
-    First course access provisions a ``current_stage=1`` StageProgress
-    row via :func:`ensure_user_progress`, so the drip-feed clock has a
-    real ``stage_started_at`` even for users who never explicitly
-    advanced a stage — without it every chapter read as locked.
+    First course access provisions a ``current_stage=1`` StageProgress row
+    via :func:`ensure_user_progress`, so the clock has a real anchor even
+    for users who never explicitly advanced a stage.
 
-    Returns:
-    - ``_PAST_STAGE_DAYS_SENTINEL`` when the user has already moved past
-      this stage (all content should be unlocked).
-    - The actual days elapsed when the user is currently on this stage.
-    - ``-1`` when the user has not yet reached this stage.
+    Advancement is honored so time can only widen access, never revoke it:
+
+    - a **past** stage returns its full duration → every chapter open;
+    - the **current** stage runs on whichever is further along, the
+      program calendar or how long the user has actually sat on the stage
+      (``max`` of the two), so an early advancer is never penalized;
+    - a **not-yet-current** stage the calendar has already opened uses the
+      calendar day.  This is the fix for the old ``-1``: a stage unlocked
+      by ``calendar_stage`` (ahead of ``current_stage``) used to read as
+      "-1 days", locking every one of its chapters.
     """
     progress = await ensure_user_progress(session, user_id)
+    duration = _stage_duration_days(stage_number)
     if progress.current_stage > stage_number:
-        return _PAST_STAGE_DAYS_SENTINEL
+        return duration
+    calendar_day = calendar_day_in_stage(resolve_program_anchor(progress), stage_number)
     if progress.current_stage == stage_number:
-        return compute_days_elapsed(progress.stage_started_at)
-    return -1
+        started_day = compute_days_elapsed(progress.stage_started_at) + 1
+        return max(calendar_day, started_day)
+    return calendar_day
+
+
+async def _stage_content_count(session: AsyncSession, stage_id: int) -> int:
+    """Total content rows for a stage — the proportional drip denominator."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(StageContent)
+        .where(StageContent.course_stage_id == stage_id)
+    )
+    return result.scalar() or 0
+
+
+async def _ordinal_position(session: AsyncSession, item: StageContent) -> int:
+    """0-based rank of ``item`` within its stage, ordered by (release_day, id).
+
+    Mirrors the ``ORDER BY release_day, id`` the listing endpoint uses, so
+    a single-item lock check agrees with the list view even when
+    ``release_day`` has gaps or ties.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(StageContent)
+        .where(
+            StageContent.course_stage_id == item.course_stage_id,
+            or_(
+                col(StageContent.release_day) < item.release_day,
+                (col(StageContent.release_day) == item.release_day)
+                & (col(StageContent.id) < item.id),
+            ),
+        )
+    )
+    return result.scalar() or 0
+
+
+async def _content_item_is_locked(
+    session: AsyncSession, user_id: int, stage: CourseStage, item: StageContent
+) -> bool:
+    """Whether ``item`` is drip-locked for the user under the proportional model."""
+    day = await _day_in_stage_for_user(session, user_id, stage.stage_number)
+    assert stage.id is not None
+    total = await _stage_content_count(session, stage.id)
+    unlocked = unlocked_chapter_count(
+        total=total,
+        duration_days=_stage_duration_days(stage.stage_number),
+        day_in_stage=day,
+    )
+    position = await _ordinal_position(session, item)
+    return position >= unlocked
 
 
 async def _read_ids_for_user(
@@ -172,16 +245,21 @@ async def list_stage_content(
     result = await session.execute(
         select(StageContent)
         .where(StageContent.course_stage_id == stage.id)
-        .order_by(col(StageContent.release_day).asc())
+        .order_by(col(StageContent.release_day).asc(), col(StageContent.id).asc())
     )
     items = list(result.scalars().all())
 
-    days = await _days_for_user_stage(session, current_user, stage_number)
+    day = await _day_in_stage_for_user(session, current_user, stage_number)
+    unlocked = unlocked_chapter_count(
+        total=len(items),
+        duration_days=_stage_duration_days(stage_number),
+        day_in_stage=day,
+    )
     content_ids = [item.id for item in items if item.id is not None]
     read_ids = await _read_ids_for_user(session, current_user, content_ids)
 
     raw = _items_to_raw_dicts(items)
-    filtered = filter_content_for_user(raw, days_elapsed=max(days, -1), read_content_ids=read_ids)
+    filtered = filter_content_for_user(raw, unlocked_count=unlocked, read_content_ids=read_ids)
     responses = [ContentItemResponse(**f) for f in filtered]
 
     if pagination.paginate:
@@ -211,18 +289,17 @@ async def get_content_item(
     if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
         raise not_found("content")
 
-    days = await _days_for_user_stage(session, current_user, stage.stage_number)
-
     item_id = item.id
     if item_id is None:
         msg = "StageContent ID unexpectedly None after database fetch"
         raise RuntimeError(msg)
     read_ids = await _read_ids_for_user(session, current_user, [item_id])
 
-    filtered = filter_content_for_user(
-        _items_to_raw_dicts([item]), days_elapsed=max(days, -1), read_content_ids=read_ids
+    is_locked = await _content_item_is_locked(session, current_user, stage, item)
+    enriched = enrich_content_item(
+        _items_to_raw_dicts([item])[0], is_locked=is_locked, read_content_ids=read_ids
     )
-    return ContentItemResponse(**filtered[0])
+    return ContentItemResponse(**enriched)
 
 
 async def _existing_content_completion(
@@ -354,13 +431,16 @@ async def get_course_progress(
 
     read_ids = await _read_ids_for_user(session, current_user, _content_ids_from_items(items))
     progress_pct = round((len(read_ids) / len(items)) * 100, 2)
-    days = await _days_for_user_stage(session, current_user, stage_number)
+    day = await _day_in_stage_for_user(session, current_user, stage_number)
 
-    # BUG-COURSE-004: Don't compute next_unlock_day when days_elapsed is
-    # negative (user hasn't started this stage) or for past stages.
-    nud: int | None = None
-    if 0 <= days < _PAST_STAGE_DAYS_SENTINEL:
-        nud = next_unlock_day(release_days=[item.release_day for item in items], days_elapsed=days)
+    # ``total_items`` stays the whole-stage count (not the unlocked count)
+    # so "stage complete" only fires when everything is read; the drip only
+    # governs how many are openable right now, surfaced via next_unlock_day.
+    nud = next_unlock_day(
+        total=len(items),
+        duration_days=_stage_duration_days(stage_number),
+        day_in_stage=day,
+    )
 
     return CourseProgressResponse(
         total_items=len(items),
@@ -423,35 +503,25 @@ async def _load_content_with_stage(
     return item, stage
 
 
-async def _check_released_for_user(
-    session: AsyncSession, user_id: int, stage_number: int, release_day: int
-) -> None:
-    """Raise 404 unless the user has reached ``release_day`` on this stage.
-
-    Mirrors the drip-feed gating applied on the metadata endpoint so the
-    in-app body endpoint cannot leak a chapter ahead of its release_day.
-    """
-    days = await _days_for_user_stage(session, user_id, stage_number)
-    if 0 <= days < _PAST_STAGE_DAYS_SENTINEL and release_day > days:
-        raise not_found("content")
-
-
 async def _resolve_released_content_ref(
     session: AsyncSession, user_id: int, content_id: int
 ) -> str:
-    """Gate on stage-unlock + release_day, return the local chapter id.
+    """Gate on stage-unlock + proportional drip, return the local chapter id.
 
     Mirrors the 404-mask used by sibling endpoints (BUG-COURSE-004):
-    locked, unreleased, missing-reference, and nonexistent rows all
+    locked-stage, drip-locked, missing-reference, and nonexistent rows all
     surface as ``content_not_found`` so ``content_id`` is not an
-    enumeration oracle.  Rows without a ``content://`` reference
+    enumeration oracle.  The drip check is by ordinal position (same model
+    as the metadata endpoint), so a chapter cannot be read ahead of its
+    proportional release.  Rows without a ``content://`` reference
     (legacy/placeholder rows) have no local body and fall under the same
     mask.
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
         raise not_found("content")
-    await _check_released_for_user(session, user_id, stage.stage_number, item.release_day)
+    if await _content_item_is_locked(session, user_id, stage, item):
+        raise not_found("content")
     reference = item.url or ""
     if not reference.startswith(_CONTENT_REF_PREFIX):
         raise not_found("content")
