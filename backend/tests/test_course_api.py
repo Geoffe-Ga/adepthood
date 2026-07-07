@@ -281,15 +281,20 @@ async def test_list_content_drip_feed_day_zero(
 
 
 @pytest.mark.asyncio
-async def test_list_content_drip_feed_day_three(
+async def test_list_content_drip_feed_partway(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """After 3 days, release_day 0 and 3 items are unlocked."""
+    """Proportional drip: partway through the stage, the first ordinals open.
+
+    3 chapters over a 21-day stage: by day 8 (day-in-stage 8) the drip has
+    opened ceil(3 * 8 / 21) = 2 of them, leaving the last chapter locked —
+    regardless of that chapter's release_day value.
+    """
     headers, user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
-    three_days_ago = datetime.now(UTC) - timedelta(days=3)
-    await _set_user_stage(db_session, user_id, stage_number=1, started_at=three_days_ago)
+    seven_days_ago = datetime.now(UTC) - timedelta(days=7)
+    await _set_user_stage(db_session, user_id, stage_number=1, started_at=seven_days_ago)
 
     resp = await async_client.get("/course/stages/1/content", headers=headers)
     assert resp.status_code == HTTPStatus.OK
@@ -308,11 +313,12 @@ async def test_list_content_drip_feed_all_unlocked(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """After 7+ days, all items are unlocked."""
+    """By the end of the stage window, every chapter is unlocked."""
     headers, user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
-    ten_days_ago = datetime.now(UTC) - timedelta(days=10)
-    await _set_user_stage(db_session, user_id, stage_number=1, started_at=ten_days_ago)
+    # Stage 1 runs 21 days; sit at/after its close so the whole stage drips.
+    full_stage_ago = datetime.now(UTC) - timedelta(days=21)
+    await _set_user_stage(db_session, user_id, stage_number=1, started_at=full_stage_ago)
 
     resp = await async_client.get("/course/stages/1/content", headers=headers)
     data = resp.json()
@@ -507,8 +513,9 @@ async def test_course_progress_complete(
     """100% progress when all items read."""
     headers, user_id = await _signup(async_client)
     _, items = await _seed_stage_with_content(db_session, stage_number=1)
-    ten_days_ago = datetime.now(UTC) - timedelta(days=10)
-    await _set_user_stage(db_session, user_id, stage_number=1, started_at=ten_days_ago)
+    # Past the 21-day stage window so the whole stage has dripped open.
+    full_stage_ago = datetime.now(UTC) - timedelta(days=21)
+    await _set_user_stage(db_session, user_id, stage_number=1, started_at=full_stage_ago)
 
     for item in items:
         completion = ContentCompletion(user_id=user_id, content_id=item.id)
@@ -522,6 +529,8 @@ async def test_course_progress_complete(
     assert data["read_items"] == expected_total
     expected_pct = 100.0
     assert data["progress_percent"] == expected_pct
+    # Every chapter has dripped by the end of the stage window, so there is
+    # no further unlock day.
     assert data["next_unlock_day"] is None
 
 
@@ -530,15 +539,16 @@ async def test_course_progress_next_unlock_day(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """next_unlock_day reports the next locked item's release_day."""
+    """next_unlock_day reports the day-in-stage the next chapter drips."""
     headers, user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
-    # User started today -> day 0: release_day 3 is next unlock
+    # Day 1 of a 21-day stage with 3 chapters: one has dripped, the second
+    # opens on day 8 (the first day ceil(3 * D / 21) reaches 2).
     await _set_user_stage(db_session, user_id, stage_number=1)
 
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
     data = resp.json()
-    expected_next = 3
+    expected_next = 8
     assert data["next_unlock_day"] == expected_next
 
 
@@ -674,6 +684,59 @@ async def test_past_stage_content_fully_unlocked(
     assert all(item["url"] is not None for item in data)
 
 
+# ── Regression: a calendar-unlocked-ahead stage is not fully locked ────
+
+
+@pytest.mark.asyncio
+async def test_calendar_unlocked_ahead_stage_partially_unlocks(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A stage the calendar opened ahead of advancement drips, not blank.
+
+    The old ``_days_for_user_stage`` returned ``-1`` for any stage past
+    ``current_stage`` even when the program calendar had already opened it,
+    so every chapter of a calendar-unlocked-ahead stage read as locked.
+    Here the user is still ``current_stage=1`` but their program anchor is
+    25 days old, putting the calendar 5 days into stage 2 — the listing
+    must come back non-empty and partially unlocked (ceil(10 * 5 / 21) = 3
+    of 10), never all-locked.
+    """
+    headers, user_id = await _signup(async_client)
+    content_items = [
+        {
+            "title": f"Chapter {day}",
+            "content_type": "essay",
+            "release_day": day,
+            "url": f"https://cms.example.com/s2-{day}",
+        }
+        for day in range(10)
+    ]
+    await _seed_stage_with_content(db_session, stage_number=2, content_items=content_items)
+    anchor = datetime.now(UTC) - timedelta(days=25)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            stage_started_at=anchor,
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/course/stages/2/content", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert len(data) == len(content_items)
+    unlocked = [d for d in data if not d["is_locked"]]
+    expected_unlocked = 3
+    assert len(unlocked) == expected_unlocked
+    # The unlocked ones are the earliest ordinals and carry a usable URL.
+    assert [d["title"] for d in unlocked] == ["Chapter 0", "Chapter 1", "Chapter 2"]
+    assert all(d["url"] is not None for d in unlocked)
+
+
 # ── BUG-COURSE-004: next_unlock_day with negative days ─────────────────
 
 
@@ -684,10 +747,10 @@ async def test_course_progress_fresh_user_reports_next_unlock(
 ) -> None:
     """BUG-COURSE-004: a fresh user's progress reports a real next unlock, not -1.
 
-    First course access provisions a ``current_stage=1`` row (drip clock
-    at day 0), so the stage-1 progress endpoint reports
-    ``next_unlock_day=3`` — the release_day of the first still-locked
-    chapter — instead of feeding a negative day count to next_unlock_day.
+    First course access provisions a ``current_stage=1`` row (day-in-stage
+    1), so the stage-1 progress endpoint reports the proportional next
+    unlock (day 8 for the second of three chapters) instead of feeding a
+    negative day count into the drip math.
     """
     headers, _user_id = await _signup(async_client)
     await _seed_stage_with_content(db_session, stage_number=1)
@@ -695,7 +758,7 @@ async def test_course_progress_fresh_user_reports_next_unlock(
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
-    expected_next = 3
+    expected_next = 8
     assert data["next_unlock_day"] == expected_next
 
 

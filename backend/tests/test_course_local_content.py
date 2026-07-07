@@ -5,12 +5,12 @@ whole journey the user actually takes: manifest → seeder → gated chapter
 list → released body → read-tracking → progress math — deterministic,
 offline, against real files instead of mocks of a third party.
 
-Fixture shape: stage 1 ships chapters at release days 0/2/3/9, stage 2
-ships one chapter (locked until the user reaches the stage), plus one
-site resource.  Every test pins the user at **day 2 of stage 1**, so the
-drip-feed boundary cases fall out naturally: day 0 is past, day 2 is
-"today" (boundary — must unlock), day 3 is tomorrow (boundary — must
-stay locked), day 9 is deep future.
+Fixture shape: stage 1 ships four chapters (ordinals 0-3), stage 2 ships
+one chapter (locked until the user reaches the stage), plus one site
+resource.  Every test pins the user at **day 2 of stage 1**.  Gating is
+now the proportional drip: four chapters spread over the 21-day stage
+means by day-in-stage 3 only ceil(4 * 3 / 21) = 1 chapter has opened, so
+the first ordinal unlocks and the rest stay locked.
 """
 
 from __future__ import annotations
@@ -106,14 +106,15 @@ async def _stage_one_items(
 async def test_list_reflects_drip_feed_boundaries(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Day < N locked, day == N unlocked (boundary), day > N unlocked."""
+    """Proportional drip: on day-in-stage 3 only the first ordinal is open."""
     headers = await _signup_at_day_two(async_client, db_session, "journey")
     items = await _stage_one_items(async_client, headers)
 
-    assert items["Survival"]["is_locked"] is False  # day 0 — past
-    assert items["Breath as Anchor"]["is_locked"] is False  # day 2 — today (boundary)
-    assert items["Tomorrow Prompt"]["is_locked"] is True  # day 3 — tomorrow (boundary)
-    assert items["Late Chapter"]["is_locked"] is True  # day 9 — deep future
+    # ceil(4 chapters * day 3 / 21 days) = 1 → only ordinal 0 has dripped.
+    assert items["Survival"]["is_locked"] is False  # ordinal 0 — open
+    assert items["Breath as Anchor"]["is_locked"] is True  # ordinal 1 — not yet
+    assert items["Tomorrow Prompt"]["is_locked"] is True  # ordinal 2 — not yet
+    assert items["Late Chapter"]["is_locked"] is True  # ordinal 3 — not yet
 
 
 @pytest.mark.asyncio
@@ -145,7 +146,7 @@ async def test_gating_mask_for_unreleased_locked_and_unknown(
     headers = await _signup_at_day_two(async_client, db_session, "masked")
     items = await _stage_one_items(async_client, headers)
 
-    # Unreleased (day 3 > day 2).
+    # Still behind the drip (ordinal 2, only 1 chapter open on day 3).
     resp = await async_client.get(
         f"/course/content/{items['Tomorrow Prompt']['id']}/body", headers=headers
     )
@@ -201,8 +202,9 @@ async def test_progress_math_and_read_tracking(
     assert resp.status_code == HTTPStatus.OK
     before = resp.json()
     assert before["read_items"] == 0
-    # The next chapter after day 2 drips on day 3.
-    assert before["next_unlock_day"] == 3
+    # 4 chapters over 21 days: with one open on day-in-stage 3, the second
+    # drips on day 6 (floor(1 * 21 / 4) + 1).
+    assert before["next_unlock_day"] == 6
 
     mark = await async_client.post(
         f"/course/content/{items['Survival']['id']}/mark-read", headers=headers

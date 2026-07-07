@@ -12,7 +12,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS, TOTAL_STAGES
-from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
+from domain.program_calendar import (
+    calendar_day_in_stage,
+    calendar_stage,
+    calendar_week,
+    resolve_program_anchor,
+)
 from domain.weekly_prompts import TOTAL_WEEKS
 from models.stage_progress import StageProgress
 
@@ -94,6 +99,38 @@ def test_calendar_stage_clamps_outside_the_program() -> None:
     assert calendar_stage(_ANCHOR, _at(252)) == TOTAL_STAGES
     assert calendar_stage(_ANCHOR, _at(10_000)) == TOTAL_STAGES
     assert calendar_stage(_ANCHOR, _ANCHOR - timedelta(days=3)) == 1
+
+
+# ── calendar_day_in_stage ───────────────────────────────────────────────
+
+
+def test_calendar_day_in_stage_is_one_based_within_the_window() -> None:
+    # Stage 1 opens on the anchor day: day 1 there, day 21 at its close.
+    assert calendar_day_in_stage(_ANCHOR, 1, _at(0)) == 1
+    assert calendar_day_in_stage(_ANCHOR, 1, _at(20)) == 21
+    # Stage 2's window starts 21 days in — that day is day 1 of stage 2.
+    assert calendar_day_in_stage(_ANCHOR, 2, _at(21)) == 1
+    assert calendar_day_in_stage(_ANCHOR, 2, _at(24)) == 4
+
+
+def test_calendar_day_in_stage_caps_at_the_stage_duration() -> None:
+    # Past a stage's window the day saturates at its duration (all open).
+    assert calendar_day_in_stage(_ANCHOR, 1, _at(100)) == STAGE_DURATIONS_DAYS[0]
+    # The two integration stages run 42 days.
+    assert calendar_day_in_stage(_ANCHOR, 9, _at(10_000)) == STAGE_DURATIONS_DAYS[8]
+
+
+def test_calendar_day_in_stage_is_non_positive_before_the_window() -> None:
+    # A stage the calendar has not yet reached reads as a non-positive day,
+    # so the proportional drip opens nothing there.
+    assert calendar_day_in_stage(_ANCHOR, 2, _at(0)) <= 0
+    assert calendar_day_in_stage(_ANCHOR, 3, _at(21)) <= 0
+
+
+def test_calendar_day_in_stage_accepts_naive_anchor() -> None:
+    """SQLite returns naive datetimes; the math must not raise (issue #412 class)."""
+    naive_anchor = _ANCHOR.replace(tzinfo=None)
+    assert calendar_day_in_stage(naive_anchor, 2, _at(21)) == 1
 
 
 # ── resolve_program_anchor ──────────────────────────────────────────────

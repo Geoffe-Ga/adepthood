@@ -60,6 +60,26 @@ def calendar_stage(anchor: datetime, now: datetime | None = None) -> int:
     return TOTAL_STAGES
 
 
+def calendar_day_in_stage(anchor: datetime, stage_number: int, now: datetime | None = None) -> int:
+    """The 1-based day ``now`` falls on *within* ``stage_number``'s window.
+
+    Feeds the proportional content drip (``domain.course``): a stage's
+    chapters are spread across its ``STAGE_DURATIONS_DAYS`` window, so
+    "how far into the stage the calendar has carried the user" is what
+    decides how many are open.  Day 1 is the first day of the stage;
+    values before the window opens are non-positive and values past its
+    close are capped at the stage duration.  Independent of advancement —
+    callers combine it with ``current_stage`` so time can only widen
+    access.
+    """
+    moment = now if now is not None else datetime.now(UTC)
+    stage = min(max(stage_number, 1), TOTAL_STAGES)
+    window_start = sum(STAGE_DURATIONS_DAYS[: stage - 1])
+    duration = STAGE_DURATIONS_DAYS[stage - 1]
+    day = _elapsed_days(anchor, moment) - window_start + 1
+    return min(day, duration)
+
+
 def resolve_program_anchor(progress: StageProgress) -> datetime:
     """The user's program-start anchor.
 
