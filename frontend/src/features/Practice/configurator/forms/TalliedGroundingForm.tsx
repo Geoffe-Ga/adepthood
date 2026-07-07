@@ -2,6 +2,13 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { TalliedCategory, TalliedGroundingConfig } from '../../engine/types';
+import {
+  TALLIED_LABEL_MAX as LABEL_MAX,
+  TALLIED_ROUNDS_MAX as ROUNDS_MAX,
+  TALLIED_ROUNDS_MIN as ROUNDS_MIN,
+  TALLIED_TARGET_MAX as TARGET_MAX,
+  TALLIED_TARGET_MIN as TARGET_MIN,
+} from '../../engine/validation';
 
 import { LabeledRow, NumberStepper, TextField } from './shared';
 
@@ -11,12 +18,6 @@ interface Props {
   value: TalliedGroundingConfig;
   onChange: (next: TalliedGroundingConfig) => void;
 }
-
-const ROUNDS_MIN = 1;
-const ROUNDS_MAX = 10;
-const TARGET_MIN = 1;
-const TARGET_MAX = 20;
-const LABEL_MAX = 60;
 
 // Monotonic source of new category keys. The key is the machine id the engine
 // records in session metadata, so it is generated once and never derived from

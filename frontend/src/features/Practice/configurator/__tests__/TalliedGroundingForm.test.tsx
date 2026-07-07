@@ -4,7 +4,11 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { TalliedGroundingConfig } from '../../engine/types';
-import { TALLIED_KEY_PATTERN, validateModeConfig } from '../../engine/validation';
+import {
+  TALLIED_KEY_PATTERN,
+  TALLIED_LABEL_MAX,
+  validateModeConfig,
+} from '../../engine/validation';
 import TalliedGroundingForm from '../forms/TalliedGroundingForm';
 
 const base: TalliedGroundingConfig = {
@@ -85,6 +89,12 @@ describe('TalliedGroundingForm', () => {
     expect(getByTestId('tallied-grounding-form')).toBeTruthy();
     expect(getByTestId('tallied-add-category')).toBeTruthy();
     expect(queryByTestId('tallied-category-0')).toBeNull();
+  });
+
+  it('caps the category label at the validator limit, not a drifted local constant', () => {
+    const onChange = jest.fn();
+    const { getByTestId } = render(<TalliedGroundingForm value={base} onChange={onChange} />);
+    expect(getByTestId('tallied-category-0-label').props.maxLength).toBe(TALLIED_LABEL_MAX);
   });
 
   it('keeps the surviving category after a non-tail delete (stable keys)', () => {
