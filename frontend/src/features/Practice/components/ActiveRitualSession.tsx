@@ -23,7 +23,8 @@
  *     `useWeeklyProgress` callbacks so the bar reconciles with server truth.
  *   - Activate keep-awake while the engine is `running` (not for the whole
  *     active-card lifetime).
- *   - Inject the expo-haptics adapter so ritual cues emit tactile feedback.
+ *   - Inject the expo-haptics and expo-audio adapters so ritual cues emit
+ *     tactile feedback and audible bells.
  */
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -43,10 +44,12 @@ import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConf
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
 import { buildCardMeditationMetadata, pickCard } from '@/features/Practice/data/resolveCard';
 import { cardForDayIndex } from '@/features/Practice/data/tarot';
+import { createExpoAudioAdapter } from '@/features/Practice/engine/adapters/audio';
 import { createExpoHapticsAdapter } from '@/features/Practice/engine/adapters/haptics';
 import { scheduledCues } from '@/features/Practice/engine/cues';
 import { totalSteps, totalStepsPerRound } from '@/features/Practice/engine/tallied';
 import type {
+  AudioAdapter,
   CardMeditationConfig,
   EngineDeps,
   IntervalBellConfig,
@@ -98,6 +101,8 @@ export interface ActiveRitualSessionProps {
   onUserPracticeUpdated: (_next: UserPractice) => void;
   /** Open the journal-reflection composer (parent owns the navigator). */
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  /** Injectable audio adapter for tests; defaults to the bundled bell audio. */
+  audio?: AudioAdapter;
 }
 
 interface ActiveSession {
@@ -238,14 +243,19 @@ function useHarvestedMetadata(
   };
 }
 
-function useEngineDeps(tarotCardIndex: number): EngineDeps {
+function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): EngineDeps {
   const [haptics] = useState(() => createExpoHapticsAdapter());
-  return useMemo(() => ({ startCardIndex: tarotCardIndex, haptics }), [tarotCardIndex, haptics]);
+  const [audio] = useState<AudioAdapter>(() => injectedAudio ?? createExpoAudioAdapter());
+  useEffect(() => () => audio.dispose?.(), [audio]);
+  return useMemo(
+    () => ({ startCardIndex: tarotCardIndex, haptics, audio }),
+    [tarotCardIndex, haptics, audio],
+  );
 }
 
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
-  const engineDeps = useEngineDeps(tarotCardIndex);
+  const engineDeps = useEngineDeps(tarotCardIndex, props.audio);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status);
