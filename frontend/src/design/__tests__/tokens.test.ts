@@ -7,6 +7,8 @@ import {
   STAGE_ORDER,
   brightenColor,
   colors,
+  contentLayout,
+  journalLayout,
   radius,
   resolveStageColor,
   shadows,
@@ -273,6 +275,15 @@ describe('design tokens', () => {
       expect(type(700).body.fontSize).toBe(17);
       expect(type(1000).body.fontSize).toBe(18);
       expect(type(1300).body.fontSize).toBe(19);
+    });
+  });
+
+  describe('contentLayout', () => {
+    it('caps shared screen content at the journal page width plus its margin column, never a bare literal', () => {
+      expect(contentLayout.maxWidth).toBe(
+        journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
+      );
+      expect(contentLayout.maxWidth).toBe(900);
     });
   });
 });

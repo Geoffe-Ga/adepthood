@@ -14,6 +14,7 @@ import {
 } from '../../api';
 import { Celebration } from '../../components/feedback/Celebration';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { ContentContainer } from '../../components/layout/ContentContainer';
 import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
@@ -497,20 +498,22 @@ const CourseScreen = (): React.JSX.Element => {
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
-      <View style={styles.headerBand}>
-        <ScreenHeader eyebrow={COURSE_EYEBROW} title={COURSE_TITLE} />
-      </View>
-      <StageSelector
-        stages={allStages}
-        selectedStage={selectedStage}
-        onSelectStage={handleStageSelect}
-      />
-      <StagePanel
-        selectedStage={selectedStage}
-        selectedStageData={selectedStageData}
-        stageContent={stageContent}
-        viewer={viewer}
-      />
+      <ContentContainer>
+        <View style={styles.headerBand}>
+          <ScreenHeader eyebrow={COURSE_EYEBROW} title={COURSE_TITLE} />
+        </View>
+        <StageSelector
+          stages={allStages}
+          selectedStage={selectedStage}
+          onSelectStage={handleStageSelect}
+        />
+        <StagePanel
+          selectedStage={selectedStage}
+          selectedStageData={selectedStageData}
+          stageContent={stageContent}
+          viewer={viewer}
+        />
+      </ContentContainer>
     </SafeAreaView>
   );
 };

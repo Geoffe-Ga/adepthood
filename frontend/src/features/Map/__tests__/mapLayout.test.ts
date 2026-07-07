@@ -2,10 +2,14 @@
 /* global describe, it, expect */
 import { ink, surface } from '../../../design/tokens';
 import {
+  fitRightLabel,
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
   MAP_TITLE_LINES,
+  RIGHT_LABEL_GLYPH_EM_WIDTH,
+  RIGHT_LABEL_MAX_FONT_SIZE,
+  RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
@@ -88,13 +92,18 @@ describe('mapLayout', () => {
     expect(MAP_TITLE_LINES).toEqual(['EMPTINESS', 'UNITY']);
   });
 
-  it('gives every right-label at most two hyphenated lines, each within the cell width', () => {
+  it('gives every two-line right-label fallback two hyphenated lines, each within the cell width', () => {
+    // Single-line fallbacks (the common case) carry the full, un-truncated
+    // word instead: fitRightLabel shrinks its font size to fit at render
+    // time, so they are not bound by the old fixed-width hyphenation budget.
     MAP_ROWS.forEach((row) => {
       expect(row.rightLabelLines.length).toBeGreaterThanOrEqual(1);
       expect(row.rightLabelLines.length).toBeLessThanOrEqual(2);
-      row.rightLabelLines.forEach((line) => {
-        expect(line.length).toBeLessThanOrEqual(MAX_RIGHT_LABEL_LINE_LENGTH);
-      });
+      if (row.rightLabelLines.length === 2) {
+        row.rightLabelLines.forEach((line) => {
+          expect(line.length).toBeLessThanOrEqual(MAX_RIGHT_LABEL_LINE_LENGTH);
+        });
+      }
     });
   });
 
@@ -105,8 +114,10 @@ describe('mapLayout', () => {
     });
   });
 
-  it('hyphenates Understanding as Under- / standing', () => {
-    expect(findRowByLabel('Understanding').rightLabelLines).toEqual(['Under-', 'standing']);
+  it('keeps Understanding as a single un-hyphenated fallback line (fitRightLabel shrinks it to fit)', () => {
+    const lines = findRowByLabel('Understanding').rightLabelLines;
+    expect(lines).toEqual(['Understanding']);
+    lines.forEach((line) => expect(line).not.toContain('-'));
   });
 
   it('hyphenates Yes-And-Ness as Yes-And- / Ness', () => {
@@ -186,6 +197,63 @@ describe('fittedTitleFontSize', () => {
         expect(estimatedWidth(title, size)).toBeLessThanOrEqual(NARROW_CELL);
       }
     }
+  });
+});
+
+describe('fitRightLabel', () => {
+  const UNDERSTANDING_FALLBACK = ['Under-', 'standing'] as const;
+  const YES_AND_NESS_FALLBACK = ['Yes-And-', 'Ness'] as const;
+  const WIDE_CELL = 180;
+  const NARROW_PHONE_CELL = 56;
+
+  // Same conservative advance-width idiom fittedTitleFontSize's own tests use,
+  // scoped to the right label's own glyph budget.
+  const estimatedLineWidth = (line: string, fontSize: number): number =>
+    line.length * fontSize * RIGHT_LABEL_GLYPH_EM_WIDTH;
+
+  it('renders the full label on one un-hyphenated line at the ceiling before layout reports a width', () => {
+    const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, 0);
+    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+  });
+
+  it('keeps Understanding on one line at the ceiling size in a wide cell', () => {
+    const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, WIDE_CELL);
+    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+  });
+
+  it('keeps every returned line within the measured cell width whenever the size shrinks below the ceiling', () => {
+    for (const width of [40, 56, 70, 90, 120, 150]) {
+      const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, width);
+      if (result.fontSize > RIGHT_LABEL_MIN_FONT_SIZE) {
+        result.lines.forEach((line) => {
+          expect(estimatedLineWidth(line, result.fontSize)).toBeLessThanOrEqual(width);
+        });
+      }
+    }
+  });
+
+  it('clamps fontSize to the configured floor and ceiling for every width, including non-positive ones', () => {
+    for (const width of [-10, 0, 20, 56, 90, 180, 500]) {
+      const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, width);
+      expect(result.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
+      expect(result.fontSize).toBeLessThanOrEqual(RIGHT_LABEL_MAX_FONT_SIZE);
+    }
+  });
+
+  it('shrinks Awareness to fit a narrow phone cell on one line without splitting the word', () => {
+    const result = fitRightLabel('Awareness', ['Awareness'], NARROW_PHONE_CELL);
+    expect(result.lines).toEqual(['Awareness']);
+    expect(result.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
+    expect(result.fontSize).toBeLessThan(RIGHT_LABEL_MAX_FONT_SIZE);
+  });
+
+  it('falls back to the pre-hyphenated Yes-And-Ness lines instead of inserting a new hyphen', () => {
+    const NARROW_WIDTH = 40;
+    const result = fitRightLabel('Yes-And-Ness', YES_AND_NESS_FALLBACK, NARROW_WIDTH);
+    expect(result.lines).toEqual(['Yes-And-', 'Ness']);
+    // Exactly the label's own two hyphens survive — none inserted elsewhere.
+    const hyphenCount = (result.lines.join('').match(/-/g) ?? []).length;
+    expect(hyphenCount).toBe(2);
   });
 });
 

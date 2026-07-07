@@ -88,6 +88,61 @@ export const fittedTitleFontSize = (title: string, width: number): number => {
   return Math.max(TITLE_MIN_FONT_SIZE, Math.min(TITLE_MAX_FONT_SIZE, fitted));
 };
 
+/** Ceiling for a right-column aspect label — the legacy fixed size (15px). */
+export const RIGHT_LABEL_MAX_FONT_SIZE = 15;
+
+/** Floor below which an aspect label would stop reading as a label. */
+export const RIGHT_LABEL_MIN_FONT_SIZE = 9;
+
+/**
+ * Conservative average advance width of a mixed-case serif glyph, in ems.
+ * Deliberately generous (err toward smaller) so the single-line fit only ever
+ * settles on a guaranteed-fitting size for the lowercase-heavy aspect words.
+ */
+export const RIGHT_LABEL_GLYPH_EM_WIDTH = 0.62;
+
+/** Line-height multiple the aspect label renders at — the legacy 19/15 rhythm. */
+export const RIGHT_LABEL_LINE_HEIGHT_RATIO = 19 / RIGHT_LABEL_MAX_FONT_SIZE;
+
+/** Largest size (<= ceiling) at which ``line`` fits ``width`` on one line. */
+const fittedLabelLineFontSize = (line: string, width: number): number => {
+  if (width <= 0 || line.length === 0) return RIGHT_LABEL_MAX_FONT_SIZE;
+  const fitted = Math.floor(width / (line.length * RIGHT_LABEL_GLYPH_EM_WIDTH));
+  return Math.max(RIGHT_LABEL_MIN_FONT_SIZE, Math.min(RIGHT_LABEL_MAX_FONT_SIZE, fitted));
+};
+
+/** Whether ``line`` at ``fontSize`` fits within ``width`` by the em estimate. */
+const labelLineFits = (line: string, fontSize: number, width: number): boolean =>
+  line.length * fontSize * RIGHT_LABEL_GLYPH_EM_WIDTH <= width;
+
+/**
+ * Fits a right-column aspect label to its measured cell width, mirroring the
+ * ``fittedTitleFontSize`` idiom. The label is preferred on a single
+ * un-hyphenated line, shrinking from the ceiling toward the floor until it fits;
+ * only when even the floor size overflows does it fall back to the row's
+ * pre-hyphenated ``fallbackLines`` (each fitted to the same cell). An unmeasured
+ * width (<= 0) renders the full label at the ceiling until layout reports.
+ */
+export const fitRightLabel = (
+  label: string,
+  fallbackLines: readonly string[],
+  width: number,
+): { lines: string[]; fontSize: number } => {
+  if (width <= 0) return { lines: [label], fontSize: RIGHT_LABEL_MAX_FONT_SIZE };
+
+  const singleFontSize = fittedLabelLineFontSize(label, width);
+  if (labelLineFits(label, singleFontSize, width)) {
+    return { lines: [label], fontSize: singleFontSize };
+  }
+
+  // Even at the floor the single word overflows — use the pre-hyphenated lines,
+  // sized to the largest font at which the longest of them still fits.
+  const fallbackFontSize = Math.min(
+    ...fallbackLines.map((line) => fittedLabelLineFontSize(line, width)),
+  );
+  return { lines: [...fallbackLines], fontSize: fallbackFontSize };
+};
+
 /**
  * The title line each top stage carries in its own grid row (no absolute
  * overlay): stage 10 reads EMPTINESS, stage 9 reads UNITY. Stages 1–8 have none.
@@ -204,7 +259,7 @@ export const MAP_ROWS: readonly MapRow[] = [
   { rightLabel: 'Awareness', rightLabelLines: ['Awareness'], stageNumbers: [10] },
   { rightLabel: 'Being', rightLabelLines: ['Being'], stageNumbers: [9] },
   { rightLabel: 'Wisdom', rightLabelLines: ['Wisdom'], stageNumbers: [8, 7] },
-  { rightLabel: 'Understanding', rightLabelLines: ['Under-', 'standing'], stageNumbers: [6, 5] },
+  { rightLabel: 'Understanding', rightLabelLines: ['Understanding'], stageNumbers: [6, 5] },
   { rightLabel: 'Love', rightLabelLines: ['Love'], stageNumbers: [4, 3] },
   { rightLabel: 'Yes-And-Ness', rightLabelLines: ['Yes-And-', 'Ness'], stageNumbers: [2, 1] },
 ];

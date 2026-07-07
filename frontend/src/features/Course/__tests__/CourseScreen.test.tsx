@@ -189,6 +189,16 @@ describe('CourseScreen', () => {
     });
   });
 
+  it('renders the stage selector and content list inside the shared content-capped container', async () => {
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    const container = getByTestId('content-container');
+    expect(within(container).getByTestId('stage-selector')).toBeTruthy();
+    expect(within(container).getByTestId('content-list')).toBeTruthy();
+  });
+
   it('selects completed_count + 1 as the default stage (backend-truth mirror)', async () => {
     // BUG-FE-COURSE-001: stage 1 is complete, stage 2 is in progress →
     // default selection is the first unfinished stage, not the highest

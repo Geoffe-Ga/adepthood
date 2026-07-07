@@ -45,6 +45,8 @@ import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 
+import { ContentContainer } from '@/components/layout/ContentContainer';
+
 /** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = MAX_HABITS;
 
@@ -887,40 +889,42 @@ const HabitsScreen = () => {
   const paginationProps = buildPaginationProps(pagination, scale);
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
-      <View style={styles.topBar}>
-        <OverflowMenu
-          scale={scale}
-          menuVisible={modals.menu}
-          onToggle={modals.toggleMenu}
-          onSelectMode={state.handleSelectMode}
-          onOpenOnboarding={() => modals.open('onboarding')}
-          onOpenAddHabit={() => modals.open('addHabit')}
-          allRevealed={state.allRevealed}
-          onToggleReveal={state.handleToggleReveal}
+      <ContentContainer>
+        <View style={styles.topBar}>
+          <OverflowMenu
+            scale={scale}
+            menuVisible={modals.menu}
+            onToggle={modals.toggleMenu}
+            onSelectMode={state.handleSelectMode}
+            onOpenOnboarding={() => modals.open('onboarding')}
+            onOpenAddHabit={() => modals.open('addHabit')}
+            allRevealed={state.allRevealed}
+            onToggleReveal={state.handleToggleReveal}
+          />
+        </View>
+        <HabitsContentSection
+          state={state}
+          columns={columns}
+          gridGutter={gridGutter}
+          paginationProps={paginationProps}
         />
-      </View>
-      <HabitsContentSection
-        state={state}
-        columns={columns}
-        gridGutter={gridGutter}
-        paginationProps={paginationProps}
-      />
-      <EnergyFooter
-        showCTA={ui.showEnergyCTA}
-        showArchive={ui.showArchiveMessage}
-        mode={state.mode}
-        onOpen={() => modals.open('onboarding')}
-        onArchive={ui.archiveEnergyCTA}
-        onExitMode={() => state.setMode('normal')}
-      />
-      <HabitModals
-        modals={modals}
-        selectedHabit={state.selectedHabit}
-        habitStats={state.habitStats}
-        habits={habits}
-        actions={actions}
-        onAddHabit={state.handleAddHabit}
-      />
+        <EnergyFooter
+          showCTA={ui.showEnergyCTA}
+          showArchive={ui.showArchiveMessage}
+          mode={state.mode}
+          onOpen={() => modals.open('onboarding')}
+          onArchive={ui.archiveEnergyCTA}
+          onExitMode={() => state.setMode('normal')}
+        />
+        <HabitModals
+          modals={modals}
+          selectedHabit={state.selectedHabit}
+          habitStats={state.habitStats}
+          habits={habits}
+          actions={actions}
+          onAddHabit={state.handleAddHabit}
+        />
+      </ContentContainer>
     </SafeAreaView>
   );
 };

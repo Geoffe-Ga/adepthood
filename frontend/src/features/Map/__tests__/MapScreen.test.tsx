@@ -6,7 +6,15 @@ import { act, create } from 'react-test-renderer';
 
 import { ink, surface } from '../../../design/tokens';
 import styles from '../Map.styles';
-import { fittedTitleFontSize, MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
+import {
+  fitRightLabel,
+  fittedTitleFontSize,
+  MAP_ROWS,
+  RIGHT_LABEL_LINE_HEIGHT_RATIO,
+  RIGHT_LABEL_MAX_FONT_SIZE,
+  RIGHT_LABEL_MIN_FONT_SIZE,
+  STAGE_DISPLAY,
+} from '../mapLayout';
 import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
@@ -456,37 +464,71 @@ describe('MapScreen', () => {
     expect(tree.root.findByProps({ testID: 'you-are-here' })).toBeTruthy();
   });
 
-  // Right-column labels render as row.rightLabelLines joined by a newline in
-  // a single Text node (static hyphenation, not shrink-to-fit).
-  const findRightLabelNode = (
+  // Right-column labels now fit their own measured cell width, mirroring the
+  // EMPTINESS/UNITY FittedTitle idiom: a measured wrapper (`right-label-fit-*`)
+  // drives a `fitRightLabel` computation, rather than a static pre-hyphenated
+  // two-line Text.
+  const rightLabelFitTestId = (label: string): string => `right-label-fit-${label}`;
+
+  const fireRightLabelLayout = (
     tree: ReturnType<typeof create>,
-    row: (typeof MAP_ROWS)[number],
-  ): TestNode => {
-    const expectedChildren = row.rightLabelLines.join('\n');
-    const matches = tree.root.findAll((n: TestNode) => n.props.children === expectedChildren);
-    const node = matches[0];
-    if (!node) {
-      throw new Error(`no right-label Text found for ${row.rightLabel}`);
-    }
-    return node;
+    label: string,
+    width: number,
+  ): void => {
+    act(() => {
+      (
+        tree.root.findByProps({ testID: rightLabelFitTestId(label) }).props.onLayout as (
+          _e: unknown,
+        ) => void
+      )({ nativeEvent: { layout: { width, height: 20 } } });
+    });
   };
 
-  it('keeps all six Aspect labels present after the wave overlay renders', () => {
+  it('renders a fitted right-label wrapper for all six Aspect rows after the wave overlay renders', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
     for (const row of MAP_ROWS) {
-      expect(findRightLabelNode(tree, row)).toBeTruthy();
+      expect(tree.root.findByProps({ testID: rightLabelFitTestId(row.rightLabel) })).toBeTruthy();
     }
   });
 
-  it('renders each right-column Aspect label as a static two-line Text, no auto-fit', () => {
+  it('renders Understanding as one un-hyphenated line in a wide right cell', () => {
+    const WIDE_CELL = 180;
+    const tree = create(<MapScreen />);
+    fireRightLabelLayout(tree, 'Understanding', WIDE_CELL);
+    const node = tree.root.findByProps({ children: 'Understanding' });
+    expect(node.props.numberOfLines).toBe(1);
+    const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+    expect(flat.fontSize).toBe(RIGHT_LABEL_MAX_FONT_SIZE);
+  });
+
+  it('shrinks Awareness to a single fitted line with a reduced, ratio-consistent fontSize in a narrow right cell', () => {
+    const NARROW_CELL = 56;
+    const tree = create(<MapScreen />);
+    fireRightLabelLayout(tree, 'Awareness', NARROW_CELL);
+    const node = tree.root.findByProps({ children: 'Awareness' });
+    expect(node.props.numberOfLines).toBe(1);
+    const flat = StyleSheet.flatten(node.props.style) as {
+      fontSize?: number;
+      lineHeight?: number;
+    };
+    const expected = fitRightLabel('Awareness', ['Awareness'], NARROW_CELL);
+    expect(flat.fontSize).toBe(expected.fontSize);
+    expect(flat.fontSize).toBeLessThan(RIGHT_LABEL_MAX_FONT_SIZE);
+    expect(flat.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
+    expect(flat.lineHeight).toBeCloseTo((flat.fontSize as number) * RIGHT_LABEL_LINE_HEIGHT_RATIO);
+  });
+
+  it('always carries android_hyphenationFrequency="none" and textBreakStrategy="simple", unconditionally', () => {
+    // Before any right-label wrapper has reported a measured width, every row
+    // renders its full label as one line (fitRightLabel's width<=0 case) — a
+    // single stable target per row, independent of hyphenation strategy.
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
     for (const row of MAP_ROWS) {
-      const node = findRightLabelNode(tree, row);
-      expect(node.props.numberOfLines).toBe(2);
-      expect(node.props.adjustsFontSizeToFit).toBeUndefined();
-      expect(node.props.minimumFontScale).toBeUndefined();
+      const node = tree.root.findByProps({ children: row.rightLabel });
+      expect(node.props.android_hyphenationFrequency).toBe('none');
+      expect(node.props.textBreakStrategy).toBe('simple');
     }
   });
 
@@ -501,6 +543,11 @@ describe('MapScreen', () => {
   it('gives the right cell symmetric horizontal padding (no left-only padding)', () => {
     expect(styles.rightCell.paddingHorizontal).toBeTruthy();
     expect('paddingLeft' in styles.rightCell).toBe(false);
+  });
+
+  it('drops the hardcoded fontSize/lineHeight from the base rightLabelText style (both are now computed per-fit)', () => {
+    expect('fontSize' in styles.rightLabelText).toBe(false);
+    expect('lineHeight' in styles.rightLabelText).toBe(false);
   });
 
   it('renders the wave overlay independent of MAP_BACKGROUND_URI (MapBackdrop is a no-op)', () => {
@@ -900,5 +947,21 @@ describe('MapScreen soft grid lines', () => {
     for (const column of [0, 1]) {
       expect(topBorder(tree, `stage-hotspot-10-${column}`).borderTopWidth ?? 0).toBe(0);
     }
+  });
+});
+
+describe('MapScreen content-width cap', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('renders the map grid inside the shared content-capped container', () => {
+    const tree = create(<MapScreen />);
+    const container = tree.root.findByProps({ testID: 'content-container' });
+    expect(container.findByProps({ testID: 'map-grid' })).toBeTruthy();
   });
 });

@@ -2,6 +2,8 @@ import React from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
+import { ContentContainer } from './ContentContainer';
+
 import { rhythm, surface } from '@/design/tokens';
 
 interface ScreenScaffoldProps {
@@ -31,13 +33,13 @@ export const ScreenScaffold = ({
         contentContainerStyle={[styles.content, style]}
         testID={testID}
       >
-        {children}
+        <ContentContainer>{children}</ContentContainer>
       </ScrollView>
     );
   }
   return (
     <View style={[styles.ground, styles.content, style]} testID={testID}>
-      {children}
+      <ContentContainer>{children}</ContentContainer>
     </View>
   );
 };

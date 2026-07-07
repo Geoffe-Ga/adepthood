@@ -358,4 +358,18 @@ describe('HabitsScreen responsive layout', () => {
     expect(hasMenuItem).toBe(true);
     jest.useRealTimers();
   });
+
+  it('renders the habits list inside the shared content-capped container', async () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
+
+    const container = testRenderer.root.findByProps({ testID: 'content-container' });
+    expect(container.findByProps({ testID: 'habits-list' })).toBeTruthy();
+  });
 });
