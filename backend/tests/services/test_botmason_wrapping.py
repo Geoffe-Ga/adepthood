@@ -35,7 +35,6 @@ from services.botmason import (
     _build_anthropic_messages,
     _build_messages,
     _get_model,
-    _import_optional,
     _make_nonce,
     _wrap_user_input,
     generate_response,
@@ -518,11 +517,6 @@ class TestGenerateResponseExceptionContract:
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         with pytest.raises(LLMProviderError, match="LLM_API_KEY"):
             await generate_response("hi", [])
-
-    def test_import_optional_missing_sdk_raises_llm_provider_error(self) -> None:
-        """An uninstalled optional SDK normalizes to LLMProviderError, not a bare RuntimeError."""
-        with pytest.raises(LLMProviderError):
-            _import_optional("nonexistent_sdk_xyz_zzqq", "Test")
 
     def test_get_model_bad_model_raises_llm_provider_error(
         self, monkeypatch: pytest.MonkeyPatch

@@ -8,7 +8,6 @@ conversation history context for coherent multi-turn chat.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 import os
 import re
@@ -16,7 +15,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
+from typing import TYPE_CHECKING, cast
 
 import anthropic
 import httpx
@@ -25,6 +24,10 @@ import openai
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required
 from security import sanitize_user_text
+
+if TYPE_CHECKING:
+    from anthropic.types import MessageParam
+    from openai.types.chat import ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
 
@@ -665,23 +668,6 @@ def _stub_response(user_message: str) -> LLMResponse:
     )
 
 
-def _import_optional(module_name: str, provider_label: str) -> ModuleType:
-    """Import an optional SDK, raising LLMProviderError if not installed.
-
-    openai and anthropic are pinned production dependencies, so this guard is
-    defensive. The dynamically imported :class:`ModuleType` is the mypy-strict
-    seam for the provider clients — keep it rather than inlining typed SDK calls.
-    """
-    try:
-        return importlib.import_module(module_name)
-    except ImportError as exc:
-        msg = (
-            f"{module_name} package is required for the {provider_label} provider. "
-            f"Install it with: pip install {module_name}"
-        )
-        raise LLMProviderError(msg) from exc
-
-
 def _get_llm_api_key() -> str:
     """Return the server-side LLM API key, raising if unset or empty.
 
@@ -737,16 +723,14 @@ async def _call_openai(
     # disallowed model fails fast with zero provider side effects (#404).
     model = _get_model("openai")
     key = _resolve_api_key(api_key)
-    openai_mod = _import_optional("openai", "OpenAI")
-
-    client = openai_mod.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    client = openai.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     messages = _build_messages(user_message, conversation_history, system_prompt)
     max_tokens = _dynamic_max_tokens(conversation_history)
 
     async def _do_call() -> object:
         return await client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=cast("list[ChatCompletionMessageParam]", messages),
             max_tokens=max_tokens,
         )
 
@@ -771,9 +755,7 @@ async def _call_anthropic(
     # Model validation first — same zero-side-effect guarantee as OpenAI.
     model = _get_model("anthropic")
     key = _resolve_api_key(api_key)
-    anthropic_mod = _import_optional("anthropic", "Anthropic")
-
-    client = anthropic_mod.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    client = anthropic.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
     # Anthropic's API takes ``system`` as a separate kwarg from ``messages``,
     # so the builder returns a tuple — (wrapped messages, augmented system
     # prompt) — both threaded through the same per-request nonce.
@@ -789,7 +771,7 @@ async def _call_anthropic(
             model=model,
             max_tokens=max_tokens,
             system=augmented_system,
-            messages=messages_for_api,
+            messages=cast("list[MessageParam]", messages_for_api),
         )
 
     response = await _retry_on_transient(_do_call)
