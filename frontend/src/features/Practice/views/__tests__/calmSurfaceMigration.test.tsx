@@ -28,7 +28,7 @@ import MeditationTimerView from '@/features/Practice/views/MeditationTimerView';
 import { SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
 
 // ---------------------------------------------------------------------------
-// Helpers — verbatim from sessionSurfaceMigration.test.tsx
+// Local WCAG contrast + flattened-style helpers.
 // ---------------------------------------------------------------------------
 
 const AA_NORMAL = 4.5;
@@ -163,9 +163,8 @@ jest.mock('../../../../features/Map/services/stageService', () => ({
 
 // ---------------------------------------------------------------------------
 // Test A — mode view re-skins off umber (real wiring via PracticeScreen)
-// RED: ActiveRitualSession currently passes SHOWCASE_SURFACE to the provider,
-// so meditation-timer-view gets backgroundColor=showcase.canvas (#2a211a), not
-// surface.raised (#ffffff). Both assertions below fail today.
+// The live session used to render on an umber ground; it now re-skins onto
+// surface.raised / ink.primary, which these assertions pin.
 // ---------------------------------------------------------------------------
 
 describe('A: mode view re-skins off umber (real ActiveRitualSession wiring)', () => {
