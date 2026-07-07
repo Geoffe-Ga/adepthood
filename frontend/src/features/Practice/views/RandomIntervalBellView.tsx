@@ -5,6 +5,7 @@ import { StyleSheet, Text } from 'react-native';
 import { createExpoAudioAdapter } from '../engine/adapters/audio';
 import type {
   AudioAdapter,
+  IntervalBellTone,
   RandomIntervalBellConfig,
   RandomIntervalBellMetadata,
   RitualControls,
@@ -104,12 +105,13 @@ function useBoundaryBells(
   }, [status, config.start_bell, config.end_bell, audio]);
 }
 
-/** Strike the bell for every newly-passed scheduled offset. */
+/** Strike the configured-tone bell for every newly-passed scheduled offset. */
 function useIntervalBells(
   schedule: Schedule | null,
   struckCount: number,
   status: RitualState['status'],
   audio: AudioAdapter,
+  tone: IntervalBellTone,
 ): void {
   const playedRef = useRef(0);
   useEffect(() => {
@@ -118,10 +120,10 @@ function useIntervalBells(
       return;
     }
     for (let i = playedRef.current; i < struckCount; i++) {
-      audio.play('interval_bell');
+      audio.play('interval_bell', tone);
     }
     playedRef.current = struckCount;
-  }, [schedule, struckCount, status, audio]);
+  }, [schedule, struckCount, status, audio, tone]);
 }
 
 const RandomIntervalBellView = ({
@@ -143,7 +145,7 @@ const RandomIntervalBellView = ({
   }, [schedule, state.elapsedMs]);
 
   useBoundaryBells(config, state.status, adapter);
-  useIntervalBells(schedule, struckCount, state.status, adapter);
+  useIntervalBells(schedule, struckCount, state.status, adapter, config.bell_tone);
 
   useEffect(() => {
     if (onMetadataChange === undefined) return;

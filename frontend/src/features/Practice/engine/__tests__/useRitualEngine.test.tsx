@@ -6,6 +6,7 @@ import type {
   CueKind,
   EngineDeps,
   HapticsAdapter,
+  IntervalBellConfig,
   MeditationTimerConfig,
   ModeConfig,
   RepCounterConfig,
@@ -15,7 +16,7 @@ import { useRitualEngine } from '../useRitualEngine';
 
 const MIN = 60_000;
 
-type CueFn = (kind: CueKind) => void;
+type CueFn = (kind: CueKind, tone?: IntervalBellConfig['bell_tone']) => void;
 
 interface MockDeps extends Required<Omit<EngineDeps, 'startCardIndex'>> {
   audio: AudioAdapter & { play: jest.Mock<CueFn> };
@@ -80,6 +81,25 @@ describe('useRitualEngine', () => {
     act(() => jest.advanceTimersByTime(30_000));
     expect(result.current[0].status).toBe('complete');
     expect(deps.audio.play).toHaveBeenLastCalledWith('end_bell');
+  });
+
+  it('tags an interval_bell cue with its configured tone while boundary cues stay single-arg', () => {
+    const config: IntervalBellConfig = {
+      mode: 'interval_bell',
+      duration_minutes: 1,
+      interval_minutes: 1,
+      bell_tone: 'gong',
+    };
+    const deps = makeDeps();
+    const { result } = renderEngine(config, deps);
+
+    act(() => result.current[1].start());
+    expect(deps.audio.play).toHaveBeenNthCalledWith(1, 'start_bell');
+
+    act(() => jest.advanceTimersByTime(60_000));
+    expect(result.current[0].status).toBe('complete');
+    expect(deps.audio.play).toHaveBeenCalledWith('interval_bell', 'gong');
+    expect(deps.audio.play).not.toHaveBeenCalledWith('interval_bell');
   });
 
   it('pause/resume/cancel work and never emit a stray end_bell on cancel', () => {

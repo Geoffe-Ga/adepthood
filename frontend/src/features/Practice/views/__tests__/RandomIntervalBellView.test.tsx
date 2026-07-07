@@ -5,6 +5,7 @@ import React from 'react';
 import type {
   AudioAdapter,
   CueKind,
+  IntervalBellTone,
   RandomIntervalBellConfig,
   RandomIntervalBellMetadata,
   RitualState,
@@ -21,7 +22,7 @@ const baseConfig: RandomIntervalBellConfig = {
   bell_tone: 'bowl',
 };
 
-type PlayFn = (kind: CueKind) => void;
+type PlayFn = (kind: CueKind, tone?: IntervalBellTone) => void;
 
 function fakeAudio(): AudioAdapter & { play: jest.Mock<PlayFn>; dispose: jest.Mock<() => void> } {
   return { play: jest.fn<PlayFn>(), dispose: jest.fn<() => void>() };
@@ -98,15 +99,16 @@ describe('RandomIntervalBellView — rendering', () => {
 });
 
 describe('RandomIntervalBellView — bell scheduling', () => {
-  it('strikes a bell each time a scheduled offset is passed', () => {
-    const h = harness();
+  it('strikes a bell tagged with the configured tone each time a scheduled offset is passed', () => {
+    const h = harness({ config: { ...baseConfig, bell_tone: 'chime' } });
     const { element, rerender } = renderView(h);
     rerender(element(fakeState({ status: 'running', elapsedMs: 0 })));
-    expect(h.audio.play).not.toHaveBeenCalledWith('interval_bell');
+    expect(h.audio.play).not.toHaveBeenCalledWith('interval_bell', 'chime');
     rerender(element(fakeState({ status: 'running', elapsedMs: 16_000 })));
     rerender(element(fakeState({ status: 'running', elapsedMs: 31_000 })));
     const intervalPlays = h.audio.play.mock.calls.filter(([kind]) => kind === 'interval_bell');
     expect(intervalPlays).toHaveLength(2);
+    expect(intervalPlays.every(([, tone]) => tone === 'chime')).toBe(true);
   });
 
   it('emits metadata with one in-bounds gap per struck bell on completion', () => {
