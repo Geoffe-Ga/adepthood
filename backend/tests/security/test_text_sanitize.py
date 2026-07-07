@@ -43,6 +43,7 @@ WORD_JOINER = "\u2060"
 INVISIBLE_TIMES = "\u2062"
 INVISIBLE_PLUS = "\u2064"
 BOM = "\ufeff"
+COMBINING_ACUTE = "\u0301"  # combining acute accent
 
 # Unicode Tags block (U+E0000-U+E007F) -- invisible ASCII-smuggling channel.
 # Range bounds as named constants so the smuggling helper below carries no
@@ -261,6 +262,34 @@ class TestUnicodeNormalization:
         assert unicodedata.is_normalized("NFC", result)
         assert "́" not in result
         assert "̈" not in result
+
+    def test_zwj_interrupted_combining_sequence_composes_to_nfc(self) -> None:
+        """A ZWJ between base and combining mark must not block NFC composition.
+
+        Input is "e" + ZWJ + combining acute.  ZWJ has to be stripped before
+        NFC normalization runs, otherwise the joiner blocks composition and
+        the result stays as the two-codepoint decomposed form instead of the
+        single precomposed "e" with an acute accent.
+        """
+        raw = "e" + ZWJ + COMBINING_ACUTE
+        expected = unicodedata.normalize("NFC", "e" + COMBINING_ACUTE)
+        result = sanitize_user_text(raw)
+        assert result == expected
+        assert len(result) == 1
+        assert unicodedata.is_normalized("NFC", result)
+
+    def test_zwj_interrupted_combining_sequence_idempotent(self) -> None:
+        """Sanitizing the ZWJ-interrupted combining sequence twice is stable."""
+        raw = "e" + ZWJ + COMBINING_ACUTE
+        once = sanitize_user_text(raw)
+        twice = sanitize_user_text(once)
+        assert once == twice
+
+    def test_zwj_interrupted_combining_sequence_output_is_nfc(self) -> None:
+        """The sanitized output of the ZWJ-interrupted sequence is itself NFC."""
+        raw = "e" + ZWJ + COMBINING_ACUTE
+        result = sanitize_user_text(raw)
+        assert result == unicodedata.normalize("NFC", result)
 
 
 class TestWhitespaceHandling:
