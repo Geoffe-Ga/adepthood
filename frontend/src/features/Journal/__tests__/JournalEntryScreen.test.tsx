@@ -115,6 +115,42 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('does not silently discard a typed title in weekly-prompt compose mode', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        {
+          weekNumber: 3,
+          promptQuestion: 'What did you notice?',
+          prefillTitle: 'Week 3 Reflection',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      expect(getByTestId('journal-title-input').props.editable).toBe(false);
+      fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.');
+      expect(mockCreate).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps the title editable for a plain journal entry', () => {
+    const { getByTestId } = renderScreen();
+    expect(getByTestId('journal-title-input').props.editable).not.toBe(false);
+  });
+
+  it('keeps the title editable for a practice-session entry', () => {
+    const { getByTestId } = renderScreen({
+      practiceSessionId: 55,
+      prefillTitle: 'After Forest grounding',
+    });
+    expect(getByTestId('journal-title-input').props.editable).not.toBe(false);
+  });
+
   it('pre-links a practice session on the created entry', async () => {
     jest.useFakeTimers();
     try {
