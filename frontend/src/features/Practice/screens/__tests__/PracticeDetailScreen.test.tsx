@@ -179,6 +179,21 @@ describe('PracticeDetailScreen — Use for stage', () => {
     expect(nav.popToTop).toHaveBeenCalledTimes(1);
   });
 
+  it('does not render a write-only success banner on assign success', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
+    await waitForLoad();
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+      await flushPromises();
+    });
+    expect(view.queryByTestId('practice-detail-assigned-banner')).toBeNull();
+    expect(nav.popToTop).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
+  });
+
   it('opens the share sheet from the Share action', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     const { view } = renderScreen();

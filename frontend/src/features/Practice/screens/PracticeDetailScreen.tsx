@@ -44,7 +44,6 @@ interface ScreenState {
   assigning: boolean;
   loading: boolean;
   pickerOpen: boolean;
-  assignedStage: number | null;
 }
 
 function initialState(actionError: string | null): ScreenState {
@@ -55,7 +54,6 @@ function initialState(actionError: string | null): ScreenState {
     assigning: false,
     loading: true,
     pickerOpen: false,
-    assignedStage: null,
   };
 }
 
@@ -85,11 +83,6 @@ function LoadedDetail({
         <Text style={styles.errorText} testID="practice-detail-action-error">
           {state.actionError}
         </Text>
-      )}
-      {state.assignedStage !== null && (
-        <View style={styles.banner} testID="practice-detail-assigned-banner">
-          <Text style={styles.bannerText}>Set as your stage {state.assignedStage} practice.</Text>
-        </View>
       )}
       <ActionRow
         practice={practice}
@@ -152,19 +145,11 @@ interface PracticeDetailHook {
   assigning: boolean;
   loading: boolean;
   pickerOpen: boolean;
-  assignedStage: number | null;
   reload: () => void;
   openPicker: () => void;
   closePicker: () => void;
   assign: (stageNumber: number) => Promise<void>;
 }
-
-const withAssignSuccess = (prev: ScreenState, stageNumber: number): ScreenState => ({
-  ...prev,
-  assigning: false,
-  pickerOpen: false,
-  assignedStage: stageNumber,
-});
 
 const withAssignError = (prev: ScreenState, err: unknown): ScreenState => ({
   ...prev,
@@ -212,7 +197,7 @@ function usePracticeDetail(
       setState((prev) => ({ ...prev, assigning: true, actionError: null }));
       try {
         await userPractices.create({ practice_id: practiceId, stage_number: stageNumber });
-        setState((prev) => withAssignSuccess(prev, stageNumber));
+        setState((prev) => ({ ...prev, assigning: false, pickerOpen: false }));
         // The callback returns the user to the Practice screen after assigning.
         onAssigned?.();
       } catch (err) {
@@ -594,13 +579,6 @@ const styles = StyleSheet.create({
   stageBoxText: { color: ink.primary, fontWeight: '700' },
   pickerCancel: { marginTop: SPACING.sm, alignSelf: 'flex-end' },
   pickerCancelText: { color: accent.primary, fontWeight: '600', fontSize: 13 },
-  banner: {
-    backgroundColor: surface.sunken,
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    marginBottom: SPACING.sm,
-  },
-  bannerText: { color: colors.successText, fontSize: 13, fontWeight: '600' },
   errorBlock: {
     flex: 1,
     padding: SPACING.lg,
