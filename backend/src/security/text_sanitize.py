@@ -117,7 +117,11 @@ def sanitize_user_text(
     4. Strip leading and trailing whitespace.  This happens **after** the
        control-char strip so a string like ``"  \x00  hello  "`` becomes
        ``"hello"`` rather than ``" hello "``.
-    5. Enforce the length cap.
+    5. Re-normalize to NFC.  Stripping a zero-width joiner that sat between a
+       base character and a combining mark can leave the result decomposed, so
+       a second normalize restores canonical form and keeps the helper
+       idempotent.
+    6. Enforce the length cap.
 
     The helper is pure (no side effects) and idempotent — applying it twice
     is the same as applying it once, which lets routers and services both
@@ -127,8 +131,9 @@ def sanitize_user_text(
         TypeError: if ``text`` is not a ``str``.  The fail-fast TypeError keeps
             ``None`` and other non-strings from being silently coerced.
         TextTooLongError: when the *sanitized* length exceeds ``max_len``.
-            Length is measured after stripping so a payload that fits inside
-            the cap purely because of stripped padding is still accepted.
+            Length is measured on the final normalized output, after stripping,
+            so a payload that fits inside the cap purely because of stripped
+            padding is still accepted.
     """
     if not isinstance(text, str):
         msg = f"sanitize_user_text expected str, got {type(text).__name__}"
@@ -137,6 +142,7 @@ def sanitize_user_text(
     cleaned = _CONTROL_CHARS.sub("", cleaned)
     cleaned = _ZERO_WIDTH.sub("", cleaned)
     cleaned = cleaned.strip()
+    cleaned = unicodedata.normalize("NFC", cleaned)
     if len(cleaned) > max_len:
         msg = f"text exceeds {max_len} chars after sanitization"
         raise TextTooLongError(msg)
