@@ -58,10 +58,9 @@ const WAVE_AMPLITUDE = 0.32;
  */
 const APEX_AMPLITUDE = 0.02;
 
-/** Pole encoding: even stages return left, odd stages point right, apex neutral. */
+/** Horizontal direction multipliers: even stages return left, odd stages point right. */
 const POLE_LEFT = -1;
 const POLE_RIGHT = 1;
-const POLE_NEUTRAL = 0;
 
 /** Half-width of the arrowhead triangle base, in pixels. */
 const ARROWHEAD_HALF_WIDTH = 6;
@@ -95,14 +94,12 @@ const STAGE_COLORS: readonly StageColor[] = Object.entries(STAGE_DISPLAY)
   }))
   .sort((a, b) => a.stageNumber - b.stageNumber);
 
-/** A single stage's anchor point on the wave, plus which pole it swings to. */
+/** A single stage's anchor point on the wave. */
 export interface WavePoint {
   /** Horizontal position in unit space [0,1]. */
   x: number;
   /** Vertical position in unit space [0,1]; smaller means higher up. */
   y: number;
-  /** -1 left pole (even), +1 right pole (odd), 0 at the converged apex. */
-  pole: -1 | 0 | 1;
 }
 
 /**
@@ -113,12 +110,6 @@ export interface WavePoint {
 const amplitudeFor = (stageNumber: number): number =>
   APEX_AMPLITUDE +
   ((WAVE_AMPLITUDE - APEX_AMPLITUDE) * (STAGE_COUNT - stageNumber)) / (STAGE_COUNT - 1);
-
-/** The pole a stage swings toward: left for even, right for odd, neutral at apex. */
-const poleFor = (stageNumber: number): -1 | 0 | 1 => {
-  if (stageNumber === STAGE_COUNT) return POLE_NEUTRAL;
-  return isLeftReturning(stageNumber) ? POLE_LEFT : POLE_RIGHT;
-};
 
 /**
  * Measured vertical centers keyed by stage number, in unit space [0,1]. May be
@@ -161,15 +152,15 @@ const resolveAnchorY = (stageNumber: number, anchors: StageAnchors): number =>
  * the stage's amplitude toward its pole, tapering smoothly toward center at the
  * top.
  *
- * The apex (stage 10) reports a neutral pole but its x still uses the left/right
- * rule, so it lands a hair off dead-center (by APEX_AMPLITUDE) rather than
- * degenerating into a vertical stub. This apparent mismatch is deliberate.
+ * The apex (stage 10) still uses the left/right rule, so it lands a hair
+ * off dead-center (by APEX_AMPLITUDE) rather than degenerating into a vertical
+ * stub. This is deliberate.
  */
 export const stageWavePoint = (stageNumber: number, anchors: StageAnchors = {}): WavePoint => {
   const y = resolveAnchorY(stageNumber, anchors);
   const direction = isLeftReturning(stageNumber) ? POLE_LEFT : POLE_RIGHT;
   const x = CENTER_X + amplitudeFor(stageNumber) * direction;
-  return { x, y, pole: poleFor(stageNumber) };
+  return { x, y };
 };
 
 /** Which centerline-split piece of a stage pair's cubic a segment carries. */

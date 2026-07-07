@@ -172,15 +172,6 @@ export const magnifierTransform = (
   magnification: MAGNIFICATION,
 });
 
-/** The magnified content's translation for a given lens center. */
-export const contentOffset = (
-  center: LensCenter,
-  transform: MagnifierTransform,
-): { tx: number; ty: number } => ({
-  tx: transform.kx - transform.magnification * center.x,
-  ty: transform.ky - transform.magnification * center.y,
-});
-
 /**
  * Glide duration scaled to travel distance, clamped so short hops still read
  * as motion and long journeys still settle promptly. Pairs with an
