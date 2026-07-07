@@ -423,6 +423,17 @@ export const journalLayout = {
 } as const;
 
 /**
+ * Shared reading-measure cap for full-width app screens. Derived from the
+ * journal page's writing column plus its margin-notes gutter so every scaffolded
+ * surface settles on the same comfortable measure on tablets and wide web,
+ * instead of stretching content edge-to-edge. Kept as a derivation (not a bare
+ * literal) so the cap tracks the journal metrics it is anchored to.
+ */
+export const contentLayout = {
+  maxWidth: journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
+} as const;
+
+/**
  * Warm, long-form serif typography for the journal surface. Uses the platform
  * serif stack (no bundled font asset): Georgia on iOS, the system ``serif``
  * family on Android, and a CSS-style stack on web. Line-heights are generous

@@ -29,11 +29,6 @@ const CENTER_FLEX = GRID_COLUMN_FLEX.center;
 const RIGHT_FLEX = GRID_COLUMN_FLEX.right;
 const CENTER = 'center';
 
-// Line height for the right-column aspect label, tuned to its fontSize 15 so
-// the up-to-two hyphenated lines stay compact and centered without pushing
-// neighboring rows.
-const RIGHT_LABEL_LINE_HEIGHT = 19;
-
 // --- Soft grid rules -------------------------------------------------------
 // The Map is a table, and a table reads as one through its rules: gentle
 // horizontal lines between the aspect bands (and the stacked stages within
@@ -131,13 +126,12 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Right-column aspect label: fixed serif size rendered on up to two
-  // pre-hyphenated lines, its line height kept compact so a two-line label
-  // stays vertically centered without pushing neighboring rows.
+  // Right-column aspect label: serif face and ink only. Font size and line
+  // height are computed per-fit at render time (fitRightLabel + the shared
+  // line-height ratio), so a long word shrinks to one line rather than being
+  // pinned to a fixed size.
   rightLabelText: {
     fontFamily: editorialType.serif,
-    fontSize: 15,
-    lineHeight: RIGHT_LABEL_LINE_HEIGHT,
     color: ink.primary,
   },
 

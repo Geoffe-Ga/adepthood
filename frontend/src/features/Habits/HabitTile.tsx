@@ -186,7 +186,7 @@ const habitGridChrome = (scale: number, gridGutter: number): number =>
   2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
 
 export const useTileLayout = () => {
-  const { width, height, columns, scale, gridGutter } = useResponsive();
+  const { contentWidth, height, columns, scale, gridGutter } = useResponsive();
   const insets = useSafeAreaInsets();
   const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
@@ -195,7 +195,10 @@ export const useTileLayout = () => {
   const rowPitch = availableHeight / rows;
   // Floor to whole pixels so the reserved stack never rounds above the viewport.
   const tileMinHeight = Math.max(touchTarget.minimum, Math.floor(rowPitch - gridGutter));
-  const tileWidth = width / columns;
+  // Size tiles off the content-capped width so a wide viewport lays them out at
+  // the same measure the shared ContentContainer renders the grid at, rather
+  // than off the raw (uncapped) window width.
+  const tileWidth = contentWidth / columns;
   const iconInline = columns === 1 || tileWidth < 400;
   return { columns, scale, gridGutter, tileMinHeight, iconInline };
 };

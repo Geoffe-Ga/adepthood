@@ -37,6 +37,7 @@ import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { ContentContainer } from '@/components/layout/ContentContainer';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -117,18 +118,20 @@ const PracticeScreen = (): React.JSX.Element => {
   }
   if (active.activeUserPractice && active.practice && active.effectiveConfig) {
     return (
-      <ActiveSessionView
-        userPractice={active.activeUserPractice}
-        practiceName={active.practice.name}
-        effectiveName={active.effectiveName}
-        effectiveConfig={active.effectiveConfig}
-        userTimezone={userTimezone}
-        weekly={weekly}
-        onUserPracticeUpdated={active.updateActivePractice}
-        onWriteReflection={handleWriteReflection}
-        banner={banner}
-        stageNumber={stageNumber}
-      />
+      <ContentContainer>
+        <ActiveSessionView
+          userPractice={active.activeUserPractice}
+          practiceName={active.practice.name}
+          effectiveName={active.effectiveName}
+          effectiveConfig={active.effectiveConfig}
+          userTimezone={userTimezone}
+          weekly={weekly}
+          onUserPracticeUpdated={active.updateActivePractice}
+          onWriteReflection={handleWriteReflection}
+          banner={banner}
+          stageNumber={stageNumber}
+        />
+      </ContentContainer>
     );
   }
 
@@ -215,8 +218,8 @@ const ActiveSessionView = ({
   const insets = useSafeAreaInsets();
   return (
     // paddingTop lives on the wrapper so the ScrollView's *viewport* starts
-    // below the notch (content can't scroll up behind it); paddingBottom rides
-    // contentContainerStyle so the scroll content clears the home indicator.
+    // below the notch (content can't scroll up behind it); paddingBottom
+    // rides contentContainerStyle so the scroll content clears the home indicator.
     <View style={[styles.screen, { paddingTop: insets.top }]} testID="practice-screen-safe-area">
       <ScrollView
         style={styles.fill}
@@ -260,20 +263,22 @@ interface EmptyStateViewProps {
 const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <EmptyState
-      glyph="🧘"
-      title="No practice yet"
-      body="No practice set for this stage yet."
-      cta={
-        <CatalogButton
-          stageNumber={stageNumber}
-          label="Browse practices"
-          testID="browse-catalog-button"
-        />
-      }
-      style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-      testID="practice-empty-state"
-    />
+    <ContentContainer>
+      <EmptyState
+        glyph="🧘"
+        title="No practice yet"
+        body="No practice set for this stage yet."
+        cta={
+          <CatalogButton
+            stageNumber={stageNumber}
+            label="Browse practices"
+            testID="browse-catalog-button"
+          />
+        }
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+        testID="practice-empty-state"
+      />
+    </ContentContainer>
   );
 };
 

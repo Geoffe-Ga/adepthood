@@ -157,7 +157,7 @@ jest.mock('expo-haptics', () => ({
 }));
 
 // eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
+const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const PracticeScreen = require('../PracticeScreen').default;
 
 interface ModeFixture {
@@ -752,5 +752,22 @@ describe('PracticeScreen', () => {
       expect(getByText(/9 of \d+/)).toBeTruthy();
     });
     expect(mockWeekCount).toHaveBeenCalled();
+  });
+
+  it('wraps the empty state in the shared content-capped container', async () => {
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    const container = getByTestId('content-container');
+    expect(within(container).getByTestId('practice-empty-state')).toBeTruthy();
+  });
+
+  it('wraps the active session view in the shared content-capped container', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    const container = getByTestId('content-container');
+    expect(within(container).getByTestId('practice-screen')).toBeTruthy();
   });
 });

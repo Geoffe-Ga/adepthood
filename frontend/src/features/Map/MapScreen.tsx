@@ -47,9 +47,11 @@ import {
 import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
 import {
+  fitRightLabel,
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
+  RIGHT_LABEL_LINE_HEIGHT_RATIO,
   STAGE_DISPLAY,
   TITLE_BY_STAGE,
 } from './mapLayout';
@@ -61,6 +63,7 @@ import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 import { Button } from '@/components/Button';
 import { Celebration } from '@/components/feedback/Celebration';
+import { ContentContainer } from '@/components/layout/ContentContainer';
 import { colors } from '@/design/tokens';
 
 /** Lookup of stage number → StageData for resolving row/arrow content. */
@@ -208,6 +211,37 @@ const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
       >
         {title}
       </Text>
+    </View>
+  );
+};
+
+/**
+ * Right-column aspect label sized to its measured cell width, mirroring the
+ * ``FittedTitle`` idiom. The full word is preferred on one un-hyphenated line,
+ * shrinking to fit; only a word too long for the floor size falls back to the
+ * row's pre-hyphenated lines. The Android break props are unconditional (no-ops
+ * on iOS/web) so the platform never inserts its own mid-word break.
+ */
+const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
+  const { lines, fontSize } = fitRightLabel(row.rightLabel, row.rightLabelLines, width);
+  const lineHeight = fontSize * RIGHT_LABEL_LINE_HEIGHT_RATIO;
+  return (
+    <View
+      testID={`right-label-fit-${row.rightLabel}`}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      {lines.map((line) => (
+        <Text
+          key={line}
+          style={[styles.rightLabelText, { fontSize, lineHeight }]}
+          numberOfLines={1}
+          android_hyphenationFrequency="none"
+          textBreakStrategy="simple"
+        >
+          {line}
+        </Text>
+      ))}
     </View>
   );
 };
@@ -394,9 +428,7 @@ const MapRowView = ({
         onCellLayout={onCellLayout}
       />
       <View style={styles.rightCell}>
-        <Text style={styles.rightLabelText} numberOfLines={2}>
-          {row.rightLabelLines.join('\n')}
-        </Text>
+        <FittedRightLabel row={row} />
       </View>
     </View>
   );
@@ -1075,31 +1107,34 @@ interface MapContentProps {
 /** The rendered Map: spiral grid + magnifier lens + banners + stage modal. */
 const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
+    {/* The parchment backdrop stays full-bleed; only the spiral content caps. */}
     <MapBackdrop />
-    <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
-    <MapGrid
-      lookup={props.lookup}
-      fullnessByStage={props.fullnessByStage}
-      currentStage={props.currentStage}
-      focusedStage={props.focusedStage}
-      onSelectStage={props.onSelectStage}
-      onSettleStage={props.onSettleStage}
-      onOpenStage={props.onOpenStage}
-    />
-    {props.showBeginAgain && (
-      <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
-    )}
-    {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
-    <CelebrationBanner
-      active={props.celebration.active}
-      message={props.celebration.message}
-      onDismiss={props.celebration.dismiss}
-    />
-    <StageDetailModal
-      activeStage={props.activeStage}
-      onClose={props.onCloseModal}
-      onNavigate={props.onNavigate}
-    />
+    <ContentContainer>
+      <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
+      <MapGrid
+        lookup={props.lookup}
+        fullnessByStage={props.fullnessByStage}
+        currentStage={props.currentStage}
+        focusedStage={props.focusedStage}
+        onSelectStage={props.onSelectStage}
+        onSettleStage={props.onSettleStage}
+        onOpenStage={props.onOpenStage}
+      />
+      {props.showBeginAgain && (
+        <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
+      )}
+      {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
+      <CelebrationBanner
+        active={props.celebration.active}
+        message={props.celebration.message}
+        onDismiss={props.celebration.dismiss}
+      />
+      <StageDetailModal
+        activeStage={props.activeStage}
+        onClose={props.onCloseModal}
+        onNavigate={props.onNavigate}
+      />
+    </ContentContainer>
   </View>
 );
 

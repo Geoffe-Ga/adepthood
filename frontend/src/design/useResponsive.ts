@@ -1,6 +1,6 @@
 import { useWindowDimensions } from 'react-native';
 
-import { breakpoints, spacing } from './tokens';
+import { breakpoints, contentLayout, spacing } from './tokens';
 
 const SCALE_XS = 0.85;
 const SCALE_SM = 0.9;
@@ -43,6 +43,10 @@ export const useResponsive = () => {
 
   return {
     width,
+    // Raw width clamped to the shared content cap, so callers can size layout
+    // off the same measure the ContentContainer renders content at on wide
+    // viewports. Callers needing the true viewport still read ``width``.
+    contentWidth: Math.min(width, contentLayout.maxWidth),
     height,
     isXS: breakpointKey === 'xs',
     isSM: breakpointKey === 'sm',
