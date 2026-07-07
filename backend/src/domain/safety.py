@@ -39,7 +39,14 @@ when a negator (e.g. "never", "not", "no plans to", "don't") appears in the
 window of :data:`_NEGATION_WINDOW_WORDS` whitespace tokens strictly *before* the
 match, within the same clause (the window is clipped at the last ``.``, ``!``,
 ``?``, ``;``, or ``,``, so a negator in an earlier clause cannot suppress genuine
-intent in a later one). Logical negators ("never", "not", "don't", …) are counted
+intent in a later one). The same-clause window is also bounded by the
+coordinating conjunctions ``and``/``but``, so a negator governing a coordinated
+sibling clause ("I would not survive this AND I want to die") cannot suppress
+genuine intent in the following clause. ``or``/``nor`` are deliberately excluded:
+negative-polarity coordination shares one negator across "or"/"nor" conjuncts
+("I would never kill myself or hurt myself" is a single denial), so clipping
+there would un-suppress the second conjunct into a false positive. Logical
+negators ("never", "not", "don't", …) are counted
 by parity: an odd count negates, an even count (including zero) does not, so
 double negation ("I can't say I don't want to die") still flags. Temporal
 negators ("used to", "no longer") negate only when they directly abut the match,
@@ -182,17 +189,30 @@ _LOGICAL_NEGATORS = re.compile(
 # the very end of the window rather than counted anywhere in it.
 _TEMPORAL_NEGATOR = re.compile(r"\b(?:no longer|used to)\s*$", re.IGNORECASE)
 
+# Coordinating conjunctions that bound a clause the same way punctuation does.
+# Word-boundary anchored so "band"/"butter" never clip. Deliberately only "and"
+# and "but": English negative-polarity coordination shares one negator across
+# "or"/"nor" conjuncts ("I would never kill myself or hurt myself" is a single
+# denial), so clipping at "or"/"nor" would un-suppress the second conjunct and
+# manufacture a false positive on a genuine denial.
+_COORDINATING_CONJUNCTIONS = r"\b(?:and|but)\b"
+
 # Clause boundaries clip the preceding window. Commas count: a negator in an
 # earlier clause must not suppress genuine intent in a later one, so a mixed
 # statement ("I would never hurt myself, but I want to kill him") still flags.
-_CLAUSE_BOUNDARY = re.compile(r"[.!?;,]")
+# Coordinating conjunctions "and"/"but" also clip, so a negator governing a
+# coordinated sibling clause ("I would not survive this and I want to die")
+# cannot suppress genuine intent in the following clause. "or"/"nor" are
+# deliberately excluded (see _COORDINATING_CONJUNCTIONS).
+_CLAUSE_BOUNDARY = re.compile(rf"[.!?;,]|{_COORDINATING_CONJUNCTIONS}", re.IGNORECASE)
 
 
 def _tail_window(prefix: str) -> str:
     """Return the last :data:`_NEGATION_WINDOW_WORDS` tokens of ``prefix``.
 
     ``prefix`` is first clipped to the current clause — only the text after the
-    last clause-boundary character (``.``, ``!``, ``?``, ``;``, ``,``) is kept.
+    last clause-boundary character (``.``, ``!``, ``?``, ``;``, ``,``) or
+    coordinating conjunction (``and``/``but``) is kept.
     """
     boundaries = list(_CLAUSE_BOUNDARY.finditer(prefix))
     if boundaries:
