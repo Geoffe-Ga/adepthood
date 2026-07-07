@@ -146,7 +146,8 @@ async def _content_item_is_locked(
 ) -> bool:
     """Whether ``item`` is drip-locked for the user under the proportional model."""
     day = await _day_in_stage_for_user(session, user_id, stage.stage_number)
-    assert stage.id is not None
+    if stage.id is None:
+        raise RuntimeError("CourseStage from database must have an id")
     total = await _stage_content_count(session, stage.id)
     unlocked = unlocked_chapter_count(
         total=total,
