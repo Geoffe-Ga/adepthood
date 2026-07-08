@@ -22,6 +22,7 @@ Editing happens in the content repo; see ``docs/content.md``.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -51,18 +52,47 @@ async def _load_stage_map(session: AsyncSession) -> dict[int, int]:
     return {s.stage_number: s.id for s in result.scalars().all() if s.id is not None}
 
 
-async def _load_existing_keys(
-    session: AsyncSession,
-) -> dict[tuple[int, str], StageContent]:
-    """Index existing ``StageContent`` rows by ``(course_stage_id, title)``.
+@dataclass
+class _ExistingRows:
+    """Two-tier lookup over existing ``StageContent`` for reconciliation.
 
-    Title is the natural key today (no slug column).  Using a dict — not a
-    set — lets us update fields on a row whose reference has drifted from
-    the manifest (e.g. a chapter id renamed upstream) without
-    re-inserting.
+    A chapter's stable identity is its ``content://<id>`` reference (the
+    ``url`` column), so a manifest title edit must still land on the same
+    row.  ``by_url`` is therefore the primary index; ``by_title`` is a
+    fallback that heals legacy rows whose ``url`` drifted from the manifest
+    while their title held steady.  Rows are popped from both indexes when
+    claimed so one DB row can never satisfy two manifest records.
+    """
+
+    by_url: dict[tuple[int, str], StageContent]
+    by_title: dict[tuple[int, str], StageContent]
+
+    def claim(self, course_stage_id: int, record: ChapterRecord) -> StageContent | None:
+        """Find and remove the prior row for ``record``: url first, title fallback."""
+        prior = self.by_url.get((course_stage_id, record.url))
+        if prior is None:
+            prior = self.by_title.get((course_stage_id, record.title))
+        if prior is not None:
+            self.by_url.pop((course_stage_id, prior.url), None)
+            self.by_title.pop((course_stage_id, prior.title), None)
+        return prior
+
+
+async def _load_existing_keys(session: AsyncSession) -> _ExistingRows:
+    """Index existing ``StageContent`` rows for id-keyed reconciliation.
+
+    The ``content://<id>`` reference (``url``) is the stable identity, so
+    rows are indexed primarily by ``(course_stage_id, url)`` — a title edit
+    on that stable ref updates in place instead of duplicating.  A
+    secondary ``(course_stage_id, title)`` index is a fallback that keeps
+    healing legacy rows whose ``url`` drifted from the manifest.
     """
     result = await session.execute(select(StageContent))
-    return {(sc.course_stage_id, sc.title): sc for sc in result.scalars().all()}
+    rows = list(result.scalars().all())
+    return _ExistingRows(
+        by_url={(sc.course_stage_id, sc.url): sc for sc in rows},
+        by_title={(sc.course_stage_id, sc.title): sc for sc in rows},
+    )
 
 
 def _build_new_row(record: ChapterRecord, course_stage_id: int) -> StageContent:
@@ -79,7 +109,8 @@ def _build_new_row(record: ChapterRecord, course_stage_id: int) -> StageContent:
 def _row_is_in_sync(existing: StageContent, record: ChapterRecord) -> bool:
     """Whether the DB row already matches the config for this chapter."""
     return (
-        existing.content_type == record.content_type
+        existing.title == record.title
+        and existing.content_type == record.content_type
         and existing.release_day == record.release_day
         and existing.url == record.url
     )
@@ -87,6 +118,7 @@ def _row_is_in_sync(existing: StageContent, record: ChapterRecord) -> bool:
 
 def _update_row(existing: StageContent, record: ChapterRecord) -> None:
     """Mutate ``existing`` in place to match ``record``."""
+    existing.title = record.title
     existing.content_type = record.content_type
     existing.release_day = record.release_day
     existing.url = record.url
@@ -96,7 +128,7 @@ def _reconcile_one(
     session: AsyncSession,
     record: ChapterRecord,
     stage_map: dict[int, int],
-    existing: dict[tuple[int, str], StageContent],
+    existing: _ExistingRows,
 ) -> tuple[bool, bool]:
     """Insert or update a single record.
 
@@ -106,7 +138,7 @@ def _reconcile_one(
     course_stage_id = stage_map.get(record.stage_number)
     if course_stage_id is None:
         return False, False
-    prior = existing.get((course_stage_id, record.title))
+    prior = existing.claim(course_stage_id, record)
     if prior is None:
         session.add(_build_new_row(record, course_stage_id))
         return True, True
@@ -131,7 +163,7 @@ def _warn_unmapped_manifest_stages(stage_map: dict[int, int]) -> None:
 def _reconcile_all(
     session: AsyncSession,
     stage_map: dict[int, int],
-    existing: dict[tuple[int, str], StageContent],
+    existing: _ExistingRows,
 ) -> tuple[int, bool]:
     """Reconcile every desired record; return ``(inserted_count, dirty)``."""
     inserted = 0

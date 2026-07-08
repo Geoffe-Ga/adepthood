@@ -393,6 +393,38 @@ async def test_seed_content_reconciles_ref_drift(
 
 
 @pytest.mark.asyncio
+async def test_seed_content_reconciles_title_drift(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A title edit on a stable content ref updates the row in place, not duplicated."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=4)
+    await seed_content(db_session)
+
+    result = await db_session.execute(select(StageContent).where(StageContent.title == "Survival"))
+    row = result.scalars().one()
+    assert row.id is not None
+    assert row.url == content_ref("beige-1")
+    original_id = row.id
+
+    moved = json.loads(json.dumps(_MANIFEST))
+    moved["chapters"][0]["title"] = "Survival (revised)"
+    install_manifest(moved)
+
+    inserted = await seed_content(db_session)
+    assert inserted == 0
+
+    result = await db_session.execute(
+        select(StageContent).where(StageContent.url == content_ref("beige-1"))
+    )
+    survivors = result.scalars().all()
+    assert len(survivors) == 1
+    assert survivors[0].title == "Survival (revised)"
+    assert survivors[0].id == original_id
+
+
+@pytest.mark.asyncio
 async def test_read_completions_survive_content_resync(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],
