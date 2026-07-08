@@ -111,6 +111,10 @@ _NEGATED_DENIALS = [
     f"I don{_CURLY}t want to die",
     "I would never say I no longer want to be alive",
     "I don't wish I wasn't here",
+    # per-clause negators: proves the fix scopes negation rather than disabling it
+    "I would never hurt myself and I would never kill him",
+    # or-exclusion pin: "or" must stay outside the clip list
+    "I would never kill myself or hurt myself",
 ]
 
 
@@ -138,6 +142,24 @@ def test_negated_denials_do_not_flag(text: str) -> None:
         (f"I wish I wasn{_CURLY}t here", DistressCategory.SUICIDAL_INTENT),
         ("Now more than I used to I want to die", DistressCategory.SUICIDAL_INTENT),
         ("I am not okay and lonely and I want to die", DistressCategory.SUICIDAL_INTENT),
+        # unrelated negator across "and" must not suppress the later clause
+        (
+            "I never thought I would not survive this and I want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        # unrelated negator across "but" must not suppress the later clause
+        ("I would not survive this but I want to die", DistressCategory.SUICIDAL_INTENT),
+        # and-control: same shape without a negator collision, must keep flagging
+        (
+            "I could not sleep last night and I want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        # comma-control: clause boundary already clips the window, must keep flagging
+        ("I could not sleep last night, I want to die", DistressCategory.SUICIDAL_INTENT),
+        # accepted tradeoff: a shared negator distributed across "and" (rare De Morgan
+        # phrasing) flags, the safe direction for a crisis screen (surface support over
+        # miss intent); pinned so the behavior is a deliberate decision, not a silent gap
+        ("I would never kill myself and hurt myself", DistressCategory.SELF_HARM),
     ],
 )
 def test_negation_does_not_suppress_genuine_signals(text: str, category: DistressCategory) -> None:
