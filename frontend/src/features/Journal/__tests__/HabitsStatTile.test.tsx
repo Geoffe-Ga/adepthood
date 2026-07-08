@@ -19,19 +19,10 @@ jest.mock('@/features/Habits/services/habitManager', () => ({
   },
 }));
 
-const mockLoadStages = jest.fn();
-jest.mock('@/features/Map/services/stageService', () => ({
-  stageService: {
-    loadStages: (...args: unknown[]) => mockLoadStages(...args),
-  },
-}));
-
 import HabitsStatTile, { describeHabits } from '../HabitsStatTile';
 
 import type { Habit } from '@/features/Habits/Habits.types';
-import type { StageData } from '@/features/Map/stageData';
 import { useHabitStore } from '@/store/useHabitStore';
-import { useStageStore } from '@/store/useStageStore';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
@@ -48,42 +39,14 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
-const makeStage = (stageNumber: number): StageData => ({
-  id: stageNumber,
-  title: `Stage ${stageNumber}`,
-  subtitle: `Subtitle ${stageNumber}`,
-  stageNumber,
-  progress: 0,
-  color: '#aaa',
-  isUnlocked: true,
-  category: '',
-  aspect: '',
-  spiralDynamicsColor: '',
-  growingUpStage: '',
-  divineGenderPolarity: '',
-  relationshipToFreeWill: '',
-  freeWillDescription: '',
-  overviewUrl: '',
-});
-
 beforeEach(() => {
   mockNavigate.mockClear();
   mockLoadHabits.mockClear();
-  mockLoadStages.mockClear();
   useHabitStore.setState({
     loading: false,
     habits: [],
     habitsById: {},
     habitOrder: [],
-    error: null,
-  });
-  // Seeded so the (currently still present) stage-store gate never blocks
-  // these tests on its own skeleton — the denominator itself must not
-  // depend on this value.
-  useStageStore.setState({
-    stages: [makeStage(1), makeStage(2), makeStage(3)],
-    currentStage: 3,
-    loading: false,
     error: null,
   });
 });
@@ -120,9 +83,7 @@ describe('HabitsStatTile', () => {
   });
 
   it('counts a manually-unlocked habit toward the denominator regardless of its stage', () => {
-    // Blue is well above currentStage 1 -- under the old stage-gated model
-    // this habit would stay excluded from the denominator. Under the new
-    // model only `revealed` decides, so it counts.
+    // Only the persisted 'revealed' flag decides the denominator, so this high-stage habit counts.
     const habits = [
       makeHabit({
         id: 500,
@@ -132,15 +93,12 @@ describe('HabitsStatTile', () => {
       }),
     ];
     useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 1 });
     const { getByText } = render(<HabitsStatTile />);
     expect(getByText('0/1 done')).toBeTruthy();
   });
 
   it('excludes a locked (revealed: false) habit from the denominator even at a low stage', () => {
-    // Beige is the very first stage -- under the old stage-gated model this
-    // habit would already count regardless of `revealed`. The new model
-    // requires an explicit manual unlock.
+    // revealed: false excludes the habit regardless of stage; unlocking is an explicit manual act.
     const habits = [
       makeHabit({
         id: 501,
@@ -150,7 +108,6 @@ describe('HabitsStatTile', () => {
       }),
     ];
     useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 5 });
     const { queryByText } = render(<HabitsStatTile />);
     expect(queryByText(/\/1 done/)).toBeNull();
   });
@@ -171,15 +128,12 @@ describe('HabitsStatTile', () => {
   });
 
   it('shows a manual-unlock invitation instead of "Unlocks soon" for a zero-unlocked corpus', () => {
-    // Both habits sit at the highest stages so the OLD stage-gated model
-    // would also report zero-unlocked here -- isolating this test to the
-    // copy itself, not the count.
+    // Isolates the zero-unlocked copy ("Unlock a habit to begin" vs "Unlocks soon"), not the count.
     const habits = [
       makeHabit({ id: 520, stage: 'Ultraviolet', revealed: false }),
       makeHabit({ id: 521, stage: 'Clear Light', revealed: false }),
     ];
     useHabitStore.setState({ loading: false, habits });
-    useStageStore.setState({ currentStage: 1 });
     const { getByText, queryByText } = render(<HabitsStatTile />);
     expect(queryByText('Unlocks soon')).toBeNull();
     expect(getByText('Unlock a habit to begin')).toBeTruthy();
