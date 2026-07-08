@@ -2,10 +2,11 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, String, and_
 from sqlmodel import Field, Relationship, SQLModel
 
 from domain.constants import TOTAL_STAGES
+from domain.reflection_hierarchy import ReflectionLevel
 from services.journal_encryption import EncryptedString
 
 # The inclusive lower bound of a valid Aspect tag. The upper bound is
@@ -13,9 +14,19 @@ from services.journal_encryption import EncryptedString
 # drifts from the curriculum length.
 ASPECT_MIN = 1
 
+# Bound at module scope so the partial unique index's ``*_where`` predicates can
+# resolve these columns by name at table-creation time (mirrors
+# :mod:`models.invitation_signal`). They are detached references used only by the
+# predicate — the real columns are declared as ``Field``s on the model — so both
+# Postgres and SQLite render the same ``IS NULL`` / ``IS NOT NULL`` form and the
+# partial index stays drift-free against the migration.
+_REFLECTION_SCOPE_COLUMN = Column("reflection_scope_key", String, nullable=True)
+_DELETED_AT_COLUMN = Column("deleted_at", DateTime(timezone=True), nullable=True)
+
 if TYPE_CHECKING:
     from .completion_suggestion import CompletionSuggestion
     from .marginalia import Marginalia
+    from .promoted_quote import PromotedQuote
     from .user import User
 
 
@@ -34,6 +45,10 @@ class JournalTag(enum.StrEnum):
     # distinct tag so stage-scoped aggregates (filtered by
     # ``STAGE_REFLECTION``) do not double-count them.
     WEEKLY_PROMPT = "weekly_prompt"
+    # A reflection that closes a layer of the nested APTITUDE calendar (week,
+    # stage, component, tier, or program). Carries a ``reflection_level`` /
+    # ``reflection_scope_key`` pair pinning which layer it summarizes.
+    HIERARCHICAL_REFLECTION = "hierarchical_reflection"
 
 
 class EntryStatus(enum.StrEnum):
@@ -66,6 +81,23 @@ def _classification_check() -> CheckConstraint:
     return CheckConstraint(
         f"classification IN ({quoted})",
         name="ck_journalentry_classification_valid",
+    )
+
+
+def _reflection_level_check() -> CheckConstraint:
+    """CHECK derived from ``ReflectionLevel`` so the DB set can't drift from the enum."""
+    quoted = ", ".join(f"'{level.value}'" for level in ReflectionLevel)
+    return CheckConstraint(
+        f"reflection_level IS NULL OR reflection_level IN ({quoted})",
+        name="ck_journalentry_reflection_level_valid",
+    )
+
+
+def _reflection_scope_paired_check() -> CheckConstraint:
+    """CHECK that ``reflection_level`` and ``reflection_scope_key`` are set (or unset) together."""
+    return CheckConstraint(
+        "(reflection_level IS NULL) = (reflection_scope_key IS NULL)",
+        name="ck_journalentry_reflection_scope_paired",
     )
 
 
@@ -123,6 +155,27 @@ class JournalEntry(SQLModel, table=True):
         _aspect_range_check("primary_aspect", "ck_journalentry_primary_aspect_range"),
         _aspect_range_check("secondary_aspect", "ck_journalentry_secondary_aspect_range"),
         _chord_shape_check(),
+        _reflection_level_check(),
+        _reflection_scope_paired_check(),
+        # At most one *live* entry may hold a given (user, scope) coordinate: a
+        # partial unique index over live rows (``deleted_at IS NULL``) that
+        # excludes NULL scopes, so soft-deleting an entry frees its scope for
+        # reuse and freeform (scopeless) entries never collide. Both dialects
+        # render the same predicate; the migration installs the identical index.
+        Index(
+            "ix_journalentry_user_reflection_scope",
+            "user_id",
+            "reflection_scope_key",
+            unique=True,
+            postgresql_where=and_(
+                _REFLECTION_SCOPE_COLUMN.is_not(None),
+                _DELETED_AT_COLUMN.is_(None),
+            ),
+            sqlite_where=and_(
+                _REFLECTION_SCOPE_COLUMN.is_not(None),
+                _DELETED_AT_COLUMN.is_(None),
+            ),
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -151,6 +204,10 @@ class JournalEntry(SQLModel, table=True):
     sender: str = Field(max_length=10)  # 'user' or 'bot'
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     tag: str = Field(default=JournalTag.FREEFORM, max_length=50)
+    # Hierarchical-reflection scope: which calendar layer this entry closes and
+    # its ``c{cycle}:{token}`` key. The paired CHECK keeps the two in lock-step.
+    reflection_level: str | None = Field(default=None, max_length=20)
+    reflection_scope_key: str | None = Field(default=None, max_length=30)
     practice_session_id: int | None = Field(default=None, foreign_key="practicesession.id")
     user_practice_id: int | None = Field(default=None, foreign_key="userpractice.id")
     # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
@@ -174,4 +231,14 @@ class JournalEntry(SQLModel, table=True):
     suggestions: list["CompletionSuggestion"] = Relationship(
         back_populates="entry",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    # ``PromotedQuote`` carries two FKs back to ``journalentry`` (its source and,
+    # optionally, the entry it was later folded into); this relationship binds
+    # only the source side, so ``foreign_keys`` is required to disambiguate.
+    promoted_quotes: list["PromotedQuote"] = Relationship(
+        back_populates="source_entry",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "foreign_keys": "PromotedQuote.source_entry_id",
+        },
     )

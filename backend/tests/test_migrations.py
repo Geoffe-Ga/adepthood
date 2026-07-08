@@ -2184,3 +2184,135 @@ def test_local_day_migration_archives_same_day_duplicate_on_sqlite(
     assert _ids_from_query(db_url, "SELECT id FROM goalcompletion ORDER BY id") == [1]
     assert _table_exists(db_url, "_duplicates_goalcompletion")
     assert _ids_from_query(db_url, "SELECT id FROM _duplicates_goalcompletion ORDER BY id") == [2]
+
+
+# -- hierarchical reflection scope + promotedquote migration round-trip ------
+
+# down_revision is f7a8b9c0d1e3 (the goalcompletion local_day migration, current head).
+_HIER_REFLECTION_BASE_REVISION = "f7a8b9c0d1e3"  # pragma: allowlist secret
+_HIER_REFLECTION_REVISION = "c4f7a2b8d9e1"  # pragma: allowlist secret
+
+
+def _index_names(db_url: str, table: str) -> set[str]:
+    """Return the set of index names installed on ``table``."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        return {ix["name"] for ix in inspect(engine).get_indexes(table) if ix["name"] is not None}
+    finally:
+        engine.dispose()
+
+
+def _bootstrap_hier_reflection_baseline(sync_url: str) -> None:
+    """Bootstrap minimal ``user`` and ``journalentry`` tables for the round-trip fixture.
+
+    Mirrors the shape just before the hierarchical-reflection migration,
+    without pulling in every preceding migration.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'hier@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " tag VARCHAR(50) NOT NULL DEFAULT 'freeform',"
+                " status VARCHAR(20) NOT NULL DEFAULT 'draft',"
+                " title VARCHAR(200),"
+                " deleted_at DATETIME,"
+                " updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message)"
+                " VALUES (1, 1, 'user', 'Pre-hierarchical-reflection entry.')"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_hier_reflection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the hierarchical-reflection migration.
+
+    Bootstraps minimal ``user`` and ``journalentry`` tables and stamps the DB
+    at ``f7a8b9c0d1e3`` (the chain head before this migration) so the
+    round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "hier_reflection_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_hier_reflection_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HIER_REFLECTION_BASE_REVISION)
+    return cfg
+
+
+def test_hier_reflection_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_hier_reflection: Config,
+) -> None:
+    """Round-trip the hierarchical-reflection migration.
+
+    Phase 1: upgrade adds journalentry.reflection_level / reflection_scope_key,
+    creates the promotedquote table with the expected columns, and installs
+    the partial unique index on (user_id, reflection_scope_key).
+    Phase 2: downgrade removes the columns, the index, and the table.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_hier_reflection
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the journalentry columns and the promotedquote table.
+    command.upgrade(cfg, _HIER_REFLECTION_REVISION)
+    journal_cols = _columns_of(db_url, "journalentry")
+    assert "reflection_level" in journal_cols
+    assert "reflection_scope_key" in journal_cols
+
+    assert _table_exists(db_url, "promotedquote")
+    quote_cols = _columns_of(db_url, "promotedquote")
+    expected_quote_cols = {
+        "id",
+        "user_id",
+        "source_entry_id",
+        "anchor_start",
+        "anchor_end",
+        "anchor_text",
+        "included_in_entry_id",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_quote_cols.issubset(quote_cols)
+
+    assert "ix_journalentry_user_reflection_scope" in _index_names(db_url, "journalentry")
+
+    # Phase 2: downgrade removes the columns, index, and table.
+    command.downgrade(cfg, _HIER_REFLECTION_BASE_REVISION)
+    journal_cols_after = _columns_of(db_url, "journalentry")
+    assert "reflection_level" not in journal_cols_after
+    assert "reflection_scope_key" not in journal_cols_after
+    assert not _table_exists(db_url, "promotedquote")
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _HIER_REFLECTION_REVISION)
+    journal_cols_final = _columns_of(db_url, "journalentry")
+    assert "reflection_level" in journal_cols_final
+    assert "reflection_scope_key" in journal_cols_final
+    assert _table_exists(db_url, "promotedquote")
