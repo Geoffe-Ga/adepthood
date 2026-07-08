@@ -109,6 +109,7 @@ async def test_promote_slices_body_server_side(
     assert data["anchor_start"] == 4
     assert data["anchor_end"] == 9
     assert data["pending"] is True
+    assert data["stale"] is False
     assert "user_id" not in data
 
 

@@ -38,6 +38,7 @@ def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
         anchor_end=quote.anchor_end,
         anchor_text=quote.anchor_text,
         pending=quote.included_in_entry_id is None,
+        stale=quote.stale,
     )
 
 

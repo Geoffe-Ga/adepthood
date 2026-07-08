@@ -1,11 +1,14 @@
 """Marginalia maintenance hooks.
 
-When a journal entry's body changes, the character spans that marginalia anchor
-to can shift or disappear. ``reanchor_entry_marginalia`` re-anchors each active
-note by re-finding its snapshot text in the new body (via ``reanchor_one``),
-updating the anchor span when it moves and marking the note stale when the text
-can no longer be found. Notes are never deleted — a stale note stays for the
-user to resolve. The PATCH endpoint calls this after persisting a body edit.
+When a journal entry's body changes, the character spans that marginalia,
+completion suggestions, and promoted quotes anchor to can shift or disappear.
+``reanchor_entry_marginalia`` re-anchors each active note by re-finding its
+snapshot text in the new body (via ``reanchor_one``), updating the anchor span
+when it moves and marking the note stale when the text can no longer be found.
+``reanchor_entry_suggestions`` and ``reanchor_entry_promoted_quotes`` apply the
+same rule to pending suggestions and pending promoted quotes. Nothing is ever
+deleted — a stale row stays for the user to resolve. The PATCH endpoint calls
+these after persisting a body edit.
 """
 
 from __future__ import annotations
@@ -14,12 +17,13 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.marginalia_anchoring import reanchor_one
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaStatus
+from models.promoted_quote import PromotedQuote
 from services.botmason import LLMResponse, generate_response
 
 
@@ -109,3 +113,35 @@ async def reanchor_entry_suggestions(
         )
     )
     _reanchor(result.scalars().all(), new_message, SuggestionStatus.DISMISSED)
+
+
+async def reanchor_entry_promoted_quotes(
+    entry: JournalEntry,
+    new_message: str,
+    session: AsyncSession,
+) -> None:
+    """Re-anchor (or mark stale) the entry's pending promoted quotes after a body edit.
+
+    Mirrors :func:`reanchor_entry_marginalia` for promoted quotes: each pending
+    quote (not yet folded into a reflection, not already stale) re-anchors to its
+    span if its ``anchor_text`` still occurs in ``new_message``; otherwise the
+    ``stale`` flag flips True. Stale quotes stay stale and nothing is deleted. A
+    quote already included in a reflection has a frozen span and is left untouched.
+
+    A dedicated loop rather than ``_reanchor``: a promoted quote's terminal state
+    is a boolean flag, not the string ``status`` field that ``_AnchoredRow`` models.
+    """
+    result = await session.execute(
+        select(PromotedQuote).where(
+            PromotedQuote.source_entry_id == entry.id,
+            col(PromotedQuote.included_in_entry_id).is_(None),
+            col(PromotedQuote.stale).is_(False),
+        )
+    )
+    for quote in result.scalars().all():
+        outcome = reanchor_one(quote.anchor_text, quote.anchor_start, new_message)
+        if outcome.stale:
+            quote.stale = True
+        else:
+            quote.anchor_start = outcome.anchor_start
+            quote.anchor_end = outcome.anchor_end
