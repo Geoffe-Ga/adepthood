@@ -59,8 +59,9 @@ export interface UseResonanceResult {
   contraction: ContractionReflection | null;
   /**
    * Reason copy from a pass that was withheld for an intimate entry.
-   * ``null`` until a generate pass returns a ``private_message``; the privacy
-   * gate falls back to its own default copy when this is null.
+   * ``null`` until a generate pass returns a ``private_message``; a new pass
+   * clears any stale copy, and the privacy gate falls back to its own default
+   * copy when this is null.
    */
   privateMessage: string | null;
   loading: boolean;
@@ -87,18 +88,31 @@ function mergeByIdSorted<T extends { id: number; anchor_start: number }>(
   return [...byId.values()].sort((a, b) => a.anchor_start - b.anchor_start);
 }
 
-/** Load a list-shaped resource once on open; silent on failure (id only). */
-function useLoadOnOpen<T>(
+/** State updater that folds a loaded snapshot under any state that outran it. */
+function mergeSnapshotUnder<T extends { id: number; anchor_start: number }>(
+  snapshot: T[],
+): (_prev: T[]) => T[] {
+  // Server rows as existing, in-memory as incoming: in-memory wins id collisions.
+  return (prev) => mergeByIdSorted(snapshot, prev);
+}
+
+/**
+ * Load a list-shaped resource once on open; silent on failure (id only).
+ * Merges the loaded snapshot into current state by id (server rows as existing,
+ * in-memory as incoming) so a slow load can't clobber state that advanced past
+ * its snapshot (generate deltas, accepted flips, essay-bearing notes).
+ */
+function useLoadOnOpen<T extends { id: number; anchor_start: number }>(
   routeEntryId: number | null,
   load: (_id: number) => Promise<{ items: T[] }>,
-  apply: (_items: T[]) => void,
+  apply: Dispatch<SetStateAction<T[]>>,
 ): void {
   useEffect(() => {
     if (routeEntryId == null) return undefined;
     let active = true;
     void load(routeEntryId)
       .then((res) => {
-        if (active) apply(res.items);
+        if (active) apply(mergeSnapshotUnder(res.items));
       })
       .catch(() => {
         // A failed initial load shouldn't block writing; stay silent here.
@@ -240,6 +254,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     // Likewise clear any prior contraction so an eased-then-healthy sequence
     // never leaves a stale "tend your foundation" reflection on the page.
     setContraction(null);
+    // Likewise clear any withheld-privacy copy up front so an errored or
+    // non-withheld pass never leaves a stale privacy surface on the page.
+    setPrivateMessage(null);
     try {
       const entryId = await flush();
       if (entryId == null) {
