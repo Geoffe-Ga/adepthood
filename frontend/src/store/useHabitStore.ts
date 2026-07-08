@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
+import { createNormalizedById } from './normalizedCollection';
 import { registerStoreReset } from './registry';
 
 /**
@@ -41,24 +42,14 @@ const INITIAL_STATE = {
   error: null as string | null,
 };
 
-interface NormalizedHabits {
-  habitsById: Record<number, Habit>;
-  habitOrder: number[];
-  habits: Habit[];
-}
+const habitCollection = createNormalizedById<Habit>((habit) => habit.id);
 
-const normalizeHabits = (habits: Habit[]): NormalizedHabits => {
-  const habitsById: Record<number, Habit> = {};
-  const habitOrder: number[] = [];
-  for (const habit of habits) {
-    habitsById[habit.id] = habit;
-    habitOrder.push(habit.id);
-  }
-  return { habitsById, habitOrder, habits: [...habits] };
+const normalizeHabits = (
+  habits: Habit[],
+): { habitsById: Record<number, Habit>; habitOrder: number[]; habits: Habit[] } => {
+  const { byId, order, list } = habitCollection.normalize(habits);
+  return { habitsById: byId, habitOrder: order, habits: list };
 };
-
-const rebuildHabitsList = (habitsById: Record<number, Habit>, habitOrder: number[]): Habit[] =>
-  habitOrder.map((id) => habitsById[id]!).filter((h): h is Habit => h !== undefined);
 
 export const useHabitStore = create<HabitStoreState>((set) => ({
   ...INITIAL_STATE,
@@ -70,7 +61,7 @@ export const useHabitStore = create<HabitStoreState>((set) => ({
     set((state) => {
       if (!(updatedHabit.id in state.habitsById)) return state;
       const habitsById = { ...state.habitsById, [updatedHabit.id]: updatedHabit };
-      return { habitsById, habits: rebuildHabitsList(habitsById, state.habitOrder) };
+      return { habitsById, habits: habitCollection.rebuild(habitsById, state.habitOrder) };
     }),
   removeHabit: (habitId) =>
     set((state) => {
@@ -78,7 +69,7 @@ export const useHabitStore = create<HabitStoreState>((set) => ({
       const habitsById = { ...state.habitsById };
       delete habitsById[habitId];
       const habitOrder = state.habitOrder.filter((id) => id !== habitId);
-      return { habitsById, habitOrder, habits: rebuildHabitsList(habitsById, habitOrder) };
+      return { habitsById, habitOrder, habits: habitCollection.rebuild(habitsById, habitOrder) };
     }),
   reset: () => set({ ...INITIAL_STATE }),
 }));
