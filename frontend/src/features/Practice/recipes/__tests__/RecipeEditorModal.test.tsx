@@ -224,5 +224,10 @@ describe('RecipeEditorModal', () => {
     const utils = mountEditor({ listTags: listTags as never });
     await waitFor(() => expect(listTags).toHaveBeenCalled());
     expect(utils.getByTestId('recipe-editor-step-0')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    });
+    await waitFor(() => expect(utils.getByTestId('tag-picker-0-empty')).toBeTruthy());
+    expect(utils.queryByTestId('tag-picker-0-option-red')).toBeNull();
   });
 });

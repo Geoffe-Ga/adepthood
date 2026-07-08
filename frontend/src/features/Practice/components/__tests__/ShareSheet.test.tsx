@@ -175,10 +175,26 @@ describe('ShareSheet', () => {
   });
 
   it('copyToClipboard returns false when navigator.clipboard is missing', async () => {
-    const result = await copyToClipboard('hello');
-    // Jest's jsdom may or may not provide navigator.clipboard; just assert
-    // the helper does not throw and returns a boolean.
-    expect(typeof result).toBe('boolean');
+    const nav = (globalThis as { navigator?: { clipboard?: unknown } }).navigator;
+    if (nav === undefined) {
+      expect(await copyToClipboard('hello')).toBe(false);
+      return;
+    }
+    const original = Object.getOwnPropertyDescriptor(nav, 'clipboard');
+    Object.defineProperty(nav, 'clipboard', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(await copyToClipboard('hello')).toBe(false);
+    } finally {
+      if (original) {
+        Object.defineProperty(nav, 'clipboard', original);
+      } else {
+        delete nav.clipboard;
+      }
+    }
   });
 
   it('does not load links while the sheet is not visible', () => {

@@ -2,9 +2,37 @@ import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
+import type { EngineStatus } from '../../engine/types';
 import RitualControlsBar from '../RitualControlsBar';
 
-import { allStatuses, fakeControls } from './fixtures';
+import { fakeControls } from './fixtures';
+
+const STATUS_CONTROL_MATRIX: readonly {
+  status: EngineStatus;
+  present: readonly string[];
+  absent: readonly string[];
+}[] = [
+  {
+    status: 'idle',
+    present: ['ritual-start'],
+    absent: ['ritual-pause', 'ritual-resume', 'ritual-cancel', 'ritual-complete-label'],
+  },
+  {
+    status: 'running',
+    present: ['ritual-pause', 'ritual-cancel'],
+    absent: ['ritual-start', 'ritual-resume', 'ritual-complete-label'],
+  },
+  {
+    status: 'paused',
+    present: ['ritual-resume', 'ritual-cancel'],
+    absent: ['ritual-start', 'ritual-pause', 'ritual-complete-label'],
+  },
+  {
+    status: 'complete',
+    present: ['ritual-complete-label'],
+    absent: ['ritual-start', 'ritual-pause', 'ritual-resume', 'ritual-cancel'],
+  },
+];
 
 describe('RitualControlsBar', () => {
   it('renders Start only when idle and calls controls.start on press', () => {
@@ -64,8 +92,15 @@ describe('RitualControlsBar', () => {
     expect(getByText('Begin')).toBeTruthy();
   });
 
-  it.each(allStatuses)('renders without crashing for every status (%s)', (status) => {
-    const controls = fakeControls();
-    expect(() => render(<RitualControlsBar status={status} controls={controls} />)).not.toThrow();
-  });
+  it.each(STATUS_CONTROL_MATRIX)(
+    'renders exactly the right controls for status $status',
+    ({ status, present, absent }) => {
+      const controls = fakeControls();
+      const { getByTestId, queryByTestId } = render(
+        <RitualControlsBar status={status} controls={controls} />,
+      );
+      for (const id of present) expect(getByTestId(id)).toBeTruthy();
+      for (const id of absent) expect(queryByTestId(id)).toBeNull();
+    },
+  );
 });
