@@ -22,6 +22,7 @@ from .practice_session import PracticeSession
 from .practice_session_idempotency import PracticeSessionSpend
 from .practice_share_link import PracticeShareLink
 from .practice_tag import PracticeTag
+from .promoted_quote import PromotedQuote
 from .prompt_response import PromptResponse
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
@@ -55,6 +56,7 @@ __all__ = [
     "PracticeSessionSpend",
     "PracticeShareLink",
     "PracticeTag",
+    "PromotedQuote",
     "PromptResponse",
     "RevokedToken",
     "StageContent",
