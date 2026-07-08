@@ -105,7 +105,9 @@ const styles = StyleSheet.create({
     ...editorialType.body,
     color: colors.paper.ink,
     paddingTop: spacing(1.5),
-    // A growing multiline field; minHeight keeps the blank page inviting.
+    // A growing multiline field; flexGrow fills the writing column's
+    // available height while minHeight keeps the blank page inviting.
+    flexGrow: 1,
     minHeight: 240,
     textAlignVertical: 'top',
   },

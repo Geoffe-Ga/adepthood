@@ -225,6 +225,21 @@ describe('JournalEntryScreen', () => {
     expect(queryByText('Send')).toBeNull();
   });
 
+  it('grows the body input to fill available vertical space on a tall desktop viewport', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1280, height: 900, scale: 1, fontScale: 1 });
+    try {
+      const { getByTestId } = renderScreen();
+      const body = StyleSheet.flatten(getByTestId('journal-body-input').props.style);
+      expect(body.flexGrow).toBeGreaterThan(0);
+      expect(body.minHeight).toBe(240);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('reserves a margin column for the inline marginalia UI', () => {
     const { getByTestId } = renderScreen();
     expect(getByTestId('journal-margin-column')).toBeTruthy();
