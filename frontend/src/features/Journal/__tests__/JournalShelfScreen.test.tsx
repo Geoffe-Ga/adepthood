@@ -415,7 +415,7 @@ describe('JournalShelfScreen', () => {
       expect.objectContaining({
         weekNumber: 3,
         promptQuestion: 'What did you notice this week?',
-        prefillTitle: 'Week 3 Reflection',
+        prefillTitle: 'Beige week 3 Prompt #1',
       }),
     );
   });

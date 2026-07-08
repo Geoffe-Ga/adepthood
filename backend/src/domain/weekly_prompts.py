@@ -96,7 +96,48 @@ WEEKLY_PROMPTS: dict[int, str] = {
 
 TOTAL_WEEKS = 36
 
+# Archetypal Wavelength band labels in developmental order. Each band spans
+# ``WEEKS_PER_BAND`` consecutive weeks, so the 12 bands tile the 36-week
+# program exactly (12 * 3 == TOTAL_WEEKS).
+PROMPT_BANDS: tuple[str, ...] = (
+    "Beige",
+    "Purple",
+    "Red",
+    "Blue",
+    "Orange",
+    "Green",
+    "Yellow",
+    "Turquoise",
+    "Coral",
+    "Teal",
+    "Indigo",
+    "Ultraviolet",
+)
+
+# Weeks per Wavelength band; three weeks each tile the 36-week program.
+WEEKS_PER_BAND = 3
+
+# There is exactly one prompt per week, so the default title always reads
+# "... Prompt #1". Named so the ordinal in the title isn't a bare literal.
+PROMPTS_PER_WEEK = 1
+
 
 def get_prompt_for_week(week_number: int) -> str | None:
     """Return the prompt question for a given week, or None if out of range."""
     return WEEKLY_PROMPTS.get(week_number)
+
+
+def prompt_title_for_week(week_number: int) -> str | None:
+    """Return the default journal title for a week, or None if out of range.
+
+    Mirrors :func:`get_prompt_for_week`'s range contract: weeks outside
+    ``1..TOTAL_WEEKS`` yield ``None``. Otherwise the title is the week's
+    Wavelength band label plus its position within that band, e.g. week 8
+    (the second Red week) becomes ``"Red week 2 Prompt #1"``. This is the
+    default a user sees in the compose title; they may override it.
+    """
+    if week_number < 1 or week_number > TOTAL_WEEKS:
+        return None
+    band = PROMPT_BANDS[(week_number - 1) // WEEKS_PER_BAND]
+    week_in_band = ((week_number - 1) % WEEKS_PER_BAND) + 1
+    return f"{band} week {week_in_band} Prompt #{PROMPTS_PER_WEEK}"

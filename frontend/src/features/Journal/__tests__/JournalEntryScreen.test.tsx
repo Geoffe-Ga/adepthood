@@ -16,7 +16,9 @@ const mockUpdate = jest.fn() as jest.MockedFunction<
 >;
 
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
-const mockRespond = jest.fn() as jest.MockedFunction<(_w: number, _b: string) => Promise<unknown>>;
+const mockRespond = jest.fn() as jest.MockedFunction<
+  (_w: number, _b: string, _t?: string) => Promise<unknown>
+>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -105,7 +107,7 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Week 3 Reflection');
       expect(mockCreate).not.toHaveBeenCalled(); // no double-create
       // Resonance can't run on a prompt-compose entry (no local id), so the
       // button must stay hidden even once idle with content.
@@ -126,12 +128,13 @@ describe('JournalEntryScreen', () => {
         },
         { autosaveDelayMs: 100 },
       );
-      expect(getByTestId('journal-title-input').props.editable).toBe(false);
+      expect(getByTestId('journal-title-input').props.editable).not.toBe(false);
+      fireEvent.changeText(getByTestId('journal-title-input'), 'Reclaiming my anger');
       fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Reclaiming my anger');
       expect(mockCreate).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
