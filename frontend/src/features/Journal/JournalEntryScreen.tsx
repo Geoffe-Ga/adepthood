@@ -30,6 +30,7 @@ import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
+import { promptTitleForWeek } from './promptTitle';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { useResonance } from './useResonance';
 
@@ -145,7 +146,7 @@ async function writeEntry(
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
     if (respondedRef.current) return;
-    await prompts.respond(ctx.weekNumber, body);
+    await prompts.respond(ctx.weekNumber, body, titleOrNull(title));
     respondedRef.current = true;
     return;
   }
@@ -921,12 +922,6 @@ interface WritingColumnProps {
    * (still in flight or failed), so they never write against an unseen entry.
    */
   controlsDisabled: boolean;
-  /**
-   * In weekly-prompt compose the title is fixed program context the respond
-   * endpoint cannot persist, so it is read-only rather than a lying editable
-   * affordance that silently discards a rename.
-   */
-  titleReadOnly: boolean;
 }
 
 /** Quiet control to mark a draft finished, with a warm retry notice on failure. */
@@ -989,11 +984,7 @@ function WritingFields({
   onChangeTitle,
   onChangeBody,
   bodyPlaceholder,
-  titleReadOnly,
-}: Pick<
-  WritingColumnProps,
-  'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'titleReadOnly'
-> & {
+}: Pick<WritingColumnProps, 'title' | 'body' | 'onChangeTitle' | 'onChangeBody'> & {
   bodyPlaceholder: string;
 }) {
   return (
@@ -1005,8 +996,6 @@ function WritingFields({
         placeholder="Title"
         placeholderTextColor={colors.paper.inkSoft}
         accessibilityLabel="Entry title"
-        editable={!titleReadOnly}
-        accessibilityState={{ disabled: titleReadOnly }}
         testID="journal-title-input"
       />
       <View style={styles.hairline} />
@@ -1044,7 +1033,6 @@ function WritingColumn({
   finishError,
   bodyPlaceholder = 'Begin writing…',
   controlsDisabled,
-  titleReadOnly,
 }: WritingColumnProps) {
   return (
     <ScrollView
@@ -1065,7 +1053,6 @@ function WritingColumn({
         onChangeTitle={onChangeTitle}
         onChangeBody={onChangeBody}
         bodyPlaceholder={bodyPlaceholder}
-        titleReadOnly={titleReadOnly}
       />
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
@@ -1366,7 +1353,6 @@ function useJournalEntryController(
   });
 
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
-  // Weekly-prompt compose gates resonance and makes the title read-only.
   const gate = deriveResonanceGate({
     isIdle,
     isLoading: resonance.loading,
@@ -1387,7 +1373,8 @@ function useJournalEntryController(
     handleBody,
     modal,
     editGate,
-    titleReadOnly: ctx.weekNumber != null,
+    // Weekly-prompt compose withholds Finish (no local id); title stays editable.
+    isPromptCompose: ctx.weekNumber != null,
   };
 }
 
@@ -1402,8 +1389,8 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
   // controls are bound to an unseen entry, so disable them.
   const controlsDisabled = ctl.autosave.controlsLocked;
   // Withhold Finish in weekly-prompt compose: the respond endpoint has no local
-  // id to finish, so the affordance would be a dead end (see titleReadOnly).
-  const canOfferFinish = canFinish && !ctl.titleReadOnly;
+  // id to finish, so the affordance would be a dead end.
+  const canOfferFinish = canFinish && !ctl.isPromptCompose;
   return editMode ? (
     <WritingColumn
       title={title}
@@ -1420,7 +1407,6 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       finishError={finishError}
       bodyPlaceholder={bodyPlaceholder}
       controlsDisabled={controlsDisabled}
-      titleReadOnly={ctl.titleReadOnly}
     />
   ) : (
     <ReadColumn
@@ -1484,7 +1470,7 @@ interface EntryEntrypoint {
 function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
   const p = params ?? {};
   const initialTitle =
-    p.prefillTitle ?? (p.weekNumber != null ? `Week ${p.weekNumber} Reflection` : '');
+    p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
   return {
     ctx: {
       weekNumber: p.weekNumber,

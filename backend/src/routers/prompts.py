@@ -15,9 +15,13 @@ from sqlmodel import col, select
 from database import get_session
 from domain.program_calendar import calendar_week, resolve_program_anchor
 from domain.stage_progress import get_user_progress
-from domain.weekly_prompts import TOTAL_WEEKS, get_prompt_for_week
+from domain.weekly_prompts import (
+    TOTAL_WEEKS,
+    get_prompt_for_week,
+    prompt_title_for_week,
+)
 from errors import conflict, forbidden, not_found, unprocessable
-from models.journal_entry import JournalEntry, JournalTag
+from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH, JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
 from schemas.pagination import page_has_more
@@ -209,6 +213,25 @@ async def get_prompt_by_week(
     )
 
 
+def _resolve_entry_title(payload_title: str | None, week_number: int) -> str | None:
+    """Resolve the journal title mirrored from a prompt submission.
+
+    A non-blank user override is sanitized and used verbatim; a blank,
+    whitespace-only, absent, or sanitized-to-empty override falls back to the
+    week's default band label (:func:`prompt_title_for_week`). ``week_number``
+    is already range-validated by the caller, so the fallback is non-``None``
+    for a real submission. An over-long title surfaces as a 422.
+    """
+    if payload_title and payload_title.strip():
+        try:
+            cleaned = sanitize_user_text(payload_title, max_len=JOURNAL_TITLE_MAX_LENGTH)
+        except TextTooLongError as exc:
+            raise unprocessable("title_too_long") from exc
+        if cleaned:
+            return cleaned
+    return prompt_title_for_week(week_number)
+
+
 @router.post(
     "/{week_number}/respond",
     response_model=PromptDetail,
@@ -255,6 +278,8 @@ async def submit_prompt_response(
     except TextTooLongError as exc:
         raise unprocessable("response_too_long") from exc
 
+    entry_title = _resolve_entry_title(payload.title, week_number)
+
     prompt_response = PromptResponse(
         week_number=week_number,
         question=question,
@@ -268,6 +293,7 @@ async def submit_prompt_response(
     # double-count it.
     journal_entry = JournalEntry(
         message=cleaned_response,
+        title=entry_title,
         sender="user",
         user_id=current_user,
         tag=JournalTag.WEEKLY_PROMPT,

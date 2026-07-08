@@ -9,7 +9,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from domain.constants import TOTAL_STAGES
 from domain.reflection_hierarchy import ReflectionLevel, scope_weeks
-from models.journal_entry import EntryStatus, JournalClassification, JournalTag
+from models.journal_entry import (
+    JOURNAL_TITLE_MAX_LENGTH,
+    EntryStatus,
+    JournalClassification,
+    JournalTag,
+)
 
 JOURNAL_MESSAGE_MAX_LENGTH = 10_000
 
@@ -84,7 +89,7 @@ class JournalEntryUpdate(BaseModel):
     """
 
     message: str | None = Field(default=None, min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
-    title: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     status: EntryStatus | None = None
     classification: JournalClassification | None = None
     primary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)

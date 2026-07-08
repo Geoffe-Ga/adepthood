@@ -14,6 +14,11 @@ from services.journal_encryption import EncryptedString
 # drifts from the curriculum length.
 ASPECT_MIN = 1
 
+# Maximum length of a journal entry title. Shared with the write-boundary
+# schemas (JournalEntryUpdate, PromptSubmit) so the DB column bound and the
+# request validation can't drift.
+JOURNAL_TITLE_MAX_LENGTH = 200
+
 # Bound at module scope so the partial unique index's ``*_where`` predicates can
 # resolve these columns by name at table-creation time (mirrors
 # :mod:`models.invitation_signal`). They are detached references used only by the
@@ -191,7 +196,7 @@ class JournalEntry(SQLModel, table=True):
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     # Long-form page metadata: an optional title and a draft/finished lifecycle.
     # ``message`` remains the body. ``updated_at`` tracks the last edit.
-    title: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     status: str = Field(default=EntryStatus.DRAFT, max_length=20)
     # Privacy tier; defaults to ``personal``. The DB CHECK in ``__table_args__``
     # pins the persisted value to the JournalClassification set.

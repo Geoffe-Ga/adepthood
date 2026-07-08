@@ -265,6 +265,95 @@ async def test_submit_response_creates_journal_entry(async_client: AsyncClient) 
     assert entry["sender"] == "user"
 
 
+# ── Prompt title (mirrored to the JournalEntry) ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_submit_without_title_uses_band_default(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "title_default")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Safety means having a stable home."},
+        headers=headers,
+    )
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_submit_with_title_override_is_persisted(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "title_override")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={
+            "response": "Safety means having a stable home.",
+            "title": "Reclaiming my anger",
+        },
+        headers=headers,
+    )
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == "Reclaiming my anger"
+
+
+@pytest.mark.asyncio
+async def test_submit_with_whitespace_only_title_falls_back_to_default(
+    async_client: AsyncClient,
+) -> None:
+    headers = await _signup(async_client, "title_whitespace")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Safety means having a stable home.", "title": "   "},
+        headers=headers,
+    )
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_submit_title_is_sanitized(async_client: AsyncClient) -> None:
+    """A zero-width space embedded in the title is stripped by ``sanitize_user_text``."""
+    headers = await _signup(async_client, "title_zerowidth")
+    dirty_title = "Anger" + chr(0x200B)
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Safety means having a stable home.", "title": dirty_title},
+        headers=headers,
+    )
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == "Anger"
+
+
+@pytest.mark.asyncio
+async def test_submit_zero_width_only_title_falls_back_to_default(
+    async_client: AsyncClient,
+) -> None:
+    """A title of only zero-width chars sanitizes to empty and must not persist blank."""
+    headers = await _signup(async_client, "title_all_zerowidth")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Safety means having a stable home.", "title": chr(0x200B) * 3},
+        headers=headers,
+    )
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_submit_title_over_max_length_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "title_toolong")
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Safety means having a stable home.", "title": "x" * 201},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
 # ── GET /prompts/history ────────────────────────────────────────────────
 
 

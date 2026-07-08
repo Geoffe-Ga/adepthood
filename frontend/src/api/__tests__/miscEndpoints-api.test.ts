@@ -182,7 +182,7 @@ describe('prompts client', () => {
     };
     mockFetch.mockReturnValueOnce(jsonResponse(prompt));
 
-    const result = await prompts.respond(3, 'Everything.', 'tok');
+    const result = await prompts.respond(3, 'Everything.', null, 'tok');
 
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/prompts/3/respond');

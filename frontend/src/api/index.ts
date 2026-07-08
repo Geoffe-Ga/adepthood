@@ -1454,10 +1454,15 @@ export const prompts = {
   current(token?: string): Promise<PromptDetail> {
     return request<PromptDetail>('/prompts/current', { token });
   },
-  respond(weekNumber: number, response: string, token?: string): Promise<PromptDetail> {
+  respond(
+    weekNumber: number,
+    response: string,
+    title?: string | null,
+    token?: string,
+  ): Promise<PromptDetail> {
     return request<PromptDetail>(`/prompts/${weekNumber}/respond`, {
       method: 'POST',
-      body: { response },
+      body: { response, ...(title ? { title } : {}) },
       token,
     });
   },

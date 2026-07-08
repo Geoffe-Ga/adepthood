@@ -15,6 +15,7 @@ import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
+import { promptTitleForWeek } from './promptTitle';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
 
@@ -398,7 +399,7 @@ function useShelfNavigation(
     navigation.navigate('JournalEntry', {
       weekNumber: week,
       promptQuestion: prompt.question,
-      prefillTitle: `Week ${week} Reflection`,
+      prefillTitle: promptTitleForWeek(week),
     });
   }, [navigation, prompt, week]);
   return { openEntry, newEntry, openPrompt, openWithPrompt };
