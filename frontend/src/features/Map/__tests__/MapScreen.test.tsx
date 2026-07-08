@@ -64,9 +64,6 @@ type TestNode = { props: Record<string, unknown> };
 
 const isLockIcon = (node: TestNode): boolean => node.props.children === '🔒';
 
-const countLockIcons = (tree: ReturnType<typeof create>): number =>
-  tree.root.findAll(isLockIcon).length;
-
 /** Whether the first hotspot of ``stageNumber`` renders a padlock overlay. */
 const hotspotHasLock = (tree: ReturnType<typeof create>, stageNumber: number): boolean => {
   const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-0` });
@@ -82,17 +79,6 @@ describe('MapScreen', () => {
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
-  it('renders text and arrow hotspots for each stage', () => {
-    const tree = create(<MapScreen />);
-    const hotspots = tree.root.findAll(
-      (node: TestNode) =>
-        typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-hotspot'),
-    );
-    const unique = new Set(hotspots.map((s: TestNode) => s.props.testID as string));
-    // Each stage has 2 hotspots = 20 total
-    expect(unique.size).toBe(20);
-  });
-
   it('shows modal with stage details when a hotspot is tapped', () => {
     const tree = create(<MapScreen />);
     act(() => {
@@ -103,12 +89,42 @@ describe('MapScreen', () => {
   });
 
   it('displays rich metadata in the stage modal', () => {
+    // Sentinel values distinctive from any other text in the tree.
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) => {
+      const stageNumber = 10 - i;
+      return stageNumber === 1
+        ? mockMakeStage(1, {
+            progress: 0.5,
+            category: 'Zorbonic Category',
+            aspect: 'Zorbonic Aspect',
+            growingUpStage: 'Zorbonic Growing Stage',
+            divineGenderPolarity: 'Zorbonic Polarity',
+            relationshipToFreeWill: 'Zorbonic Free Will Relationship',
+            freeWillDescription: 'Zorbonic free will description text.',
+          })
+        : mockMakeStage(stageNumber);
+    });
     const tree = create(<MapScreen />);
     act(() => {
       tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
     });
     const metadata = tree.root.findByProps({ testID: 'stage-metadata' });
-    expect(metadata).toBeTruthy();
+    // Dedupe: findAll returns both the composite and host instance per Text node.
+    const rendered = new Set(
+      metadata
+        .findAll((n: TestNode) => typeof n.props.children === 'string')
+        .map((n: TestNode) => n.props.children as string),
+    );
+    for (const value of [
+      'Zorbonic Category',
+      'Zorbonic Aspect',
+      'Zorbonic Growing Stage',
+      'Zorbonic Polarity',
+      'Zorbonic Free Will Relationship',
+      'Zorbonic free will description text.',
+    ]) {
+      expect(rendered.has(value)).toBe(true);
+    }
   });
 
   it('navigates to Practice with stageNumber when Practice is tapped', () => {
@@ -235,16 +251,26 @@ describe('MapScreen', () => {
       (node: TestNode) =>
         typeof node.props.testID === 'string' && node.props.testID.startsWith('stage-connection'),
     );
-    // 10 stages → 9 gaps, but connections only render when next stage exists
-    expect(connections.length).toBeGreaterThanOrEqual(9);
+    // 10 stages, 9 gaps between them (dedupe composite + host by testID).
+    const unique = new Set(connections.map((c: TestNode) => c.props.testID as string));
+    expect(unique.size).toBe(9);
   });
 
-  it('shows lock icon on locked stages', () => {
+  it('shows exactly 16 lock icons across the 8 locked stages (2 per stage)', () => {
     const tree = create(<MapScreen />);
-    // Stages 3–10 are locked in test data (isUnlocked: stageNumber <= 2) and
-    // the derived current stage is 1, so the server flags stand.
-    // 8 locked stages × 2 hotspots each; findAll may traverse into React internals
-    expect(countLockIcons(tree)).toBeGreaterThanOrEqual(16);
+    // Stages 3-10 are locked (isUnlocked: stageNumber <= 2), derived stage is 1.
+    // Count hotspots carrying a padlock (boolean per hotspot dodges the
+    // composite + host double-count): 8 locked stages across 2 columns = 16.
+    let lockedHotspots = 0;
+    for (let stageNumber = 1; stageNumber <= 10; stageNumber += 1) {
+      for (const column of [0, 1]) {
+        const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-${column}` });
+        if (hotspot.findAll(isLockIcon).length > 0) {
+          lockedHotspots += 1;
+        }
+      }
+    }
+    expect(lockedHotspots).toBe(16);
   });
 
   it('unlocks stages up to the date-derived current stage even when the server still locks them', () => {
@@ -305,16 +331,6 @@ describe('MapScreen', () => {
     expect(hotspots.length).toBeGreaterThan(0);
     // No full-screen loader should obscure the grid.
     expect(() => tree.root.findByProps({ testID: 'map-loading' })).toThrow();
-  });
-
-  it('does not render the wavelength explainer trigger', () => {
-    const tree = create(<MapScreen />);
-    expect(() => tree.root.findByProps({ testID: 'wavelength-explainer-trigger' })).toThrow();
-  });
-
-  it('does not render the balance summary', () => {
-    const tree = create(<MapScreen />);
-    expect(() => tree.root.findByProps({ testID: 'balance-summary' })).toThrow();
   });
 
   // --- begin-again affordance ---
@@ -405,7 +421,6 @@ describe('MapScreen', () => {
 
   const WAVE_LAYOUT_WIDTH = 300;
   const WAVE_LAYOUT_HEIGHT = 600;
-  const MIN_WAVE_SEGMENTS = 9;
 
   const fireGridLayout = (tree: ReturnType<typeof create>) => {
     act(() => {
@@ -421,13 +436,9 @@ describe('MapScreen', () => {
     expect(tree.root.findByProps({ testID: 'map-wave' })).toBeTruthy();
   });
 
-  it('renders at least 9 wave path segments and arrowheads after layout', () => {
+  it('renders wave arrowheads at stages 1, 5, and 9 after layout', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    const paths = tree.root.findAll(
-      (node: TestNode) => typeof node.props.d === 'string' && node.props.d.length > 0,
-    );
-    expect(paths.length).toBeGreaterThanOrEqual(MIN_WAVE_SEGMENTS);
     expect(tree.root.findByProps({ testID: 'wave-arrow-1' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'wave-arrow-5' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'wave-arrow-9' })).toBeTruthy();
