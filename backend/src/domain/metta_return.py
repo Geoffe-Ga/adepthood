@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from domain.dates import ensure_aware
+
 if TYPE_CHECKING:
     from models.stage_progress import StageProgress
 
@@ -142,19 +144,9 @@ def current_offer_episode(progress: StageProgress | None) -> str | None:
     return f"{progress.cycle_number}:{progress.current_stage}"
 
 
-def _normalize(moment: datetime) -> datetime:
-    """Strip tzinfo so naive (SQLite) and aware (Postgres) values compare.
-
-    Both dialects store UTC; only the tzinfo flag differs. Subtracting a mixed
-    naive/aware pair raises, so every elapsed-time computation funnels through
-    this, mirroring the program-calendar normalization.
-    """
-    return moment.replace(tzinfo=None) if moment.tzinfo else moment
-
-
 def _elapsed_days(anchor: datetime, now: datetime) -> int:
     """Whole days since the anchor, floored at zero for clock skew."""
-    delta = _normalize(now) - _normalize(anchor)
+    delta = ensure_aware(now) - ensure_aware(anchor)
     return max(0, delta.days)
 
 
@@ -164,13 +156,13 @@ def resumed_start(started_at: datetime, paused_at: datetime, now: datetime) -> d
     Resuming a paused arc must not lose the frozen week: the time spent paused
     is pushed onto the start so elapsed-since-start once again matches the
     pre-pause elapsed. ``now`` and ``paused_at`` may carry different tzinfo
-    flags across SQLite (naive) and Postgres (aware), so both are normalized
-    before subtracting to form the pause duration, exactly as the elapsed-day
-    math does. The resulting timedelta is then added to the ORIGINAL
+    flags across SQLite (naive) and Postgres (aware), so both are coerced to
+    UTC-aware before subtracting to form the pause duration, exactly as the
+    elapsed-day math does. The resulting timedelta is then added to the ORIGINAL
     ``started_at`` — adding a timedelta preserves its tzinfo either way — so no
     mixed naive/aware subtraction is ever performed.
     """
-    paused_duration = _normalize(now) - _normalize(paused_at)
+    paused_duration = ensure_aware(now) - ensure_aware(paused_at)
     return started_at + paused_duration
 
 
@@ -181,7 +173,7 @@ def active_return_week(started_at: datetime, paused_at: datetime | None, now: da
     is paused, otherwise to ``now`` — so a paused arc reports a frozen week that
     ignores further elapsed time. The result is clamped to
     ``[1, RETURN_WEEK_COUNT]`` so it never climbs past the arc. Mixed
-    naive/aware datetimes are normalized rather than raising.
+    naive/aware datetimes are coerced to UTC-aware rather than raising.
     """
     reference = paused_at if paused_at is not None else now
     week = _elapsed_days(started_at, reference) // DAYS_PER_WEEK + 1
@@ -197,7 +189,8 @@ def is_return_complete(started_at: datetime, paused_at: datetime | None, now: da
     a pause before the boundary keeps completion frozen at False. The arc is
     complete once at least :data:`RETURN_TOTAL_DAYS` have elapsed — the fifth week
     has fully closed, a reflective close rather than a reward. Mixed naive/aware
-    datetimes are normalized by the shared elapsed-day helper rather than raising.
+    datetimes are coerced to UTC-aware by the shared elapsed-day helper rather
+    than raising.
     """
     reference = paused_at if paused_at is not None else now
     return _elapsed_days(started_at, reference) >= RETURN_TOTAL_DAYS

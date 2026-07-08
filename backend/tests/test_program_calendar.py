@@ -9,7 +9,7 @@ agree with what the user sees.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS, TOTAL_STAGES
 from domain.program_calendar import (
@@ -22,6 +22,8 @@ from domain.weekly_prompts import TOTAL_WEEKS
 from models.stage_progress import StageProgress
 
 _ANCHOR = datetime(2026, 1, 1, tzinfo=UTC)
+# Deterministic non-UTC offset (no ZoneInfo/tzdata/DST dependency).
+_NON_UTC = timezone(timedelta(hours=-8))
 
 
 def _at(days: int) -> datetime:
@@ -81,6 +83,17 @@ def test_calendar_week_accepts_naive_anchor() -> None:
     assert calendar_week(naive_anchor, _at(7)) == 2
 
 
+def test_calendar_week_uses_instant_not_wall_clock_for_non_utc_aware_now() -> None:
+    """A non-UTC aware ``now`` counts elapsed days by INSTANT, not wall clock.
+
+    2026-01-07T20:00-08:00 is the instant 2026-01-08T04:00Z: 7 elapsed days
+    from the anchor by instant (week 2), even though its naive wall-clock
+    reading (2026-01-07T20:00 minus 2026-01-01T00:00) is only 6 days (week 1).
+    """
+    now = datetime(2026, 1, 7, 20, 0, tzinfo=_NON_UTC)
+    assert calendar_week(_ANCHOR, now) == 2
+
+
 # ── calendar_stage ──────────────────────────────────────────────────────
 
 
@@ -131,6 +144,39 @@ def test_calendar_day_in_stage_accepts_naive_anchor() -> None:
     """SQLite returns naive datetimes; the math must not raise (issue #412 class)."""
     naive_anchor = _ANCHOR.replace(tzinfo=None)
     assert calendar_day_in_stage(naive_anchor, 2, _at(21)) == 1
+
+
+def test_calendar_day_in_stage_uses_instant_not_wall_clock_for_non_utc_aware_now() -> None:
+    """The same instant-crossing boundary carries through to the day-in-stage math.
+
+    See ``test_calendar_week_uses_instant_not_wall_clock_for_non_utc_aware_now``:
+    7 elapsed days by instant (day 8 of stage 1) versus 6 by stripped wall
+    clock (day 7).
+    """
+    now = datetime(2026, 1, 7, 20, 0, tzinfo=_NON_UTC)
+    assert calendar_day_in_stage(_ANCHOR, 1, now) == 8
+
+
+def test_calendar_math_agrees_across_naive_and_aware_utc_representations() -> None:
+    """Naive, aware-UTC, and mixed inputs must agree for real UTC instants.
+
+    Pins that unifying the naive/aware normalization changes nothing
+    observable when every input already represents UTC.
+    """
+    naive_anchor = _ANCHOR.replace(tzinfo=None)
+    naive_now = naive_anchor + timedelta(days=10)
+    aware_now = naive_now.replace(tzinfo=UTC)
+
+    assert calendar_week(naive_anchor, naive_now) == calendar_week(_ANCHOR, aware_now)
+    assert calendar_week(naive_anchor, aware_now) == calendar_week(_ANCHOR, aware_now)
+    assert calendar_stage(naive_anchor, naive_now) == calendar_stage(_ANCHOR, aware_now)
+    assert calendar_stage(naive_anchor, aware_now) == calendar_stage(_ANCHOR, aware_now)
+    assert calendar_day_in_stage(naive_anchor, 1, naive_now) == calendar_day_in_stage(
+        _ANCHOR, 1, aware_now
+    )
+    assert calendar_day_in_stage(naive_anchor, 1, aware_now) == calendar_day_in_stage(
+        _ANCHOR, 1, aware_now
+    )
 
 
 # ── resolve_program_anchor ──────────────────────────────────────────────
