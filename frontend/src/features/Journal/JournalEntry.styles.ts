@@ -149,6 +149,17 @@ const styles = StyleSheet.create({
     color: colors.paper.inkSoft,
     paddingTop: spacing(2),
   },
+  /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
+  quoteActionButton: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+  },
+  /** Row holding the Promote / Cancel actions under the span-selection field. */
+  quoteSelectActions: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+    paddingTop: spacing(1),
+  },
   /** Privacy tier chooser block above the growing body. */
   privacyTierControl: {
     paddingBottom: spacing(1),

@@ -615,6 +615,30 @@ export const marginaliaSchema = z.object({
  * ``professional`` support. Anything else is a contract drift and is rejected
  * at the boundary so an unknown routing can never render an unlabelled card.
  */
+// ---------------------------------------------------------------------------
+// Promoted quotes (select-a-span -> promote-quote)
+// ---------------------------------------------------------------------------
+
+/** A promoted quote (mirrors the backend ``PromotedQuoteResponse``). */
+export const promotedQuoteSchema = z.object({
+  id: z.number().int(),
+  source_entry_id: z.number().int(),
+  anchor_start: z.number().int(),
+  anchor_end: z.number().int(),
+  anchor_text: z.string(),
+  pending: z.boolean(),
+});
+
+/**
+ * A promoted quote as it appears in the cross-entry sources feed (mirrors the
+ * backend ``PromotedQuoteSummary``): the same shape minus ``source_entry_id``,
+ * which the feed groups by rather than repeating on every row.
+ */
+export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({ source_entry_id: true });
+
+export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
+export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
+
 export const careKindSchema = z.enum(['hotline', 'text_line', 'human', 'professional']);
 
 /** One support pointer (mirrors the backend ``CareResourceResponse``). */
