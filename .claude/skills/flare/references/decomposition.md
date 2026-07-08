@@ -16,7 +16,10 @@ two frontend screens). This mirrors the sizing convention already used across
    the overall Goal and Context (why this matters, what the finished feature
    looks like end-to-end), plus a checklist linking each sub-issue once
    created. No `agent-ready` label — an epic isn't a directly implementable
-   unit of work, it's a tracking/coordination issue.
+   unit of work, it's a tracking/coordination issue. It must also carry the
+   bare `epic` label (not just `epic:<slug>` — see step 5): that's the
+   literal token `pick-next.sh`'s default exclude list matches, and its
+   label filtering is exact-match, not prefix-match.
 
 3. **Write each sub-issue** using the full `report-template.md` (Role /
    Goal / Context / Output Format / Examples / Constraints), scoped to one
@@ -30,11 +33,13 @@ two frontend screens). This mirrors the sizing convention already used across
    picker's epic guard prevents same-epic issues running in parallel by
    default, but does not enforce ordering among them.
 
-5. **Label everything**: `epic:<slug>` on the epic and every sub-issue.
-   Backend/frontend split issues that verifiably don't touch the same files
-   may add `parallelizable` to let them run concurrently despite sharing the
-   epic label — only do this when Step 2's research confirmed no file/table
-   overlap.
+5. **Label everything**: `epic:<slug>` on the epic and every sub-issue, PLUS
+   the bare `epic` label on the epic issue only (never on sub-issues — a
+   sub-issue carrying the bare `epic` label would itself be excluded from
+   the picker). Backend/frontend split sub-issues that verifiably don't
+   touch the same files may add `parallelizable` to let them run
+   concurrently despite sharing the `epic:<slug>` label — only do this when
+   Step 2's research confirmed no file/table overlap.
 
 6. **Link sub-issues to the epic.** Prefer `mcp__github__sub_issue_write`
    (action `add_sub_issue`) so GitHub's native sub-issue relationship shows

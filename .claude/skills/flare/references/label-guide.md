@@ -43,11 +43,14 @@ always apply one explicitly rather than relying on the default.
 
 - `epic:<slug>` — applied to an epic issue and every one of its sub-issues.
   The picker's same-epic guard prevents two sub-issues of the same epic from
-  running in parallel unless also labeled `parallelizable`. Epics themselves
-  should NOT carry `agent-ready` — they aren't directly implementable; the
-  picker isn't meant to pick them (exclude via not tagging `agent-ready`, or
-  add `epic` to `RALPH_EXCLUDE_LABELS` if the repo's picker config requires
-  it).
+  running in parallel unless also labeled `parallelizable`.
+- `epic` (bare, on the epic issue ONLY, in addition to `epic:<slug>`) — this
+  is the literal token `pick-next.sh`'s default `RALPH_EXCLUDE_LABELS`
+  matches; the picker's label filtering is exact-match, not prefix-match, so
+  `epic:<slug>` alone does NOT trigger the exclusion. Without the bare
+  `epic` label, an epic issue is fully pickable despite not being directly
+  implementable. Sub-issues must NOT carry the bare `epic` label — only
+  `epic:<slug>` — or they'd be excluded too.
 - `parallelizable` — overrides the same-epic guard; only apply when repo
   research (Step 2 in SKILL.md) confirms the sub-issues don't touch
   overlapping files, tables, or migrations.

@@ -104,10 +104,13 @@ reasonable default so Ralph isn't blocked waiting on a decision.
 
 If Step 3 flagged this as too big for one issue, follow
 `references/decomposition.md`: create one epic issue (context + the overall
-goal, no `agent-ready` label — epics aren't directly pickable) and 2–5
-atomized sub-issues (~300 LoC each, each independently agent-ready), linked
-to the epic via `mcp__github__sub_issue_write` (or `gh issue edit --add-...`
-sub-issue linking where available) and a shared `epic:<slug>` label. Mark
+goal, labeled with both the bare `epic` label AND `epic:<slug>` — the bare
+`epic` token is what actually keeps it out of the picker; `epic:<slug>`
+alone does not, since `pick-next.sh` matches labels exactly, not by prefix)
+and 2–5 atomized sub-issues (~300 LoC each, each independently agent-ready,
+labeled `epic:<slug>` only — never the bare `epic` label, or they'd be
+excluded too), linked to the epic via `mcp__github__sub_issue_write` (or
+`gh issue edit --add-...` sub-issue linking where available). Mark
 sub-issues `parallelizable` only if Step 2's research confirms they don't
 touch overlapping files/tables.
 
@@ -123,7 +126,9 @@ See `references/label-guide.md` for the full set. At minimum apply:
   keeps an incomplete issue out of Ralph's auto-pick. `needs-triage` is not
   in that default exclude set and will NOT reliably stop the picker on its
   own — see `references/label-guide.md`.
-- `epic:<slug>` on the epic issue and all its sub-issues, if decomposed
+- `epic:<slug>` on the epic issue and all its sub-issues, if decomposed, PLUS
+  the bare `epic` label on the epic issue only (see Step 4b — `epic:<slug>`
+  alone does not exclude it from the picker; the bare `epic` token does)
 - `solo` only if the change cannot safely run alongside parallel Ralph
   workers (e.g. touches a migration or shared config every other issue also
   touches)
