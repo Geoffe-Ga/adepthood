@@ -295,15 +295,6 @@ export function formatApiError(err: unknown, options: FormatErrorOptions = {}): 
   return resolved ?? GENERIC_FALLBACK;
 }
 
-/**
- * Narrower helper for BotMason chat where callers already have a raw
- * backend ``detail`` string (e.g. from an SSE ``error`` frame) and want
- * the mapped user copy. Preserves the old ``JournalScreen`` API.
- */
-export function mapDetailToMessage(detail: string): string {
-  return messageForCode(detail) ?? PROVIDER_TROUBLE;
-}
-
 // Re-export for use in contexts that can't import ``ApiError`` directly
 // without creating a circular import.
 export { ApiError };

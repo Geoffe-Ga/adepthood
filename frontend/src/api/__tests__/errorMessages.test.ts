@@ -4,7 +4,6 @@
 import {
   formatApiError,
   GENERIC_FALLBACK,
-  mapDetailToMessage,
   messageForCode,
   USER_FACING_ERROR_MESSAGES,
 } from '../errorMessages';
@@ -116,16 +115,6 @@ describe('messageForCode', () => {
     expect(messageForCode('')).toBeUndefined();
     expect(messageForCode(null)).toBeUndefined();
     expect(messageForCode(undefined)).toBeUndefined();
-  });
-});
-
-describe('mapDetailToMessage', () => {
-  it('maps known codes', () => {
-    expect(mapDetailToMessage('rate_limit_exceeded')).toMatch(/Slow down/);
-  });
-
-  it('falls back to the provider-trouble copy for unknown codes', () => {
-    expect(mapDetailToMessage('whatever_new_code')).toMatch(/having trouble/);
   });
 });
 
