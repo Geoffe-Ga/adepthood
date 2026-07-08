@@ -77,6 +77,7 @@ import {
 import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
+import { habitManager } from '../../services/habitManager';
 import { useHabitActions } from '../useHabitActions';
 import { useHabitUI } from '../useHabitUI';
 
@@ -370,6 +371,23 @@ describe('useHabitActions.addHabit', () => {
     expect(habitsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Brand New', icon: '🆕' }),
     );
+  });
+});
+
+describe('useHabitActions tz binding for date-shifted mutations', () => {
+  it('forwards the hook tz prop as the third argument to backfillMissedDays', () => {
+    // Spy before render: useMemo captures whatever habitManager.backfillMissedDays
+    // currently is, so the spy must already be in place at capture time.
+    const backfillSpy = jest.spyOn(habitManager, 'backfillMissedDays').mockImplementation(() => {});
+    const { result } = renderActions();
+    const days = [new Date('2025-01-02')];
+
+    act(() => {
+      result.current.actions.backfillMissedDays(1, days);
+    });
+
+    expect(backfillSpy).toHaveBeenCalledWith(1, days, 'UTC');
+    backfillSpy.mockRestore();
   });
 });
 
