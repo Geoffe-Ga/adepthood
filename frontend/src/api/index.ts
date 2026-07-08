@@ -26,6 +26,8 @@ import {
   programCalendarSchema,
   promotedQuoteSchema,
   promptListResponseSchema,
+  reflectionDueResponseSchema,
+  reflectionSourcesResponseSchema,
   resonanceResponseSchema,
   stageIntroSchema,
   userPracticeSchema,
@@ -52,6 +54,9 @@ import {
   type ProgramCalendarT,
   type PromotedQuoteT,
   type PromotedQuoteSummaryT,
+  type ReflectionDueT,
+  type ReflectionLevelT,
+  type ReflectionSourceItemT,
   type StageProgressRecordT,
   type SuggestionStatusT,
   type Tier,
@@ -1107,6 +1112,10 @@ export interface JournalMessageCreate {
   primary_aspect?: number | null;
   /** Secondary chord Aspect (a stage 1..10); only meaningful with a primary. */
   secondary_aspect?: number | null;
+  /** Reflection scope this entry closes (a 7th-day reflection); omitted otherwise. */
+  reflection_level?: ReflectionLevel;
+  /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflection_level``. */
+  reflection_scope_key?: string;
 }
 
 export type EntryStatus = 'draft' | 'finished';
@@ -1146,6 +1155,10 @@ export interface JournalEntryUpdate {
   primary_aspect?: number | null;
   /** Update the secondary chord Aspect (a stage 1..10); null clears it. */
   secondary_aspect?: number | null;
+  /** Reflection scope this entry closes (a 7th-day reflection); omitted otherwise. */
+  reflection_level?: ReflectionLevel;
+  /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflection_level``. */
+  reflection_scope_key?: string;
 }
 
 export type MarginaliaKind = 'theme' | 'connection' | 'symbol';
@@ -1312,6 +1325,50 @@ export const promotions = {
       token,
       schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
     });
+  },
+};
+
+// Hierarchical reflections client (the 7th-day reflection invitation + sources)
+export type ReflectionLevel = ReflectionLevelT;
+export type ReflectionDue = ReflectionDueT;
+export type ReflectionSourceItem = ReflectionSourceItemT;
+
+/** ``GET /reflections/due`` result: the due window, or ``null`` when nothing is due. */
+export interface ReflectionDueResponse {
+  due: ReflectionDue | null;
+}
+
+/** ``GET /reflections/sources`` result: the chronological rereadable-source feed. */
+export interface ReflectionSourcesResponse {
+  items: ReflectionSourceItem[];
+}
+
+/**
+ * The declinable reflection surface. ``due`` reports the currently-open
+ * reflection window (safe to poll on focus); ``sources`` returns the entries and
+ * earlier reflections that fall inside a given scope so the reader can reread and
+ * fold quotes into the new reflection. The colon-bearing ``scopeKey`` is
+ * URL-encoded onto the query string (``c1:s3`` → ``c1%3As3``).
+ */
+export const reflections = {
+  due(token?: string): Promise<ReflectionDueResponse> {
+    return request<ReflectionDueResponse>('/reflections/due', {
+      token,
+      schema: reflectionDueResponseSchema as unknown as z.ZodType<ReflectionDueResponse>,
+    });
+  },
+  sources(
+    level: ReflectionLevel,
+    scopeKey: string,
+    token?: string,
+  ): Promise<ReflectionSourcesResponse> {
+    return request<ReflectionSourcesResponse>(
+      `/reflections/sources?level=${level}&scope_key=${encodeURIComponent(scopeKey)}`,
+      {
+        token,
+        schema: reflectionSourcesResponseSchema as unknown as z.ZodType<ReflectionSourcesResponse>,
+      },
+    );
   },
 };
 

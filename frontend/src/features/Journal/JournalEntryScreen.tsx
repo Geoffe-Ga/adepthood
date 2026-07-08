@@ -33,11 +33,13 @@ import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
+import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
+import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
 
-import { journal, prompts } from '@/api';
+import { journal, prompts, reflections } from '@/api';
 import type {
   CheckInResult,
   CompletionSuggestion,
@@ -46,6 +48,7 @@ import type {
   JournalMessage,
   Marginalia,
   PromotedQuote,
+  ReflectionLevel,
 } from '@/api';
 import { Button } from '@/components/Button';
 import { colors } from '@/design/tokens';
@@ -103,6 +106,30 @@ export interface SaveContext {
   weekNumber?: number;
   practiceSessionId?: number;
   userPracticeId?: number;
+  /** Reflection scope this page closes (7th-day reflection compose mode). */
+  reflectionLevel?: ReflectionLevel;
+  /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflectionLevel``. */
+  reflectionScopeKey?: string;
+}
+
+/** HTTP status the backend returns when a reflection already exists for the scope. */
+const REFLECTION_CONFLICT_STATUS = 409;
+
+/**
+ * Warm, declinable hint shown when a folded quote could not be marked included.
+ * The quote stays pending and the entry is safe — the writer can simply try
+ * again later; there is deliberately no urgency or blame here.
+ */
+const QUOTE_INCLUSION_HINT =
+  "That quote is saved but didn't fold in just yet — no rush, you can add it again anytime.";
+
+/** True for a create rejection that means "this reflection already exists". */
+function isCreateConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { status?: unknown }).status === REFLECTION_CONFLICT_STATUS
+  );
 }
 
 interface WriteEntryRefs {
@@ -129,6 +156,8 @@ async function createEntry(refs: WriteEntryRefs, body: string, ctx: SaveContext)
     secondary_aspect: chordRef.current.secondary,
     ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
     ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+    ...(ctx.reflectionLevel != null && { reflection_level: ctx.reflectionLevel }),
+    ...(ctx.reflectionScopeKey != null && { reflection_scope_key: ctx.reflectionScopeKey }),
   });
   return created.id;
 }
@@ -437,15 +466,21 @@ function trackedWrite(
   ctx: SaveContext,
   setSaveState: (_state: SaveState) => void,
   onSaved: (() => void) | undefined,
+  onConflict: (() => void) | undefined,
 ): Promise<void> {
   return (async () => {
     try {
       await writeEntry(refs, title, body, ctx);
       setSaveState('saved');
       onSaved?.();
-    } catch {
+    } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
       setSaveState('error');
+      // Additive: a reflection-scope create can 409 because the reflection
+      // already exists. Hand that case to the caller (which routes to the
+      // existing entry); every other failure keeps the plain save-error hint.
+      // This never rejects, so the single-flight drain loops stay safe.
+      if (isCreateConflict(error)) onConflict?.();
     }
   })();
 }
@@ -455,6 +490,8 @@ type SaveRunnerRefs = WriteEntryRefs & {
   entryUnsettledRef: React.MutableRefObject<boolean>;
   ctxRef: React.MutableRefObject<SaveContext>;
   onSavedRef: React.MutableRefObject<(() => void) | undefined>;
+  /** Additively invoked on a reflection-scope create 409 (routes to the existing entry). */
+  onConflictRef: React.MutableRefObject<(() => void) | undefined>;
   inFlightRef: React.MutableRefObject<Promise<void> | null>;
 };
 
@@ -465,7 +502,7 @@ type SaveRunnerRefs = WriteEntryRefs & {
  */
 function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) => void): RunSave {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
-  const { entryUnsettledRef, ctxRef, onSavedRef, inFlightRef } = refs;
+  const { entryUnsettledRef, ctxRef, onSavedRef, onConflictRef, inFlightRef } = refs;
   return useCallback<RunSave>(
     async (title, body) => {
       // Never overwrite an entry until its load settles (still in flight or failed).
@@ -486,6 +523,7 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
         ctxRef.current,
         setSaveState,
         onSavedRef.current,
+        onConflictRef.current,
       );
       inFlightRef.current = task;
       try {
@@ -502,6 +540,7 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
       entryUnsettledRef,
       ctxRef,
       onSavedRef,
+      onConflictRef,
       inFlightRef,
       setSaveState,
     ],
@@ -621,6 +660,73 @@ function useDraftWriters(
   return { save, flush, finish };
 }
 
+/** The non-memoised inputs the writer reads through refs (kept fresh each render). */
+interface MirroredInputs {
+  onSaved?: () => void;
+  onConflict?: () => void;
+  ctx: SaveContext;
+  entryUnsettled: boolean;
+}
+
+/** Mirror the latest non-memoised writer inputs onto their refs (no callback churn). */
+function useMirroredInputs(
+  onSavedRef: React.MutableRefObject<(() => void) | undefined>,
+  onConflictRef: React.MutableRefObject<(() => void) | undefined>,
+  ctxRef: React.MutableRefObject<SaveContext>,
+  entryUnsettledRef: React.MutableRefObject<boolean>,
+  values: MirroredInputs,
+): void {
+  useEffect(() => {
+    onSavedRef.current = values.onSaved;
+    onConflictRef.current = values.onConflict;
+    ctxRef.current = values.ctx;
+    entryUnsettledRef.current = values.entryUnsettled;
+  });
+}
+
+/** The stable refs the draft writer reads (created once, mirrored each render). */
+interface DraftRefs {
+  entryIdRef: React.MutableRefObject<number | null>;
+  timerRef: TimerRef;
+  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+  respondedRef: React.MutableRefObject<boolean>;
+  onSavedRef: React.MutableRefObject<(() => void) | undefined>;
+  onConflictRef: React.MutableRefObject<(() => void) | undefined>;
+  ctxRef: React.MutableRefObject<SaveContext>;
+  entryUnsettledRef: React.MutableRefObject<boolean>;
+}
+
+/**
+ * Create the draft writer's refs and keep the non-memoised ones mirrored.
+ *
+ * ``entryUnsettledRef`` gates every write: until an existing entry's load
+ * settles, ``entryIdRef`` points at the real, unloaded entry with a blank body,
+ * so a save (or tier/chord PATCH) would overwrite it. ``respondedRef`` makes a
+ * weekly-prompt response write-once, and ``inFlightRef`` single-flights saves so
+ * two id-less saves can't each fire ``journal.create``.
+ */
+function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): DraftRefs {
+  const entryIdRef = useRef<number | null>(routeEntryId);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const respondedRef = useRef(false);
+  const onSavedRef = useRef(values.onSaved);
+  const onConflictRef = useRef(values.onConflict);
+  const ctxRef = useRef(values.ctx);
+  const entryUnsettledRef = useRef(values.entryUnsettled);
+  useMirroredInputs(onSavedRef, onConflictRef, ctxRef, entryUnsettledRef, values);
+  return {
+    entryIdRef,
+    timerRef,
+    inFlightRef,
+    respondedRef,
+    onSavedRef,
+    onConflictRef,
+    ctxRef,
+    entryUnsettledRef,
+  };
+}
+
 /** Debounced create-then-update draft saver; tracks the save state. */
 function useDebouncedSave(
   routeEntryId: number | null,
@@ -628,44 +734,15 @@ function useDebouncedSave(
   ctx: SaveContext,
   entryUnsettled: boolean,
   onSaved?: () => void,
+  onConflict?: () => void,
 ) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
-  const entryIdRef = useRef<number | null>(routeEntryId);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Single-flight guard: the in-flight save, so overlapping saves of an id-less
-  // entry can't each fire journal.create (a duplicate-entry TOCTOU otherwise).
-  const inFlightRef = useRef<Promise<void> | null>(null);
-  // A weekly-prompt response is write-once; this guards against the debounce or
-  // flush submitting it twice (the backend 409s on a duplicate week).
-  const respondedRef = useRef(false);
-  // Refs so non-memoised inputs don't churn the save callbacks below.
-  const onSavedRef = useRef(onSaved);
-  const ctxRef = useRef(ctx);
-  // Until an existing entry's load settles (still in flight or failed), entryIdRef
-  // points at the real, unloaded entry with a blank body — so any save (or
-  // tier/chord PATCH) here would overwrite it. Gate on the latest flag; declared
-  // before the persisters so they can read it too.
-  const entryUnsettledRef = useRef(entryUnsettled);
-  const persist = usePersistControls(entryIdRef, setSaveState, entryUnsettledRef);
-  useEffect(() => {
-    onSavedRef.current = onSaved;
-    ctxRef.current = ctx;
-    entryUnsettledRef.current = entryUnsettled;
-  });
-  useTimerCleanup(timerRef);
+  const refs = useDraftRefs(routeEntryId, { onSaved, onConflict, ctx, entryUnsettled });
+  const persist = usePersistControls(refs.entryIdRef, setSaveState, refs.entryUnsettledRef);
+  useTimerCleanup(refs.timerRef);
 
   const { save, flush, finish } = useDraftWriters(
-    {
-      entryIdRef,
-      respondedRef,
-      classificationRef: persist.classificationRef,
-      chordRef: persist.chordRef,
-      entryUnsettledRef,
-      ctxRef,
-      onSavedRef,
-      inFlightRef,
-      timerRef,
-    },
+    { ...refs, classificationRef: persist.classificationRef, chordRef: persist.chordRef },
     delayMs,
     setSaveState,
   );
@@ -860,6 +937,7 @@ function useJournalAutosave(
   ctx: SaveContext,
   initialTitle: string,
   onSaved?: () => void,
+  onConflict?: () => void,
 ): AutosaveApi {
   const entry = useEntryState(routeEntryId, initialTitle);
   const { titleRef, bodyRef } = entry;
@@ -869,7 +947,7 @@ function useJournalAutosave(
   // null). Gate the writer + controls on this so neither touches an unseen entry.
   const entryUnsettled = routeEntryId != null && !entry.loaded;
   const { saveState, save, flush, finish, changeClassification, changeChord, seedPersist } =
-    useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved);
+    useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
   useSeedPersistOnLoad(entry, seedPersist);
 
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
@@ -926,6 +1004,8 @@ interface WritingColumnProps {
    * (still in flight or failed), so they never write against an unseen entry.
    */
   controlsDisabled: boolean;
+  /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
+  onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
 }
 
 /** Quiet control to mark a draft finished, with a warm retry notice on failure. */
@@ -987,8 +1067,12 @@ function WritingFields({
   body,
   onChangeTitle,
   onChangeBody,
+  onBodySelectionChange,
   bodyPlaceholder,
-}: Pick<WritingColumnProps, 'title' | 'body' | 'onChangeTitle' | 'onChangeBody'> & {
+}: Pick<
+  WritingColumnProps,
+  'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'onBodySelectionChange'
+> & {
   bodyPlaceholder: string;
 }) {
   return (
@@ -1007,6 +1091,7 @@ function WritingFields({
         style={styles.bodyInput}
         value={body}
         onChangeText={onChangeBody}
+        onSelectionChange={onBodySelectionChange}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
         multiline
@@ -1037,6 +1122,7 @@ function WritingColumn({
   finishError,
   bodyPlaceholder = 'Begin writing…',
   controlsDisabled,
+  onBodySelectionChange,
 }: WritingColumnProps) {
   return (
     <ScrollView
@@ -1056,6 +1142,7 @@ function WritingColumn({
         body={body}
         onChangeTitle={onChangeTitle}
         onChangeBody={onChangeBody}
+        onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
       <Text style={styles.savedHint} testID="journal-save-hint">
@@ -1508,6 +1595,61 @@ function useRefreshAfterEdit(): RefreshAfterEdit {
 }
 
 /** Compose the autosave + idle + resonance hooks into the screen's view-model. */
+/**
+ * A reflection-scope create can 409 because the reflection already exists.
+ * Consult the due window and, when it points at an existing reflection for the
+ * same scope, route there instead of leaving a dead-ended save error.
+ */
+function useCreateConflictHandler(ctx: SaveContext, navigation: ScreenNavigation): () => void {
+  return useCallback(() => {
+    const scopeKey = ctx.reflectionScopeKey;
+    if (scopeKey == null) return;
+    void reflections
+      .due()
+      .then(({ due }) => {
+        if (due != null && due.scope_key === scopeKey && due.existing_entry_id != null) {
+          navigation.replace('JournalEntry', { entryId: due.existing_entry_id });
+        }
+      })
+      .catch(() => {
+        // Fall back to the plain save-error hint; the draft is safe and retryable.
+      });
+  }, [ctx.reflectionScopeKey, navigation]);
+}
+
+/**
+ * Wire the reflection composer: mirror the latest body onto a ref so a folded
+ * quote can be spliced at the caret without threading the autosave's draft ref
+ * out, and hand the sources/insert flow the body writer + flush.
+ */
+function useReflectionComposer(ctx: SaveContext, autosave: AutosaveApi) {
+  const reflectionBodyRef = useRef(autosave.body);
+  reflectionBodyRef.current = autosave.body;
+  return useReflectionMode({
+    reflectionLevel: ctx.reflectionLevel,
+    reflectionScopeKey: ctx.reflectionScopeKey,
+    bodyRef: reflectionBodyRef,
+    onChangeBody: autosave.onChangeBody,
+    flush: autosave.flush,
+  });
+}
+
+/** The finished-entry edit gate wired from the autosave's status + finish write. */
+function useEntryEditGate(
+  autosave: AutosaveApi,
+  navigation: ScreenNavigation,
+  onConfirmEdit: () => void,
+) {
+  return useEditGate({
+    status: autosave.status,
+    setStatus: autosave.setStatus,
+    finish: autosave.finish,
+    body: autosave.body,
+    navigation,
+    onConfirmEdit,
+  });
+}
+
 function useJournalEntryController(
   routeEntryId: number | null,
   autosaveDelayMs: number,
@@ -1516,27 +1658,22 @@ function useJournalEntryController(
   initialTitle: string,
 ) {
   const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
-
+  const onCreateConflict = useCreateConflictHandler(ctx, navigation);
   const autosave = useJournalAutosave(
     routeEntryId,
     autosaveDelayMs,
     ctx,
     initialTitle,
     handleSaved,
+    onCreateConflict,
   );
   const { isIdle, bump } = useIdle();
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
+  const reflection = useReflectionComposer(ctx, autosave);
   const modal = useEssayModal(resonance.updateNote);
-  const editGate = useEditGate({
-    status: autosave.status,
-    setStatus: autosave.setStatus,
-    finish: autosave.finish,
-    body: autosave.body,
-    navigation,
-    onConfirmEdit,
-  });
+  const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const gate = deriveResonanceGate({
     isIdle,
@@ -1551,6 +1688,7 @@ function useJournalEntryController(
     autosave,
     resonance,
     quote,
+    reflection,
     isIdle,
     ...gate,
     handleTitle,
@@ -1591,6 +1729,9 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       finishError={finishError}
       bodyPlaceholder={bodyPlaceholder}
       controlsDisabled={controlsDisabled}
+      onBodySelectionChange={
+        ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
+      }
     />
   ) : (
     <ReadColumn
@@ -1661,6 +1802,8 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
       weekNumber: p.weekNumber,
       practiceSessionId: p.practiceSessionId,
       userPracticeId: p.userPracticeId,
+      reflectionLevel: p.reflectionLevel,
+      reflectionScopeKey: p.reflectionScopeKey,
     },
     initialTitle,
     bodyPlaceholder: p.promptQuestion ?? 'Begin writing…',
@@ -1702,6 +1845,47 @@ function LoadErrorBanner({ message }: { message: string | null }): React.JSX.Ele
   );
 }
 
+/**
+ * Reflection compose surface: the rereadable sources panel plus a warm hint when
+ * a folded quote could not be marked included. Renders nothing outside reflection
+ * mode so the plain and weekly-prompt paths are untouched.
+ */
+function ReflectionComposer({
+  reflection,
+}: {
+  reflection: Controller['reflection'];
+}): React.JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const openSources = useCallback(() => setOpen(true), []);
+  const closeSources = useCallback(() => setOpen(false), []);
+  if (!reflection.active) return null;
+  return (
+    <>
+      <TouchableOpacity
+        style={styles.quoteActionButton}
+        onPress={openSources}
+        accessibilityRole="button"
+        accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
+        testID="reflection-sources-toggle"
+      >
+        <Text style={styles.controlLink}>Sources</Text>
+      </TouchableOpacity>
+      {open ? (
+        <ReflectionSourcesPanel
+          items={reflection.sources}
+          onInsertQuote={reflection.onInsertQuote}
+          onClose={closeSources}
+        />
+      ) : null}
+      {reflection.inclusionHint ? (
+        <Text style={styles.savedHint} testID="quote-inclusion-hint">
+          {QUOTE_INCLUSION_HINT}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -1728,6 +1912,7 @@ function JournalEntryScreen({
       <ContractionReflectionNote contraction={ctl.resonance.contraction} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+      <ReflectionComposer reflection={ctl.reflection} />
       <PrivacyResonanceReason
         visible={ctl.visible && ctl.resonanceDisabled}
         reason={ctl.resonanceReason}

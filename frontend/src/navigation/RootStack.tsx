@@ -15,6 +15,7 @@ import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen'
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
 
+import type { ReflectionLevel } from '@/api';
 import { accent, fonts, ink } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
@@ -57,6 +58,10 @@ export type RootStackParamList = {
         practiceSessionId?: number;
         userPracticeId?: number;
         prefillTitle?: string;
+        /** Reflection scope this page closes (7th-day reflection compose mode). */
+        reflectionLevel?: ReflectionLevel;
+        /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflectionLevel``. */
+        reflectionScopeKey?: string;
       }
     | undefined;
 };
