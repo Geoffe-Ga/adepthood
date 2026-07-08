@@ -5,9 +5,9 @@ import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
+import { useAuthSubmit } from './useAuthSubmit';
 
 import { auth as authApi } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 
 const FORGOT_FALLBACK =
@@ -96,22 +96,14 @@ function SuccessNotice({ onBackToLogin }: { onBackToLogin: () => void }): React.
 
 export default function ForgotPasswordScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-
-  const handleSubmit = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
+  const { submitting, error, run } = useAuthSubmit(
+    async () => {
       await authApi.requestPasswordReset({ email: canonicalizeEmail(email) });
       setSubmitted(true);
-    } catch (err: unknown) {
-      setError(formatApiError(err, { fallback: FORGOT_FALLBACK }));
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    },
+    { fallback: FORGOT_FALLBACK },
+  );
 
   if (submitted) {
     return (
@@ -132,7 +124,7 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
       {error && <Text style={styles.error}>{error}</Text>}
       <ForgotActions
         submitting={submitting}
-        onSubmit={handleSubmit}
+        onSubmit={run}
         onBackToLogin={() => navigation.navigate('Login')}
       />
     </AuthScreenContainer>

@@ -13,8 +13,8 @@ import { authStyles } from './auth.styles';
 import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
+import { useAuthSubmit } from './useAuthSubmit';
 
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -116,20 +116,10 @@ export function ReauthSheet(): React.JSX.Element {
   const { login, dismissReauth } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = useCallback(async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await login(canonicalizeEmail(email), password);
-    } catch (err: unknown) {
-      setError(formatApiError(err, { fallback: REAUTH_FALLBACK }));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [login, email, password]);
+  const { submitting, error, run } = useAuthSubmit(
+    () => login(canonicalizeEmail(email), password),
+    { fallback: REAUTH_FALLBACK },
+  );
 
   const handleDismiss = useCallback(() => {
     void dismissReauth();
@@ -155,7 +145,7 @@ export function ReauthSheet(): React.JSX.Element {
           submitting={submitting}
           onEmailChange={setEmail}
           onPasswordChange={setPassword}
-          onSubmit={handleSubmit}
+          onSubmit={run}
           onDismiss={handleDismiss}
         />
       </KeyboardAvoidingView>

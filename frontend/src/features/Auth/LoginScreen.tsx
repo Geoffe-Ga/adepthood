@@ -7,8 +7,8 @@ import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
+import { useAuthSubmit } from './useAuthSubmit';
 
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 
@@ -99,27 +99,15 @@ export default function LoginScreen({ navigation }: Props) {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleLogin = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
-      // produce a confusing 422 from the backend.
-      // BUG-FE-AUTH-015: lowercase the email client-side so the backend
-      // receives the canonical form and a "Foo@bar.com" / "foo@bar.com"
-      // login pair can't end up looking like two distinct accounts.
-      await login(canonicalizeEmail(email), password);
-    } catch (err: unknown) {
-      // BUG-FRONTEND-INFRA-016: ``formatApiError`` returns a dedicated
-      // timeout message when the new AbortController fires.
-      setError(formatApiError(err, { fallback: LOGIN_FALLBACK }));
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const { submitting, error, run } = useAuthSubmit(
+    // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
+    // produce a confusing 422 from the backend.
+    // BUG-FE-AUTH-015: lowercase the email client-side so the backend
+    // receives the canonical form and a "Foo@bar.com" / "foo@bar.com"
+    // login pair can't end up looking like two distinct accounts.
+    () => login(canonicalizeEmail(email), password),
+    { fallback: LOGIN_FALLBACK },
+  );
 
   return (
     <AuthScreenContainer testID="login">
@@ -135,7 +123,7 @@ export default function LoginScreen({ navigation }: Props) {
       {error && <Text style={styles.error}>{error}</Text>}
       <LoginActions
         submitting={submitting}
-        onLogin={handleLogin}
+        onLogin={run}
         onNavigateSignup={() => navigation.navigate('Signup')}
         onNavigateForgot={() => navigation.navigate('ForgotPassword')}
       />
