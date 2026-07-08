@@ -208,6 +208,19 @@ describe('CareSupportNote — dismiss and re-open', () => {
     fireEvent.press(getByTestId('care-dismiss'));
     expect(getByTestId('care-support')).toBeTruthy();
   });
+
+  it('re-shows the resources when a NEW care object arrives after a prior dismissal (fresh crisis signal)', () => {
+    const { getByTestId, queryByTestId, getByText, rerender } = render(
+      <CareSupportNote care={carePayload()} />,
+    );
+    fireEvent.press(getByTestId('care-dismiss'));
+    expect(queryByTestId('care-resource-hotline')).toBeNull();
+
+    rerender(<CareSupportNote care={carePayload({ message: 'second crisis pass' })} />);
+
+    expect(getByTestId('care-resource-hotline')).toBeTruthy();
+    expect(getByText('second crisis pass')).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------

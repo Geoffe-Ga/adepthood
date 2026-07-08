@@ -71,17 +71,19 @@ function ExpandedBody({
 }
 
 function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | null {
-  const [expanded, setExpanded] = useState(true);
+  // Reference-identity collapse: a fresh care object never matches the pinned one, so a new crisis signal always re-surfaces the resources.
+  const [collapsedFor, setCollapsedFor] = useState<CareResponse | null>(null);
   if (care == null) return null;
+  const expanded = collapsedFor !== care;
   return (
     <View style={reflectionCardStyles.root} testID="care-support">
       <Text style={reflectionCardStyles.header} accessibilityRole="header">
         {care.message}
       </Text>
       {expanded ? (
-        <ExpandedBody resources={care.resources} onDismiss={() => setExpanded(false)} />
+        <ExpandedBody resources={care.resources} onDismiss={() => setCollapsedFor(care)} />
       ) : (
-        <ReopenControl onPress={() => setExpanded(true)} />
+        <ReopenControl onPress={() => setCollapsedFor(null)} />
       )}
     </View>
   );
