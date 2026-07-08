@@ -56,3 +56,6 @@ class PromotedQuoteResponse(BaseModel):
     anchor_end: int
     anchor_text: str
     pending: bool
+    # True once a source-body edit deleted/mutated the anchored passage so the
+    # quote could no longer re-anchor; a stale quote stays for the user to resolve.
+    stale: bool

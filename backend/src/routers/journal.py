@@ -71,6 +71,7 @@ from services.llm_usage import record_llm_usage
 from services.marginalia import (
     BotmasonResonanceLLM,
     reanchor_entry_marginalia,
+    reanchor_entry_promoted_quotes,
     reanchor_entry_suggestions,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
@@ -292,7 +293,7 @@ async def get_journal_entry(
 async def _apply_message_edit(
     entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
 ) -> None:
-    """Re-sanitize the body on edit and re-anchor marginalia + suggestions."""
+    """Re-sanitize the body on edit and re-anchor marginalia, suggestions, and quotes."""
     if payload.message is None:
         return
     old_message = entry.message
@@ -301,6 +302,7 @@ async def _apply_message_edit(
         entry.message = new_message
         await reanchor_entry_marginalia(entry, new_message, session)
         await reanchor_entry_suggestions(entry, new_message, session)
+        await reanchor_entry_promoted_quotes(entry, new_message, session)
 
 
 def _apply_chord_update(entry: JournalEntry, payload: JournalEntryUpdate) -> None:

@@ -184,6 +184,22 @@ async def test_promoted_quote_persists_and_reads_back(db_session: AsyncSession) 
 
 
 @pytest.mark.asyncio
+async def test_promoted_quote_defaults_to_not_stale(db_session: AsyncSession) -> None:
+    """A freshly created PromotedQuote defaults stale to False."""
+    user_id = await _user(db_session)
+    entry = _reflection_entry(user_id)
+    db_session.add(entry)
+    await db_session.flush()
+    assert entry.id is not None
+
+    db_session.add(_quote(user_id, entry.id))
+    await db_session.commit()
+
+    row = (await db_session.execute(select(PromotedQuote))).scalar_one()
+    assert row.stale is False
+
+
+@pytest.mark.asyncio
 async def test_anchor_text_is_encrypted_at_rest(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

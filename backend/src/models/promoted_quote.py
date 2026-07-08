@@ -29,7 +29,9 @@ class PromotedQuote(SQLModel, table=True):
     ``anchor_start`` / ``anchor_end`` are character offsets into the source
     entry's text; ``anchor_text`` snapshots the spanned substring so the quote
     survives later edits. ``included_in_entry_id`` points at the entry the quote
-    was folded into, or NULL while it is still pending.
+    was folded into, or NULL while it is still pending. ``stale`` marks a pending
+    quote whose anchored passage a later source edit deleted or mutated, so it can
+    no longer be re-anchored (mirrors ``Marginalia``).
     """
 
     # The hot read is "all quotes for a source entry", so index that FK; a second
@@ -58,6 +60,11 @@ class PromotedQuote(SQLModel, table=True):
         foreign_key="journalentry.id",
         ondelete="SET NULL",
     )
+    # True once a source-body edit removed or mutated the anchored passage: the
+    # quote can no longer re-anchor, so it stays for the user to resolve and is
+    # never revived or deleted (mirrors ``Marginalia``). Only pending quotes go
+    # stale; a quote already folded into a reflection has a frozen span.
+    stale: bool = Field(default=False)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
