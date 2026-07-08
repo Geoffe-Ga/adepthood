@@ -9,6 +9,8 @@ import type {
   ModeConfig,
   TarotConfig,
 } from '../types';
+import { MS_PER_MINUTE } from '../types';
+import { BPM_MAX, DURATION_MAX_MINUTES } from '../validation';
 
 const MIN = 60_000;
 
@@ -70,19 +72,52 @@ describe('scheduledCues — metronome', () => {
     expect(cues.filter((c) => c.kind === 'halfway_bell')).toHaveLength(1);
   });
 
-  it('respects the 10k tick safety cap', () => {
+  it('emits every tick for the worst-case valid session (max bpm, max duration)', () => {
     const config: MetronomeConfig = {
       mode: 'metronome',
-      bpm: 240,
+      bpm: BPM_MAX,
       timer: {
         mode: 'meditation_timer',
-        duration_minutes: 1440,
+        duration_minutes: DURATION_MAX_MINUTES,
         start_bell: false,
         end_bell: false,
       },
     };
     const ticks = scheduledCues(config).filter((c) => c.kind === 'metronome_tick');
-    expect(ticks.length).toBeLessThanOrEqual(10_000);
+    expect(ticks.length).toBe(BPM_MAX * DURATION_MAX_MINUTES);
+    expect(ticks.at(-1)?.atMs).toBe(DURATION_MAX_MINUTES * MS_PER_MINUTE);
+  });
+
+  it('emits all ticks for a mid-range session that exceeds the old 10k cap', () => {
+    const config: MetronomeConfig = {
+      mode: 'metronome',
+      bpm: 240,
+      timer: {
+        mode: 'meditation_timer',
+        duration_minutes: 60,
+        start_bell: false,
+        halfway_bell: false,
+        end_bell: false,
+      },
+    };
+    const ticks = scheduledCues(config).filter((c) => c.kind === 'metronome_tick');
+    expect(ticks.length).toBe(240 * 60);
+    expect(ticks.at(-1)?.atMs).toBe(60 * MS_PER_MINUTE);
+  });
+
+  it('caps ticks at the worst-case ceiling for out-of-range input that bypasses validation', () => {
+    const config: MetronomeConfig = {
+      mode: 'metronome',
+      bpm: BPM_MAX,
+      timer: {
+        mode: 'meditation_timer',
+        duration_minutes: 2 * DURATION_MAX_MINUTES,
+        start_bell: false,
+        end_bell: false,
+      },
+    };
+    const ticks = scheduledCues(config).filter((c) => c.kind === 'metronome_tick');
+    expect(ticks.length).toBe(BPM_MAX * DURATION_MAX_MINUTES);
   });
 });
 

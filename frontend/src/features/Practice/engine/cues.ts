@@ -8,9 +8,12 @@ import type {
   TarotConfig,
 } from './types';
 import { DEFAULT_CARD_MEDITATION_MINUTES, DEFAULT_TAROT_MINUTES, MS_PER_MINUTE } from './types';
+import { BPM_MAX, DURATION_MAX_MINUTES } from './validation';
 
-// Defensive: at bpm=240 over the max session this would otherwise blow up.
-const MAX_METRONOME_TICKS = 10_000;
+// The validated worst case (max duration x max bpm): no in-range session ever
+// hits it, so nothing valid is truncated. It only bounds memory for configs
+// that reach here without passing validateMetronome.
+const MAX_METRONOME_TICKS = DURATION_MAX_MINUTES * BPM_MAX;
 
 /** Cue builder for modes whose pacing the engine does not drive (open-ended or view-owned). */
 const noCues = (): readonly Cue[] => [];
@@ -50,7 +53,8 @@ function cuesForMetronome(config: MetronomeConfig): readonly Cue[] {
   const totalMs = config.timer.duration_minutes * MS_PER_MINUTE;
   const intervalMs = MS_PER_MINUTE / config.bpm;
   const ticks: Cue[] = [];
-  for (let i = 1; i <= MAX_METRONOME_TICKS; i++) {
+  const tickCount = Math.min(Math.floor(totalMs / intervalMs), MAX_METRONOME_TICKS);
+  for (let i = 1; i <= tickCount; i++) {
     const atMs = i * intervalMs;
     if (atMs > totalMs) break;
     ticks.push({ atMs, kind: 'metronome_tick' });
