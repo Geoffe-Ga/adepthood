@@ -8,6 +8,7 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 from domain.constants import TOTAL_STAGES
+from domain.reflection_hierarchy import ReflectionLevel, scope_weeks
 from models.journal_entry import EntryStatus, JournalClassification, JournalTag
 
 JOURNAL_MESSAGE_MAX_LENGTH = 10_000
@@ -35,6 +36,22 @@ def _validate_chord_shape(primary: int | None, secondary: int | None) -> None:
         raise ValueError(msg)
 
 
+def _validate_reflection_scope(level: ReflectionLevel | None, key: str | None) -> None:
+    """Enforce the both-or-neither reflection-scope pairing and its key grammar.
+
+    The layer and its ``c{cycle}:{token}`` key are an atomic pair: supplying
+    exactly one is rejected. When both are present the key is run through
+    :func:`scope_weeks`, whose ``ValueError`` for a malformed key, a
+    level/token mismatch, or an out-of-range index surfaces here as a 422.
+    """
+    if (level is None) != (key is None):
+        msg = "reflection_level and reflection_scope_key must be set together"
+        raise ValueError(msg)
+    if level is None or key is None:
+        return
+    scope_weeks(level, key)
+
+
 class JournalMessageCreate(BaseModel):
     """Payload for creating a user journal message.
 
@@ -49,10 +66,13 @@ class JournalMessageCreate(BaseModel):
     user_practice_id: int | None = None
     primary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
     secondary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
+    reflection_level: ReflectionLevel | None = None
+    reflection_scope_key: str | None = None
 
     @model_validator(mode="after")
     def _validate_chord(self) -> Self:
         _validate_chord_shape(self.primary_aspect, self.secondary_aspect)
+        _validate_reflection_scope(self.reflection_level, self.reflection_scope_key)
         return self
 
 
@@ -69,6 +89,8 @@ class JournalEntryUpdate(BaseModel):
     classification: JournalClassification | None = None
     primary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
     secondary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
+    reflection_level: ReflectionLevel | None = None
+    reflection_scope_key: str | None = None
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> Self:
@@ -79,6 +101,7 @@ class JournalEntryUpdate(BaseModel):
             msg = "at least one field must be provided"
             raise ValueError(msg)
         _validate_chord_shape(self.primary_aspect, self.secondary_aspect)
+        _validate_reflection_scope(self.reflection_level, self.reflection_scope_key)
         return self
 
 
@@ -102,6 +125,8 @@ class JournalMessageResponse(BaseModel):
     user_practice_id: int | None
     primary_aspect: int | None = None
     secondary_aspect: int | None = None
+    reflection_level: str | None = None
+    reflection_scope_key: str | None = None
 
 
 class JournalListResponse(BaseModel):

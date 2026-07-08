@@ -9,6 +9,7 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -19,6 +20,7 @@ from domain.care import CarePayload, build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
+from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from domain.safety import assess_distress
 from domain.stage_progress import get_user_progress
@@ -94,6 +96,18 @@ def _sanitize_message(message: str) -> str:
         raise unprocessable("message_too_long") from exc
 
 
+def _coerce_reflection_level(data: dict[str, object]) -> None:
+    """Flatten a ``ReflectionLevel`` enum in a dumped payload to its plain value.
+
+    ``model_dump`` yields the enum member; the ORM column is a plain string, so
+    persisting the bare value keeps the partial unique index and the reflection
+    grammar comparing ordinary strings rather than enum reprs.
+    """
+    level = data.get("reflection_level")
+    if isinstance(level, ReflectionLevel):
+        data["reflection_level"] = level.value
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/journal", tags=["journal"])
@@ -144,9 +158,18 @@ async def create_journal_entry(
     """
     data = payload.model_dump()
     data["message"] = _sanitize_message(data["message"])
+    _coerce_reflection_level(data)
     entry = JournalEntry(sender="user", user_id=current_user, **data)
     session.add(entry)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # A partial unique index guards one live entry per (user, scope); only a
+        # scoped write can trip it, so a scopeless collision is a real bug to raise.
+        if data.get("reflection_scope_key") is not None:
+            raise conflict("reflection_scope_taken") from exc
+        raise
     await session.refresh(entry)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
@@ -293,6 +316,20 @@ def _apply_chord_update(entry: JournalEntry, payload: JournalEntryUpdate) -> Non
         entry.secondary_aspect = payload.secondary_aspect
 
 
+def _apply_scope_update(entry: JournalEntry, payload: JournalEntryUpdate) -> None:
+    """Apply the reflection-scope (level/key) as one atomic pair.
+
+    Touching either field writes both, mirroring the chord update: the schema
+    validator already guarantees both-or-neither plus a well-formed key, so the
+    persisted pair stays a valid, in-lock-step reflection scope.
+    """
+    scope_fields = {"reflection_level", "reflection_scope_key"}
+    if payload.model_fields_set & scope_fields:
+        level = payload.reflection_level
+        entry.reflection_level = level.value if level is not None else None
+        entry.reflection_scope_key = payload.reflection_scope_key
+
+
 async def _apply_entry_update(
     entry: JournalEntry, payload: JournalEntryUpdate, session: AsyncSession
 ) -> None:
@@ -305,6 +342,7 @@ async def _apply_entry_update(
     if payload.classification is not None:
         entry.classification = payload.classification
     _apply_chord_update(entry, payload)
+    _apply_scope_update(entry, payload)
     # ``updated_at`` is bumped by the column's ``onupdate`` only when a value
     # actually changes, so a same-value PATCH doesn't move it.
 
@@ -336,7 +374,15 @@ async def update_journal_entry(
         raise not_found("journal_entry")
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # The partial unique index only fires on a scoped write; a scopeless
+        # PATCH tripping it would be a real bug, so re-raise those.
+        if payload.reflection_scope_key is not None:
+            raise conflict("reflection_scope_taken") from exc
+        raise
     await session.refresh(entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
