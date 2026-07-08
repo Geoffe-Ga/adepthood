@@ -282,6 +282,99 @@ describe('CourseScreen', () => {
     });
   });
 
+  it('keeps the current stage content when a stale fetch for a previously-selected stage resolves late', async () => {
+    // Stage 1 is incomplete so it stays the default selection, matching the repro scenario.
+    const incompleteStages: Stage[] = [
+      makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 0 }),
+      makeStage({
+        id: 2,
+        stage_number: 2,
+        title: 'Stage 2',
+        subtitle: 'Second stage',
+        is_unlocked: true,
+        progress: 0,
+      }),
+    ];
+    mockStagesList.mockResolvedValue(incompleteStages);
+
+    const stageOneContent: ContentItem[] = [
+      {
+        id: 11,
+        title: 'Stage One Essay',
+        content_type: 'essay',
+        release_day: 0,
+        url: 'https://example.com/one',
+        is_locked: false,
+        is_read: false,
+      },
+    ];
+    const stageTwoContent: ContentItem[] = [
+      {
+        id: 21,
+        title: 'Stage Two Essay',
+        content_type: 'essay',
+        release_day: 0,
+        url: 'https://example.com/two',
+        is_locked: false,
+        is_read: false,
+      },
+    ];
+
+    const deferredCalls: Array<{ stage: number; resolve: (_value: ContentItem[]) => void }> = [];
+    mockStageContent.mockImplementation((stage: number) => {
+      let resolveCall: (_value: ContentItem[]) => void = () => undefined;
+      const promise = new Promise<ContentItem[]>((res) => {
+        resolveCall = res;
+      });
+      deferredCalls.push({ stage, resolve: resolveCall });
+      return promise;
+    });
+
+    // Narrow the indexed access so a missing deferred call fails loudly instead of silently.
+    const resolveDeferred = (index: number, content: ContentItem[]): void => {
+      const call = deferredCalls[index];
+      if (!call) throw new Error(`No deferred stageContentAll call at index ${index}`);
+      call.resolve(content);
+    };
+
+    // Several ticks so a resolved Promise.all fully propagates through state, regardless of chain depth.
+    const flushMicrotasks = async (): Promise<void> => {
+      for (let i = 0; i < 4; i += 1) {
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+    };
+
+    const { getByTestId, getByText, queryByText } = render(<CourseScreen />);
+
+    await waitFor(() => expect(deferredCalls.length).toBe(1));
+    resolveDeferred(0, stageOneContent);
+    await flushMicrotasks();
+    await waitFor(() => expect(getByText('Stage One Essay')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('stage-pill-2'));
+    });
+    await waitFor(() => expect(deferredCalls.length).toBe(2));
+
+    await act(async () => {
+      fireEvent.press(getByTestId('stage-pill-1'));
+    });
+    await waitFor(() => expect(deferredCalls.length).toBe(3));
+
+    // Resolve the current stage-1 fetch first.
+    resolveDeferred(2, stageOneContent);
+    await flushMicrotasks();
+
+    // Then resolve the stale stage-2 fetch that was left hanging from the earlier tap.
+    resolveDeferred(1, stageTwoContent);
+    await flushMicrotasks();
+
+    expect(within(getByTestId('content-list')).getByText('Stage One Essay')).toBeTruthy();
+    expect(queryByText('Stage Two Essay')).toBeNull();
+  });
+
   it('opens content viewer when tapping an unlocked item', async () => {
     const { getByText, getByTestId } = render(<CourseScreen />);
 

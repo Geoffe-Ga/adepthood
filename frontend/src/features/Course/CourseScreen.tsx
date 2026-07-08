@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -89,8 +89,12 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
   const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [error, setError] = useState(false);
+  const requestSeq = useRef(0);
 
   const refreshContent = useCallback(async () => {
+    // Only the newest in-flight request may settle; stale ones are dropped.
+    const requestId = (requestSeq.current += 1);
+    const isLatest = () => requestId === requestSeq.current;
     setLoadingContent(true);
     setError(false);
     try {
@@ -98,23 +102,30 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
         courseApi.stageContentAll(selectedStage),
         courseApi.stageProgress(selectedStage),
       ]);
+      if (!isLatest()) return;
       setContent(contentResult);
       setProgress(progressResult);
     } catch (err) {
       // A failed fetch is distinct from a genuinely empty stage: flag it so the
       // screen shows error+retry rather than "No Content Yet" (audit-ux-04).
       console.error('Failed to load stage content:', err);
-      setContent([]);
-      setProgress(null);
-      setError(true);
+      if (isLatest()) {
+        setContent([]);
+        setProgress(null);
+        setError(true);
+      }
     } finally {
-      setLoadingContent(false);
+      if (isLatest()) setLoadingContent(false);
     }
   }, [selectedStage]);
 
   useEffect(() => {
     if (!stagesLoaded) return;
     void refreshContent();
+    // On unmount, supersede any in-flight run so it cannot setState afterward.
+    return () => {
+      requestSeq.current += 1;
+    };
   }, [stagesLoaded, refreshContent]);
 
   const handleMarkRead = useCallback(() => {
