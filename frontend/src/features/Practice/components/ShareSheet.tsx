@@ -15,7 +15,7 @@
  * the link in another app routes through `App.tsx`'s linking config to
  * the `SharePreviewScreen`.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -30,6 +30,8 @@ import {
 
 import { practiceShare, type ShareLinkResponse } from '@/api/practiceShare';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
+import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
 
 const DEEP_LINK_PREFIX = 'adepthood://practices/share/';
@@ -72,17 +74,6 @@ export async function copyToClipboard(value: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function useMountedRef() {
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-  return mountedRef;
 }
 
 interface MintFormState {
@@ -378,26 +369,26 @@ function LinkList({ state, onCopy }: LinkListProps) {
   const { links, isLoading, loadError, reload, revokingId, handleRevoke } = state;
   if (isLoading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={colors.primary} testID="share-sheet-loading" />
-      </View>
+      <LoadingBlock
+        style={styles.center}
+        color={colors.primary}
+        spinnerTestID="share-sheet-loading"
+      />
     );
   }
   if (loadError) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.loadErrorText}>{loadError}</Text>
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={() => {
-            void reload();
-          }}
-          style={styles.retryButton}
-          testID="share-sheet-retry"
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
+      <LoadErrorRetry
+        message={loadError}
+        onRetry={() => {
+          void reload();
+        }}
+        containerStyle={styles.center}
+        messageStyle={styles.loadErrorText}
+        retryStyle={styles.retryButton}
+        retryTextStyle={styles.retryButtonText}
+        retryTestID="share-sheet-retry"
+      />
     );
   }
   if (links.length === 0) {

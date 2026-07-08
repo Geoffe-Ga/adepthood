@@ -21,7 +21,6 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   SectionList,
   StyleSheet,
@@ -47,6 +46,7 @@ import {
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
+import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
 import { MIN_STAGE, stageRange } from '@/features/Practice/constants';
 import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
@@ -395,25 +395,26 @@ interface CatalogStatusProps {
 const CatalogStatus = ({ state, onRetry }: CatalogStatusProps): React.JSX.Element | null => {
   if (state.loading) {
     return (
-      <View style={styles.loadingBlock} testID="practice-catalog-loading">
-        <ActivityIndicator color={accent.primary} />
-      </View>
+      <LoadingBlock
+        style={styles.loadingBlock}
+        color={accent.primary}
+        testID="practice-catalog-loading"
+      />
     );
   }
   if (state.error !== null) {
     return (
-      <View style={styles.errorBlock} testID="practice-catalog-error">
-        <Text style={styles.errorText}>{state.error}</Text>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Retry"
-          onPress={onRetry}
-          style={styles.retryButton}
-          testID="practice-catalog-retry"
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
+      <LoadErrorRetry
+        message={state.error}
+        onRetry={onRetry}
+        containerStyle={styles.errorBlock}
+        containerTestID="practice-catalog-error"
+        messageStyle={styles.errorText}
+        retryStyle={styles.retryButton}
+        retryTextStyle={styles.retryButtonText}
+        retryTestID="practice-catalog-retry"
+        retryAccessibilityLabel="Retry"
+      />
     );
   }
   return null;
