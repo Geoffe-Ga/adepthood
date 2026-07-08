@@ -1,11 +1,12 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { SenseGroundingConfig, SensePrompt } from '../../engine/types';
 import { PROMPT_LABEL_MAX } from '../../engine/validation';
 
 import GroundingDropdown from './GroundingDropdown';
-import { TextField } from './shared';
+import { useStableRowKeys } from './rowKeys';
+import { AddRowButton, TextField } from './shared';
 
 import { BORDER_RADIUS, SPACING, editorialType, ink, surface } from '@/design/tokens';
 
@@ -14,29 +15,20 @@ interface Props {
   onChange: (next: SenseGroundingConfig) => void;
 }
 
-// Monotonic source of per-row keys. Prompts have no persistable id (the backend
-// config schema is `extra="forbid"`), so row identity is tracked transiently
-// here and kept in lockstep with add/remove/move — keying by array index would
-// remap a row's instance state (open dropdown, focus) onto the wrong row on a
-// reorder or non-tail delete.
-let nextPromptKey = 0;
-
 interface PromptRowsApi {
-  keys: string[];
+  keyAt: (_index: number) => string;
   setPrompt: (_index: number, _patch: Partial<SensePrompt>) => void;
   move: (_index: number, _direction: -1 | 1) => void;
   remove: (_index: number) => void;
   append: () => void;
 }
 
-/** Owns the prompt list + its transient stable row keys (kept in lockstep). */
+/** Owns the prompt list, delegating transient stable row keys to the shared hook. */
 function usePromptRows(
   value: SenseGroundingConfig,
   onChange: (next: SenseGroundingConfig) => void,
 ): PromptRowsApi {
-  const keysRef = useRef<string[] | null>(null);
-  keysRef.current ??= value.prompts.map(() => `prompt-${(nextPromptKey += 1)}`);
-  const keys = keysRef.current;
+  const rows = useStableRowKeys('prompt', value.prompts.length);
 
   const setPrompt = (index: number, patch: Partial<SensePrompt>) => {
     const next = value.prompts.map((prompt, i) => (i === index ? { ...prompt, ...patch } : prompt));
@@ -50,30 +42,27 @@ function usePromptRows(
     const next = value.prompts.slice();
     next[index] = swapWith;
     next[target] = current;
-    // Swap the keys alongside the rows so each stable id follows its prompt.
-    const nextKeys = keys.slice();
-    [nextKeys[index], nextKeys[target]] = [keys[target]!, keys[index]!];
-    keysRef.current = nextKeys;
+    rows.swap(index, target);
     onChange({ ...value, prompts: next });
   };
   const remove = (index: number) => {
-    keysRef.current = keys.filter((_, i) => i !== index);
+    rows.remove(index);
     onChange({ ...value, prompts: value.prompts.filter((_, i) => i !== index) });
   };
   const append = () => {
-    keysRef.current = [...keys, `prompt-${(nextPromptKey += 1)}`];
+    rows.append();
     onChange({ ...value, prompts: [...value.prompts, { sense: 'sight', label: '' }] });
   };
-  return { keys, setPrompt, move, remove, append };
+  return { keyAt: rows.keyAt, setPrompt, move, remove, append };
 }
 
 const SenseGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
-  const { keys, setPrompt, move, remove, append } = usePromptRows(value, onChange);
+  const { keyAt, setPrompt, move, remove, append } = usePromptRows(value, onChange);
   return (
     <View testID="sense-grounding-form">
       {value.prompts.map((prompt, index) => (
         <PromptRow
-          key={keys[index] ?? `prompt-fallback-${index}`}
+          key={keyAt(index)}
           prompt={prompt}
           index={index}
           last={index === value.prompts.length - 1}
@@ -82,15 +71,13 @@ const SenseGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
           onRemove={() => remove(index)}
         />
       ))}
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Add prompt"
+      <AddRowButton
+        noun="prompt"
         onPress={append}
+        variant="filled"
         style={localStyles.addButton}
         testID="sense-grounding-add"
-      >
-        <Text style={localStyles.addButtonText}>+ Add prompt</Text>
-      </TouchableOpacity>
+      />
     </View>
   );
 };
@@ -182,14 +169,7 @@ const localStyles = StyleSheet.create({
   },
   smallButtonText: { ...editorialType.caption, color: ink.primary },
   disabled: { opacity: 0.4 },
-  addButton: {
-    paddingVertical: SPACING.sm,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: surface.sunken,
-    alignItems: 'center',
-    marginTop: SPACING.sm,
-  },
-  addButtonText: { ...editorialType.note, color: ink.primary },
+  addButton: { marginTop: SPACING.sm },
 });
 
 export default SenseGroundingForm;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { MindfulAnchorConfig, MindfulAnchorOption } from '../../engine/types';
 import {
@@ -8,19 +8,26 @@ import {
   OPTION_LABEL_MAX as LABEL_MAX,
 } from '../../engine/validation';
 
-import { LabeledRow, NumericField, TextField, ToggleRow } from './shared';
-
-import { BORDER_RADIUS, SPACING, accent, colors, surface } from '@/design/tokens';
+import { makeRowKeyFactory } from './rowKeys';
+import {
+  AddRowButton,
+  LabeledRow,
+  NumericField,
+  RemoveButton,
+  RowCard,
+  TextField,
+  ToggleRow,
+} from './shared';
 
 interface Props {
   value: MindfulAnchorConfig;
   onChange: (next: MindfulAnchorConfig) => void;
 }
 
-// Monotonic source of new option keys — the machine id recorded in session
-// metadata, generated once and never derived from the array index (audit
-// section 5.2 stable-key guidance).
-let nextOptionKey = 0;
+// New option keys are the machine id recorded in session metadata, minted once
+// and never derived from the array index. Underscore, not hyphen: the key must
+// match OPTION_KEY_PATTERN (^[a-z][a-z0-9_]*$) or validateModeConfig rejects it.
+const nextOptionKey = makeRowKeyFactory('option');
 
 interface OptionRowProps {
   option: MindfulAnchorOption;
@@ -30,7 +37,7 @@ interface OptionRowProps {
 }
 
 const OptionRow = ({ option, index, onChange, onRemove }: OptionRowProps) => (
-  <View style={localStyles.card} testID={`anchor-option-${index}`}>
+  <RowCard testID={`anchor-option-${index}`}>
     <TextField
       value={option.label}
       onChange={(label) => onChange({ label })}
@@ -45,16 +52,13 @@ const OptionRow = ({ option, index, onChange, onRemove }: OptionRowProps) => (
       maxLength={DESCRIPTION_MAX}
       testID={`anchor-option-${index}-description`}
     />
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`Remove option ${index + 1}`}
+    <RemoveButton
+      noun="option"
+      index={index}
       onPress={onRemove}
-      style={localStyles.removeButton}
       testID={`anchor-option-${index}-remove`}
-    >
-      <Text style={localStyles.removeButtonText}>Remove</Text>
-    </TouchableOpacity>
-  </View>
+    />
+  </RowCard>
 );
 
 /** The scalar settings (instruction, minimum duration, require-choice toggle). */
@@ -93,10 +97,7 @@ const MindfulAnchorForm = ({ value, onChange }: Props): React.JSX.Element => {
   const removeOption = (index: number) =>
     onChange({ ...value, options: value.options.filter((_, i) => i !== index) });
   const addOption = () => {
-    // Underscore, not hyphen: the key must match OPTION_KEY_PATTERN
-    // (^[a-z][a-z0-9_]*$) or validateModeConfig rejects the new row.
-    const key = `option_${(nextOptionKey += 1)}`;
-    const next: MindfulAnchorOption = { key, label: '' };
+    const next: MindfulAnchorOption = { key: nextOptionKey(), label: '' };
     onChange({ ...value, options: [...value.options, next] });
   };
   return (
@@ -111,31 +112,9 @@ const MindfulAnchorForm = ({ value, onChange }: Props): React.JSX.Element => {
           onRemove={() => removeOption(index)}
         />
       ))}
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Add option"
-        onPress={addOption}
-        style={localStyles.addButton}
-        testID="anchor-add-option"
-      >
-        <Text style={localStyles.addButtonText}>+ Add option</Text>
-      </TouchableOpacity>
+      <AddRowButton noun="option" onPress={addOption} testID="anchor-add-option" />
     </View>
   );
 };
-
-const localStyles = StyleSheet.create({
-  card: {
-    borderWidth: 1,
-    borderColor: surface.hairline,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.sm,
-    marginBottom: SPACING.sm,
-  },
-  addButton: { paddingVertical: SPACING.sm },
-  addButtonText: { color: accent.primary, fontWeight: '600' },
-  removeButton: { paddingVertical: SPACING.xs },
-  removeButtonText: { color: colors.danger },
-});
 
 export default MindfulAnchorForm;

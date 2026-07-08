@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import type { TarotConfig } from '../../engine/types';
 import { DEFAULT_TAROT_MINUTES } from '../../engine/types';
 
-import { LabeledRow, NumericField, ToggleRow } from './shared';
+import { HideTimerToggle, LabeledRow, NumericField } from './shared';
 
 interface Props {
   value: TarotConfig;
@@ -24,14 +24,7 @@ const TarotForm = ({ value, onChange }: Props): React.JSX.Element => {
           testID="tarot-per-card"
         />
       </LabeledRow>
-      <ToggleRow
-        label="Hide timer during sit"
-        value={value.hide_timer_during_meditation ?? true}
-        onChange={(hide_timer_during_meditation) =>
-          onChange({ ...value, hide_timer_during_meditation })
-        }
-        testID="tarot-hide-timer"
-      />
+      <HideTimerToggle value={value} onChange={onChange} testID="tarot-hide-timer" />
     </View>
   );
 };
