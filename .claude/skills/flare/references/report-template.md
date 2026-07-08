@@ -5,7 +5,9 @@
   prompts/templates/scan-issue-body.md (Role / Goal / Context / Output Format
   / Examples / Constraints) because every agent-ready issue in this repo IS a
   prompt: it gets consumed directly by the Ralph agent. An issue missing any
-  component gets `needs-triage` instead of `agent-ready`.
+  component gets `needs-spec` instead of `agent-ready` — `needs-spec` is the
+  label the Ralph picker's default exclude list actually honors (see
+  `flare`'s `references/label-guide.md`).
 
   Replace every [bracketed] placeholder. Delete whichever of the Bug/Feature
   Context blocks doesn't apply. Leave no placeholder behind.

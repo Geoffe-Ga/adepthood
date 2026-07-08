@@ -1,8 +1,11 @@
 # Ralph Label Quick Reference
 
 Source of truth for how the picker (`scripts/ralph/pick-next.sh`) interprets
-labels. Always run `gh label list` (or `mcp__github__list_issue_types`) first
-and reuse an existing label — only create a new one if nothing fits.
+labels. Always run `gh label list` first and reuse an existing label — only
+create a new one if nothing fits. There's no bulk label-listing MCP tool; if
+`gh` isn't available, use `mcp__github__get_label` to check a specific
+candidate name (`mcp__github__list_issue_types` is GitHub's separate "Issue
+Types" feature, not labels — it won't help here).
 
 ## Type
 
@@ -26,9 +29,15 @@ always apply one explicitly rather than relying on the default.
 - `agent-ready` — every template section (`references/report-template.md`)
   is filled with real content; the picker can hand this straight to a Ralph
   worker.
-- `needs-triage` — something is missing (reproduction failed, ambiguous
-  scope, unverifiable claim). A human or a grooming pass finishes it before
-  it's pickable.
+- `needs-spec` — something is missing (reproduction failed, ambiguous scope,
+  unverifiable claim). Apply this, not `needs-triage`, when the issue must
+  not be auto-picked: `needs-spec` is the label `pick-next.sh`'s default
+  `RALPH_EXCLUDE_LABELS` actually excludes. A human or a grooming pass
+  finishes it, then relabels `agent-ready`.
+- `needs-triage` — informational only. It is NOT in the picker's default
+  exclude set, so an issue carrying `needs-triage` alone (without
+  `needs-spec`) remains pickable by default. Don't rely on it to keep an
+  incomplete issue out of the fleet.
 
 ## Decomposition
 

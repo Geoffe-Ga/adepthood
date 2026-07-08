@@ -62,7 +62,7 @@ Before writing a word of the ticket, ground it in the actual codebase:
   (or add a comment with fresh evidence if the finding has new information).
 
 Spend real effort here — this step is what separates a `flare` ticket from a
-one-line vague complaint that sits in `needs-triage` forever.
+one-line vague complaint that sits unpicked-but-unfinished forever.
 
 ### Step 3 — Classify
 
@@ -118,15 +118,22 @@ See `references/label-guide.md` for the full set. At minimum apply:
 - Type: `bug` or `feature`
 - Priority: `P0`–`P3`
 - Readiness: `agent-ready` if every template section is filled with real
-  content, otherwise `needs-triage`
+  content, otherwise `needs-spec` — this is the label `pick-next.sh`'s
+  default `RALPH_EXCLUDE_LABELS` actually excludes, so it's the one that
+  keeps an incomplete issue out of Ralph's auto-pick. `needs-triage` is not
+  in that default exclude set and will NOT reliably stop the picker on its
+  own — see `references/label-guide.md`.
 - `epic:<slug>` on the epic issue and all its sub-issues, if decomposed
 - `solo` only if the change cannot safely run alongside parallel Ralph
   workers (e.g. touches a migration or shared config every other issue also
   touches)
 
-Check `gh label list` (or `mcp__github__list_issue_types`) first — reuse an
-existing label; only create a new one if nothing fits, per this repo's
-git-workflow skill.
+Check `gh label list` first — reuse an existing label; only create a new one
+if nothing fits, per this repo's git-workflow skill. There's no bulk
+label-listing MCP tool; if `gh` isn't available, use
+`mcp__github__get_label` to check a specific candidate name, or infer the
+label set from labels already attached to issues returned by
+`mcp__github__list_issues`.
 
 ### Step 6 — File it
 
@@ -194,5 +201,6 @@ in-code reference — don't fabricate a file:line.
 
 ### User's report doesn't reproduce
 State that in Context: what you tried, what you expected, what actually
-happened when you checked. File it as `needs-triage` rather than guessing at
-a root cause you didn't verify.
+happened when you checked. File it as `needs-spec` (not `agent-ready`) rather
+than guessing at a root cause you didn't verify — `needs-spec` is what
+actually keeps the picker from auto-assigning it.
