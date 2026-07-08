@@ -50,6 +50,11 @@ export function usePromotions({
   // One promote at a time; per-id guard for removals — no double-post/-delete.
   const promotingRef = useRef(false);
   const removingIdsRef = useRef<Set<number>>(new Set());
+  // Mirror the latest quotes so ``removePromotion`` can look up the row it drops
+  // (for revert-on-error) without depending on ``quotes`` — that keeps its
+  // identity stable across every add/remove.
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
 
   const promote = useCallback(
     async (start: number, end: number): Promise<void> => {
@@ -68,24 +73,21 @@ export function usePromotions({
     [entryId],
   );
 
-  const removePromotion = useCallback(
-    async (id: number): Promise<void> => {
-      if (removingIdsRef.current.has(id)) return;
-      removingIdsRef.current.add(id);
-      setHint(null);
-      const removed = quotes.find((q) => q.id === id);
-      setQuotes((prev) => dropById(prev, id)); // optimistic
-      try {
-        await promotions.remove(id);
-      } catch (err) {
-        if (removed) setQuotes((prev) => insertSorted(prev, removed)); // revert
-        setHint(formatApiError(err));
-      } finally {
-        removingIdsRef.current.delete(id);
-      }
-    },
-    [quotes],
-  );
+  const removePromotion = useCallback(async (id: number): Promise<void> => {
+    if (removingIdsRef.current.has(id)) return;
+    removingIdsRef.current.add(id);
+    setHint(null);
+    const removed = quotesRef.current.find((q) => q.id === id);
+    setQuotes((prev) => dropById(prev, id)); // optimistic
+    try {
+      await promotions.remove(id);
+    } catch (err) {
+      if (removed) setQuotes((prev) => insertSorted(prev, removed)); // revert
+      setHint(formatApiError(err));
+    } finally {
+      removingIdsRef.current.delete(id);
+    }
+  }, []);
 
   return { quotes, hint, promote, removePromotion };
 }

@@ -129,6 +129,16 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     expect(input.props.value).toBe(BODY);
   });
 
+  it('cancelling selection leaves selection mode without promoting', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    expect(getByTestId('quote-select-input')).toBeTruthy();
+    fireEvent.press(getByTestId('quote-select-cancel'));
+    expect(queryByTestId('quote-select-input')).toBeNull();
+    expect(getByTestId('promote-quote-button')).toBeTruthy(); // back in read mode
+    expect(mockPromote).not.toHaveBeenCalled();
+  });
+
   it('confirming a collapsed selection promotes nothing and stays in selection mode', async () => {
     const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
     fireEvent.press(await findByTestId('promote-quote-button'));
