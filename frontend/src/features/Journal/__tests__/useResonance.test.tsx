@@ -120,6 +120,87 @@ describe('useResonance', () => {
     expect(mockGenerate).not.toHaveBeenCalled();
     expect(result.current.error).toBeTruthy();
   });
+
+  it('a slow initial load resolving after a generate pass keeps the generated notes and suggestions', async () => {
+    let resolveLoad: (_v: { items: Marginalia[] }) => void = () => {};
+    let resolveSugLoad: (_v: { items: CompletionSuggestion[] }) => void = () => {};
+    mockList.mockReturnValue(
+      new Promise<{ items: Marginalia[] }>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    mockSugList.mockReturnValue(
+      new Promise<{ items: CompletionSuggestion[] }>((resolve) => {
+        resolveSugLoad = resolve;
+      }),
+    );
+    mockGenerate.mockResolvedValue(
+      resonancePayload({
+        marginalia: [note({ id: 9, anchor_start: 10 })],
+        suggestions: [suggestion({ id: 9, anchor_start: 10 })],
+      }),
+    );
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    await act(async () => {
+      resolveLoad({ items: [note({ id: 1 })] });
+      resolveSugLoad({ items: [suggestion({ id: 1 })] });
+    });
+
+    expect(result.current.marginalia.map((m: Marginalia) => m.id)).toEqual([1, 9]);
+    expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 9]);
+  });
+
+  it('replaces the prior entry notes and suggestions when routeEntryId changes to a different entry', async () => {
+    mockList.mockResolvedValueOnce({ items: [note({ id: 1 })] });
+    mockSugList.mockResolvedValueOnce({ items: [suggestion({ id: 1 })] });
+    const flush = jest.fn(async () => 7);
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useResonance({ routeEntryId: id, flush }),
+      { initialProps: { id: 7 } },
+    );
+    await waitFor(() =>
+      expect(result.current.marginalia.map((m: Marginalia) => m.id)).toEqual([1]),
+    );
+
+    mockList.mockResolvedValueOnce({
+      items: [note({ id: 2, journal_entry_id: 8, anchor_start: 10 })],
+    });
+    mockSugList.mockResolvedValueOnce({
+      items: [suggestion({ id: 2, journal_entry_id: 8, anchor_start: 10 })],
+    });
+    rerender({ id: 8 });
+
+    await waitFor(() =>
+      expect(result.current.marginalia.map((m: Marginalia) => m.id)).toEqual([2]),
+    );
+    expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([2]);
+  });
+
+  it('a stale privateMessage from a withheld pass is cleared when a later pass errors', async () => {
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockResolvedValueOnce(
+      resonancePayload({ private_message: 'Intimate entry - resonance paused.' }),
+    );
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.privateMessage).toBe('Intimate entry - resonance paused.');
+
+    mockGenerate.mockRejectedValueOnce(new ApiError(500, 'boom'));
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.privateMessage).toBeNull();
+    expect(result.current.error).toBeTruthy();
+  });
 });
 
 describe('useResonance — suggestions', () => {
