@@ -755,3 +755,60 @@ export const wheelBalanceSchema = z.object({
 
 export type WheelAspectT = z.infer<typeof wheelAspectSchema>;
 export type WheelBalanceT = z.infer<typeof wheelBalanceSchema>;
+
+// ---------------------------------------------------------------------------
+// Hierarchical reflections (the 7th-day reflection invitation + sources feed)
+// ---------------------------------------------------------------------------
+
+/**
+ * The reflection scope a due window covers, in ascending breadth: a single
+ * ``week``, a Wavelength ``stage``, a curriculum ``component``, a ``tier`` of
+ * stages, or the whole ``program``. Mirrors the backend ``ReflectionLevel``;
+ * an unknown value is rejected at the boundary so it can never key untitled copy.
+ */
+export const reflectionLevelSchema = z.enum(['week', 'stage', 'component', 'tier', 'program']);
+
+/** Whether a source row is a plain journal entry or an earlier reflection. */
+export const reflectionSourceKindSchema = z.enum(['entry', 'reflection']);
+
+/**
+ * A currently-due reflection window (mirrors the backend ``ReflectionDue``).
+ * ``existing_entry_id`` is set when an in-progress reflection already exists for
+ * this scope, so the invitation can resume it rather than open a fresh page.
+ */
+export const reflectionDueSchema = z.object({
+  level: reflectionLevelSchema,
+  scope_key: z.string(),
+  window_start: isoDateTime,
+  window_end: isoDateTime,
+  existing_entry_id: z.number().int().nullable(),
+});
+
+/**
+ * One rereadable source in the reflection's sources feed (mirrors the backend
+ * ``ReflectionSourceItem``): an entry or an earlier reflection, with any promoted
+ * quotes the reader can fold into the new reflection. ``reflection_level`` is a
+ * free string label (present only on ``reflection`` rows) so a future backend
+ * level cannot fail the whole feed at the client edge.
+ */
+export const reflectionSourceItemSchema = z.object({
+  kind: reflectionSourceKindSchema,
+  id: z.number().int(),
+  title: z.string().nullable(),
+  timestamp: isoDateTime,
+  body: z.string(),
+  reflection_level: z.string().nullable(),
+  promoted_quotes: z.array(promotedQuoteSummarySchema),
+});
+
+/** ``GET /reflections/due`` envelope: the due window, or ``null`` when nothing is due. */
+export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.nullable() });
+
+/** ``GET /reflections/sources`` envelope: the chronological source feed. */
+export const reflectionSourcesResponseSchema = z.object({
+  items: z.array(reflectionSourceItemSchema),
+});
+
+export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
+export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
+export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;

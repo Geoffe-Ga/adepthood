@@ -16,6 +16,7 @@ import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import { promptTitleForWeek } from './promptTitle';
+import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
 
@@ -365,6 +366,7 @@ function ShelfTopMatter({
         action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
       />
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}
+      <ReflectionInvitationBand />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
       </View>
