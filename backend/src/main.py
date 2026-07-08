@@ -46,7 +46,9 @@ from routers.practice_sessions import router as practice_sessions_router
 from routers.practice_share import router as practice_share_router
 from routers.practice_tags import router as practice_tags_router
 from routers.practices import router as practices_router
+from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
+from routers.reflections import router as reflections_router
 from routers.stages import router as stages_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
@@ -436,6 +438,8 @@ app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
 app.include_router(habits_router)
 app.include_router(journal_router)
+app.include_router(reflections_router)
+app.include_router(promotions_router)
 app.include_router(prompts_router)
 app.include_router(energy_router)
 app.include_router(goal_completion_router)
