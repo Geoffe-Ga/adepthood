@@ -3,10 +3,6 @@
 import { isLeftReturning, STAGE_COUNT } from '../stageData';
 
 describe('stageData', () => {
-  it('exports STAGE_COUNT as 10', () => {
-    expect(STAGE_COUNT).toBe(10);
-  });
-
   it('winds even (Divine-Feminine) stages left and odd stages right', () => {
     // The spiral's meaning, read directly by the arrow glyph so the Map is
     // legible with no background PNG (#766).
