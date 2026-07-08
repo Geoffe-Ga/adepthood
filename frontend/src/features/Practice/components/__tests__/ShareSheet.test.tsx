@@ -175,20 +175,24 @@ describe('ShareSheet', () => {
   });
 
   it('copyToClipboard returns false when navigator.clipboard is missing', async () => {
-    const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
-    Object.defineProperty(navigator, 'clipboard', {
+    const nav = (globalThis as { navigator?: { clipboard?: unknown } }).navigator;
+    if (nav === undefined) {
+      expect(await copyToClipboard('hello')).toBe(false);
+      return;
+    }
+    const original = Object.getOwnPropertyDescriptor(nav, 'clipboard');
+    Object.defineProperty(nav, 'clipboard', {
       value: undefined,
       configurable: true,
       writable: true,
     });
     try {
-      const result = await copyToClipboard('hello');
-      expect(result).toBe(false);
+      expect(await copyToClipboard('hello')).toBe(false);
     } finally {
       if (original) {
-        Object.defineProperty(navigator, 'clipboard', original);
+        Object.defineProperty(nav, 'clipboard', original);
       } else {
-        delete (navigator as { clipboard?: unknown }).clipboard;
+        delete nav.clipboard;
       }
     }
   });
