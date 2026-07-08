@@ -30,12 +30,11 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
 
 from models.practice import Practice
 from schemas.practice_mode_config import ModeConfigAdapter
+from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
 from seed_practice_copy import PRESET_COPY
 
 #: Nominal ``default_duration_minutes`` for the Dog Walkin' Shamanism
@@ -474,29 +473,12 @@ STAGE_TO_PRESET_NAME: MappingProxyType[int, str] = MappingProxyType(
 
 async def _existing_preset_keys(session: AsyncSession) -> set[tuple[int, str]]:
     """Return ``(stage_number, name)`` for every preset already in the DB."""
-    result = await session.execute(
-        select(Practice.stage_number, Practice.name).where(
-            col(Practice.submitted_by_user_id).is_(None)
-        )
+    return await existing_system_keys(
+        session,
+        Practice.stage_number,
+        Practice.name,
+        owner_col=Practice.submitted_by_user_id,
     )
-    return {(row[0], row[1]) for row in result.all()}
-
-
-async def _commit_or_yield_to_race_winner(session: AsyncSession, inserted: int) -> int:
-    """Commit ``inserted`` new rows, treating a unique-index collision as a no-op.
-
-    Race-loser path: a peer process committed the same preset(s) between
-    our SELECT and our COMMIT. Roll back and return 0 — the work has
-    already been done by the peer. Migration ``d2e3f4a5b6c7`` is what
-    makes the database arbitrate; without it both peers would commit and
-    we'd ship the duplicate the index was added to prevent.
-    """
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        return 0
-    return inserted
 
 
 async def seed_practices(session: AsyncSession) -> int:
@@ -517,4 +499,4 @@ async def seed_practices(session: AsyncSession) -> int:
         inserted += 1
     if not inserted:
         return 0
-    return await _commit_or_yield_to_race_winner(session, inserted)
+    return await commit_or_yield_to_race_winner(session, inserted)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -117,3 +119,42 @@ async def test_canonical_five_four_three_two_one_seeded(db_session: AsyncSession
     )
     assert [s.tag_slug for s in steps] == ["sight", "touch", "hearing", "smell", "taste"]
     assert [s.target_count for s in steps] == [5, 4, 3, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_seed_practice_recipes_race_loser_returns_zero(
+    db_session: AsyncSession,
+) -> None:
+    """The actual race-loser path: tag SELECT misses, COMMIT loses the race.
+
+    Patches ``existing_system_keys`` so the tag pass sees an empty set (every
+    system tag gets re-staged as a duplicate) while the recipe pass sees every
+    recipe slug as already present (no recipe insert, so no mid-seed flush
+    fires before the commit guard runs). The commit then hits the
+    ``PracticeTag.slug`` partial-unique index, and the shared helper rolls
+    back and returns 0.
+    """
+    first = await seed_practice_recipes(db_session)
+    assert first == len(SYSTEM_RECIPES) + len(SYSTEM_TAGS)
+
+    with patch(
+        "seed_practice_recipes.existing_system_keys",
+        new=AsyncMock(side_effect=[set(), {r["slug"] for r in SYSTEM_RECIPES}]),
+    ):
+        result = await seed_practice_recipes(db_session)
+
+    assert result == 0
+
+    tag_rows = (
+        await db_session.execute(
+            select(PracticeTag).where(col(PracticeTag.owner_user_id).is_(None))
+        )
+    ).all()
+    assert len(tag_rows) == len(SYSTEM_TAGS)
+
+    recipe_rows = (
+        await db_session.execute(
+            select(PracticeRecipe).where(col(PracticeRecipe.owner_user_id).is_(None))
+        )
+    ).all()
+    assert len(recipe_rows) == len(SYSTEM_RECIPES)

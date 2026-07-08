@@ -12,10 +12,10 @@ from __future__ import annotations
 from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
 
 import curriculum
 from models.course_stage import CourseStage
+from seed_helpers import existing_system_keys
 
 #: The curriculum dataset does not carry per-Stage overview URLs; they are a
 #: seeder concern and default to empty until populated elsewhere.
@@ -49,8 +49,7 @@ async def seed_stages(session: AsyncSession) -> int:
 
     Returns the number of stages inserted.
     """
-    result = await session.execute(select(CourseStage))
-    existing = {s.stage_number for s in result.scalars().all()}
+    existing = await existing_system_keys(session, CourseStage.stage_number)
 
     inserted = 0
     for definition in STAGE_DEFINITIONS:
