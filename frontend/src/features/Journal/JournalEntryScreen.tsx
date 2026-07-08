@@ -65,6 +65,15 @@ const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonan
 const LOAD_ERROR_MESSAGE =
   "We couldn't open this entry. Check your connection and try again — your existing writing is safe.";
 
+/**
+ * Shown when the atomic Finish write fails. The Finish write is the only path
+ * that flips status, so on failure the entry stays a draft: this reassures the
+ * writing is untouched (still in local state, autosave keeps retrying) and asks
+ * for a simple retry.
+ */
+const FINISH_ERROR_MESSAGE =
+  "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
+
 type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
@@ -100,6 +109,30 @@ interface WriteEntryRefs {
   chordRef: React.MutableRefObject<AspectChordValue>;
 }
 
+/**
+ * Create the entry with its full body + tags in one call, returning the new
+ * server id. Only attaches context keys when present, so a plain entry's payload
+ * stays lean rather than carrying explicit nulls. ``classification`` always rides
+ * along so the entry's privacy tier is set at birth (defaults to personal).
+ */
+async function createEntry(refs: WriteEntryRefs, body: string, ctx: SaveContext): Promise<number> {
+  const { classificationRef, chordRef } = refs;
+  const created = await journal.create({
+    message: body,
+    classification: classificationRef.current,
+    primary_aspect: chordRef.current.primary,
+    secondary_aspect: chordRef.current.secondary,
+    ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
+    ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+  });
+  return created.id;
+}
+
+/** A blank title collapses to null so an empty title is stored as absent. */
+function titleOrNull(title: string): string | null {
+  return title.trim() ? title : null;
+}
+
 /** Create on first save, then update; title is optional and saved separately. */
 async function writeEntry(
   refs: WriteEntryRefs,
@@ -107,7 +140,7 @@ async function writeEntry(
   body: string,
   ctx: SaveContext,
 ): Promise<void> {
-  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
+  const { entryIdRef, respondedRef } = refs;
   // Weekly-prompt mode: the respond endpoint persists the entry itself, so we
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
@@ -116,26 +149,42 @@ async function writeEntry(
     respondedRef.current = true;
     return;
   }
-  const trimmedTitle = title.trim() ? title : null;
+  const trimmedTitle = titleOrNull(title);
   if (entryIdRef.current == null) {
-    // Only attach context keys when present, so a plain entry's payload stays
-    // lean rather than carrying explicit nulls. ``classification`` always rides
-    // along so the entry's privacy tier is set at birth (defaults to personal).
-    const created = await journal.create({
-      message: body,
-      classification: classificationRef.current,
-      primary_aspect: chordRef.current.primary,
-      secondary_aspect: chordRef.current.secondary,
-      ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
-      ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
-    });
-    entryIdRef.current = created.id;
+    entryIdRef.current = await createEntry(refs, body, ctx);
     if (trimmedTitle != null) {
-      await journal.update(created.id, { title: trimmedTitle, status: 'draft' });
+      await journal.update(entryIdRef.current, { title: trimmedTitle, status: 'draft' });
     }
   } else {
     await journal.update(entryIdRef.current, { message: body, title: trimmedTitle });
   }
+}
+
+/**
+ * The single authoritative Finish write: one atomic update that carries the FULL
+ * body + title alongside the ``finished`` status flip, so an earlier, shorter
+ * autosave can never win. Rejects on failure (never swallows) so the caller keeps
+ * the entry a draft and surfaces a retry. Resolves to the finished entry's id.
+ *
+ * Weekly-prompt compose has no local id to finish, so the Finish affordance is
+ * withheld there and this path handles only plain/practice entries.
+ */
+async function finishWrite(
+  refs: WriteEntryRefs,
+  title: string,
+  body: string,
+  ctx: SaveContext,
+): Promise<number> {
+  const finishTitle = titleOrNull(title);
+  const id = refs.entryIdRef.current;
+  if (id == null) {
+    const created = await createEntry(refs, body, ctx);
+    refs.entryIdRef.current = created;
+    await journal.update(created, { title: finishTitle, status: 'finished' });
+    return created;
+  }
+  await journal.update(id, { message: body, title: finishTitle, status: 'finished' });
+  return id;
 }
 
 interface AutosaveApi {
@@ -156,6 +205,12 @@ interface AutosaveApi {
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
+  /**
+   * Perform the single atomic Finish write (full body + title + ``finished``
+   * status) after draining any in-flight autosave, resolving to the entry id.
+   * Rejects on failure so the caller keeps the entry a draft and offers a retry.
+   */
+  finish: () => Promise<number>;
   /** Set when loading an existing entry failed; drives the banner. */
   loadError: string | null;
   /**
@@ -448,6 +503,73 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
   );
 }
 
+/** The refs the Finish writer reads: the write payload plus its timers + gates. */
+type FinishRunnerRefs = WriteEntryRefs & {
+  entryUnsettledRef: React.MutableRefObject<boolean>;
+  ctxRef: React.MutableRefObject<SaveContext>;
+  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+  timerRef: TimerRef;
+};
+
+/** Raised when Finish is pressed before an existing entry's load has settled. */
+const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loading.';
+
+type RunFinish = (_title: string, _body: string) => Promise<number>;
+
+/**
+ * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
+ * shorter one can't land after us, then issue the single atomic Finish write.
+ * Tracks the save state and rethrows on failure so the caller keeps the draft.
+ */
+function useFinishWriter(
+  refs: FinishRunnerRefs,
+  setSaveState: (_state: SaveState) => void,
+): RunFinish {
+  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
+  const { entryUnsettledRef, ctxRef, inFlightRef, timerRef } = refs;
+  return useCallback<RunFinish>(
+    async (title, body) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      // The tracked autosave never rejects, so draining it is safe; this ensures a
+      // slower, shorter autosave can't overwrite the body after the Finish write.
+      while (inFlightRef.current) await inFlightRef.current;
+      if (entryUnsettledRef.current) throw new Error(UNSETTLED_FINISH_ERROR);
+      setSaveState('saving');
+      const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
+      const task = finishWrite(writeRefs, title, body, ctxRef.current);
+      // Register a never-rejecting shadow in the single-flight slot so a keystroke
+      // that schedules an autosave mid-finish drains onto us (and sees the id our
+      // create set) rather than firing a second journal.create.
+      const shadow = task.then(
+        () => undefined,
+        () => undefined,
+      );
+      inFlightRef.current = shadow;
+      try {
+        const id = await task;
+        setSaveState('saved');
+        return id;
+      } catch (error) {
+        setSaveState('error');
+        throw error;
+      } finally {
+        if (inFlightRef.current === shadow) inFlightRef.current = null;
+      }
+    },
+    [
+      entryIdRef,
+      respondedRef,
+      classificationRef,
+      chordRef,
+      entryUnsettledRef,
+      ctxRef,
+      inFlightRef,
+      timerRef,
+      setSaveState,
+    ],
+  );
+}
+
 /**
  * Compose the tier + chord persisters: their refs (read by the writer), their
  * seeders (for load), and error-surfacing change wrappers sharing the save hint.
@@ -476,6 +598,22 @@ function usePersistControls(
     persistClassification: useErrorSurfacingPersist(changeClassification, setSaveState),
     persistChord: useErrorSurfacingPersist(changeChord, setSaveState),
   };
+}
+
+/** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
+type DraftWriters = SaveTimer & { finish: (_title: string, _body: string) => Promise<number> };
+
+/** Wire the three writers (debounced save, flush, atomic finish) over shared refs. */
+function useDraftWriters(
+  refs: SaveRunnerRefs & FinishRunnerRefs,
+  delayMs: number,
+  setSaveState: (_state: SaveState) => void,
+): DraftWriters {
+  const setTyping = useCallback(() => setSaveState('typing'), [setSaveState]);
+  const run = useSaveRunner(refs, setSaveState);
+  const { save, flush } = useSaveTimer(run, refs.timerRef, refs.entryIdRef, delayMs, setTyping);
+  const finish = useFinishWriter(refs, setSaveState);
+  return { save, flush, finish };
 }
 
 /** Debounced create-then-update draft saver; tracks the save state. */
@@ -511,7 +649,7 @@ function useDebouncedSave(
   });
   useTimerCleanup(timerRef);
 
-  const run = useSaveRunner(
+  const { save, flush, finish } = useDraftWriters(
     {
       entryIdRef,
       respondedRef,
@@ -521,17 +659,17 @@ function useDebouncedSave(
       ctxRef,
       onSavedRef,
       inFlightRef,
+      timerRef,
     },
+    delayMs,
     setSaveState,
   );
-
-  const setTyping = useCallback(() => setSaveState('typing'), []);
-  const { save, flush } = useSaveTimer(run, timerRef, entryIdRef, delayMs, setTyping);
 
   return {
     saveState,
     save,
     flush,
+    finish,
     changeClassification: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
@@ -539,6 +677,24 @@ function useDebouncedSave(
 }
 
 type StrRef = React.MutableRefObject<string>;
+
+/** Bind flush + finish to the latest title/body refs so callers pass no args. */
+function useBoundWriters(
+  flush: (_title: string, _body: string) => Promise<number | null>,
+  finish: (_title: string, _body: string) => Promise<number>,
+  titleRef: StrRef,
+  bodyRef: StrRef,
+): { flushNow: () => Promise<number | null>; finishNow: () => Promise<number> } {
+  const flushNow = useCallback(
+    () => flush(titleRef.current, bodyRef.current),
+    [flush, titleRef, bodyRef],
+  );
+  const finishNow = useCallback(
+    () => finish(titleRef.current, bodyRef.current),
+    [finish, titleRef, bodyRef],
+  );
+  return { flushNow, finishNow };
+}
 
 /** Referentially-stable change handlers; each save reads the other field's ref. */
 function useFieldHandlers(
@@ -707,7 +863,7 @@ function useJournalAutosave(
   // and failed-load windows (and is irrelevant for a new entry — routeEntryId is
   // null). Gate the writer + controls on this so neither touches an unseen entry.
   const entryUnsettled = routeEntryId != null && !entry.loaded;
-  const { saveState, save, flush, changeClassification, changeChord, seedPersist } =
+  const { saveState, save, flush, finish, changeClassification, changeChord, seedPersist } =
     useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved);
   useSeedPersistOnLoad(entry, seedPersist);
 
@@ -718,10 +874,7 @@ function useJournalAutosave(
     entry.setTitle,
     entry.setBody,
   );
-  const flushNow = useCallback(
-    () => flush(titleRef.current, bodyRef.current),
-    [flush, titleRef, bodyRef],
-  );
+  const { flushNow, finishNow } = useBoundWriters(flush, finish, titleRef, bodyRef);
   const { onChangeClassification, onChangeChord } = useChoiceHandlers(
     entry,
     changeClassification,
@@ -741,6 +894,7 @@ function useJournalAutosave(
     onChangeClassification,
     onChangeChord,
     flush: flushNow,
+    finish: finishNow,
     loadError: entry.loadError,
     controlsLocked: entryUnsettled,
   };
@@ -757,6 +911,10 @@ interface WritingColumnProps {
   onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
   onFinish?: () => void;
+  /** True while the Finish write is in flight; drives the busy/disabled control. */
+  finishing: boolean;
+  /** Set (to {@link FINISH_ERROR_MESSAGE}) when the Finish write failed. */
+  finishError: string | null;
   bodyPlaceholder?: string;
   /**
    * Disables the tier + chord controls until an existing entry's load settles
@@ -771,16 +929,33 @@ interface WritingColumnProps {
   titleReadOnly: boolean;
 }
 
-/** Quiet control to mark a draft finished. */
-function FinishControl({ onFinish }: { onFinish: () => void }) {
+/** Quiet control to mark a draft finished, with a warm retry notice on failure. */
+function FinishControl({
+  onFinish,
+  finishing,
+  finishError,
+}: {
+  onFinish: () => void;
+  finishing: boolean;
+  finishError: string | null;
+}) {
   return (
-    <Button
-      variant="tertiary"
-      onPress={onFinish}
-      accessibilityLabel="Mark this entry finished"
-      testID="journal-finish-button"
-      label="Finish"
-    />
+    <>
+      <Button
+        variant="tertiary"
+        onPress={onFinish}
+        accessibilityLabel="Mark this entry finished"
+        testID="journal-finish-button"
+        label="Finish"
+        busy={finishing}
+        disabled={finishing}
+      />
+      {finishError == null ? null : (
+        <Text style={styles.marginError} testID="journal-finish-error">
+          {finishError}
+        </Text>
+      )}
+    </>
   );
 }
 
@@ -865,6 +1040,8 @@ function WritingColumn({
   onChangeClassification,
   onChangeChord,
   onFinish,
+  finishing,
+  finishError,
   bodyPlaceholder = 'Begin writing…',
   controlsDisabled,
   titleReadOnly,
@@ -893,7 +1070,9 @@ function WritingColumn({
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
       </Text>
-      {onFinish ? <FinishControl onFinish={onFinish} /> : null}
+      {onFinish ? (
+        <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
+      ) : null}
     </ScrollView>
   );
 }
@@ -1015,16 +1194,18 @@ function useEssayModal(updateNote: (_note: Marginalia) => void) {
 interface EditGateArgs {
   status: EntryStatus;
   setStatus: (_status: EntryStatus) => void;
-  flush: () => Promise<number | null>;
+  finish: () => Promise<number>;
   body: string;
   navigation: ScreenNavigation;
   onConfirmEdit: () => void;
 }
 
 /** The deliberate edit gate for finished entries + the draft "Finish" action. */
-function useEditGate({ status, setStatus, flush, body, navigation, onConfirmEdit }: EditGateArgs) {
+function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdit }: EditGateArgs) {
   const [editing, setEditing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
   // A finished entry is read-only until the user deliberately chooses to edit.
   const editMode = editing || status !== 'finished';
 
@@ -1039,13 +1220,21 @@ function useEditGate({ status, setStatus, flush, body, navigation, onConfirmEdit
     setConfirmOpen(false);
     navigation.push('JournalEntry');
   }, [navigation]);
+  // Only flip to finished once the single atomic write resolves; on failure the
+  // entry stays a draft (editable) and the error invites a retry.
   const markFinished = useCallback(async () => {
-    const id = await flush();
-    if (id == null) return;
-    await journal.update(id, { status: 'finished' });
-    setStatus('finished');
-    setEditing(false);
-  }, [flush, setStatus]);
+    setFinishError(null);
+    setFinishing(true);
+    try {
+      await finish();
+      setStatus('finished');
+      setEditing(false);
+    } catch {
+      setFinishError(FINISH_ERROR_MESSAGE);
+    } finally {
+      setFinishing(false);
+    }
+  }, [finish, setStatus]);
 
   const canFinish = status === 'draft' && body.trim().length > 0;
   return {
@@ -1057,6 +1246,8 @@ function useEditGate({ status, setStatus, flush, body, navigation, onConfirmEdit
     startNew,
     markFinished,
     canFinish,
+    finishing,
+    finishError,
   };
 }
 
@@ -1168,7 +1359,7 @@ function useJournalEntryController(
   const editGate = useEditGate({
     status: autosave.status,
     setStatus: autosave.setStatus,
-    flush: autosave.flush,
+    finish: autosave.finish,
     body: autosave.body,
     navigation,
     onConfirmEdit,
@@ -1206,9 +1397,13 @@ type Controller = ReturnType<typeof useJournalEntryController>;
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
+  const { finishing, finishError } = ctl.editGate;
   // Until an existing entry's load settles (still in flight or failed) the
   // controls are bound to an unseen entry, so disable them.
   const controlsDisabled = ctl.autosave.controlsLocked;
+  // Withhold Finish in weekly-prompt compose: the respond endpoint has no local
+  // id to finish, so the affordance would be a dead end (see titleReadOnly).
+  const canOfferFinish = canFinish && !ctl.titleReadOnly;
   return editMode ? (
     <WritingColumn
       title={title}
@@ -1220,7 +1415,9 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
       onChangeChord={ctl.autosave.onChangeChord}
-      onFinish={canFinish ? markFinished : undefined}
+      onFinish={canOfferFinish ? markFinished : undefined}
+      finishing={finishing}
+      finishError={finishError}
       bodyPlaceholder={bodyPlaceholder}
       controlsDisabled={controlsDisabled}
       titleReadOnly={ctl.titleReadOnly}
