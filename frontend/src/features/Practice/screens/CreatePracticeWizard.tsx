@@ -53,7 +53,8 @@ import {
 } from '@/design/tokens';
 import ConfiguratorBody from '@/features/Practice/components/ConfiguratorBody';
 import ModePicker, { type PickableMode } from '@/features/Practice/components/ModePicker';
-import { FALLBACK_STAGE, stageRange } from '@/features/Practice/constants';
+import StageSelector from '@/features/Practice/components/StageSelector';
+import { FALLBACK_STAGE } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -468,51 +469,18 @@ const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Eleme
   );
 };
 
-const StageField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => {
-  const stages = stageRange();
-  return (
-    <View style={styles.field} testID="create-practice-stage-field">
-      <Text style={styles.fieldLabel}>Assign to a stage (optional)</Text>
-      <Text style={styles.fieldHelp}>Makes this your active practice for that stage.</Text>
-      <View style={styles.stageRow}>
-        <StageChip
-          label="Skip"
-          selected={state.stageNumber === null}
-          onPress={() => setState((prev) => ({ ...prev, stageNumber: null }))}
-          testID="create-practice-stage-skip"
-        />
-        {stages.map((n) => (
-          <StageChip
-            key={n}
-            label={String(n)}
-            selected={state.stageNumber === n}
-            onPress={() => setState((prev) => ({ ...prev, stageNumber: n }))}
-            testID={`create-practice-stage-${n}`}
-          />
-        ))}
-      </View>
-    </View>
-  );
-};
-
-interface StageChipProps {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-  testID: string;
-}
-
-const StageChip = ({ label, selected, onPress, testID }: StageChipProps): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="radio"
-    accessibilityLabel={`Stage ${label}`}
-    accessibilityState={{ selected }}
-    onPress={onPress}
-    style={[styles.stageChip, selected && styles.stageChipSelected]}
-    testID={testID}
-  >
-    <Text style={[styles.stageChipText, selected && styles.stageChipTextSelected]}>{label}</Text>
-  </TouchableOpacity>
+const StageField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => (
+  <View style={styles.field} testID="create-practice-stage-field">
+    <Text style={styles.fieldLabel}>Assign to a stage (optional)</Text>
+    <Text style={styles.fieldHelp}>Makes this your active practice for that stage.</Text>
+    <StageSelector
+      variant="radio"
+      selectedStage={state.stageNumber}
+      onSelect={(n) => setState((prev) => ({ ...prev, stageNumber: n }))}
+      onSkip={() => setState((prev) => ({ ...prev, stageNumber: null }))}
+      testIDPrefix="create-practice-stage"
+    />
+  </View>
 );
 
 interface FieldLabelProps {
@@ -819,18 +787,6 @@ const styles = StyleSheet.create({
     backgroundColor: surface.raised,
   },
   inputMultiline: { minHeight: 64, textAlignVertical: 'top' },
-  stageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
-  stageChip: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs,
-    borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 1,
-    borderColor: surface.hairline,
-    backgroundColor: surface.raised,
-  },
-  stageChipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
-  stageChipText: { ...editorialType.note, color: ink.primary },
-  stageChipTextSelected: { color: accent.onPrimary },
   notice: {
     backgroundColor: surface.sunken,
     padding: SPACING.md,
