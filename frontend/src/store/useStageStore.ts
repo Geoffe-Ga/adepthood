@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 import type { StageData } from '../features/Map/stageData';
 
+import { createNormalizedById } from './normalizedCollection';
 import { registerStoreReset } from './registry';
 
 /**
@@ -47,27 +48,14 @@ const INITIAL_STATE = {
   error: null as string | null,
 };
 
-interface NormalizedStages {
-  stagesByNumber: Record<number, StageData>;
-  stageOrder: number[];
-  stages: StageData[];
-}
+const stageCollection = createNormalizedById<StageData>((stage) => stage.stageNumber);
 
-const normalizeStages = (stages: StageData[]): NormalizedStages => {
-  const stagesByNumber: Record<number, StageData> = {};
-  const stageOrder: number[] = [];
-  for (const stage of stages) {
-    stagesByNumber[stage.stageNumber] = stage;
-    stageOrder.push(stage.stageNumber);
-  }
-  return { stagesByNumber, stageOrder, stages: [...stages] };
+const normalizeStages = (
+  stages: StageData[],
+): { stagesByNumber: Record<number, StageData>; stageOrder: number[]; stages: StageData[] } => {
+  const { byId, order, list } = stageCollection.normalize(stages);
+  return { stagesByNumber: byId, stageOrder: order, stages: list };
 };
-
-const rebuildStageList = (
-  stagesByNumber: Record<number, StageData>,
-  stageOrder: number[],
-): StageData[] =>
-  stageOrder.map((num) => stagesByNumber[num]!).filter((s): s is StageData => s !== undefined);
 
 export const useStageStore = create<StageStoreState>((set) => ({
   ...INITIAL_STATE,
@@ -97,7 +85,7 @@ export const useStageStore = create<StageStoreState>((set) => ({
         ...state.stagesByNumber,
         [stageNumber]: { ...existing, progress },
       };
-      return { stagesByNumber, stages: rebuildStageList(stagesByNumber, state.stageOrder) };
+      return { stagesByNumber, stages: stageCollection.rebuild(stagesByNumber, state.stageOrder) };
     }),
   reset: () => set({ ...INITIAL_STATE }),
 }));
