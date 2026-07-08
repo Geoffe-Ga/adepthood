@@ -92,7 +92,6 @@ function mergeByIdSorted<T extends { id: number; anchor_start: number }>(
 function mergeSnapshotUnder<T extends { id: number; anchor_start: number }>(
   snapshot: T[],
 ): (_prev: T[]) => T[] {
-  // Server rows as existing, in-memory as incoming: in-memory wins id collisions.
   return (prev) => mergeByIdSorted(snapshot, prev);
 }
 
@@ -100,7 +99,9 @@ function mergeSnapshotUnder<T extends { id: number; anchor_start: number }>(
  * Load a list-shaped resource once on open; silent on failure (id only).
  * Merges the loaded snapshot into current state by id (server rows as existing,
  * in-memory as incoming) so a slow load can't clobber state that advanced past
- * its snapshot (generate deltas, accepted flips, essay-bearing notes).
+ * its snapshot (generate deltas, accepted flips, essay-bearing notes). Resets to
+ * an empty list on each entry change (deps are stable), so a prior entry's rows
+ * can't union into a new one while same-entry late loads still merge under state.
  */
 function useLoadOnOpen<T extends { id: number; anchor_start: number }>(
   routeEntryId: number | null,
@@ -109,6 +110,8 @@ function useLoadOnOpen<T extends { id: number; anchor_start: number }>(
 ): void {
   useEffect(() => {
     if (routeEntryId == null) return undefined;
+    // Start each entry from empty so a prior entry's rows can't union into it.
+    apply([]);
     let active = true;
     void load(routeEntryId)
       .then((res) => {

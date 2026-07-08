@@ -156,6 +156,32 @@ describe('useResonance', () => {
     expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 9]);
   });
 
+  it('replaces the prior entry notes and suggestions when routeEntryId changes to a different entry', async () => {
+    mockList.mockResolvedValueOnce({ items: [note({ id: 1 })] });
+    mockSugList.mockResolvedValueOnce({ items: [suggestion({ id: 1 })] });
+    const flush = jest.fn(async () => 7);
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useResonance({ routeEntryId: id, flush }),
+      { initialProps: { id: 7 } },
+    );
+    await waitFor(() =>
+      expect(result.current.marginalia.map((m: Marginalia) => m.id)).toEqual([1]),
+    );
+
+    mockList.mockResolvedValueOnce({
+      items: [note({ id: 2, journal_entry_id: 8, anchor_start: 10 })],
+    });
+    mockSugList.mockResolvedValueOnce({
+      items: [suggestion({ id: 2, journal_entry_id: 8, anchor_start: 10 })],
+    });
+    rerender({ id: 8 });
+
+    await waitFor(() =>
+      expect(result.current.marginalia.map((m: Marginalia) => m.id)).toEqual([2]),
+    );
+    expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([2]);
+  });
+
   it('a stale privateMessage from a withheld pass is cleared when a later pass errors', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValueOnce(
