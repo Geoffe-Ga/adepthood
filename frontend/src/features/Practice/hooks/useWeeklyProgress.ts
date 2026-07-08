@@ -14,9 +14,11 @@
  * after a save (BUG-FE-PRACTICE-005). The `commit` callback inside
  * `useSaveSessionMutation` calls `refresh()` here on success.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { practiceSessions } from '@/api';
+import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
+import { toError } from '@/features/Practice/utils/toError';
 
 export interface UseWeeklyProgressResult {
   count: number;
@@ -29,10 +31,6 @@ export interface UseWeeklyProgressResult {
   decrement: () => void;
   /** Replace `count` with an authoritative value (e.g. from `commit`). */
   setCount: (_next: number) => void;
-}
-
-function toError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
 }
 
 async function fetchCurrentCount(): Promise<number> {
@@ -58,14 +56,7 @@ export function useWeeklyProgress(): UseWeeklyProgressResult {
   const [count, setCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mountedRef = useMountedRef();
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -80,7 +71,7 @@ export function useWeeklyProgress(): UseWeeklyProgressResult {
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     void refresh();

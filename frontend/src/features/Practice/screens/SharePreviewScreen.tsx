@@ -35,6 +35,7 @@ import {
   type ShareLinkPreviewResponse,
 } from '@/api/practiceShare';
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export type SharePreviewScreenProps = NativeStackScreenProps<RootStackParamList, 'SharePreview'>;
@@ -209,19 +210,16 @@ function SuccessBanner({ imported, onDone }: SuccessProps) {
 
 function ErrorView({ banner, onRetry }: { banner: ErrorBanner; onRetry?: () => void }) {
   return (
-    <View style={styles.errorBlock} testID={`share-preview-error-${banner.kind}`}>
-      <Text style={styles.errorText}>{errorCopyFor(banner)}</Text>
-      {onRetry && (
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={onRetry}
-          style={[styles.actionButton, styles.importButton]}
-          testID="share-preview-retry"
-        >
-          <Text style={styles.importButtonText}>Retry</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+    <LoadErrorRetry
+      message={errorCopyFor(banner)}
+      onRetry={onRetry}
+      containerStyle={styles.errorBlock}
+      containerTestID={`share-preview-error-${banner.kind}`}
+      messageStyle={styles.errorText}
+      retryStyle={[styles.actionButton, styles.importButton]}
+      retryTextStyle={styles.importButtonText}
+      retryTestID="share-preview-retry"
+    />
   );
 }
 
@@ -280,9 +278,12 @@ export function SharePreviewScreen({
 
   if (state.isLoading) {
     return (
-      <View style={styles.loading} testID="share-preview-loading">
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
+      <LoadingBlock
+        style={styles.loading}
+        color={colors.primary}
+        size="large"
+        testID="share-preview-loading"
+      />
     );
   }
   if (state.loadError || !state.preview) {

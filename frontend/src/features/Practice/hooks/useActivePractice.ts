@@ -20,13 +20,14 @@
  * `PracticeScreen` switches on this to render the selector instead of the
  * mode views.
  */
-import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
+import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { practices, userPractices } from '@/api';
 import type { PracticeItem, UserPractice } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import type { ModeConfig } from '@/features/Practice/engine/types';
+import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 
 const LOAD_FALLBACK =
   "We couldn't load your practices. Check your connection, then tap Retry to try again.";
@@ -77,17 +78,6 @@ function resolveEffective(
   const config =
     active.effective_config ?? active.mode_config_override ?? practice.mode_config ?? null;
   return { name, config };
-}
-
-function useMountedRef(): MutableRefObject<boolean> {
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-  return mountedRef;
 }
 
 function useRefreshAction(

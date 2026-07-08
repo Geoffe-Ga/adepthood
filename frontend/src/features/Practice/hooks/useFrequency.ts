@@ -12,9 +12,11 @@
  * on refetch because retaining a stale failure would lie about the state of
  * the new request.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { frequency, type FrequencyResponse } from '@/api';
+import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
+import { toError } from '@/features/Practice/utils/toError';
 
 export interface UseFrequencyResult {
   data: FrequencyResponse | null;
@@ -24,25 +26,12 @@ export interface UseFrequencyResult {
   refetch: () => Promise<void>;
 }
 
-function toError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
-}
-
 export function useFrequency(stageNumber?: number | null): UseFrequencyResult {
   const [data, setData] = useState<FrequencyResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Strict-mode + unmount safety: a slow fetch that resolves after the
-  // banner unmounts must NOT call setState. The same pattern is used by
-  // the existing PracticeScreen loaders.
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mountedRef = useMountedRef();
 
   const fetchOnce = useCallback(async () => {
     setIsLoading(true);
@@ -57,7 +46,7 @@ export function useFrequency(stageNumber?: number | null): UseFrequencyResult {
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }, [stageNumber]);
+  }, [stageNumber, mountedRef]);
 
   useEffect(() => {
     void fetchOnce();

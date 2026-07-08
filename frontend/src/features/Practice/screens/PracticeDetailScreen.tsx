@@ -10,7 +10,7 @@
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
 
@@ -27,6 +27,7 @@ import {
   surface,
   surfaceShadow,
 } from '@/design/tokens';
+import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import { stageRange } from '@/features/Practice/constants';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
@@ -125,14 +126,27 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
   const state = usePracticeDetail(practiceId, onAssigned, assignError ?? null);
   if (state.loading) {
     return (
-      <View style={styles.loading} testID="practice-detail-loading">
-        <ActivityIndicator color={accent.primary} size="large" />
-      </View>
+      <LoadingBlock
+        style={styles.loading}
+        color={accent.primary}
+        size="large"
+        testID="practice-detail-loading"
+      />
     );
   }
   if (state.loadError !== null || state.practice === null) {
     return (
-      <ErrorView message={state.loadError ?? 'Could not load practice.'} onRetry={state.reload} />
+      <LoadErrorRetry
+        message={state.loadError ?? 'Could not load practice.'}
+        onRetry={state.reload}
+        containerStyle={styles.errorBlock}
+        containerTestID="practice-detail-error"
+        messageStyle={styles.errorText}
+        retryStyle={styles.actionButton}
+        retryTextStyle={styles.actionButtonText}
+        retryTestID="practice-detail-retry"
+        retryAccessibilityLabel="Retry"
+      />
     );
   }
   return <LoadedDetail props={props} state={state} practice={state.practice} />;
@@ -472,26 +486,6 @@ interface BadgeChipProps {
 const BadgeChip = ({ label, testID }: BadgeChipProps): React.JSX.Element => (
   <View style={styles.badge} testID={testID}>
     <Text style={styles.badgeText}>{label}</Text>
-  </View>
-);
-
-interface ErrorViewProps {
-  message: string;
-  onRetry: () => void;
-}
-
-const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
-  <View style={styles.errorBlock} testID="practice-detail-error">
-    <Text style={styles.errorText}>{message}</Text>
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel="Retry"
-      onPress={onRetry}
-      style={styles.actionButton}
-      testID="practice-detail-retry"
-    >
-      <Text style={styles.actionButtonText}>Retry</Text>
-    </TouchableOpacity>
   </View>
 );
 
