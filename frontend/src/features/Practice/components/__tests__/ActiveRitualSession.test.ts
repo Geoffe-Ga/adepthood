@@ -2,13 +2,13 @@ import { describe, expect, it } from '@jest/globals';
 
 import { pickCard } from '../../data/resolveCard';
 import type { PickedCard } from '../../data/resolveCard';
+import { harvestMetadata, harvestSummaryMetadata } from '../../engine/harvestMetadata';
 import type {
   CardMeditationConfig,
   RandomIntervalBellConfig,
   RandomIntervalBellMetadata,
 } from '../../engine/types';
 import { fakeState } from '../../views/__tests__/fixtures';
-import { harvestMetadata, harvestSummaryMetadata } from '../ActiveRitualSession';
 
 const config: CardMeditationConfig = { mode: 'card_meditation', deck_id: 'rws', cards: null };
 

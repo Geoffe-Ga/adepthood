@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import { harvestMetadata, harvestSummaryMetadata } from '../../engine/harvestMetadata';
 import type {
   IntervalBellConfig,
   MeditationTimerConfig,
@@ -12,7 +13,6 @@ import type {
   TarotConfig,
 } from '../../engine/types';
 import { fakeState } from '../../views/__tests__/fixtures';
-import { harvestMetadata, harvestSummaryMetadata } from '../ActiveRitualSession';
 
 const meditationTimerConfig: MeditationTimerConfig = {
   mode: 'meditation_timer',
