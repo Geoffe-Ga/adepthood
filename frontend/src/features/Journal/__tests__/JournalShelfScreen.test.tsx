@@ -12,10 +12,14 @@ const mockList = jest.fn() as jest.MockedFunction<
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
+// Present so a display-only excerpt() regression that starts writing back to the
+// server (instead of only truncating the rendered preview) has something to trip.
+const mockUpdate = jest.fn();
 
 jest.mock('@/api', () => ({
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
+    update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
   },
   prompts: {
     current: (...a: unknown[]) =>
@@ -131,6 +135,7 @@ beforeEach(() => {
   mockList.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
+  mockUpdate.mockReset();
   mockList.mockResolvedValue(page([]));
   // Default: the weekly prompt is already answered, so no card surfaces.
   mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
@@ -236,13 +241,15 @@ describe('JournalShelfScreen', () => {
     expect(within(card).queryByText(/saved today/)).toBeNull();
   });
 
-  it('truncates a long entry body to an ellipsis excerpt', async () => {
+  it('truncates a long entry body to an ellipsis excerpt, display-only (no journal.update)', async () => {
     const longBody = 'word '.repeat(60).trim();
     mockList.mockResolvedValue(page([entry(4, { message: longBody })]));
     const { findByTestId } = render(<JournalShelfScreen />);
     const card = await findByTestId('journal-shelf-card-4');
     expect(within(card).getByText(new RegExp(`${String.fromCharCode(0x2026)}$`))).toBeTruthy();
     expect(within(card).queryByText(longBody)).toBeNull();
+    // Rendering the excerpt must never write anything back to the server.
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it('starts a blank page from the empty-state call to action', async () => {

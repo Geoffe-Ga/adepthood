@@ -585,7 +585,12 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await Promise.resolve();
       });
-      expect(mockUpdate).toHaveBeenCalledWith(42, { status: 'finished' });
+      // Spec change: Finish now writes the full body + title atomically with the status flip, not a status-only PATCH.
+      expect(mockUpdate).toHaveBeenCalledWith(42, {
+        message: 'A finished thought.',
+        title: null,
+        status: 'finished',
+      });
       // Returns to read mode.
       expect(await findByTestId('journal-edit-button')).toBeTruthy();
     } finally {
