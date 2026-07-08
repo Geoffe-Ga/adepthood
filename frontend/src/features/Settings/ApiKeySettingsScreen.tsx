@@ -37,6 +37,12 @@ const MIN_KEY_LENGTH = 10;
 const PLACEHOLDER_KEY = 'sk-... or sk-ant-...';
 const MASK_VISIBLE_CHARS = 4;
 
+// Shown when ApiKeyContext.loadError is set — SecureStore is unavailable, so the
+// key can't persist. Kept generic (never the raw thrown error) to avoid leaking
+// keychain internals into the UI.
+export const SECURE_STORAGE_WARNING =
+  "Secure storage is unavailable on this device, so your API key can't be saved. It will still work for this session, but it won't persist after you close the app. Try restarting the app, then save your key again.";
+
 // Built from the provider map so the error copy can never drift from the
 // supported set: e.g. `"sk-" (OpenAI) or "sk-ant-" (Anthropic)`.
 const PREFIX_SUMMARY = BYOK_PROVIDERS.map((p) => `"${p.keyPrefix}" (${p.label})`).join(' or ');
@@ -166,6 +172,7 @@ interface ScreenBodyProps {
   submitting: boolean;
   error: string | null;
   status: string | null;
+  storageWarning: string | null;
   onChangeDraft: (_v: string) => void;
   onToggleReveal: () => void;
   onRequestRemove: () => void;
@@ -275,6 +282,7 @@ const ScreenBody = ({
   submitting,
   error,
   status,
+  storageWarning,
   onChangeDraft,
   onToggleReveal,
   onRequestRemove,
@@ -284,6 +292,7 @@ const ScreenBody = ({
 }: ScreenBodyProps): React.JSX.Element => (
   <>
     <ScreenIntro apiKey={apiKey} />
+    <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
     <ProviderDirectory />
     {apiKey && (
       <StoredKeyCard apiKey={apiKey} disabled={submitting} onRequestRemove={onRequestRemove} />
@@ -345,8 +354,24 @@ function useClearKeyHandler(
   return useSettingsSubmit(form, { validate, perform, onError });
 }
 
+function useScreenNavHandlers(navigation: Props['navigation']): {
+  onBack?: () => void;
+  onOpenTimezone?: () => void;
+} {
+  const onBack = useMemo(
+    () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
+    [navigation],
+  );
+  const onOpenTimezone = useMemo(
+    () => (navigation?.navigate ? () => navigation.navigate?.('TimezoneSettings') : undefined),
+    [navigation],
+  );
+  return { onBack, onOpenTimezone };
+}
+
 export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.JSX.Element {
-  const { apiKey, isLoading, saveApiKey, clearApiKey } = useApiKey();
+  const { apiKey, isLoading, loadError, saveApiKey, clearApiKey } = useApiKey();
+  const storageWarning = loadError ? SECURE_STORAGE_WARNING : null;
   const form = useSettingsFormState('');
   const [reveal, setReveal] = useState(false);
   const handleSave = useSaveKeyHandler(form, setReveal, saveApiKey);
@@ -362,14 +387,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
     [setDraft, setError],
   );
   const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
-  const onBack = useMemo(
-    () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
-    [navigation],
-  );
-  const onOpenTimezone = useMemo(
-    () => (navigation?.navigate ? () => navigation.navigate?.('TimezoneSettings') : undefined),
-    [navigation],
-  );
+  const { onBack, onOpenTimezone } = useScreenNavHandlers(navigation);
 
   if (isLoading) {
     return (
@@ -388,6 +406,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         submitting={form.submitting}
         error={form.error}
         status={form.status}
+        storageWarning={storageWarning}
         onChangeDraft={onChangeDraft}
         onToggleReveal={toggleReveal}
         onRequestRemove={handleRequestRemove}
