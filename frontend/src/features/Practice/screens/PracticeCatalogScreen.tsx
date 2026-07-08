@@ -48,7 +48,8 @@ import {
 } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
-import { MIN_STAGE, stageRange } from '@/features/Practice/constants';
+import StageSelector from '@/features/Practice/components/StageSelector';
+import { MIN_STAGE } from '@/features/Practice/constants';
 import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -499,22 +500,17 @@ interface StageChipsProps {
   onSelect: (stage: number) => void;
 }
 
-const StageChips = ({ selected, onSelect }: StageChipsProps): React.JSX.Element => {
-  const stages = stageRange();
-  return (
-    <View style={styles.chipRow} testID="practice-catalog-stage-chips">
-      {stages.map((n) => (
-        <FilterChip
-          key={n}
-          label={`Stage ${n}`}
-          selected={selected === n}
-          onPress={() => onSelect(n)}
-          testID={`practice-catalog-stage-${n}`}
-        />
-      ))}
-    </View>
-  );
-};
+const StageChips = ({ selected, onSelect }: StageChipsProps): React.JSX.Element => (
+  <StageSelector
+    variant="filter"
+    selectedStage={selected}
+    onSelect={onSelect}
+    formatLabel={(n) => `Stage ${n}`}
+    testIDPrefix="practice-catalog-stage"
+    rowTestID="practice-catalog-stage-chips"
+    rowStyle={styles.stageChipsRow}
+  />
+);
 
 interface ModeChipsProps {
   selected: string | null;
@@ -702,6 +698,7 @@ const styles = StyleSheet.create({
     gap: SPACING.xs,
     marginBottom: SPACING.sm,
   },
+  stageChipsRow: { marginBottom: SPACING.sm },
   chip: {
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,

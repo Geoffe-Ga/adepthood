@@ -29,7 +29,7 @@ import {
 } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
-import { stageRange } from '@/features/Practice/constants';
+import StageSelector from '@/features/Practice/components/StageSelector';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
@@ -445,38 +445,26 @@ interface StagePickerProps {
   onClose: () => void;
 }
 
-const StagePicker = ({ assigning, onPick, onClose }: StagePickerProps): React.JSX.Element => {
-  const stages = stageRange();
-  return (
-    <View style={styles.pickerCard} testID="practice-detail-stage-picker">
-      <Text style={styles.pickerHeading}>Pick a stage</Text>
-      <View style={styles.pickerRow}>
-        {stages.map((n) => (
-          <TouchableOpacity
-            key={n}
-            accessibilityRole="button"
-            accessibilityLabel={`Stage ${n}`}
-            accessibilityState={{ disabled: assigning }}
-            onPress={assigning ? undefined : () => onPick(n)}
-            style={[styles.stageBox, assigning && styles.disabledButton]}
-            testID={`practice-detail-stage-pick-${n}`}
-          >
-            <Text style={styles.stageBoxText}>{n}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Cancel"
-        onPress={onClose}
-        style={styles.pickerCancel}
-        testID="practice-detail-stage-pick-cancel"
-      >
-        <Text style={styles.pickerCancelText}>Cancel</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
+const StagePicker = ({ assigning, onPick, onClose }: StagePickerProps): React.JSX.Element => (
+  <View style={styles.pickerCard} testID="practice-detail-stage-picker">
+    <Text style={styles.pickerHeading}>Pick a stage</Text>
+    <StageSelector
+      variant="picker"
+      onSelect={onPick}
+      disabled={assigning}
+      testIDPrefix="practice-detail-stage-pick"
+    />
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel="Cancel"
+      onPress={onClose}
+      style={styles.pickerCancel}
+      testID="practice-detail-stage-pick-cancel"
+    >
+      <Text style={styles.pickerCancelText}>Cancel</Text>
+    </TouchableOpacity>
+  </View>
+);
 
 interface BadgeChipProps {
   label: string;
@@ -561,16 +549,6 @@ const styles = StyleSheet.create({
     color: ink.primary,
     marginBottom: SPACING.sm,
   },
-  pickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
-  stageBox: {
-    minWidth: 36,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: surface.sunken,
-    alignItems: 'center',
-  },
-  stageBoxText: { color: ink.primary, fontWeight: '700' },
   pickerCancel: { marginTop: SPACING.sm, alignSelf: 'flex-end' },
   pickerCancelText: { color: accent.primary, fontWeight: '600', fontSize: 13 },
   errorBlock: {
