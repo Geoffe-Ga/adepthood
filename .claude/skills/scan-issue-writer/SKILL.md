@@ -7,8 +7,9 @@ description: >-
   prompts/scans/*.md file. Handles dedupe, priority labeling, and max-issue
   caps so the Ralph loop never starves and never bloats. Do NOT use for
   implementing fixes (use stay-green), reviewing PRs (use
-  comprehensive-pr-review), or closing/triaging existing issues (use
-  backlog-grooming).
+  comprehensive-pr-review), closing/triaging existing issues (use
+  backlog-grooming), or filing a one-off bug/feature report from a live user
+  description (use flare).
 metadata:
   author: Geoff
   version: 1.0.0
