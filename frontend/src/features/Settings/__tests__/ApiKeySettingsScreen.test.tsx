@@ -4,7 +4,10 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Alert, Linking } from 'react-native';
 
-import ApiKeySettingsScreen, { validateUserApiKey } from '../ApiKeySettingsScreen';
+import ApiKeySettingsScreen, {
+  SECURE_STORAGE_WARNING,
+  validateUserApiKey,
+} from '../ApiKeySettingsScreen';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 
 import { useApiKey } from '@/context/ApiKeyContext';
@@ -21,6 +24,7 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
   const base = {
     apiKey: null,
     isLoading: false,
+    loadError: null,
     saveApiKey: jest.fn(() => Promise.resolve()),
     clearApiKey: jest.fn(() => Promise.resolve()),
   };
@@ -323,5 +327,32 @@ describe('ApiKeySettingsScreen', () => {
 
     expect(queryByLabelText('Go back')).toBeNull();
     expect(queryByTestId('open-timezone-settings')).toBeNull();
+  });
+
+  test('surfaces a storage-unavailable warning when loadError is set', () => {
+    setApiKeyState({ loadError: new Error('boom') });
+    const { getByTestId, queryByText } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('api-key-storage-error').props.children).toBe(SECURE_STORAGE_WARNING);
+    expect(queryByText('boom')).toBeNull();
+  });
+
+  test('hides the storage warning when loadError is null', () => {
+    setApiKeyState({});
+    const { queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(queryByTestId('api-key-storage-error')).toBeNull();
+  });
+
+  test('shows the storage warning alongside a form submit error', async () => {
+    setApiKeyState({ loadError: new Error('x') });
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), 'not-a-real-key');
+    fireEvent.press(getByTestId('save-key-button'));
+
+    const formError = await findByTestId('api-key-error');
+    expect(formError).toBeTruthy();
+    expect(getByTestId('api-key-storage-error').props.children).toBe(SECURE_STORAGE_WARNING);
   });
 });

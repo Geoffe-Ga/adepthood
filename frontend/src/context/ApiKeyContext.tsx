@@ -29,10 +29,10 @@ interface ApiKeyContextValue {
   /** True until the initial load from SecureStore completes. */
   isLoading: boolean;
   /**
-   * BUG-FRONTEND-INFRA-017: populated when the initial SecureStore read,
-   * save, or clear throws. Callers can surface this to the user (e.g.,
-   * "Secure storage is unavailable — your key won't persist across
-   * launches") instead of silently running with a blank key.
+   * Set to the thrown error when the initial SecureStore read, save, or
+   * clear fails; null while storage is healthy. ApiKeySettingsScreen surfaces
+   * this as a "secure storage unavailable" warning so a keychain failure is
+   * visible instead of the app silently running with a blank, non-persisted key.
    */
   loadError: Error | null;
   /** Persist a new key to SecureStore and update context state. */
