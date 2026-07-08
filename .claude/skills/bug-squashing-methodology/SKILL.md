@@ -4,6 +4,9 @@ description: >-
   Structured 5-step bug fix process with root cause analysis and TDD.
   Use when fixing bugs, debugging failures, or investigating defects.
   Covers RCA documentation, reproduction, TDD fix cycle, and PR workflow.
+  Do NOT use for filing a new bug/feature report as a GitHub issue (use
+  flare) — this skill starts once an issue already exists and work is
+  underway.
 metadata:
   author: Geoff
   version: 1.0.0
