@@ -710,6 +710,32 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
   await clearPendingCheckIns();
 };
 
+/**
+ * Build one goal-completion POST per backfilled day, bucketing each day into
+ * the user's IANA zone. A day that resolves to "today" omits ``completed_on``
+ * so the server stamps real wall-clock time — the same genuine-backfill rule
+ * the online log path uses; any earlier day sends its ``YYYY-MM-DD`` key so
+ * the completion lands on the calendar day the user actually missed, not on
+ * the wall-clock day the request happened to fire. Extracted so the caller
+ * stays a flat, low-complexity sequence of guarded steps.
+ */
+const postBackfillCompletions = (
+  lowGoalId: number,
+  days: Date[],
+  zone: string,
+): Array<Promise<unknown>> => {
+  const today = todayInUserTZ(zone);
+  return days.map((day) => {
+    const dayKey = dayKeyInTZ(day, zone);
+    const completedOn = dayKey !== today ? dayKey : undefined;
+    return goalCompletionsApi.create({
+      goal_id: lowGoalId,
+      did_complete: true,
+      completed_on: completedOn,
+    });
+  });
+};
+
 // ---------------------------------------------------------------------------
 // Public service: a plain object with async methods. Composable from hooks
 // but not itself a hook. Every method is independently unit-testable.
@@ -1032,19 +1058,63 @@ export const habitManager = {
     return milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount);
   },
 
-  backfillMissedDays: (habitId: number, days: Date[]): void => {
-    // Persist like every sibling mutation — without this the backfill lives only
-    // in the Zustand store and is silently lost on the next cold rehydrate (#783).
-    const next = getHabits().map((h) => (h.id === habitId ? backfillHabit(h, days) : h));
+  /**
+   * Backfill missed days: bump the local streak + completions, persist the
+   * optimistic state, then POST one goal completion per day against the
+   * habit's LOW-tier goal so the backfill survives the next ``loadHabits``
+   * reload (which trusts the server as the source of truth). A single
+   * ``Promise.all`` rejection rolls the store AND the on-disk snapshot back
+   * to ``prev`` and alerts the user — the same deterministic single-rollback
+   * pattern as ``saveHabitOrder``. When the habit or its low goal has no
+   * server id we keep the optimistic update but skip the network call, so a
+   * pre-sync onboarding habit still shows the backfill locally.
+   *
+   * ``tz`` is the user's stored IANA zone forwarded by the hook; it falls
+   * back to the last zone a ``loadHabits`` observed, then to the device zone.
+   */
+  backfillMissedDays: (habitId: number, days: Date[], tz?: string): void => {
+    const prev = getHabits();
+    const next = prev.map((h) => (h.id === habitId ? backfillHabit(h, days) : h));
     setHabits(next);
     void persistHabits(next);
+    const lowGoal = prev.find((h) => h.id === habitId)?.goals.find((g) => g.tier === 'low');
+    if (!lowGoal?.id) return;
+    const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
+    const updates = postBackfillCompletions(lowGoal.id, days, zone);
+    Promise.all(updates).catch(
+      revertOnFailure(
+        prev,
+        "We couldn't save those backfilled days. Your previous state was restored — check your connection and try again.",
+      ),
+    );
   },
 
+  /**
+   * Reset a habit's start date: clear the streak + completions locally,
+   * persist, then PUT the new start date so that half of the reset reaches
+   * the server. Only ``start_date`` is durable — the PUT carries no streak
+   * and does not delete the habit's goal-completion rows, so the local
+   * streak/completions clear is optimistic and is rebuilt from the surviving
+   * server rows on the next ``loadHabits``. Without the PUT even the new
+   * start date would revert to the stale server value. On failure the
+   * rollback restores both the store and the on-disk snapshot and alerts the
+   * user.
+   */
   setNewStartDate: (habitId: number, newDate: Date): void => {
-    // Persist so the reset start date survives a rehydrate (#783).
-    const next = getHabits().map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
+    const prev = getHabits();
+    const next = prev.map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
     setHabits(next);
     void persistHabits(next);
+    const updated = next.find((h) => h.id === habitId);
+    if (!updated?.id) return;
+    habitsApi
+      .update(updated.id, toApiPayload(updated))
+      .catch(
+        revertOnFailure(
+          prev,
+          "We couldn't save the new start date. Your previous state was restored — check your connection and try again.",
+        ),
+      );
   },
 
   onboardingSave: async (newHabits: OnboardingHabit[], showToast?: ShowToast): Promise<void> => {

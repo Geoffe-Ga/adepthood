@@ -171,7 +171,10 @@ export const useHabitActions = (
       deleteHabit: habitManager.deleteHabit,
       addHabit: habitManager.addHabit,
       saveHabitOrder: habitManager.saveHabitOrder,
-      backfillMissedDays: habitManager.backfillMissedDays,
+      // Bind the hook tz so a backfill buckets its completed_on days into the
+      // user's stored zone, matching the online log path.
+      backfillMissedDays: (habitId: number, days: Date[]) =>
+        habitManager.backfillMissedDays(habitId, days, tz),
       setNewStartDate: habitManager.setNewStartDate,
       onboardingSave,
       iconPress,
