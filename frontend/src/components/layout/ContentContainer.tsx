@@ -15,11 +15,11 @@ interface ContentContainerProps {
  * The shared content-width cap: a full-width box centered and capped at
  * ``contentLayout.maxWidth`` so screen bodies settle on the same comfortable
  * reading measure on tablets and wide web instead of stretching edge-to-edge.
- * It uses ``flexGrow`` (not ``flex``) so it fills a definite-height parent while
- * still collapsing to its content height inside a ScrollView's content
- * container — a plain ``flex: 1`` there would resolve to zero height on native.
- * Callers wrap their scroll/flow body in this; a caller ``style`` is merged on
- * top without dropping the cap.
+ * It uses ``flexGrow`` (not ``flex``) so it fills its parent, which holds when
+ * the parent is a definite-height box or a scroll content container that itself
+ * sets ``flexGrow`` — a scroll content container without its own grow leaves
+ * this child at ~0 height on RN web. Callers wrap their scroll/flow body in
+ * this; a caller ``style`` is merged on top without dropping the cap.
  */
 export const ContentContainer = ({
   children,

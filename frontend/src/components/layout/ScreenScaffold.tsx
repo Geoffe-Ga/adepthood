@@ -30,7 +30,9 @@ export const ScreenScaffold = ({
     return (
       <ScrollView
         style={styles.ground}
-        contentContainerStyle={[styles.content, style]}
+        // The content container must itself grow so its flex-grow child fills
+        // the viewport when short yet still scrolls when tall (journal idiom).
+        contentContainerStyle={[styles.content, styles.scrollContent, style]}
         testID={testID}
       >
         <ContentContainer>{children}</ContentContainer>
@@ -52,6 +54,9 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: rhythm.screenPaddingH,
     paddingTop: rhythm.screenPaddingTop,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
 });
 
