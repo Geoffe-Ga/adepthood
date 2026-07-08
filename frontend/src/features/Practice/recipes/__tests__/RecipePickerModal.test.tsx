@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import RecipePickerModal from '../RecipePickerModal';
@@ -105,7 +105,8 @@ describe('RecipePickerModal', () => {
   it('shows a System badge on read-only recipes', async () => {
     const utils = mountPicker();
     await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
-    expect(utils.queryByText('System')).toBeTruthy();
+    expect(within(utils.getByTestId('recipe-row-1')).getByText('System')).toBeTruthy();
+    expect(within(utils.getByTestId('recipe-row-2')).queryByText('System')).toBeNull();
   });
 
   it('renders "Edit a copy" on system rows and "Edit" on user rows', async () => {

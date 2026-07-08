@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type { PracticeItem, UserPractice } from '@/api';
@@ -303,15 +303,16 @@ describe('PracticeDetailScreen — assignError route param', () => {
 
 describe('PracticeDetailScreen — config summary variants', () => {
   it.each([
-    [{ mode: 'meditation_timer', duration_minutes: 10 } as const],
-    [{ mode: 'count_up' } as const],
-    [{ mode: 'count_up', soft_cap_minutes: 20 } as const],
+    [{ mode: 'meditation_timer', duration_minutes: 10 } as const, ['Duration: 10 min']],
+    [{ mode: 'count_up' } as const, ['Open-ended']],
+    [{ mode: 'count_up', soft_cap_minutes: 20 } as const, ['Soft cap: 20 min']],
     [
       {
         mode: 'metronome',
         bpm: 60,
         timer: { mode: 'meditation_timer', duration_minutes: 10 },
       } as const,
+      ['BPM: 60', 'Duration: 10 min'],
     ],
     [
       {
@@ -320,6 +321,7 @@ describe('PracticeDetailScreen — config summary variants', () => {
         interval_minutes: 5,
         bell_tone: 'bowl',
       } as const,
+      ['Duration: 20 min', 'Spacing: every 5 min', 'Tone: bowl'],
     ],
     [
       {
@@ -328,13 +330,15 @@ describe('PracticeDetailScreen — config summary variants', () => {
         cue_offsets_minutes: [2, 7, 15],
         bell_tone: 'bowl',
       } as const,
+      ['Duration: 20 min', 'Spacing: 3 custom cues', 'Tone: bowl'],
     ],
-    [{ mode: 'rep_counter', target_reps: 12, unit_label: 'reps' } as const],
+    [{ mode: 'rep_counter', target_reps: 12, unit_label: 'reps' } as const, ['Target: 12 reps']],
     [
       {
         mode: 'sense_grounding',
         prompts: [{ sense: 'sight', label: 'blue' }],
       } as const,
+      ['1 prompts across the senses'],
     ],
     [
       {
@@ -342,9 +346,10 @@ describe('PracticeDetailScreen — config summary variants', () => {
         rounds: 2,
         categories: [{ key: 'c', label: 'a circle', target_count: 3 }],
       } as const,
+      ['2 rounds', '1 categories'],
     ],
-    [{ mode: 'tarot', deck: 'major_arcana' } as const],
-    [{ mode: 'card_meditation', deck_id: 'rws' } as const],
+    [{ mode: 'tarot', deck: 'major_arcana' } as const, ['Major arcana — one card per sit']],
+    [{ mode: 'card_meditation', deck_id: 'rws' } as const, ['Deck: rws']],
     [
       {
         mode: 'mindful_anchor',
@@ -353,6 +358,7 @@ describe('PracticeDetailScreen — config summary variants', () => {
         options: [],
         require_option_choice: false,
       } as const,
+      ['Soft minimum: 60s', 'no chooser'],
     ],
     [
       {
@@ -362,12 +368,17 @@ describe('PracticeDetailScreen — config summary variants', () => {
         options: [{ key: 'touch_grass', label: 'Touch grass' }],
         require_option_choice: false,
       } as const,
+      ['Soft minimum: 60s', '1 options'],
     ],
-  ])('summarises %p', async (config) => {
+  ])('summarises %p as %p', async (config, lines) => {
     mockPracticesGet.mockResolvedValueOnce({ ...samplePractice, mode_config: config });
     const { view } = renderScreen();
     await waitForLoad();
-    expect(view.getByTestId('practice-detail-config-summary')).toBeTruthy();
+    const summary = view.getByTestId('practice-detail-config-summary');
+    expect(within(summary).getAllByText(/^• /)).toHaveLength(lines.length);
+    for (const line of lines) {
+      expect(within(summary).getByText(`• ${line}`)).toBeTruthy();
+    }
   });
 });
 
