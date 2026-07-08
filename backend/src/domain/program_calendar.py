@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_STAGES
+from domain.dates import ensure_aware
 from domain.weekly_prompts import TOTAL_WEEKS
 
 if TYPE_CHECKING:
@@ -26,19 +27,9 @@ if TYPE_CHECKING:
 _DAYS_PER_WEEK = 7
 
 
-def _normalize(moment: datetime) -> datetime:
-    """Strip tzinfo so naive (SQLite) and aware (Postgres) values compare.
-
-    Both dialects store UTC; only the tzinfo flag differs (issue #412
-    class).  Subtracting mixed naive/aware datetimes raises, so every
-    calendar computation funnels through this.
-    """
-    return moment.replace(tzinfo=None) if moment.tzinfo else moment
-
-
 def _elapsed_days(anchor: datetime, now: datetime) -> int:
     """Whole days since the anchor, floored at zero for clock skew."""
-    delta = _normalize(now) - _normalize(anchor)
+    delta = ensure_aware(now) - ensure_aware(anchor)
     return max(0, delta.days)
 
 

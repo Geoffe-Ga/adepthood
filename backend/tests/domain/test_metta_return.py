@@ -33,7 +33,7 @@ Pinned public surface:
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -321,6 +321,9 @@ def test_current_offer_episode_key_changes_when_cycle_bumps() -> None:
 # Week derivation from elapsed and paused time.
 # ---------------------------------------------------------------------------
 
+# Deterministic non-UTC offset (no ZoneInfo/tzdata/DST dependency).
+_NON_UTC = timezone(timedelta(hours=-8))
+
 
 def test_active_return_week_day_zero_is_week_one() -> None:
     """No elapsed time — the arc starts in week 1."""
@@ -370,6 +373,43 @@ def test_active_return_week_handles_naive_and_aware_datetime_mix() -> None:
     now_aware = datetime(2026, 1, 8, tzinfo=UTC)
     week = active_return_week(started_at_naive, None, now_aware)
     assert week == 2
+
+
+def test_active_return_week_uses_instant_not_wall_clock_for_non_utc_aware_now() -> None:
+    """A non-UTC aware ``now`` counts elapsed days by INSTANT, not wall clock.
+
+    2026-01-07T20:00-08:00 is the instant 2026-01-08T04:00Z: 7 elapsed days
+    from the start by instant (week 2), even though its naive wall-clock
+    reading (2026-01-07T20:00 minus 2026-01-01T00:00) is only 6 days (week 1).
+    """
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = datetime(2026, 1, 7, 20, 0, tzinfo=_NON_UTC)
+    assert active_return_week(started_at, None, now) == 2
+
+
+def test_active_return_week_and_is_return_complete_agree_across_naive_and_aware_utc() -> None:
+    """Naive, aware-UTC, and mixed inputs must agree for real UTC instants.
+
+    Pins that unifying the naive/aware normalization changes nothing
+    observable when every input already represents UTC.
+    """
+    naive_started = datetime(2026, 1, 1)  # noqa: DTZ001 - deliberately naive
+    naive_now = naive_started + timedelta(days=10)
+    aware_started = naive_started.replace(tzinfo=UTC)
+    aware_now = naive_now.replace(tzinfo=UTC)
+
+    assert active_return_week(naive_started, None, naive_now) == active_return_week(
+        aware_started, None, aware_now
+    )
+    assert active_return_week(naive_started, None, aware_now) == active_return_week(
+        aware_started, None, aware_now
+    )
+    assert is_return_complete(naive_started, None, naive_now) == is_return_complete(
+        aware_started, None, aware_now
+    )
+    assert is_return_complete(naive_started, None, aware_now) == is_return_complete(
+        aware_started, None, aware_now
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +475,19 @@ def test_is_return_complete_handles_naive_and_aware_datetime_mix() -> None:
     assert is_return_complete(started_at_naive, None, now_aware) is True
 
 
+def test_is_return_complete_uses_instant_not_wall_clock_at_the_boundary() -> None:
+    """A non-UTC aware ``now`` that has crossed the boundary by INSTANT is complete.
+
+    2026-02-04T20:00-08:00 is the instant 2026-02-05T04:00Z: 35 elapsed days
+    from the start by instant (complete), even though its naive wall-clock
+    reading (2026-02-04T20:00 minus 2026-01-01T00:00) is only 34 days
+    (not yet complete).
+    """
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = datetime(2026, 2, 4, 20, 0, tzinfo=_NON_UTC)
+    assert is_return_complete(started_at, None, now) is True
+
+
 # ---------------------------------------------------------------------------
 # resumed_start
 # ---------------------------------------------------------------------------
@@ -482,6 +535,20 @@ def test_resumed_start_handles_naive_and_aware_datetime_mix() -> None:
     # Three paused days push the start to Jan 4; week stays frozen at week 1.
     assert resumed == started_at_naive + timedelta(days=3)
     assert active_return_week(resumed, None, now_aware) == 1
+
+
+def test_resumed_start_uses_instant_pause_duration_for_non_utc_aware_now() -> None:
+    """The pause duration is computed by INSTANT, not by stripped wall clock.
+
+    2026-01-07T20:00-08:00 is the instant 2026-01-08T04:00Z: a 7-day-4-hour
+    pause by instant, even though its naive wall-clock reading
+    (2026-01-07T20:00 minus 2026-01-01T00:00) is only 6 days 20 hours.
+    """
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    paused_at = datetime(2026, 1, 1, tzinfo=UTC)
+    now = datetime(2026, 1, 7, 20, 0, tzinfo=_NON_UTC)
+    resumed = resumed_start(started_at, paused_at, now)
+    assert resumed == started_at + timedelta(days=7, hours=4)
 
 
 # ---------------------------------------------------------------------------
