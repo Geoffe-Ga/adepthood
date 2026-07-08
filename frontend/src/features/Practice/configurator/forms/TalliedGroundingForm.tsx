@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { TalliedCategory, TalliedGroundingConfig } from '../../engine/types';
 import {
@@ -10,19 +10,26 @@ import {
   TALLIED_TARGET_MIN as TARGET_MIN,
 } from '../../engine/validation';
 
-import { LabeledRow, NumberStepper, TextField } from './shared';
-
-import { BORDER_RADIUS, SPACING, accent, colors, surface } from '@/design/tokens';
+import { makeRowKeyFactory } from './rowKeys';
+import {
+  AddRowButton,
+  LabeledRow,
+  NumberStepper,
+  RemoveButton,
+  RowCard,
+  TextField,
+} from './shared';
 
 interface Props {
   value: TalliedGroundingConfig;
   onChange: (next: TalliedGroundingConfig) => void;
 }
 
-// Monotonic source of new category keys. The key is the machine id the engine
-// records in session metadata, so it is generated once and never derived from
-// the array position (stable-key guidance, audit section 5.2).
-let nextCategoryKey = 0;
+// New category keys are the machine id the engine records in session metadata,
+// minted once and never derived from the array position. Underscore, not
+// hyphen: the key must match TALLIED_KEY_PATTERN (^[a-z][a-z0-9_]*$) or
+// validateModeConfig rejects it.
+const nextCategoryKey = makeRowKeyFactory('category');
 
 interface CategoryRowProps {
   category: TalliedCategory;
@@ -32,7 +39,7 @@ interface CategoryRowProps {
 }
 
 const CategoryRow = ({ category, index, onChange, onRemove }: CategoryRowProps) => (
-  <View style={localStyles.card} testID={`tallied-category-${index}`}>
+  <RowCard testID={`tallied-category-${index}`}>
     <TextField
       value={category.label}
       onChange={(label) => onChange({ label })}
@@ -50,16 +57,13 @@ const CategoryRow = ({ category, index, onChange, onRemove }: CategoryRowProps) 
         testID={`tallied-category-${index}-count`}
       />
     </LabeledRow>
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`Remove category ${index + 1}`}
+    <RemoveButton
+      noun="category"
+      index={index}
       onPress={onRemove}
-      style={localStyles.removeButton}
       testID={`tallied-category-${index}-remove`}
-    >
-      <Text style={localStyles.removeButtonText}>Remove</Text>
-    </TouchableOpacity>
-  </View>
+    />
+  </RowCard>
 );
 
 const TalliedGroundingForm = ({ value, onChange }: Props): React.JSX.Element => {
@@ -70,10 +74,7 @@ const TalliedGroundingForm = ({ value, onChange }: Props): React.JSX.Element => 
   const removeCategory = (index: number) =>
     onChange({ ...value, categories: value.categories.filter((_, i) => i !== index) });
   const addCategory = () => {
-    // Underscore, not hyphen: the key must match TALLIED_KEY_PATTERN
-    // (^[a-z][a-z0-9_]*$) or validateModeConfig rejects the new row.
-    const key = `category_${(nextCategoryKey += 1)}`;
-    const next: TalliedCategory = { key, label: '', target_count: 1 };
+    const next: TalliedCategory = { key: nextCategoryKey(), label: '', target_count: 1 };
     onChange({ ...value, categories: [...value.categories, next] });
   };
   return (
@@ -97,31 +98,9 @@ const TalliedGroundingForm = ({ value, onChange }: Props): React.JSX.Element => 
           onRemove={() => removeCategory(index)}
         />
       ))}
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel="Add category"
-        onPress={addCategory}
-        style={localStyles.addButton}
-        testID="tallied-add-category"
-      >
-        <Text style={localStyles.addButtonText}>+ Add category</Text>
-      </TouchableOpacity>
+      <AddRowButton noun="category" onPress={addCategory} testID="tallied-add-category" />
     </View>
   );
 };
-
-const localStyles = StyleSheet.create({
-  card: {
-    borderWidth: 1,
-    borderColor: surface.hairline,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.sm,
-    marginBottom: SPACING.sm,
-  },
-  addButton: { paddingVertical: SPACING.sm },
-  addButtonText: { color: accent.primary, fontWeight: '600' },
-  removeButton: { paddingVertical: SPACING.xs },
-  removeButtonText: { color: colors.danger },
-});
 
 export default TalliedGroundingForm;

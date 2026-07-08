@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import type { IntervalBellTone } from '../../engine/types';
@@ -262,8 +263,119 @@ export const CollapsibleSection = ({
   );
 };
 
+interface RowCardProps {
+  testID: string;
+  children: React.ReactNode;
+}
+
+/** Bordered container for one editable row (mindful-anchor / tallied lists). */
+export const RowCard = ({ testID, children }: RowCardProps): React.JSX.Element => (
+  <View style={formStyles.rowCard} testID={testID}>
+    {children}
+  </View>
+);
+
+interface AddRowButtonProps {
+  noun: string;
+  onPress: () => void;
+  testID: string;
+  /** ``link`` = inline accent text (default); ``filled`` = a sunken block button. */
+  variant?: 'link' | 'filled';
+  style?: StyleProp<ViewStyle>;
+}
+
+/** "+ Add <noun>" affordance shared by the list forms, in two visual variants. */
+export const AddRowButton = ({
+  noun,
+  onPress,
+  testID,
+  variant = 'link',
+  style,
+}: AddRowButtonProps): React.JSX.Element => {
+  const filled = variant === 'filled';
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={`Add ${noun}`}
+      onPress={onPress}
+      style={[filled ? formStyles.addButtonFilled : formStyles.addButtonLink, style]}
+      testID={testID}
+    >
+      <Text style={filled ? formStyles.addButtonFilledText : formStyles.addButtonLinkText}>
+        {`+ Add ${noun}`}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
+interface RemoveButtonProps {
+  noun: string;
+  index: number;
+  onPress: () => void;
+  testID: string;
+}
+
+/** "Remove" affordance for a row, labelled with its 1-based position. */
+export const RemoveButton = ({
+  noun,
+  index,
+  onPress,
+  testID,
+}: RemoveButtonProps): React.JSX.Element => (
+  <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel={`Remove ${noun} ${index + 1}`}
+    onPress={onPress}
+    style={formStyles.removeButton}
+    testID={testID}
+  >
+    <Text style={formStyles.removeButtonText}>Remove</Text>
+  </TouchableOpacity>
+);
+
+interface HideTimerToggleProps<T extends { hide_timer_during_meditation?: boolean }> {
+  value: T;
+  onChange: (_next: T) => void;
+  /** testID stays per-caller, e.g. ``card-meditation-hide-timer`` / ``tarot-hide-timer``. */
+  testID: string;
+}
+
+/** "Hide timer during sit" toggle shared by the card-meditation and tarot forms. */
+export const HideTimerToggle = <T extends { hide_timer_during_meditation?: boolean }>({
+  value,
+  onChange,
+  testID,
+}: HideTimerToggleProps<T>): React.JSX.Element => (
+  <ToggleRow
+    label="Hide timer during sit"
+    value={value.hide_timer_during_meditation ?? true}
+    onChange={(hide_timer_during_meditation) =>
+      onChange({ ...value, hide_timer_during_meditation })
+    }
+    testID={testID}
+  />
+);
+
 const formStyles = StyleSheet.create({
   toneRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
+  rowCard: {
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  addButtonLink: { paddingVertical: SPACING.sm },
+  addButtonLinkText: { color: accent.primary, fontWeight: '600' },
+  addButtonFilled: {
+    paddingVertical: SPACING.sm,
+    alignItems: 'center',
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: surface.sunken,
+  },
+  addButtonFilledText: { ...editorialType.note, color: ink.primary },
+  removeButton: { paddingVertical: SPACING.xs },
+  removeButtonText: { color: colors.danger },
   advancedToggle: { paddingVertical: SPACING.md, marginTop: SPACING.sm },
   advancedToggleText: { ...editorialType.note, color: ink.primary },
   row: {

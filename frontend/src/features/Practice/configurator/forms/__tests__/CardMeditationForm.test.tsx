@@ -3,6 +3,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import type { CardMeditationCard, CardMeditationConfig } from '../../../engine/types';
+import { CARD_MEDITATION_CARDS_MAX } from '../../../engine/types';
 import { pickCardPhoto } from '../../../utils/pickCardPhoto';
 import CardMeditationForm from '../CardMeditationForm';
 
@@ -226,5 +227,23 @@ describe('CardMeditationForm — advanced section', () => {
     fireEvent.press(getByTestId('card-meditation-advanced-toggle'));
     fireEvent.changeText(getByTestId('card-meditation-per-card'), '');
     expect(onChange).toHaveBeenCalledWith({ ...bundled(), per_card_minutes: 5 });
+  });
+});
+
+describe('CardMeditationForm — card cap', () => {
+  it('hides the add-card button once the deck reaches CARD_MEDITATION_CARDS_MAX', () => {
+    const atMax = Array.from({ length: CARD_MEDITATION_CARDS_MAX }, () => EMPTY_CARD);
+    const { queryByTestId } = render(
+      <CardMeditationForm value={custom(atMax)} onChange={jest.fn()} />,
+    );
+    expect(queryByTestId('card-meditation-add-card')).toBeNull();
+  });
+
+  it('still offers the add-card button one below the cap', () => {
+    const belowMax = Array.from({ length: CARD_MEDITATION_CARDS_MAX - 1 }, () => EMPTY_CARD);
+    const { getByTestId } = render(
+      <CardMeditationForm value={custom(belowMax)} onChange={jest.fn()} />,
+    );
+    expect(getByTestId('card-meditation-add-card')).toBeTruthy();
   });
 });

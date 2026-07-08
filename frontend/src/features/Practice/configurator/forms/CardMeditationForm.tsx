@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { resolveCardImage } from '../../data/assetResolver';
@@ -14,7 +14,17 @@ import {
 } from '../../engine/types';
 import { pickCardPhoto } from '../../utils/pickCardPhoto';
 
-import { Chip, CollapsibleSection, LabeledRow, NumericField, TextField, ToggleRow } from './shared';
+import { useStableRowKeys } from './rowKeys';
+import {
+  AddRowButton,
+  Chip,
+  CollapsibleSection,
+  HideTimerToggle,
+  LabeledRow,
+  NumericField,
+  TextField,
+  ToggleRow,
+} from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, editorialType, ink, surface } from '@/design/tokens';
 
@@ -118,28 +128,20 @@ const KnownDeckSummary = ({ deck }: { deck: DeckMeta }): React.JSX.Element => {
   );
 };
 
-// Monotonic source of per-row keys. Cards have no persistable id (the
-// backend config schema is `extra="forbid"`), so row identity is tracked
-// transiently here instead of on the card object.
-let nextCardKey = 0;
-
 const CustomCardEditor = ({ value, onChange }: Props): React.JSX.Element => {
   const cards = value.cards ?? [];
-  // One stable key per row, kept in lockstep with add/remove so a non-tail
-  // removal cannot shift a surviving row onto a different key (which would
-  // let React reuse the wrong row instance).
-  const keysRef = useRef<string[] | null>(null);
-  keysRef.current ??= cards.map(() => `card-${(nextCardKey += 1)}`);
-  const keys = keysRef.current;
+  // Cards have no persistable id (the backend config schema is `extra="forbid"`),
+  // so row identity is tracked transiently and kept in lockstep with add/remove.
+  const rows = useStableRowKeys('card', cards.length);
   const setCards = (next: readonly CardMeditationCard[]) => onChange({ ...value, cards: next });
   const updateCard = (index: number, patch: Partial<CardMeditationCard>) =>
     setCards(cards.map((card, i) => (i === index ? { ...card, ...patch } : card)));
   const removeCard = (index: number) => {
-    keysRef.current = keys.filter((_, i) => i !== index);
+    rows.remove(index);
     setCards(cards.filter((_, i) => i !== index));
   };
   const addCard = () => {
-    keysRef.current = [...keys, `card-${(nextCardKey += 1)}`];
+    rows.append();
     setCards([...cards, EMPTY_CARD]);
   };
   return (
@@ -155,7 +157,7 @@ const CustomCardEditor = ({ value, onChange }: Props): React.JSX.Element => {
       )}
       {cards.map((card, index) => (
         <CardRow
-          key={keys[index] ?? `card-fallback-${index}`}
+          key={rows.keyAt(index)}
           index={index}
           card={card}
           onUpdate={updateCard}
@@ -163,15 +165,12 @@ const CustomCardEditor = ({ value, onChange }: Props): React.JSX.Element => {
         />
       ))}
       {cards.length < CARD_MEDITATION_CARDS_MAX && (
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Add card"
+        <AddRowButton
+          noun="card"
           onPress={addCard}
-          style={styles.addButton}
+          variant="filled"
           testID="card-meditation-add-card"
-        >
-          <Text style={styles.addButtonText}>+ Add card</Text>
-        </TouchableOpacity>
+        />
       )}
     </View>
   );
@@ -286,14 +285,7 @@ const AdvancedFields = ({ value, onChange }: Props): React.JSX.Element => (
       onChange={(reveal_after_meditation) => onChange({ ...value, reveal_after_meditation })}
       testID="card-meditation-reveal"
     />
-    <ToggleRow
-      label="Hide timer during sit"
-      value={value.hide_timer_during_meditation ?? true}
-      onChange={(hide_timer_during_meditation) =>
-        onChange({ ...value, hide_timer_during_meditation })
-      }
-      testID="card-meditation-hide-timer"
-    />
+    <HideTimerToggle value={value} onChange={onChange} testID="card-meditation-hide-timer" />
   </View>
 );
 
@@ -369,13 +361,6 @@ const styles = StyleSheet.create({
   },
   photoButtonText: { ...editorialType.caption, fontWeight: '500', color: ink.primary },
   photoThumb: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: BORDER_RADIUS.sm },
-  addButton: {
-    paddingVertical: SPACING.sm,
-    alignItems: 'center',
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: surface.sunken,
-  },
-  addButtonText: { ...editorialType.note, color: ink.primary },
 });
 
 export default CardMeditationForm;
