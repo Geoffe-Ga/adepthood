@@ -55,6 +55,17 @@ to I want to die" still flags). Because the window is strictly before the match,
 negator that is itself part of a positive phrase (the "don't" in "don't want to
 be alive anymore") can never suppress that phrase.
 
+A further suppression realizes the negative-polarity coordination the module
+already relies on for keeping ``or``/``nor`` out of the clause boundaries: a match
+that is the bare right conjunct of an "X or Y" (or "X nor Y") coordination is
+suppressed when its left acute conjunct ``X`` is itself denied, so a shared
+negator is inherited rightward down the whole chain ("I have no plans to kill
+myself or hurt myself" is a single denial). The inheritance is resolved
+iteratively, not recursively, so an adversarially long or-chain terminates without
+RecursionError. Any intervening words or punctuation between the conjuncts break
+the coordination and restore normal per-match behavior ("I have no plans to kill
+myself or I will hurt myself" still flags the self-harm conjunct).
+
 Purity: no FastAPI, SQLModel, or network/LLM imports — only the standard library.
 """
 
@@ -206,6 +217,16 @@ _COORDINATING_CONJUNCTIONS = r"\b(?:and|but)\b"
 # deliberately excluded (see _COORDINATING_CONJUNCTIONS).
 _CLAUSE_BOUNDARY = re.compile(rf"[.!?;,]|{_COORDINATING_CONJUNCTIONS}", re.IGNORECASE)
 
+# A bare "or"/"nor" as the very last token of a prefix (only whitespace after it):
+# the coordinator joining a right conjunct to the acute clause immediately before
+# it. Intervening words fail the trailing anchor, breaking the coordination.
+_BARE_COORDINATOR = re.compile(r"\b(?:or|nor)\s*$", re.IGNORECASE)
+
+# Left-conjunct search is bounded to this many characters before the coordinator.
+# It comfortably exceeds the longest acute phrase, so a bare right conjunct always
+# finds its left conjunct while the search stays cheap on long or-chains.
+_CONJUNCT_LOOKBACK_CHARS = 80
+
 
 def _tail_window(prefix: str) -> str:
     """Return the last :data:`_NEGATION_WINDOW_WORDS` tokens of ``prefix``.
@@ -233,6 +254,75 @@ def _is_negated(normalized: str, match_start: int) -> bool:
     if _TEMPORAL_NEGATOR.search(window):
         return True
     return len(_LOGICAL_NEGATORS.findall(window)) % 2 == 1
+
+
+def _acute_phrase_start_ending_at(normalized: str, boundary: int) -> int | None:
+    """Return the earliest start of an acute phrase ending exactly at ``boundary``.
+
+    Each phrase is searched over the window ``[boundary - _CONJUNCT_LOOKBACK_CHARS,
+    boundary]`` of ``normalized`` (using ``pos``/``endpos`` on the full string so
+    word boundaries stay correct), and only a match ending precisely at
+    ``boundary`` qualifies. ``None`` when no acute phrase abuts that offset.
+    """
+    floor = max(0, boundary - _CONJUNCT_LOOKBACK_CHARS)
+    starts = [
+        match.start()
+        for _, pattern in _COMPILED
+        for match in pattern.finditer(normalized, floor, boundary)
+        if match.end() == boundary
+    ]
+    return min(starts) if starts else None
+
+
+def _coordinated_conjunct_start(normalized: str, match_start: int) -> int | None:
+    """Return the start of the acute left conjunct coordinated with this match.
+
+    When the match at ``match_start`` is the bare right conjunct of an "X or Y"
+    (or "X nor Y") coordination — the coordinator being the last token before the
+    match — the left conjunct ``X`` must be an acute phrase ending exactly where
+    the coordinator begins. The earliest such phrase's start offset is returned so
+    a shared negator can be inherited from it; ``None`` when there is no bare
+    coordinator or no acute left conjunct abutting it.
+    """
+    prefix = normalized[:match_start]
+    coordinator = _BARE_COORDINATOR.search(prefix)
+    if coordinator is None:
+        return None
+    boundary = len(prefix[: coordinator.start()].rstrip())
+    return _acute_phrase_start_ending_at(normalized, boundary)
+
+
+def _is_denied(normalized: str, match_start: int, cache: dict[int, bool]) -> bool:
+    """Return whether the match at ``match_start`` is denied by negation.
+
+    A match is denied when it is directly negated, or when it is the bare right
+    conjunct of an or/nor coordination whose left conjunct is itself denied. The
+    coordination is walked iteratively rather than recursively, so an adversarially
+    long or-chain terminates quickly and without ``RecursionError``; each step
+    moves strictly leftward, guaranteeing termination.
+
+    ``cache`` memoizes the denied-status of every offset visited within a single
+    :func:`assess_distress` call. Every offset on one walk shares the walk's
+    result (a not-yet-negated conjunct is denied exactly when the conjunct it
+    inherits from is), so caching them collapses the repeated left-walks of
+    overlapping or-chains from cubic to quadratic total work.
+    """
+    chain: list[int] = []
+    current = match_start
+    while current not in cache:
+        if _is_negated(normalized, current):
+            cache[current] = True
+            break
+        chain.append(current)
+        left = _coordinated_conjunct_start(normalized, current)
+        if left is None:
+            cache[current] = False
+            break
+        current = left
+    result = cache[current]
+    for offset in chain:
+        cache[offset] = result
+    return result
 
 
 def _normalize(text: str) -> str:
@@ -266,7 +356,8 @@ def assess_distress(text: str) -> DistressSignal:
     on explicit intent/action phrasing and lets ordinary sadness, grief,
     emptiness, and "dark night" reflection pass through unflagged, so the app does
     not pathologize ordinary darkness. Explicit denials ("I would never kill
-    myself") are suppressed by preceding-window negation handling. This is a
+    myself") are suppressed by preceding-window negation handling, which also
+    inherits a shared negator rightward across "or"/"nor" coordination. This is a
     screen, not a diagnosis, and introduces no medication, treatment, or medical
     advice.
 
@@ -276,8 +367,9 @@ def assess_distress(text: str) -> DistressSignal:
     normalized = _normalize(text)
     if not normalized:
         return _NONE
+    denied_cache: dict[int, bool] = {}
     for category, pattern in _COMPILED:
         for match in pattern.finditer(normalized):
-            if not _is_negated(normalized, match.start()):
+            if not _is_denied(normalized, match.start(), denied_cache):
                 return DistressSignal(level="elevated", category=category)
     return _NONE

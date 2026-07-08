@@ -115,6 +115,18 @@ _NEGATED_DENIALS = [
     "I would never hurt myself and I would never kill him",
     # or-exclusion pin: "or" must stay outside the clip list
     "I would never kill myself or hurt myself",
+    # multi-word negator clipped by the 5-token window must still suppress the denied clause
+    "I have no plans to kill myself or hurt myself",
+    "I have no intention to kill myself or hurt myself",
+    "I have no desire to kill myself or hurt myself",
+    # chained shared-negator coordination: the denial inherits down the whole or-chain
+    "I have no plans to kill myself or hurt myself or cut myself",
+    # long left conjunct pushes "never" out of the base distance window; the shared-negator
+    # inheritance (not distance) is what suppresses the right conjunct here
+    "I would never take my own life or hurt myself",
+    # accepted tradeoff: a shared past-tense denial inherits across "or" the same way a
+    # logical negator does, the safe-for-a-denial direction; pinned as a deliberate decision
+    "I used to cut myself or hurt myself",
 ]
 
 
@@ -160,6 +172,47 @@ def test_negated_denials_do_not_flag(text: str) -> None:
         # phrasing) flags, the safe direction for a crisis screen (surface support over
         # miss intent); pinned so the behavior is a deliberate decision, not a silent gap
         ("I would never kill myself and hurt myself", DistressCategory.SELF_HARM),
+        # clause-boundary guards: clause clipping must still dominate a multi-word negator
+        (
+            "I have no plans to hurt myself, but I want to kill him",
+            DistressCategory.INTENT_TO_HARM,
+        ),
+        ("I have no desire to see him and I want to die", DistressCategory.SUICIDAL_INTENT),
+        # distant-negator guards: negator ends well outside the window; "because" isn't a clip word
+        (
+            "I have no intention of moving to the city because these days I want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        (
+            "I have no plans to travel over the holidays because honestly I want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        # sentence-boundary control: a period already clips the window, must keep flagging
+        ("I have no plans to travel. I want to die", DistressCategory.SUICIDAL_INTENT),
+        # window-widening tripwire: a single-word negator 7+ tokens back must still flag,
+        # killing the "just widen to 7 tokens" shortcut
+        (
+            "I will not let this heavy week convince me I want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        # parity-preservation pin: an in-window multi-word negator plus an in-window "not"
+        # is an even count, so it flags — the safe direction, pinned as deliberate
+        ("I have no plans to ever not kill myself", DistressCategory.SUICIDAL_INTENT),
+        # FN guards: a multi-word negator with no or/nor coordination must not suppress a
+        # later genuine signal
+        ("I have no desire to live so I want to die", DistressCategory.SUICIDAL_INTENT),
+        ("I have no plans to cope so I want to die", DistressCategory.SUICIDAL_INTENT),
+        (
+            "I have no desire to pretend anymore I just want to die",
+            DistressCategory.SUICIDAL_INTENT,
+        ),
+        # intended second conjunct: intervening words ("I will") break the bare adjacency
+        # a shared-negator inheritance requires, so the denial does not carry across "or"
+        ("I have no plans to kill myself or I will hurt myself", DistressCategory.SELF_HARM),
+        # non-acute left conjunct ("scream" isn't a denied phrase at all): no inheritance
+        ("I want to scream or hurt myself", DistressCategory.SELF_HARM),
+        # left conjunct "hurt myself" is not denied, so the right conjunct must still flag
+        ("I hurt myself or want to die", DistressCategory.SUICIDAL_INTENT),
     ],
 )
 def test_negation_does_not_suppress_genuine_signals(text: str, category: DistressCategory) -> None:
@@ -268,3 +321,11 @@ def test_zero_width_space_in_ordinary_darkness_does_not_flag() -> None:
     signal = assess_distress(text)
     assert signal.level == "none"
     assert signal.category is DistressCategory.NONE
+
+
+# Robustness: the shared-negator or-chain inheritance must stay iterative-safe, not
+# recurse per conjunct — an adversarially long chain must still resolve quickly and
+# without RecursionError.
+def test_long_or_chain_denial_does_not_recurse() -> None:
+    text = "I have no plans to kill myself" + " or hurt myself" * 300
+    assert assess_distress(text) == DistressSignal(level="none", category=DistressCategory.NONE)
