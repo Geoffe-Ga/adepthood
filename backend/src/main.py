@@ -361,11 +361,16 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # orchestrator should still be able to take the pod live so an operator
     # can SSH in and run ``alembic upgrade head`` if migrations are missing.
     if os.getenv("SKIP_STARTUP_SEED") != "1":
+        logger.info("startup_seed_begin")
         try:
             async with async_session_factory() as session:
+                logger.info("database_session_created")
                 await _seed_startup_data(session)
+                logger.info("startup_seed_complete")
         except Exception:
             logger.exception("startup seed failed; continuing without seeded catalog")
+    else:
+        logger.info("startup_seed_skipped", extra={"reason": "SKIP_STARTUP_SEED=1"})
 
     # Issue #397: surface a bad content deploy at boot, not at first
     # chapter open.  Loud log rather than crash — the app's non-content
