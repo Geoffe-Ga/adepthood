@@ -6,8 +6,8 @@ import { AuthScreenContainer } from './AuthScreenContainer';
 import { PasswordField } from './components/PasswordField';
 import { validatePasswordPair } from './passwordValidation';
 import { MIN_TOKEN_LENGTH } from './resetToken';
+import { useAuthSubmit } from './useAuthSubmit';
 
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 
@@ -116,34 +116,30 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
   const { confirmPasswordReset } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
   const token = route?.params?.token ?? '';
 
-  if (!token || token.length < MIN_TOKEN_LENGTH) {
-    return <MissingTokenView onRequestNew={() => navigation.navigate('ForgotPassword')} />;
-  }
-
-  const handleSubmit = async () => {
-    setError(null);
-    const validationError = validatePasswordPair(password, confirmPassword);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setSubmitting(true);
-    try {
+  const { submitting, error, setError, run } = useAuthSubmit(
+    async () => {
       await confirmPasswordReset(token, password);
       // applyAuthResponse inside the context flips authStatus to
       // ``authenticated``, which the App-level navigator picks up to
       // swap the AuthStack for RootStack.  No explicit navigation
       // call is needed here.
-    } catch (err: unknown) {
-      setError(formatApiError(err, { fallback: RESET_FALLBACK }));
-    } finally {
-      setSubmitting(false);
+    },
+    { fallback: RESET_FALLBACK },
+  );
+
+  if (!token || token.length < MIN_TOKEN_LENGTH) {
+    return <MissingTokenView onRequestNew={() => navigation.navigate('ForgotPassword')} />;
+  }
+
+  const handleSubmit = () => {
+    const validationError = validatePasswordPair(password, confirmPassword);
+    if (validationError) {
+      setError(validationError);
+      return;
     }
+    void run();
   };
 
   return (

@@ -8,8 +8,8 @@ import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
 import { validatePasswordPair } from './passwordValidation';
+import { useAuthSubmit } from './useAuthSubmit';
 
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 
@@ -98,31 +98,20 @@ export default function SignupScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { submitting, error, setError, run } = useAuthSubmit(
+    // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
+    // produce a confusing 422 from the backend.
+    () => signup(canonicalizeEmail(email), password),
+    { fallback: SIGNUP_FALLBACK },
+  );
 
-  const handleSignup = async () => {
-    setError(null);
-
+  const handleSignup = () => {
     const validationError = validatePasswordPair(password, confirmPassword);
     if (validationError) {
       setError(validationError);
       return;
     }
-
-    setSubmitting(true);
-    try {
-      // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
-      // produce a confusing 422 from the backend.
-      await signup(canonicalizeEmail(email), password);
-    } catch (err: unknown) {
-      // BUG-FRONTEND-INFRA-016 — timeout-specific message handled via
-      // formatApiError; backend detail codes mapped through the shared
-      // mapper instead of leaking snake_case to the user.
-      setError(formatApiError(err, { fallback: SIGNUP_FALLBACK }));
-    } finally {
-      setSubmitting(false);
-    }
+    void run();
   };
 
   return (
