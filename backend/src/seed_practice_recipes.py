@@ -29,9 +29,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
 
 from domain.practice_modes import PracticeMode
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -42,6 +40,7 @@ from schemas.practice_recipe import (
     PracticeRecipeStepOut,
     materialise_mode_config,
 )
+from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
 
 # Default repeat counts for rounds-by-categories recipes.  Three is the
 # defacto "enough to settle, not so many you check out" round count the
@@ -323,25 +322,11 @@ if len(set(_tag_slugs)) != len(_tag_slugs):
     raise ValueError(msg)
 
 
-async def _existing_system_tag_slugs(session: AsyncSession) -> set[str]:
-    """Return slugs of system tags already in the DB."""
-    result = await session.execute(
-        select(PracticeTag.slug).where(col(PracticeTag.owner_user_id).is_(None))
-    )
-    return {row[0] for row in result.all()}
-
-
-async def _existing_system_recipe_slugs(session: AsyncSession) -> set[str]:
-    """Return slugs of system recipes already in the DB."""
-    result = await session.execute(
-        select(PracticeRecipe.slug).where(col(PracticeRecipe.owner_user_id).is_(None))
-    )
-    return {row[0] for row in result.all()}
-
-
 async def _seed_system_tags(session: AsyncSession) -> int:
     """Insert system tags not yet present.  Returns inserted row count."""
-    existing = await _existing_system_tag_slugs(session)
+    existing = await existing_system_keys(
+        session, PracticeTag.slug, owner_col=PracticeTag.owner_user_id
+    )
     inserted = 0
     for definition in SYSTEM_TAGS:
         if definition["slug"] in existing:
@@ -382,7 +367,9 @@ async def _insert_recipe_with_steps(session: AsyncSession, definition: dict[str,
 
 async def _seed_system_recipes(session: AsyncSession) -> int:
     """Insert system recipes not yet present.  Returns inserted row count."""
-    existing = await _existing_system_recipe_slugs(session)
+    existing = await existing_system_keys(
+        session, PracticeRecipe.slug, owner_col=PracticeRecipe.owner_user_id
+    )
     inserted = 0
     for definition in SYSTEM_RECIPES:
         if definition["slug"] in existing:
@@ -405,9 +392,4 @@ async def seed_practice_recipes(session: AsyncSession) -> int:
     total = tags_inserted + recipes_inserted
     if not total:
         return 0
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        return 0
-    return total
+    return await commit_or_yield_to_race_winner(session, total)
