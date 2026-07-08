@@ -142,6 +142,10 @@ export const colors = {
     inkSoft: '#5a5046',
     hairline: '#e3dccd',
     anchorHighlight: '#f0e3c2',
+    // Promoted-quote wash — a warm apricot/blush, deliberately rosier than the
+    // golden ``anchorHighlight`` so a promoted span reads as a distinct gesture
+    // from a margin-note anchor. Ink (#2b2620) on it clears WCAG AA (~11.5:1).
+    quoteHighlight: '#f7ddcb',
   },
 
   /**

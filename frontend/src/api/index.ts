@@ -24,6 +24,7 @@ import {
   practiceSessionResponseSchema,
   practiceTagSchema,
   programCalendarSchema,
+  promotedQuoteSchema,
   promptListResponseSchema,
   resonanceResponseSchema,
   stageIntroSchema,
@@ -49,6 +50,8 @@ import {
   type ReturnWeekT,
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
+  type PromotedQuoteT,
+  type PromotedQuoteSummaryT,
   type StageProgressRecordT,
   type SuggestionStatusT,
   type Tier,
@@ -1163,6 +1166,15 @@ export interface Marginalia {
   updated_at: string;
 }
 
+/**
+ * A promoted quote — a reader-chosen span of an entry raised into the corpus
+ * (mirrors the backend ``PromotedQuoteResponse``). ``pending`` is true until the
+ * quote is folded into another entry.
+ */
+export type PromotedQuote = PromotedQuoteT;
+/** A promoted quote in the cross-entry sources feed (no ``source_entry_id``). */
+export type PromotedQuoteSummary = PromotedQuoteSummaryT;
+
 /** One of the four non-clinical care routings (mirrors ``domain.care.CareKind``). */
 export type CareKind = CareKindT;
 /** One support pointer (mirrors the backend ``CareResourceResponse``). */
@@ -1262,6 +1274,44 @@ export const journal = {
   },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
+  },
+};
+
+/** The char-offset span a reader selected to promote (end-exclusive). */
+export interface PromoteQuoteSpan {
+  anchor_start: number;
+  anchor_end: number;
+}
+
+/**
+ * Promoted-quotes client (select-a-span -> promote-quote). ``create`` raises the
+ * selected span into the corpus (may surface ``422 anchor_out_of_range`` /
+ * ``422 quote_too_long`` as an ``ApiError``); ``remove`` un-promotes it; and
+ * ``setIncluded`` folds a quote into another entry (or returns it to pending
+ * with ``null``).
+ */
+export const promotions = {
+  /** Promote a reader-selected span of an entry into the corpus. */
+  create(entryId: number, span: PromoteQuoteSpan, token?: string): Promise<PromotedQuote> {
+    return request<PromotedQuote>(`/journal/${entryId}/promote`, {
+      method: 'POST',
+      body: span,
+      token,
+      schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
+    });
+  },
+  /** Un-promote a quote by id. */
+  remove(id: number, token?: string): Promise<void> {
+    return request<void>(`/promotions/${id}`, { method: 'DELETE', token });
+  },
+  /** Fold a quote into ``entryId`` (or pass ``null`` to return it to pending). */
+  setIncluded(id: number, entryId: number | null, token?: string): Promise<PromotedQuote> {
+    return request<PromotedQuote>(`/promotions/${id}`, {
+      method: 'PATCH',
+      body: { included_in_entry_id: entryId },
+      token,
+      schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
+    });
   },
 };
 

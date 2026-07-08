@@ -51,6 +51,17 @@ describe('editorial tokens', () => {
       expect(colors.paper.sheetEdge).toMatch(/^#[\da-f]{6}$/i);
       expect(luminance(colors.paper.desk)).toBeLessThan(luminance(colors.paper.background));
     });
+
+    // RED (promote-a-quote): `quoteHighlight` does not exist on `colors.paper`
+    // yet -- this fails with a TypeError reading `.quoteHighlight` of
+    // undefined until the implementation-specialist adds the token.
+    it('exports a quoteHighlight wash distinct from the note anchorHighlight, meeting AA ink contrast', () => {
+      expect(colors.paper.quoteHighlight).toMatch(/^#[\da-f]{6}$/i);
+      expect(colors.paper.quoteHighlight).not.toBe(colors.paper.anchorHighlight);
+      expect(contrast(colors.paper.ink, colors.paper.quoteHighlight)).toBeGreaterThanOrEqual(
+        AA_NORMAL,
+      );
+    });
   });
 
   describe('paperShadow', () => {

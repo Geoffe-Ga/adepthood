@@ -16,6 +16,8 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type NativeSyntheticEvent,
+  type TextInputSelectionChangeEventData,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -32,6 +34,7 @@ import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
 import ResonanceEssayModal from './ResonanceEssayModal';
+import { usePromotions } from './usePromotions';
 import { useResonance } from './useResonance';
 
 import { journal, prompts } from '@/api';
@@ -42,6 +45,7 @@ import type {
   JournalClassification,
   JournalMessage,
   Marginalia,
+  PromotedQuote,
 } from '@/api';
 import { Button } from '@/components/Button';
 import { colors } from '@/design/tokens';
@@ -1073,17 +1077,186 @@ function ResonanceMargin({ error }: { error: string | null }) {
   ) : null;
 }
 
+type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+
+/** The read-mode quote surface: the promoted-quote list plus its UI gestures. */
+interface QuotePromotion {
+  quotes: PromotedQuote[];
+  /** Warm, declinable copy for the latest failed promote/remove; null otherwise. */
+  hint: string | null;
+  /** True while the reader is choosing a span in the selection TextInput. */
+  selecting: boolean;
+  /** The quote whose "Remove promotion" affordance is currently revealed, if any. */
+  removeTargetId: number | null;
+  startSelecting: () => void;
+  cancelSelecting: () => void;
+  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  confirmSelection: () => Promise<void>;
+  onQuotePress: (_quote: PromotedQuote) => void;
+  confirmRemove: () => void;
+}
+
+/** The read-mode selection/removal gestures over the {@link usePromotions} state. */
+function useQuoteInteraction(
+  promote: (_start: number, _end: number) => Promise<void>,
+  removePromotion: (_id: number) => Promise<void>,
+): Omit<QuotePromotion, 'quotes' | 'hint'> {
+  const [selecting, setSelecting] = useState(false);
+  const [removeTargetId, setRemoveTargetId] = useState<number | null>(null);
+  // The latest selection, held in a ref so a keystroke-free selection change
+  // doesn't re-render the read-only surface until the reader confirms.
+  const selectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+
+  const startSelecting = useCallback(() => {
+    setRemoveTargetId(null);
+    selectionRef.current = { start: 0, end: 0 };
+    setSelecting(true);
+  }, []);
+  const cancelSelecting = useCallback(() => setSelecting(false), []);
+  const onSelectionChange = useCallback((e: SelectionChangeEvent) => {
+    selectionRef.current = e.nativeEvent.selection;
+  }, []);
+  // A collapsed/empty selection (a caret tap, no highlighted span) can't be
+  // promoted — stay in selection mode rather than post a span the server would
+  // only reject. Otherwise leave selection mode first so a 422 returns the
+  // reader to their place in the read view; ``promote`` never throws (it maps
+  // failures to a hint).
+  const confirmSelection = useCallback(async () => {
+    const { start, end } = selectionRef.current;
+    if (end <= start) return;
+    setSelecting(false);
+    await promote(start, end);
+  }, [promote]);
+  const onQuotePress = useCallback((quote: PromotedQuote) => setRemoveTargetId(quote.id), []);
+  const confirmRemove = useCallback(() => {
+    const id = removeTargetId;
+    setRemoveTargetId(null);
+    if (id != null) void removePromotion(id);
+  }, [removeTargetId, removePromotion]);
+
+  return {
+    selecting,
+    removeTargetId,
+    startSelecting,
+    cancelSelecting,
+    onSelectionChange,
+    confirmSelection,
+    onQuotePress,
+    confirmRemove,
+  };
+}
+
+/** Compose the promoted-quote state with its read-mode selection gestures. */
+function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
+  const { quotes, hint, promote, removePromotion } = usePromotions({ entryId: routeEntryId ?? 0 });
+  const interaction = useQuoteInteraction(promote, removePromotion);
+  return { quotes, hint, ...interaction };
+}
+
+/**
+ * The span-selection surface: a controlled, effectively read-only serif field
+ * that mirrors the body so the reader can select a passage to promote without
+ * editing it (soft keyboard suppressed, caret hidden; ``editable`` stays true so
+ * Android text selection still works).
+ */
+function QuoteSelectionSurface({
+  body,
+  onSelectionChange,
+  onConfirm,
+  onCancel,
+}: {
+  body: string;
+  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
+    <View>
+      <TextInput
+        style={styles.bodyInput}
+        value={body}
+        multiline
+        editable
+        showSoftInputOnFocus={false}
+        caretHidden
+        scrollEnabled={false}
+        onSelectionChange={onSelectionChange}
+        accessibilityLabel="Select a passage to promote"
+        testID="quote-select-input"
+      />
+      <View style={styles.quoteSelectActions}>
+        <TouchableOpacity
+          onPress={() => void onConfirm()}
+          accessibilityRole="button"
+          accessibilityLabel="Promote the selected passage"
+          style={styles.quoteActionButton}
+          testID="quote-select-confirm"
+        >
+          <Text style={styles.controlLink}>Promote selection</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel promoting"
+          style={styles.quoteActionButton}
+          testID="quote-select-cancel"
+        >
+          <Text style={styles.controlLink}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/** Read-mode affordances: a remove offer (when a span is tapped), Promote, Edit. */
+function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: () => void }) {
+  return (
+    <>
+      {quote.removeTargetId != null ? (
+        <TouchableOpacity
+          onPress={quote.confirmRemove}
+          accessibilityRole="button"
+          accessibilityLabel="Remove promotion"
+          style={styles.quoteActionButton}
+          testID={`promotion-remove-${quote.removeTargetId}`}
+        >
+          <Text style={styles.controlLink}>Remove promotion</Text>
+        </TouchableOpacity>
+      ) : null}
+      <TouchableOpacity
+        onPress={quote.startSelecting}
+        accessibilityRole="button"
+        accessibilityLabel="Promote a quote"
+        style={styles.quoteActionButton}
+        testID="promote-quote-button"
+      >
+        <Text style={styles.controlLink}>Promote a quote</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={onEdit}
+        accessibilityRole="button"
+        accessibilityLabel="Edit this entry"
+        testID="journal-edit-button"
+      >
+        <Text style={styles.controlLink}>Edit</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
 /** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
 function ReadColumn({
   title,
   body,
   notes,
+  quote,
   onOpen,
   onEdit,
 }: {
   title: string;
   body: string;
   notes: Marginalia[];
+  quote: QuotePromotion;
   onOpen: (_note: Marginalia) => void;
   onEdit: () => void;
 }) {
@@ -1095,15 +1268,28 @@ function ReadColumn({
     >
       {title ? <Text style={styles.titleInput}>{title}</Text> : null}
       <View style={styles.hairline} />
-      <HighlightedBody body={body} notes={notes} onOpen={onOpen} />
-      <TouchableOpacity
-        onPress={onEdit}
-        accessibilityRole="button"
-        accessibilityLabel="Edit this entry"
-        testID="journal-edit-button"
-      >
-        <Text style={styles.controlLink}>Edit</Text>
-      </TouchableOpacity>
+      {quote.selecting ? (
+        <QuoteSelectionSurface
+          body={body}
+          onSelectionChange={quote.onSelectionChange}
+          onConfirm={quote.confirmSelection}
+          onCancel={quote.cancelSelecting}
+        />
+      ) : (
+        <HighlightedBody
+          body={body}
+          notes={notes}
+          onOpen={onOpen}
+          quotes={quote.quotes}
+          onQuotePress={quote.onQuotePress}
+        />
+      )}
+      {quote.hint != null ? (
+        <Text style={styles.savedHint} testID="quote-promotion-error">
+          {quote.hint}
+        </Text>
+      ) : null}
+      {quote.selecting ? null : <ReadModeControls quote={quote} onEdit={onEdit} />}
     </ScrollView>
   );
 }
@@ -1340,8 +1526,8 @@ function useJournalEntryController(
   );
   const { isIdle, bump } = useIdle();
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
+  const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
-
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEditGate({
     status: autosave.status,
@@ -1351,7 +1537,6 @@ function useJournalEntryController(
     navigation,
     onConfirmEdit,
   });
-
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const gate = deriveResonanceGate({
     isIdle,
@@ -1365,10 +1550,9 @@ function useJournalEntryController(
   return {
     autosave,
     resonance,
+    quote,
     isIdle,
-    visible: gate.visible,
-    resonanceDisabled: gate.resonanceDisabled,
-    resonanceReason: gate.resonanceReason,
+    ...gate,
     handleTitle,
     handleBody,
     modal,
@@ -1413,6 +1597,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       title={title}
       body={body}
       notes={ctl.resonance.marginalia}
+      quote={ctl.quote}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
     />
