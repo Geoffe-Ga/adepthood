@@ -10,6 +10,7 @@ import * as llmKeyStorage from '@/storage/llmKeyStorage';
 
 jest.mock('@/api', () => ({
   setLlmApiKeyGetter: jest.fn(),
+  setLlmApiKeyReset: jest.fn(),
 }));
 
 jest.mock('@/storage/llmKeyStorage', () => ({
@@ -68,6 +69,77 @@ describe('ApiKeyProvider', () => {
     const registered = firstCall![0];
     expect(registered).not.toBeNull();
     await waitFor(() => expect(registered?.()).toBe('sk-alpha'));
+  });
+
+  test('registered reset synchronously nulls the getter', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    let ctx: ReturnType<typeof useApiKey> | null = null;
+
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            ctx = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+
+    await waitFor(() => expect(ctx?.apiKey).toBe('sk-alpha'));
+
+    const getterCall = mockApi.setLlmApiKeyGetter.mock.calls[0];
+    const resetCall = mockApi.setLlmApiKeyReset.mock.calls[0];
+    expect(getterCall).toBeDefined();
+    expect(resetCall).toBeDefined();
+    const getter = getterCall![0];
+    const reset = resetCall![0];
+    expect(getter).not.toBeNull();
+    expect(reset).not.toBeNull();
+    expect(getter?.()).toBe('sk-alpha');
+
+    act(() => {
+      reset?.();
+    });
+
+    // No waitFor here: the ref null must be visible the instant reset() returns.
+    expect(getter?.()).toBeNull();
+    expect(ctx!.apiKey).toBeNull();
+  });
+
+  test('reset does not call clearLlmApiKey (storage separation)', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    render(
+      <ApiKeyProvider>
+        <TestConsumer onValue={() => undefined} />
+      </ApiKeyProvider>,
+    );
+
+    await waitFor(() => expect(mockApi.setLlmApiKeyGetter).toHaveBeenCalled());
+    const reset = mockApi.setLlmApiKeyReset.mock.calls[0]?.[0];
+
+    act(() => {
+      reset?.();
+    });
+
+    expect(mockStorage.clearLlmApiKey).not.toHaveBeenCalled();
+  });
+
+  test('unmount unregisters both seams', async () => {
+    const view = render(
+      <ApiKeyProvider>
+        <TestConsumer onValue={() => undefined} />
+      </ApiKeyProvider>,
+    );
+
+    await waitFor(() => expect(mockApi.setLlmApiKeyGetter).toHaveBeenCalled());
+    view.unmount();
+
+    const lastGetterCall = mockApi.setLlmApiKeyGetter.mock.calls.at(-1);
+    const lastResetCall = mockApi.setLlmApiKeyReset.mock.calls.at(-1);
+    expect(lastGetterCall).toBeDefined();
+    expect(lastResetCall).toBeDefined();
+    expect(lastGetterCall![0]).toBeNull();
+    expect(lastResetCall![0]).toBeNull();
   });
 
   test('saveApiKey persists and updates state', async () => {

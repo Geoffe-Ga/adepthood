@@ -10,6 +10,7 @@ import * as llmKeyStorage from '@/storage/llmKeyStorage';
 
 jest.mock('@/api', () => ({
   setLlmApiKeyGetter: jest.fn(),
+  setLlmApiKeyReset: jest.fn(),
 }));
 
 jest.mock('@/storage/llmKeyStorage', () => ({

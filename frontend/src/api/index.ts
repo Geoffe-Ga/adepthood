@@ -181,6 +181,7 @@ let onUnauthorizedCallback: ((reason: UnauthorizedReason) => void) | null = null
 let onTokenRefreshedCallback:
   ((token: string, timezone: string | undefined, expectedPriorToken: string) => void) | null = null;
 let llmApiKeyGetter: (() => string | null) | null = null;
+let llmApiKeyReset: (() => void) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
 export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
@@ -237,6 +238,25 @@ export function setOnTokenRefreshed(
  */
 export function setLlmApiKeyGetter(getter: (() => string | null) | null) {
   llmApiKeyGetter = getter;
+}
+
+/**
+ * Register the reset hook that ApiKeyProvider uses to drop its in-memory LLM
+ * key. Session teardown calls {@link resetLlmApiKey}, which invokes this hook
+ * so a logged-out user's key can never ride the ``X-LLM-API-Key`` header into
+ * the next user's requests on a shared device.
+ */
+export function setLlmApiKeyReset(reset: (() => void) | null) {
+  llmApiKeyReset = reset;
+}
+
+/**
+ * Invoke the registered reset hook on session teardown, clearing the in-memory
+ * LLM key so it cannot leak across users via the ``X-LLM-API-Key`` header. A
+ * no-op when no provider has registered a reset.
+ */
+export function resetLlmApiKey(): void {
+  llmApiKeyReset?.();
 }
 
 interface RequestOptions<TResponse = unknown> {
