@@ -60,6 +60,18 @@ describe('ScreenScaffold', () => {
     expect(flat.paddingTop).toBe(rhythm.screenPaddingTop);
   });
 
+  it('keeps the scroll contentContainerStyle as a single grow, not a bounded flex box', () => {
+    const { getByTestId } = render(
+      <ScreenScaffold scroll testID="scaffold">
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    const flat = StyleSheet.flatten(getByTestId('scaffold').props.contentContainerStyle);
+    expect(flat.flexGrow).toBe(1);
+    expect(flat.flex).toBeUndefined();
+    expect(flat.flexShrink).toBeUndefined();
+  });
+
   it('lets a caller style win over the default scroll contentContainerStyle', () => {
     const { getByTestId } = render(
       <ScreenScaffold scroll testID="scaffold" style={{ paddingTop: 999 }}>
@@ -70,14 +82,25 @@ describe('ScreenScaffold', () => {
     expect(flat.paddingTop).toBe(999);
   });
 
-  it('keeps the content container grow-flexed inside the scroll variant', () => {
+  it('keeps the inner content container content-sized (non-growing) inside the scroll variant', () => {
     const { getByTestId } = render(
       <ScreenScaffold scroll>
         <Text>x</Text>
       </ScreenScaffold>,
     );
     const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
-    expect(flat.flexGrow).toBe(1);
+    expect(flat.flexGrow).toBeUndefined();
+    expect(flat.flex).toBeUndefined();
+  });
+
+  it('gives the inner content container a bounded fill in the non-scroll variant', () => {
+    const { getByTestId } = render(
+      <ScreenScaffold>
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
+    expect(flat.flex).toBe(1);
   });
 
   it('keeps the non-scroll root fill-flexed with screen padding', () => {

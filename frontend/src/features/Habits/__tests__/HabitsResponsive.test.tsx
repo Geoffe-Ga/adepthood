@@ -372,4 +372,20 @@ describe('HabitsScreen responsive layout', () => {
     const container = testRenderer.root.findByProps({ testID: 'content-container' });
     expect(container.findByProps({ testID: 'habits-list' })).toBeTruthy();
   });
+
+  it('gives the shared content-capped container a bounded fill so native scroll/touch chains hold', async () => {
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
+
+    let testRenderer: any;
+    await renderer.act(async () => {
+      testRenderer = renderer.create(<HabitsScreen />);
+    });
+
+    const { StyleSheet } = require('react-native');
+    const container = testRenderer.root.findByProps({ testID: 'content-container' });
+    const flat = StyleSheet.flatten(container.props.style);
+    expect(flat.flex).toBe(1);
+  });
 });

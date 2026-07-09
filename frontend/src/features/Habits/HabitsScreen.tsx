@@ -889,7 +889,7 @@ const HabitsScreen = () => {
   const paginationProps = buildPaginationProps(pagination, scale);
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
-      <ContentContainer>
+      <ContentContainer fill>
         <View style={styles.topBar}>
           <OverflowMenu
             scale={scale}

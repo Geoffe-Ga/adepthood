@@ -30,8 +30,9 @@ export const ScreenScaffold = ({
     return (
       <ScrollView
         style={styles.ground}
-        // The content container must itself grow so its flex-grow child fills
-        // the viewport when short yet still scrolls when tall (journal idiom).
+        // Invariant: only the ScrollView content container grows. The inner
+        // wrapper stays content-sized so the native contentSize tracks the real
+        // content height (fills when short, scrolls when tall — journal idiom).
         contentContainerStyle={[styles.content, styles.scrollContent, style]}
         testID={testID}
       >
@@ -41,7 +42,7 @@ export const ScreenScaffold = ({
   }
   return (
     <View style={[styles.ground, styles.content, style]} testID={testID}>
-      <ContentContainer>{children}</ContentContainer>
+      <ContentContainer fill>{children}</ContentContainer>
     </View>
   );
 };

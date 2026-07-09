@@ -1109,7 +1109,7 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
   <View style={styles.container}>
     {/* The parchment backdrop stays full-bleed; only the spiral content caps. */}
     <MapBackdrop />
-    <ContentContainer>
+    <ContentContainer fill>
       <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
       <MapGrid
         lookup={props.lookup}

@@ -118,7 +118,7 @@ const PracticeScreen = (): React.JSX.Element => {
   }
   if (active.activeUserPractice && active.practice && active.effectiveConfig) {
     return (
-      <ContentContainer>
+      <ContentContainer fill>
         <ActiveSessionView
           userPractice={active.activeUserPractice}
           practiceName={active.practice.name}
@@ -263,7 +263,7 @@ interface EmptyStateViewProps {
 const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <ContentContainer>
+    <ContentContainer fill>
       <EmptyState
         glyph="🧘"
         title="No practice yet"
