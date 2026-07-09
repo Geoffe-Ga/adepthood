@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 
-import { setLlmApiKeyGetter } from '@/api';
+import { setLlmApiKeyGetter, setLlmApiKeyReset } from '@/api';
 import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeyStorage';
 
 /**
@@ -43,6 +43,31 @@ interface ApiKeyContextValue {
 
 const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
 
+/**
+ * Bridge the in-memory key to the API layer: register a getter the HTTP client
+ * polls per request, plus a reset seam that session teardown invokes so a
+ * logged-out user's key can never ride the ``X-LLM-API-Key`` header into the
+ * next user's requests on a shared device. The reset nulls the ref
+ * synchronously so the getter returns null immediately, before any re-render
+ * triggered by ``setApiKey`` lands. Both seams are cleared on unmount.
+ */
+function useLlmApiKeyBridge(
+  apiKeyRef: React.MutableRefObject<string | null>,
+  setApiKey: React.Dispatch<React.SetStateAction<string | null>>,
+): void {
+  useEffect(() => {
+    setLlmApiKeyGetter(() => apiKeyRef.current);
+    setLlmApiKeyReset(() => {
+      apiKeyRef.current = null;
+      setApiKey(null);
+    });
+    return () => {
+      setLlmApiKeyGetter(null);
+      setLlmApiKeyReset(null);
+    };
+  }, [apiKeyRef, setApiKey]);
+}
+
 export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,10 +79,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const apiKeyRef = useRef<string | null>(null);
   apiKeyRef.current = apiKey;
 
-  useEffect(() => {
-    setLlmApiKeyGetter(() => apiKeyRef.current);
-    return () => setLlmApiKeyGetter(null);
-  }, []);
+  useLlmApiKeyBridge(apiKeyRef, setApiKey);
 
   useEffect(() => {
     loadLlmApiKey()

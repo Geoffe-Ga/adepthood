@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   ApiError,
   auth as authApi,
+  resetLlmApiKey,
   setOnTokenRefreshed,
   setOnUnauthorized,
   setTokenGetter,
@@ -147,10 +148,15 @@ interface AuthMutators {
  * sheet's "sign out instead" button) must wipe the in-memory Zustand stores
  * AND the AsyncStorage persistence keys so the next user on the device
  * doesn't inherit the previous user's habits, stage progress, or BYOK key.
- * The storage clears are wrapped in try/catch so one failing key doesn't
+ * The BYOK wipe covers both the in-memory key and its registered API-layer
+ * getter (via ``resetLlmApiKey``) and the persisted SecureStore key (via
+ * ``clearLlmApiKey``). ``resetLlmApiKey`` runs first and synchronously so the
+ * getter is nulled immediately even if the async storage clears are slow or
+ * fail. The storage clears are wrapped in try/catch so one failing key doesn't
  * leave the rest of the wipe half-done.
  */
 async function wipeUserState(): Promise<void> {
+  resetLlmApiKey();
   resetAllStores();
   const clears: Array<[string, Promise<void>]> = [
     ['habits', clearHabits()],

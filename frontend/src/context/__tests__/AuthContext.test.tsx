@@ -21,6 +21,7 @@ jest.mock('@/api', () => {
     setTokenGetter: jest.fn(),
     setOnUnauthorized: jest.fn(),
     setOnTokenRefreshed: jest.fn(),
+    resetLlmApiKey: jest.fn(),
   };
 });
 
@@ -42,7 +43,13 @@ jest.mock('@/utils/token', () => ({
   REFRESH_BUFFER_SECONDS: 300,
 }));
 
-import { auth, setOnTokenRefreshed, setOnUnauthorized, setTokenGetter } from '@/api';
+import {
+  auth,
+  resetLlmApiKey,
+  setOnTokenRefreshed,
+  setOnUnauthorized,
+  setTokenGetter,
+} from '@/api';
 import {
   saveToken,
   loadToken,
@@ -65,6 +72,7 @@ const mockSetOnTokenRefreshed = setOnTokenRefreshed as jest.MockedFunction<
   typeof setOnTokenRefreshed
 >;
 const mockSetOnUnauthorized = setOnUnauthorized as jest.MockedFunction<typeof setOnUnauthorized>;
+const mockResetLlmApiKey = resetLlmApiKey as jest.MockedFunction<typeof resetLlmApiKey>;
 const mockIsTokenExpired = isTokenExpired as jest.MockedFunction<typeof isTokenExpired>;
 const mockShouldRefreshToken = shouldRefreshToken as jest.MockedFunction<typeof shouldRefreshToken>;
 
@@ -242,6 +250,22 @@ describe('AuthContext', () => {
 
       expect(result.current.token).toBeNull();
       expect(result.current.authStatus).toBe('anonymous');
+      warnSpy.mockRestore();
+    });
+
+    it('still calls resetLlmApiKey when clearToken rejects (teardown resilience)', async () => {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(mockResetLlmApiKey).toHaveBeenCalledTimes(1);
       warnSpy.mockRestore();
     });
   });
@@ -856,6 +880,43 @@ describe('AuthContext', () => {
       await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
       expect(resetSpy).not.toHaveBeenCalled();
       resetSpy.mockRestore();
+    });
+
+    it('calls resetLlmApiKey on explicit logout', async () => {
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(mockResetLlmApiKey).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls resetLlmApiKey when the user dismisses the re-auth sheet', async () => {
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+
+      expect(mockResetLlmApiKey).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT call resetLlmApiKey on a 401-triggered reauth-required transition', async () => {
+      mockLoadToken.mockResolvedValue('jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('jwt'));
+
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(mockResetLlmApiKey).not.toHaveBeenCalled();
     });
   });
 
