@@ -36,15 +36,28 @@ describe('ContentContainer', () => {
     expect(getByTestId('custom-container')).toBeTruthy();
   });
 
-  it('fills a phone-width screen with a grow-flexed, full-width box centered and capped at the shared content max-width', () => {
+  it('defaults to a width-capped box with no grow of its own (content-sized, not flex-grown)', () => {
     const { getByTestId } = render(
       <ContentContainer>
         <Text>hello</Text>
       </ContentContainer>,
     );
     const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
-    expect(flat.flexGrow).toBe(1);
+    expect(flat.flexGrow).toBeUndefined();
     expect(flat.flex).toBeUndefined();
+    expect(flat.width).toBe('100%');
+    expect(flat.maxWidth).toBe(contentLayout.maxWidth);
+    expect(flat.alignSelf).toBe('center');
+  });
+
+  it('renders a bounded fill box (flex: 1) when the fill prop is set, keeping the width cap', () => {
+    const { getByTestId } = render(
+      <ContentContainer fill>
+        <Text>hello</Text>
+      </ContentContainer>,
+    );
+    const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
+    expect(flat.flex).toBe(1);
     expect(flat.width).toBe('100%');
     expect(flat.maxWidth).toBe(contentLayout.maxWidth);
     expect(flat.alignSelf).toBe('center');

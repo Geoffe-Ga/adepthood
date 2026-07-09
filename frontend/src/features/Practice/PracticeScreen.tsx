@@ -118,7 +118,9 @@ const PracticeScreen = (): React.JSX.Element => {
   }
   if (active.activeUserPractice && active.practice && active.effectiveConfig) {
     return (
-      <ContentContainer>
+      // Screen root: `fill`'s bounded height comes from the navigator's screen
+      // container, which the nested session ScrollView needs to scroll natively.
+      <ContentContainer fill>
         <ActiveSessionView
           userPractice={active.activeUserPractice}
           practiceName={active.practice.name}
@@ -263,7 +265,9 @@ interface EmptyStateViewProps {
 const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <ContentContainer>
+    // Screen root: `fill`'s bounded height comes from the navigator's screen
+    // container (no wrapping flex:1 View is local to this file).
+    <ContentContainer fill>
       <EmptyState
         glyph="🧘"
         title="No practice yet"

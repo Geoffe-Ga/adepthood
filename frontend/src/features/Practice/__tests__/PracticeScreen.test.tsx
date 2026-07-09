@@ -762,6 +762,15 @@ describe('PracticeScreen', () => {
     expect(within(container).getByTestId('practice-empty-state')).toBeTruthy();
   });
 
+  it('gives the shared content-capped container a bounded fill so native scroll/touch chains hold', async () => {
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    const { StyleSheet } = require('react-native');
+    const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
+    expect(flat.flex).toBe(1);
+  });
+
   it('wraps the active session view in the shared content-capped container', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);

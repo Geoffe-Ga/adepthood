@@ -509,7 +509,7 @@ const CourseScreen = (): React.JSX.Element => {
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
-      <ContentContainer>
+      <ContentContainer fill>
         <View style={styles.headerBand}>
           <ScreenHeader eyebrow={COURSE_EYEBROW} title={COURSE_TITLE} />
         </View>

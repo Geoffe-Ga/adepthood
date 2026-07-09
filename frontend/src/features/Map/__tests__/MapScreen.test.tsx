@@ -975,4 +975,11 @@ describe('MapScreen content-width cap', () => {
     const container = tree.root.findByProps({ testID: 'content-container' });
     expect(container.findByProps({ testID: 'map-grid' })).toBeTruthy();
   });
+
+  it('gives the shared content-capped container a bounded fill so native scroll/touch chains hold', () => {
+    const tree = create(<MapScreen />);
+    const container = tree.root.findByProps({ testID: 'content-container' });
+    const flat = StyleSheet.flatten(container.props.style) as { flex?: number };
+    expect(flat.flex).toBe(1);
+  });
 });
