@@ -28,7 +28,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MIN_QUEUE: "12"           # ~6 hrs of runway at ~2 issues/hr
-      MAX_QUEUE: "80"           # above this, let the backlog drain
+      MAX_QUEUE: "80"           # above this, let the agent-ready queue drain
+      BACKLOG_MAX: "50"         # total open issues; overrides MIN_QUEUE below
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -38,6 +39,22 @@ jobs:
       - name: Measure runway and refill if starving
         run: |
           set -euo pipefail
+          TOTAL=$(gh issue list --state open --limit 300 --json number --jq 'length')
+          echo "Total open backlog: $TOTAL (gate threshold: $BACKLOG_MAX)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # The agent-ready subset can look "starving" (few triaged/labeled
+          # issues) even while the TOTAL backlog is bloated with un-triaged or
+          # tech-debt work — that's a grooming problem, not a supply problem.
+          # Refilling more scan output in that state buries user-facing bugs
+          # and features deeper. So the total-backlog gate wins outright,
+          # regardless of agent-ready runway.
+          if [ "$TOTAL" -ge "$BACKLOG_MAX" ]; then
+            echo "Backlog bloated (>= $BACKLOG_MAX total open issues) — standing down regardless of agent-ready runway; groom before refilling." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           COUNT=$(gh issue list --label agent-ready --state open \
                     --limit 300 --json number --jq 'length')
           echo "Agent-ready queue depth: $COUNT" | tee -a "$GITHUB_STEP_SUMMARY"

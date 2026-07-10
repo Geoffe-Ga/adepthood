@@ -47,8 +47,37 @@ permissions:
   id-token: write
 
 jobs:
+  # Backlog drain gate — see _claude-scan.yml for the rationale. De-slop is a
+  # producer like the other maintenance scans: it only adds issues, so it must
+  # not keep filing while the backlog is already bloated with un-drained work.
+  gate:
+    name: Backlog drain gate
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BACKLOG_MAX: "50"
+    steps:
+      - name: Check total open backlog size
+        id: check
+        run: |
+          set -euo pipefail
+          TOTAL=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                    --limit 300 --json number --jq 'length')
+          echo "Total open backlog: $TOTAL (gate threshold: $BACKLOG_MAX)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TOTAL" -ge "$BACKLOG_MAX" ]; then
+            echo "::notice::Backlog has $TOTAL open issues (>= $BACKLOG_MAX) — standing down so it can drain instead of piling on more findings."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   plan:
     name: Resolve target areas
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.areas.outputs.matrix }}

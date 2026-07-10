@@ -48,8 +48,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Backlog drain gate: producer scans only ADD to the queue, so they must not
+  # keep filing while the backlog is already bloated with un-drained work —
+  # otherwise tech-debt/hygiene findings bury the user-facing bugs and features
+  # Ralph should be spending tokens on. Mirrors the threshold in hopper.yml's
+  # off-schedule refill gate; unlike the hopper (which only measures the
+  # agent-ready subset), this counts the WHOLE open backlog, since a bloated
+  # backlog starves grooming/triage capacity even before issues reach
+  # agent-ready.
+  gate:
+    name: Backlog drain gate
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BACKLOG_MAX: "50"
+    steps:
+      - name: Check total open backlog size
+        id: check
+        run: |
+          set -euo pipefail
+          TOTAL=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                    --limit 300 --json number --jq 'length')
+          echo "Total open backlog: $TOTAL (gate threshold: $BACKLOG_MAX)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TOTAL" -ge "$BACKLOG_MAX" ]; then
+            echo "::notice::Backlog has $TOTAL open issues (>= $BACKLOG_MAX) — standing down so it can drain instead of piling on more findings."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   scan:
     name: "Scan ${{ inputs.scan_name }}"
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
