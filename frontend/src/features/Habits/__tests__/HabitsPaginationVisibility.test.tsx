@@ -1,11 +1,10 @@
 /* eslint-env jest */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Second habit set (stages 11-20): once a lap fills every slot, the screen
-// offers a trailing invite page into the next lap instead of stranding the
-// user on a full first page with no way forward.
+// The in-body pagination bar is now optional: a persisted "hidden" flag
+// (toggled from the header drawer) must suppress it even on a full lap
+// that would otherwise show it.
 import { jest, describe, afterEach, it, expect } from '@jest/globals';
 import React from 'react';
-import { Text } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import type * as ApiModule from '../../../api';
@@ -38,16 +37,19 @@ const makeApiHabit = (id: number, overrides: Record<string, unknown> = {}) => ({
 const buildApiHabits = (count: number) =>
   Array.from({ length: count }, (_, i) => makeApiHabit(i + 1, { sort_order: i }));
 
-// HabitsScreen now installs its header-left toggle through useAppNavigation
-// (useScreenDrawer); mock the navigation hooks module so the screen renders
-// outside a real NavigationContainer.
 jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ setOptions: jest.fn() }),
 }));
 
+// This test targets HabitsScreen's pagination-gating behavior, not the storage
+// module itself (covered separately in paginationVisibilityStorage.test.ts), so
+// the module is mocked to report the bar as persisted-hidden.
+jest.mock('../../../storage/paginationVisibilityStorage', () => ({
+  loadPaginationBarHidden: jest.fn(() => Promise.resolve(true)),
+  savePaginationBarHidden: jest.fn(() => Promise.resolve(undefined)),
+}));
+
 jest.mock('../../../api', () => {
-  // Keep the real ``toLocalHabit`` mapper the load path delegates to; stub only
-  // the network namespaces this screen exercises.
   const actual: typeof ApiModule = jest.requireActual('../../../api');
   return {
     ...actual,
@@ -106,62 +108,37 @@ jest.mock('../components/StatsModal', () => ({
 const { habits: habitsApi } = require('../../../api');
 const HabitsScreen = require('../HabitsScreen').default;
 
-const renderScreen = async (apiHabits: ReturnType<typeof buildApiHabits>) => {
-  habitsApi.listAll.mockResolvedValue(apiHabits);
-  jest
-    .spyOn(require('react-native'), 'useWindowDimensions')
-    .mockReturnValue({ width: 400, height: 800, scale: 1, fontScale: 1 });
-  let testRenderer: any;
-  await renderer.act(async () => {
-    testRenderer = renderer.create(React.createElement(HabitsScreen));
-  });
-  await renderer.act(async () => {
-    await Promise.resolve();
-  });
-  return testRenderer;
-};
-
 const hasTestId = (tree: any, testID: string): boolean =>
   tree.findAllByProps({ testID }).length > 0;
 
-const visibleTextMatches = (tree: any, pattern: RegExp): boolean =>
-  tree.findAllByType(Text).some((node: any) => {
-    const children = node.props.children;
-    const text = Array.isArray(children) ? children.join('') : String(children ?? '');
-    return pattern.test(text);
-  });
-
-describe('Habits screen second-lap pagination flow', () => {
+describe('Habits screen pagination-bar visibility', () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  it('shows the stage-range pagination bar for a full first lap, invites into the second lap, and returns on Prev', async () => {
-    const testRenderer = await renderScreen(buildApiHabits(10));
-    const tree = testRenderer.root;
+  it('hides the in-body pagination bar when the hidden flag was persisted, even on a full lap', async () => {
+    habitsApi.listAll.mockResolvedValue(buildApiHabits(10));
+    jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: 400, height: 800, scale: 1, fontScale: 1 });
 
-    // A full first lap (10 habits) must show pagination, not just a bare list.
-    expect(hasTestId(tree, 'habits-pagination')).toBe(true);
-    expect(visibleTextMatches(tree, /Stages\s*1[\s\S]*10/)).toBe(true);
-
-    const nextButton = tree.findByProps({ testID: 'pagination-next' });
+    let testRenderer: any;
     await renderer.act(async () => {
-      nextButton.props.onPress();
+      testRenderer = renderer.create(React.createElement(HabitsScreen));
     });
+    // Both the habit load and the persisted-hidden flag resolve asynchronously;
+    // flush pending microtasks until the bar is gone (bounded so a genuine
+    // regression that never hides it still fails rather than hangs).
+    for (
+      let attempt = 0;
+      attempt < 10 && hasTestId(testRenderer.root, 'habits-pagination');
+      attempt += 1
+    ) {
+      await renderer.act(async () => {
+        await Promise.resolve();
+      });
+    }
 
-    // The invite page: no second-lap habits yet, so the range-aware empty
-    // state renders, and the pagination bar stays visible (not stranded).
-    expect(hasTestId(tree, 'habits-empty-state')).toBe(true);
-    expect(hasTestId(tree, 'habits-pagination')).toBe(true);
-    expect(visibleTextMatches(tree, /Stages\s*11[\s\S]*20/)).toBe(true);
-
-    const prevButton = tree.findByProps({ testID: 'pagination-prev' });
-    await renderer.act(async () => {
-      prevButton.props.onPress();
-    });
-
-    // Back on the first lap: the list is showing again, not the empty state.
-    expect(hasTestId(tree, 'habits-list')).toBe(true);
-    expect(hasTestId(tree, 'habits-empty-state')).toBe(false);
+    expect(hasTestId(testRenderer.root, 'habits-pagination')).toBe(false);
   });
 });

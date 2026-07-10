@@ -4,7 +4,7 @@
 // confirm on a locked tile.
 //
 // Mirrors the isolated-component convention in HabitsScreenA11y.test.tsx:
-// render OverflowMenu directly with explicit props rather than mounting the
+// render HabitsDrawer directly with explicit props rather than mounting the
 // whole screen + API layer.
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
@@ -25,26 +25,34 @@ jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: (
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
 
-import { OverflowMenu } from '../HabitsScreen';
+import HabitsDrawer from '../components/HabitsDrawer';
 
 const noop = (..._args: unknown[]): void => {};
 
 const baseProps = {
   scale: 1,
-  onToggle: noop,
   onSelectMode: noop,
   onOpenOnboarding: noop,
   onOpenAddHabit: noop,
+  page: 0,
+  pageCount: 1,
+  onPrev: noop,
+  onNext: noop,
+  stageStart: 1,
+  stageEnd: 10,
+  barVisible: true,
+  onToggleBarVisible: noop,
+  onClose: noop,
 };
 
 afterEach(() => {
   jest.clearAllMocks();
 });
 
-describe('OverflowMenu unlock-all confirm flow', () => {
+describe('HabitsDrawer unlock-all confirm flow', () => {
   it('labels the toggle "Unlock All Habits" (not "Reveal All Habits") when nothing is unlocked', () => {
     const { getByRole } = render(
-      <OverflowMenu {...baseProps} menuVisible allRevealed={false} onToggleReveal={jest.fn()} />,
+      <HabitsDrawer {...baseProps} allRevealed={false} onToggleReveal={jest.fn()} />,
     );
     expect(getByRole('button', { name: 'Unlock All Habits' })).toBeTruthy();
   });
@@ -52,12 +60,7 @@ describe('OverflowMenu unlock-all confirm flow', () => {
   it('pressing "Unlock All Habits" opens a confirm dialog instead of firing the toggle immediately', () => {
     const onToggleReveal = jest.fn();
     const { getByRole, getByTestId } = render(
-      <OverflowMenu
-        {...baseProps}
-        menuVisible
-        allRevealed={false}
-        onToggleReveal={onToggleReveal}
-      />,
+      <HabitsDrawer {...baseProps} allRevealed={false} onToggleReveal={onToggleReveal} />,
     );
 
     fireEvent.press(getByRole('button', { name: 'Unlock All Habits' }));
@@ -70,12 +73,7 @@ describe('OverflowMenu unlock-all confirm flow', () => {
   it('confirming the dialog invokes the unlock-all action exactly once', () => {
     const onToggleReveal = jest.fn();
     const { getByRole, getByTestId } = render(
-      <OverflowMenu
-        {...baseProps}
-        menuVisible
-        allRevealed={false}
-        onToggleReveal={onToggleReveal}
-      />,
+      <HabitsDrawer {...baseProps} allRevealed={false} onToggleReveal={onToggleReveal} />,
     );
 
     fireEvent.press(getByRole('button', { name: 'Unlock All Habits' }));
@@ -87,12 +85,7 @@ describe('OverflowMenu unlock-all confirm flow', () => {
   it('cancelling does NOT invoke the unlock-all action', () => {
     const onToggleReveal = jest.fn();
     const { getByRole, getByTestId, queryByTestId } = render(
-      <OverflowMenu
-        {...baseProps}
-        menuVisible
-        allRevealed={false}
-        onToggleReveal={onToggleReveal}
-      />,
+      <HabitsDrawer {...baseProps} allRevealed={false} onToggleReveal={onToggleReveal} />,
     );
 
     fireEvent.press(getByRole('button', { name: 'Unlock All Habits' }));

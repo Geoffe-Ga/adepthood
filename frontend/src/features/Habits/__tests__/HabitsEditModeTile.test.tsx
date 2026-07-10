@@ -1,17 +1,50 @@
 /* eslint-env jest */
 // Pins the Edit-mode branch of ``openModalForMode``: tapping a tile while
 // Edit mode is active opens the habit-settings modal, not the goal modal.
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 
 import HabitsScreen from '../HabitsScreen';
+
+const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
+  headerLeftStore.listeners.add(onChange);
+  return () => headerLeftStore.listeners.delete(onChange);
+};
+
+// Renders the screen's headerLeft toggle in the same tree as the screen, so the
+// drawer opens in-tree and its rows are pressable.
+const HabitsScreenWithHeader = (): React.JSX.Element => {
+  const headerLeft = useSyncExternalStore(subscribeHeaderLeft, () => headerLeftStore.current);
+  return (
+    <>
+      {headerLeft === undefined ? null : headerLeft()}
+      <HabitsScreen />
+    </>
+  );
+};
 
 interface SettingsModalProps {
   visible: boolean;
 }
 
 const mockHabitSettingsModal = jest.fn((_props: SettingsModalProps) => null);
+
+// HabitsScreen installs its drawer toggle as the navigator's headerLeft via
+// useAppNavigation. Rendering the screen bare would strand that toggle in a
+// detached tree whose presses never reach the screen's Modal-based drawer, so a
+// small external store relays the headerLeft into the same tree (see harness).
+const headerLeftStore: {
+  current: (() => React.ReactElement) | undefined;
+  listeners: Set<() => void>;
+} = { current: undefined, listeners: new Set() };
+const mockSetOptions = jest.fn((opts: { headerLeft?: () => React.ReactElement }) => {
+  headerLeftStore.current = opts.headerLeft;
+  headerLeftStore.listeners.forEach((listener) => listener());
+});
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: mockSetOptions }),
+}));
 
 jest.mock('../../../api', () => ({
   habits: {
@@ -92,13 +125,18 @@ jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
 
+beforeEach(() => {
+  headerLeftStore.current = undefined;
+  headerLeftStore.listeners.clear();
+});
+
 describe('Habits Edit-mode tile tap', () => {
   it('opens the habit settings modal when a tile is tapped in Edit mode', async () => {
-    const { getByTestId, getByText, getAllByTestId } = render(<HabitsScreen />);
+    const { getByText, getByLabelText, getAllByTestId } = render(<HabitsScreenWithHeader />);
 
     await waitFor(() => expect(getAllByTestId('habit-tile').length).toBeGreaterThan(0));
 
-    fireEvent.press(getByTestId('overflow-menu-toggle'));
+    fireEvent.press(getByLabelText('Open Habits menu'));
     fireEvent.press(getByText('Edit'));
     fireEvent.press(getAllByTestId('habit-tile')[0]!);
 

@@ -6,6 +6,12 @@ import { ToastProvider } from '../../../components/ToastProvider';
 
 const HabitsScreen = require('../HabitsScreen').default;
 
+// HabitsScreen installs its header-left toggle via useAppNavigation; mock the
+// navigation hooks so the screen renders outside a real NavigationContainer.
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: jest.fn() }),
+}));
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 jest.mock('../../../api', () => ({
   habits: {

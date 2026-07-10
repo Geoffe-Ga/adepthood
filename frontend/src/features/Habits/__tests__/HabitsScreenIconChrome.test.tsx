@@ -2,7 +2,14 @@ import { describe, it, expect, jest, afterEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import HabitsScreen from '../HabitsScreen';
+// HabitsScreen now installs its header-left toggle through useAppNavigation
+// (useScreenDrawer); mock the navigation hooks module so the screen renders
+// outside a real NavigationContainer. mockSetOptions is prefixed "mock" so
+// jest's hoist plugin allows the jest.mock factory to reference it.
+const mockSetOptions = jest.fn();
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: mockSetOptions }),
+}));
 
 // Mock the API so HabitsScreen loads instantly with an empty list. Plain
 // promise-returning functions avoid the typed-mock `never` inference of
@@ -58,28 +65,54 @@ jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
 
-describe('HabitsScreen icon chrome (lucide-react-native)', () => {
+import HabitsScreen from '../HabitsScreen';
+
+interface HeaderLeftOptions {
+  headerLeft: (() => React.ReactElement) | undefined;
+}
+
+describe('HabitsScreen top-bar chrome', () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  it('mounts the top-bar overflow toggle without throwing', async () => {
-    const { getByTestId } = render(<HabitsScreen />);
-
-    // The top-bar MoreHorizontal icon lives inside this toggle; mounting it
-    // proves the native lucide icon renders under @testing-library/react-native.
-    await waitFor(() => expect(getByTestId('overflow-menu-toggle')).toBeTruthy());
+  it('does not render the removed in-body overflow menu toggle', () => {
+    const { queryByTestId } = render(<HabitsScreen />);
+    expect(queryByTestId('overflow-menu-toggle')).toBeNull();
+    expect(queryByTestId('overflow-menu')).toBeNull();
   });
 
-  it('renders the overflow menu icons when the toggle is pressed', async () => {
-    const { getByTestId, getByText } = render(<HabitsScreen />);
+  it('installs a header-left drawer toggle via useAppNavigation', async () => {
+    render(<HabitsScreen />);
+    await waitFor(() => expect(mockSetOptions).toHaveBeenCalled());
 
-    const toggle = await waitFor(() => getByTestId('overflow-menu-toggle'));
-    fireEvent.press(toggle);
+    const lastCall = mockSetOptions.mock.calls[mockSetOptions.mock.calls.length - 1];
+    if (lastCall === undefined) {
+      throw new Error('expected a setOptions call');
+    }
+    const options = lastCall[0] as HeaderLeftOptions;
+    expect(typeof options.headerLeft).toBe('function');
+  });
+
+  it('opens the header drawer and renders the menu rows when the toggle is pressed', async () => {
+    const { getByTestId, getByText } = render(<HabitsScreen />);
+    await waitFor(() => expect(mockSetOptions).toHaveBeenCalled());
+
+    const lastCall = mockSetOptions.mock.calls[mockSetOptions.mock.calls.length - 1];
+    if (lastCall === undefined) {
+      throw new Error('expected a setOptions call');
+    }
+    const headerLeft = (lastCall[0] as HeaderLeftOptions).headerLeft;
+    if (headerLeft === undefined) {
+      throw new Error('headerLeft was not installed');
+    }
+
+    const { getByTestId: getByTestIdInToggle } = render(headerLeft());
+    fireEvent.press(getByTestIdInToggle('drawer-toggle'));
 
     // The menu rows each render a lucide-react-native icon next to a label;
     // their presence proves the icon chrome mounts without throwing on native.
-    expect(getByTestId('overflow-menu')).toBeTruthy();
+    expect(getByTestId('screen-drawer-panel')).toBeTruthy();
     expect(getByText('Quick Log')).toBeTruthy();
     expect(getByText('Stats')).toBeTruthy();
     expect(getByText('Add Habit')).toBeTruthy();

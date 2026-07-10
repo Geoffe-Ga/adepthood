@@ -5,7 +5,23 @@ import { brightenColor, STAGE_COLORS, SPACING } from '../../../design/tokens';
 
 const renderer = require('react-test-renderer');
 
+// HabitsScreen installs its header-left drawer toggle via useAppNavigation;
+// capture setOptions so the tests can open the drawer that now hosts the menu.
+const mockSetOptions = jest.fn();
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: mockSetOptions }),
+}));
+
 const HabitsScreen = require('../HabitsScreen').default;
+
+// Open the header drawer by invoking the installed header-left toggle's press.
+const openHabitsDrawer = (): void => {
+  const calls = mockSetOptions.mock.calls;
+  const last = calls[calls.length - 1] as any;
+  renderer.act(() => {
+    last[0].headerLeft().props.onPress();
+  });
+};
 
 // Mock the API so HabitsScreen loads instantly with an empty list (triggers fallback defaults)
 jest.mock('../../../api', () => ({
@@ -152,62 +168,21 @@ describe('HabitsScreen responsive layout', () => {
     expect(secondList.props.numColumns).toBe(1);
   });
 
-  it('renders overflow menu in top bar', async () => {
+  it('exposes the drawer menu rows once the drawer is open', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
-    const { StyleSheet } = require('react-native');
-    const wrapper = testRenderer.root.findByProps({ testID: 'overflow-menu-wrapper' });
-    const wrapperStyle = StyleSheet.flatten(wrapper.props.style);
-    expect(wrapperStyle.position).toBeUndefined();
-    expect(wrapperStyle.zIndex).toBeGreaterThan(0);
-
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
-
-    const menu = testRenderer.root.findByProps({ testID: 'overflow-menu' });
-    const style = Array.isArray(menu.props.style)
-      ? menu.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
-      : menu.props.style;
-
-    expect(style.zIndex).toBeGreaterThan(0);
-  });
-
-  it('places overflow menu above habit tiles', async () => {
-    jest
-      .spyOn(require('react-native'), 'useWindowDimensions')
-      .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
-
-    const { StyleSheet, TouchableOpacity, Text } = require('react-native');
+    const { TouchableOpacity, Text } = require('react-native');
     let testRenderer: any;
     await renderer.act(async () => {
       testRenderer = renderer.create(<HabitsScreen />);
     });
 
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
+    openHabitsDrawer();
 
-    const menu = testRenderer.root.findByProps({ testID: 'overflow-menu' });
-    const menuStyle = StyleSheet.flatten(menu.props.style);
-
-    const firstTile = testRenderer.root.findAllByProps({ testID: 'habit-tile' })[0];
-    const tileStyle = StyleSheet.flatten(firstTile.props.style);
-
-    const tileZ = typeof tileStyle.zIndex === 'number' ? tileStyle.zIndex : 0;
-    expect(menuStyle.zIndex).toBeGreaterThan(tileZ);
-
-    // ensure menu options are tappable
-    const options = menu.findAllByType(TouchableOpacity);
+    // The Quick Log row lives in the header drawer, not an in-body overflow menu.
+    const options = testRenderer.root.findAllByType(TouchableOpacity);
     const quickLog = options.find((o: any) =>
       o.findAllByType(Text).some((t: any) => t.props.children === 'Quick Log'),
     );
@@ -225,11 +200,7 @@ describe('HabitsScreen responsive layout', () => {
     await renderer.act(async () => {
       testRenderer = renderer.create(<HabitsScreen />);
     });
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
+    openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
     const options = testRenderer.root.findAll(
@@ -260,11 +231,7 @@ describe('HabitsScreen responsive layout', () => {
     await renderer.act(async () => {
       testRenderer = renderer.create(<HabitsScreen />);
     });
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
+    openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
     const statsOption = testRenderer.root.findAll(
@@ -298,11 +265,7 @@ describe('HabitsScreen responsive layout', () => {
     await renderer.act(async () => {
       testRenderer = renderer.create(<HabitsScreen />);
     });
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
+    openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
     const quickOption = testRenderer.root.findAll(
@@ -347,10 +310,7 @@ describe('HabitsScreen responsive layout', () => {
     const postTimerTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
     expect(postTimerTexts).not.toContain('Energy Scaffolding button moved to menu.');
 
-    const toggle = testRenderer.root.findByProps({ testID: 'overflow-menu-toggle' });
-    renderer.act(() => {
-      toggle.props.onPress();
-    });
+    openHabitsDrawer();
 
     const hasMenuItem = testRenderer.root
       .findAllByType(Text)

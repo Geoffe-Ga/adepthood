@@ -15,7 +15,6 @@ describe('useModalCoordinator', () => {
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
-    expect(result.current.menu).toBe(false);
   });
 
   it('BUG-FE-HABIT-008: open() preserves prior modal flags', () => {
@@ -49,18 +48,13 @@ describe('useModalCoordinator', () => {
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
-    expect(result.current.menu).toBe(false);
   });
 
-  it('open("addHabit") opens the AddHabit modal and collapses the menu', () => {
+  it('open("addHabit") opens the AddHabit modal', () => {
     const { result } = renderHook(() => useModalCoordinator());
-
-    act(() => result.current.toggleMenu());
-    expect(result.current.menu).toBe(true);
 
     act(() => result.current.open('addHabit'));
     expect(result.current.addHabit).toBe(true);
-    expect(result.current.menu).toBe(false);
   });
 
   it('close(name) closes only that modal', () => {
@@ -69,26 +63,5 @@ describe('useModalCoordinator', () => {
     act(() => result.current.open('goal'));
     act(() => result.current.close('goal'));
     expect(result.current.goal).toBe(false);
-  });
-
-  it('toggleMenu toggles the menu state', () => {
-    const { result } = renderHook(() => useModalCoordinator());
-
-    act(() => result.current.toggleMenu());
-    expect(result.current.menu).toBe(true);
-
-    act(() => result.current.toggleMenu());
-    expect(result.current.menu).toBe(false);
-  });
-
-  it('opening a modal closes the menu', () => {
-    const { result } = renderHook(() => useModalCoordinator());
-
-    act(() => result.current.toggleMenu());
-    expect(result.current.menu).toBe(true);
-
-    act(() => result.current.open('goal'));
-    expect(result.current.menu).toBe(false);
-    expect(result.current.goal).toBe(true);
   });
 });
