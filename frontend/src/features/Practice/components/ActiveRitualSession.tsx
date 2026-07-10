@@ -27,7 +27,15 @@
  *     tactile feedback and audible bells.
  */
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type {
@@ -121,38 +129,46 @@ interface ActiveSession {
   ) => Promise<void>;
 }
 
-export function ActiveRitualSession(props: ActiveRitualSessionProps): React.JSX.Element {
-  const [showConfigurator, setShowConfigurator] = useState(false);
-  const session = useActiveSession(props);
-  return (
-    <View testID="active-ritual-session">
-      <SessionCard
-        effectiveName={props.effectiveName}
-        onConfigure={() => setShowConfigurator(true)}
-        config={props.effectiveConfig}
-        state={session.state}
-        controls={session.controls}
-        tarotCardIndex={session.tarotCardIndex}
-        cardPick={session.cardPick}
-        onMindfulAnchorComplete={session.onMindfulAnchorComplete}
-        saveError={session.saveError}
-        onRandomBellMetadata={session.onRandomBellMetadata}
-      />
-      <RitualConfiguratorSheet
-        visible={showConfigurator}
-        userPracticeId={props.userPractice.id}
-        initialName={props.effectiveName}
-        initialConfig={props.effectiveConfig}
-        onClose={() => setShowConfigurator(false)}
-        onSaved={(next) => {
-          props.onUserPracticeUpdated(next);
-          setShowConfigurator(false);
-        }}
-      />
-      <SessionInsightModal session={session} onWriteReflection={props.onWriteReflection} />
-    </View>
-  );
+/** Imperative surface: lets a parent open the configurator sheet (e.g. from a header drawer). */
+export interface ActiveRitualSessionHandle {
+  openConfigurator: () => void;
 }
+
+export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveRitualSessionProps>(
+  function ActiveRitualSession(props, ref): React.JSX.Element {
+    const [showConfigurator, setShowConfigurator] = useState(false);
+    const session = useActiveSession(props);
+    useImperativeHandle(ref, () => ({ openConfigurator: () => setShowConfigurator(true) }), []);
+    return (
+      <View testID="active-ritual-session">
+        <SessionCard
+          effectiveName={props.effectiveName}
+          onConfigure={() => setShowConfigurator(true)}
+          config={props.effectiveConfig}
+          state={session.state}
+          controls={session.controls}
+          tarotCardIndex={session.tarotCardIndex}
+          cardPick={session.cardPick}
+          onMindfulAnchorComplete={session.onMindfulAnchorComplete}
+          saveError={session.saveError}
+          onRandomBellMetadata={session.onRandomBellMetadata}
+        />
+        <RitualConfiguratorSheet
+          visible={showConfigurator}
+          userPracticeId={props.userPractice.id}
+          initialName={props.effectiveName}
+          initialConfig={props.effectiveConfig}
+          onClose={() => setShowConfigurator(false)}
+          onSaved={(next) => {
+            props.onUserPracticeUpdated(next);
+            setShowConfigurator(false);
+          }}
+        />
+        <SessionInsightModal session={session} onWriteReflection={props.onWriteReflection} />
+      </View>
+    );
+  },
+);
 
 interface SessionInsightModalProps {
   session: ActiveSession;

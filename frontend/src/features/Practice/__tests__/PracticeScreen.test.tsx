@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
 
@@ -97,8 +98,22 @@ jest.mock('../../../context/AuthContext', () => ({
 const mockNavigate = jest.fn();
 const mockRootNavigate = jest.fn();
 const mockRouteParams: Record<string, unknown> = {};
+// PracticeScreen installs its header-left drawer toggle through
+// useAppNavigation (useScreenDrawer), which calls navigation.setOptions in a
+// layout effect on every mount -- without this mock every existing test below
+// would crash reading setOptions off an undefined navigation object. The store
+// relays the installed headerLeft into the same render tree as the screen so
+// the Modal-based drawer opens in-tree and its rows are pressable.
+const headerLeftStore: {
+  current: (() => ReactElement) | undefined;
+  listeners: Set<() => void>;
+} = { current: undefined, listeners: new Set() };
+const mockSetOptions = jest.fn((opts: { headerLeft?: () => ReactElement }) => {
+  headerLeftStore.current = opts.headerLeft;
+  headerLeftStore.listeners.forEach((listener) => listener());
+});
 jest.mock('../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate }),
+  useAppNavigation: () => ({ navigate: mockNavigate, setOptions: mockSetOptions }),
   useAppRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
 }));
 
@@ -159,6 +174,23 @@ jest.mock('expo-haptics', () => ({
 // eslint-disable-next-line import/order
 const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const PracticeScreen = require('../PracticeScreen').default;
+
+const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
+  headerLeftStore.listeners.add(onChange);
+  return () => headerLeftStore.listeners.delete(onChange);
+};
+
+// Renders the screen's headerLeft toggle in the same tree as the screen, so the
+// drawer opens in-tree and its rows are pressable.
+const PracticeScreenWithHeader = (): ReactElement => {
+  const headerLeft = useSyncExternalStore(subscribeHeaderLeft, () => headerLeftStore.current);
+  return (
+    <>
+      {headerLeft === undefined ? null : headerLeft()}
+      <PracticeScreen />
+    </>
+  );
+};
 
 interface ModeFixture {
   label: string;
@@ -278,6 +310,8 @@ describe('PracticeScreen', () => {
     mockFrequency.mockResolvedValue(sampleFrequency);
     mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
     mockNavigate.mockClear();
+    mockSetOptions.mockClear();
+    mockRootNavigate.mockClear();
   });
 
   it('shows loading indicator initially', async () => {
@@ -778,5 +812,80 @@ describe('PracticeScreen', () => {
 
     const container = getByTestId('content-container');
     expect(within(container).getByTestId('practice-screen')).toBeTruthy();
+  });
+});
+
+describe('PracticeScreen header drawer', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    headerLeftStore.current = undefined;
+    headerLeftStore.listeners.clear();
+    mockFocusCallbacks.length = 0;
+    mockPracticesList.mockResolvedValue([samplePractice()]);
+    mockUserPracticesList.mockResolvedValue([]);
+    mockWeekCount.mockResolvedValue({ count: 2 });
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
+    mockNavigate.mockClear();
+    mockSetOptions.mockClear();
+    mockRootNavigate.mockClear();
+  });
+
+  it('opens the drawer and shows the full active-state row set, alongside the unchanged in-body controls', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+
+    expect(getByTestId('screen-drawer-panel')).toBeTruthy();
+    expect(getByTestId('practice-drawer-change')).toBeTruthy();
+    expect(getByTestId('practice-drawer-browse')).toBeTruthy();
+    expect(getByTestId('practice-drawer-customize')).toBeTruthy();
+    expect(getByTestId('practice-drawer-details')).toBeTruthy();
+    expect(getByTestId('practice-drawer-create')).toBeTruthy();
+    // The in-body CatalogButton is not replaced by the drawer's rows.
+    expect(getByTestId('change-practice-button')).toBeTruthy();
+  });
+
+  it('opens the drawer and shows only the browse/create rows when there is no active practice, alongside the unchanged in-body CTA', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+
+    expect(getByTestId('screen-drawer-panel')).toBeTruthy();
+    expect(getByTestId('practice-drawer-browse')).toBeTruthy();
+    expect(getByTestId('practice-drawer-create')).toBeTruthy();
+    expect(queryByTestId('practice-drawer-change')).toBeNull();
+    expect(queryByTestId('practice-drawer-customize')).toBeNull();
+    expect(queryByTestId('practice-drawer-details')).toBeNull();
+    // The in-body empty-state CTA is not replaced by the drawer's rows.
+    expect(getByTestId('browse-catalog-button')).toBeTruthy();
+  });
+
+  it('pressing the drawer "Customize this practice" row opens the same configurator sheet as the gear', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-drawer-customize'));
+    });
+
+    expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
+  });
+
+  it('pressing the drawer "Create a practice" row navigates via the root stack navigator', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+    fireEvent.press(getByTestId('practice-drawer-create'));
+
+    expect(mockRootNavigate).toHaveBeenCalledWith('CreatePractice');
   });
 });

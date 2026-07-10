@@ -90,7 +90,7 @@ jest.mock('@react-navigation/native', () => {
 });
 
 jest.mock('../../../../navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: jest.fn() }),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
   useAppRoute: () => ({ key: 'Practice-test', name: 'Practice', params: {} }),
 }));
 
