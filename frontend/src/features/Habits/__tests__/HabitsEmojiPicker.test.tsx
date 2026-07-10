@@ -8,6 +8,12 @@ import HabitsScreen from '../HabitsScreen';
 
 const mockUpdateHabit = jest.fn((..._args: unknown[]) => Promise.resolve());
 
+// HabitsScreen installs its header-left toggle via useAppNavigation; mock the
+// navigation hooks so the screen renders outside a real NavigationContainer.
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: jest.fn() }),
+}));
+
 jest.mock('../../../api', () => ({
   habits: {
     list: () =>

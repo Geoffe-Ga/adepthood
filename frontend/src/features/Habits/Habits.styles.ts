@@ -948,31 +948,6 @@ export const styles = StyleSheet.create({
     color: COLORS.text.primary,
     fontWeight: '600',
   },
-
-  // ===== Overflow Menu =====
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginBottom: SPACING.sm,
-    zIndex: 1000,
-  },
-  overflowMenuContainer: {
-    zIndex: 1001,
-  },
-  mobileMenu: {
-    position: 'absolute',
-    top: 36,
-    right: 8,
-    backgroundColor: surface.raised,
-    borderRadius: 8,
-    padding: 8,
-    zIndex: 1002,
-    shadowColor: COLORS.paper.ink,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 10,
-  },
 });
 
 export default styles;

@@ -33,16 +33,13 @@ const INITIAL_STATE: ModalState = {
 };
 
 export interface ModalCoordinator extends ModalState {
-  menu: boolean;
   open: (_name: ModalName) => void;
   close: (_name: ModalName) => void;
   closeAll: () => void;
-  toggleMenu: () => void;
 }
 
 export const useModalCoordinator = (): ModalCoordinator => {
   const [modals, setModals] = useState<ModalState>(INITIAL_STATE);
-  const [menu, setMenu] = useState(false);
 
   const open = useCallback((name: ModalName) => {
     // BUG-FE-HABIT-008: previously this resolved to ``{ [name]: true }``
@@ -53,7 +50,6 @@ export const useModalCoordinator = (): ModalCoordinator => {
     // modals when the UX requires it; callers that need exclusivity
     // call ``closeAll`` first.
     setModals((prev) => ({ ...prev, [name]: true }));
-    setMenu(false);
   }, []);
 
   const close = useCallback((name: ModalName) => {
@@ -62,19 +58,12 @@ export const useModalCoordinator = (): ModalCoordinator => {
 
   const closeAll = useCallback(() => {
     setModals(INITIAL_STATE);
-    setMenu(false);
-  }, []);
-
-  const toggleMenu = useCallback(() => {
-    setMenu((prev) => !prev);
   }, []);
 
   return {
     ...modals,
-    menu,
     open,
     close,
     closeAll,
-    toggleMenu,
   };
 };

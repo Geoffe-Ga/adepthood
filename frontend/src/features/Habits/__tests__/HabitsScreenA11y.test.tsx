@@ -1,4 +1,4 @@
-// audit-ux-01: the Habits screen chrome (overflow menu, mode bar, pagination,
+// audit-ux-01: the Habits screen chrome (header drawer, mode bar, pagination,
 // energy CTA) must expose accessibilityRole/Label/State so screen-reader users
 // can identify and operate the controls.
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
@@ -24,7 +24,8 @@ jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: (
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
 
-import { EnergyCTA, ModeBar, OverflowMenu, PaginationBar } from '../HabitsScreen';
+import HabitsDrawer from '../components/HabitsDrawer';
+import { EnergyCTA, ModeBar, PaginationBar } from '../HabitsScreen';
 
 const noop = (..._args: unknown[]): void => {};
 
@@ -33,32 +34,27 @@ afterEach(() => {
 });
 
 describe('HabitsScreen chrome accessibility', () => {
-  describe('OverflowMenu', () => {
+  describe('HabitsDrawer', () => {
     const baseProps = {
       scale: 1,
-      onToggle: noop,
       onSelectMode: noop,
       onOpenOnboarding: noop,
       onOpenAddHabit: noop,
       allRevealed: false,
       onToggleReveal: noop,
+      page: 0,
+      pageCount: 1,
+      onPrev: noop,
+      onNext: noop,
+      stageStart: 1,
+      stageEnd: 10,
+      barVisible: true,
+      onToggleBarVisible: noop,
+      onClose: noop,
     };
 
-    it('labels the toggle and reflects its expanded state', () => {
-      const { getByLabelText, rerender } = render(
-        <OverflowMenu {...baseProps} menuVisible={false} />,
-      );
-      const toggle = getByLabelText('Habit options menu');
-      expect(toggle.props.accessibilityState).toEqual({ expanded: false });
-
-      rerender(<OverflowMenu {...baseProps} menuVisible />);
-      expect(getByLabelText('Habit options menu').props.accessibilityState).toEqual({
-        expanded: true,
-      });
-    });
-
-    it('exposes each open menu item as a named button', () => {
-      const { getByRole } = render(<OverflowMenu {...baseProps} menuVisible />);
+    it('exposes each action row as a named button', () => {
+      const { getByRole } = render(<HabitsDrawer {...baseProps} />);
       for (const name of ['Quick Log', 'Stats', 'Edit', 'Add Habit', 'Energy Scaffolding']) {
         expect(getByRole('button', { name })).toBeTruthy();
       }
@@ -68,8 +64,18 @@ describe('HabitsScreen chrome accessibility', () => {
     });
 
     it('switches the reveal-toggle label when all habits are revealed', () => {
-      const { getByRole } = render(<OverflowMenu {...baseProps} menuVisible allRevealed />);
+      const { getByRole } = render(<HabitsDrawer {...baseProps} allRevealed />);
       expect(getByRole('button', { name: 'Lock Unstarted Habits' })).toBeTruthy();
+    });
+
+    it('labels the pagination Prev/Next controls and disables Prev on the first page', () => {
+      const { getByLabelText } = render(
+        <HabitsDrawer {...baseProps} page={0} pageCount={3} stageStart={1} stageEnd={10} />,
+      );
+      expect(getByLabelText('Previous page').props.accessibilityState).toEqual({
+        disabled: true,
+      });
+      expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: false });
     });
   });
 

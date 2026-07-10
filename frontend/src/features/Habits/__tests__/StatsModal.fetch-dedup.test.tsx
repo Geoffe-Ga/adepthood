@@ -3,13 +3,46 @@
 // fetched, doubling the call. This drives the real open flow through
 // HabitsScreen with the real StatsModal, so a re-introduced second fetch would
 // make the count 2.
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 
 import HabitsScreen from '../HabitsScreen';
 
+const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
+  headerLeftStore.listeners.add(onChange);
+  return () => headerLeftStore.listeners.delete(onChange);
+};
+
+// Renders the screen's headerLeft toggle in the same tree as the screen so the
+// drawer opens in-tree and its rows are pressable.
+const HabitsScreenWithHeader = (): React.JSX.Element => {
+  const headerLeft = useSyncExternalStore(subscribeHeaderLeft, () => headerLeftStore.current);
+  return (
+    <>
+      {headerLeft === undefined ? null : headerLeft()}
+      <HabitsScreen />
+    </>
+  );
+};
+
 const mockGetStats = jest.fn();
+
+// HabitsScreen installs its drawer toggle as the navigator's headerLeft via
+// useAppNavigation. Rendering the screen outside a navigator would strand that
+// toggle in a detached tree whose presses never reach the screen's Modal-based
+// drawer, so a small external store relays the headerLeft into the same tree.
+const headerLeftStore: {
+  current: (() => React.ReactElement) | undefined;
+  listeners: Set<() => void>;
+} = { current: undefined, listeners: new Set() };
+const mockSetOptions = jest.fn((opts: { headerLeft?: () => React.ReactElement }) => {
+  headerLeftStore.current = opts.headerLeft;
+  headerLeftStore.listeners.forEach((listener) => listener());
+});
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: mockSetOptions }),
+}));
 
 jest.mock('../../../api', () => ({
   habits: {
@@ -92,14 +125,19 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 
+beforeEach(() => {
+  headerLeftStore.current = undefined;
+  headerLeftStore.listeners.clear();
+});
+
 describe('Habits stats modal fetch dedup', () => {
   it('fires getStats exactly once when the stats modal opens', async () => {
-    const { getByTestId, getAllByTestId, getByText } = render(<HabitsScreen />);
+    const { getAllByTestId, getByText, getByLabelText } = render(<HabitsScreenWithHeader />);
 
-    // Wait for the habit list to load, then drive: overflow menu → Stats mode →
+    // Wait for the habit list to load, then drive: header drawer -> Stats mode ->
     // tap the tile (which opens the stats modal in stats mode).
-    const toggle = await waitFor(() => getByTestId('overflow-menu-toggle'));
-    fireEvent.press(toggle);
+    await waitFor(() => expect(getAllByTestId('habit-tile').length).toBeGreaterThan(0));
+    fireEvent.press(getByLabelText('Open Habits menu'));
     fireEvent.press(getByText('Stats'));
     fireEvent.press(getAllByTestId('habit-tile')[0]!);
 

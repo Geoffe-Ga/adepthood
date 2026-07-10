@@ -38,6 +38,12 @@ const makeApiHabit = (id: number, overrides: Record<string, unknown> = {}) => ({
 const buildApiHabits = (count: number) =>
   Array.from({ length: count }, (_, i) => makeApiHabit(i + 1, { sort_order: i }));
 
+// HabitsScreen installs its header-left toggle via useAppNavigation; mock the
+// navigation hooks so the screen renders outside a real NavigationContainer.
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: jest.fn() }),
+}));
+
 jest.mock('../../../api', () => {
   // Keep the real ``toLocalHabit`` mapper the load path delegates to; stub only
   // the network namespaces this screen exercises.

@@ -1,15 +1,5 @@
 // HabitsScreen.tsx
 
-import {
-  BarChart2,
-  Check,
-  Lock,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Unlock,
-  Zap,
-} from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,9 +10,9 @@ import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
-import ConfirmDialog from './components/ConfirmDialog';
 import GoalModal from './components/GoalModal';
 import HabitEmojiPicker from './components/HabitEmojiPicker';
+import HabitsDrawer from './components/HabitsDrawer';
 import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import MissedDaysModal from './components/MissedDaysModal';
@@ -44,32 +34,13 @@ import {
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
+import { usePaginationBarVisibility } from './hooks/usePaginationBarVisibility';
 
+import { ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 
 /** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = MAX_HABITS;
-
-interface MenuItemProps {
-  icon: React.ReactNode;
-  label: string;
-  onPress: () => void;
-  scale: number;
-}
-
-const MenuItem = ({ icon, label, onPress, scale }: MenuItemProps) => (
-  <TouchableOpacity
-    onPress={onPress}
-    accessibilityRole="button"
-    accessibilityLabel={label}
-    style={{ paddingVertical: spacing(0.5, scale) }}
-  >
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      {icon}
-      <Text>{label}</Text>
-    </View>
-  </TouchableOpacity>
-);
 
 const MODE_LABELS: Record<string, string> = {
   stats: 'Stats Mode',
@@ -104,133 +75,6 @@ const openModalForMode = (
   else if (mode === 'edit') open('settings');
   else if (mode === 'quickLog') logUnit(itemId, 1);
   else open('goal');
-};
-
-interface OverflowMenuProps {
-  scale: number;
-  menuVisible: boolean;
-  onToggle: () => void;
-  onSelectMode: (_mode: 'quickLog' | 'stats' | 'edit') => void;
-  onOpenOnboarding: () => void;
-  onOpenAddHabit: () => void;
-  allRevealed: boolean;
-  onToggleReveal: () => void;
-}
-
-type MenuAction = 'quickLog' | 'stats' | 'edit' | 'addHabit' | 'onboarding';
-
-const MENU_ITEMS: Array<{
-  Icon: typeof Check;
-  label: string;
-  action: MenuAction;
-}> = [
-  { Icon: Check, label: 'Quick Log', action: 'quickLog' },
-  { Icon: BarChart2, label: 'Stats', action: 'stats' },
-  { Icon: Pencil, label: 'Edit', action: 'edit' },
-  { Icon: Plus, label: 'Add Habit', action: 'addHabit' },
-  { Icon: Zap, label: 'Energy Scaffolding', action: 'onboarding' },
-];
-
-interface OverflowMenuListProps {
-  scale: number;
-  iconMargin: { marginRight: number };
-  handleMenuPress: (_action: MenuAction) => void;
-  allRevealed: boolean;
-  onToggleReveal: () => void;
-}
-
-const OverflowMenuList = ({
-  scale,
-  iconMargin,
-  handleMenuPress,
-  allRevealed,
-  onToggleReveal,
-}: OverflowMenuListProps) => {
-  const RevealIcon = allRevealed ? Lock : Unlock;
-  // Locking re-locks only untouched habits; the toggle label reflects that
-  // it acts on unstarted habits. Unlocking-all is destructive enough (it
-  // bypasses every per-tile confirm) to warrant its own confirmation.
-  const revealLabel = allRevealed ? 'Lock Unstarted Habits' : 'Unlock All Habits';
-  const [showUnlockAllConfirm, setShowUnlockAllConfirm] = useState(false);
-  const handleRevealPress = () => {
-    if (allRevealed) onToggleReveal();
-    else setShowUnlockAllConfirm(true);
-  };
-  return (
-    <View testID="overflow-menu" style={[styles.mobileMenu, { top: spacing(4, scale), right: 0 }]}>
-      {MENU_ITEMS.map((item) => (
-        <MenuItem
-          key={item.label}
-          icon={<item.Icon size={spacing(2, scale)} style={iconMargin} />}
-          label={item.label}
-          onPress={() => handleMenuPress(item.action)}
-          scale={scale}
-        />
-      ))}
-      <MenuItem
-        key="reveal-toggle"
-        icon={<RevealIcon size={spacing(2, scale)} style={iconMargin} />}
-        label={revealLabel}
-        onPress={handleRevealPress}
-        scale={scale}
-      />
-      <ConfirmDialog
-        visible={showUnlockAllConfirm}
-        title="Unlock all habits?"
-        message="This opens every locked habit at once. You can always re-lock the ones you haven't started."
-        testID="unlock-all-confirm"
-        cancelTestID="unlock-all-cancel"
-        confirmTestID="unlock-all-confirm-button"
-        confirmLabel="Unlock All"
-        onCancel={() => setShowUnlockAllConfirm(false)}
-        onConfirm={() => {
-          setShowUnlockAllConfirm(false);
-          onToggleReveal();
-        }}
-      />
-    </View>
-  );
-};
-
-export const OverflowMenu = ({
-  scale,
-  menuVisible,
-  onToggle,
-  onSelectMode,
-  onOpenOnboarding,
-  onOpenAddHabit,
-  allRevealed,
-  onToggleReveal,
-}: OverflowMenuProps) => {
-  const iconMargin = { marginRight: spacing(1, scale) };
-  const handleMenuPress = (action: MenuAction) => {
-    if (action === 'onboarding') onOpenOnboarding();
-    else if (action === 'addHabit') onOpenAddHabit();
-    else onSelectMode(action);
-  };
-  return (
-    <View style={styles.overflowMenuContainer} testID="overflow-menu-wrapper">
-      <TouchableOpacity
-        testID="overflow-menu-toggle"
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityLabel="Habit options menu"
-        accessibilityState={{ expanded: menuVisible }}
-        style={{ padding: spacing(1, scale) }}
-      >
-        <MoreHorizontal size={spacing(3, scale)} />
-      </TouchableOpacity>
-      {menuVisible && (
-        <OverflowMenuList
-          scale={scale}
-          iconMargin={iconMargin}
-          handleMenuPress={handleMenuPress}
-          allRevealed={allRevealed}
-          onToggleReveal={onToggleReveal}
-        />
-      )}
-    </View>
-  );
 };
 
 interface HabitModalsProps {
@@ -882,26 +726,58 @@ const HabitsContentSection = ({
   />
 );
 
+interface HabitsScreenDrawerProps {
+  state: ReturnType<typeof useHabitsScreenState>;
+  drawer: ReturnType<typeof useScreenDrawer>;
+  barVisible: boolean;
+  toggleBarVisible: () => void;
+}
+
+// The header drawer: every moved overflow-menu action plus the stage pager and
+// the in-body-bar show/hide toggle. Kept as its own component so the screen's
+// render stays small and the drawer wiring lives in one place.
+const HabitsScreenDrawer = ({
+  state,
+  drawer,
+  barVisible,
+  toggleBarVisible,
+}: HabitsScreenDrawerProps) => {
+  const { modals, pagination } = state;
+  const drawerRange = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
+  return (
+    <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Habits" title="Habits">
+      <HabitsDrawer
+        onSelectMode={state.handleSelectMode}
+        onOpenOnboarding={() => modals.open('onboarding')}
+        onOpenAddHabit={() => modals.open('addHabit')}
+        allRevealed={state.allRevealed}
+        onToggleReveal={state.handleToggleReveal}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        onPrev={pagination.goPrev}
+        onNext={pagination.goNext}
+        stageStart={drawerRange.start}
+        stageEnd={drawerRange.end}
+        barVisible={barVisible}
+        onToggleBarVisible={toggleBarVisible}
+        onClose={drawer.close}
+      />
+    </ScreenDrawer>
+  );
+};
+
 const HabitsScreen = () => {
   const state = useHabitsScreenState();
   const { habits, modals, actions, ui, responsive, pagination } = state;
   const { columns, gridGutter, scale, isLG, isXL } = responsive;
-  const paginationProps = buildPaginationProps(pagination, scale);
+  const drawer = useScreenDrawer('Habits');
+  const { barVisible, toggleBarVisible } = usePaginationBarVisibility();
+  // The in-body bar is suppressed while hidden; the drawer's pager stays wired
+  // regardless so the user can always page or re-show the bar.
+  const paginationProps = barVisible ? buildPaginationProps(pagination, scale) : null;
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <ContentContainer fill>
-        <View style={styles.topBar}>
-          <OverflowMenu
-            scale={scale}
-            menuVisible={modals.menu}
-            onToggle={modals.toggleMenu}
-            onSelectMode={state.handleSelectMode}
-            onOpenOnboarding={() => modals.open('onboarding')}
-            onOpenAddHabit={() => modals.open('addHabit')}
-            allRevealed={state.allRevealed}
-            onToggleReveal={state.handleToggleReveal}
-          />
-        </View>
         <HabitsContentSection
           state={state}
           columns={columns}
@@ -925,6 +801,12 @@ const HabitsScreen = () => {
           onAddHabit={state.handleAddHabit}
         />
       </ContentContainer>
+      <HabitsScreenDrawer
+        state={state}
+        drawer={drawer}
+        barVisible={barVisible}
+        toggleBarVisible={toggleBarVisible}
+      />
     </SafeAreaView>
   );
 };

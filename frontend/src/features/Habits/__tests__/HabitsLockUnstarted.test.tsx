@@ -2,11 +2,44 @@
 // Pins the overflow menu's reveal toggle in its other direction: pressing
 // "Lock Unstarted Habits" flips an early-unlocked (revealed, future
 // start_date) habit back to locked.
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 
 import HabitsScreen from '../HabitsScreen';
+
+const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
+  headerLeftStore.listeners.add(onChange);
+  return () => headerLeftStore.listeners.delete(onChange);
+};
+
+// Renders the screen's headerLeft toggle in the same tree as the screen, so the
+// drawer opens in-tree and its rows are pressable.
+const HabitsScreenWithHeader = (): React.JSX.Element => {
+  const headerLeft = useSyncExternalStore(subscribeHeaderLeft, () => headerLeftStore.current);
+  return (
+    <>
+      {headerLeft === undefined ? null : headerLeft()}
+      <HabitsScreen />
+    </>
+  );
+};
+
+// HabitsScreen installs its drawer toggle as the navigator's headerLeft via
+// useAppNavigation. Rendering the screen bare would strand that toggle in a
+// detached tree whose presses never reach the screen's Modal-based drawer, so a
+// small external store relays the headerLeft into the same tree (see harness).
+const headerLeftStore: {
+  current: (() => React.ReactElement) | undefined;
+  listeners: Set<() => void>;
+} = { current: undefined, listeners: new Set() };
+const mockSetOptions = jest.fn((opts: { headerLeft?: () => React.ReactElement }) => {
+  headerLeftStore.current = opts.headerLeft;
+  headerLeftStore.listeners.forEach((listener) => listener());
+});
+jest.mock('@/navigation/hooks', () => ({
+  useAppNavigation: () => ({ setOptions: mockSetOptions }),
+}));
 
 jest.mock('../../../api', () => ({
   habits: {
@@ -84,17 +117,24 @@ jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
 
-describe('Habits overflow menu lock-unstarted toggle', () => {
+beforeEach(() => {
+  headerLeftStore.current = undefined;
+  headerLeftStore.listeners.clear();
+});
+
+describe('Habits drawer lock-unstarted toggle', () => {
   it('locks an early-unlocked habit via Lock Unstarted Habits', async () => {
-    const { getAllByTestId, getByTestId, getByText, queryByText } = render(<HabitsScreen />);
+    const { getAllByTestId, getByText, getByLabelText, queryByText } = render(
+      <HabitsScreenWithHeader />,
+    );
 
     await waitFor(() => expect(getAllByTestId('habit-icon').length).toBeGreaterThan(0));
 
     // All seeded habits are revealed, so the toggle offers the lock action.
-    fireEvent.press(getByTestId('overflow-menu-toggle'));
+    fireEvent.press(getByLabelText('Open Habits menu'));
     fireEvent.press(getByText('Lock Unstarted Habits'));
 
-    // Acting on a menu item closes the overflow menu.
+    // Acting on a drawer row closes the drawer.
     await waitFor(() => expect(queryByText('Lock Unstarted Habits')).toBeNull());
   });
 });
