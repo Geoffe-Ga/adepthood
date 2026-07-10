@@ -36,6 +36,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
+import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
@@ -51,8 +52,11 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
-import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
+import ActiveRitualSession, {
+  type ActiveRitualSessionHandle,
+} from '@/features/Practice/components/ActiveRitualSession';
 import { FrequencyBanner } from '@/features/Practice/components/FrequencyBanner';
+import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import { useAppRoute } from '@/navigation/hooks';
@@ -111,7 +115,56 @@ const PracticeScreen = (): React.JSX.Element => {
   const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
   const refreshSignal = useFocusRefresh(active.refresh);
   const { banner } = usePracticeChrome(stageNumber, refreshSignal);
+  const drawer = useScreenDrawer('Practice');
+  const sessionRef = useRef<ActiveRitualSessionHandle>(null);
 
+  const hasActivePractice = Boolean(
+    active.activeUserPractice && active.practice && active.effectiveConfig,
+  );
+
+  return (
+    <>
+      <PracticeBody
+        active={active}
+        userTimezone={userTimezone}
+        weekly={weekly}
+        onWriteReflection={handleWriteReflection}
+        banner={banner}
+        stageNumber={stageNumber}
+        sessionRef={sessionRef}
+      />
+      <PracticeScreenDrawer
+        drawer={drawer}
+        hasActivePractice={hasActivePractice}
+        stageNumber={stageNumber}
+        practiceId={active.practice?.id}
+        onCustomize={() => sessionRef.current?.openConfigurator()}
+      />
+    </>
+  );
+};
+
+interface PracticeBodyProps {
+  active: ActivePracticeHook;
+  userTimezone: string;
+  weekly: WeeklyProgressHook;
+  onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  banner: React.JSX.Element;
+  stageNumber: number;
+  sessionRef: React.Ref<ActiveRitualSessionHandle>;
+}
+
+// Selects the screen body for the current load state: a loading/error
+// placeholder, the active session, or the empty state when no practice is set.
+const PracticeBody = ({
+  active,
+  userTimezone,
+  weekly,
+  onWriteReflection,
+  banner,
+  stageNumber,
+  sessionRef,
+}: PracticeBodyProps): React.JSX.Element => {
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
     return <ErrorView error={active.error} onRetry={active.refresh} />;
@@ -129,16 +182,50 @@ const PracticeScreen = (): React.JSX.Element => {
           userTimezone={userTimezone}
           weekly={weekly}
           onUserPracticeUpdated={active.updateActivePractice}
-          onWriteReflection={handleWriteReflection}
+          onWriteReflection={onWriteReflection}
           banner={banner}
           stageNumber={stageNumber}
+          sessionRef={sessionRef}
         />
       </ContentContainer>
     );
   }
-
   return <EmptyStateView stageNumber={stageNumber} />;
 };
+
+interface PracticeScreenDrawerProps {
+  drawer: ScreenDrawerState;
+  hasActivePractice: boolean;
+  stageNumber: number;
+  practiceId?: number;
+  onCustomize: () => void;
+}
+
+// The header drawer: catalog/customize/details/create actions in the active
+// state, browse/create when empty. Kept as its own component so the screen's
+// render stays small and the drawer wiring lives in one place.
+const PracticeScreenDrawer = ({
+  drawer,
+  hasActivePractice,
+  stageNumber,
+  practiceId,
+  onCustomize,
+}: PracticeScreenDrawerProps): React.JSX.Element => (
+  <ScreenDrawer
+    visible={drawer.isOpen}
+    onClose={drawer.close}
+    screenName="Practice"
+    title="Practice"
+  >
+    <PracticeDrawer
+      hasActivePractice={hasActivePractice}
+      stageNumber={stageNumber}
+      practiceId={practiceId}
+      onCustomize={onCustomize}
+      onClose={drawer.close}
+    />
+  </ScreenDrawer>
+);
 
 interface CatalogButtonProps {
   stageNumber: number;
@@ -203,6 +290,7 @@ interface ActiveSessionViewProps {
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   banner: React.JSX.Element;
   stageNumber: number;
+  sessionRef?: React.Ref<ActiveRitualSessionHandle>;
 }
 
 const ActiveSessionView = ({
@@ -216,6 +304,7 @@ const ActiveSessionView = ({
   onWriteReflection,
   banner,
   stageNumber,
+  sessionRef,
 }: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
@@ -240,6 +329,7 @@ const ActiveSessionView = ({
         />
         <ActiveRitualSession
           key={`practice-${userPractice.id}`}
+          ref={sessionRef}
           userPractice={userPractice}
           effectiveName={effectiveName ?? practiceName}
           effectiveConfig={effectiveConfig}
