@@ -13,7 +13,7 @@
  * Responsive per the margin-column precedent: a bottom-sheet ``Modal`` on a
  * narrow viewport, an inline side pane on a wide one. Reduced-motion safe.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   ScrollView,
@@ -22,11 +22,14 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type NativeSyntheticEvent,
+  type TextInputSelectionChangeEventData,
 } from 'react-native';
 
+import QuoteSelectionSurface from './QuoteSelectionSurface';
 import { sourceAttribution } from './reflectionCopy';
 
-import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type { PromoteQuoteSpan, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -53,9 +56,25 @@ const STRIPE_WIDTH = 3;
 /** Dim a pending quote once it has been folded into the reflection body. */
 const INCLUDED_ROW_OPACITY = 0.5;
 
+/** Warm, declinable copy when a re-promotion didn't take; invites a calm retry. */
+const PROMOTE_FAILURE_HINT =
+  'That selection didn’t quite take — you can try again whenever you like.';
+
+type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
-  onInsertQuote: (_quote: PromotedQuoteSummary, _sourceItem: ReflectionSourceItem) => void;
+  /**
+   * Fold a pending quote into the reflection body. Resolves ``true`` when it was
+   * marked included (keep the dim), ``false``/reject to revert the dim, or
+   * ``undefined`` on a legacy fire-and-forget caller (keep the dim).
+   */
+  onInsertQuote: (
+    _quote: PromotedQuoteSummary,
+    _sourceItem: ReflectionSourceItem,
+  ) => Promise<boolean> | undefined;
+  /** Re-promote a freshly selected span of a source; resolves ``true`` on success. */
+  onPromoteSpan?: (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean>;
   onClose?: () => void;
 }
 
@@ -80,6 +99,26 @@ function levelLabel(level: string | null): string {
 /** Feed order: oldest → newest by timestamp. */
 function byTimestamp(a: ReflectionSourceItem, b: ReflectionSourceItem): number {
   return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+}
+
+/** A copy of ``ids`` with ``id`` added (the optimistic dim). */
+function withId(ids: ReadonlySet<number>, id: number): Set<number> {
+  return new Set(ids).add(id);
+}
+
+/** A copy of ``ids`` with ``id`` removed (reverting a failed fold-in's dim). */
+function withoutId(ids: ReadonlySet<number>, id: number): Set<number> {
+  const next = new Set(ids);
+  next.delete(id);
+  return next;
+}
+
+/** A copy of ``keys`` with ``key`` toggled (expand/collapse a row). */
+function toggleKey(keys: ReadonlySet<string>, key: string): Set<string> {
+  const next = new Set(keys);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
 }
 
 /** The pending quotes across every source (deduped by id), in source order. */
@@ -150,15 +189,70 @@ function PendingQuotesGroup({
   );
 }
 
+/** The gesture wiring an expanded row hands to its promote opener / selection. */
+interface RowPromoteControls {
+  /** True when this row currently owns the shared selection surface. */
+  selecting: boolean;
+  /** True when this row's last re-promotion could not be saved. */
+  promoteFailed: boolean;
+  /** True when re-promotion is available at all (the parent wired a handler). */
+  canPromote: boolean;
+  onStartSelecting: () => void;
+  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}
+
+/** An expanded row's body — either the read-only text or the selection surface. */
+function SourceExpansion({
+  item,
+  controls,
+}: {
+  item: ReflectionSourceItem;
+  controls: RowPromoteControls;
+}): React.JSX.Element {
+  if (controls.selecting) {
+    return (
+      <QuoteSelectionSurface
+        body={item.body}
+        onSelectionChange={controls.onSelectionChange}
+        onConfirm={controls.onConfirm}
+        onCancel={controls.onCancel}
+        testID={`source-select-${item.kind}-${item.id}`}
+      />
+    );
+  }
+  return (
+    <>
+      <Text style={styles.body} testID={`source-body-${item.id}`}>
+        {item.body}
+      </Text>
+      {controls.canPromote ? (
+        <TouchableOpacity
+          style={styles.promoteOpener}
+          onPress={controls.onStartSelecting}
+          accessibilityRole="button"
+          accessibilityLabel="Promote a passage from this source"
+          testID={`source-promote-${item.kind}-${item.id}`}
+        >
+          <Text style={styles.promoteOpenerLink}>Promote a quote</Text>
+        </TouchableOpacity>
+      ) : null}
+    </>
+  );
+}
+
 /** One source in the feed: a header + excerpt, expanding to the full body on tap. */
 function SourceRow({
   item,
   expanded,
   onToggle,
+  controls,
 }: {
   item: ReflectionSourceItem;
   expanded: boolean;
   onToggle: () => void;
+  controls: RowPromoteControls;
 }): React.JSX.Element {
   const isReflection = item.kind === 'reflection';
   return (
@@ -181,26 +275,111 @@ function SourceRow({
           </Text>
         )}
       </TouchableOpacity>
-      {expanded ? (
-        <Text style={styles.body} testID={`source-body-${item.id}`}>
-          {item.body}
+      {expanded ? <SourceExpansion item={item} controls={controls} /> : null}
+      {controls.promoteFailed ? (
+        <Text style={styles.promoteHint} testID="source-promote-hint">
+          {PROMOTE_FAILURE_HINT}
         </Text>
       ) : null}
     </View>
   );
 }
 
-/** The chronological feed; owns which rows are expanded. */
-function SourceFeed({ feed }: { feed: ReflectionSourceItem[] }): React.JSX.Element {
+/** A char-offset span (defaults to empty so a bare confirm promotes nothing). */
+type SelectionSpan = { start: number; end: number };
+
+/** A re-promotion span handler; absent when the parent doesn't offer it. */
+type PromoteSpanHandler = (
+  _item: ReflectionSourceItem,
+  _span: PromoteQuoteSpan,
+) => Promise<boolean>;
+
+/** The single-row selection state the feed threads down to its rows. */
+interface RowSelection {
+  selectingKey: string | null;
+  promoteFailedKey: string | null;
+  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  startSelecting: (_key: string) => void;
+  cancelSelecting: () => void;
+  confirmSelection: (_item: ReflectionSourceItem, _key: string) => Promise<void>;
+}
+
+/**
+ * Own the one row that currently holds the shared selection surface and the one
+ * whose last re-promotion failed. Only one row selects at a time, so a single
+ * key + a single captured span suffice.
+ */
+function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
+  const [selectingKey, setSelectingKey] = useState<string | null>(null);
+  const [promoteFailedKey, setPromoteFailedKey] = useState<string | null>(null);
+  const selectionRef = useRef<SelectionSpan>({ start: 0, end: 0 });
+
+  const startSelecting = useCallback((key: string) => {
+    selectionRef.current = { start: 0, end: 0 };
+    setPromoteFailedKey(null);
+    setSelectingKey(key);
+  }, []);
+
+  const cancelSelecting = useCallback(() => setSelectingKey(null), []);
+
+  const onSelectionChange = useCallback((event: SelectionChangeEvent) => {
+    selectionRef.current = event.nativeEvent.selection;
+  }, []);
+
+  const confirmSelection = useCallback(
+    async (item: ReflectionSourceItem, key: string): Promise<void> => {
+      const { start, end } = selectionRef.current;
+      if (end <= start) return; // An empty selection promotes nothing; stay put.
+      setSelectingKey(null);
+      if (onPromoteSpan == null) return;
+      const ok = await onPromoteSpan(item, { anchor_start: start, anchor_end: end });
+      if (!ok) setPromoteFailedKey(key);
+    },
+    [onPromoteSpan],
+  );
+
+  return {
+    selectingKey,
+    promoteFailedKey,
+    onSelectionChange,
+    startSelecting,
+    cancelSelecting,
+    confirmSelection,
+  };
+}
+
+/** Bind the shared selection state to one row's promote controls. */
+function buildControls(
+  item: ReflectionSourceItem,
+  key: string,
+  canPromote: boolean,
+  selection: RowSelection,
+): RowPromoteControls {
+  return {
+    selecting: selection.selectingKey === key,
+    promoteFailed: selection.promoteFailedKey === key,
+    canPromote,
+    onStartSelecting: () => selection.startSelecting(key),
+    onSelectionChange: selection.onSelectionChange,
+    onConfirm: () => selection.confirmSelection(item, key),
+    onCancel: selection.cancelSelecting,
+  };
+}
+
+/** The chronological feed; owns which rows are expanded + the selection surface. */
+function SourceFeed({
+  feed,
+  onPromoteSpan,
+}: {
+  feed: ReflectionSourceItem[];
+  onPromoteSpan?: PromoteSpanHandler;
+}): React.JSX.Element {
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const toggle = useCallback((key: string) => {
-    setExpandedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExpandedKeys((prev) => toggleKey(prev, key));
   }, []);
+  const selection = useRowSelection(onPromoteSpan);
+  const canPromote = onPromoteSpan != null;
   return (
     <View>
       {feed.map((item) => {
@@ -211,6 +390,7 @@ function SourceFeed({ feed }: { feed: ReflectionSourceItem[] }): React.JSX.Eleme
             item={item}
             expanded={expandedKeys.has(key)}
             onToggle={() => toggle(key)}
+            controls={buildControls(item, key, canPromote, selection)}
           />
         );
       })}
@@ -218,23 +398,54 @@ function SourceFeed({ feed }: { feed: ReflectionSourceItem[] }): React.JSX.Eleme
   );
 }
 
+/**
+ * Own the "which pending quotes are folded in" dim and reconcile it with the
+ * fold-in outcome: dim on tap, revert on a ``false``/rejected result, keep the
+ * dim on ``true`` or a legacy fire-and-forget (``undefined``) caller.
+ */
+function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQuote']): {
+  includedIds: ReadonlySet<number>;
+  onInsert: (_entry: PendingEntry) => void;
+} {
+  const [includedIds, setIncludedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
+
+  const reconcileInsert = useCallback(
+    async (entry: PendingEntry): Promise<void> => {
+      const { id } = entry.quote;
+      setIncludedIds((prev) => withId(prev, id)); // Dim optimistically.
+      const outcome = onInsertQuote(entry.quote, entry.item);
+      if (outcome == null) return; // Legacy fire-and-forget caller: keep the dim.
+      let foldedIn = false;
+      try {
+        foldedIn = await outcome;
+      } catch {
+        foldedIn = false; // A rejected fold-in reverts the dim, like a false.
+      }
+      if (!foldedIn) setIncludedIds((prev) => withoutId(prev, id));
+    },
+    [onInsertQuote],
+  );
+
+  const onInsert = useCallback(
+    (entry: PendingEntry): void => {
+      void reconcileInsert(entry);
+    },
+    [reconcileInsert],
+  );
+
+  return { includedIds, onInsert };
+}
+
 /** The panel's inner content, shared by the sheet and pane containers. */
 function SourcesContent({
   items,
   onInsertQuote,
+  onPromoteSpan,
   onClose,
 }: ReflectionSourcesPanelProps): React.JSX.Element {
-  const [includedIds, setIncludedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
   const pending = useMemo(() => collectPending(items), [items]);
   const feed = useMemo(() => [...items].sort(byTimestamp), [items]);
-
-  const onInsert = useCallback(
-    (entry: PendingEntry) => {
-      setIncludedIds((prev) => new Set(prev).add(entry.quote.id));
-      onInsertQuote(entry.quote, entry.item);
-    },
-    [onInsertQuote],
-  );
+  const { includedIds, onInsert } = useDimReconciler(onInsertQuote);
 
   return (
     <ScrollView
@@ -254,7 +465,7 @@ function SourcesContent({
         </TouchableOpacity>
       )}
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
-      <SourceFeed feed={feed} />
+      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} />
     </ScrollView>
   );
 }
@@ -381,6 +592,21 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: accent.primary,
     fontWeight: '600',
+  },
+  promoteOpener: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    paddingTop: spacing(1),
+  },
+  promoteOpenerLink: {
+    ...editorialType.caption,
+    color: accent.primary,
+    fontWeight: '600',
+  },
+  promoteHint: {
+    ...editorialType.caption,
+    color: ink.soft,
+    paddingTop: spacing(0.5),
   },
 });
 

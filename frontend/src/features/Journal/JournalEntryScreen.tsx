@@ -33,6 +33,7 @@ import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
+import QuoteSelectionSurface from './QuoteSelectionSurface';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
@@ -1240,61 +1241,6 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   return { quotes, hint, ...interaction };
 }
 
-/**
- * The span-selection surface: a controlled, effectively read-only serif field
- * that mirrors the body so the reader can select a passage to promote without
- * editing it (soft keyboard suppressed, caret hidden; ``editable`` stays true so
- * Android text selection still works).
- */
-function QuoteSelectionSurface({
-  body,
-  onSelectionChange,
-  onConfirm,
-  onCancel,
-}: {
-  body: string;
-  onSelectionChange: (_e: SelectionChangeEvent) => void;
-  onConfirm: () => Promise<void>;
-  onCancel: () => void;
-}) {
-  return (
-    <View>
-      <TextInput
-        style={styles.bodyInput}
-        value={body}
-        multiline
-        editable
-        showSoftInputOnFocus={false}
-        caretHidden
-        scrollEnabled={false}
-        onSelectionChange={onSelectionChange}
-        accessibilityLabel="Select a passage to promote"
-        testID="quote-select-input"
-      />
-      <View style={styles.quoteSelectActions}>
-        <TouchableOpacity
-          onPress={() => void onConfirm()}
-          accessibilityRole="button"
-          accessibilityLabel="Promote the selected passage"
-          style={styles.quoteActionButton}
-          testID="quote-select-confirm"
-        >
-          <Text style={styles.controlLink}>Promote selection</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={onCancel}
-          accessibilityRole="button"
-          accessibilityLabel="Cancel promoting"
-          style={styles.quoteActionButton}
-          testID="quote-select-cancel"
-        >
-          <Text style={styles.controlLink}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
 /** Read-mode affordances: a remove offer (when a span is tapped), Promote, Edit. */
 function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: () => void }) {
   return (
@@ -1874,6 +1820,7 @@ function ReflectionComposer({
         <ReflectionSourcesPanel
           items={reflection.sources}
           onInsertQuote={reflection.onInsertQuote}
+          onPromoteSpan={reflection.onPromoteSpan}
           onClose={closeSources}
         />
       ) : null}

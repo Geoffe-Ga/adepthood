@@ -7,15 +7,30 @@
  * a Markdown blockquote at the caret, let the normal draft path create/save the
  * entry, then mark the quote included on that entry. A failed inclusion leaves
  * the quote pending and raises a warm, declinable hint — never a crash, never a
- * nag.
+ * nag. It also re-promotes a freshly selected span from a source and folds the
+ * created quote into the feed's pending set.
  */
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from 'react';
 import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
 import { formatBlockquote, sourceAttribution } from './reflectionCopy';
 
 import { promotions, reflections } from '@/api';
-import type { PromotedQuoteSummary, ReflectionLevel, ReflectionSourceItem } from '@/api';
+import type {
+  PromoteQuoteSpan,
+  PromotedQuote,
+  PromotedQuoteSummary,
+  ReflectionLevel,
+  ReflectionSourceItem,
+} from '@/api';
 
 type SelectionEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
 
@@ -39,8 +54,13 @@ export interface UseReflectionModeResult {
   inclusionHint: boolean;
   /** Track the body caret so an inserted quote lands where the writer is. */
   onBodySelectionChange: (_e: SelectionEvent) => void;
-  /** Fold a chosen pending quote into the reflection body. */
-  onInsertQuote: (_quote: PromotedQuoteSummary, _sourceItem: ReflectionSourceItem) => void;
+  /** Fold a chosen pending quote in; resolves true when it was marked included. */
+  onInsertQuote: (
+    _quote: PromotedQuoteSummary,
+    _sourceItem: ReflectionSourceItem,
+  ) => Promise<boolean>;
+  /** Promote a freshly selected span of a source; resolves true on success. */
+  onPromoteSpan: (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean>;
 }
 
 /**
@@ -57,11 +77,39 @@ function spliceAtCaret(
   return { text: body.slice(0, at) + block + body.slice(at), nextCaret: at + block.length };
 }
 
+/** True when ``item`` is the source a created quote belongs to (kind + id). */
+function isSameSource(item: ReflectionSourceItem, sourceItem: ReflectionSourceItem): boolean {
+  return item.kind === sourceItem.kind && item.id === sourceItem.id;
+}
+
+/**
+ * Append the created quote (as a feed summary, minus ``source_entry_id``) onto
+ * its source item's pending set, leaving every other item untouched.
+ */
+function mergeCreatedQuote(
+  items: ReflectionSourceItem[],
+  sourceItem: ReflectionSourceItem,
+  created: PromotedQuote,
+): ReflectionSourceItem[] {
+  const summary: PromotedQuoteSummary = {
+    id: created.id,
+    anchor_start: created.anchor_start,
+    anchor_end: created.anchor_end,
+    anchor_text: created.anchor_text,
+    pending: created.pending,
+  };
+  return items.map((item) =>
+    isSameSource(item, sourceItem)
+      ? { ...item, promoted_quotes: [...item.promoted_quotes, summary] }
+      : item,
+  );
+}
+
 /** Fetch the rereadable sources feed for a reflection scope (hidden on any error). */
 function useSourcesFeed(
   reflectionLevel: ReflectionLevel | undefined,
   reflectionScopeKey: string | undefined,
-): ReflectionSourceItem[] {
+): [ReflectionSourceItem[], Dispatch<SetStateAction<ReflectionSourceItem[]>>] {
   const [sources, setSources] = useState<ReflectionSourceItem[]>([]);
   useEffect(() => {
     if (reflectionLevel == null || reflectionScopeKey == null) return undefined;
@@ -78,7 +126,77 @@ function useSourcesFeed(
       alive = false;
     };
   }, [reflectionLevel, reflectionScopeKey]);
-  return sources;
+  return [sources, setSources];
+}
+
+/** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
+function useFoldIn(
+  bodyRef: MutableRefObject<string>,
+  onChangeBody: (_next: string) => void,
+  flush: () => Promise<number | null>,
+): {
+  inclusionHint: boolean;
+  onBodySelectionChange: (_e: SelectionEvent) => void;
+  onInsertQuote: (
+    _quote: PromotedQuoteSummary,
+    _sourceItem: ReflectionSourceItem,
+  ) => Promise<boolean>;
+} {
+  const [inclusionHint, setInclusionHint] = useState(false);
+  const caretRef = useRef<number | null>(null);
+
+  const onBodySelectionChange = useCallback((event: SelectionEvent) => {
+    caretRef.current = event.nativeEvent.selection.start;
+  }, []);
+
+  const onInsertQuote = useCallback(
+    async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
+      const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
+      const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
+      onChangeBody(text);
+      caretRef.current = nextCaret;
+      const entryId = await flush();
+      if (entryId == null) return false;
+      try {
+        await promotions.setIncluded(quote.id, entryId);
+        // A retried fold-in should not leave a stale warning from an earlier try.
+        setInclusionHint(false);
+        return true;
+      } catch {
+        // Leave the quote pending and invite a calm retry — no crash, no nag.
+        setInclusionHint(true);
+        return false;
+      }
+    },
+    [bodyRef, onChangeBody, flush],
+  );
+
+  return { inclusionHint, onBodySelectionChange, onInsertQuote };
+}
+
+/** The in-panel re-promote flow: lift a fresh span into its source's pending set. */
+function usePromoteSpan(
+  setSources: Dispatch<SetStateAction<ReflectionSourceItem[]>>,
+): (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean> {
+  // One re-promote at a time so a double press can't double-post the same span.
+  const promotingRef = useRef(false);
+  return useCallback(
+    async (sourceItem: ReflectionSourceItem, span: PromoteQuoteSpan): Promise<boolean> => {
+      if (promotingRef.current) return false;
+      promotingRef.current = true;
+      try {
+        const created = await promotions.create(sourceItem.id, span);
+        setSources((prev) => mergeCreatedQuote(prev, sourceItem, created));
+        return true;
+      } catch {
+        // The source is unchanged and the writer can try again — no crash, no nag.
+        return false;
+      } finally {
+        promotingRef.current = false;
+      }
+    },
+    [setSources],
+  );
 }
 
 export function useReflectionMode({
@@ -89,38 +207,13 @@ export function useReflectionMode({
   flush,
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
-  const sources = useSourcesFeed(reflectionLevel, reflectionScopeKey);
-  const [inclusionHint, setInclusionHint] = useState(false);
-  const caretRef = useRef<number | null>(null);
-
-  const onBodySelectionChange = useCallback((event: SelectionEvent) => {
-    caretRef.current = event.nativeEvent.selection.start;
-  }, []);
-
-  const foldIn = useCallback(
-    async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<void> => {
-      const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
-      const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
-      onChangeBody(text);
-      caretRef.current = nextCaret;
-      const entryId = await flush();
-      if (entryId == null) return;
-      try {
-        await promotions.setIncluded(quote.id, entryId);
-      } catch {
-        // Leave the quote pending and invite a calm retry — no crash, no nag.
-        setInclusionHint(true);
-      }
-    },
-    [bodyRef, onChangeBody, flush],
+  const [sources, setSources] = useSourcesFeed(reflectionLevel, reflectionScopeKey);
+  const { inclusionHint, onBodySelectionChange, onInsertQuote } = useFoldIn(
+    bodyRef,
+    onChangeBody,
+    flush,
   );
+  const onPromoteSpan = usePromoteSpan(setSources);
 
-  const onInsertQuote = useCallback(
-    (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): void => {
-      void foldIn(quote, sourceItem);
-    },
-    [foldIn],
-  );
-
-  return { active, sources, inclusionHint, onBodySelectionChange, onInsertQuote };
+  return { active, sources, inclusionHint, onBodySelectionChange, onInsertQuote, onPromoteSpan };
 }
