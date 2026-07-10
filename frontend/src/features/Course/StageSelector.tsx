@@ -2,40 +2,14 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Stage } from '../../api';
-import { STAGE_ORDER, resolveStageColor } from '../../design/tokens';
 
 import styles from './Course.styles';
-
-/** Derive the total number of stage pills from the API response. */
-function totalStageCount(stages: Stage[]): number {
-  if (stages.length === 0) return 0;
-  return Math.max(...stages.map((s) => s.stage_number));
-}
+import { getStageColor, isCompleted, isUnlocked, totalStageCount } from './stageDisplay';
 
 interface StageSelectorProps {
   stages: Stage[];
   selectedStage: number;
   onSelectStage: (_stageNumber: number) => void;
-}
-
-/** Get the spiral dynamics color for a stage number (1-indexed). */
-function getStageColor(stageNumber: number, stageById: Map<number, Stage>): string {
-  // Prefer the stage's own API color; fall back to its progression-order name
-  // when the API omits that stage number. The shared resolver handles the
-  // neutral fallback for missing or unrecognized names.
-  const name = stageById.get(stageNumber)?.spiral_dynamics_color ?? STAGE_ORDER[stageNumber - 1];
-  return resolveStageColor(name);
-}
-
-/** Determine if a stage is unlocked based on API data. */
-function isUnlocked(stageNumber: number, stageById: Map<number, Stage>): boolean {
-  return stageById.get(stageNumber)?.is_unlocked ?? false;
-}
-
-/** Determine if a stage has been completed (progress === 1.0). */
-function isCompleted(stageNumber: number, stageById: Map<number, Stage>): boolean {
-  const stage = stageById.get(stageNumber);
-  return stage != null && stage.progress >= 1.0;
 }
 
 interface StagePillProps {

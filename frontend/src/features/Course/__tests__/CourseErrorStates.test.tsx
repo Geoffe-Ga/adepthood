@@ -61,9 +61,13 @@ jest.mock('../../../api', () => ({
   },
 }));
 
+// CourseScreen installs its header-left drawer toggle through useAppNavigation
+// (useScreenDrawer), which calls navigation.setOptions in a layout effect on
+// every mount -- without this mock every test below would crash reading
+// setOptions off an undefined navigation object.
 jest.mock('../../../navigation/hooks', () => ({
   useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
-  useAppNavigation: () => ({ navigate: jest.fn() }),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({ navigate: jest.fn() }),
