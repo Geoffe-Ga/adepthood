@@ -20,7 +20,7 @@
 // panel in a bottom-sheet `Modal` (testID `reflection-sources-sheet`); >= 600
 // renders an inline side pane (testID `reflection-sources-pane`).
 import { jest, describe, it, expect } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
@@ -169,5 +169,147 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// RED: `onPromoteSpan` prop and `source-promote-<kind>-<id>` don't exist yet.
+describe('ReflectionSourcesPanel -- in-panel re-promotion opener', () => {
+  it('shows the promote opener only on an expanded row when onPromoteSpan is provided', () => {
+    const items = [item({ id: 1 })];
+    const withPromote = render(
+      <ReflectionSourcesPanel items={items} onInsertQuote={jest.fn()} onPromoteSpan={jest.fn()} />,
+    );
+    fireEvent.press(withPromote.getByTestId('entry-source-1'));
+    expect(withPromote.getByTestId('source-promote-entry-1')).toBeTruthy();
+
+    const withoutPromote = render(
+      <ReflectionSourcesPanel items={items} onInsertQuote={jest.fn()} />,
+    );
+    fireEvent.press(withoutPromote.getByTestId('entry-source-1'));
+    expect(withoutPromote.queryByTestId('source-promote-entry-1')).toBeNull();
+  });
+});
+
+describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', () => {
+  it('confirming a selected span calls onPromoteSpan with the source item and offsets', async () => {
+    const onPromoteSpan = jest.fn(() => Promise.resolve(true));
+    const sourceItem = item({ id: 1 });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[sourceItem]}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    const input = getByTestId('source-select-entry-1-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 9 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+    });
+    expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 9 });
+  });
+
+  it('does not fire onPromoteSpan on a collapsed selection and stays on the selection surface', async () => {
+    const onPromoteSpan = jest.fn(() => Promise.resolve(true));
+    const items = [item({ id: 1 })];
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={items}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    const input = getByTestId('source-select-entry-1-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 5, end: 5 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+    });
+    expect(onPromoteSpan).not.toHaveBeenCalled();
+    expect(getByTestId('source-select-entry-1-input')).toBeTruthy();
+  });
+
+  it('cancel restores the plain body without firing onPromoteSpan', () => {
+    const onPromoteSpan = jest.fn();
+    const items = [item({ id: 1, body: 'A river-bank sentence to reread.' })];
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel
+        items={items}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    fireEvent.press(getByTestId('source-select-entry-1-cancel'));
+    expect(queryByTestId('source-select-entry-1-input')).toBeNull();
+    expect(getByTestId('source-body-1').props.children).toContain(
+      'A river-bank sentence to reread.',
+    );
+    expect(onPromoteSpan).not.toHaveBeenCalled();
+  });
+
+  it('shows a declinable hint when onPromoteSpan resolves false, and the opener stays usable', async () => {
+    const onPromoteSpan = jest.fn(() => Promise.resolve(false));
+    const items = [item({ id: 1 })];
+    const { getByTestId, findByTestId } = render(
+      <ReflectionSourcesPanel
+        items={items}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    const input = getByTestId('source-select-entry-1-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 9 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+    });
+    expect(await findByTestId('source-promote-hint')).toBeTruthy();
+    expect(getByTestId('source-promote-entry-1')).toBeTruthy();
+  });
+});
+
+// RED: `onInsertQuote`'s Promise<boolean> result is not yet reconciled with the dim.
+describe('ReflectionSourcesPanel -- dim reconciles with a failed fold-in', () => {
+  it('reverts the dim when onInsertQuote resolves false, and a second press re-fires it', async () => {
+    const onInsertQuote = jest.fn(() => Promise.resolve(false));
+    const sourceItem = item({ id: 1, promoted_quotes: [quote({ id: 90, pending: true })] });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel items={[sourceItem]} onInsertQuote={onInsertQuote} />,
+    );
+    fireEvent.press(getByTestId('pending-quote-90'));
+    await waitFor(() => {
+      expect(getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBeFalsy();
+    });
+    fireEvent.press(getByTestId('pending-quote-90'));
+    expect(onInsertQuote).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the dim when onInsertQuote resolves true', async () => {
+    const onInsertQuote = jest.fn(() => Promise.resolve(true));
+    const sourceItem = item({ id: 1, promoted_quotes: [quote({ id: 90, pending: true })] });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel items={[sourceItem]} onInsertQuote={onInsertQuote} />,
+    );
+    fireEvent.press(getByTestId('pending-quote-90'));
+    await waitFor(() => expect(onInsertQuote).toHaveBeenCalledTimes(1));
+    expect(getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBe(true);
+  });
+
+  it('reverts the dim when onInsertQuote rejects', async () => {
+    const onInsertQuote = jest.fn(() => Promise.reject(new Error('fold-in failed')));
+    const sourceItem = item({ id: 1, promoted_quotes: [quote({ id: 90, pending: true })] });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel items={[sourceItem]} onInsertQuote={onInsertQuote} />,
+    );
+    fireEvent.press(getByTestId('pending-quote-90'));
+    await waitFor(() => {
+      expect(getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBeFalsy();
+    });
   });
 });

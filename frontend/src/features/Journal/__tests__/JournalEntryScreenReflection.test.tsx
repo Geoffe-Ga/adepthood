@@ -15,6 +15,7 @@ import React from 'react';
 
 import type {
   JournalMessage,
+  PromotedQuote,
   PromotedQuoteSummary,
   ReflectionDue,
   ReflectionSourceItem,
@@ -39,6 +40,9 @@ const mockReflectionsDue = jest.fn() as jest.MockedFunction<
 const mockReflectionsSources = jest.fn() as jest.MockedFunction<
   (_level: string, _scopeKey: string) => Promise<{ items: ReflectionSourceItem[] }>
 >;
+const mockPromotionsCreate = jest.fn() as jest.MockedFunction<
+  (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
+>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -60,7 +64,8 @@ jest.mock('@/api', () => ({
     dismiss: jest.fn(),
   },
   promotions: {
-    create: jest.fn(),
+    create: (...a: unknown[]) =>
+      (mockPromotionsCreate as unknown as (...x: unknown[]) => unknown)(...a),
     remove: jest.fn(),
     setIncluded: (...a: unknown[]) =>
       (mockSetIncluded as unknown as (...x: unknown[]) => unknown)(...a),
@@ -92,20 +97,52 @@ const mockStubSourceItem: ReflectionSourceItem = {
   promoted_quotes: [mockStubQuote],
 };
 
+// Fixed span the stub asks to promote from `mockStubSourceItem`.
+const mockStubPromoteSpan = { anchor_start: 2, anchor_end: 19 };
+
 jest.mock('../ReflectionSourcesPanel', () => {
   const { Text, TouchableOpacity } = require('react-native');
   const Stub = ({
+    items,
     onInsertQuote,
+    onPromoteSpan,
   }: {
-    onInsertQuote: (_q: PromotedQuoteSummary, _item: ReflectionSourceItem) => void;
-  }) => (
-    <TouchableOpacity
-      testID="stub-insert-quote"
-      onPress={() => onInsertQuote(mockStubQuote, mockStubSourceItem)}
-    >
-      <Text>Insert stub quote</Text>
-    </TouchableOpacity>
-  );
+    items: ReflectionSourceItem[];
+    onInsertQuote: (
+      _q: PromotedQuoteSummary,
+      _item: ReflectionSourceItem,
+    ) => Promise<boolean> | undefined;
+    onPromoteSpan?: (
+      _item: ReflectionSourceItem,
+      _span: { anchor_start: number; anchor_end: number },
+    ) => Promise<boolean>;
+  }) => {
+    const pendingIds = items
+      .flatMap((source) => source.promoted_quotes)
+      .filter((quote) => quote.pending)
+      .map((quote) => quote.id);
+    return (
+      <>
+        <TouchableOpacity
+          testID="stub-insert-quote"
+          onPress={() => onInsertQuote(mockStubQuote, mockStubSourceItem)}
+        >
+          <Text>Insert stub quote</Text>
+        </TouchableOpacity>
+        {onPromoteSpan == null ? null : (
+          <TouchableOpacity
+            testID="stub-promote-span"
+            onPress={() => {
+              void onPromoteSpan(mockStubSourceItem, mockStubPromoteSpan);
+            }}
+          >
+            <Text>Promote stub span</Text>
+          </TouchableOpacity>
+        )}
+        <Text testID="stub-pending-ids">{pendingIds.join(',')}</Text>
+      </>
+    );
+  };
   return { __esModule: true, default: Stub };
 });
 
@@ -160,6 +197,7 @@ beforeEach(() => {
   mockReflectionsDue.mockResolvedValue({ due: null });
   mockReflectionsSources.mockReset();
   mockReflectionsSources.mockResolvedValue({ items: [] });
+  mockPromotionsCreate.mockReset();
 });
 
 const REFLECTION_PARAMS = {
@@ -288,6 +326,109 @@ describe('JournalEntryScreen -- reflection mode', () => {
           (replaceCall[1] as Record<string, unknown> | undefined)?.entryId === 77) ||
         navigateCall != null;
       expect(routedToExisting).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+// RED: the screen does not yet pass `onPromoteSpan` to the sources panel.
+describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => {
+  it('promotes a selected span from a source and folds the created quote into the pending set', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    mockPromotionsCreate.mockResolvedValue({
+      id: 501,
+      source_entry_id: mockStubSourceItem.id,
+      anchor_start: mockStubPromoteSpan.anchor_start,
+      anchor_end: mockStubPromoteSpan.anchor_end,
+      anchor_text: 'went for a daily walk',
+      pending: true,
+    });
+    const { findByTestId } = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await findByTestId('reflection-sources-toggle'));
+    });
+    await act(async () => {
+      fireEvent.press(await findByTestId('stub-promote-span'));
+    });
+
+    expect(mockPromotionsCreate).toHaveBeenCalledWith(mockStubSourceItem.id, mockStubPromoteSpan);
+    expect((await findByTestId('stub-pending-ids')).props.children).toContain('501');
+  });
+
+  it('leaves the pending set unchanged when promotions.create rejects, without crashing', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    mockPromotionsCreate.mockRejectedValue({ status: 500, detail: 'boom' });
+    const { findByTestId } = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await findByTestId('reflection-sources-toggle'));
+    });
+    await act(async () => {
+      fireEvent.press(await findByTestId('stub-promote-span'));
+    });
+
+    expect((await findByTestId('stub-pending-ids')).props.children).not.toContain('501');
+  });
+
+  it('single-flights a hanging promote so a double press calls create once', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    let resolveCreate: (_value: PromotedQuote) => void = () => undefined;
+    mockPromotionsCreate.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const { findByTestId } = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await findByTestId('reflection-sources-toggle'));
+    });
+    const button = await findByTestId('stub-promote-span');
+    await act(async () => {
+      fireEvent.press(button);
+      fireEvent.press(button);
+    });
+    resolveCreate({
+      id: 501,
+      source_entry_id: mockStubSourceItem.id,
+      anchor_start: mockStubPromoteSpan.anchor_start,
+      anchor_end: mockStubPromoteSpan.anchor_end,
+      anchor_text: 'went for a daily walk',
+      pending: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockPromotionsCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the fold-in hint on a failed setIncluded, then clears it on the next successful one', async () => {
+    mockSetIncluded.mockRejectedValueOnce({ status: 500, detail: 'boom' });
+    mockSetIncluded.mockResolvedValueOnce(mockStubQuote);
+    jest.useFakeTimers();
+    try {
+      const { findByTestId, queryByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      const insertButton = await findByTestId('stub-insert-quote');
+
+      await act(async () => {
+        fireEvent.press(insertButton);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(await findByTestId('quote-inclusion-hint')).toBeTruthy();
+
+      await act(async () => {
+        fireEvent.press(insertButton);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(queryByTestId('quote-inclusion-hint')).toBeNull();
     } finally {
       jest.useRealTimers();
     }
