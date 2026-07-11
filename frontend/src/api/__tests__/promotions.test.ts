@@ -8,7 +8,7 @@
  * ``TypeError: promotions is undefined`` / ``is not a function`` until the
  * implementation-specialist adds the client to ``@/api/index``.
  */
-import { ApiError, promotions } from '../index';
+import { ApiError, ApiValidationError, promotions } from '../index';
 import type { PromotedQuote } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -108,5 +108,29 @@ describe('promotions.setIncluded', () => {
     const [, init] = mockFetch.mock.calls[0];
     expect(JSON.parse(init.body)).toEqual({ included_in_entry_id: null });
     expect(result.pending).toBe(true);
+  });
+});
+
+describe('promotions.list', () => {
+  test('GETs /journal/{id}/promotions and resolves to the schema-parsed array', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse([quote({ id: 1, anchor_start: 1 }), quote({ id: 2, anchor_start: 9 })], 200),
+    );
+    const result = await promotions.list(7, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/promotions');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(result).toEqual([
+      expect.objectContaining({ id: 1, anchor_start: 1 }),
+      expect.objectContaining({ id: 2, anchor_start: 9 }),
+    ]);
+  });
+
+  test('rejects a malformed row (anchor_start as a string) via zod', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse([{ ...quote(), anchor_start: 'not-a-number' }], 200),
+    );
+    await expect(promotions.list(7, 'tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 });

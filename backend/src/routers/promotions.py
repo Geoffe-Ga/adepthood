@@ -91,6 +91,31 @@ async def promote_quote(
     return _quote_response(quote)
 
 
+@router.get("/journal/{entry_id}/promotions", response_model=list[PromotedQuoteResponse])
+async def list_promotions(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    entry: Annotated[JournalEntry, Depends(require_owned_journal_entry)],
+) -> list[PromotedQuoteResponse]:
+    """List every promoted quote anchored in the caller's own entry.
+
+    Ownership is enforced by ``require_owned_journal_entry`` (a missing,
+    soft-deleted, or foreign entry all resolve to 404). Results are scoped to
+    this entry and the caller, ordered by ``(anchor_start, id)``, and include
+    every quote regardless of status -- pending, folded, and stale -- so a
+    reopened entry can rehydrate all of its highlights.
+    """
+    result = await session.execute(
+        select(PromotedQuote)
+        .where(
+            PromotedQuote.source_entry_id == entry.id,
+            PromotedQuote.user_id == current_user,
+        )
+        .order_by(col(PromotedQuote.anchor_start), col(PromotedQuote.id))
+    )
+    return [_quote_response(quote) for quote in result.scalars().all()]
+
+
 async def _load_owned_quote(
     session: AsyncSession, promotion_id: int, user_id: int
 ) -> PromotedQuote | None:
