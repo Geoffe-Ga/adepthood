@@ -63,6 +63,19 @@ from services.content_repository import (
 
 logger = logging.getLogger(__name__)
 
+# Configure logging to output to stdout in all environments.
+# This is critical for containerized deployments (Docker on Railway) where
+# logs must go to stdout/stderr to be captured by the orchestrator.
+# Without this, application logs silently drop even though Uvicorn's
+# access logs appear (Uvicorn configures its own handlers separately).
+_root_logger = logging.getLogger()
+if not _root_logger.handlers:
+    _handler = logging.StreamHandler()
+    _formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    _handler.setFormatter(_formatter)
+    _root_logger.addHandler(_handler)
+    _root_logger.setLevel(logging.INFO)
+
 VALID_ENVIRONMENTS = {"development", "staging", "production"}
 
 DEV_ORIGINS = [
