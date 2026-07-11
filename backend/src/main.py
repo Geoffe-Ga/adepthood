@@ -75,6 +75,13 @@ if not _root_logger.handlers:
         "%(asctime)s - %(trace_id)s - %(name)s - %(levelname)s - %(message)s"
     )
     _handler.setFormatter(_formatter)
+    # Attach trace_id filter to the handler, not the logger, so it applies to
+    # records from child loggers that propagate to root's handlers. Logger-level
+    # filters only run for records logged directly through that logger instance,
+    # but handler-level filters apply to all records that reach the handler.
+    from observability import TraceIdLogFilter
+
+    _handler.addFilter(TraceIdLogFilter())
     _root_logger.addHandler(_handler)
     _root_logger.setLevel(logging.INFO)
 
