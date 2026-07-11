@@ -12,6 +12,7 @@ import {
   type SiteResource,
   type Stage,
 } from '../../api';
+import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '../../components/drawer';
 import { Celebration } from '../../components/feedback/Celebration';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { ContentContainer } from '../../components/layout/ContentContainer';
@@ -28,6 +29,7 @@ import ChapterReader from './ChapterReader';
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
+import CourseDrawer, { useCourseDrawerContent } from './CourseDrawer';
 import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
@@ -478,17 +480,73 @@ const StagePanel = ({
   );
 };
 
-const CourseScreen = (): React.JSX.Element => {
-  const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
-  const stageContent = useStageContent(selectedStage, allStages.length > 0);
-  const viewer = useCourseViewer(selectedStage);
+interface CourseScreenDrawerProps {
+  drawer: ScreenDrawerState;
+  stages: Stage[];
+  selectedStage: number;
+  onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
+}
 
+/** The Course header drawer: a stage-grouped table of contents whose chapter
+ *  content loads lazily above the panel so the cache survives close/reopen. */
+const CourseScreenDrawer = ({
+  drawer,
+  stages,
+  selectedStage,
+  onChapterPress,
+}: CourseScreenDrawerProps): React.JSX.Element => {
+  const { sections, retry } = useCourseDrawerContent(stages, drawer.isOpen);
+  return (
+    <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Course" title="Course">
+      <CourseDrawer
+        stages={stages}
+        selectedStage={selectedStage}
+        sections={sections}
+        onChapterPress={onChapterPress}
+        onRetry={retry}
+      />
+    </ScreenDrawer>
+  );
+};
+
+/** Stage-selector and drawer navigation callbacks. A drawer chapter tap switches
+ *  to that chapter's stage, opens the reader (``handleContentPress`` already
+ *  guards locked items — never a raw ``setViewingItem`` that would bypass the
+ *  lock check), then closes the drawer. */
+function useCourseNavigation(
+  setSelectedStage: (_stageNumber: number) => void,
+  viewer: ReturnType<typeof useCourseViewer>,
+  drawer: ScreenDrawerState,
+) {
   const handleStageSelect = useCallback(
     (stageNumber: number) => {
       setSelectedStage(stageNumber);
       viewer.setViewingItem(null);
     },
     [setSelectedStage, viewer],
+  );
+
+  const handleChapterPress = useCallback(
+    (stageNumber: number, item: ContentItem) => {
+      setSelectedStage(stageNumber);
+      viewer.handleContentPress(item);
+      drawer.close();
+    },
+    [setSelectedStage, viewer, drawer],
+  );
+
+  return { handleStageSelect, handleChapterPress };
+}
+
+const CourseScreen = (): React.JSX.Element => {
+  const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
+  const stageContent = useStageContent(selectedStage, allStages.length > 0);
+  const viewer = useCourseViewer(selectedStage);
+  const drawer = useScreenDrawer('Course');
+  const { handleStageSelect, handleChapterPress } = useCourseNavigation(
+    setSelectedStage,
+    viewer,
+    drawer,
   );
 
   const overlay = renderOverlay(viewer, stageContent.handleMarkRead);
@@ -523,6 +581,12 @@ const CourseScreen = (): React.JSX.Element => {
           selectedStageData={selectedStageData}
           stageContent={stageContent}
           viewer={viewer}
+        />
+        <CourseScreenDrawer
+          drawer={drawer}
+          stages={allStages}
+          selectedStage={selectedStage}
+          onChapterPress={handleChapterPress}
         />
       </ContentContainer>
     </SafeAreaView>
