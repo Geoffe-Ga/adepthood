@@ -82,6 +82,18 @@ describe('ResonanceEssayModal', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it('treats a blank fetched essay as a failure, offering retry instead of an empty body', async () => {
+    mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
+    const onEssayLoaded = jest.fn();
+    const { findByTestId, queryByTestId } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />,
+    );
+    await findByTestId('essay-retry');
+    expect(queryByTestId('essay-text')).toBeNull();
+    expect(onEssayLoaded).not.toHaveBeenCalled();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a friendly error with retry, and retry refetches', async () => {
     mockEssay
       .mockRejectedValueOnce(new Error('boom'))
