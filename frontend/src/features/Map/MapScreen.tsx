@@ -18,11 +18,7 @@ import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from
 import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
-import {
-  useDaysUntilStage,
-  useDerivedCurrentStage,
-  useDerivedCurrentWeek,
-} from '../../store/useProgramProgression';
+import { useDaysUntilStage, useDerivedCurrentStage } from '../../store/useProgramProgression';
 import {
   selectCurrentStage,
   selectCycleNumber,
@@ -32,14 +28,14 @@ import {
   useStageStore,
 } from '../../store/useStageStore';
 
-import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
+import { BEGIN_AGAIN_COPY } from './beginAgain';
 import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
+import { useJourneySummary } from './hooks/useJourneySummary';
 import { useStageAnchors } from './hooks/useStageAnchors';
 import type { UseStageAnchorsResult } from './hooks/useStageAnchors';
 import { useWheelBalance } from './hooks/useWheelBalance';
 import {
   formatMinutes,
-  journeyRead,
   progressionSentence,
   rankedStats,
   unlockTimeline,
@@ -58,7 +54,7 @@ import {
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
-import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
+import { isLeftReturning, type StageData } from './stageData';
 import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
@@ -824,9 +820,6 @@ const MapBackdrop = (): React.JSX.Element =>
     <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
   );
 
-/** The first pass through the arc; cycles beyond it earn the subtle indicator. */
-const FIRST_CYCLE = 1;
-
 interface JourneyHeaderProps {
   currentStage: number;
   cycleNumber: number;
@@ -834,13 +827,13 @@ interface JourneyHeaderProps {
 
 /** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
 const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React.JSX.Element => {
-  const week = useDerivedCurrentWeek(1);
+  const { read, cycleCaption } = useJourneySummary(currentStage, cycleNumber);
   return (
     <View style={styles.journeyHeader} testID="journey-read">
-      <Text style={styles.journeyReadText}>{journeyRead(currentStage, week, STAGE_COUNT)}</Text>
-      {cycleNumber > FIRST_CYCLE ? (
+      <Text style={styles.journeyReadText}>{read}</Text>
+      {cycleCaption ? (
         <Text style={styles.cycleIndicator} testID="cycle-indicator">
-          {cycleLabel(cycleNumber)}
+          {cycleCaption}
         </Text>
       ) : null}
     </View>

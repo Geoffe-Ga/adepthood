@@ -10,10 +10,10 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 
 import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../design/tokens';
-import { useDaysUntilStage, useDerivedCurrentWeek } from '../../store/useProgramProgression';
+import { useDaysUntilStage } from '../../store/useProgramProgression';
 
-import { cycleLabel } from './beginAgain';
-import { journeyRead, unlockTimeline } from './journeyNarrative';
+import { useJourneySummary } from './hooks/useJourneySummary';
+import { unlockTimeline } from './journeyNarrative';
 import { STAGE_DISPLAY, type StageDisplay } from './mapLayout';
 import { isStageUnlocked } from './services/stageService';
 import { STAGE_COUNT, type StageData } from './stageData';
@@ -21,8 +21,6 @@ import { balanceLabelSuffix, stageNodeLabel, THIN_FULLNESS } from './stageLegend
 
 /** Glyph shown on a locked stage row. */
 const LOCKED_GLYPH = '🔒';
-/** Only the first pass earns no cycle caption; later passes name the cycle. */
-const SINGLE_CYCLE = 1;
 /** Diameter of the current-stage marker dot in dp. */
 const MARKER_SIZE = 10;
 /** Side of the square color swatch in dp. */
@@ -38,14 +36,12 @@ interface JourneySummaryProps {
 /** The "Stage N of 10 · Week W" read plus, past the first pass, its cycle. */
 const JourneySummary = ({ currentStage, cycleNumber }: JourneySummaryProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
-  const week = useDerivedCurrentWeek(1);
+  const { read, cycleCaption } = useJourneySummary(currentStage, cycleNumber);
   return (
     <View testID="map-drawer-journey" style={styles.journey}>
-      <Text style={[type(width).body, styles.journeyText]}>
-        {journeyRead(currentStage, week, STAGE_COUNT)}
-      </Text>
-      {cycleNumber > SINGLE_CYCLE ? (
-        <Text style={[type(width).caption, styles.cycle]}>{cycleLabel(cycleNumber)}</Text>
+      <Text style={[type(width).body, styles.journeyText]}>{read}</Text>
+      {cycleCaption ? (
+        <Text style={[type(width).caption, styles.cycle]}>{cycleCaption}</Text>
       ) : null}
     </View>
   );
