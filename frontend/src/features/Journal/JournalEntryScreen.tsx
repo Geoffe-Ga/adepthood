@@ -28,6 +28,7 @@ import ContractionReflectionNote from './ContractionReflectionNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
+import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
@@ -52,6 +53,7 @@ import type {
   ReflectionLevel,
 } from '@/api';
 import { Button } from '@/components/Button';
+import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
 import { colors } from '@/design/tokens';
 import { useIdle } from '@/hooks/useIdle';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -1833,20 +1835,84 @@ function ReflectionComposer({
   );
 }
 
+interface EntryScreenDrawer {
+  drawer: ScreenDrawerState;
+  onSelectEntry: (_id: number) => void;
+  onNewEntry: () => void;
+}
+
+/**
+ * The header drawer wired for the entry screen. It latches its entry id at mount,
+ * so a row tap and New entry must ``push`` a fresh screen (not ``navigate`` in
+ * place, which would keep the current, already-loaded entry).
+ */
+function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
+  const drawer = useScreenDrawer('Journal');
+  const onSelectEntry = useCallback(
+    (entryId: number) => {
+      navigation.push('JournalEntry', { entryId });
+      drawer.close();
+    },
+    [navigation, drawer],
+  );
+  const onNewEntry = useCallback(() => {
+    navigation.push('JournalEntry');
+    drawer.close();
+  }, [navigation, drawer]);
+  return { drawer, onSelectEntry, onNewEntry };
+}
+
+/** The screen's floating layers: the essay modal, the edit-confirm dialog, and
+ *  the header drawer — grouped so the screen component stays under the line cap. */
+function EntryOverlays({
+  modal,
+  editGate,
+  entryDrawer,
+  currentEntryId,
+}: {
+  modal: Controller['modal'];
+  editGate: Controller['editGate'];
+  entryDrawer: EntryScreenDrawer;
+  currentEntryId: number | null;
+}): React.JSX.Element {
+  return (
+    <>
+      <ResonanceEssayModal
+        note={modal.openNote}
+        onClose={modal.onCloseNote}
+        onEssayLoaded={modal.onEssayLoaded}
+      />
+      <EditConfirmDialog
+        visible={editGate.confirmOpen}
+        onEdit={editGate.confirmEdit}
+        onStartNew={editGate.startNew}
+        onCancel={editGate.cancelEdit}
+      />
+      <JournalScreenDrawer
+        drawer={entryDrawer.drawer}
+        currentEntryId={currentEntryId}
+        onSelectEntry={entryDrawer.onSelectEntry}
+        onNewEntry={entryDrawer.onNewEntry}
+      />
+    </>
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
   const { ctx, initialTitle, bodyPlaceholder } = readEntrypoint(route.params);
+  const currentEntryId = route.params?.entryId ?? null;
+  const entryDrawer = useEntryScreenDrawer(navigation);
   const ctl = useJournalEntryController(
-    route.params?.entryId ?? null,
+    currentEntryId,
     autosaveDelayMs,
     navigation,
     ctx,
     initialTitle,
   );
-  const { editGate, modal } = ctl;
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       {/* Screen-level care surface (NORTH-STAR §10): a sibling ABOVE the page,
@@ -1870,16 +1936,11 @@ function JournalEntryScreen({
         disabled={ctl.resonanceDisabled}
         onPress={ctl.resonance.requestResonance}
       />
-      <ResonanceEssayModal
-        note={modal.openNote}
-        onClose={modal.onCloseNote}
-        onEssayLoaded={modal.onEssayLoaded}
-      />
-      <EditConfirmDialog
-        visible={editGate.confirmOpen}
-        onEdit={editGate.confirmEdit}
-        onStartNew={editGate.startNew}
-        onCancel={editGate.cancelEdit}
+      <EntryOverlays
+        modal={ctl.modal}
+        editGate={ctl.editGate}
+        entryDrawer={entryDrawer}
+        currentEntryId={currentEntryId}
       />
     </SafeAreaView>
   );

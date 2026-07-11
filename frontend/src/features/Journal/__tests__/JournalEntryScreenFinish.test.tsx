@@ -35,6 +35,11 @@ jest.mock('@/api', () => ({
   },
 }));
 
+jest.mock('@/navigation/hooks', () => ({
+  ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+}));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 // Comfortably longer than the shelf's EXCERPT_MAX (140 chars) and multi-paragraph,
