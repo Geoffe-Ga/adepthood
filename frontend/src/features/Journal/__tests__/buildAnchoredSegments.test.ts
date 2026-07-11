@@ -145,3 +145,47 @@ describe('buildAnchoredSegments', () => {
     expect(anchored).toEqual(legacy.map((s) => ({ ...s, quote: null })));
   });
 });
+
+// True when a slice cut a non-BMP (astral) character in half, leaving a lone surrogate.
+const UNPAIRED_HIGH_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
+const UNPAIRED_LOW_SURROGATE = /(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+function hasUnpairedSurrogate(text: string): boolean {
+  return UNPAIRED_HIGH_SURROGATE.test(text) || UNPAIRED_LOW_SURROGATE.test(text);
+}
+
+// RED: anchors are code points, but slice() indexes UTF-16 code units, so a leading emoji drifts them.
+describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
+  const EMOJI = '\u{1F600}';
+  // Code points: 0=emoji, 1..16="went for a daily" (16 chars), 17=' ', 18.."walk."
+  const LEADING_EMOJI_BODY = `${EMOJI}went for a daily walk.`;
+
+  it('slices the exact anchored phrase after a leading emoji using code-point offsets', () => {
+    const start = 1; // code-point index right after the emoji, at "w"
+    const end = 17; // code-point index right after "went for a daily"
+    const q = quote({ id: 55, anchor_start: start, anchor_end: end });
+    const segments = buildAnchoredSegments(LEADING_EMOJI_BODY, [], [q]);
+    const anchored = segments.find((s) => s.quote?.id === 55);
+    expect(anchored?.text).toBe('went for a daily');
+  });
+
+  it('renders an anchor whose end equals the code-point length of an emoji-final body', () => {
+    // Code points: 0.."went for a walk" (15 chars), 15=emoji; length=16.
+    const tailBody = `went for a walk${EMOJI}`;
+    const start = 11; // code-point index of "w" in "walk"
+    const end = 16; // the body's code-point length, including the trailing emoji
+    const q = quote({ id: 77, anchor_start: start, anchor_end: end });
+    const segments = buildAnchoredSegments(tailBody, [], [q]);
+    const anchored = segments.find((s) => s.quote?.id === 77);
+    expect(anchored).toBeDefined();
+    expect(anchored?.text).toBe(`walk${EMOJI}`);
+  });
+
+  it('never produces a segment with a lone/unpaired surrogate', () => {
+    const tailBody = `went for a walk${EMOJI}`;
+    const q = quote({ id: 77, anchor_start: 11, anchor_end: 16 });
+    const segments = buildAnchoredSegments(tailBody, [], [q]);
+    for (const segment of segments) {
+      expect(hasUnpairedSurrogate(segment.text)).toBe(false);
+    }
+  });
+});

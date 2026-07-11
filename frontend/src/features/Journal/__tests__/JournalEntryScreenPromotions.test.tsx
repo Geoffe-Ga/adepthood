@@ -206,6 +206,29 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
   });
 });
 
+// RED: anchors are code points, but the TextInput reports UTF-16 offsets, so a leading emoji drifts them.
+describe('JournalEntryScreen -- promote-a-quote code-point anchors (non-BMP)', () => {
+  const EMOJI = '\u{1F600}';
+  const EMOJI_BODY = `${EMOJI}went for a daily walk.`;
+
+  it('converts a UTF-16 selection over an emoji-led body to code-point anchor offsets', async () => {
+    mockGet.mockResolvedValue(entry({ message: EMOJI_BODY }));
+    mockPromote.mockResolvedValue(
+      promotedQuote({ anchor_start: 1, anchor_end: 17, anchor_text: 'went for a daily' }),
+    );
+    const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const input = getByTestId('quote-select-input');
+    // The one leading astral char shifts every later UTF-16 offset by +1 vs its code-point index.
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 18 } } });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+    expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 1, anchor_end: 17 });
+  });
+});
+
 describe('JournalEntryScreen -- removing a promoted quote', () => {
   async function promoteOne(screen: ReturnType<typeof renderScreen>): Promise<void> {
     mockPromote.mockResolvedValue(promotedQuote({ id: 90 }));

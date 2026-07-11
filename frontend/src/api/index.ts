@@ -1188,7 +1188,9 @@ export interface Marginalia {
   id: number;
   journal_entry_id: number;
   kind: MarginaliaKind;
+  /** Anchor start as a Unicode code-point offset into the body (end-exclusive pair). */
   anchor_start: number;
+  /** Anchor end as a Unicode code-point offset into the body (end-exclusive). */
   anchor_end: number;
   anchor_text: string;
   note: string;
@@ -1310,7 +1312,12 @@ export const journal = {
   },
 };
 
-/** The char-offset span a reader selected to promote (end-exclusive). */
+/**
+ * The span a reader selected to promote, in Unicode code-point offsets
+ * (end-exclusive) — the anchor API's unit, matching the code-point-native
+ * backend. Callers converting a native UTF-16 TextInput selection must map it to
+ * code points first (see ``features/Journal/codePoints``).
+ */
 export interface PromoteQuoteSpan {
   anchor_start: number;
   anchor_end: number;

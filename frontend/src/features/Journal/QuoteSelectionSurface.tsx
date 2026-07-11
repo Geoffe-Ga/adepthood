@@ -7,7 +7,7 @@
  * ``ReflectionSourcesPanel``; ``testID`` prefixes every element so more than one
  * surface can coexist on a page.
  */
-import React from 'react';
+import React, { useCallback } from 'react';
 import {
   Text,
   TextInput,
@@ -17,19 +17,51 @@ import {
   type TextInputSelectionChangeEventData,
 } from 'react-native';
 
+import { utf16ToCodePoint } from './codePoints';
 import styles from './JournalEntry.styles';
 
 type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+
+/**
+ * A selection span in Unicode code-point offsets (the anchor API's unit),
+ * end-exclusive. This is the single conversion boundary between the native
+ * TextInput's UTF-16 selection and the code-point anchors both send flows post.
+ */
+export interface CodePointSpan {
+  start: number;
+  end: number;
+}
 
 /** Prefix for the surface's testIDs; the read-mode flow relies on this default. */
 const DEFAULT_TEST_ID = 'quote-select';
 
 export interface QuoteSelectionSurfaceProps {
   body: string;
-  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  /** Emits the selection as a code-point span (already converted from UTF-16). */
+  onSelectionChange: (_span: CodePointSpan) => void;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
   testID?: string;
+}
+
+/**
+ * Adapt the native UTF-16 selection event into a code-point span emitter — the
+ * single conversion boundary, lifted out of the component so its body stays lean.
+ */
+function useCodePointSelection(
+  body: string,
+  onSelectionChange: (_span: CodePointSpan) => void,
+): (_event: SelectionChangeEvent) => void {
+  return useCallback(
+    (event: SelectionChangeEvent) => {
+      const { start, end } = event.nativeEvent.selection;
+      onSelectionChange({
+        start: utf16ToCodePoint(body, start),
+        end: utf16ToCodePoint(body, end),
+      });
+    },
+    [body, onSelectionChange],
+  );
 }
 
 function QuoteSelectionSurface({
@@ -39,6 +71,8 @@ function QuoteSelectionSurface({
   onCancel,
   testID = DEFAULT_TEST_ID,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
+  const handleSelectionChange = useCodePointSelection(body, onSelectionChange);
+
   return (
     <View>
       <TextInput
@@ -49,7 +83,7 @@ function QuoteSelectionSurface({
         showSoftInputOnFocus={false}
         caretHidden
         scrollEnabled={false}
-        onSelectionChange={onSelectionChange}
+        onSelectionChange={handleSelectionChange}
         accessibilityLabel="Select a passage to promote"
         testID={`${testID}-input`}
       />

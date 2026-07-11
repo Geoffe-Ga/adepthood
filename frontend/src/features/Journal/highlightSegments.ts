@@ -6,7 +6,7 @@
 import type { Marginalia, PromotedQuote } from '@/api';
 
 export interface HighlightSegment {
-  /** Character offset of this segment in the body (stable, unique → React key). */
+  /** Code-point offset of this segment in the body (stable, unique → React key). */
   start: number;
   text: string;
   /** The note whose anchor this segment is, or null for plain text. */
@@ -33,15 +33,19 @@ interface Anchor {
   quote: PromotedQuote | null;
 }
 
-/** An anchor is drawn only if it falls inside the body and is non-empty. */
-function inRange(body: string, start: number, end: number): boolean {
-  return start >= 0 && end <= body.length && start < end;
+/**
+ * An anchor is drawn only if it falls inside the body and is non-empty. Anchor
+ * offsets are Unicode code points, so the bound is the body's code-point length
+ * (``length``), not its UTF-16 code-unit length.
+ */
+function inRange(length: number, start: number, end: number): boolean {
+  return start >= 0 && end <= length && start < end;
 }
 
 /** Live (non-stale), in-range note anchors — stale notes are not drawn inline. */
-function noteAnchors(body: string, notes: Marginalia[]): Anchor[] {
+function noteAnchors(length: number, notes: Marginalia[]): Anchor[] {
   return notes
-    .filter((n) => n.status !== 'stale' && inRange(body, n.anchor_start, n.anchor_end))
+    .filter((n) => n.status !== 'stale' && inRange(length, n.anchor_start, n.anchor_end))
     .map((n) => ({
       start: n.anchor_start,
       end: n.anchor_end,
@@ -53,9 +57,9 @@ function noteAnchors(body: string, notes: Marginalia[]): Anchor[] {
 }
 
 /** In-range quote anchors (quotes have no stale status to filter on). */
-function quoteAnchors(body: string, quotes: PromotedQuote[]): Anchor[] {
+function quoteAnchors(length: number, quotes: PromotedQuote[]): Anchor[] {
   return quotes
-    .filter((q) => inRange(body, q.anchor_start, q.anchor_end))
+    .filter((q) => inRange(length, q.anchor_start, q.anchor_end))
     .map((q) => ({
       start: q.anchor_start,
       end: q.anchor_end,
@@ -67,8 +71,8 @@ function quoteAnchors(body: string, quotes: PromotedQuote[]): Anchor[] {
 }
 
 /** Merge + sort by (anchor_start, note-before-quote at equal start, then id). */
-function usableAnchors(body: string, notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
-  return [...noteAnchors(body, notes), ...quoteAnchors(body, quotes)].sort(
+function usableAnchors(length: number, notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
+  return [...noteAnchors(length, notes), ...quoteAnchors(length, quotes)].sort(
     (a, b) => a.start - b.start || a.order - b.order || a.id - b.id,
   );
 }
@@ -78,34 +82,39 @@ function usableAnchors(body: string, notes: Marginalia[], quotes: PromotedQuote[
  * first-wins cursor-skip rule as the notes-only path resolves overlaps: the
  * earliest-starting anchor wins and any anchor overlapping a committed range is
  * skipped.
+ *
+ * All slicing happens in CODE-POINT space (``chars``), matching the anchor
+ * contract, so a non-BMP character (emoji / astral) never shifts a boundary or
+ * gets cut mid-surrogate.
  */
 export function buildAnchoredSegments(
   body: string,
   notes: Marginalia[],
   quotes: PromotedQuote[],
 ): AnchoredSegment[] {
+  const chars = Array.from(body);
   const segments: AnchoredSegment[] = [];
   let cursor = 0;
-  for (const anchor of usableAnchors(body, notes, quotes)) {
+  for (const anchor of usableAnchors(chars.length, notes, quotes)) {
     if (anchor.start < cursor) continue; // overlaps a committed range — skip it
     if (anchor.start > cursor) {
       segments.push({
         start: cursor,
-        text: body.slice(cursor, anchor.start),
+        text: chars.slice(cursor, anchor.start).join(''),
         note: null,
         quote: null,
       });
     }
     segments.push({
       start: anchor.start,
-      text: body.slice(anchor.start, anchor.end),
+      text: chars.slice(anchor.start, anchor.end).join(''),
       note: anchor.note,
       quote: anchor.quote,
     });
     cursor = anchor.end;
   }
-  if (cursor < body.length) {
-    segments.push({ start: cursor, text: body.slice(cursor), note: null, quote: null });
+  if (cursor < chars.length) {
+    segments.push({ start: cursor, text: chars.slice(cursor).join(''), note: null, quote: null });
   }
   if (segments.length === 0) segments.push({ start: 0, text: body, note: null, quote: null });
   return segments;
