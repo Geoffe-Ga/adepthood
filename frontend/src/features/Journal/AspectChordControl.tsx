@@ -55,6 +55,7 @@ interface AspectChipRowProps {
   selectedStage: number | null;
   omitStage: number | null;
   onSelect: (_stage: number) => void;
+  disabled: boolean;
 }
 
 /** A wrapping row of Aspect chips, optionally omitting one stage. */
@@ -63,6 +64,7 @@ function AspectChipRow({
   selectedStage,
   omitStage,
   onSelect,
+  disabled,
 }: AspectChipRowProps): React.JSX.Element {
   return (
     <RadioGroup style={styles.aspectChordRow}>
@@ -72,6 +74,7 @@ function AspectChipRow({
           label={option.label}
           selected={option.stage === selectedStage}
           onPress={() => onSelect(option.stage)}
+          disabled={disabled}
           testID={`${prefix}-${option.stage}`}
           style={styles.aspectChordChip}
           selectedStyle={styles.aspectChordChipSelected}
@@ -111,7 +114,8 @@ function CollapsedTrigger({
 function ExpandedChooser({
   value,
   onChange,
-}: Required<Pick<AspectChordControlProps, 'value' | 'onChange'>>): React.JSX.Element {
+  disabled,
+}: Required<Pick<AspectChordControlProps, 'value' | 'onChange' | 'disabled'>>): React.JSX.Element {
   const primary = value.primary;
   return (
     <View style={styles.aspectChordControl} accessibilityLabel="Aspect chord">
@@ -121,6 +125,7 @@ function ExpandedChooser({
         selectedStage={primary}
         omitStage={null}
         onSelect={(stage) => onChange({ primary: stage, secondary: null })}
+        disabled={disabled}
       />
       {primary === null ? null : (
         <View>
@@ -130,6 +135,7 @@ function ExpandedChooser({
             selectedStage={value.secondary}
             omitStage={primary}
             onSelect={(stage) => onChange({ primary, secondary: stage })}
+            disabled={disabled}
           />
         </View>
       )}
@@ -138,6 +144,7 @@ function ExpandedChooser({
         onPress={() => onChange(EMPTY_CHORD)}
         accessibilityRole="button"
         accessibilityLabel="Clear Aspect"
+        accessibilityState={{ disabled }}
         testID="aspect-chord-clear"
       >
         <Text style={styles.aspectChordClearLabel}>Clear</Text>
@@ -175,7 +182,7 @@ function AspectChordControl({
     setUserExpanded(true);
     onChange(next);
   };
-  return <ExpandedChooser value={value} onChange={handleChange} />;
+  return <ExpandedChooser value={value} onChange={handleChange} disabled={disabled} />;
 }
 
 export default AspectChordControl;
