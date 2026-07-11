@@ -274,6 +274,33 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
   });
 });
 
+// RED: anchors are code points, but the shared surface's TextInput reports UTF-16 offsets.
+describe('ReflectionSourcesPanel -- in-panel re-promotion code-point anchors (non-BMP)', () => {
+  const EMOJI = '\u{1F600}';
+  const EMOJI_BODY = `${EMOJI}went for a daily walk.`;
+
+  it('converts a UTF-16 selection over an emoji-led body to code-point anchor offsets', async () => {
+    const onPromoteSpan = jest.fn(() => Promise.resolve(true));
+    const sourceItem = item({ id: 1, body: EMOJI_BODY });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[sourceItem]}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    const input = getByTestId('source-select-entry-1-input');
+    // The one leading astral char shifts every later UTF-16 offset by +1 vs its code-point index.
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 18 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+    });
+    expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 1, anchor_end: 17 });
+  });
+});
+
 // RED: `onInsertQuote`'s Promise<boolean> result is not yet reconciled with the dim.
 describe('ReflectionSourcesPanel -- dim reconciles with a failed fold-in', () => {
   it('reverts the dim when onInsertQuote resolves false, and a second press re-fires it', async () => {

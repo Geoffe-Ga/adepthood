@@ -45,9 +45,11 @@ def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
 def _slice_anchor_text(entry: JournalEntry, payload: PromoteQuoteCreate) -> str:
     """Slice + sanitize the anchored span from the persisted body.
 
-    The span is validated against the *server-held* body (never client text): an
-    end past the body length is 422 ``anchor_out_of_range``, and a normalized
-    span longer than the plaintext cap is 422 ``quote_too_long``.
+    Offsets are Unicode code points (Python string indexing is code-point-based),
+    which is the anchor API's contract. The span is validated against the
+    *server-held* body (never client text): an end past the body length is 422
+    ``anchor_out_of_range``, and a normalized span longer than the plaintext cap
+    is 422 ``quote_too_long``.
     """
     if payload.anchor_end > len(entry.message):
         raise unprocessable("anchor_out_of_range")

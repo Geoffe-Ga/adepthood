@@ -34,7 +34,7 @@ import MarginNote from './MarginNote';
 import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
-import QuoteSelectionSurface from './QuoteSelectionSurface';
+import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
@@ -1180,7 +1180,7 @@ interface QuotePromotion {
   removeTargetId: number | null;
   startSelecting: () => void;
   cancelSelecting: () => void;
-  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  onSelectionChange: (_span: CodePointSpan) => void;
   confirmSelection: () => Promise<void>;
   onQuotePress: (_quote: PromotedQuote) => void;
   confirmRemove: () => void;
@@ -1203,8 +1203,10 @@ function useQuoteInteraction(
     setSelecting(true);
   }, []);
   const cancelSelecting = useCallback(() => setSelecting(false), []);
-  const onSelectionChange = useCallback((e: SelectionChangeEvent) => {
-    selectionRef.current = e.nativeEvent.selection;
+  // The surface converts the native UTF-16 selection to a code-point span; store
+  // it verbatim so ``confirmSelection`` posts anchors in the API's code-point unit.
+  const onSelectionChange = useCallback((span: CodePointSpan) => {
+    selectionRef.current = span;
   }, []);
   // A collapsed/empty selection (a caret tap, no highlighted span) can't be
   // promoted — stay in selection mode rather than post a span the server would

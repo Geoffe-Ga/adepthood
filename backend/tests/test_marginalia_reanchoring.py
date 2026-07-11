@@ -58,6 +58,19 @@ def test_empty_anchor_text_is_stale() -> None:
     assert out.stale is True
 
 
+def test_reanchor_round_trips_with_a_preceding_emoji() -> None:
+    """A body with a leading astral (emoji) character still round-trips exactly.
+
+    Python string indexing is code-point-native, so this pins the backend's
+    existing correct behavior as a regression guard.
+    """
+    emoji_body = "\U0001f600" + _BODY
+    start = emoji_body.index(_ANCHOR)
+    out = reanchor_one(_ANCHOR, start, emoji_body)
+    assert out.stale is False
+    assert emoji_body[out.anchor_start : out.anchor_end] == _ANCHOR
+
+
 async def _signup(client: AsyncClient, username: str = "anchor") -> tuple[dict[str, str], int]:
     resp = await client.post(
         "/auth/signup",

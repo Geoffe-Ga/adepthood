@@ -169,6 +169,30 @@ async def test_caps_at_max_hits() -> None:
     assert len(hits) == MAX_HITS
 
 
+@pytest.mark.asyncio
+async def test_anchors_round_trip_through_an_emoji_containing_body() -> None:
+    """Every resolved anchor's [start:end) code-point slice matches the anchored phrase.
+
+    Python string indexing is code-point-native, so a leading astral (emoji)
+    character never desyncs an offset the way UTF-16 code-unit indexing would --
+    this pins that round-trip as a regression guard.
+    """
+    body = (
+        "\U0001f600This morning I meditated for twenty minutes by the window. "
+        "Later I went for a run along the river."
+    )
+    llm = FakeLLM(
+        _hits_json(
+            {"index": 0, "quote": "I meditated for twenty minutes"},
+            {"index": 1, "quote": "I went for a run along the river"},
+        )
+    )
+    hits = await detect_completions(body, candidates=_CANDIDATES, llm=llm)
+    assert len(hits) == 2
+    for hit in hits:
+        assert body[hit.anchor_start : hit.anchor_end] == hit.anchor_text
+
+
 def test_prompt_excludes_intentions_and_avoidance() -> None:
     """The prompt forbids counting planned/avoided items, not just completed ones."""
     prompt = build_detection_prompt(_BODY, _CANDIDATES)

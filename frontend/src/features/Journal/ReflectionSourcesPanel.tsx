@@ -22,11 +22,9 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
-  type NativeSyntheticEvent,
-  type TextInputSelectionChangeEventData,
 } from 'react-native';
 
-import QuoteSelectionSurface from './QuoteSelectionSurface';
+import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { sourceAttribution } from './reflectionCopy';
 
 import type { PromoteQuoteSpan, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
@@ -59,8 +57,6 @@ const INCLUDED_ROW_OPACITY = 0.5;
 /** Warm, declinable copy when a re-promotion didn't take; invites a calm retry. */
 const PROMOTE_FAILURE_HINT =
   'That selection didn’t quite take — you can try again whenever you like.';
-
-type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
 
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
@@ -198,7 +194,7 @@ interface RowPromoteControls {
   /** True when re-promotion is available at all (the parent wired a handler). */
   canPromote: boolean;
   onStartSelecting: () => void;
-  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  onSelectionChange: (_span: CodePointSpan) => void;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
 }
@@ -298,7 +294,7 @@ type PromoteSpanHandler = (
 interface RowSelection {
   selectingKey: string | null;
   promoteFailedKey: string | null;
-  onSelectionChange: (_e: SelectionChangeEvent) => void;
+  onSelectionChange: (_span: CodePointSpan) => void;
   startSelecting: (_key: string) => void;
   cancelSelecting: () => void;
   confirmSelection: (_item: ReflectionSourceItem, _key: string) => Promise<void>;
@@ -322,8 +318,10 @@ function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
 
   const cancelSelecting = useCallback(() => setSelectingKey(null), []);
 
-  const onSelectionChange = useCallback((event: SelectionChangeEvent) => {
-    selectionRef.current = event.nativeEvent.selection;
+  // The surface hands back an already-converted code-point span; store it so the
+  // confirm handler posts anchors in the API's code-point unit.
+  const onSelectionChange = useCallback((span: CodePointSpan) => {
+    selectionRef.current = span;
   }, []);
 
   const confirmSelection = useCallback(

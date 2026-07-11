@@ -209,6 +209,66 @@ async def test_promote_rejects_inverted_span_422(
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+# ── Unicode code-point offsets (regression guard; Python indexing is code-point-native) ──
+
+_EMOJI = "\U0001f600"
+
+
+@pytest.mark.asyncio
+async def test_promote_slices_exact_phrase_after_leading_emoji(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A code-point span after a leading astral character slices exactly."""
+    headers, user_id = await _signup(async_client, db_session)
+    body = f"{_EMOJI}went for a daily walk."
+    entry = await _seed_entry(db_session, user_id, body)
+
+    resp = await async_client.post(
+        f"/journal/{entry.id}/promote",
+        json={"anchor_start": 1, "anchor_end": 17},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["anchor_text"] == "went for a daily"
+
+
+@pytest.mark.asyncio
+async def test_promote_accepts_anchor_end_at_code_point_length_of_emoji_final_body(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An anchor_end equal to the body's code-point length (trailing emoji) is accepted."""
+    headers, user_id = await _signup(async_client, db_session)
+    body = f"went for a walk{_EMOJI}"
+    entry = await _seed_entry(db_session, user_id, body)
+    assert len(body) == 16
+
+    resp = await async_client.post(
+        f"/journal/{entry.id}/promote",
+        json={"anchor_start": 11, "anchor_end": len(body)},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["anchor_text"] == f"walk{_EMOJI}"
+
+
+@pytest.mark.asyncio
+async def test_promote_rejects_anchor_end_one_past_code_point_length_422(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An anchor_end one past the body's code-point length is anchor_out_of_range."""
+    headers, user_id = await _signup(async_client, db_session)
+    body = f"went for a walk{_EMOJI}"
+    entry = await _seed_entry(db_session, user_id, body)
+
+    resp = await async_client.post(
+        f"/journal/{entry.id}/promote",
+        json={"anchor_start": 11, "anchor_end": len(body) + 1},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "anchor_out_of_range"
+
+
 # ── DELETE /promotions/{id} ──────────────────────────────────────────────
 
 
