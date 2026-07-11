@@ -171,3 +171,41 @@ describe('AspectChordControl — clear affordance', () => {
     expect(queryByTestId('aspect-chord-trigger')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Disabled while expanded (assistive tech announces chips as disabled)
+// ---------------------------------------------------------------------------
+
+describe('AspectChordControl — disabled while expanded', () => {
+  it('marks every primary chip disabled for assistive tech', () => {
+    const { getByTestId } = render(
+      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+    );
+    for (let n = 1; n <= 10; n += 1) {
+      expect(getByTestId(`aspect-primary-${n}`).props.accessibilityState.disabled).toBe(true);
+    }
+  });
+
+  it('marks every secondary chip disabled for assistive tech', () => {
+    const { getByTestId } = render(
+      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+    );
+    // Secondary chips omit the chosen primary (stage 1), so stage 2 is present.
+    expect(getByTestId('aspect-secondary-2').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('marks the Clear control disabled for assistive tech', () => {
+    const { getByTestId } = render(
+      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+    );
+    expect(getByTestId('aspect-chord-clear').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('leaves the chips enabled for assistive tech when not disabled', () => {
+    const { getByTestId } = render(
+      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} />,
+    );
+    expect(getByTestId('aspect-primary-1').props.accessibilityState.disabled).toBe(false);
+    expect(getByTestId('aspect-chord-clear').props.accessibilityState.disabled).toBe(false);
+  });
+});
