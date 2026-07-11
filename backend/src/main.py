@@ -71,7 +71,9 @@ logger = logging.getLogger(__name__)
 _root_logger = logging.getLogger()
 if not _root_logger.handlers:
     _handler = logging.StreamHandler()
-    _formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    _formatter = logging.Formatter(
+        "%(asctime)s - %(trace_id)s - %(name)s - %(levelname)s - %(message)s"
+    )
     _handler.setFormatter(_formatter)
     _root_logger.addHandler(_handler)
     _root_logger.setLevel(logging.INFO)
