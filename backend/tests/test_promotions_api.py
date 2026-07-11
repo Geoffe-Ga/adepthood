@@ -367,3 +367,152 @@ async def test_patch_promotion_rejects_empty_body_422(
 
     resp = await async_client.patch(f"/promotions/{quote.id}", json={}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── GET /journal/{entry_id}/promotions ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_requires_auth(async_client: AsyncClient) -> None:
+    """Unauthenticated callers get 401."""
+    resp = await async_client.get("/journal/1/promotions")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_orders_by_anchor_start_then_id(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Returns a bare array ordered by (anchor_start, id), with no user_id leak."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry = await _seed_entry(db_session, user_id, "abcdefghijklmnopqrstuvwxyz")
+
+    # Seeded out of anchor order; two quotes share anchor_start=5 to pin the id tiebreak.
+    quote_c = await _seed_quote(db_session, user_id, entry.id, "j", anchor_start=9, anchor_end=10)
+    quote_a1 = await _seed_quote(db_session, user_id, entry.id, "f", anchor_start=5, anchor_end=6)
+    quote_a2 = await _seed_quote(db_session, user_id, entry.id, "g", anchor_start=5, anchor_end=6)
+    quote_b = await _seed_quote(db_session, user_id, entry.id, "b", anchor_start=1, anchor_end=2)
+
+    resp = await async_client.get(f"/journal/{entry.id}/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert isinstance(data, list)
+    assert [item["id"] for item in data] == [
+        quote_b.id,
+        quote_a1.id,
+        quote_a2.id,
+        quote_c.id,
+    ]
+    for item in data:
+        assert "user_id" not in item
+    assert data[0] == {
+        "id": quote_b.id,
+        "source_entry_id": entry.id,
+        "anchor_start": 1,
+        "anchor_end": 2,
+        "anchor_text": "b",
+        "pending": True,
+        "stale": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_includes_folded_quotes(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A quote already folded into a reflection is still listed, with pending False."""
+    headers, user_id = await _signup(async_client, db_session)
+    source_entry = await _seed_entry(db_session, user_id, "Source body text")
+    target_entry = await _seed_entry(
+        db_session,
+        user_id,
+        "Target reflection body",
+        tag=JournalTag.HIERARCHICAL_REFLECTION,
+        reflection_level="week",
+        reflection_scope_key="c1:w1",
+    )
+    quote = await _seed_quote(
+        db_session,
+        user_id,
+        source_entry.id,
+        "Source",
+        included_in_entry_id=target_entry.id,
+    )
+
+    resp = await async_client.get(f"/journal/{source_entry.id}/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert [item["id"] for item in data] == [quote.id]
+    assert data[0]["pending"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_empty_entry_returns_empty_list(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An entry with no promotions returns an empty array, not 404."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry = await _seed_entry(db_session, user_id, "No quotes taken from here")
+
+    resp = await async_client.get(f"/journal/{entry.id}/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_rejects_other_users_entry_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Listing promotions on an entry owned by another user 404s (enumeration-safe).
+
+    Checks the ownership-dependency's detail body, not just the status code --
+    a route-not-found 404 would otherwise match by accident.
+    """
+    _owner_headers, owner_id = await _signup(async_client, db_session, username="alice")
+    other_headers, _other_id = await _signup(async_client, db_session, username="bob")
+    entry = await _seed_entry(db_session, owner_id, "Bob's private body text")
+    await _seed_quote(db_session, owner_id, entry.id, "Bob's")
+
+    resp = await async_client.get(f"/journal/{entry.id}/promotions", headers=other_headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "journal_entry_not_found"
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_rejects_missing_entry_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A nonexistent entry id 404s with the ownership-dependency's detail body."""
+    headers, _user_id = await _signup(async_client, db_session)
+    resp = await async_client.get("/journal/999999/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "journal_entry_not_found"
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_rejects_soft_deleted_entry_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A soft-deleted entry is treated as gone, with the ownership-dependency's detail."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry = await _seed_entry(db_session, user_id, "Deleted body", deleted_at=datetime.now(UTC))
+
+    resp = await async_client.get(f"/journal/{entry.id}/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "journal_entry_not_found"
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_isolated_by_entry(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A quote seeded on a different entry of the same user is not returned."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry_a = await _seed_entry(db_session, user_id, "Entry A body")
+    entry_b = await _seed_entry(db_session, user_id, "Entry B body")
+    quote_a = await _seed_quote(db_session, user_id, entry_a.id, "Entry A")
+    await _seed_quote(db_session, user_id, entry_b.id, "Entry B")
+
+    resp = await async_client.get(f"/journal/{entry_a.id}/promotions", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert [item["id"] for item in resp.json()] == [quote_a.id]

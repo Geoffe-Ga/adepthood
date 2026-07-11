@@ -1321,7 +1321,8 @@ export interface PromoteQuoteSpan {
  * selected span into the corpus (may surface ``422 anchor_out_of_range`` /
  * ``422 quote_too_long`` as an ``ApiError``); ``remove`` un-promotes it; and
  * ``setIncluded`` folds a quote into another entry (or returns it to pending
- * with ``null``).
+ * with ``null``); ``list`` fetches every quote anchored in an entry so a
+ * reopened entry can rehydrate its highlights.
  */
 export const promotions = {
   /** Promote a reader-selected span of an entry into the corpus. */
@@ -1344,6 +1345,13 @@ export const promotions = {
       body: { included_in_entry_id: entryId },
       token,
       schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
+    });
+  },
+  /** List every quote anchored in ``entryId`` (ordered by anchor then id). */
+  list(entryId: number, token?: string): Promise<PromotedQuote[]> {
+    return request<PromotedQuote[]>(`/journal/${entryId}/promotions`, {
+      token,
+      schema: z.array(promotedQuoteSchema) as unknown as z.ZodType<PromotedQuote[]>,
     });
   },
 };

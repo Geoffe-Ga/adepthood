@@ -25,6 +25,9 @@ const mockPromote = jest.fn() as jest.MockedFunction<
   (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
 >;
 const mockRemovePromotion = jest.fn() as jest.MockedFunction<(_id: number) => Promise<void>>;
+const mockPromotionsList = jest.fn() as jest.MockedFunction<
+  (_entryId: number) => Promise<PromotedQuote[]>
+>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -48,6 +51,8 @@ jest.mock('@/api', () => ({
     remove: (...a: unknown[]) =>
       (mockRemovePromotion as unknown as (...x: unknown[]) => unknown)(...a),
     setIncluded: jest.fn(),
+    list: (...a: unknown[]) =>
+      (mockPromotionsList as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -107,6 +112,8 @@ beforeEach(() => {
   mockCompletionList.mockResolvedValue({ items: [] });
   mockPromote.mockReset();
   mockRemovePromotion.mockReset();
+  mockPromotionsList.mockReset();
+  mockPromotionsList.mockResolvedValue([]);
   mockGet.mockResolvedValue(entry());
 });
 
@@ -237,5 +244,21 @@ describe('JournalEntryScreen -- removing a promoted quote', () => {
       fireEvent.press(removeButton);
     });
     expect(await screen.findByTestId('quote-highlight-90')).toBeTruthy();
+  });
+});
+
+describe('JournalEntryScreen -- reopening a finished entry hydrates promoted-quote highlights', () => {
+  it('renders every promoted quote returned by promotions.list', async () => {
+    mockGet.mockResolvedValue(entry({ status: 'finished' }));
+    mockPromotionsList.mockResolvedValue([
+      promotedQuote({ id: 12, anchor_start: 2, anchor_end: 6 }),
+      promotedQuote({ id: 34, anchor_start: 21, anchor_end: 24 }),
+    ]);
+    const { findByTestId } = renderScreen({ entryId: 7 });
+
+    expect(await findByTestId('journal-body-read')).toBeTruthy();
+    expect(await findByTestId('quote-highlight-12')).toBeTruthy();
+    expect(await findByTestId('quote-highlight-34')).toBeTruthy();
+    expect(mockPromotionsList).toHaveBeenCalledWith(7);
   });
 });

@@ -69,6 +69,7 @@ jest.mock('@/api', () => ({
     remove: jest.fn(),
     setIncluded: (...a: unknown[]) =>
       (mockSetIncluded as unknown as (...x: unknown[]) => unknown)(...a),
+    list: jest.fn(() => Promise.resolve([])),
   },
   reflections: {
     due: (...a: unknown[]) => (mockReflectionsDue as unknown as (...x: unknown[]) => unknown)(...a),

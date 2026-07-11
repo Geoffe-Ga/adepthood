@@ -8,7 +8,8 @@
  * it on error, guarding a double-tap per id (mirrors ``useResonance``'s
  * ``runDismiss``). One promote runs at a time so a double-tap can't double-post.
  */
-import { useCallback, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { promotions } from '@/api';
 import type { PromotedQuote } from '@/api';
@@ -31,14 +32,71 @@ export interface UsePromotionsResult {
   removePromotion: (_id: number) => Promise<void>;
 }
 
+/** The list's canonical order: by anchor offset, then id as a stable tiebreak. */
+function byAnchorThenId(a: PromotedQuote, b: PromotedQuote): number {
+  return a.anchor_start - b.anchor_start || a.id - b.id;
+}
+
 /** Re-insert a reverted quote, keeping the list ordered by anchor then id. */
 function insertSorted(quotes: PromotedQuote[], quote: PromotedQuote): PromotedQuote[] {
-  return [...quotes, quote].sort((a, b) => a.anchor_start - b.anchor_start || a.id - b.id);
+  return [...quotes, quote].sort(byAnchorThenId);
 }
 
 /** Drop the quote with ``id`` (a named helper so it isn't a nested callback). */
 function dropById(quotes: PromotedQuote[], id: number): PromotedQuote[] {
   return quotes.filter((q) => q.id !== id);
+}
+
+/**
+ * Union the fetched quotes into the current list by id, keeping the ordered
+ * invariant. A merge (rather than a blind replace) preserves a quote an
+ * in-flight ``promote`` already appended, and dedupes when the server echoes it.
+ */
+function mergeById(prev: PromotedQuote[], incoming: PromotedQuote[]): PromotedQuote[] {
+  const byId = new Map<number, PromotedQuote>(prev.map((q) => [q.id, q]));
+  for (const q of incoming) byId.set(q.id, q);
+  return [...byId.values()].sort(byAnchorThenId);
+}
+
+/** The sentinel for an unsaved entry — nothing to hydrate until it has a real id. */
+const UNSAVED_ENTRY_ID = 0;
+
+/**
+ * A state updater that unions the fetched quotes into the *latest* list. Named
+ * at module scope (not an inline updater) so the hydration effect stays flat,
+ * and functional so it can't clobber a concurrent optimistic add or removal.
+ */
+function mergeFetched(fetched: PromotedQuote[]): (_prev: PromotedQuote[]) => PromotedQuote[] {
+  return (prev) => mergeById(prev, fetched);
+}
+
+/**
+ * Rehydrate a reopened entry's quotes. Keyed by ``entryId`` and skipped for the
+ * unsaved-entry sentinel; the ``cancelled`` flag stops a slow response from
+ * setting state after unmount or an id change. Merges (never replaces) so a
+ * quote an in-flight ``promote`` already appended survives.
+ */
+function useHydrateOnOpen(
+  entryId: number,
+  setQuotes: Dispatch<SetStateAction<PromotedQuote[]>>,
+  setHint: (_hint: string | null) => void,
+): void {
+  useEffect(() => {
+    if (entryId <= UNSAVED_ENTRY_ID) return undefined;
+    let cancelled = false;
+    const hydrate = async (): Promise<void> => {
+      try {
+        const fetched = await promotions.list(entryId);
+        if (!cancelled) setQuotes(mergeFetched(fetched));
+      } catch (err) {
+        if (!cancelled) setHint(formatApiError(err));
+      }
+    };
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [entryId, setQuotes, setHint]);
 }
 
 export function usePromotions({
@@ -55,6 +113,8 @@ export function usePromotions({
   // identity stable across every add/remove.
   const quotesRef = useRef(quotes);
   quotesRef.current = quotes;
+
+  useHydrateOnOpen(entryId, setQuotes, setHint);
 
   const promote = useCallback(
     async (start: number, end: number): Promise<void> => {

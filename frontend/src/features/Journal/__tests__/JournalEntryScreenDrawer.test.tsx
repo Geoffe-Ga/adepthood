@@ -38,6 +38,12 @@ jest.mock('@/api', () => ({
     accept: jest.fn(),
     dismiss: jest.fn(),
   },
+  promotions: {
+    create: jest.fn(),
+    remove: jest.fn(),
+    setIncluded: jest.fn(),
+    list: jest.fn(() => Promise.resolve([])),
+  },
 }));
 
 // useScreenDrawer installs the header-left toggle through useAppNavigation

@@ -22,6 +22,7 @@ const mockCreate = jest.fn() as jest.MockedFunction<
   (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
 >;
 const mockRemove = jest.fn() as jest.MockedFunction<(_id: number) => Promise<void>>;
+const mockList = jest.fn() as jest.MockedFunction<(_entryId: number) => Promise<PromotedQuote[]>>;
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
@@ -31,17 +32,18 @@ jest.mock('@/api', () => {
       create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
       remove: (...a: unknown[]) => (mockRemove as unknown as (...x: unknown[]) => unknown)(...a),
       setIncluded: jest.fn(),
+      list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     },
   };
 });
 
-// RED: `usePromotions` does not exist yet -- this `require` fails with
-// "Cannot find module" until the implementation-specialist adds the hook.
 const { usePromotions } = require('../usePromotions');
 
 beforeEach(() => {
   mockCreate.mockReset();
   mockRemove.mockReset();
+  mockList.mockReset();
+  mockList.mockResolvedValue([]);
 });
 
 describe('usePromotions', () => {
@@ -128,5 +130,59 @@ describe('usePromotions', () => {
     });
     await waitFor(() => expect(result.current.quotes).toEqual([]));
     expect(mockRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('hydrates its quote list from promotions.list on mount, sorted by anchor then id', async () => {
+    const hydrated = [quote({ id: 20, anchor_start: 15 }), quote({ id: 3, anchor_start: 1 })];
+    mockList.mockResolvedValue(hydrated);
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+
+    await waitFor(() =>
+      expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([3, 20]),
+    );
+    expect(mockList).toHaveBeenCalledTimes(1);
+    expect(mockList).toHaveBeenCalledWith(7);
+  });
+
+  it('never calls promotions.list when entryId is 0 (unsaved entry)', async () => {
+    renderHook(() => usePromotions({ entryId: 0 }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('a hydration failure sets a non-blocking hint and leaves quotes empty', async () => {
+    mockList.mockRejectedValue(new ApiError(500, 'boom'));
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+
+    await waitFor(() => expect(result.current.hint).toBeTruthy());
+    expect(result.current.quotes).toEqual([]);
+  });
+
+  it('does not drop a quote added via promote when hydration resolves after it', async () => {
+    let resolveList: (_value: PromotedQuote[]) => void = () => {};
+    mockList.mockReturnValue(
+      new Promise<PromotedQuote[]>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+    mockCreate.mockResolvedValue(quote({ id: 9, anchor_start: 30, anchor_end: 49 }));
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+
+    await act(async () => {
+      await result.current.promote(30, 49);
+    });
+    expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([9]);
+
+    await act(async () => {
+      resolveList([quote({ id: 3, anchor_start: 1, anchor_end: 2 })]);
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([3, 9]),
+    );
   });
 });
