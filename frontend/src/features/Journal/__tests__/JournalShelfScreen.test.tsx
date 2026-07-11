@@ -32,7 +32,7 @@ jest.mock('@react-navigation/native', () => {
     useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
   };
   return {
-    useNavigation: () => ({ navigate: mockNavigate }),
+    useNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
     // Run the focus callback on mount (and its cleanup on unmount) — enough to
     // exercise the prompt re-fetch in these render-once tests.
     useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),

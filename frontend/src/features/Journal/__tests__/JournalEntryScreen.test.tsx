@@ -40,6 +40,11 @@ jest.mock('@/api', () => ({
   },
 }));
 
+jest.mock('@/navigation/hooks', () => ({
+  ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+}));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {

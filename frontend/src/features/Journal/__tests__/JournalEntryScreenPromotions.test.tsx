@@ -51,6 +51,11 @@ jest.mock('@/api', () => ({
   },
 }));
 
+jest.mock('@/navigation/hooks', () => ({
+  ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+}));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 const BODY = 'A page about a daily run to the river and back.';

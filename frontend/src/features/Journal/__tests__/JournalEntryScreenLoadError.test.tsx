@@ -38,6 +38,11 @@ jest.mock('@/api', () => ({
   },
 }));
 
+jest.mock('@/navigation/hooks', () => ({
+  ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
+  useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+}));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 // The exact copy the load-error banner must render (substring-matched below so

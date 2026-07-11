@@ -8,22 +8,25 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import { promptTitleForWeek } from './promptTitle';
+import { formatDate, groupByRecency, type ShelfSection } from './recency';
 import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
+import { usePagedJournal } from './usePagedJournal';
 
-import { journal, prompts } from '@/api';
+import { prompts } from '@/api';
 import type { JournalMessage, PromptDetail } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
+import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -34,11 +37,9 @@ import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentWeek } from '@/store/useProgramProgression';
 import { MS_PER_DAY } from '@/utils/dateUtils';
 
-const PAGE_SIZE = 20;
 const SEARCH_MIN_LENGTH = 3;
 const SEARCH_MAX_LENGTH = 64; // mirrors the backend JOURNAL_SEARCH_MAX_LENGTH guard
 const EXCERPT_MAX = 140;
-const WEEK_DAYS = 7;
 const MONTH_DAYS = 30;
 const WORDS_PER_MINUTE = 200;
 
@@ -47,38 +48,9 @@ const FIRST_PROMPT = 'What brought you here?';
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
 
-interface ShelfSection {
-  title: string;
-  data: JournalMessage[];
-}
-
-function formatDate(timestamp: string): string {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
 function excerpt(body: string): string {
   const flat = body.replace(/\s+/g, ' ').trim();
   return flat.length > EXCERPT_MAX ? `${flat.slice(0, EXCERPT_MAX).trimEnd()}…` : flat;
-}
-
-const RECENCY_ORDER = ['This week', 'This month', 'Earlier'] as const;
-
-/** Bucket name for an entry's age relative to ``now`` (epoch ms). */
-function bucketFor(timestamp: string, now: number): string {
-  const age = (now - new Date(timestamp).getTime()) / MS_PER_DAY;
-  if (age < WEEK_DAYS) return 'This week';
-  if (age < MONTH_DAYS) return 'This month';
-  return 'Earlier';
-}
-
-/** Group entries into recency sections, dropping any section with no entries. */
-function groupByRecency(items: JournalMessage[], now: number): ShelfSection[] {
-  return RECENCY_ORDER.map((title) => ({
-    title,
-    data: items.filter((item) => bucketFor(item.timestamp, now) === title),
-  })).filter((section) => section.data.length > 0);
 }
 
 /** Estimated reading time in whole minutes (≥1). */
@@ -131,34 +103,8 @@ function isSearchable(next: string): boolean {
 
 /** Loads the shelf with offset paging + debounced search (via SearchBar). */
 function useShelf(): ShelfState {
-  const [items, setItems] = useState<JournalMessage[]>([]);
-  const [total, setTotal] = useState(0);
+  const { items, total, hasMore, loading, error, load } = usePagedJournal();
   const [query, setQuery] = useState('');
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestSeq = useRef(0);
-
-  const load = useCallback(async (search: string | undefined, offset: number) => {
-    // Only the newest in-flight request may settle; stale ones are dropped.
-    const requestId = (requestSeq.current += 1);
-    const isLatest = () => requestId === requestSeq.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const page = await journal.list({ search, limit: PAGE_SIZE, offset });
-      if (!isLatest()) return;
-      setItems((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
-      setTotal(page.total);
-      setHasMore(page.has_more);
-    } catch (err) {
-      // Surface the failure so a cold-start network error isn't mistaken for an
-      // empty shelf; the current items (if any) stay in place for retry.
-      if (isLatest()) setError(formatApiError(err));
-    } finally {
-      if (isLatest()) setLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     void load(undefined, 0);
@@ -415,13 +361,42 @@ function renderSectionHeader({
   return <SectionHeading title={section.title} />;
 }
 
-function JournalShelfScreen(): React.JSX.Element {
-  const navigation = useNavigation<ShelfNavigation>();
-  const { items, total, loading, error, query, hasMore, onSearch, loadMore } = useShelf();
-  const prompt = usePrompt();
-  const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
-  const nav = useShelfNavigation(navigation, prompt, week);
-  const now = Date.now();
+interface ShelfDrawer {
+  drawer: ReturnType<typeof useScreenDrawer>;
+  onSelectEntry: (_id: number) => void;
+  onNewEntry: () => void;
+}
+
+/** The header drawer's open state plus its open-then-close row callbacks. From
+ *  the shelf a row tap navigates (not pushes) to the entry, then closes. */
+function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
+  const drawer = useScreenDrawer('Journal');
+  const onSelectEntry = useCallback(
+    (entryId: number) => {
+      nav.openEntry(entryId);
+      drawer.close();
+    },
+    [nav, drawer],
+  );
+  const onNewEntry = useCallback(() => {
+    nav.newEntry();
+    drawer.close();
+  }, [nav, drawer]);
+  return { drawer, onSelectEntry, onNewEntry };
+}
+
+interface ShelfBodyProps {
+  shelf: ShelfState;
+  nav: ShelfNav;
+  prompt: PromptDetail | null;
+  week: number;
+  now: number;
+}
+
+/** The shelf's scrolling list surface (top matter, recency sections, paging) —
+ *  split out so the screen component stays under the line cap. */
+function ShelfBody({ shelf, nav, prompt, week, now }: ShelfBodyProps): React.JSX.Element {
+  const { items, total, loading, error, query, hasMore, onSearch, loadMore } = shelf;
   const sections = groupByRecency(items, now);
   const searching = query.length >= SEARCH_MIN_LENGTH;
   const resultCount = searching ? total : undefined;
@@ -431,38 +406,57 @@ function JournalShelfScreen(): React.JSX.Element {
   );
 
   return (
+    <SectionList
+      style={styles.list}
+      testID="journal-shelf-list"
+      sections={sections}
+      keyExtractor={(item) => String(item.id)}
+      renderItem={renderItem}
+      renderSectionHeader={renderSectionHeader}
+      stickySectionHeadersEnabled={false}
+      ListHeaderComponent={
+        <ShelfTopMatter
+          prompt={prompt}
+          week={week}
+          onPrompt={nav.openPrompt}
+          onNew={nav.newEntry}
+          onSearch={onSearch}
+          query={query}
+          resultCount={resultCount}
+        />
+      }
+      ListEmptyComponent={
+        <ShelfEmpty
+          loading={loading}
+          error={error}
+          searching={searching}
+          onNew={nav.newEntry}
+          onFirstPrompt={nav.openWithPrompt}
+        />
+      }
+      onEndReached={hasMore ? loadMore : undefined}
+      onEndReachedThreshold={0.4}
+      contentContainerStyle={styles.listContent}
+    />
+  );
+}
+
+function JournalShelfScreen(): React.JSX.Element {
+  const navigation = useNavigation<ShelfNavigation>();
+  const shelf = useShelf();
+  const prompt = usePrompt();
+  const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
+  const nav = useShelfNavigation(navigation, prompt, week);
+  const shelfDrawer = useShelfDrawer(nav);
+  const now = Date.now();
+
+  return (
     <ScreenScaffold testID="journal-shelf">
-      <SectionList
-        style={styles.list}
-        testID="journal-shelf-list"
-        sections={sections}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader}
-        stickySectionHeadersEnabled={false}
-        ListHeaderComponent={
-          <ShelfTopMatter
-            prompt={prompt}
-            week={week}
-            onPrompt={nav.openPrompt}
-            onNew={nav.newEntry}
-            onSearch={onSearch}
-            query={query}
-            resultCount={resultCount}
-          />
-        }
-        ListEmptyComponent={
-          <ShelfEmpty
-            loading={loading}
-            error={error}
-            searching={searching}
-            onNew={nav.newEntry}
-            onFirstPrompt={nav.openWithPrompt}
-          />
-        }
-        onEndReached={hasMore ? loadMore : undefined}
-        onEndReachedThreshold={0.4}
-        contentContainerStyle={styles.listContent}
+      <ShelfBody shelf={shelf} nav={nav} prompt={prompt} week={week} now={now} />
+      <JournalScreenDrawer
+        drawer={shelfDrawer.drawer}
+        onSelectEntry={shelfDrawer.onSelectEntry}
+        onNewEntry={shelfDrawer.onNewEntry}
       />
     </ScreenScaffold>
   );
