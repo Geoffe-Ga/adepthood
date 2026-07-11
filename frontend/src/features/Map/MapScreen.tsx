@@ -18,11 +18,7 @@ import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from
 import { stages as stagesApi } from '../../api';
 import { MAP_BACKGROUND_URI } from '../../constants/images';
 import { useAppNavigation } from '../../navigation/hooks';
-import {
-  useDaysUntilStage,
-  useDerivedCurrentStage,
-  useDerivedCurrentWeek,
-} from '../../store/useProgramProgression';
+import { useDaysUntilStage, useDerivedCurrentStage } from '../../store/useProgramProgression';
 import {
   selectCurrentStage,
   selectCycleNumber,
@@ -32,20 +28,21 @@ import {
   useStageStore,
 } from '../../store/useStageStore';
 
-import { BEGIN_AGAIN_COPY, cycleLabel } from './beginAgain';
+import { BEGIN_AGAIN_COPY } from './beginAgain';
 import { useBeginAgainGuard } from './hooks/useBeginAgainGuard';
+import { useJourneySummary } from './hooks/useJourneySummary';
 import { useStageAnchors } from './hooks/useStageAnchors';
 import type { UseStageAnchorsResult } from './hooks/useStageAnchors';
 import { useWheelBalance } from './hooks/useWheelBalance';
 import {
   formatMinutes,
-  journeyRead,
   progressionSentence,
   rankedStats,
   unlockTimeline,
 } from './journeyNarrative';
 import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
+import MapDrawer from './MapDrawer';
 import {
   fitRightLabel,
   fittedTitleFontSize,
@@ -57,11 +54,12 @@ import {
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
-import { isLeftReturning, STAGE_COUNT, type StageData } from './stageData';
+import { isLeftReturning, type StageData } from './stageData';
+import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
-import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 import { Button } from '@/components/Button';
+import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
 import { Celebration } from '@/components/feedback/Celebration';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { colors } from '@/design/tokens';
@@ -73,15 +71,6 @@ type StageLookup = Readonly<Record<number, StageData | undefined>>;
 type FullnessLookup = Readonly<Record<number, number>>;
 
 const FULL_PROGRESS = 1;
-const THIN_FULLNESS = 0;
-
-/** Accessibility suffix appended to a node's label from its wheel fullness. */
-const balanceLabelSuffix = (fullness: number): string =>
-  fullness >= FULLNESS_ALIVE_THRESHOLD ? 'reads full' : 'reads thin';
-
-/** Full a11y label for a stage node: persona/descriptor plus the balance read. */
-const stageNodeLabel = (display: StageDisplay, fullness: number): string =>
-  `${display.persona} - ${display.descriptor} - ${balanceLabelSuffix(fullness)}`;
 
 // --- Sub-components ---
 //
@@ -831,9 +820,6 @@ const MapBackdrop = (): React.JSX.Element =>
     <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
   );
 
-/** The first pass through the arc; cycles beyond it earn the subtle indicator. */
-const FIRST_CYCLE = 1;
-
 interface JourneyHeaderProps {
   currentStage: number;
   cycleNumber: number;
@@ -841,13 +827,13 @@ interface JourneyHeaderProps {
 
 /** Compact momentum read at the top of the Map: "Stage N of 10 · Week W". */
 const JourneyHeader = ({ currentStage, cycleNumber }: JourneyHeaderProps): React.JSX.Element => {
-  const week = useDerivedCurrentWeek(1);
+  const { read, cycleCaption } = useJourneySummary(currentStage, cycleNumber);
   return (
     <View style={styles.journeyHeader} testID="journey-read">
-      <Text style={styles.journeyReadText}>{journeyRead(currentStage, week, STAGE_COUNT)}</Text>
-      {cycleNumber > FIRST_CYCLE ? (
+      <Text style={styles.journeyReadText}>{read}</Text>
+      {cycleCaption ? (
         <Text style={styles.cycleIndicator} testID="cycle-indicator">
-          {cycleLabel(cycleNumber)}
+          {cycleCaption}
         </Text>
       ) : null}
     </View>
@@ -1084,7 +1070,38 @@ const CelebrationBanner = ({
   );
 };
 
+interface MapScreenDrawerProps {
+  drawer: ScreenDrawerState;
+  lookup: StageLookup;
+  currentStage: number;
+  fullnessByStage: FullnessLookup;
+  cycleNumber: number;
+  onSelectStage: (_stageNumber: number) => void;
+}
+
+/** The Map header drawer: a stage legend whose row tap glides the lens there. */
+const MapScreenDrawer = ({
+  drawer,
+  lookup,
+  currentStage,
+  fullnessByStage,
+  cycleNumber,
+  onSelectStage,
+}: MapScreenDrawerProps): React.JSX.Element => (
+  <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Map" title="Map">
+    <MapDrawer
+      lookup={lookup}
+      currentStage={currentStage}
+      fullnessByStage={fullnessByStage}
+      cycleNumber={cycleNumber}
+      onSelectStage={onSelectStage}
+    />
+  </ScreenDrawer>
+);
+
 interface MapContentProps {
+  drawer: ScreenDrawerState;
+  onDrawerSelectStage: (_stageNumber: number) => void;
   lookup: StageLookup;
   fullnessByStage: FullnessLookup;
   currentStage: number;
@@ -1134,19 +1151,47 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
         onClose={props.onCloseModal}
         onNavigate={props.onNavigate}
       />
+      <MapScreenDrawer
+        drawer={props.drawer}
+        lookup={props.lookup}
+        currentStage={props.currentStage}
+        fullnessByStage={props.fullnessByStage}
+        cycleNumber={props.cycleNumber}
+        onSelectStage={props.onDrawerSelectStage}
+      />
     </ContentContainer>
   </View>
 );
 
+/** Map header drawer: a row tap closes it and glides the lens to that stage. */
+const useMapDrawer = (
+  lens: LensFocus,
+): { drawer: ScreenDrawerState; onDrawerSelectStage: (_stageNumber: number) => void } => {
+  const drawer = useScreenDrawer('Map');
+  // A drawer row tap is a pure select-and-highlight: the map is not scrollable,
+  // so close the drawer and glide the magnifier lens to the tapped stage.
+  const onDrawerSelectStage = useCallback(
+    (stageNumber: number) => {
+      drawer.close();
+      lens.setFocusedStage(stageNumber);
+    },
+    [drawer, lens],
+  );
+  return { drawer, onDrawerSelectStage };
+};
+
+/** Read the five Map-relevant slices of the stage store in one place. */
+const useMapStageStore = () => ({
+  stages: useStageStore(selectStages),
+  loading: useStageStore(selectStagesLoading),
+  error: useStageStore(selectStagesError),
+  storeCurrentStage: useStageStore(selectCurrentStage),
+  cycleNumber: useStageStore(selectCycleNumber),
+});
+
 const MapScreen = (): React.JSX.Element => {
-  const stages = useStageStore(selectStages);
-  const loading = useStageStore(selectStagesLoading);
-  const error = useStageStore(selectStagesError);
-  const storeCurrentStage = useStageStore(selectCurrentStage);
-  const cycleNumber = useStageStore(selectCycleNumber);
-  // Prefer the date-driven stage when the master anchor is set; the
-  // server's count-based ``currentStage`` is the fallback for users who
-  // haven't picked an anchor yet.
+  const { stages, loading, error, storeCurrentStage, cycleNumber } = useMapStageStore();
+  // Prefer the date-driven stage; the server's count-based one is the fallback.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
@@ -1170,12 +1215,15 @@ const MapScreen = (): React.JSX.Element => {
   const handleNavigate = useStageNavigation(handleCloseModal);
   const celebration = useStageCompletionCelebration(stages, lookup);
   const lens = useLensFocus(currentStage, lookup, setActiveStage);
+  const { drawer, onDrawerSelectStage } = useMapDrawer(lens);
 
   if (loading && stages.length === 0) return <MapLoading />;
   if (error && stages.length === 0) return <MapError message={error} />;
 
   return (
     <MapContent
+      drawer={drawer}
+      onDrawerSelectStage={onDrawerSelectStage}
       lookup={lookup}
       fullnessByStage={fullnessByStage}
       currentStage={currentStage}

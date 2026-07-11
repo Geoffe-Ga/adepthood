@@ -3,7 +3,7 @@
 import type { StageData } from '../stageData';
 
 /**
- * Shared Jest scaffold for the six MapScreen-driven suites. Each suite keeps its
+ * Shared Jest scaffold for the MapScreen-driven suites. Each suite keeps its
  * own ``jest.mock(...)`` calls (so it controls exactly which modules it mocks)
  * and points every factory at a builder here via
  * ``jest.requireActual('./mapTestHarness')`` — the factory then references only
@@ -103,6 +103,8 @@ export function resetMapMockState(): void {
 
 /** Navigation spy asserted by the suites; the navigation mock reads it. */
 export const mockNavigate = jest.fn();
+/** ``navigation.setOptions`` spy — surfaces the drawer's installed ``headerLeft``. */
+export const mockSetOptions = jest.fn();
 /** ``stageService.loadStages`` spy. */
 export const mockLoadStages = jest.fn();
 /** ``stageService.beginAgain`` spy. */
@@ -112,6 +114,7 @@ export const mockBeginAgain = jest.fn();
 export function resetMapMocks(): void {
   resetMapMockState();
   mockNavigate.mockClear();
+  mockSetOptions.mockClear();
   mockLoadStages.mockClear();
   mockBeginAgain.mockClear();
 }
@@ -157,9 +160,14 @@ export function mockInteractionManagerModule() {
   };
 }
 
-/** ``navigation/hooks`` — surfaces the shared ``mockNavigate`` spy. */
+/**
+ * ``navigation/hooks`` — surfaces the shared ``mockNavigate`` / ``mockSetOptions``
+ * spies. ``setOptions`` is read by ``useScreenDrawer`` (a header-left toggle
+ * installed in a ``useLayoutEffect``); without it every screen that mounts a
+ * drawer would crash reading ``setOptions`` off an undefined navigation object.
+ */
 export function mockNavigationModule() {
-  return { useAppNavigation: () => ({ navigate: mockNavigate }) };
+  return { useAppNavigation: () => ({ navigate: mockNavigate, setOptions: mockSetOptions }) };
 }
 
 /** ``@react-navigation/bottom-tabs``. */
