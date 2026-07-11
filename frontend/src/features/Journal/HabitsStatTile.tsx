@@ -5,15 +5,12 @@
  */
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect } from 'react';
+import React from 'react';
 
 import StatTile from './StatTile';
+import { useHabitsSummary } from './useHabitsSummary';
 
-import { useAuth } from '@/context/AuthContext';
-import { countDoneToday, unlockedHabits } from '@/features/Habits/habitCounts';
-import { habitManager } from '@/features/Habits/services/habitManager';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
-import { useHabitStore } from '@/store/useHabitStore';
 
 type HabitsTileNav = BottomTabNavigationProp<RootTabParamList>;
 
@@ -71,24 +68,8 @@ export function describeHabits(
 
 const HabitsStatTile = (): React.JSX.Element => {
   const navigation = useNavigation<HabitsTileNav>();
-  const { userTimezone } = useAuth();
-  const habitsLoading = useHabitStore((state) => state.loading);
-  const habits = useHabitStore((state) => state.habits);
-
-  useEffect(() => {
-    void habitManager.loadHabits(userTimezone);
-  }, [userTimezone]);
-
-  // Unlock is governed solely by the persisted ``revealed`` flag, so the
-  // denominator no longer depends on the user's current stage.
-  const unlocked = unlockedHabits(habits);
-  const showSkeleton = habitsLoading && habits.length === 0;
-  const descriptor = describeHabits(
-    showSkeleton,
-    habits.length,
-    unlocked.length,
-    countDoneToday(unlocked, userTimezone),
-  );
+  const { showSkeleton, habitCount, unlockedCount, doneCount } = useHabitsSummary();
+  const descriptor = describeHabits(showSkeleton, habitCount, unlockedCount, doneCount);
 
   return (
     <StatTile
