@@ -38,6 +38,9 @@ export interface ResonanceEssayModalProps {
 /** Stable no-op so the card's press-capture doesn't allocate a fn per render. */
 const NOOP = (): void => {};
 
+/** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
+const BLANK_ESSAY_MESSAGE = "This note's essay isn't ready yet.";
+
 interface EssayState {
   essay: string | null;
   loading: boolean;
@@ -74,8 +77,14 @@ function useEssay(
       .essay(note.id)
       .then((updated) => {
         if (!active) return;
-        setState({ essay: updated.essay, loading: false, error: null });
-        onLoadedRef.current?.(updated);
+        if (updated.essay) {
+          // Same blank-as-missing contract as the cached path above.
+          setState({ essay: updated.essay, loading: false, error: null });
+          onLoadedRef.current?.(updated);
+          return;
+        }
+        // Don't cache a blank essay back (it would re-fetch on every reopen).
+        setState({ essay: null, loading: false, error: BLANK_ESSAY_MESSAGE });
       })
       .catch((err: unknown) => {
         if (active) setState({ essay: null, loading: false, error: formatApiError(err) });
