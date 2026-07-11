@@ -170,3 +170,17 @@ When working from the phone interface, these skills are available:
 - `/triage-and-plan` — Analyze the codebase and generate a new epic of issues
 - `/preflight` — Run pre-commit, fix all failures, iterate until green
 - `/review-diff` — Self-review the current branch diff before PR
+
+## Playbook (auto-curated)
+
+Concrete "when X, do Y" rules distilled weekly from real failures — flare-filed
+bugs and Claude review verdicts that blocked LGTM — by
+`.github/workflows/weekly-playbook.yml`, which specs each week's delta as a
+P0 `agent-ready` issue (label `playbook`) that the Ralph fleet implements.
+Every rule below carries an HTML-comment marker with its evidence; the
+playbook may add, edit, or retire ONLY marker-bearing rules (here and in
+`.claude/agents/` and `.claude/skills/` playbook sections). Edit rules by
+hand freely — remove the marker to take a rule out of the playbook's
+jurisdiction.
+
+<!-- playbook rules are inserted below this line -->
