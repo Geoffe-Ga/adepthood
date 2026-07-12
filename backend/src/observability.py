@@ -20,11 +20,16 @@ from __future__ import annotations
 import contextvars
 import logging
 import re
+import sys
 import uuid
+from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
+
+if TYPE_CHECKING:
+    from typing import TextIO
 
 # Header used by upstream load balancers / browser clients to propagate a
 # trace identifier.  We honour whatever value the caller supplied as long as
@@ -82,10 +87,12 @@ def _normalise_trace_id(raw: str | None) -> str:
 class TraceIdLogFilter(logging.Filter):
     """Inject the current request's trace ID into every log record.
 
-    Adding the filter at the root logger means every handler picks up the
-    ``trace_id`` attribute without having to be reconfigured individually.
-    Use ``%(trace_id)s`` in the formatter to emit the value, or read it
-    directly from a structured-log handler.
+    Attach this to a **handler** (see :func:`configure_stdout_logging`),
+    not a logger: logger-level filters are skipped for records that
+    propagate up from child loggers, so a root-*logger* filter never
+    fires for the ``logging.getLogger(__name__)`` calls this codebase
+    uses everywhere.  Use ``%(trace_id)s`` in the formatter to emit the
+    value, or read it directly from a structured-log handler.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -121,17 +128,51 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def install_trace_id_logging() -> None:
-    """Attach :class:`TraceIdLogFilter` to the root logger (idempotent).
+# Format for every application log line.  ``%(trace_id)s`` is safe to
+# reference only because :func:`configure_stdout_logging` guarantees a
+# :class:`TraceIdLogFilter` sits on the same handler as this formatter,
+# so the attribute exists on every record before interpolation.
+LOG_FORMAT = "%(asctime)s - %(trace_id)s - %(name)s - %(levelname)s - %(message)s"
 
-    Safe to call from app startup and from tests; calling it more than
-    once is a no-op because we check for an existing instance before
-    appending.  This means importing :mod:`main` repeatedly during a test
-    run doesn't accumulate filters.
+
+def configure_stdout_logging(
+    root: logging.Logger | None = None,
+    stream: TextIO | None = None,
+) -> bool:
+    """Install a stdout log handler with trace-ID injection (idempotent).
+
+    Containerized deployments (Docker on Railway) capture stdout/stderr
+    only — yet Python's root logger ships with **no** handlers, so every
+    ``logger.info(...)`` in the app was silently dropped while Uvicorn's
+    separately-configured access logs still appeared.  This installs a
+    single :class:`~logging.StreamHandler` on ``root`` writing to
+    ``stream`` (default ``sys.stdout``) at ``INFO`` level.
+
+    The :class:`TraceIdLogFilter` is attached to the *handler*, not the
+    logger: logger-level filters only run for records logged directly
+    through that logger instance, while handler-level filters apply to
+    every record that reaches the handler — including records propagated
+    from the named child loggers (``logging.getLogger(__name__)``) that
+    this codebase uses everywhere.  A logger-level filter would leave
+    propagated records without ``trace_id`` and make the
+    ``%(trace_id)s`` interpolation in :data:`LOG_FORMAT` raise
+    ``KeyError``, which :meth:`logging.Handler.emit` swallows into a
+    ``--- Logging error ---`` stderr dump instead of the real log line.
+
+    Returns ``True`` when the handler was installed, ``False`` when
+    ``root`` already had handlers (e.g. under pytest, or a deployment
+    that configures logging itself) — pre-configured environments are
+    always left untouched, which also makes repeat calls no-ops.
     """
-    root = logging.getLogger()
-    if not any(isinstance(f, TraceIdLogFilter) for f in root.filters):
-        root.addFilter(TraceIdLogFilter())
+    target = root if root is not None else logging.getLogger()
+    if target.handlers:
+        return False
+    handler = logging.StreamHandler(stream if stream is not None else sys.stdout)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(TraceIdLogFilter())
+    target.addHandler(handler)
+    target.setLevel(logging.INFO)
+    return True
 
 
 # Width that keeps log records small enough to flow through SQLite/

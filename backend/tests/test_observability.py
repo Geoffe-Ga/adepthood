@@ -9,9 +9,11 @@ BUG-INFRA-025: every request must have a trace ID that:
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -20,8 +22,8 @@ from observability import (
     TRACE_ID_HEADER,
     TraceIdLogFilter,
     _normalise_trace_id,
+    configure_stdout_logging,
     get_trace_id,
-    install_trace_id_logging,
     trace_id_var,
 )
 
@@ -62,13 +64,88 @@ def test_log_filter_injects_trace_id() -> None:
     assert record.trace_id == "trace-xyz"  # type: ignore[attr-defined]
 
 
-def test_install_trace_id_logging_is_idempotent() -> None:
-    """Calling :func:`install_trace_id_logging` twice adds only one filter."""
-    install_trace_id_logging()
-    install_trace_id_logging()
+def test_configure_stdout_logging_installs_trace_aware_handler() -> None:
+    """One call installs the handler, its trace-id filter, and INFO level."""
+    target = logging.getLogger("test-stdout-install")
+    target.handlers.clear()
+    try:
+        assert configure_stdout_logging(root=target, stream=io.StringIO()) is True
+        assert len(target.handlers) == 1
+        assert any(isinstance(f, TraceIdLogFilter) for f in target.handlers[0].filters)
+        assert target.level == logging.INFO
+    finally:
+        target.handlers.clear()
+        target.setLevel(logging.NOTSET)
+
+
+def test_configure_stdout_logging_leaves_preconfigured_loggers_untouched() -> None:
+    """A logger that already has handlers is not modified (returns ``False``).
+
+    This is both the idempotency guarantee (a second call sees the first
+    call's handler) and the pytest/deployment escape hatch: environments
+    that configure logging themselves are respected.
+    """
+    target = logging.getLogger("test-stdout-preconfigured")
+    target.handlers.clear()
+    sentinel = logging.NullHandler()
+    target.addHandler(sentinel)
+    try:
+        assert configure_stdout_logging(root=target, stream=io.StringIO()) is False
+        assert target.handlers == [sentinel]
+    finally:
+        target.handlers.clear()
+
+
+def test_configure_stdout_logging_defaults_to_process_root_logger() -> None:
+    """With no explicit target the *process* root logger is inspected.
+
+    Under pytest the root logger carries the capture plugin's handlers, so
+    the default-argument call must refuse to touch it.  A ``NullHandler``
+    is added first so the assertion stays deterministic even if the plugin
+    ever attaches its handlers lazily.
+    """
     root = logging.getLogger()
-    trace_filters = [f for f in root.filters if isinstance(f, TraceIdLogFilter)]
-    assert len(trace_filters) == 1
+    placeholder: logging.Handler | None = None
+    if not root.handlers:
+        placeholder = logging.NullHandler()
+        root.addHandler(placeholder)
+    try:
+        assert configure_stdout_logging() is False
+    finally:
+        if placeholder is not None:
+            root.removeHandler(placeholder)
+
+
+def test_child_logger_record_renders_trace_id_through_configured_handler(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression (PR #1547): child-logger records must render, with trace id.
+
+    The original implementation attached :class:`TraceIdLogFilter` to the
+    root *logger*, which is skipped for records propagating up from named
+    child loggers — so ``%(trace_id)s`` in the formatter raised
+    ``KeyError`` and every real log line was swallowed into a
+    ``--- Logging error ---`` stderr dump.  This exercises the full
+    pipeline the presence-only assertions missed: child logger →
+    propagation → handler-level filter → formatter → stream.
+    """
+    parent = logging.getLogger("test-stdout-e2e")
+    parent.handlers.clear()
+    child = logging.getLogger("test-stdout-e2e.chapters.seed")
+    token = trace_id_var.set("trace-e2e-123")
+    try:
+        # No explicit stream: the handler must bind sys.stdout (capsys's
+        # replacement), pinning the "stdout by default" contract too.
+        assert configure_stdout_logging(root=parent) is True
+        child.info("seed probe message")
+    finally:
+        trace_id_var.reset(token)
+        parent.handlers.clear()
+        parent.setLevel(logging.NOTSET)
+    captured = capsys.readouterr()
+    assert "seed probe message" in captured.out
+    assert "trace-e2e-123" in captured.out
+    assert "Logging error" not in captured.err
 
 
 def test_caller_provided_id_is_echoed() -> None:

@@ -25,7 +25,7 @@ from middleware import (
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
-from observability import install_trace_id_logging
+from observability import configure_stdout_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -248,13 +248,17 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
     )
 
 
-# BUG-APP-007: install the trace-id log filter at *import* time, not in the
-# lifespan startup hook.  Module imports (router registration, seed data
-# loading) run before lifespan fires, and a missing filter at that point
-# would leave their log records without a ``trace_id`` field — breaking
-# the formatter and causing a flood of ``KeyError`` messages on the very
-# first request a worker process serves.  The function is idempotent.
-install_trace_id_logging()
+# BUG-APP-007: configure logging at *import* time, not in the lifespan
+# startup hook.  Module imports (router registration, seed data loading)
+# run before lifespan fires, and records emitted then must already flow
+# through the trace-id-aware stdout handler — otherwise they are silently
+# dropped (Python's root logger has no handlers by default, so only
+# Uvicorn's separately-configured access logs reach the container
+# orchestrator on Railway).  ``STDOUT_LOGGING_CONFIGURED`` exists so tests
+# can pin that this call happens at import; it is ``False`` whenever the
+# environment (e.g. pytest) already configured root handlers, which
+# ``configure_stdout_logging`` always leaves untouched.
+STDOUT_LOGGING_CONFIGURED = configure_stdout_logging()
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:
@@ -363,11 +367,16 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # orchestrator should still be able to take the pod live so an operator
     # can SSH in and run ``alembic upgrade head`` if migrations are missing.
     if os.getenv("SKIP_STARTUP_SEED") != "1":
+        logger.info("startup_seed_begin")
         try:
             async with async_session_factory() as session:
+                logger.info("database_session_created")
                 await _seed_startup_data(session)
+                logger.info("startup_seed_complete")
         except Exception:
             logger.exception("startup seed failed; continuing without seeded catalog")
+    else:
+        logger.info("startup_seed_skipped", extra={"reason": "SKIP_STARTUP_SEED=1"})
 
     # Issue #397: surface a bad content deploy at boot, not at first
     # chapter open.  Loud log rather than crash — the app's non-content

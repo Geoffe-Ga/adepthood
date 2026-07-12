@@ -42,8 +42,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     The line carries the request method, truncated path, response status,
     and elapsed milliseconds.  ``trace_id`` is injected automatically by
-    the log filter installed in :func:`observability.install_trace_id_logging`,
-    so every line is correlatable end-to-end without explicit threading.
+    the handler-level filter installed in
+    :func:`observability.configure_stdout_logging`, so every line is
+    correlatable end-to-end without explicit threading.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
