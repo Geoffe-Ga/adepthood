@@ -6,7 +6,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 
-import { ink, SPACING, touchTarget, type } from '@/design/tokens';
+import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/design/tokens';
 
 export interface DrawerItemProps {
   /** Visible row label; also the default accessibility label. */
@@ -19,6 +19,8 @@ export interface DrawerItemProps {
   accessibilityLabel?: string;
   /** Test hook for the row. */
   testID?: string;
+  /** Highlights the row as the current selection and announces it to a11y. */
+  selected?: boolean;
 }
 
 /** A drawer row with an optional icon slot and an accessible label. */
@@ -28,19 +30,23 @@ export default function DrawerItem({
   icon,
   accessibilityLabel,
   testID,
+  selected = false,
 }: DrawerItemProps): React.JSX.Element {
   const { width } = useWindowDimensions();
 
   return (
     <TouchableOpacity
-      style={styles.row}
+      style={[styles.row, selected ? styles.rowSelected : null]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={{ selected }}
       testID={testID}
     >
       {icon}
-      <Text style={[type(width).body, styles.label]}>{label}</Text>
+      <Text style={[type(width).body, styles.label, selected ? styles.labelSelected : null]}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -52,7 +58,15 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
     minHeight: touchTarget.minimum,
   },
+  rowSelected: {
+    backgroundColor: surface.sunken,
+    borderRadius: radius.sm,
+    paddingHorizontal: SPACING.sm,
+  },
   label: {
     color: ink.primary,
+  },
+  labelSelected: {
+    color: accent.primary,
   },
 });
