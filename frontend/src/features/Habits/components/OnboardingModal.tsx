@@ -1,4 +1,4 @@
-import Slider, { type SliderProps } from '@react-native-community/slider';
+import Slider from '@react-native-community/slider';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LayoutAnimation,
@@ -34,14 +34,6 @@ import { HABIT_NAME_MAX_LENGTH, validateAndAddHabit } from './onboardingValidati
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-interface SmoothSliderProps extends SliderProps {
-  animateTransitions?: boolean;
-  animationType?: 'timing' | 'spring';
-  animationConfig?: Record<string, unknown>;
-}
-
-const SmoothSlider = Slider as React.ComponentType<SmoothSliderProps>;
 
 const REVEAL_STAGGER_MS = 150;
 const REVEAL_SORT_PAUSE_MS = 500;
@@ -96,16 +88,13 @@ const EnergySliderTile = ({ habit, index, type, onValueChange }: EnergySliderTil
       </Text>
       <View style={styles.energySliderRow}>
         <View style={styles.energySliderContainer}>
-          <SmoothSlider
+          <Slider
             testID={`${type}-slider`}
             minimumValue={0}
             maximumValue={10}
             step={1}
             value={value}
             onValueChange={(v) => onValueChange(index, type, v)}
-            animateTransitions
-            animationType="timing"
-            animationConfig={{ duration: 150 }}
             minimumTrackTintColor={colors.secondary}
             maximumTrackTintColor={colors.mystical.glowLight}
             thumbTintColor={colors.secondary}

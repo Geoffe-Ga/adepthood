@@ -62,7 +62,6 @@ describe('OnboardingModal cost step', () => {
   it('applies mystical slider styling', () => {
     const { getAllByTestId } = setupToCostStep();
     const slider = getAllByTestId('cost-slider')[0];
-    expect(slider.props.animateTransitions).toBe(true);
     expect(slider.props.minimumTrackTintColor).toBe(COLORS.secondary);
     expect(slider.props.thumbTintColor).toBe(COLORS.secondary);
   });
