@@ -946,10 +946,7 @@ const useStageNavigation = (onBeforeNavigate: () => void) => {
       onBeforeNavigate();
       InteractionManager.runAfterInteractions(() => {
         if (screen === 'Journal') {
-          navigation.navigate('Journal', {
-            tag: 'stage_reflection',
-            stageNumber: stage.stageNumber,
-          });
+          navigation.navigate('Journal');
         } else {
           navigation.navigate(screen, { stageNumber: stage.stageNumber });
         }
