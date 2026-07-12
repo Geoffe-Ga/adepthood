@@ -119,16 +119,3 @@ export function buildAnchoredSegments(
   if (segments.length === 0) segments.push({ start: 0, text: body, note: null, quote: null });
   return segments;
 }
-
-/**
- * The notes-only segmentation the read-mode highlight tree consumes. A thin
- * wrapper over {@link buildAnchoredSegments} (no quotes) that drops the quote
- * key, so its shape and behaviour stay exactly as before.
- */
-export function buildHighlightSegments(body: string, notes: Marginalia[]): HighlightSegment[] {
-  return buildAnchoredSegments(body, notes, []).map(({ start, text, note }) => ({
-    start,
-    text,
-    note,
-  }));
-}

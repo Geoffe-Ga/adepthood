@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { describe, it, expect } from '@jest/globals';
 
-import { buildHighlightSegments } from '../highlightSegments';
+import { buildAnchoredSegments } from '../highlightSegments';
 
 import type { Marginalia } from '@/api';
 
@@ -25,19 +25,19 @@ function note(overrides: Partial<Marginalia>): Marginalia {
   };
 }
 
-describe('buildHighlightSegments', () => {
+describe('buildAnchoredSegments -- notes-only segmentation', () => {
   it('returns the whole body as one plain segment when there are no notes', () => {
-    const segments = buildHighlightSegments(BODY, []);
-    expect(segments).toEqual([{ start: 0, text: BODY, note: null }]);
+    const segments = buildAnchoredSegments(BODY, [], []);
+    expect(segments).toEqual([{ start: 0, text: BODY, note: null, quote: null }]);
   });
 
   it('splits the body at anchor boundaries', () => {
     const start = BODY.indexOf('the willow');
     const n = note({ id: 7, anchor_start: start, anchor_end: start + 'the willow'.length });
-    const segments = buildHighlightSegments(BODY, [n]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
 
     expect(segments).toHaveLength(3);
-    expect(segments[0]).toEqual({ start: 0, text: BODY.slice(0, start), note: null });
+    expect(segments[0]).toEqual({ start: 0, text: BODY.slice(0, start), note: null, quote: null });
     expect(segments[1]).toMatchObject({ start, text: 'the willow' });
     expect(segments[1]!.note?.id).toBe(7);
     expect(segments[2]!.note).toBeNull();
@@ -47,7 +47,7 @@ describe('buildHighlightSegments', () => {
 
   it('handles an anchor at the very start (no leading plain segment)', () => {
     const n = note({ id: 2, anchor_start: 0, anchor_end: 8 }); // "I walked"
-    const segments = buildHighlightSegments(BODY, [n]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
     expect(segments[0]!.note?.id).toBe(2);
     expect(segments[0]!.text).toBe('I walked');
   });
@@ -55,7 +55,7 @@ describe('buildHighlightSegments', () => {
   it('keeps the earliest of two overlapping anchors, deterministically', () => {
     const a = note({ id: 1, anchor_start: 2, anchor_end: 10 });
     const b = note({ id: 2, anchor_start: 5, anchor_end: 15 }); // overlaps a
-    const segments = buildHighlightSegments(BODY, [b, a]); // unsorted input
+    const segments = buildAnchoredSegments(BODY, [b, a], []); // unsorted input
     const highlighted = segments.filter((s) => s.note != null);
     expect(highlighted).toHaveLength(1);
     expect(highlighted[0]!.note?.id).toBe(1); // earliest start wins
@@ -63,7 +63,7 @@ describe('buildHighlightSegments', () => {
 
   it('drops anchors that fall outside the body', () => {
     const n = note({ id: 9, anchor_start: 100, anchor_end: 120 });
-    const segments = buildHighlightSegments(BODY, [n]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
     expect(segments.every((s) => s.note == null)).toBe(true);
   });
 
@@ -75,36 +75,36 @@ describe('buildHighlightSegments', () => {
       anchor_end: start + 'the willow'.length,
       status: 'stale',
     });
-    const segments = buildHighlightSegments(BODY, [stale]);
+    const segments = buildAnchoredSegments(BODY, [stale], []);
     expect(segments.every((s) => s.note == null)).toBe(true);
   });
 
   it('drops an anchor whose start is negative', () => {
     const n = note({ id: 10, anchor_start: -1, anchor_end: 4 });
-    const segments = buildHighlightSegments(BODY, [n]);
-    expect(segments).toEqual([{ start: 0, text: BODY, note: null }]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
+    expect(segments).toEqual([{ start: 0, text: BODY, note: null, quote: null }]);
   });
 
   it('drops an empty anchor whose start equals its end', () => {
     const at = BODY.indexOf('willow');
     const n = note({ id: 11, anchor_start: at, anchor_end: at });
-    const segments = buildHighlightSegments(BODY, [n]);
-    expect(segments).toEqual([{ start: 0, text: BODY, note: null }]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
+    expect(segments).toEqual([{ start: 0, text: BODY, note: null, quote: null }]);
   });
 
   it('includes an anchor that ends exactly at the end of the body', () => {
     const end = BODY.length;
     const tail = 'bent.';
     const n = note({ id: 12, anchor_start: end - tail.length, anchor_end: end });
-    const segments = buildHighlightSegments(BODY, [n]);
+    const segments = buildAnchoredSegments(BODY, [n], []);
     const last = segments[segments.length - 1]!;
     expect(last.note?.id).toBe(12);
     expect(last.text).toBe(tail);
   });
 
   it('returns a single plain segment for an empty body', () => {
-    const segments = buildHighlightSegments('', []);
-    expect(segments).toEqual([{ start: 0, text: '', note: null }]);
+    const segments = buildAnchoredSegments('', [], []);
+    expect(segments).toEqual([{ start: 0, text: '', note: null, quote: null }]);
   });
 });
 
@@ -115,8 +115,7 @@ function hasUnpairedSurrogate(text: string): boolean {
   return UNPAIRED_HIGH_SURROGATE.test(text) || UNPAIRED_LOW_SURROGATE.test(text);
 }
 
-// RED: anchors are code points, but slice() indexes UTF-16 code units, so a leading emoji drifts them.
-describe('buildHighlightSegments -- non-BMP (astral) code-point anchors (marginalia)', () => {
+describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors (marginalia, notes-only)', () => {
   const EMOJI = '\u{1F600}';
   const LEADING_EMOJI_BODY = `${EMOJI}went for a daily walk.`;
 
@@ -124,7 +123,7 @@ describe('buildHighlightSegments -- non-BMP (astral) code-point anchors (margina
     const start = 1; // code-point index right after the emoji, at "w"
     const end = 17; // code-point index right after "went for a daily"
     const n = note({ id: 7, anchor_start: start, anchor_end: end });
-    const segments = buildHighlightSegments(LEADING_EMOJI_BODY, [n]);
+    const segments = buildAnchoredSegments(LEADING_EMOJI_BODY, [n], []);
     const anchored = segments.find((s) => s.note?.id === 7);
     expect(anchored?.text).toBe('went for a daily');
   });
@@ -134,7 +133,7 @@ describe('buildHighlightSegments -- non-BMP (astral) code-point anchors (margina
     const start = 11; // code-point index of "w" in "walk"
     const end = 16; // the body's code-point length, including the trailing emoji
     const n = note({ id: 8, anchor_start: start, anchor_end: end });
-    const segments = buildHighlightSegments(tailBody, [n]);
+    const segments = buildAnchoredSegments(tailBody, [n], []);
     const anchored = segments.find((s) => s.note?.id === 8);
     expect(anchored).toBeDefined();
     expect(anchored?.text).toBe(`walk${EMOJI}`);
@@ -143,7 +142,7 @@ describe('buildHighlightSegments -- non-BMP (astral) code-point anchors (margina
   it('never produces a segment with a lone/unpaired surrogate', () => {
     const tailBody = `went for a walk${EMOJI}`;
     const n = note({ id: 8, anchor_start: 11, anchor_end: 16 });
-    const segments = buildHighlightSegments(tailBody, [n]);
+    const segments = buildAnchoredSegments(tailBody, [n], []);
     for (const segment of segments) {
       expect(hasUnpairedSurrogate(segment.text)).toBe(false);
     }

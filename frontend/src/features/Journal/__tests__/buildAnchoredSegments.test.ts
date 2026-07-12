@@ -1,12 +1,8 @@
 /* eslint-env jest */
 import { describe, it, expect } from '@jest/globals';
 
-// RED: `buildAnchoredSegments` does not exist on `../highlightSegments` yet --
-// this file fails with "Cannot find module" / "is not a function" until the
-// implementation-specialist adds it (highlightSegments.ts becomes a thin
-// wrapper around it; `buildHighlightSegments` stays byte-identical -- see
-// highlightSegments.test.ts, which is untouched).
-import { buildAnchoredSegments, buildHighlightSegments } from '../highlightSegments';
+// Segments the body against a merged note + promoted-quote anchor stream.
+import { buildAnchoredSegments } from '../highlightSegments';
 
 import type { Marginalia, PromotedQuote } from '@/api';
 
@@ -83,8 +79,7 @@ describe('buildAnchoredSegments', () => {
     const segments = buildAnchoredSegments(BODY, [n], [q]);
 
     const anchored = segments.filter((s) => s.note != null || s.quote != null);
-    // The note wins the tie; the overlapping quote is skipped by the same
-    // first-wins cursor-skip rule `buildHighlightSegments` already uses.
+    // The note wins the tie; the overlapping quote is skipped by the anchored path's own first-wins cursor-skip rule.
     expect(anchored).toHaveLength(1);
     expect(anchored[0]!.note?.id).toBe(1);
   });
@@ -137,12 +132,13 @@ describe('buildAnchoredSegments', () => {
     expect(segments.every((s) => s.note == null)).toBe(true);
   });
 
-  it('is a strict superset of buildHighlightSegments when there are no quotes', () => {
+  it('carries quote:null on every segment when there are no quotes', () => {
     const start = BODY.indexOf('the willow');
     const n = note({ id: 7, anchor_start: start, anchor_end: start + 'the willow'.length });
-    const legacy = buildHighlightSegments(BODY, [n]);
-    const anchored = buildAnchoredSegments(BODY, [n], []);
-    expect(anchored).toEqual(legacy.map((s) => ({ ...s, quote: null })));
+    const segments = buildAnchoredSegments(BODY, [n], []);
+    expect(segments.every((s) => s.quote === null)).toBe(true);
+    const anchored = segments.find((s) => s.note?.id === 7);
+    expect(anchored?.text).toBe('the willow');
   });
 });
 
@@ -153,7 +149,7 @@ function hasUnpairedSurrogate(text: string): boolean {
   return UNPAIRED_HIGH_SURROGATE.test(text) || UNPAIRED_LOW_SURROGATE.test(text);
 }
 
-// RED: anchors are code points, but slice() indexes UTF-16 code units, so a leading emoji drifts them.
+// Anchors are code points; slicing here must not drift or split a non-BMP character.
 describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
   const EMOJI = '\u{1F600}';
   // Code points: 0=emoji, 1..16="went for a daily" (16 chars), 17=' ', 18.."walk."
