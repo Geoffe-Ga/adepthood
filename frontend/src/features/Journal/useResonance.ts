@@ -18,6 +18,8 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { optimisticRemove } from './optimisticRemove';
+
 import { completionSuggestions, resonance } from '@/api';
 import type {
   CareResponse,
@@ -161,7 +163,15 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
   );
 
   const dismissSuggestion = useCallback(
-    (id: number) => runDismiss(id, suggestions, { pendingIdsRef, setSuggestions, setError }),
+    (id: number) =>
+      optimisticRemove(id, {
+        pendingIds: pendingIdsRef.current,
+        current: suggestions,
+        setItems: setSuggestions,
+        removeRemote: completionSuggestions.dismiss,
+        reinsert: (prev, item) => mergeByIdSorted([item], prev),
+        onError: setError,
+      }),
     [suggestions, setError],
   );
 
@@ -191,34 +201,6 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
     deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
   } catch (err) {
     deps.setError(formatApiError(err)); // row stays pending; user can retry
-  } finally {
-    deps.pendingIdsRef.current.delete(id);
-  }
-}
-
-interface DismissDeps {
-  pendingIdsRef: MutableRefObject<Set<number>>;
-  setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
-  setError: SetError;
-}
-
-/** Dismiss a suggestion: per-id guarded; optimistic remove, revert on error. */
-async function runDismiss(
-  id: number,
-  current: CompletionSuggestion[],
-  deps: DismissDeps,
-): Promise<void> {
-  if (deps.pendingIdsRef.current.has(id)) return;
-  deps.pendingIdsRef.current.add(id);
-  const dismissed = current.find((s) => s.id === id);
-  deps.setSuggestions((prev) => prev.filter((s) => s.id !== id)); // optimistic
-  try {
-    await completionSuggestions.dismiss(id);
-  } catch (err) {
-    if (dismissed) {
-      deps.setSuggestions((prev) => mergeByIdSorted([dismissed], prev)); // revert
-    }
-    deps.setError(formatApiError(err));
   } finally {
     deps.pendingIdsRef.current.delete(id);
   }
