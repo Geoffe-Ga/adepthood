@@ -19,7 +19,6 @@ import {
 import React from 'react';
 import { StyleSheet, TouchableOpacity } from 'react-native';
 
-import type { JournalTag } from '../api';
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
 import { accent, ink, SPACING, surface, touchTarget } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
@@ -43,17 +42,7 @@ export type RootTabParamList = {
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
   Course: { stageNumber?: number } | undefined;
-  Journal:
-    | {
-        tag?: JournalTag;
-        stageNumber?: number;
-        contentTitle?: string;
-        practiceSessionId?: number;
-        userPracticeId?: number;
-        practiceName?: string;
-        practiceDuration?: number;
-      }
-    | undefined;
+  Journal: undefined;
   Map: undefined;
 };
 

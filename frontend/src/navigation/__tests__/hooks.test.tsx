@@ -52,17 +52,16 @@ describe('useAppRoute', () => {
     expect(result.params).toBeUndefined();
   });
 
-  it('returns a route with Journal params', () => {
+  it('returns a route with params for a parameterized screen', () => {
     const fakeRoute = {
-      key: 'Journal-abc',
-      name: 'Journal',
-      params: { practiceSessionId: 42, practiceName: 'Meditation' },
+      key: 'Course-abc',
+      name: 'Course',
+      params: { stageNumber: 5 },
     };
     mockUseRoute.mockReturnValue(fakeRoute);
 
-    const result = useAppRoute<'Journal'>();
+    const result = useAppRoute<'Course'>();
 
-    expect(result.params?.practiceSessionId).toBe(42);
-    expect(result.params?.practiceName).toBe('Meditation');
+    expect(result.params?.stageNumber).toBe(5);
   });
 });

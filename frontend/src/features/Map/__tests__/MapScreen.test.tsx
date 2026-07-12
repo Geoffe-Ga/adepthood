@@ -149,7 +149,7 @@ describe('MapScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('Course', { stageNumber: 1 });
   });
 
-  it('navigates to Journal with stage_reflection tag when Journal is tapped', () => {
+  it('navigates to the Journal tab when Journal is tapped', () => {
     const tree = create(<MapScreen />);
     act(() => {
       tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
@@ -157,10 +157,7 @@ describe('MapScreen', () => {
     act(() => {
       tree.root.findByProps({ testID: 'journal-link' }).props.onPress();
     });
-    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
-      tag: 'stage_reflection',
-      stageNumber: 1,
-    });
+    expect(mockNavigate).toHaveBeenCalledWith('Journal');
   });
 
   it('closes modal when X is pressed', () => {
