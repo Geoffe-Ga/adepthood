@@ -10,7 +10,7 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.dates import today_in_tz
 from models.goal import Goal
@@ -859,3 +859,199 @@ async def test_subtractive_habit_no_logs_streaks_from_start_date_via_list(
     assert resp.status_code == HTTPStatus.OK
     row = next(h for h in resp.json() if h["id"] == habit_id)
     assert row["streak"] == 6
+
+
+# ── Bulk completions clear ──────────────────────────────────────────────
+
+
+async def _seed_completion(
+    db_session: AsyncSession, *, goal_id: int, user_id: int, days_back: int, units: float = 1.0
+) -> GoalCompletion:
+    """Insert one directly-seeded completion row on a distinct local day."""
+    local_day = today_in_tz("UTC") - timedelta(days=days_back)
+    completion = GoalCompletion(
+        goal_id=goal_id,
+        user_id=user_id,
+        completed_units=units,
+        timestamp=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days_back),
+        local_day=local_day,
+    )
+    db_session.add(completion)
+    await db_session.commit()
+    return completion
+
+
+async def _goal_ids_for_habit(db_session: AsyncSession, habit_id: int) -> list[int]:
+    """Return every goal id belonging to a habit, for post-clear assertions."""
+    result = await db_session.execute(select(Goal.id).where(Goal.habit_id == habit_id))
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_owner_clears_all_completions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """DELETE /habits/{id}/completions removes every completion for the habit's goals."""
+    headers = await _signup(async_client, "clear_owner")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+
+    for days_back in (0, 1, 5, 40):
+        await _seed_completion(
+            db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=days_back
+        )
+
+    resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+    goal_ids = await _goal_ids_for_habit(db_session, habit_id)
+    remaining = await db_session.execute(
+        select(GoalCompletion).where(col(GoalCompletion.goal_id).in_(goal_ids))
+    )
+    assert remaining.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_clear_resets_streak_and_embedded_completions(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A refetch after clearing shows streak 0 and no embedded completions."""
+    headers = await _signup(async_client, "clear_streak")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+
+    for days_back in range(5):
+        await _seed_completion(
+            db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=days_back
+        )
+
+    resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+    detail = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert detail.status_code == HTTPStatus.OK
+    body = detail.json()
+    assert body["streak"] == 0
+    for goal in body["goals"]:
+        assert goal["completions"] == []
+
+
+@pytest.mark.asyncio
+async def test_clear_empty_habit_is_a_no_op(async_client: AsyncClient) -> None:
+    """A habit with goals but zero completions still returns 204."""
+    headers = await _signup(async_client, "clear_empty")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+
+    resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_clear_completions_nonexistent_habit_returns_404(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "clear_missing")
+    resp = await async_client.delete("/habits/999999/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_clear_completions_cross_user_returns_403(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A non-owner cannot clear another user's completions, and none are lost."""
+    alice_headers = await _signup(async_client, "clear_alice")
+    bob_headers = await _signup(async_client, "clear_bob")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=alice_headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+    await _seed_completion(db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=0)
+
+    resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=bob_headers)
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+    remaining = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    assert len(remaining.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_completions_filters_by_user_id_defense_in_depth(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A foreign-user row on the owner's goal survives; only the owner's rows are deleted."""
+    headers = await _signup(async_client, "clear_defense")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+
+    owned = await _seed_completion(
+        db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=0
+    )
+    stray = GoalCompletion(
+        goal_id=goal_id,
+        user_id=999_999,
+        completed_units=1.0,
+        local_day=today_in_tz("UTC") - timedelta(days=1),
+    )
+    db_session.add(stray)
+    await db_session.commit()
+    stray_id = stray.id
+    owned_id = owned.id
+
+    resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+    db_session.expire_all()
+    assert await db_session.get(GoalCompletion, owned_id) is None
+    survivor = await db_session.get(GoalCompletion, stray_id)
+    assert survivor is not None
+    assert survivor.user_id == 999_999
+
+
+@pytest.mark.asyncio
+async def test_clear_completions_scoped_to_single_habit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Clearing habit A's completions leaves habit B's completions intact."""
+    headers = await _signup(async_client, "clear_scope")
+    resp_a = await async_client.post(
+        "/habits/", json=sample_payload(name="Habit A"), headers=headers
+    )
+    resp_b = await async_client.post(
+        "/habits/", json=sample_payload(name="Habit B"), headers=headers
+    )
+    habit_a_id = resp_a.json()["id"]
+    goal_a_id = next(g["id"] for g in resp_a.json()["goals"] if g["tier"] == "clear")
+    goal_b_id = next(g["id"] for g in resp_b.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_a_id)
+    assert habit_row is not None
+
+    await _seed_completion(db_session, goal_id=goal_a_id, user_id=habit_row.user_id, days_back=0)
+    b_completion = await _seed_completion(
+        db_session, goal_id=goal_b_id, user_id=habit_row.user_id, days_back=0
+    )
+    b_completion_id = b_completion.id
+
+    resp = await async_client.delete(f"/habits/{habit_a_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+    remaining_a = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_a_id)
+    )
+    assert remaining_a.scalars().all() == []
+
+    db_session.expire_all()
+    survivor = await db_session.get(GoalCompletion, b_completion_id)
+    assert survivor is not None
+    assert survivor.goal_id == goal_b_id

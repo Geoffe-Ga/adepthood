@@ -1091,14 +1091,20 @@ export const habitManager = {
 
   /**
    * Reset a habit's start date: clear the streak + completions locally,
-   * persist, then PUT the new start date so that half of the reset reaches
-   * the server. Only ``start_date`` is durable — the PUT carries no streak
-   * and does not delete the habit's goal-completion rows, so the local
-   * streak/completions clear is optimistic and is rebuilt from the surviving
-   * server rows on the next ``loadHabits``. Without the PUT even the new
-   * start date would revert to the stale server value. On failure the
-   * rollback restores both the store and the on-disk snapshot and alerts the
-   * user.
+   * persist, then run two server writes in sequence — first PUT the new start
+   * date, and only once that resolves bulk-clear the habit's server-side
+   * goal-completion rows via the clear-completions endpoint. Clearing
+   * server-side means a later ``loadHabits`` refetch shows no stale
+   * completions rather than rebuilding a streak from rows the reset was meant
+   * to wipe. Without the PUT even the new start date would revert to the stale
+   * server value. Sequencing matters because the clear is irreversible: if it
+   * ran concurrently and the PUT failed, the rollback would restore the local
+   * completions while the server had already dropped them, silently losing
+   * history behind a "previous state was restored" message. Ordering the
+   * reversible PUT first means a PUT failure never reaches the clear, so any
+   * failure leaves the server's completions intact for the rollback to match.
+   * On failure the rollback restores both the store and the on-disk snapshot
+   * and alerts the user.
    */
   setNewStartDate: (habitId: number, newDate: Date): void => {
     const prev = getHabits();
@@ -1107,8 +1113,10 @@ export const habitManager = {
     void persistHabits(next);
     const updated = next.find((h) => h.id === habitId);
     if (!updated?.id) return;
+    const updatedId = updated.id;
     habitsApi
-      .update(updated.id, toApiPayload(updated))
+      .update(updatedId, toApiPayload(updated))
+      .then(() => habitsApi.clearCompletions(updatedId))
       .catch(
         revertOnFailure(
           prev,

@@ -1016,6 +1016,10 @@ export const habits = {
   delete(habitId: number, token?: string): Promise<void> {
     return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
   },
+  /** Bulk-delete every goal-completion row for a habit (server-side reset). */
+  clearCompletions(habitId: number, token?: string): Promise<void> {
+    return request<void>(`/habits/${habitId}/completions`, { method: 'DELETE', token });
+  },
   getStats(habitId: number, token?: string): Promise<ApiHabitStats> {
     return request<ApiHabitStats>(`/habits/${habitId}/stats`, { token });
   },

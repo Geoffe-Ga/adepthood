@@ -88,6 +88,18 @@ describe('habits API client', () => {
     expect(init.method).toBe('DELETE');
   });
 
+  test('habits.clearCompletions sends DELETE request to /habits/{id}/completions', async () => {
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({ ok: true, status: 204, json: () => Promise.resolve(null) }),
+    );
+
+    await habits.clearCompletions(1, 'test-token');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/habits/1/completions');
+    expect(init.method).toBe('DELETE');
+  });
+
   test('habits.getStats sends GET to /habits/{id}/stats', async () => {
     const stats = {
       day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],

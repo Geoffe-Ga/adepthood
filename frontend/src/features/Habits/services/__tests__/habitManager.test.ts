@@ -10,6 +10,7 @@ jest.mock('../../../../api', () => ({
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
+    clearCompletions: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
     updateGoalUnits: jest.fn(() => Promise.resolve([])),
   },
@@ -1707,6 +1708,96 @@ describe('habitManager', () => {
         1,
         expect.objectContaining({ start_date: '2025-06-01' }),
       );
+      // The PUT alone does not delete completion rows server-side; clearing
+      // them is a separate call so the reset survives the next refetch.
+      expect(habitsApi.clearCompletions).toHaveBeenCalledWith(1);
+    });
+
+    it('reflects a cleared server state on the next loadHabits refetch, with no resurrected rows', async () => {
+      const habit = makeHabit({
+        id: 1,
+        streak: 10,
+        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
+      });
+      useHabitStore.setState({ habits: [habit] });
+      // Stand in for the server: the refetch only comes back cleared if the
+      // clear-completions call actually reached it, so a fix that forgets
+      // the DELETE reloads pre-reset rows straight back.
+      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => {
+        const cleared = (habitsApi.clearCompletions as jest.Mock).mock.calls.length > 0;
+        return Promise.resolve([
+          {
+            id: 1,
+            name: habit.name,
+            icon: habit.icon,
+            start_date: '2025-06-01',
+            energy_cost: 1,
+            energy_return: 2,
+            stage: 'Beige',
+            streak: cleared ? 0 : 10,
+            milestone_notifications: false,
+            revealed: true,
+            goals: [
+              {
+                ...freshServerGoal(1, 'Low', 'low', 1),
+                completions: cleared
+                  ? []
+                  : [{ id: 1, timestamp: '2025-05-01T00:00:00.000Z', completed_units: 1 }],
+              },
+              { ...freshServerGoal(2, 'Clear', 'clear', 2), completions: [] },
+              { ...freshServerGoal(3, 'Stretch', 'stretch', 3), completions: [] },
+            ],
+          },
+        ] as never);
+      });
+
+      habitManager.setNewStartDate(1, new Date('2025-06-01'));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+      await habitManager.loadHabits('UTC');
+
+      const reloaded = useHabitStore.getState().habits.find((h) => h.id === 1)!;
+      expect(reloaded.streak).toBe(0);
+      expect(reloaded.completions).toEqual([]);
+    });
+
+    it('rolls back the store and disk, and alerts the user, when clearCompletions rejects', async () => {
+      const habit = makeHabit({
+        streak: 10,
+        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
+      });
+      const prev = [habit];
+      useHabitStore.setState({ habits: prev });
+      (habitsApi.clearCompletions as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
+
+      habitManager.setNewStartDate(1, new Date('2025-06-01'));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+      const rolledBack = useHabitStore.getState().habits[0]!;
+      expect(rolledBack.streak).toBe(10);
+      expect(rolledBack.completions).toHaveLength(1);
+      expect(saveHabits).toHaveBeenLastCalledWith(prev);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      expect(Alert.alert).toHaveBeenCalled();
+    });
+
+    it('skips both network calls for an id-less habit but still applies the optimistic reset', async () => {
+      const habit = makeHabit({
+        id: 0,
+        streak: 5,
+        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
+      });
+      useHabitStore.setState({ habits: [habit] });
+
+      habitManager.setNewStartDate(0, new Date('2025-06-01'));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+      const updated = useHabitStore.getState().habits[0]!;
+      expect(updated.streak).toBe(0);
+      expect(updated.completions).toEqual([]);
+      expect(habitsApi.update).not.toHaveBeenCalled();
+      expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
     });
 
     it('rolls back the store and disk, and alerts the user, when the start-date PUT rejects', async () => {

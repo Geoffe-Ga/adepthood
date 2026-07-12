@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Response, status
-from sqlalchemy import func
+from sqlalchemy import CursorResult, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -316,6 +316,47 @@ async def delete_habit(
         extra={
             "user_id": current_user,
             "habit_id": habit_id,
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{habit_id}/completions", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_habit_completions(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    habit: Annotated[Habit, Depends(require_owned_habit)],
+) -> Response:
+    """Bulk-delete every goal-completion row for the owned habit's goals.
+
+    Resets the habit's completion history in one statement so a start-date
+    reset (or any other "start fresh" flow) leaves no stale rows behind for a
+    later refetch to embed. Ownership is enforced by ``require_owned_habit``,
+    yielding the same 404 (missing) / 403 (cross-user) split as
+    :func:`delete_habit`. A defense-in-depth ``user_id`` filter guarantees only
+    the caller's own rows are removed even if a foreign row is somehow parented
+    to one of the habit's goals.
+    """
+    # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
+    # ``rowcount`` is the number of rows removed.
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            delete(GoalCompletion).where(
+                col(GoalCompletion.goal_id).in_(
+                    select(col(Goal.id)).where(Goal.habit_id == habit.id)
+                ),
+                col(GoalCompletion.user_id) == current_user,
+            )
+        ),
+    )
+    await session.commit()
+    logger.info(
+        "habit_completions_cleared",
+        extra={
+            "user_id": current_user,
+            "habit_id": habit.id,
+            "deleted_count": result.rowcount,
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
