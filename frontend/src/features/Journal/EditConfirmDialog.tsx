@@ -5,16 +5,11 @@
  * card over the dimmed, still-visible page.
  */
 import React from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
-import {
-  BORDER_RADIUS,
-  SPACING,
-  colors,
-  editorialType,
-  spacing,
-  touchTarget,
-} from '@/design/tokens';
+import JournalModalShell from './JournalModalShell';
+
+import { BORDER_RADIUS, colors, editorialType, spacing, touchTarget } from '@/design/tokens';
 
 export interface EditConfirmDialogProps {
   visible: boolean;
@@ -22,9 +17,6 @@ export interface EditConfirmDialogProps {
   onStartNew: () => void;
   onCancel: () => void;
 }
-
-/** No-op so the card's tap-capture doesn't allocate a function per render. */
-const NOOP = (): void => {};
 
 interface ChoiceProps {
   label: string;
@@ -55,51 +47,37 @@ function EditConfirmDialog({
   onCancel,
 }: EditConfirmDialogProps): React.JSX.Element {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable
-        style={styles.scrim}
-        onPress={onCancel}
-        testID="edit-confirm-scrim"
-        accessibilityLabel="Dismiss"
-      >
-        <Pressable style={styles.card} onPress={NOOP} testID="edit-confirm-dialog">
-          <Text style={styles.title}>Edit finished entry?</Text>
-          <Text style={styles.body}>
-            This entry has its resonance. Editing it may move or unsettle the margin notes — they’ll
-            re-anchor where they still fit and dim where they no longer do.
-          </Text>
-          <Choice
-            label="Edit"
-            onPress={onEdit}
-            a11y="Edit this entry"
-            testID="edit-confirm-edit"
-            primary
-          />
-          <Choice
-            label="Start new"
-            onPress={onStartNew}
-            a11y="Start a new entry"
-            testID="edit-confirm-start-new"
-          />
-          <Choice label="Cancel" onPress={onCancel} a11y="Cancel" testID="edit-confirm-cancel" />
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <JournalModalShell
+      visible={visible}
+      onDismiss={onCancel}
+      scrimTestID="edit-confirm-scrim"
+      scrimLabel="Dismiss"
+      cardTestID="edit-confirm-dialog"
+    >
+      <Text style={styles.title}>Edit finished entry?</Text>
+      <Text style={styles.body}>
+        This entry has its resonance. Editing it may move or unsettle the margin notes — they’ll
+        re-anchor where they still fit and dim where they no longer do.
+      </Text>
+      <Choice
+        label="Edit"
+        onPress={onEdit}
+        a11y="Edit this entry"
+        testID="edit-confirm-edit"
+        primary
+      />
+      <Choice
+        label="Start new"
+        onPress={onStartNew}
+        a11y="Start a new entry"
+        testID="edit-confirm-start-new"
+      />
+      <Choice label="Cancel" onPress={onCancel} a11y="Cancel" testID="edit-confirm-cancel" />
+    </JournalModalShell>
   );
 }
 
 const styles = StyleSheet.create({
-  scrim: {
-    flex: 1,
-    backgroundColor: colors.mystical.overlay,
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.xl,
-  },
-  card: {
-    padding: SPACING.xl,
-    borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: colors.paper.background,
-  },
   title: {
     ...editorialType.title,
     color: colors.paper.ink,
