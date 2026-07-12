@@ -4,12 +4,14 @@
  *
  * ``promote`` raises a reader-selected span into the corpus and appends the
  * returned quote on success; a failure maps to a warm, non-blocking hint and
- * appends nothing. ``removePromotion`` optimistically drops a quote and reverts
- * it on error, guarding a double-tap per id (mirrors ``useResonance``'s
- * ``runDismiss``). One promote runs at a time so a double-tap can't double-post.
+ * appends nothing. ``removePromotion`` drops a quote optimistically and reverts
+ * it on error via the shared optimistic-remove primitive. One promote runs at a
+ * time so a double-tap can't double-post.
  */
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { optimisticRemove } from './optimisticRemove';
 
 import { promotions } from '@/api';
 import type { PromotedQuote } from '@/api';
@@ -40,11 +42,6 @@ function byAnchorThenId(a: PromotedQuote, b: PromotedQuote): number {
 /** Re-insert a reverted quote, keeping the list ordered by anchor then id. */
 function insertSorted(quotes: PromotedQuote[], quote: PromotedQuote): PromotedQuote[] {
   return [...quotes, quote].sort(byAnchorThenId);
-}
-
-/** Drop the quote with ``id`` (a named helper so it isn't a nested callback). */
-function dropById(quotes: PromotedQuote[], id: number): PromotedQuote[] {
-  return quotes.filter((q) => q.id !== id);
 }
 
 /**
@@ -133,21 +130,19 @@ export function usePromotions({
     [entryId],
   );
 
-  const removePromotion = useCallback(async (id: number): Promise<void> => {
-    if (removingIdsRef.current.has(id)) return;
-    removingIdsRef.current.add(id);
-    setHint(null);
-    const removed = quotesRef.current.find((q) => q.id === id);
-    setQuotes((prev) => dropById(prev, id)); // optimistic
-    try {
-      await promotions.remove(id);
-    } catch (err) {
-      if (removed) setQuotes((prev) => insertSorted(prev, removed)); // revert
-      setHint(formatApiError(err));
-    } finally {
-      removingIdsRef.current.delete(id);
-    }
-  }, []);
+  const removePromotion = useCallback(
+    (id: number): Promise<void> =>
+      optimisticRemove(id, {
+        pendingIds: removingIdsRef.current,
+        current: quotesRef.current,
+        setItems: setQuotes,
+        removeRemote: promotions.remove,
+        reinsert: insertSorted,
+        onError: setHint,
+        beforeStart: () => setHint(null),
+      }),
+    [],
+  );
 
   return { quotes, hint, promote, removePromotion };
 }

@@ -8,8 +8,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,26 +15,18 @@ import {
   View,
 } from 'react-native';
 
+import JournalModalShell from './JournalModalShell';
+
 import { resonance } from '@/api';
 import type { Marginalia } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  colors,
-  editorialType,
-  spacing,
-  touchTarget,
-} from '@/design/tokens';
+import { colors, editorialType, spacing, touchTarget } from '@/design/tokens';
 
 export interface ResonanceEssayModalProps {
   note: Marginalia | null;
   onClose: () => void;
   onEssayLoaded?: (_note: Marginalia) => void;
 }
-
-/** Stable no-op so the card's press-capture doesn't allocate a fn per render. */
-const NOOP = (): void => {};
 
 /** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
 const BLANK_ESSAY_MESSAGE = "This note's essay isn't ready yet.";
@@ -125,58 +115,40 @@ function ResonanceEssayModal({
   const { essay, loading, error, retry } = useEssay(note, onEssayLoaded);
 
   return (
-    <Modal
+    <JournalModalShell
       visible={note != null}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      testID="essay-modal"
+      onDismiss={onClose}
+      scrimTestID="essay-scrim"
+      scrimLabel="Dismiss essay"
+      modalTestID="essay-modal"
+      cardStyle={styles.essayCard}
     >
-      <Pressable
-        style={styles.scrim}
-        onPress={onClose}
-        testID="essay-scrim"
-        accessibilityLabel="Dismiss essay"
-      >
-        {/* Capture taps on the card so they don't bubble to the dismiss scrim. */}
-        <Pressable style={styles.card} onPress={NOOP}>
-          <View style={styles.header}>
-            <Text style={[styles.kind, { color: note ? colors.marginalia[note.kind] : undefined }]}>
-              {note?.kind}
-            </Text>
-            <TouchableOpacity
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              testID="essay-close"
-            >
-              <Text style={styles.close}>×</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.quote} testID="essay-quote">
-            “{note?.anchor_text}”
-          </Text>
-          <ScrollView contentContainerStyle={styles.bodyScroll}>
-            <EssayBody essay={essay} loading={loading} error={error} retry={retry} />
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+      <View style={styles.header}>
+        <Text style={[styles.kind, { color: note ? colors.marginalia[note.kind] : undefined }]}>
+          {note?.kind}
+        </Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          testID="essay-close"
+        >
+          <Text style={styles.close}>×</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.quote} testID="essay-quote">
+        “{note?.anchor_text}”
+      </Text>
+      <ScrollView contentContainerStyle={styles.bodyScroll}>
+        <EssayBody essay={essay} loading={loading} error={error} retry={retry} />
+      </ScrollView>
+    </JournalModalShell>
   );
 }
 
 const styles = StyleSheet.create({
-  scrim: {
-    flex: 1,
-    backgroundColor: colors.mystical.overlay,
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.xl,
-  },
-  card: {
+  essayCard: {
     maxHeight: '80%',
-    padding: SPACING.xl,
-    borderRadius: BORDER_RADIUS.lg,
-    backgroundColor: colors.paper.background,
   },
   header: {
     flexDirection: 'row',
