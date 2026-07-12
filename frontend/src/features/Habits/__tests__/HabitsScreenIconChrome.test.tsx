@@ -16,7 +16,7 @@ jest.mock('@/navigation/hooks', () => ({
 // `@jest/globals`' `jest.fn().mockResolvedValue(...)`.
 jest.mock('../../../api', () => ({
   habits: {
-    list: () => Promise.resolve([]),
+    listAll: () => Promise.resolve([]),
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),

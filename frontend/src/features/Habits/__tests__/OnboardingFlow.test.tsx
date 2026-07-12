@@ -17,7 +17,7 @@ import { useHabits } from '../hooks/useHabits';
 
 jest.mock('../../../api', () => ({
   habits: {
-    list: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
