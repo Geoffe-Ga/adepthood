@@ -915,6 +915,36 @@ async def test_owner_clears_all_completions(
 
 
 @pytest.mark.asyncio
+async def test_clear_completions_logs_deleted_count(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The clear emits an audit log recording how many rows it removed."""
+    headers = await _signup(async_client, "clear_audit")
+    create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    habit_id = create_resp.json()["id"]
+    goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
+    habit_row = await db_session.get(Habit, habit_id)
+    assert habit_row is not None
+
+    seeded = 3
+    for days_back in range(seeded):
+        await _seed_completion(
+            db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=days_back
+        )
+
+    with caplog.at_level(logging.INFO, logger="routers.habits"):
+        resp = await async_client.delete(f"/habits/{habit_id}/completions", headers=headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+    audit_logs = [r for r in caplog.records if r.message == "habit_completions_cleared"]
+    assert audit_logs, "expected a habit_completions_cleared audit log entry"
+    record = audit_logs[0]
+    assert getattr(record, "habit_id", None) == habit_id
+    assert getattr(record, "user_id", None) is not None
+    assert getattr(record, "deleted_count", None) == seeded
+
+
+@pytest.mark.asyncio
 async def test_clear_resets_streak_and_embedded_completions(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

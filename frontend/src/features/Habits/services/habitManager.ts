@@ -646,6 +646,18 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
 };
 
 /**
+ * Build a rejection handler that only alerts, leaving local state untouched.
+ * Used when an earlier write already succeeded durably (e.g. the start-date
+ * PUT) so a later step's failure must not roll the durable change back — it
+ * only surfaces that the follow-up step did not complete.
+ */
+const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
+  return (err: unknown) => {
+    Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
+  };
+};
+
+/**
  * Optimistically apply a new unlock (``revealed``) state and PUT each affected
  * row to the API. Shared by the bulk reveal/re-lock affordances and the
  * single-habit unlock so all three persist the flag server-side rather than
@@ -1101,10 +1113,15 @@ export const habitManager = {
    * ran concurrently and the PUT failed, the rollback would restore the local
    * completions while the server had already dropped them, silently losing
    * history behind a "previous state was restored" message. Ordering the
-   * reversible PUT first means a PUT failure never reaches the clear, so any
-   * failure leaves the server's completions intact for the rollback to match.
-   * On failure the rollback restores both the store and the on-disk snapshot
-   * and alerts the user.
+   * reversible PUT first means a PUT failure never reaches the clear.
+   *
+   * The two stages fail differently and are handled separately. A PUT failure
+   * changes nothing durably, so it fully rolls the store + on-disk snapshot
+   * back to the previous state. A clear failure happens only after the PUT has
+   * already persisted the new start date, so a full rollback would wrongly
+   * revert that durable date; instead the optimistic reset is kept and the
+   * user is told only the check-in clear failed, so retrying re-runs the
+   * idempotent reset.
    */
   setNewStartDate: (habitId: number, newDate: Date): void => {
     const prev = getHabits();
@@ -1116,8 +1133,15 @@ export const habitManager = {
     const updatedId = updated.id;
     habitsApi
       .update(updatedId, toApiPayload(updated))
-      .then(() => habitsApi.clearCompletions(updatedId))
-      .catch(
+      .then(
+        () =>
+          habitsApi
+            .clearCompletions(updatedId)
+            .catch(
+              warnOnFailure(
+                "Your new start date was saved, but we couldn't clear the old check-ins. Try the reset again.",
+              ),
+            ),
         revertOnFailure(
           prev,
           "We couldn't save the new start date. Your previous state was restored — check your connection and try again.",

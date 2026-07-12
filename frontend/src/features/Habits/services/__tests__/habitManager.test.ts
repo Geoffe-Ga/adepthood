@@ -1761,8 +1761,9 @@ describe('habitManager', () => {
       expect(reloaded.completions).toEqual([]);
     });
 
-    it('rolls back the store and disk, and alerts the user, when clearCompletions rejects', async () => {
+    it('keeps the durably-saved start date and only warns when clearCompletions rejects', async () => {
       const habit = makeHabit({
+        id: 1,
         streak: 10,
         completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
       });
@@ -1774,12 +1775,18 @@ describe('habitManager', () => {
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 
-      const rolledBack = useHabitStore.getState().habits[0]!;
-      expect(rolledBack.streak).toBe(10);
-      expect(rolledBack.completions).toHaveLength(1);
-      expect(saveHabits).toHaveBeenLastCalledWith(prev);
+      // The PUT resolved, so the new start date is already durable server-side.
+      // A failed clear must not roll the store back to the stale start date;
+      // the optimistic reset holds and the user is told the clear failed.
+      const after = useHabitStore.getState().habits[0]!;
+      expect(after.streak).toBe(0);
+      expect(after.completions).toEqual([]);
+      expect(saveHabits).not.toHaveBeenLastCalledWith(prev);
       const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalled();
+      expect(Alert.alert).toHaveBeenCalledWith(
+        "Couldn't sync",
+        expect.stringContaining('old check-ins'),
+      );
     });
 
     it('skips both network calls for an id-less habit but still applies the optimistic reset', async () => {

@@ -351,12 +351,18 @@ async def clear_habit_completions(
         ),
     )
     await session.commit()
+    deleted = int(result.rowcount)
+    if deleted < 0:
+        # The driver doesn't report rowcount; surface it rather than logging a
+        # misleading zero, mirroring the bulk-delete in ``services/energy.py``.
+        logger.warning("habit completions cleared but the driver did not report a row count")
+        deleted = 0
     logger.info(
         "habit_completions_cleared",
         extra={
             "user_id": current_user,
             "habit_id": habit.id,
-            "deleted_count": result.rowcount,
+            "deleted_count": deleted,
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
