@@ -99,8 +99,9 @@ describe('ReauthSheet', () => {
 
   // BUG-NAV-001 review follow-up: if dismiss fires while a login is in flight,
   // the login completion races the dismiss and can silently log the user back
-  // in after they chose to sign out. Disable the dismiss button while
-  // submitting so the race is impossible by construction.
+  // in after they chose to sign out. Both dismiss entry points guard on
+  // submitting — the disabled button here and the Android-back/onRequestClose
+  // path covered below.
   it('disables the dismiss button while a login is in flight', () => {
     const resolveLoginRef: { current: (() => void) | null } = { current: null };
     mockLogin.mockImplementationOnce(
@@ -124,6 +125,44 @@ describe('ReauthSheet', () => {
     expect(mockDismissReauth).not.toHaveBeenCalled();
 
     resolveLoginRef.current?.();
+  });
+
+  // Android hardware back fires the Modal's onRequestClose directly, bypassing
+  // the disabled dismiss button. It must honour the same in-flight guard so the
+  // login cannot be silently superseded by a mid-flight sign-out.
+  it('ignores Android-back (onRequestClose) while a login is in flight', () => {
+    const resolveLoginRef: { current: (() => void) | null } = { current: null };
+    mockLogin.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveLoginRef.current = () => resolve();
+        }),
+    );
+
+    const { getByTestId } = render(<ReauthSheet />);
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    fireEvent(getByTestId('reauth-sheet'), 'requestClose');
+    expect(mockDismissReauth).not.toHaveBeenCalled();
+
+    resolveLoginRef.current?.();
+  });
+
+  it('honours Android-back (onRequestClose) once the login promise settles', async () => {
+    mockLogin.mockRejectedValueOnce(new Error('nope'));
+    const { getByTestId } = render(<ReauthSheet />);
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    await waitFor(() =>
+      expect(getByTestId('reauth-dismiss').props.accessibilityState?.disabled).toBe(false),
+    );
+
+    fireEvent(getByTestId('reauth-sheet'), 'requestClose');
+    expect(mockDismissReauth).toHaveBeenCalledTimes(1);
   });
 
   it('re-enables the dismiss button once the login promise settles', async () => {

@@ -122,8 +122,11 @@ export function ReauthSheet(): React.JSX.Element {
   );
 
   const handleDismiss = useCallback(() => {
+    if (submitting) {
+      return;
+    }
     void dismissReauth();
-  }, [dismissReauth]);
+  }, [dismissReauth, submitting]);
 
   return (
     <Modal
