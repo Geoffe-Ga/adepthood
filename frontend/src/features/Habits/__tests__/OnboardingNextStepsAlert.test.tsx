@@ -15,7 +15,7 @@ jest.mock('@/navigation/hooks', () => ({
 /* eslint-disable @typescript-eslint/no-explicit-any */
 jest.mock('../../../api', () => ({
   habits: {
-    list: (jest.fn() as any).mockResolvedValue([]),
+    listAll: (jest.fn() as any).mockResolvedValue([]),
     create: (jest.fn() as any).mockResolvedValue({}),
     update: jest.fn(),
     delete: jest.fn(),

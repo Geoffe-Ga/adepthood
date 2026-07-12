@@ -16,7 +16,7 @@ import { useModalCoordinator } from '../hooks/useModalCoordinator';
 // Mock dependencies
 jest.mock('../../../api', () => ({
   habits: {
-    list: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() =>
       Promise.resolve({
         id: 100,
