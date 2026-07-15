@@ -731,6 +731,20 @@ export const depthPreferencesSchema = z.object({
 export type DepthPreferencesT = z.infer<typeof depthPreferencesSchema>;
 
 // ---------------------------------------------------------------------------
+// UI flags (per-account, server-owned one-time UI state)
+// ---------------------------------------------------------------------------
+
+// Per-account UI flags (mirrors the backend ``UiFlags``). Plain object, not
+// ``.strict()``, so unknown keys are stripped and an additive backend field
+// cannot fail a client build; a non-boolean field raises ApiValidationError.
+export const uiFlagsSchema = z.object({
+  has_seen_welcome: z.boolean(),
+  energy_scaffolding_archived: z.boolean(),
+});
+
+export type UiFlagsT = z.infer<typeof uiFlagsSchema>;
+
+// ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
 // ---------------------------------------------------------------------------
 
