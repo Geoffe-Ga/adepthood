@@ -277,10 +277,9 @@ async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckI
     """
     goal_id = cast("int", ctx.goal.id)
     subtractive = await _subtractive_context_for_goal(session, ctx.habit, ctx.goal)
-    streak = await compute_consecutive_streak(
+    return await _idempotent_already_logged_response(
         session, goal_id, ctx.user_id, ctx.user_timezone, subtractive
     )
-    return CheckInResult(streak=streak, milestones=[], reason_code="already_logged_today")
 
 
 async def record_goal_completion(
