@@ -36,7 +36,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
-import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import {
+  DrawerNavSection,
+  ScreenDrawer,
+  useScreenDrawer,
+  type ScreenDrawerState,
+} from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
@@ -217,6 +222,7 @@ const PracticeScreenDrawer = ({
     screenName="Practice"
     title="Practice"
   >
+    <DrawerNavSection currentScreen="Practice" onNavigate={drawer.close} />
     <PracticeDrawer
       hasActivePractice={hasActivePractice}
       stageNumber={stageNumber}
