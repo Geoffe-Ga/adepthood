@@ -27,12 +27,15 @@ import type {
 import { practiceRecipes, practiceTags } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { NumberStepper } from '@/features/Practice/configurator/forms/shared';
 import {
   CUSTOM_NAME_MAX,
   PROMPT_LABEL_MAX,
   TALLIED_CATEGORIES_MAX,
   TALLIED_ROUNDS_MAX,
+  TALLIED_ROUNDS_MIN,
   TALLIED_TARGET_MAX,
+  TALLIED_TARGET_MIN,
 } from '@/features/Practice/engine/validation';
 
 export interface RecipeEditorModalProps {
@@ -55,7 +58,9 @@ export interface RecipeEditorModalProps {
 const NAME_MAX = CUSTOM_NAME_MAX;
 const PROMPT_MAX = PROMPT_LABEL_MAX;
 const ROUNDS_MAX = TALLIED_ROUNDS_MAX;
+const ROUNDS_MIN = TALLIED_ROUNDS_MIN;
 const TARGET_COUNT_MAX = TALLIED_TARGET_MAX;
+const TARGET_COUNT_MIN = TALLIED_TARGET_MIN;
 const STEPS_MAX = TALLIED_CATEGORIES_MAX;
 // Recipe description cap has no engine-owned constant (no mode config mirrors it).
 const DESCRIPTION_MAX = 2_000;
@@ -500,42 +505,15 @@ const RoundsField = ({
 }): React.JSX.Element => (
   <View style={styles.field}>
     <Text style={styles.label}>Rounds</Text>
-    <View style={styles.stepperRow}>
-      <RoundsButton
-        label="-"
-        onPress={() => onChange(Math.max(1, value - 1))}
-        testID="recipe-editor-rounds-minus"
-      />
-      <Text style={styles.stepperValue} testID="recipe-editor-rounds-value">
-        {value}
-      </Text>
-      <RoundsButton
-        label="+"
-        onPress={() => onChange(Math.min(ROUNDS_MAX, value + 1))}
-        testID="recipe-editor-rounds-plus"
-      />
-    </View>
+    <NumberStepper
+      value={value}
+      onChange={onChange}
+      step={1}
+      min={ROUNDS_MIN}
+      max={ROUNDS_MAX}
+      testID="recipe-editor-rounds"
+    />
   </View>
-);
-
-const RoundsButton = ({
-  label,
-  onPress,
-  testID,
-}: {
-  label: string;
-  onPress: () => void;
-  testID: string;
-}): React.JSX.Element => (
-  <TouchableOpacity
-    accessibilityRole="button"
-    accessibilityLabel={label}
-    onPress={onPress}
-    style={styles.stepperButton}
-    testID={testID}
-  >
-    <Text style={styles.stepperButtonText}>{label}</Text>
-  </TouchableOpacity>
 );
 
 interface StepEditorProps {
@@ -636,21 +614,14 @@ interface StepCountRowProps {
 const StepCountRow = ({ index, value, onChange }: StepCountRowProps): React.JSX.Element => (
   <View style={styles.countRow}>
     <Text style={styles.label}>Count</Text>
-    <View style={styles.stepperRow}>
-      <RoundsButton
-        label="-"
-        onPress={() => onChange(Math.max(1, value - 1))}
-        testID={`recipe-editor-step-${index}-count-minus`}
-      />
-      <Text style={styles.stepperValue} testID={`recipe-editor-step-${index}-count-value`}>
-        {value}
-      </Text>
-      <RoundsButton
-        label="+"
-        onPress={() => onChange(Math.min(TARGET_COUNT_MAX, value + 1))}
-        testID={`recipe-editor-step-${index}-count-plus`}
-      />
-    </View>
+    <NumberStepper
+      value={value}
+      onChange={onChange}
+      step={1}
+      min={TARGET_COUNT_MIN}
+      max={TARGET_COUNT_MAX}
+      testID={`recipe-editor-step-${index}-count`}
+    />
   </View>
 );
 
@@ -754,23 +725,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   descriptionInput: { minHeight: 60, textAlignVertical: 'top' },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  stepperButton: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: colors.background.accent,
-    minWidth: 40,
-    alignItems: 'center',
-  },
-  stepperButtonText: { color: colors.text.primary, fontSize: 16, fontWeight: '600' },
-  stepperValue: {
-    minWidth: 32,
-    textAlign: 'center',
-    fontSize: 16,
-    color: colors.text.primary,
-    fontVariant: ['tabular-nums'],
-  },
   stepCard: {
     padding: SPACING.sm,
     backgroundColor: colors.background.card,

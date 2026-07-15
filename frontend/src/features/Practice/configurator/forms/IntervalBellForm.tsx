@@ -2,8 +2,9 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { IntervalBellConfig } from '../../engine/types';
+import { DEFAULT_INTERVAL_BELL_INTERVAL } from '../defaults';
 
-import { BellToneRow, Chip, LabeledRow, NumericField } from './shared';
+import { BellToneRow, Chip, DurationRow, LabeledRow, NumericField } from './shared';
 
 import { BORDER_RADIUS, SPACING, accent, editorialType, ink, surface } from '@/design/tokens';
 
@@ -21,7 +22,11 @@ const IntervalBellForm = ({ value, onChange }: Props): React.JSX.Element => {
   const kind = detectKind(value);
   return (
     <View testID="interval-bell-form">
-      <DurationRow value={value} onChange={onChange} />
+      <DurationRow
+        value={value.duration_minutes}
+        onChange={(duration_minutes) => onChange({ ...value, duration_minutes })}
+        testID="interval-bell-duration"
+      />
       <SpacingRow kind={kind} value={value} onChange={onChange} />
       {kind === 'even' ? (
         <EvenIntervalControls value={value} onChange={onChange} />
@@ -33,16 +38,6 @@ const IntervalBellForm = ({ value, onChange }: Props): React.JSX.Element => {
   );
 };
 
-const DurationRow = ({ value, onChange }: Props): React.JSX.Element => (
-  <LabeledRow label="Duration (minutes)">
-    <NumericField
-      value={value.duration_minutes}
-      onChange={(next) => onChange({ ...value, duration_minutes: next ?? 0 })}
-      testID="interval-bell-duration"
-    />
-  </LabeledRow>
-);
-
 interface SpacingRowProps extends Props {
   kind: SpacingKind;
 }
@@ -51,7 +46,11 @@ const SpacingRow = ({ kind, value, onChange }: SpacingRowProps): React.JSX.Eleme
   const switchKind = (next: SpacingKind) => {
     if (next === kind) return;
     if (next === 'even') {
-      onChange({ ...value, interval_minutes: 5, cue_offsets_minutes: null });
+      onChange({
+        ...value,
+        interval_minutes: DEFAULT_INTERVAL_BELL_INTERVAL,
+        cue_offsets_minutes: null,
+      });
     } else {
       onChange({ ...value, interval_minutes: null, cue_offsets_minutes: [] });
     }
@@ -81,7 +80,7 @@ const EvenIntervalControls = ({ value, onChange }: Props): React.JSX.Element => 
     <NumericField
       value={value.interval_minutes ?? null}
       onChange={(interval_minutes) => onChange({ ...value, interval_minutes })}
-      placeholder="5"
+      placeholder={String(DEFAULT_INTERVAL_BELL_INTERVAL)}
       allowNull
       testID="interval-bell-interval"
     />

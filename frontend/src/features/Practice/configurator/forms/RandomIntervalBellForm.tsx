@@ -3,7 +3,14 @@ import { View } from 'react-native';
 
 import type { RandomIntervalBellConfig } from '../../engine/types';
 
-import { BellToneRow, CollapsibleSection, LabeledRow, NumericField, ToggleRow } from './shared';
+import {
+  BellToneRow,
+  CollapsibleSection,
+  DurationRow,
+  LabeledRow,
+  NumericField,
+  ToggleRow,
+} from './shared';
 
 interface Props {
   value: RandomIntervalBellConfig;
@@ -17,13 +24,11 @@ interface Props {
  */
 const RandomIntervalBellForm = ({ value, onChange }: Props): React.JSX.Element => (
   <View testID="random-interval-bell-form">
-    <LabeledRow label="Duration (minutes)">
-      <NumericField
-        value={value.duration_minutes}
-        onChange={(next) => onChange({ ...value, duration_minutes: next ?? 0 })}
-        testID="random-interval-bell-duration"
-      />
-    </LabeledRow>
+    <DurationRow
+      value={value.duration_minutes}
+      onChange={(duration_minutes) => onChange({ ...value, duration_minutes })}
+      testID="random-interval-bell-duration"
+    />
     <LabeledRow label="Min interval (seconds)">
       <NumericField
         value={value.min_interval_seconds}
