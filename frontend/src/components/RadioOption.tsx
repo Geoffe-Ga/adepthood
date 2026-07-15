@@ -1,3 +1,16 @@
+/**
+ * Shared radio primitive for exclusive-choice controls.
+ *
+ * Adoption criteria — a hand-rolled radio is a clean adopter only when every
+ * point below holds. When one does not, keep the control local rather than
+ * bending the primitive or weakening its a11y contract:
+ * - each option is a single TouchableOpacity wrapping exactly one Text label
+ *   (no icons, badges, description lines, or other child nodes);
+ * - the visible label doubles as the accessible name (they cannot differ);
+ * - selection is announced through accessibilityState `selected`, not `checked`;
+ * - the selected and unselected looks are expressed purely through the four
+ *   style props, with no runtime-injected theme colors.
+ */
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
