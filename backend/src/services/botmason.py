@@ -202,9 +202,9 @@ def get_provider() -> str:
     return os.getenv("BOTMASON_PROVIDER", "stub")
 
 
-def provider_requires_api_key(provider: str | None = None) -> bool:
+def provider_requires_api_key() -> bool:
     """Return True when the selected provider needs an API key to function."""
-    return (provider or get_provider()) in PROVIDER_REGISTRY
+    return get_provider() in PROVIDER_REGISTRY
 
 
 # Prefix rules derived from the registry — a dict keeps
