@@ -175,6 +175,22 @@ describe('ApiKeySettingsScreen', () => {
     expect(getByTestId('api-key-input').props.value).toBe('');
   });
 
+  test('clears the success banner once the draft changes after a save', async () => {
+    setApiKeyState({});
+    const { getByTestId, findByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    await act(async () => {
+      fireEvent.press(getByTestId('save-key-button'));
+    });
+    await findByTestId('api-key-status');
+
+    // Typing a replacement key must retire the stale "saved" confirmation.
+    fireEvent.changeText(getByTestId('api-key-input'), 'typing a new value');
+
+    expect(queryByTestId('api-key-status')).toBeNull();
+  });
+
   test('the reveal toggle flips secureTextEntry', () => {
     setApiKeyState({});
     const { getByTestId } = render(<ApiKeySettingsScreen />);

@@ -111,7 +111,7 @@ interface Pager {
   page: number;
   width: number;
   scrollRef: React.RefObject<ScrollView>;
-  onScroll: (_e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
   goNext: () => void;
 }
 
@@ -140,28 +140,29 @@ const useWelcomePager = (): Pager => {
 };
 
 export interface WelcomeScreenProps {
-  /** Persist the flag and dismiss the welcome (called on Begin and Skip). */
+  /** Persist the flag and dismiss the welcome; fired once by Begin or Skip. */
   onComplete: () => void;
-  /** Land on the Journal home, optionally opening the first-habits step. */
-  onBegin: () => void;
 }
 
 /**
  * The program welcome (#836): a swipeable editorial intro to the 36-week
  * journey. Paging works with or without animation (reduced-motion-safe), a
  * persistent Skip sits on every panel, and the final panel's Begin CTA lands
- * the user on the Journal home (the app shell's initial route).
+ * the user on the Journal home (the app shell's initial route). Begin and Skip
+ * share one dismissal path, latched so a rapid double-tap persists only once.
  */
-export const WelcomeScreen = ({ onComplete, onBegin }: WelcomeScreenProps): React.JSX.Element => {
+export const WelcomeScreen = ({ onComplete }: WelcomeScreenProps): React.JSX.Element => {
   const { page, width, scrollRef, onScroll, goNext } = useWelcomePager();
-  const begin = useCallback(() => {
+  const dismissed = useRef(false);
+  const dismiss = useCallback(() => {
+    if (dismissed.current) return;
+    dismissed.current = true;
     onComplete();
-    onBegin();
-  }, [onComplete, onBegin]);
+  }, [onComplete]);
 
   return (
     <SafeAreaView style={s.ground} testID="welcome-screen">
-      <SkipButton onSkip={onComplete} />
+      <SkipButton onSkip={dismiss} />
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -178,7 +179,7 @@ export const WelcomeScreen = ({ onComplete, onBegin }: WelcomeScreenProps): Reac
         page={page}
         isLast={page === WELCOME_PANELS.length - 1}
         onNext={goNext}
-        onBegin={begin}
+        onBegin={dismiss}
       />
     </SafeAreaView>
   );

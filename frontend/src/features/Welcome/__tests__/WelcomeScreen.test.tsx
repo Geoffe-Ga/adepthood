@@ -23,9 +23,8 @@ beforeEach(() => {
 
 const setup = () => {
   const onComplete = jest.fn();
-  const onBegin = jest.fn();
-  const utils = render(<WelcomeScreen onComplete={onComplete} onBegin={onBegin} />);
-  return { onComplete, onBegin, ...utils };
+  const utils = render(<WelcomeScreen onComplete={onComplete} />);
+  return { onComplete, ...utils };
 };
 
 describe('WelcomeScreen', () => {
@@ -53,7 +52,7 @@ describe('WelcomeScreen', () => {
   });
 
   it("Begin completes (sets flag) and lands on Journal (the app shell's initial route)", () => {
-    const { getByTestId, onComplete, onBegin } = setup();
+    const { getByTestId, onComplete } = setup();
     // Page to the last panel via the pager scroll handler.
     const lastIndex = WELCOME_PANELS.length - 1;
     fireEvent(getByTestId('welcome-pager'), 'momentumScrollEnd', {
@@ -61,14 +60,32 @@ describe('WelcomeScreen', () => {
     });
     fireEvent.press(getByTestId('welcome-begin'));
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onBegin).toHaveBeenCalledTimes(1);
   });
 
-  it('Skip completes (sets flag) without beginning', () => {
-    const { getByTestId, onComplete, onBegin } = setup();
+  it('Skip completes (sets flag)', () => {
+    const { getByTestId, onComplete } = setup();
     fireEvent.press(getByTestId('welcome-skip'));
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onBegin).not.toHaveBeenCalled();
+  });
+
+  it('persists once when Begin is double-tapped rapidly', () => {
+    const { getByTestId, onComplete } = setup();
+    const lastIndex = WELCOME_PANELS.length - 1;
+    fireEvent(getByTestId('welcome-pager'), 'momentumScrollEnd', {
+      nativeEvent: { contentOffset: { x: lastIndex * 400 }, layoutMeasurement: { width: 400 } },
+    });
+    const begin = getByTestId('welcome-begin');
+    fireEvent.press(begin);
+    fireEvent.press(begin);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists once when Skip is double-tapped rapidly', () => {
+    const { getByTestId, onComplete } = setup();
+    const skip = getByTestId('welcome-skip');
+    fireEvent.press(skip);
+    fireEvent.press(skip);
+    expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
   it('advances pages under reduced motion (paging works without animation)', () => {
@@ -144,22 +161,20 @@ describe('WelcomeScreen — onboarding privacy note (issue #897)', () => {
     expect(within(panel).getByText(PRIVACY_NOTE)).toBeTruthy();
   });
 
-  it('Skip still fires onComplete without onBegin after privacy note added', () => {
-    const { getByTestId, onComplete, onBegin } = setup();
+  it('Skip still fires onComplete after privacy note added', () => {
+    const { getByTestId, onComplete } = setup();
     fireEvent.press(getByTestId('welcome-skip'));
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onBegin).not.toHaveBeenCalled();
   });
 
-  it('Begin on the last panel still fires both onComplete and onBegin after privacy note added', () => {
-    const { getByTestId, onComplete, onBegin } = setup();
+  it('Begin on the last panel still fires onComplete after privacy note added', () => {
+    const { getByTestId, onComplete } = setup();
     const lastIndex = WELCOME_PANELS.length - 1;
     scrollToPanelIndex(getByTestId, lastIndex);
     fireEvent.press(getByTestId('welcome-begin'));
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onBegin).toHaveBeenCalledTimes(1);
   });
 });
 

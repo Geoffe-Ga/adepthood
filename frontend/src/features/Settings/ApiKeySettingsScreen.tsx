@@ -385,13 +385,14 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   const performClear = useClearKeyHandler(form, clearApiKey);
   const handleRequestRemove = useRemoveConfirmation(performClear);
 
-  const { setDraft, setError } = form;
+  const { setDraft, setError, setStatus } = form;
   const onChangeDraft = useCallback(
     (value: string) => {
       setDraft(value);
       setError(null);
+      setStatus(null);
     },
-    [setDraft, setError],
+    [setDraft, setError, setStatus],
   );
   const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
   const { onBack, onOpenTimezone } = useScreenNavHandlers(navigation);

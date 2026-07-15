@@ -145,7 +145,7 @@ function WelcomeGate(): React.JSX.Element {
   const { token } = useAuth();
   const { isFirstRun, markSeen } = useFirstRun(token);
   if (isFirstRun) {
-    return <WelcomeScreen onComplete={markSeen} onBegin={markSeen} />;
+    return <WelcomeScreen onComplete={markSeen} />;
   }
   return <RootStack key="auth" />;
 }

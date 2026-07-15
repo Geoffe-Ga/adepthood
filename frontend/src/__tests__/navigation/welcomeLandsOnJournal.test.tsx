@@ -6,11 +6,11 @@
 
 // ─── Screen stubs (keep the navigation plumbing real) ───────────────────────
 
-// WelcomeScreen stub: Begin fires onBegin+onComplete, Skip fires onComplete only.
+// WelcomeScreen stub: Begin and Skip both fire onComplete (the single dismissal).
 jest.mock('@/features/Welcome/WelcomeScreen', () => {
   const React = require('react');
   const { Pressable, Text, View } = require('react-native');
-  const WelcomeStub = ({ onComplete, onBegin }: { onComplete: () => void; onBegin: () => void }) =>
+  const WelcomeStub = ({ onComplete }: { onComplete: () => void }) =>
     React.createElement(
       View,
       { testID: 'welcome-screen' },
@@ -18,10 +18,7 @@ jest.mock('@/features/Welcome/WelcomeScreen', () => {
         Pressable,
         {
           testID: 'welcome-begin',
-          onPress: () => {
-            onBegin();
-            onComplete();
-          },
+          onPress: onComplete,
         },
         React.createElement(Text, null, 'Begin'),
       ),
@@ -250,7 +247,7 @@ beforeEach(() => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('Welcome → Journal landing', () => {
-  // Begin (onBegin+onComplete → markSeen) lands on Journal; fails if the initial route reverts.
+  // Begin (onComplete → markSeen) lands on Journal; fails if the initial route reverts.
   it('Begin path: focused route is Journal after Welcome is dismissed', async () => {
     const navRef = React.createRef<NavigationContainerRef<RootTabParamList>>();
     act(() => useWelcomeStore.setState({ hasSeenWelcome: false }));
@@ -260,7 +257,7 @@ describe('Welcome → Journal landing', () => {
     // Welcome is showing before Begin is pressed.
     expect(getByTestId('welcome-screen')).toBeTruthy();
 
-    // Dismiss via the Begin path (mirrors production: onBegin + onComplete).
+    // Dismiss via the Begin path (mirrors production: onComplete).
     act(() => {
       fireEvent.press(getByTestId('welcome-begin'));
     });
