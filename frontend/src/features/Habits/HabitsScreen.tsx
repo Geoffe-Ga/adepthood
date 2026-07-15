@@ -36,7 +36,7 @@ import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 import { usePaginationBarVisibility } from './hooks/usePaginationBarVisibility';
 
-import { ScreenDrawer, useScreenDrawer } from '@/components/drawer';
+import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 
 /** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
@@ -746,6 +746,7 @@ const HabitsScreenDrawer = ({
   const drawerRange = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
   return (
     <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Habits" title="Habits">
+      <DrawerNavSection currentScreen="Habits" onNavigate={drawer.close} />
       <HabitsDrawer
         onSelectMode={state.handleSelectMode}
         onOpenOnboarding={() => modals.open('onboarding')}

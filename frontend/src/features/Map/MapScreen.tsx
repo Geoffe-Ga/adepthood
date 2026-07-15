@@ -59,7 +59,12 @@ import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
 import { Button } from '@/components/Button';
-import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import {
+  DrawerNavSection,
+  ScreenDrawer,
+  useScreenDrawer,
+  type ScreenDrawerState,
+} from '@/components/drawer';
 import { Celebration } from '@/components/feedback/Celebration';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { colors } from '@/design/tokens';
@@ -1086,6 +1091,7 @@ const MapScreenDrawer = ({
   onSelectStage,
 }: MapScreenDrawerProps): React.JSX.Element => (
   <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Map" title="Map">
+    <DrawerNavSection currentScreen="Map" onNavigate={drawer.close} />
     <MapDrawer
       lookup={lookup}
       currentStage={currentStage}

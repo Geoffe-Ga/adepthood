@@ -12,7 +12,12 @@ import {
   type SiteResource,
   type Stage,
 } from '../../api';
-import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '../../components/drawer';
+import {
+  DrawerNavSection,
+  ScreenDrawer,
+  useScreenDrawer,
+  type ScreenDrawerState,
+} from '../../components/drawer';
 import { Celebration } from '../../components/feedback/Celebration';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { ContentContainer } from '../../components/layout/ContentContainer';
@@ -498,6 +503,7 @@ const CourseScreenDrawer = ({
   const { sections, retry } = useCourseDrawerContent(stages, drawer.isOpen);
   return (
     <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Course" title="Course">
+      <DrawerNavSection currentScreen="Course" onNavigate={drawer.close} />
       <CourseDrawer
         stages={stages}
         selectedStage={selectedStage}
