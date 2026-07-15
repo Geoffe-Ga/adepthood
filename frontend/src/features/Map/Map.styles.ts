@@ -143,14 +143,6 @@ const styles = StyleSheet.create({
     justifyContent: CENTER,
     paddingHorizontal: spacing(0.5),
   },
-  // Polarity is now carried by the sine-wave overlay, so the center cells stay
-  // transparent and let the wave read through the whole column.
-  cellFeminine: {
-    backgroundColor: 'transparent',
-  },
-  cellMasculine: {
-    backgroundColor: 'transparent',
-  },
   // --- The glass magnifier lens (the "you are here" box, grown up) ----------
   // A translucent pill floating over the center column. Width / height /
   // borderRadius and its transform are computed per-layout in the component;
@@ -586,7 +578,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: onShowcase.soft,
   },
-  historyLoading: {
+  historyStatus: {
     paddingVertical: spacing(1.5),
     alignItems: CENTER,
   },
@@ -596,10 +588,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     paddingVertical: spacing(1),
     textAlign: CENTER,
-  },
-  historyError: {
-    paddingVertical: spacing(1.5),
-    alignItems: CENTER,
   },
   historyErrorText: {
     fontSize: 12,
