@@ -28,7 +28,9 @@ export function formatDate(timestamp: string): string {
 
 /** Bucket name for an entry's age relative to ``now`` (epoch ms). */
 function bucketFor(timestamp: string, now: number): string {
-  const age = (now - new Date(timestamp).getTime()) / MS_PER_DAY;
+  const ms = new Date(timestamp).getTime();
+  if (Number.isNaN(ms)) return 'Earlier';
+  const age = (now - ms) / MS_PER_DAY;
   if (age < WEEK_DAYS) return 'This week';
   if (age < MONTH_DAYS) return 'This month';
   return 'Earlier';

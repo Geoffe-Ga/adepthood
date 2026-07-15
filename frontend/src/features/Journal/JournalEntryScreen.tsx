@@ -66,6 +66,9 @@ export const AUTOSAVE_DELAY_MS = 1500;
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
 
+/** Body-field placeholder for a free-write with no prompt to echo. */
+const DEFAULT_BODY_PLACEHOLDER = 'Begin writing…';
+
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
 
@@ -970,7 +973,7 @@ interface WritingColumnProps {
   finishing: boolean;
   /** Set (to {@link FINISH_ERROR_MESSAGE}) when the Finish write failed. */
   finishError: string | null;
-  bodyPlaceholder?: string;
+  bodyPlaceholder: string;
   /**
    * Disables the tier + chord controls until an existing entry's load settles
    * (still in flight or failed), so they never write against an unseen entry.
@@ -1092,7 +1095,7 @@ function WritingColumn({
   onFinish,
   finishing,
   finishError,
-  bodyPlaceholder = 'Begin writing…',
+  bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
 }: WritingColumnProps) {
@@ -1725,7 +1728,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
       reflectionScopeKey: p.reflectionScopeKey,
     },
     initialTitle,
-    bodyPlaceholder: p.promptQuestion ?? 'Begin writing…',
+    bodyPlaceholder: p.promptQuestion ?? DEFAULT_BODY_PLACEHOLDER,
   };
 }
 
