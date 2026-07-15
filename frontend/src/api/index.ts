@@ -34,6 +34,7 @@ import {
   stageProgressRecordSchema,
   stageSchema,
   timezoneReadSchema,
+  uiFlagsSchema,
   wheelBalanceSchema,
   type AcceptSuggestionResultT,
   type CareKindT,
@@ -44,6 +45,7 @@ import {
   type ContractionVariantT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
+  type UiFlagsT,
   type InvitationT,
   type journalTagSchema,
   type MettaReturnStateT,
@@ -2602,6 +2604,43 @@ export const depthPreferences = {
       body: partial,
       token,
       schema: depthPreferencesResponseSchema,
+    });
+  },
+};
+
+// Per-account UI flags (server-owned one-time UI state, e.g. hasSeenWelcome)
+
+/** Full UI-flags state (mirrors the backend response). */
+export type UiFlags = UiFlagsT;
+
+/** Partial update body — only the flipped flags are sent. */
+export type UiFlagsUpdate = Partial<UiFlags>;
+
+// Responses are validated via ``uiFlagsSchema`` so a mis-shaped payload (e.g. a
+// non-boolean flag) raises ApiValidationError rather than silently corrupting a
+// flag. The route has no trailing slash — the backend serves ``/ui-flags``
+// directly (no 307 redirect).
+const uiFlagsResponseSchema = uiFlagsSchema as unknown as z.ZodType<UiFlags>;
+
+export const uiFlags = {
+  /** Read the caller's current UI flags. */
+  get(token?: string): Promise<UiFlags> {
+    return request<UiFlags>('/ui-flags', {
+      token,
+      schema: uiFlagsResponseSchema,
+    });
+  },
+  /**
+   * Flip one or more flags. The partial is sent verbatim; the server echoes the
+   * FULL state back, so callers get the authoritative post-update snapshot
+   * rather than the subset they sent.
+   */
+  update(partial: UiFlagsUpdate, token?: string): Promise<UiFlags> {
+    return request<UiFlags>('/ui-flags', {
+      method: 'PATCH',
+      body: partial,
+      token,
+      schema: uiFlagsResponseSchema,
     });
   },
 };

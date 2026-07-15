@@ -160,6 +160,16 @@ jest.mock('@/storage/welcomeStorage', () => ({
   clearHasSeenWelcome: jest.fn(() => Promise.resolve()),
 }));
 
+// A never-settling GET falls through to the local-cache mock above so this
+// file's direct useWelcomeStore.setState scenarios are unaffected.
+jest.mock('@/api', () => ({
+  __esModule: true,
+  uiFlags: {
+    get: jest.fn(() => new Promise(() => undefined)),
+    update: jest.fn(() => new Promise(() => undefined)),
+  },
+}));
+
 // ─── FeatureErrorBoundary — transparent pass-through ─────────────────────────
 jest.mock('@/components/FeatureErrorBoundary', () => {
   const React = require('react');
