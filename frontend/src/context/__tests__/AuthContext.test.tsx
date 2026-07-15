@@ -827,7 +827,6 @@ describe('AuthContext', () => {
   // the device doesn't inherit the previous user's data.
   describe('logout clears all user state (BUG-FE-STATE-001)', () => {
     it('calls resetAllStores from the registry on explicit logout', async () => {
-      const { resetAllStores } = require('@/store/registry');
       const resetSpy = jest.spyOn(require('@/store/registry'), 'resetAllStores');
       mockLoadToken.mockResolvedValue('jwt');
       const { result } = renderHook(() => useAuth(), { wrapper });
@@ -838,7 +837,6 @@ describe('AuthContext', () => {
       });
 
       expect(resetSpy).toHaveBeenCalledTimes(1);
-      expect(typeof resetAllStores).toBe('function');
       resetSpy.mockRestore();
     });
 

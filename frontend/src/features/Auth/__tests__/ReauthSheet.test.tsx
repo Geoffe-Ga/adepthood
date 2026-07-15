@@ -47,9 +47,9 @@ describe('ReauthSheet', () => {
     expect(getByTestId('reauth-dismiss')).toBeTruthy();
   });
 
-  it('calls login(email.trim(), password) when submit is pressed', async () => {
+  it('calls login with the canonicalized (trimmed + lowercased) email', async () => {
     const { getByTestId } = render(<ReauthSheet />);
-    fireEvent.changeText(getByTestId('reauth-email'), '  user@example.com  ');
+    fireEvent.changeText(getByTestId('reauth-email'), '  User@Example.COM  ');
     fireEvent.changeText(getByTestId('reauth-password'), 'secret'); // pragma: allowlist secret
     fireEvent.press(getByTestId('reauth-submit'));
 

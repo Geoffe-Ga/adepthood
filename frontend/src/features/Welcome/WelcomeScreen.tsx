@@ -168,7 +168,6 @@ export const WelcomeScreen = ({ onComplete, onBegin }: WelcomeScreenProps): Reac
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onScroll}
-        scrollEventThrottle={16}
         testID="welcome-pager"
       >
         {WELCOME_PANELS.map((panel, index) => (

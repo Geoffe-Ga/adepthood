@@ -20,7 +20,7 @@ export interface WelcomePanel {
  * "you choose your depth" ethos is visible before any entry is written — no
  * extra panel, no gate.
  */
-export const WELCOME_PRIVACY_NOTE =
+const WELCOME_PRIVACY_NOTE =
   'Your journal is yours — you choose each entry’s privacy, and anything you mark Intimate never leaves for AI.';
 
 /** The five APTITUDE pillars introduced on the second panel. */

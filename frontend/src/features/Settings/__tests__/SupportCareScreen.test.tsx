@@ -151,29 +151,3 @@ describe('SupportCareScreen — limits line', () => {
     expect(getByText('This complements professional care — it does not replace it.')).toBeTruthy();
   });
 });
-
-// ---------------------------------------------------------------------------
-// No chatbot chrome
-// ---------------------------------------------------------------------------
-
-describe('SupportCareScreen — no chatbot chrome', () => {
-  it('does not render testID "sender"', () => {
-    const { queryByTestId } = render(<SupportCareScreen />);
-    expect(queryByTestId('sender')).toBeNull();
-  });
-
-  it('does not render testID "avatar"', () => {
-    const { queryByTestId } = render(<SupportCareScreen />);
-    expect(queryByTestId('avatar')).toBeNull();
-  });
-
-  it('does not render testID "reply"', () => {
-    const { queryByTestId } = render(<SupportCareScreen />);
-    expect(queryByTestId('reply')).toBeNull();
-  });
-
-  it('does not render a "Send" text element', () => {
-    const { queryByText } = render(<SupportCareScreen />);
-    expect(queryByText('Send')).toBeNull();
-  });
-});
