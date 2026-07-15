@@ -2,9 +2,16 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import type { ContentItem } from '../../../api';
+import { colors, surface } from '../../../design/tokens';
 import ContentCard from '../ContentCard';
+
+const DEFAULT_ICON = '📄';
+
+const iconBackground = (style: unknown): unknown =>
+  (StyleSheet.flatten(style as never) as { backgroundColor?: unknown }).backgroundColor;
 
 const makeItem = (overrides: Partial<ContentItem> = {}): ContentItem => ({
   id: 1,
@@ -46,6 +53,28 @@ describe('ContentCard', () => {
     const item = makeItem({ content_type: 'video' });
     const { getByText } = render(<ContentCard item={item} onPress={onPress} />);
     expect(getByText('▶')).toBeTruthy();
+  });
+
+  it('shows a non-default icon for the production chapter content type', () => {
+    const item = makeItem({ content_type: 'chapter' });
+    const { getByText, queryByText } = render(<ContentCard item={item} onPress={onPress} />);
+    expect(getByText('📚')).toBeTruthy();
+    expect(queryByText(DEFAULT_ICON)).toBeNull();
+  });
+
+  it('gives the chapter icon badge a non-default themed background', () => {
+    const item = makeItem({ id: 42, content_type: 'chapter' });
+    const { getByTestId } = render(<ContentCard item={item} onPress={onPress} />);
+    const background = iconBackground(getByTestId('content-card-icon-42').props.style);
+    expect(background).toBe(colors.tier.stretch);
+    expect(background).not.toBe(surface.sunken);
+  });
+
+  it('falls back to the default icon and background for an unknown content type', () => {
+    const item = makeItem({ id: 7, content_type: 'mystery' });
+    const { getByText, getByTestId } = render(<ContentCard item={item} onPress={onPress} />);
+    expect(getByText(DEFAULT_ICON)).toBeTruthy();
+    expect(iconBackground(getByTestId('content-card-icon-7').props.style)).toBe(surface.sunken);
   });
 
   it('shows unlock date for locked items', () => {
