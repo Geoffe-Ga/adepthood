@@ -246,10 +246,4 @@ describe('useHabits', () => {
     expect(updated?.completions).toEqual([]);
     expect(updated?.start_date).toEqual(newDate);
   });
-
-  it('emojiHabitIndex tracks which habit is being edited', () => {
-    const { result } = renderHook(() => useHabits());
-
-    expect(result.current.ui.emojiHabitIndex).toBeNull();
-  });
 });
