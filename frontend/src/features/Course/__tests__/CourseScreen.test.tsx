@@ -567,12 +567,13 @@ describe('CourseScreen', () => {
       expect(getByTestId('stage-selector')).toBeTruthy();
     });
 
+    // Stage 2 is the default selection, so press stage 1 for a genuine change.
     await act(async () => {
-      fireEvent.press(getByTestId('stage-pill-2'));
+      fireEvent.press(getByTestId('stage-pill-1'));
     });
 
     await waitFor(() => {
-      expect(mockStageIntro).toHaveBeenCalledWith(2);
+      expect(mockStageIntro).toHaveBeenCalledWith(1);
     });
   });
 });
