@@ -1,9 +1,12 @@
 """Integration tests for :mod:`services.contraction` -- read-only aggregate gathering.
 
-These tests FAIL until ``backend/src/services/contraction.py`` exists with the
-contract pinned below. That is the correct RED state for Gate 1.
+Exercises ``gather_contraction_aggregates`` against a live async session: it reads
+a user's habits, their additive goals, and recent goal completions, buckets the
+completions into user-local days, and derives each habit's consecutive unmet /
+unchecked day counts into a :class:`ContractionAggregates` snapshot -- issuing
+``SELECT`` statements only, never staging a write.
 
-Pinned service contract:
+Service contract:
   async def gather_contraction_aggregates(session, user_id, user_timezone="UTC")
       -> ContractionAggregates
 """
