@@ -19,18 +19,6 @@ import type { ReflectionLevel } from '@/api';
 import { accent, fonts, ink } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
-/**
- * Root stack for the authenticated app. Hosts the bottom-tabs shell plus
- * modal-style screens (e.g. BYOK API key settings, the practice share
- * preview screen deep-linked from another app) that should not live
- * inside any single tab.
- *
- * ``Tabs`` is typed as ``NavigatorScreenParams<RootTabParamList>`` (not
- * ``undefined``) so screens nested under it -- e.g. ``SharePreviewScreen``
- * forwarding the recipient back to the Practice tab after a successful
- * import -- can pass ``{ screen, params }`` through ``navigation.navigate``
- * with full type safety.
- */
 export interface CreatePracticePrefill {
   config: ModeConfig;
   name?: string;
@@ -75,6 +63,18 @@ const NAV_SCREEN_OPTIONS = {
   headerTitleStyle: { fontFamily: fonts.serif, color: ink.primary },
 } as const;
 
+/**
+ * Root stack for the authenticated app. Hosts the bottom-tabs shell plus
+ * modal-style screens (e.g. BYOK API key settings, the practice share
+ * preview screen deep-linked from another app) that should not live
+ * inside any single tab.
+ *
+ * ``Tabs`` is typed as ``NavigatorScreenParams<RootTabParamList>`` (not
+ * ``undefined``) so screens nested under it -- e.g. ``SharePreviewScreen``
+ * forwarding the recipient back to the Practice tab after a successful
+ * import -- can pass ``{ screen, params }`` through ``navigation.navigate``
+ * with full type safety.
+ */
 const RootStack = (): React.JSX.Element => (
   <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />

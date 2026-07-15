@@ -18,12 +18,10 @@ import { setNetworkOnlineGetter } from '@/api';
 
 interface NetworkStatusContextValue {
   isOnline: boolean;
-  isInternetReachable: boolean | null;
 }
 
 const NetworkStatusContext = createContext<NetworkStatusContextValue>({
   isOnline: true,
-  isInternetReachable: null,
 });
 
 /**
@@ -39,7 +37,6 @@ function isStateOnline(state: NetInfoState): boolean {
 
 export function NetworkStatusProvider({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(true);
-  const [isInternetReachable, setIsInternetReachable] = useState<boolean | null>(null);
   const onlineRef = useRef(true);
   onlineRef.current = isOnline;
 
@@ -49,7 +46,6 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
 
     const handleChange = (state: NetInfoState): void => {
       setIsOnline(isStateOnline(state));
-      setIsInternetReachable(state.isInternetReachable);
     };
 
     // Seed once, then subscribe for deltas.
@@ -66,7 +62,7 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
     };
   }, []);
 
-  const value = useMemo(() => ({ isOnline, isInternetReachable }), [isOnline, isInternetReachable]);
+  const value = useMemo(() => ({ isOnline }), [isOnline]);
 
   return <NetworkStatusContext.Provider value={value}>{children}</NetworkStatusContext.Provider>;
 }
