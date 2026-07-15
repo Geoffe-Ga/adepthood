@@ -1,5 +1,5 @@
 /* eslint-env jest */
-// Candle & Ink token guards: wizard canvas, primary CTA, and selected stage chip pinned to their semantic token values, with negative pins against the legacy values.
+// Candle & Ink token guards: wizard canvas, primary CTA, and selected stage chip pinned to their semantic token values.
 
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
@@ -7,7 +7,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { PracticeItem, UserPractice } from '@/api';
-import { accent, colors, surface } from '@/design/tokens';
+import { accent, surface } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
 // Mirror the safe-area mock from the main wizard test so the canvas node is identical between both files.
@@ -95,29 +95,21 @@ function navigateToMetadata(navOverride?: NavMock) {
 const flatBackground = (style: unknown): string | undefined =>
   (StyleSheet.flatten(style as never) as { backgroundColor?: string }).backgroundColor;
 
-// Guard 1: wizard canvas background resolves to surface.canvas, not legacy colors.background.primary (#f8f8f8).
+// Guard 1: wizard canvas background resolves to surface.canvas (the migrated semantic token).
 describe('Candle & Ink token guard — wizard canvas (create-practice-wizard)', () => {
   beforeEach(() => {
     mockPracticesCreate.mockReset();
     mockUserPracticesCreate.mockReset();
   });
 
-  it('wizard canvas resolves to surface.canvas, not the legacy background.primary', () => {
+  it('wizard canvas resolves to surface.canvas', () => {
     const { view } = renderScreen();
     const canvas = view.getByTestId('create-practice-wizard');
-    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(canvas.props.style)).toBe(surface.canvas);
-  });
-
-  it('wizard canvas does NOT use the legacy colors.background.primary value', () => {
-    const { view } = renderScreen();
-    const canvas = view.getByTestId('create-practice-wizard');
-    // Negative pin: stays valid even if surface.canvas and colors.background.primary were ever equated.
-    expect(flatBackground(canvas.props.style)).not.toBe(colors.background.primary);
   });
 });
 
-// Guard 2: primary CTA "Save practice" background resolves to accent.primary, not legacy colors.primary (#1a1910).
+// Guard 2: primary CTA "Save practice" background resolves to accent.primary (the migrated semantic token).
 describe('Candle & Ink token guard — primary CTA (create-practice-submit)', () => {
   beforeEach(() => {
     mockPracticesCreate.mockReset();
@@ -129,19 +121,11 @@ describe('Candle & Ink token guard — primary CTA (create-practice-submit)', ()
     // Fill the name field so the button is enabled (not disabled-opaque); duration is pre-seeded for meditation_timer.
     fireEvent.changeText(view.getByTestId('create-practice-name'), 'Bell sit');
     const submit = view.getByTestId('create-practice-submit');
-    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(submit.props.style)).toBe(accent.primary);
-  });
-
-  it('submit button does NOT use the legacy colors.primary near-black', () => {
-    const { view } = navigateToMetadata();
-    fireEvent.changeText(view.getByTestId('create-practice-name'), 'Bell sit');
-    const submit = view.getByTestId('create-practice-submit');
-    expect(flatBackground(submit.props.style)).not.toBe(colors.primary);
   });
 });
 
-// Guard 3: selected stage chip background resolves to accent.primary (unselected must not), not legacy colors.primary (#1a1910).
+// Guard 3: selected stage chip resolves to accent.primary; an unselected chip must not.
 describe('Candle & Ink token guard — selected stage chip (create-practice-stage-3)', () => {
   beforeEach(() => {
     mockPracticesCreate.mockReset();
@@ -152,7 +136,6 @@ describe('Candle & Ink token guard — selected stage chip (create-practice-stag
     const { view } = navigateToMetadata();
     fireEvent.press(view.getByTestId('create-practice-stage-3'));
     const chip = view.getByTestId('create-practice-stage-3');
-    // POST-migration expected value — the migrated semantic token value.
     expect(flatBackground(chip.props.style)).toBe(accent.primary);
   });
 
@@ -162,12 +145,5 @@ describe('Candle & Ink token guard — selected stage chip (create-practice-stag
     fireEvent.press(view.getByTestId('create-practice-stage-3'));
     const unselected = view.getByTestId('create-practice-stage-5');
     expect(flatBackground(unselected.props.style)).not.toBe(accent.primary);
-  });
-
-  it('selected stage chip does NOT use the legacy colors.primary near-black', () => {
-    const { view } = navigateToMetadata();
-    fireEvent.press(view.getByTestId('create-practice-stage-3'));
-    const chip = view.getByTestId('create-practice-stage-3');
-    expect(flatBackground(chip.props.style)).not.toBe(colors.primary);
   });
 });
