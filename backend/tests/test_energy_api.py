@@ -9,7 +9,7 @@ which monkeypatch the service.
 from __future__ import annotations
 
 import asyncio
-import time
+import threading
 from datetime import date
 from http import HTTPStatus
 from typing import Any
@@ -103,24 +103,45 @@ async def test_keyed_requests_replay_identical_persisted_plan(
 async def test_create_plan_does_not_block_event_loop(async_client: AsyncClient) -> None:
     """BUG-INFRA-009: slow plan generation must not starve concurrent requests.
 
-    Replace ``build_energy_response`` (the CPU-bound step) with a sync sleep
-    that would block the loop for 300ms if run inline; ``get_or_create_persisted_plan``
-    runs it via ``asyncio.to_thread``, so two concurrent requests overlap and
-    finish in ~300ms, not ~600ms. ``_persist`` is stubbed to a no-op and the
-    habit lookup is stubbed so the test isolates the offload from the DB.
+    ``get_or_create_persisted_plan`` runs the CPU-bound ``build_energy_response``
+    via ``asyncio.to_thread``, so two concurrent requests must have their builds
+    in flight *at the same time* rather than serialised on the event loop. This
+    is asserted deterministically — not by a wall-clock budget: the stubbed build
+    performs a two-party handshake (a ``threading.Barrier``) so that each build
+    blocks until its sibling has also entered, then records peak overlap. If the
+    offload regressed to an inline call the loop would be blocked, only one build
+    could ever be in flight, the barrier would time out, and the request would
+    fail. ``_persist`` and the habit lookup are stubbed to isolate the offload
+    from the DB.
     """
     headers, _ = await _signup(async_client)
-    sleep_seconds = 0.3
+    expected_overlap = 2  # both concurrent requests build simultaneously
+    # Generous deadlock guard, not a speed budget: when the loop is *not* blocked
+    # the barrier releases the instant the sibling build enters (microseconds,
+    # independent of runner speed); this bound only trips if a regression forces
+    # the builds to run serially, so it is immune to slow-CI flake.
+    handshake_timeout_seconds = 10.0
     one_habit = [DomainHabit(id=1, name="Run", energy_cost=2, energy_return=5)]
     real_response = energy.build_energy_response(one_habit, date(2024, 1, 1))
+
+    both_builds_entered = threading.Barrier(expected_overlap, timeout=handshake_timeout_seconds)
+    concurrency_lock = threading.Lock()
+    active_builds = 0
+    peak_builds = 0
 
     async def _stub_resolve(
         _session: AsyncSession, _user_id: int, _payload: EnergyPlanRequest
     ) -> list[DomainHabit]:
         return one_habit
 
-    def _slow_build(_habits: list[DomainHabit], _start: date) -> EnergyPlanResponse:
-        time.sleep(sleep_seconds)
+    def _handshake_build(_habits: list[DomainHabit], _start: date) -> EnergyPlanResponse:
+        nonlocal active_builds, peak_builds
+        with concurrency_lock:
+            active_builds += 1
+            peak_builds = max(peak_builds, active_builds)
+        both_builds_entered.wait()  # blocks until the sibling build is also in flight
+        with concurrency_lock:
+            active_builds -= 1
         return real_response
 
     async def _noop_persist(
@@ -133,23 +154,22 @@ async def test_create_plan_does_not_block_event_loop(async_client: AsyncClient) 
 
     with (
         patch.object(energy_router, "resolve_trusted_habits", _stub_resolve),
-        patch.object(energy, "build_energy_response", _slow_build),
+        patch.object(energy, "build_energy_response", _handshake_build),
         patch.object(energy, "_persist", _noop_persist),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            start = time.perf_counter()
             results = await asyncio.gather(
                 ac.post("/v1/energy/plan", json=sample_payload(), headers=headers),
                 ac.post("/v1/energy/plan", json=sample_payload(), headers=headers),
             )
-            elapsed = time.perf_counter() - start
 
     for res in results:
         assert res.status_code == HTTPStatus.OK
 
-    assert elapsed < sleep_seconds * 1.8, (
-        f"expected concurrent energy requests to overlap; took {elapsed:.3f}s"
+    assert peak_builds == expected_overlap, (
+        f"expected {expected_overlap} energy builds in flight at once; "
+        f"peak overlap was {peak_builds} (event loop appears blocked)"
     )
 
 
