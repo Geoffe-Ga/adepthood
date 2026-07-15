@@ -186,19 +186,21 @@ export default function TimezoneSettingsScreen({ navigation }: Props = {}): Reac
   // Depend on the stable useState setters, not ``state`` itself — the hook
   // returns a fresh object every render, so a ``[state]`` dependency would
   // silently defeat the memoization.
-  const { setDraft, setError } = state;
+  const { setDraft, setError, setStatus } = state;
   const onChangeDraft = useCallback(
     (value: string) => {
       setDraft(value);
       setError(null);
+      setStatus(null);
     },
-    [setDraft, setError],
+    [setDraft, setError, setStatus],
   );
 
   const onUseDeviceZone = useCallback(() => {
     setDraft(detectDeviceTimezone());
     setError(null);
-  }, [setDraft, setError]);
+    setStatus(null);
+  }, [setDraft, setError, setStatus]);
 
   const onBack = useMemo(
     () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
