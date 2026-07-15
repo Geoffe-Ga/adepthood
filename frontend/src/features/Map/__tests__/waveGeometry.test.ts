@@ -132,11 +132,9 @@ const pairPixelEndpoints = (
 
 describe('stageWavePoint', () => {
   it('rises upward: y strictly decreases as stageNumber climbs from 1 to 10', () => {
-    const ys = Array.from({ length: STAGE_COUNT }, (_, i) => stageWavePoint(i + 1).y);
     for (let stage = 2; stage <= STAGE_COUNT; stage += 1) {
       expect(stageWavePoint(stage).y).toBeLessThan(stageWavePoint(stage - 1).y);
     }
-    expect(ys).toHaveLength(STAGE_COUNT);
   });
 
   it('wobbles left for even (WE) stages and right for odd (I) stages, stages 1-8', () => {
