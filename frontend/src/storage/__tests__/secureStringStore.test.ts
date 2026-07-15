@@ -48,6 +48,22 @@ function makeStore() {
   return createSecureStringStore(TEST_KEY, TestEmptyError);
 }
 
+// Microtask rounds pumped so a serialized write chain enqueues each successive
+// write; generous because every write hops the FIFO chain several times.
+const MAX_DRAIN_ROUNDS = 50;
+
+// Commit deferred mock writes newest-first (a later write settling before an
+// earlier one), pumping microtasks so a serialized chain runs to completion. A
+// momentarily empty queue is not the end — a chained write may not be enqueued yet.
+async function drainNewestFirst(pending: Array<() => void>): Promise<void> {
+  for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
+    await Promise.resolve();
+    if (pending.length === 0) continue;
+    const batch = pending.splice(0).reverse();
+    for (const commit of batch) commit();
+  }
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -130,5 +146,131 @@ describe('createSecureStringStore (web)', () => {
     const store = makeStore();
     await expect(store.load()).rejects.toThrow('read boom');
     expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSecureStringStore (native write ordering)', () => {
+  beforeEach(() => {
+    platformRef.value = 'ios';
+  });
+
+  test('a fresh save always wins over a stale save issued earlier', async () => {
+    let stored: string | null = null;
+    const pending: Array<() => void> = [];
+    mockSecureStore.setItemAsync.mockImplementation(
+      (_key: string, val: string) =>
+        new Promise<void>((resolve) => {
+          pending.push(() => {
+            stored = val;
+            resolve();
+          });
+        }),
+    );
+
+    const store = makeStore();
+    const pStale = store.save('stale-token');
+    const pFresh = store.save('fresh-token');
+
+    await drainNewestFirst(pending);
+    await Promise.all([pStale, pFresh]);
+
+    expect(stored).toBe('fresh-token');
+  });
+
+  test('a clear issued after a save is never overwritten by the save settling late', async () => {
+    let stored: string | null = null;
+    const pending: Array<() => void> = [];
+    mockSecureStore.setItemAsync.mockImplementation(
+      (_key: string, val: string) =>
+        new Promise<void>((resolve) => {
+          pending.push(() => {
+            stored = val;
+            resolve();
+          });
+        }),
+    );
+    mockSecureStore.deleteItemAsync.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          pending.push(() => {
+            stored = null;
+            resolve();
+          });
+        }),
+    );
+
+    const store = makeStore();
+    const pSave = store.save('fresh-token');
+    const pClear = store.clear();
+
+    await drainNewestFirst(pending);
+    await Promise.all([pSave, pClear]);
+
+    expect(stored).toBeNull();
+  });
+
+  test('a held write on one key does not block a write on a different key', async () => {
+    const { createSecureStringStore } = loadSecureStringStore();
+    const storeA = createSecureStringStore('key-a', TestEmptyError);
+    const storeB = createSecureStringStore('key-b', TestEmptyError);
+
+    let resolveA: () => void = () => undefined;
+    mockSecureStore.setItemAsync.mockImplementation((key: string) =>
+      key === 'key-a'
+        ? new Promise<void>((resolve) => {
+            resolveA = resolve;
+          })
+        : Promise.resolve(),
+    );
+
+    const pA = storeA.save('a-value');
+    const pB = storeB.save('b-value');
+
+    await expect(pB).resolves.toBeUndefined();
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith('key-b', 'b-value');
+
+    resolveA();
+    await pA;
+  });
+
+  test('a rejected save does not wedge the lane for the same key', async () => {
+    const store = makeStore();
+    mockSecureStore.setItemAsync.mockRejectedValueOnce(new Error('keychain write failed'));
+
+    await expect(store.save('will-fail')).rejects.toThrow('keychain write failed');
+
+    mockSecureStore.setItemAsync.mockResolvedValueOnce(undefined);
+    await store.save('recovers');
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenLastCalledWith(TEST_KEY, 'recovers');
+  });
+});
+
+describe('createSecureStringStore (web write ordering)', () => {
+  beforeEach(() => {
+    platformRef.value = 'web';
+  });
+
+  test('a fresh save always wins over a stale save issued earlier on web', async () => {
+    let stored: string | null = null;
+    const pending: Array<() => void> = [];
+    mockAsyncStorage.setItem.mockImplementation(
+      (_key: string, val: string) =>
+        new Promise<void>((resolve) => {
+          pending.push(() => {
+            stored = val;
+            resolve();
+          });
+        }),
+    );
+
+    const store = makeStore();
+    const pStale = store.save('stale-token');
+    const pFresh = store.save('fresh-token');
+
+    await drainNewestFirst(pending);
+    await Promise.all([pStale, pFresh]);
+
+    expect(stored).toBe('fresh-token');
   });
 });
