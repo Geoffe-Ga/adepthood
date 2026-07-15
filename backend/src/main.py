@@ -50,6 +50,7 @@ from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
 from routers.reflections import router as reflections_router
 from routers.stages import router as stages_router
+from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
 from seed_content import seed_content
@@ -448,6 +449,7 @@ app.include_router(goals_router)
 app.include_router(stages_router)
 app.include_router(users_router)
 app.include_router(depth_preferences_router)
+app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
 
