@@ -1,8 +1,11 @@
 """BotMason AI service — LLM integration layer.
 
 Supports configurable LLM providers via environment variables. The service
-loads a system prompt from a file path or inline text and maintains
-conversation history context for coherent multi-turn chat.
+loads a system prompt from a file path or inline text and generates a single
+resonance reflection per call.  The ``conversation_history`` parameter on
+:func:`generate_response` is a retained seam, but the sole production caller
+(``services.marginalia``) always passes an empty history, so no multi-turn
+chat path exists today.
 """
 
 from __future__ import annotations
