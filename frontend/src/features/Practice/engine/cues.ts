@@ -79,7 +79,7 @@ function computeIntervalOffsets(config: IntervalBellConfig, totalMs: number): re
   if (!interval || interval <= 0) return [];
   const intervalMs = interval * MS_PER_MINUTE;
   const out: number[] = [];
-  for (let t = intervalMs; t <= totalMs; t += intervalMs) out.push(t);
+  for (let t = intervalMs; t < totalMs; t += intervalMs) out.push(t);
   return out;
 }
 

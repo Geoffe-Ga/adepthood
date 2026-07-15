@@ -86,7 +86,7 @@ describe('useRitualEngine', () => {
   it('tags an interval_bell cue with its configured tone while boundary cues stay single-arg', () => {
     const config: IntervalBellConfig = {
       mode: 'interval_bell',
-      duration_minutes: 1,
+      duration_minutes: 2,
       interval_minutes: 1,
       bell_tone: 'gong',
     };
@@ -97,9 +97,11 @@ describe('useRitualEngine', () => {
     expect(deps.audio.play).toHaveBeenNthCalledWith(1, 'start_bell');
 
     act(() => jest.advanceTimersByTime(60_000));
-    expect(result.current[0].status).toBe('complete');
     expect(deps.audio.play).toHaveBeenCalledWith('interval_bell', 'gong');
     expect(deps.audio.play).not.toHaveBeenCalledWith('interval_bell');
+
+    act(() => jest.advanceTimersByTime(60_000));
+    expect(result.current[0].status).toBe('complete');
   });
 
   it('pause/resume/cancel work and never emit a stray end_bell on cancel', () => {
