@@ -78,19 +78,31 @@ jest.mock('@/storage/welcomeStorage', () => ({
   clearHasSeenWelcome: jest.fn(() => Promise.resolve()),
 }));
 
-import { render, act } from '@testing-library/react-native';
+// A never-settling GET keeps the store gated on the local-cache fallback for
+// tests that drive useWelcomeStore state directly.
+jest.mock('@/api', () => ({
+  __esModule: true,
+  uiFlags: {
+    get: jest.fn(() => new Promise(() => undefined)),
+    update: jest.fn(() => Promise.resolve()),
+  },
+}));
+
+import { render, act, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
+import { uiFlags } from '@/api';
 import { RootNavigator } from '@/App';
 import * as AuthContextModule from '@/context/AuthContext';
 import type { AuthStatus } from '@/context/AuthContext';
 import { useWelcomeStore } from '@/store/useWelcomeStore';
 
+const mockUiFlagsGet = jest.mocked(uiFlags.get);
+
 function mockAuthenticated() {
   jest.spyOn(AuthContextModule, 'useAuth').mockReturnValue({
     token: 'jwt',
     authStatus: 'authenticated' as AuthStatus,
-    isLoading: false,
     userTimezone: 'UTC',
     setUserTimezone: jest.fn(),
     login: jest.fn(() => Promise.resolve()),
@@ -151,5 +163,52 @@ describe('WelcomeGate → Journal shell (regression locks)', () => {
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
     expect(getByTestId('root-stack')).toBeTruthy();
     expect(queryByTestId('welcome-screen')).toBeNull();
+  });
+});
+
+// End-to-end through the real useFirstRun hook (not a setState bypass) so the
+// server round-trip actually drives the gate.
+describe('WelcomeGate — server hydration', () => {
+  beforeEach(() => {
+    act(() => useWelcomeStore.setState({ hasSeenWelcome: null }));
+  });
+
+  it('does not flash the welcome while the server GET is still pending', () => {
+    mockUiFlagsGet.mockReturnValueOnce(
+      new Promise<{ has_seen_welcome: boolean; energy_scaffolding_archived: boolean }>(
+        () => undefined,
+      ),
+    );
+    const { getByTestId, queryByTestId } = render(<RootNavigator />);
+    expect(getByTestId('root-stack')).toBeTruthy();
+    expect(queryByTestId('welcome-screen')).toBeNull();
+    // Pins that hydration is server-driven, not just the stay-closed no-flash.
+    expect(mockUiFlagsGet).toHaveBeenCalledWith('jwt');
+  });
+
+  it('returning user (server has_seen_welcome=true, empty local cache) lands on root-stack', async () => {
+    mockUiFlagsGet.mockResolvedValueOnce({
+      has_seen_welcome: true,
+      energy_scaffolding_archived: false,
+    });
+    const { getByTestId, queryByTestId } = render(<RootNavigator />);
+    await waitFor(() => expect(mockUiFlagsGet).toHaveBeenCalledWith('jwt'));
+    expect(getByTestId('root-stack')).toBeTruthy();
+    expect(queryByTestId('welcome-screen')).toBeNull();
+  });
+
+  it('first-run (server has_seen_welcome=false) shows Welcome; markSeen closes it', async () => {
+    mockUiFlagsGet.mockResolvedValueOnce({
+      has_seen_welcome: false,
+      energy_scaffolding_archived: false,
+    });
+    const { getByTestId, queryByTestId } = render(<RootNavigator />);
+    await waitFor(() => expect(getByTestId('welcome-screen')).toBeTruthy());
+    expect(queryByTestId('root-stack')).toBeNull();
+
+    act(() => useWelcomeStore.getState().markWelcomeSeen());
+
+    expect(queryByTestId('welcome-screen')).toBeNull();
+    expect(getByTestId('root-stack')).toBeTruthy();
   });
 });

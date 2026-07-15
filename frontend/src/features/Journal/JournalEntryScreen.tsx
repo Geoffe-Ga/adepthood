@@ -47,6 +47,7 @@ import type {
   CompletionSuggestion,
   EntryStatus,
   JournalClassification,
+  JournalEntryUpdate,
   JournalMessage,
   Marginalia,
   PromotedQuote,
@@ -64,6 +65,9 @@ export const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
+
+/** Body-field placeholder for a free-write with no prompt to echo. */
+const DEFAULT_BODY_PLACEHOLDER = 'Begin writing…';
 
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
@@ -292,119 +296,77 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
   );
 }
 
-interface ClassificationPersist {
-  classificationRef: React.MutableRefObject<JournalClassification>;
+interface RefPersist<T> {
+  /** The optimistic ref holding the latest value; the create writer rides it. */
+  ref: React.MutableRefObject<T>;
   /**
-   * Record the tier for the next create and PATCH it when the entry exists.
-   * Resolves to the tier the UI should revert to when a PATCH fails and no later
-   * change has superseded it, else null.
-   */
-  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>;
-  /**
-   * Seed the last-persisted tier from a loaded entry so a failed re-tag reverts
-   * to the entry's real tier rather than the module default.
-   */
-  seedClassification: (_tier: JournalClassification) => void;
-}
-
-/**
- * Owns the latest privacy tier: it rides the first ``journal.create`` via the
- * ref, and on an existing entry a change is PATCHed immediately so a
- * re-classification never waits on (or is lost to) the body-save debounce.
- */
-function useClassificationPersist(
-  entryIdRef: React.MutableRefObject<number | null>,
-  entryUnsettledRef: React.MutableRefObject<boolean>,
-): ClassificationPersist {
-  const classificationRef = useRef<JournalClassification>(DEFAULT_TIER);
-  const changeClassification = useCallback(
-    async (tier: JournalClassification): Promise<JournalClassification | null> => {
-      // Never PATCH until the entry's load settles (still in flight or failed) —
-      // the ref is stale and a write here could silently downgrade the stored
-      // (unseen) privacy tier.
-      if (entryUnsettledRef.current) return null;
-      const previous = classificationRef.current;
-      classificationRef.current = tier;
-      // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
-      if (entryIdRef.current == null) return null;
-      try {
-        await journal.update(entryIdRef.current, { classification: tier });
-        return null;
-      } catch {
-        // A rapid superseding change already owns the ref and the UI — leave both
-        // to it rather than reverting to this now-stale tier. Assumes one PATCH in
-        // flight at a time; ``previous`` is the optimistic ref, not last-persisted.
-        if (classificationRef.current !== tier) return null;
-        classificationRef.current = previous;
-        return previous;
-      }
-    },
-    [entryIdRef, entryUnsettledRef],
-  );
-  const seedClassification = useCallback((tier: JournalClassification): void => {
-    classificationRef.current = tier;
-  }, []);
-  return { classificationRef, changeClassification, seedClassification };
-}
-
-interface ChordPersist {
-  chordRef: React.MutableRefObject<AspectChordValue>;
-  /**
-   * Record the chord for the next create and PATCH it when the entry exists.
-   * Resolves to the chord the UI should revert to when a PATCH fails and no
+   * Record the value for the next create and PATCH it when the entry exists.
+   * Resolves to the value the UI should revert to when a PATCH fails and no
    * later change has superseded it, else null.
    */
-  changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>;
+  change: (_value: T) => Promise<T | null>;
   /**
-   * Seed the last-persisted chord from a loaded entry so a failed re-tag reverts
-   * to the entry's real chord rather than the empty default.
+   * Seed the last-persisted value from a loaded entry so a failed re-tag reverts
+   * to the entry's real value rather than the module default.
    */
-  seedChord: (_next: AspectChordValue) => void;
+  seed: (_value: T) => void;
 }
 
 /**
- * Owns the latest Aspect chord: it rides the first ``journal.create`` via the
- * ref, and on an existing entry a change is PATCHed immediately (both notes,
- * including explicit nulls) so re-tagging never waits on the body-save debounce.
- * A failed PATCH resolves to the prior chord so the control reverts to the
- * truth, mirroring the sibling privacy-tier control's revert-on-failure path.
+ * Owns the latest value behind a control that persists optimistically: the ref
+ * rides the first ``journal.create``, and on an existing entry a change is
+ * PATCHed immediately (via ``toPatch``) so re-tagging never waits on (or is lost
+ * to) the body-save debounce. A failed PATCH reverts to the prior value so the
+ * control shows the truth, unless a rapid later change has already superseded
+ * it. Assumes one PATCH in flight at a time; ``previous`` is the optimistic ref,
+ * not the last-persisted value. Shared by the privacy-tier and Aspect-chord
+ * controls; ``toPatch`` must be referentially stable to keep ``change`` stable.
  */
-function useChordPersist(
+function useRefPersist<T>(
   entryIdRef: React.MutableRefObject<number | null>,
   entryUnsettledRef: React.MutableRefObject<boolean>,
-): ChordPersist {
-  const chordRef = useRef<AspectChordValue>(EMPTY_CHORD);
-  const changeChord = useCallback(
-    async (next: AspectChordValue): Promise<AspectChordValue | null> => {
+  initial: T,
+  toPatch: (_value: T) => JournalEntryUpdate,
+): RefPersist<T> {
+  const ref = useRef<T>(initial);
+  const change = useCallback(
+    async (value: T): Promise<T | null> => {
       // Never PATCH until the entry's load settles (still in flight or failed) —
-      // the ref is stale and a write here could overwrite the stored (unseen) chord.
+      // the ref is stale and a write here could overwrite the stored (unseen) value.
       if (entryUnsettledRef.current) return null;
-      const previous = chordRef.current;
-      chordRef.current = next;
+      const previous = ref.current;
+      ref.current = value;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
       if (entryIdRef.current == null) return null;
       try {
-        await journal.update(entryIdRef.current, {
-          primary_aspect: next.primary,
-          secondary_aspect: next.secondary,
-        });
+        await journal.update(entryIdRef.current, toPatch(value));
         return null;
       } catch {
         // A rapid superseding change already owns the ref and the UI — leave both
-        // to it rather than reverting to this now-stale chord. Assumes one PATCH in
-        // flight at a time; ``previous`` is the optimistic ref, not last-persisted.
-        if (chordRef.current !== next) return null;
-        chordRef.current = previous;
+        // to it rather than reverting to this now-stale value.
+        if (ref.current !== value) return null;
+        ref.current = previous;
         return previous;
       }
     },
-    [entryIdRef, entryUnsettledRef],
+    [entryIdRef, entryUnsettledRef, toPatch],
   );
-  const seedChord = useCallback((next: AspectChordValue): void => {
-    chordRef.current = next;
+  const seed = useCallback((value: T): void => {
+    ref.current = value;
   }, []);
-  return { chordRef, changeChord, seedChord };
+  return { ref, change, seed };
 }
+
+// Module-level so the mappers stay referentially stable across renders, keeping
+// each ``useRefPersist`` ``change`` callback's identity stable (as the inlined
+// twins were) rather than churning every render.
+const classificationToPatch = (tier: JournalClassification): JournalEntryUpdate => ({
+  classification: tier,
+});
+const chordToPatch = (chord: AspectChordValue): JournalEntryUpdate => ({
+  primary_aspect: chord.primary,
+  secondary_aspect: chord.secondary,
+});
 
 type TimerRef = React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
 type RunSave = (_title: string, _body: string) => Promise<void>;
@@ -626,11 +588,21 @@ function usePersistControls(
   setSaveState: (_state: SaveState) => void,
   entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
-  const { classificationRef, changeClassification, seedClassification } = useClassificationPersist(
+  const {
+    ref: classificationRef,
+    change: changeClassification,
+    seed: seedClassification,
+  } = useRefPersist<JournalClassification>(
     entryIdRef,
     entryUnsettledRef,
+    DEFAULT_TIER,
+    classificationToPatch,
   );
-  const { chordRef, changeChord, seedChord } = useChordPersist(entryIdRef, entryUnsettledRef);
+  const {
+    ref: chordRef,
+    change: changeChord,
+    seed: seedChord,
+  } = useRefPersist<AspectChordValue>(entryIdRef, entryUnsettledRef, EMPTY_CHORD, chordToPatch);
   const seedPersist = useCallback(
     (tier: JournalClassification, chord: AspectChordValue): void => {
       seedClassification(tier);
@@ -1001,7 +973,7 @@ interface WritingColumnProps {
   finishing: boolean;
   /** Set (to {@link FINISH_ERROR_MESSAGE}) when the Finish write failed. */
   finishError: string | null;
-  bodyPlaceholder?: string;
+  bodyPlaceholder: string;
   /**
    * Disables the tier + chord controls until an existing entry's load settles
    * (still in flight or failed), so they never write against an unseen entry.
@@ -1123,7 +1095,7 @@ function WritingColumn({
   onFinish,
   finishing,
   finishError,
-  bodyPlaceholder = 'Begin writing…',
+  bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
 }: WritingColumnProps) {
@@ -1756,7 +1728,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
       reflectionScopeKey: p.reflectionScopeKey,
     },
     initialTitle,
-    bodyPlaceholder: p.promptQuestion ?? 'Begin writing…',
+    bodyPlaceholder: p.promptQuestion ?? DEFAULT_BODY_PLACEHOLDER,
   };
 }
 

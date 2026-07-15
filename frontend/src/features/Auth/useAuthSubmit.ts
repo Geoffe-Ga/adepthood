@@ -14,7 +14,7 @@ import { formatApiError } from '@/api/errorMessages';
  * makes a synchronous second ``run()`` a no-op until the first settles.
  */
 
-export interface AuthSubmit {
+interface AuthSubmit {
   submitting: boolean;
   error: string | null;
   setError: Dispatch<SetStateAction<string | null>>;

@@ -1,7 +1,7 @@
 /**
  * Pure parser for the energy-cost / energy-return text inputs in the
- * habit settings modal.  Lives in its own file so unit tests can import
- * without pulling in the RN component tree.
+ * habit settings and Add Habit modals.  Lives in its own file so unit
+ * tests can import without pulling in the RN component tree.
  *
  * BUG-FE-HABIT-201: the prior ``parseInt(text) || 0`` silently coerced
  * "foo", "1.5", "" all to ``0`` and accepted them as valid energy
@@ -9,9 +9,9 @@
  * cases so the caller can surface a validation error instead of writing
  * 0 to the planner.
  */
-// Bounds mirror those expressed in ``HabitSettingsModal``; kept here so
-// the parser stays a single source of truth across the input row + the
-// dedicated unit tests.
+// The -10..10 range is also spelled out in the user-facing validation
+// copy (``EnergyCostReturnEditor``'s ENERGY_VALIDATION_NOTE); keep the two
+// in sync.
 const ENERGY_MIN = -10;
 const ENERGY_MAX = 10;
 

@@ -6,7 +6,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { MeditationCardShell, SaveButton } from './shared';
+import { MeditationCardShell, SessionCtaButton } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -84,7 +84,8 @@ const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element
 
 const TarotSaveButton = ({ onSave }: { onSave?: () => void }): React.JSX.Element => (
   <View style={styles.completeRow}>
-    <SaveButton
+    <SessionCtaButton
+      variant="success"
       label="Save session"
       accessibilityLabel="Save session and reflect"
       disabled={!onSave}

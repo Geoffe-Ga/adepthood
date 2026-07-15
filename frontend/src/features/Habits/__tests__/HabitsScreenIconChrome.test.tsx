@@ -16,7 +16,7 @@ jest.mock('@/navigation/hooks', () => ({
 // `@jest/globals`' `jest.fn().mockResolvedValue(...)`.
 jest.mock('../../../api', () => ({
   habits: {
-    list: () => Promise.resolve([]),
+    listAll: () => Promise.resolve([]),
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
@@ -33,6 +33,11 @@ jest.mock('../../../api', () => ({
       }),
   },
   goalCompletions: { create: jest.fn() },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: () => Promise.reject(new Error('no server hydration configured')),
+    update: jest.fn(),
+  },
 }));
 
 jest.mock('../../../context/AuthContext', () => ({

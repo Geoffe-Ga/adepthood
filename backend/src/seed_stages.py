@@ -50,7 +50,7 @@ async def seed_stages(session: AsyncSession) -> int:
     Returns the number of stages inserted.  The commit is race-safe: two
     workers booting concurrently (uvicorn ``--workers N``) can both pass the
     existence check on a fresh database, so the loser's commit hits the
-    ``ix_coursestage_stage_number_unique`` index (migration ``b4c5d6e7f8a1``)
+    ``ix_coursestage_stage_number_unique`` index (migration ``e8f9a0b1c2d3``)
     and yields as a no-op instead of duplicating every stage.
     """
     existing = await existing_system_keys(session, CourseStage.stage_number)

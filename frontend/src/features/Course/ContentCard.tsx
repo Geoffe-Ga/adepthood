@@ -6,22 +6,41 @@ import { colors, surface } from '../../design/tokens';
 
 import styles from './Course.styles';
 
-/** Map content_type to a representative icon character. */
-const CONTENT_TYPE_ICONS: Record<string, string> = {
-  essay: '📖',
-  prompt: '💬',
-  video: '▶',
+interface ContentTypeStyle {
+  icon: string;
+  color: string;
+}
+
+/**
+ * Single source of truth for per-content_type presentation. Icon and background
+ * live in one entry so they cannot drift apart, and the keys track the
+ * content_type values the backend actually serves (production ships `chapter`;
+ * `essay`/`prompt`/`video` are creatable via the course authoring endpoint).
+ */
+const CONTENT_TYPE_STYLES: Record<string, ContentTypeStyle> = {
+  chapter: { icon: '📚', color: colors.tier.stretch },
+  essay: { icon: '📖', color: colors.mystical.glowPurple },
+  prompt: { icon: '💬', color: colors.tier.clear },
+  video: { icon: '▶', color: colors.tier.low },
 };
 
-/** Background color by content type. */
-const CONTENT_TYPE_COLORS: Record<string, string> = {
-  essay: colors.mystical.glowPurple,
-  prompt: colors.tier.clear,
-  video: colors.tier.low,
+const DEFAULT_STYLE: ContentTypeStyle = { icon: '📄', color: surface.sunken };
+
+const getSubtitle = (item: ContentItem): string => {
+  if (item.is_locked) {
+    return `Unlocks on day ${item.release_day}`;
+  }
+  if (item.is_read) {
+    return 'Completed';
+  }
+  return item.content_type.charAt(0).toUpperCase() + item.content_type.slice(1);
 };
 
-const DEFAULT_ICON = '📄';
-const DEFAULT_COLOR = surface.sunken;
+const getStatusIndicator = (item: ContentItem): string => {
+  if (item.is_locked) return '🔒';
+  if (item.is_read) return '✓';
+  return '›';
+};
 
 interface ContentCardProps {
   item: ContentItem;
@@ -29,24 +48,7 @@ interface ContentCardProps {
 }
 
 const ContentCard = ({ item, onPress }: ContentCardProps): React.JSX.Element => {
-  const icon = CONTENT_TYPE_ICONS[item.content_type] ?? DEFAULT_ICON;
-  const iconBg = CONTENT_TYPE_COLORS[item.content_type] ?? DEFAULT_COLOR;
-
-  const getSubtitle = (): string => {
-    if (item.is_locked) {
-      return `Unlocks on day ${item.release_day}`;
-    }
-    if (item.is_read) {
-      return 'Completed';
-    }
-    return item.content_type.charAt(0).toUpperCase() + item.content_type.slice(1);
-  };
-
-  const getStatusIndicator = (): string => {
-    if (item.is_locked) return '🔒';
-    if (item.is_read) return '✓';
-    return '›';
-  };
+  const { icon, color: iconBg } = CONTENT_TYPE_STYLES[item.content_type] ?? DEFAULT_STYLE;
 
   return (
     <TouchableOpacity
@@ -65,17 +67,20 @@ const ContentCard = ({ item, onPress }: ContentCardProps): React.JSX.Element => 
         item.is_read && styles.contentCardRead,
       ]}
     >
-      <View style={[styles.contentCardIcon, { backgroundColor: iconBg }]}>
+      <View
+        testID={`content-card-icon-${item.id}`}
+        style={[styles.contentCardIcon, { backgroundColor: iconBg }]}
+      >
         <Text style={styles.contentCardIconText}>{icon}</Text>
       </View>
       <View style={styles.contentCardBody}>
         <Text style={styles.contentCardTitle} numberOfLines={1}>
           {item.title}
         </Text>
-        <Text style={styles.contentCardSubtitle}>{getSubtitle()}</Text>
+        <Text style={styles.contentCardSubtitle}>{getSubtitle(item)}</Text>
       </View>
       <View style={styles.contentCardStatus}>
-        <Text style={styles.contentCardStatusText}>{getStatusIndicator()}</Text>
+        <Text style={styles.contentCardStatusText}>{getStatusIndicator(item)}</Text>
       </View>
     </TouchableOpacity>
   );

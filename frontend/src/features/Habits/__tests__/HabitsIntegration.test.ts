@@ -16,7 +16,7 @@ import { useModalCoordinator } from '../hooks/useModalCoordinator';
 // Mock dependencies
 jest.mock('../../../api', () => ({
   habits: {
-    list: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() =>
       Promise.resolve({
         id: 100,
@@ -42,6 +42,11 @@ jest.mock('../../../api', () => ({
     create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
   },
   goals: {
+    update: jest.fn(() => Promise.resolve({})),
+  },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: jest.fn(() => Promise.reject(new Error('no server hydration configured'))),
     update: jest.fn(() => Promise.resolve({})),
   },
 }));

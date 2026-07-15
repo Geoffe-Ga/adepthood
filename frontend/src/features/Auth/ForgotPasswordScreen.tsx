@@ -14,7 +14,7 @@ const FORGOT_FALLBACK =
   "We couldn't reach the server. Check your connection, then try again in a moment.";
 
 interface Props {
-  navigation: { navigate: (_screen: string) => void; goBack: () => void };
+  navigation: { navigate: (_screen: string) => void };
 }
 
 interface ForgotFieldsProps {

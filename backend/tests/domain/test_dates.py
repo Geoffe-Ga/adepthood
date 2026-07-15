@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from domain.dates import (
+    compute_next_reset,
     day_bounds_in_tz,
     ensure_aware,
     now_in_tz,
@@ -253,3 +254,20 @@ class TestYearAndLeapBoundaries:
         start, end = day_bounds_in_tz("UTC", date(2024, 2, 29))
         assert start.day == 29
         assert end.day == 1
+
+
+class TestComputeNextReset:
+    """``compute_next_reset`` returns first-of-next-month, UTC-aware."""
+
+    def test_mid_month(self) -> None:
+        result = compute_next_reset(datetime(2026, 4, 15, 12, 34, 56, tzinfo=UTC))
+        assert result == datetime(2026, 5, 1, tzinfo=UTC)
+
+    def test_december_rollover(self) -> None:
+        result = compute_next_reset(datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
+        assert result == datetime(2027, 1, 1, tzinfo=UTC)
+
+    def test_normalises_naive_input(self) -> None:
+        """A naive datetime is interpreted as UTC rather than crashing later."""
+        result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0))  # noqa: DTZ001
+        assert result == datetime(2026, 7, 1, tzinfo=UTC)

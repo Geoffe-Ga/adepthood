@@ -54,12 +54,17 @@ import {
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
-import { isLeftReturning, type StageData } from './stageData';
+import { type StageData } from './stageData';
 import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
 import { Button } from '@/components/Button';
-import { ScreenDrawer, useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import {
+  DrawerNavSection,
+  ScreenDrawer,
+  useScreenDrawer,
+  type ScreenDrawerState,
+} from '@/components/drawer';
 import { Celebration } from '@/components/feedback/Celebration';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { colors } from '@/design/tokens';
@@ -277,7 +282,6 @@ const StageCenterCell = ({
     style={[
       styles.centerStageCell,
       showTopDivider ? styles.horizontalDivider : null,
-      isLeftReturning(display.stageNumber) ? styles.cellFeminine : styles.cellMasculine,
       locked ? styles.locked : null,
     ]}
     onPress={() => onPress(stage)}
@@ -624,7 +628,7 @@ const HistoryBody = ({
 
   if (loading) {
     return (
-      <View style={styles.historyLoading} testID="history-loading">
+      <View style={styles.historyStatus} testID="history-loading">
         <ActivityIndicator size="small" color={colors.text.light} />
       </View>
     );
@@ -633,7 +637,7 @@ const HistoryBody = ({
   // retry instead of the "begin this stage" empty copy.
   if (error) {
     return (
-      <View style={styles.historyError} testID="history-error">
+      <View style={styles.historyStatus} testID="history-error">
         <Text style={styles.historyErrorText}>Couldn&apos;t load your journey for this stage.</Text>
         <TouchableOpacity
           onPress={onRetry}
@@ -946,10 +950,7 @@ const useStageNavigation = (onBeforeNavigate: () => void) => {
       onBeforeNavigate();
       InteractionManager.runAfterInteractions(() => {
         if (screen === 'Journal') {
-          navigation.navigate('Journal', {
-            tag: 'stage_reflection',
-            stageNumber: stage.stageNumber,
-          });
+          navigation.navigate('Journal');
         } else {
           navigation.navigate(screen, { stageNumber: stage.stageNumber });
         }
@@ -1089,6 +1090,7 @@ const MapScreenDrawer = ({
   onSelectStage,
 }: MapScreenDrawerProps): React.JSX.Element => (
   <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Map" title="Map">
+    <DrawerNavSection currentScreen="Map" onNavigate={drawer.close} />
     <MapDrawer
       lookup={lookup}
       currentStage={currentStage}

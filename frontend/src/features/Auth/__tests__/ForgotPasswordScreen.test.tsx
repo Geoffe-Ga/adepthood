@@ -16,7 +16,7 @@ const { _mockRequestPasswordReset: mockRequest } = require('@/api') as any;
 
 import ForgotPasswordScreen from '../ForgotPasswordScreen';
 
-const navigation = { navigate: jest.fn(), goBack: jest.fn() };
+const navigation = { navigate: jest.fn() };
 
 beforeEach(() => {
   jest.clearAllMocks();

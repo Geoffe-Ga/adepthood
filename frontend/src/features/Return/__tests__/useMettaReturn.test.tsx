@@ -100,8 +100,7 @@ describe('useMettaReturn', () => {
   it('loads state on mount and exposes eligible/weeks/arc', async () => {
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
-    expect(result.current.eligible).toBe(true);
+    await waitFor(() => expect(result.current.eligible).toBe(true));
     expect(result.current.weeks).toHaveLength(5);
     expect(result.current.arc).toBeNull();
   });
@@ -110,7 +109,7 @@ describe('useMettaReturn', () => {
     mockUseContractionSignalActive.mockReturnValue(false);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.eligible).toBe(true));
     expect(result.current.offerVisible).toBe(false);
   });
 
@@ -125,7 +124,7 @@ describe('useMettaReturn', () => {
     mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: false, arc: null }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.weeks).toHaveLength(5));
     expect(result.current.offerVisible).toBe(false);
   });
 
@@ -133,9 +132,8 @@ describe('useMettaReturn', () => {
     mockUseContractionSignalActive.mockReturnValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: arc() }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
     expect(result.current.offerVisible).toBe(false);
-    expect(result.current.arc).not.toBeNull();
   });
 
   it('dismissOffer hides the offer, calls the API, and persists the cache flag', async () => {
@@ -158,7 +156,7 @@ describe('useMettaReturn', () => {
     mockLoadDismissed.mockResolvedValue(false);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: true }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.eligible).toBe(true));
     expect(result.current.offerVisible).toBe(false);
   });
 
@@ -167,7 +165,7 @@ describe('useMettaReturn', () => {
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: true }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.eligible).toBe(true));
     expect(result.current.offerVisible).toBe(false);
   });
 
@@ -176,8 +174,7 @@ describe('useMettaReturn', () => {
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
-    expect(result.current.offerVisible).toBe(true);
+    await waitFor(() => expect(result.current.offerVisible).toBe(true));
   });
 
   it('falls back to the cached dismissal flag when state() rejects', async () => {
@@ -208,7 +205,7 @@ describe('useMettaReturn', () => {
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
     mockStart.mockResolvedValue(arc({ week: 1, focus: 'self' }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.eligible).toBe(true));
 
     await act(async () => {
       await result.current.start();

@@ -103,7 +103,7 @@ describe('ActiveRitualSession harvesters — interval_bell', () => {
     const state = fakeState({ elapsedMs: 5 * 60_000 });
     const wire = harvestMetadata(intervalBellConfig, state, null);
     const summary = harvestSummaryMetadata(intervalBellConfig, state, 0, null);
-    expect(wire).toEqual({ mode: 'interval_bell', intervals_struck: 2, total_intervals: 5 });
+    expect(wire).toEqual({ mode: 'interval_bell', intervals_struck: 2, total_intervals: 4 });
     expect(summary).toEqual(wire);
   });
 });

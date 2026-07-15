@@ -3,6 +3,13 @@ import { Audio } from 'expo-av';
 
 import { createExpoAudioAdapter, createNoopAudioAdapter } from '../audio';
 
+// The exact bundled assets each interval_bell tone must resolve to. Requiring
+// the same module paths the adapter uses yields the identical cached asset
+// reference, so a swapped tone-to-asset mapping fails the identity checks below.
+const bowlAsset = require('../../../../../../assets/sounds/bell-bowl.mp3');
+const chimeAsset = require('../../../../../../assets/sounds/bell-chime.mp3');
+const gongAsset = require('../../../../../../assets/sounds/bell-gong.mp3');
+
 const mockedCreateAsync = Audio.Sound.createAsync as jest.MockedFunction<
   typeof Audio.Sound.createAsync
 >;
@@ -96,38 +103,30 @@ describe('createExpoAudioAdapter', () => {
       return created;
     }
 
-    it('replays a distinct sound instance per interval_bell tone, loaded from distinct assets', async () => {
+    it('replays the chime asset for the chime tone and the gong asset for the gong tone', async () => {
       const created = mockDistinctSoundsPerLoad();
       const adapter = createExpoAudioAdapter();
       await new Promise((resolve) => setImmediate(resolve));
 
       await adapter.play('interval_bell', 'chime');
       const chimeEntry = created.find((entry) => entry.replayAsync.mock.calls.length > 0);
-      expect(chimeEntry).toBeDefined();
+      expect(chimeEntry?.asset).toBe(chimeAsset);
 
       await adapter.play('interval_bell', 'gong');
       const gongEntry = created.find(
         (entry) => entry !== chimeEntry && entry.replayAsync.mock.calls.length > 0,
       );
-      expect(gongEntry).toBeDefined();
-      expect(gongEntry?.asset).not.toBe(chimeEntry?.asset);
+      expect(gongEntry?.asset).toBe(gongAsset);
     });
 
-    it('defaults a toneless interval_bell play to the bowl asset, distinct from other tones', async () => {
+    it('defaults a toneless interval_bell play to the bowl asset', async () => {
       const created = mockDistinctSoundsPerLoad();
       const adapter = createExpoAudioAdapter();
       await new Promise((resolve) => setImmediate(resolve));
 
       await adapter.play('interval_bell');
       const bowlEntry = created.find((entry) => entry.replayAsync.mock.calls.length > 0);
-      expect(bowlEntry).toBeDefined();
-
-      await adapter.play('interval_bell', 'chime');
-      const chimeEntry = created.find(
-        (entry) => entry !== bowlEntry && entry.replayAsync.mock.calls.length > 0,
-      );
-      expect(chimeEntry).toBeDefined();
-      expect(chimeEntry).not.toBe(bowlEntry);
+      expect(bowlEntry?.asset).toBe(bowlAsset);
     });
   });
 

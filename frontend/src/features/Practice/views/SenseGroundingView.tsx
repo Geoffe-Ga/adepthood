@@ -12,9 +12,14 @@ import type {
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { PrimaryButton, SaveButton, SessionContainer } from './shared';
+import {
+  GroundingCompleteCard,
+  SessionContainer,
+  SessionCtaButton,
+  groundingHeaderStyles,
+} from './shared';
 
-import { BORDER_RADIUS, SPACING, shadows } from '@/design/tokens';
+import { SPACING } from '@/design/tokens';
 
 /**
  * Canonical 5-4-3-2-1 grounding counts.
@@ -94,7 +99,17 @@ const SenseBody = ({
   onSave,
   surface,
 }: SenseBodyProps): React.JSX.Element => {
-  if (isComplete) return <CompleteCard onSave={onSave} surface={surface} />;
+  if (isComplete) {
+    return (
+      <GroundingCompleteCard
+        body="You moved through all five senses. Save the session below."
+        testID="sense-grounding-complete"
+        saveTestID="sense-grounding-save"
+        onSave={onSave}
+        surface={surface}
+      />
+    );
+  }
   if (inProgress && prompt) {
     return <AdvanceButton sense={prompt.sense} canAdvance={canAdvance} onTap={onTap} />;
   }
@@ -112,12 +127,15 @@ interface SenseHeaderProps {
 
 const SenseHeader = ({ prompt, surface }: SenseHeaderProps): React.JSX.Element => (
   <View
-    style={styles.header}
+    style={groundingHeaderStyles.header}
     testID="sense-grounding-header"
     accessibilityRole="header"
     accessibilityLabel="5-4-3-2-1 grounding"
   >
-    <Text style={[styles.badge, { color: surface.text }]} testID="sense-grounding-badge">
+    <Text
+      style={[groundingHeaderStyles.badge, { color: surface.text }]}
+      testID="sense-grounding-badge"
+    >
       5-4-3-2-1
     </Text>
     {prompt && (
@@ -129,31 +147,6 @@ const SenseHeader = ({ prompt, surface }: SenseHeaderProps): React.JSX.Element =
   </View>
 );
 
-interface CompleteCardProps {
-  onSave?: () => void;
-  surface: SessionSurface;
-}
-
-const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element => (
-  <View
-    style={[styles.completeCard, { backgroundColor: surface.raised }]}
-    testID="sense-grounding-complete"
-  >
-    <Text style={[styles.completeTitle, { color: surface.accent }]}>Grounding complete</Text>
-    <Text style={[styles.completeBody, { color: surface.textSoft }]}>
-      You moved through all five senses. Save the session below.
-    </Text>
-    <SaveButton
-      label="Save session"
-      accessibilityLabel="Save session and reflect"
-      disabled={!onSave}
-      onPress={onSave}
-      testID="sense-grounding-save"
-      accessibilityState={{ disabled: !onSave }}
-    />
-  </View>
-);
-
 interface AdvanceButtonProps {
   sense: SenseKind;
   canAdvance: boolean;
@@ -161,7 +154,7 @@ interface AdvanceButtonProps {
 }
 
 const AdvanceButton = ({ sense, canAdvance, onTap }: AdvanceButtonProps): React.JSX.Element => (
-  <PrimaryButton
+  <SessionCtaButton
     label={`Mark ${sense} done`}
     accessibilityLabel={`Mark ${sense} done`}
     disabled={!canAdvance}
@@ -173,13 +166,6 @@ const AdvanceButton = ({ sense, canAdvance, onTap }: AdvanceButtonProps): React.
 );
 
 const styles = StyleSheet.create({
-  header: { alignItems: 'center', marginBottom: SPACING.xl },
-  badge: {
-    fontSize: 36,
-    fontWeight: '700',
-    letterSpacing: 4,
-    marginBottom: SPACING.sm,
-  },
   count: {
     fontSize: 18,
   },
@@ -193,24 +179,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
     lineHeight: 24,
-  },
-  completeCard: {
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl,
-    alignItems: 'center',
-    marginBottom: SPACING.xl,
-    maxWidth: 320,
-    ...shadows.small,
-  },
-  completeTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    marginBottom: SPACING.sm,
-  },
-  completeBody: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: SPACING.lg,
   },
 });
 

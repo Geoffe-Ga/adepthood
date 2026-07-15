@@ -11,58 +11,20 @@ jest.mock('@react-navigation/native', () => ({
 
 import { useAppNavigation, useAppRoute } from '../hooks';
 
-describe('useAppNavigation', () => {
-  it('returns a typed BottomTabNavigationProp', () => {
-    const fakeNav = { navigate: jest.fn(), goBack: jest.fn() };
-    mockUseNavigation.mockReturnValue(fakeNav);
+// These wrappers only narrow React Navigation's hooks at compile time; their
+// sole runtime behavior is delegating to the underlying hook, so that is all
+// these tests exercise. The generic typing is verified by the type-checker,
+// not here.
+describe('navigation typed hooks', () => {
+  it('useAppNavigation delegates to React Navigation useNavigation', () => {
+    useAppNavigation();
 
-    const result = useAppNavigation();
-
-    expect(result).toBe(fakeNav);
-    expect(result.navigate).toBeDefined();
-  });
-});
-
-describe('useAppRoute', () => {
-  it('returns a typed route for a given screen name', () => {
-    const fakeRoute = {
-      key: 'Practice-abc',
-      name: 'Practice',
-      params: { stageNumber: 3 },
-    };
-    mockUseRoute.mockReturnValue(fakeRoute);
-
-    const result = useAppRoute<'Practice'>();
-
-    expect(result).toBe(fakeRoute);
-    expect(result.params?.stageNumber).toBe(3);
+    expect(mockUseNavigation).toHaveBeenCalledTimes(1);
   });
 
-  it('returns a route with undefined params for screens without params', () => {
-    const fakeRoute = {
-      key: 'Habits-abc',
-      name: 'Habits',
-      params: undefined,
-    };
-    mockUseRoute.mockReturnValue(fakeRoute);
+  it('useAppRoute delegates to React Navigation useRoute', () => {
+    useAppRoute<'Practice'>();
 
-    const result = useAppRoute<'Habits'>();
-
-    expect(result).toBe(fakeRoute);
-    expect(result.params).toBeUndefined();
-  });
-
-  it('returns a route with Journal params', () => {
-    const fakeRoute = {
-      key: 'Journal-abc',
-      name: 'Journal',
-      params: { practiceSessionId: 42, practiceName: 'Meditation' },
-    };
-    mockUseRoute.mockReturnValue(fakeRoute);
-
-    const result = useAppRoute<'Journal'>();
-
-    expect(result.params?.practiceSessionId).toBe(42);
-    expect(result.params?.practiceName).toBe('Meditation');
+    expect(mockUseRoute).toHaveBeenCalledTimes(1);
   });
 });

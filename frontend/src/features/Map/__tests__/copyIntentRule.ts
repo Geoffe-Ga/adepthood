@@ -1,6 +1,6 @@
 /** Intent-rule predicate: ranking/shaming the person is banned, ascending model vocabulary is not. */
 
-const RANK_OR_SHAME_PATTERNS: readonly RegExp[] = [
+export const RANK_OR_SHAME_PATTERNS: readonly RegExp[] = [
   // Ranking the user against a fixed scale or each other.
   /you.?re only at level \d/i,
   /you are at level \d/i,
@@ -14,13 +14,11 @@ const RANK_OR_SHAME_PATTERNS: readonly RegExp[] = [
   /reach the next to unlock/i,
   // Behind/inferior/comparison framing.
   /\bbehind\b/i,
-  /fall(ing)? behind/i,
   /catch up/i,
   /ahead of you/i,
   /you.?re inferior/i,
   /further along than you/i,
   // Streak-shame / FOMO pressure.
-  /don.?t lose your streak/i,
   /keep your streak/i,
   /streak alive/i,
   /lost your streak/i,
@@ -36,4 +34,9 @@ const RANK_OR_SHAME_PATTERNS: readonly RegExp[] = [
 /** True when copy ranks or shames the person, per the balance-not-altitude intent rule. */
 export function ranksOrShames(copy: string): boolean {
   return RANK_OR_SHAME_PATTERNS.some((pattern) => pattern.test(copy));
+}
+
+/** Count of intent-rule patterns the copy trips, used to prove each pattern is uniquely exercised. */
+export function countRankOrShameMatches(copy: string): number {
+  return RANK_OR_SHAME_PATTERNS.filter((pattern) => pattern.test(copy)).length;
 }

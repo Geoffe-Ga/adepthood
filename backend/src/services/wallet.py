@@ -6,9 +6,13 @@ The BotMason wallet has two buckets:
   rolls over at the start of every calendar month.
 - ``offering_balance`` — paid / gifted credits with no expiry.
 
-Every mutation in this module is expressed as a single atomic SQL statement
-(``UPDATE … WHERE … RETURNING``) so concurrent requests can never overspend
-either bucket.  The router layer is responsible for translating ``None``
+The spend and grant mutations are each expressed as a single atomic SQL
+statement (``UPDATE … WHERE … RETURNING``) so concurrent requests can never
+overspend either bucket.  The monthly-usage reset is the exception: it reads
+the row first (to snapshot the pre-reset count for the audit log) and then
+issues a guarded ``UPDATE … WHERE monthly_reset_date <= now`` without a
+``RETURNING`` clause — the ``WHERE`` predicate still makes the reset
+exactly-once.  The router layer is responsible for translating ``None``
 returns into HTTP errors; the service only reports capacity outcomes.
 
 Every mutation also stages a :class:`models.WalletAudit` row recording
@@ -24,8 +28,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any, cast
 
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -175,7 +180,7 @@ async def reset_monthly_usage_if_due(
         .values(monthly_messages_used=0, monthly_reset_date=next_reset)
         .execution_options(synchronize_session=False)
     )
-    if not result.rowcount:  # type: ignore[attr-defined]
+    if not cast("CursorResult[Any]", result).rowcount:
         return
     logger.info(
         "Monthly usage reset for user_id=%s, next_reset=%s",
@@ -325,10 +330,12 @@ async def add_balance(
     SQL statement — no lost-update window between read and write.
 
     BUG-BM-011: a ``WalletAudit`` row is staged for every successful
-    grant.  ``actor_user_id`` defaults to ``user_id`` for the legacy
-    "user tops up their own wallet" path, but the admin endpoint
-    overrides it with the granting admin's id so the audit row records
-    the actor distinct from the recipient.
+    grant.  ``actor_user_id`` defaults to ``user_id``, so the only
+    production caller -- an admin topping up their own wallet -- records
+    a ``self_grant`` (actor == recipient).  A distinct actor would be
+    logged as ``admin_grant``, a forward-looking seam reserved for a
+    future cross-user grant path (e.g. a Stripe webhook or referral
+    credit); no such caller exists yet.
     """
     result = await session.execute(
         update(User)

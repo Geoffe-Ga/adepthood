@@ -176,10 +176,7 @@ describe('MapScreen — journey narrative', () => {
 
     openStage(tree, 1);
     act(() => tree.root.findByProps({ testID: 'journal-link' }).props.onPress());
-    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
-      tag: 'stage_reflection',
-      stageNumber: 1,
-    });
+    expect(mockNavigate).toHaveBeenCalledWith('Journal');
   });
 
   it('plays the Celebration when a stage newly completes', () => {

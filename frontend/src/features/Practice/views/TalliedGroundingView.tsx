@@ -8,9 +8,14 @@ import type { RitualControls, RitualState, TalliedGroundingConfig } from '../eng
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { PrimaryButton, SaveButton, SessionContainer } from './shared';
+import {
+  GroundingCompleteCard,
+  SessionContainer,
+  SessionCtaButton,
+  groundingHeaderStyles,
+} from './shared';
 
-import { BORDER_RADIUS, SPACING, shadows } from '@/design/tokens';
+import { SPACING } from '@/design/tokens';
 
 /**
  * `TalliedGroundingView` drives the Find Shapes / Find Colors ritual UX.
@@ -40,7 +45,13 @@ const TalliedGroundingView = ({ config, state, controls, onSave }: Props): React
     <SessionContainer testID="tallied-grounding-view">
       <TalliedHeader config={config} position={position} surface={surface} />
       {position === null ? (
-        <CompleteCard onSave={onSave} surface={surface} />
+        <GroundingCompleteCard
+          body="You tallied every round. Save the session below."
+          testID="tallied-grounding-complete"
+          saveTestID="tallied-grounding-save"
+          onSave={onSave}
+          surface={surface}
+        />
       ) : (
         <ActivePrompt
           position={position}
@@ -62,12 +73,15 @@ interface HeaderProps {
 
 const TalliedHeader = ({ config, position, surface }: HeaderProps): React.JSX.Element => (
   <View
-    style={styles.header}
+    style={groundingHeaderStyles.header}
     testID="tallied-grounding-header"
     accessibilityRole="header"
     accessibilityLabel="Tallied grounding"
   >
-    <Text style={[styles.badge, { color: surface.text }]} testID="tallied-grounding-badge">
+    <Text
+      style={[groundingHeaderStyles.badge, { color: surface.text }]}
+      testID="tallied-grounding-badge"
+    >
       {`${config.categories.length} × ${config.rounds}`}
     </Text>
     {position && (
@@ -75,31 +89,6 @@ const TalliedHeader = ({ config, position, surface }: HeaderProps): React.JSX.El
         {`Round ${position.roundIndex + 1} of ${config.rounds}`}
       </Text>
     )}
-  </View>
-);
-
-interface CompleteCardProps {
-  onSave?: () => void;
-  surface: SessionSurface;
-}
-
-const CompleteCard = ({ onSave, surface }: CompleteCardProps): React.JSX.Element => (
-  <View
-    style={[styles.completeCard, { backgroundColor: surface.raised }]}
-    testID="tallied-grounding-complete"
-  >
-    <Text style={[styles.completeTitle, { color: surface.accent }]}>Grounding complete</Text>
-    <Text style={[styles.completeBody, { color: surface.textSoft }]}>
-      You tallied every round. Save the session below.
-    </Text>
-    <SaveButton
-      label="Save session"
-      accessibilityLabel="Save session and reflect"
-      disabled={!onSave}
-      onPress={onSave}
-      testID="tallied-grounding-save"
-      accessibilityState={{ disabled: !onSave }}
-    />
   </View>
 );
 
@@ -123,7 +112,7 @@ const ActivePrompt = ({
       <Text style={[styles.prompt, { color: surface.text }]} testID="tallied-grounding-prompt">
         {promptText}
       </Text>
-      <PrimaryButton
+      <SessionCtaButton
         label="I found one"
         accessibilityLabel={`Tally ${category.label}`}
         disabled={!canAdvance}
@@ -137,13 +126,6 @@ const ActivePrompt = ({
 };
 
 const styles = StyleSheet.create({
-  header: { alignItems: 'center', marginBottom: SPACING.xl },
-  badge: {
-    fontSize: 36,
-    fontWeight: '700',
-    letterSpacing: 4,
-    marginBottom: SPACING.sm,
-  },
   round: {
     fontSize: 18,
     fontWeight: '700',
@@ -155,24 +137,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.xxl,
     paddingHorizontal: SPACING.lg,
-  },
-  completeCard: {
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xl,
-    alignItems: 'center',
-    marginBottom: SPACING.xl,
-    maxWidth: 320,
-    ...shadows.small,
-  },
-  completeTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    marginBottom: SPACING.sm,
-  },
-  completeBody: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: SPACING.lg,
   },
 });
 

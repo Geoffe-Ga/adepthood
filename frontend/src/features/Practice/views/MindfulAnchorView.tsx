@@ -32,8 +32,8 @@ import {
   PRIMARY_FILL,
   SESSION_BUTTON_BASE,
   SESSION_BUTTON_TEXT,
-  SaveButton,
   SessionContainer,
+  SessionCtaButton,
 } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
@@ -150,7 +150,8 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
         <RitualControlsBar status={status} controls={controls} startLabel="Begin" />
       )}
       {status === 'running' && (
-        <SaveButton
+        <SessionCtaButton
+          variant="success"
           label="Save session"
           accessibilityLabel="Save session"
           onPress={anchor.handleSave}

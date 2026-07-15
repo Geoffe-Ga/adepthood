@@ -1,9 +1,12 @@
 """Integration tests for :mod:`services.contraction` -- read-only aggregate gathering.
 
-These tests FAIL until ``backend/src/services/contraction.py`` exists with the
-contract pinned below. That is the correct RED state for Gate 1.
+Exercises ``gather_contraction_aggregates`` against a live async session: it reads
+a user's habits, their additive goals, and recent goal completions, buckets the
+completions into user-local days, and derives each habit's consecutive unmet /
+unchecked day counts into a :class:`ContractionAggregates` snapshot -- issuing
+``SELECT`` statements only, never staging a write.
 
-Pinned service contract:
+Service contract:
   async def gather_contraction_aggregates(session, user_id, user_timezone="UTC")
       -> ContractionAggregates
 """
@@ -150,8 +153,11 @@ async def test_healthy_habit_is_not_flagged(db_session: AsyncSession) -> None:
 
     matching = [h for h in aggregates.habits if h.habit_id == habit_id]
     assert matching
-    assert matching[0].consecutive_unmet_days < FOUNDATION_UNMET_CONSECUTIVE_DAYS
-    assert matching[0].consecutive_unchecked_days < FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS
+    # Five days of met completions: today is present-and-met, so both walks in
+    # ``_consecutive_days`` break on day 0. Pin the exact zero counts rather
+    # than a loose ``< THRESHOLD`` so a miscount that stays under the gate fails.
+    assert matching[0].consecutive_unmet_days == 0
+    assert matching[0].consecutive_unchecked_days == 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +180,10 @@ async def test_brand_new_habit_is_not_reported_unchecked(db_session: AsyncSessio
 
     matching = [h for h in aggregates.habits if h.habit_id == habit_id]
     assert matching
-    assert matching[0].consecutive_unchecked_days < FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS
+    # start_date is today - 2 days, so ``earliest`` clamps the unchecked walk to
+    # today, -1, -2 (three days) before it crosses the habit's start. Pin the
+    # exact count so a miscount that stays under the gate is caught.
+    assert matching[0].consecutive_unchecked_days == 3
 
 
 # ---------------------------------------------------------------------------

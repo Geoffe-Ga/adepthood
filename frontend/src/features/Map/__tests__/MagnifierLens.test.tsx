@@ -83,6 +83,14 @@ const soleCenterGlide = (timing: jest.SpyInstance): CenterGlideConfig => {
   return glide;
 };
 
+/**
+ * Count the frost-wash raises a spy saw. The frost-in animation is the only
+ * `Animated.timing` with a scalar `toValue: 1`; center glides target an XY
+ * object and the frost clear targets `0`.
+ */
+const frostRaiseCount = (timing: jest.SpyInstance): number =>
+  timing.mock.calls.filter(([, config]) => (config as { toValue?: unknown }).toValue === 1).length;
+
 /** Drive a full grant → move → release drag on the lens. */
 const drag = (
   tree: ReturnType<typeof create>,
@@ -250,8 +258,13 @@ describe('MagnifierLens', () => {
   it('glides with animation when reduced motion is off', () => {
     reducedMotionState.value = false;
     jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
     try {
       const { tree } = renderLens({ focusedStage: 1 });
+      act(() => {
+        jest.advanceTimersByTime(2000); // let the mount glide finish
+      });
+      timing.mockClear();
       act(() => {
         tree.update(
           <MagnifierLens
@@ -265,13 +278,11 @@ describe('MagnifierLens', () => {
           />,
         );
       });
-      // Caption follows immediately; the glide itself settles over time.
+      // Caption follows immediately; the glide raises the frost wash as it starts.
       expect(headlineText(tree)).toBe('Nondual');
-      act(() => {
-        jest.advanceTimersByTime(2000);
-      });
-      expect(tree.root.findByProps({ testID: 'magnifier-frost' })).toBeTruthy();
+      expect(frostRaiseCount(timing)).toBe(1);
     } finally {
+      timing.mockRestore();
       jest.useRealTimers();
     }
   });
@@ -327,22 +338,29 @@ describe('MagnifierLens', () => {
   it('raises the frost while a drag is live when reduced motion is off', () => {
     reducedMotionState.value = false;
     jest.useFakeTimers();
+    const timing = jest.spyOn(Animated, 'timing');
     try {
       const { tree, onSettleStage } = renderLens({ focusedStage: 1 });
       act(() => {
         jest.advanceTimersByTime(2000); // let the mount glide finish
       });
+      timing.mockClear();
       const lens = lensNode(tree);
       const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
       const stage3Y = stageWavePoint(3).y * GRID_HEIGHT;
       act(() => {
         lens.props.onResponderGrant(touch(150, start.y));
         lens.props.onResponderMove(touch(150, stage3Y));
+      });
+      // A live drag raises the frost wash before any release-settle glide begins.
+      expect(frostRaiseCount(timing)).toBe(1);
+      act(() => {
         lens.props.onResponderRelease(touch(150, stage3Y));
         jest.advanceTimersByTime(2000);
       });
       expect(onSettleStage).toHaveBeenCalledWith(3);
     } finally {
+      timing.mockRestore();
       jest.useRealTimers();
     }
   });

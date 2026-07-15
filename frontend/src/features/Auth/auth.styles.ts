@@ -12,7 +12,7 @@ import {
 
 // Cap the form width so fields don't stretch edge-to-edge on laptop/desktop
 // browsers; on phones the screen is narrower so it has no effect.
-export const FORM_MAX_WIDTH = 480;
+const FORM_MAX_WIDTH = 480;
 
 // The serif type ramp is responsive (scales with viewport width); the auth
 // screens are full-bleed editorial covers, so resolve at the widest step so the

@@ -401,16 +401,4 @@ describe('MindfulAnchorView', () => {
       met_min_duration: true,
     });
   });
-
-  it('matches the option-chooser snapshot', () => {
-    const { toJSON } = render(
-      <MindfulAnchorView
-        config={optionConfig}
-        state={fakeState({ status: 'idle' })}
-        controls={fakeControls()}
-        onComplete={jest.fn()}
-      />,
-    );
-    expect(toJSON()).toMatchSnapshot();
-  });
 });

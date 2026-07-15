@@ -33,6 +33,13 @@ import {
  */
 export type PickableMode = ModeConfig['mode'];
 
+/** Mode a practice falls back to when its persisted `mode` is absent. */
+export const DEFAULT_PICKABLE_MODE: PickableMode = 'meditation_timer';
+
+/** Resolve a possibly-missing practice mode to a concrete `PickableMode`. */
+export const resolvePickableMode = (mode: string | null | undefined): PickableMode =>
+  (mode ?? DEFAULT_PICKABLE_MODE) as PickableMode;
+
 const NEW_MODES = new Set<PickableMode>([
   'tallied_grounding',
   'mindful_anchor',

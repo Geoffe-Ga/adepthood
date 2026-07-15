@@ -1,7 +1,7 @@
 """coursestage/stagecontent dedupe + unique indexes (seeder-race TOCTOU)
 
-Revision ID: b4c5d6e7f8a1
-Revises: a9b0c1d2e3f4
+Revision ID: e8f9a0b1c2d3
+Revises: b4c5d6e7f8a1
 Create Date: 2026-07-12 00:00:00.000000
 
 Closes the duplicate-course-row TOCTOU. The production image boots uvicorn
@@ -38,8 +38,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "b4c5d6e7f8a1"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "a9b0c1d2e3f4"  # pragma: allowlist secret
+revision: str = "e8f9a0b1c2d3"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b4c5d6e7f8a1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

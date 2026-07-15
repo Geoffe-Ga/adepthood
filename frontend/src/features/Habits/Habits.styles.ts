@@ -34,11 +34,6 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Habit Tiles =====
-  icon: {
-    fontSize: 40,
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.xs,
-  },
   iconLarge: {
     fontSize: 24,
   },
@@ -181,10 +176,6 @@ export const styles = StyleSheet.create({
   // ===== Icon Selector =====
   currentIcon: {
     fontSize: 24,
-  },
-  iconButtonText: {
-    color: COLORS.secondary,
-    fontWeight: '500',
   },
 
   // ===== Energy Container =====

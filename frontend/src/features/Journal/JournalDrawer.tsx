@@ -22,7 +22,12 @@ import { groupByRecency, formatDate, type ShelfSection } from './recency';
 import { usePagedJournal } from './usePagedJournal';
 
 import type { JournalMessage } from '@/api';
-import { DrawerItem, ScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import {
+  DrawerItem,
+  DrawerNavSection,
+  ScreenDrawer,
+  type ScreenDrawerState,
+} from '@/components/drawer';
 import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/design/tokens';
 
 /** Row that starts a fresh, blank entry. */
@@ -287,6 +292,7 @@ export function JournalScreenDrawer({
       screenName="Journal"
       title="Journal"
     >
+      <DrawerNavSection currentScreen="Journal" onNavigate={drawer.close} />
       <JournalDrawer
         items={items}
         now={Date.now()}

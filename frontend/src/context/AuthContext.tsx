@@ -60,8 +60,6 @@ type ConfirmReset = (_token: string, _newPassword: string) => Promise<void>;
 interface AuthContextValue {
   token: string | null;
   authStatus: AuthStatus;
-  /** Mirrors ``authStatus === 'loading'``. Kept for backwards compatibility. */
-  isLoading: boolean;
   /**
    * IANA timezone the server has on record for the authenticated user.
    * Populated from the `/auth/signup` / `/auth/login` / `/auth/refresh`
@@ -386,7 +384,7 @@ async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators)
   mutators.setAuthStatus('authenticated');
 }
 
-/** Sentinel user_id in the backend's anti-enumeration duplicate-signup response (see schemas.ts:57, BUG-AUTH-002). */
+/** Sentinel user_id in the backend's anti-enumeration duplicate-signup response (see ``authResponseSchema`` in schemas.ts, BUG-AUTH-002). */
 const DUPLICATE_SIGNUP_SENTINEL_USER_ID = 0;
 
 /**
@@ -526,11 +524,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useLoadStoredToken(mutators);
 
   const actions = useAuthActions(mutators);
-  const isLoading = authStatus === 'loading';
 
   const value = useMemo(
-    () => ({ token, authStatus, isLoading, userTimezone, setUserTimezone, ...actions }),
-    [token, authStatus, isLoading, userTimezone, actions],
+    () => ({ token, authStatus, userTimezone, setUserTimezone, ...actions }),
+    [token, authStatus, userTimezone, actions],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

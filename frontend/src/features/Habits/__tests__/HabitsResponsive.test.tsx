@@ -23,10 +23,11 @@ const openHabitsDrawer = (): void => {
   });
 };
 
-// Mock the API so HabitsScreen loads instantly with an empty list (triggers fallback defaults)
+// Mock the API so HabitsScreen loads an empty list, which the loader seeds into
+// the demo fallback defaults that these responsive-grid assertions render against.
 jest.mock('../../../api', () => ({
   habits: {
-    list: (jest.fn() as any).mockResolvedValue([]),
+    listAll: (jest.fn() as any).mockResolvedValue([]),
     create: jest.fn() as any,
     update: jest.fn() as any,
     delete: jest.fn() as any,
@@ -42,6 +43,17 @@ jest.mock('../../../api', () => ({
     }),
   },
   goalCompletions: { create: jest.fn() as any },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: (jest.fn() as any).mockResolvedValue({
+      has_seen_welcome: false,
+      energy_scaffolding_archived: false,
+    }),
+    update: (jest.fn() as any).mockResolvedValue({
+      has_seen_welcome: false,
+      energy_scaffolding_archived: true,
+    }),
+  },
 }));
 
 jest.mock('../../../context/AuthContext', () => ({

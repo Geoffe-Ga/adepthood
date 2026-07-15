@@ -112,7 +112,7 @@ existence checks used to pass and every `CourseStage` row landed twice
 — with all the content mapped onto only one of the duplicate ids, so
 the course endpoints (which resolve stages with an unordered
 `.first()`) served the content-less duplicate: "No Content Yet" with
-all-200 responses. Migration `b4c5d6e7f8a1` deduplicates any such rows
+all-200 responses. Migration `e8f9a0b1c2d3` deduplicates any such rows
 (preserving read-marks) and adds unique indexes on
 `coursestage.stage_number` and `stagecontent (course_stage_id, url)`
 for `content://` rows; the seeders yield to the race winner when those

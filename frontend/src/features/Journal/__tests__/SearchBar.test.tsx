@@ -95,6 +95,14 @@ describe('SearchBar', () => {
     expect(getByText("5 results for 'test'")).toBeTruthy();
   });
 
+  it('uses the singular noun for exactly one result', () => {
+    const { getByTestId, getByText } = render(
+      <SearchBar onSearch={onSearch} resultCount={1} searchQuery="test" />,
+    );
+    fireEvent.press(getByTestId('search-toggle'));
+    expect(getByText("1 result for 'test'")).toBeTruthy();
+  });
+
   it('shows a "No results" line when a query comes back empty', () => {
     const { getByTestId, getByText } = render(
       <SearchBar onSearch={onSearch} resultCount={0} searchQuery="willow" />,

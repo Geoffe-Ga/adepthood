@@ -194,7 +194,7 @@ async def seed_content(session: AsyncSession) -> int:
         # Race-safe commit: a peer worker that seeded the same chapters
         # between our existence read and this commit trips the
         # ``ix_stagecontent_stage_content_ref_unique`` index (migration
-        # ``b4c5d6e7f8a1``); the loser rolls back and reports 0 inserts.
+        # ``e8f9a0b1c2d3``); the loser rolls back and reports 0 inserts.
         inserted = await commit_or_yield_to_race_winner(session, inserted)
     _warn_unmapped_manifest_stages(stage_map)
     return inserted

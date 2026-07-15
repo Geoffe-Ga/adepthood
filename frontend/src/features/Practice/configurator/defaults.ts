@@ -10,7 +10,11 @@
  * round-trip to a 422.
  */
 
-import { SECONDS_PER_MINUTE } from '../engine/types';
+import {
+  DEFAULT_CARD_MEDITATION_MINUTES,
+  DEFAULT_TAROT_MINUTES,
+  SECONDS_PER_MINUTE,
+} from '../engine/types';
 import type {
   CardMeditationConfig,
   CountUpConfig,
@@ -28,7 +32,7 @@ import type {
 
 const DEFAULT_DURATION_MINUTES = 10;
 const DEFAULT_METRONOME_BPM = 60;
-const DEFAULT_INTERVAL_BELL_INTERVAL = 5;
+export const DEFAULT_INTERVAL_BELL_INTERVAL = 5;
 const DEFAULT_RANDOM_BELL_MIN_SECONDS = 30;
 const DEFAULT_RANDOM_BELL_MAX_SECONDS = 180;
 const DEFAULT_REP_TARGET = 10;
@@ -128,8 +132,8 @@ const DURATION_HINTS: {
   interval_bell: (c) => c.duration_minutes,
   random_interval_bell: (c) => c.duration_minutes,
   metronome: (c) => c.timer.duration_minutes,
-  tarot: (c) => c.per_card_minutes ?? DEFAULT_DURATION_MINUTES / 2,
-  card_meditation: (c) => c.per_card_minutes ?? DEFAULT_DURATION_MINUTES / 2,
+  tarot: (c) => c.per_card_minutes ?? DEFAULT_TAROT_MINUTES,
+  card_meditation: (c) => c.per_card_minutes ?? DEFAULT_CARD_MEDITATION_MINUTES,
   count_up: () => DEFAULT_DURATION_MINUTES,
   rep_counter: () => DEFAULT_DURATION_MINUTES,
   sense_grounding: () => DEFAULT_DURATION_MINUTES,

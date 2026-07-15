@@ -21,6 +21,22 @@ const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
 const MAX_RIGHT_LABEL_LINE_LENGTH = 9;
 
+// The canonical archetype word for each stage, mirroring the backend's
+// Stage.title in archetypal_wavelength.json. The Map descriptor is a second
+// copy of this vocabulary, so it must not drift from the source of truth.
+const CANONICAL_DESCRIPTOR: Readonly<Record<number, string>> = {
+  1: 'Survival',
+  2: 'Magick',
+  3: 'Power',
+  4: 'Conformity',
+  5: 'Achievist',
+  6: 'Pluralist',
+  7: 'Integrative',
+  8: 'Nondual',
+  9: 'Effortless Being',
+  10: 'Pure Awareness',
+};
+
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
   const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
@@ -71,6 +87,12 @@ describe('mapLayout', () => {
       expect(display?.descriptor).toBeTruthy();
       expect(display?.practice).toBeTruthy();
       expect(display?.textColor).toMatch(HEX_COLOR);
+    });
+  });
+
+  it('matches each stage descriptor to the canonical backend archetype word', () => {
+    ALL_STAGES.forEach((stageNumber) => {
+      expect(requireDisplay(stageNumber).descriptor).toBe(CANONICAL_DESCRIPTOR[stageNumber]);
     });
   });
 

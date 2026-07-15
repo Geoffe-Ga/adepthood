@@ -142,9 +142,10 @@ function AuthNavigator() {
  * false, so the shell renders without a flash.
  */
 function WelcomeGate(): React.JSX.Element {
-  const { isFirstRun, markSeen } = useFirstRun();
+  const { token } = useAuth();
+  const { isFirstRun, markSeen } = useFirstRun(token);
   if (isFirstRun) {
-    return <WelcomeScreen onComplete={markSeen} onBegin={markSeen} />;
+    return <WelcomeScreen onComplete={markSeen} />;
   }
   return <RootStack key="auth" />;
 }

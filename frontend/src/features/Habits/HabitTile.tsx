@@ -29,14 +29,19 @@ import {
   isGoalAchieved,
   calculateTodaysProgress,
 } from './HabitUtils';
+import { useStarFill, type StarFillControls } from './hooks/useStarFill';
 import { longPressGestureStyle } from './longPressGestureStyle';
+import { STAR_LONG_PRESS_MS } from './starFill';
 import {
   TierMarkerOverlay,
   type MarkerInteraction,
   type TierMarkerSpec,
 } from './TierMarkerOverlay';
 
-/** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
+/** A tile that is not wired to log units keeps the star as a tooltip-only touch target. */
+const NOOP_LOG_UNIT: NonNullable<HabitTileProps['onLogUnit']> = () => {};
+
+/** Marker star size: tracks the bar's nominal thickness (spacing(2)) so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
 
 /** Round to at most two decimals and drop trailing zeros so the fraction reads cleanly. */
@@ -172,8 +177,6 @@ const HabitHeader = ({
   );
 };
 
-const TOTAL_HABITS = MAX_HABITS;
-
 /** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
 export const TILE_BORDER_WIDTH = 3;
 
@@ -188,7 +191,7 @@ const habitGridChrome = (scale: number, gridGutter: number): number =>
 export const useTileLayout = () => {
   const { contentWidth, height, columns, scale, gridGutter } = useResponsive();
   const insets = useSafeAreaInsets();
-  const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
+  const rows = columns === 2 ? MAX_HABITS / columns : MAX_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
   const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
   const availableHeight = height - insets.top - bottomBarReserve - chrome;
@@ -233,8 +236,8 @@ const TileTooltipText = ({
   </Text>
 );
 
-/** Every tile marker is a press-to-reveal-tooltip touch target (no drag on the tile). */
-const tileMarkerInteraction = (
+/** A quick tap on any marker reveals its tier-progress tooltip; no fill is armed. */
+const tooltipOnlyInteraction = (
   tier: TierType,
   setTooltip: (_v: TierType | null) => void,
 ): MarkerInteraction => ({
@@ -244,6 +247,46 @@ const tileMarkerInteraction = (
     onPressOut: () => setTooltip(null),
   },
 });
+
+/**
+ * A logging tile mirrors the goal modal's star behavior: a quick tap still shows
+ * the tooltip, but holding past the shared long-press delay arms the fill sweep
+ * toward that star and logs its delta on arrival; an early release reverts.
+ */
+const fillMarkerInteraction = (
+  tier: TierType,
+  setTooltip: (_v: TierType | null) => void,
+  starFill: StarFillControls,
+): MarkerInteraction => ({
+  Wrapper: TouchableOpacity,
+  interactionProps: {
+    onPressIn: () => setTooltip(tier),
+    onPressOut: () => {
+      setTooltip(null);
+      starFill.release();
+    },
+    onLongPress: () => starFill.begin(tier),
+    delayLongPress: STAR_LONG_PRESS_MS,
+    accessibilityRole: 'button',
+    accessibilityLabel: TIER_LABELS[tier],
+    accessibilityHint: `Hold to log your ${TIER_LABELS[tier]} for today.`,
+  },
+});
+
+/**
+ * Stars only arm the fill when the tile is actually wired to log units; without
+ * a real `onLogUnit` the marker stays tooltip-only so it never silently sweeps
+ * toward a no-op.
+ */
+const tileMarkerInteraction = (
+  tier: TierType,
+  setTooltip: (_v: TierType | null) => void,
+  starFill: StarFillControls,
+  hasLogUnit: boolean,
+): MarkerInteraction =>
+  hasLogUnit
+    ? fillMarkerInteraction(tier, setTooltip, starFill)
+    : tooltipOnlyInteraction(tier, setTooltip);
 
 interface ProgressBarProps {
   habit: Habit;
@@ -255,6 +298,8 @@ interface ProgressBarProps {
   tooltip: TierType | null;
   setTooltip: (_v: TierType | null) => void;
   tz: string;
+  starFill: StarFillControls;
+  hasLogUnit: boolean;
 }
 
 const COLOR_TRANSITION_MS = 400;
@@ -313,6 +358,43 @@ const AnimatedFill = ({ width, color, prevColor, fadeAnim, borderRadius }: Anima
   </>
 );
 
+interface TileMarkerLayerProps {
+  habit: Habit;
+  tz: string;
+  scale: number;
+  barHeight: number;
+  markers: TileMarkerSpec[];
+  tooltip: TierType | null;
+  setTooltip: (_v: TierType | null) => void;
+  starFill: StarFillControls;
+  hasLogUnit: boolean;
+}
+
+/** The tier-star overlay that sits atop the tile bar, wired for tap-tooltip and long-press fill. */
+const TileMarkerLayer = ({
+  habit,
+  tz,
+  scale,
+  barHeight,
+  markers,
+  tooltip,
+  setTooltip,
+  starFill,
+  hasLogUnit,
+}: TileMarkerLayerProps) => (
+  <TierMarkerOverlay<TileMarkerSpec>
+    markers={markers}
+    barHeight={barHeight}
+    starSize={markerStarSize(scale)}
+    tooltip={tooltip}
+    setTooltip={setTooltip}
+    markerTestIDPrefix="marker"
+    tooltipTestIDPrefix="tooltip"
+    renderTooltip={(m) => <TileTooltipText goal={m.goal} habit={habit} tz={tz} scale={scale} />}
+    resolveInteraction={(m) => tileMarkerInteraction(m.tier, setTooltip, starFill, hasLogUnit)}
+  />
+);
+
 const ProgressBar = ({
   habit,
   barHeight,
@@ -323,9 +405,10 @@ const ProgressBar = ({
   tooltip,
   setTooltip,
   tz,
+  starFill,
+  hasLogUnit,
 }: ProgressBarProps) => {
   const { fadeAnim, prevColor } = useColorTransition(progressBarColor);
-  const widthStyle: DimensionValue = `${progressPercentage}%`;
   const borderR = barHeight / 2;
 
   return (
@@ -340,25 +423,23 @@ const ProgressBar = ({
           }}
         >
           <AnimatedFill
-            width={widthStyle}
+            width={`${progressPercentage}%`}
             color={progressBarColor}
             prevColor={prevColor}
             fadeAnim={fadeAnim}
             borderRadius={borderR}
           />
         </View>
-        <TierMarkerOverlay<TileMarkerSpec>
-          markers={markers}
+        <TileMarkerLayer
+          habit={habit}
+          tz={tz}
+          scale={scale}
           barHeight={barHeight}
-          starSize={markerStarSize(scale)}
+          markers={markers}
           tooltip={tooltip}
           setTooltip={setTooltip}
-          markerTestIDPrefix="marker"
-          tooltipTestIDPrefix="tooltip"
-          renderTooltip={(m) => (
-            <TileTooltipText goal={m.goal} habit={habit} tz={tz} scale={scale} />
-          )}
-          resolveInteraction={(m) => tileMarkerInteraction(m.tier, setTooltip)}
+          starFill={starFill}
+          hasLogUnit={hasLogUnit}
         />
       </View>
     </View>
@@ -381,7 +462,8 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
 
-  // SG is unconditionally visible (the prior ``hasCleared`` gate caused user-reported confusion).
+  // Each marker is visible whenever its tier's goal exists — the stretch marker is
+  // no longer gated on ``hasCleared`` (that gate caused user-reported confusion).
   // ``met`` is only computed when the goal exists — an absent tier has no goal to achieve.
   const markers: TileMarkerSpec[] = [
     {
@@ -521,6 +603,7 @@ interface UnlockedTileProps {
   onOpenGoals?: () => void;
   onLongPress?: () => void;
   onIconPress?: () => void;
+  onLogUnit?: HabitTileProps['onLogUnit'];
   tz: string;
 }
 
@@ -542,16 +625,69 @@ const buildUnlockedTileStyle = (
   ...longPressGestureStyle,
 });
 
+interface TileProgressSectionProps {
+  habit: Habit;
+  tz: string;
+  scale: number;
+  barHeight: number;
+  progressPercentage: number;
+  progressBarColor: string;
+  markers: TileMarkerSpec[];
+  onLogUnit?: HabitTileProps['onLogUnit'];
+}
+
+/**
+ * The tile's progress bar plus its own tooltip state and the shared star-fill
+ * animation. The hook is always called (rules-of-hooks); a tile with no real
+ * logger gets a no-op, and `hasLogUnit` gates whether the stars ever arm the
+ * sweep. While a fill/revert runs the animated frame wins over the static
+ * percent, mirroring the goal modal's bar.
+ */
+const TileProgressSection = ({
+  habit,
+  tz,
+  scale,
+  barHeight,
+  progressPercentage,
+  progressBarColor,
+  markers,
+  onLogUnit,
+}: TileProgressSectionProps) => {
+  const [tooltip, setTooltip] = useState<TierType | null>(null);
+  const fill = useStarFill({
+    habit,
+    tz,
+    progressPercent: progressPercentage,
+    onLogUnit: onLogUnit ?? NOOP_LOG_UNIT,
+  });
+
+  return (
+    <ProgressBar
+      habit={habit}
+      barHeight={barHeight}
+      progressPercentage={fill.displayPercent ?? progressPercentage}
+      progressBarColor={progressBarColor}
+      markers={markers}
+      scale={scale}
+      tooltip={tooltip}
+      setTooltip={setTooltip}
+      tz={tz}
+      starFill={fill}
+      hasLogUnit={onLogUnit !== undefined}
+    />
+  );
+};
+
 const UnlockedTile = ({
   habit,
   stageColor,
   onOpenGoals,
   onLongPress,
   onIconPress,
+  onLogUnit,
   tz,
 }: UnlockedTileProps) => {
   const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
-  const [tooltip, setTooltip] = useState<TierType | null>(null);
   const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
     habit,
     tz,
@@ -578,16 +714,15 @@ const UnlockedTile = ({
         iconInline={iconInline}
         onIconPress={onIconPress}
       />
-      <ProgressBar
+      <TileProgressSection
         habit={habit}
+        tz={tz}
+        scale={scale}
         barHeight={barHeight}
         progressPercentage={progressPercentage}
         progressBarColor={progressBarColor}
         markers={markers}
-        scale={scale}
-        tooltip={tooltip}
-        setTooltip={setTooltip}
-        tz={tz}
+        onLogUnit={onLogUnit}
       />
     </TouchableOpacity>
   );
@@ -600,6 +735,7 @@ const HabitTileComponent = ({
   onLongPress,
   onIconPress,
   onUnlockHabit,
+  onLogUnit,
   tz = DEFAULT_TIMEZONE,
   stageColor,
   globalIndex = 0,
@@ -634,6 +770,7 @@ const HabitTileComponent = ({
       onOpenGoals={onOpenGoals ? () => onOpenGoals(habit) : undefined}
       onLongPress={onLongPress ? () => onLongPress(habit) : undefined}
       onIconPress={onIconPress ? () => onIconPress(globalIndex) : undefined}
+      onLogUnit={onLogUnit}
       tz={tz}
     />
   );

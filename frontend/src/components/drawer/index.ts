@@ -8,5 +8,7 @@ export { default as DrawerToggle } from './DrawerToggle';
 export type { DrawerToggleProps } from './DrawerToggle';
 export { default as DrawerItem } from './DrawerItem';
 export type { DrawerItemProps } from './DrawerItem';
+export { default as DrawerNavSection } from './DrawerNavSection';
+export type { DrawerNavSectionProps } from './DrawerNavSection';
 export { useScreenDrawer } from './useScreenDrawer';
 export type { ScreenDrawerState } from './useScreenDrawer';

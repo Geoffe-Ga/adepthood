@@ -35,7 +35,8 @@ interface ChapterReaderProps {
   source: ChapterReaderSource;
   /** Title shown in the header until the live ``title`` from the manifest arrives. */
   fallbackTitle: string;
-  /** Render no footer — used for site resources, which aren't tracked. */
+  /** Optional footer rendered below the body — the content viewer passes its
+   *  mark-read / reflect actions; omitted for untracked site resources. */
   footer?: React.ReactNode;
   onBack: () => void;
 }

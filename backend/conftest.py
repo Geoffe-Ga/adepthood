@@ -82,13 +82,13 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # seeder race that duplicated every stage on a fresh database and left
     # the Course screen serving the content-less duplicate ("No Content
     # Yet" with all-200 responses). Mirrors production migration
-    # ``b4c5d6e7f8a1``.
+    # ``e8f9a0b1c2d3``.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_number_unique_test" '
     "ON coursestage (stage_number)",
     # stagecontent: one ``content://`` reference per stage — the seeder's
     # stable chapter identity. Scoped to the content:// scheme so legacy
     # rows with empty/CMS urls stay unconstrained. Mirrors production
-    # migration ``b4c5d6e7f8a1``.
+    # migration ``e8f9a0b1c2d3``.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_stagecontent_stage_content_ref_unique_test" '
     "ON stagecontent (course_stage_id, url) WHERE url LIKE 'content://%'",
 )

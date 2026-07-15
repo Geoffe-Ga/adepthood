@@ -300,17 +300,17 @@ describe('stageService', () => {
       return map;
     }
 
-    it('returns true when currentStage is STAGE_COUNT and stage-10 progress >= 1', () => {
-      const { isEndOfCycle } = require('../stageService');
-      const stagesByNumber = makeStagesByNumber({ 10: { progress: 1 } });
-      expect(isEndOfCycle(stagesByNumber, 10)).toBe(true);
-    });
-
-    it('returns true when stage-10 progress is exactly 1.0 and currentStage is 10', () => {
-      const { isEndOfCycle } = require('../stageService');
-      const stagesByNumber = makeStagesByNumber({ 10: { progress: 1.0 } });
-      expect(isEndOfCycle(stagesByNumber, 10)).toBe(true);
-    });
+    it.each([
+      [1, 'exactly at the completion threshold'],
+      [1.5, 'past the completion threshold'],
+    ])(
+      'returns true when currentStage is STAGE_COUNT and stage-10 progress is %s (%s)',
+      (progress) => {
+        const { isEndOfCycle } = require('../stageService');
+        const stagesByNumber = makeStagesByNumber({ 10: { progress } });
+        expect(isEndOfCycle(stagesByNumber, 10)).toBe(true);
+      },
+    );
 
     it('returns false when currentStage is 10 but stage-10 progress < 1', () => {
       const { isEndOfCycle } = require('../stageService');
@@ -363,8 +363,8 @@ describe('stageService', () => {
       expect(mockBeginAgainClient).toHaveBeenCalledTimes(1);
     });
 
-    it('sets cycleNumber from the response record', async () => {
-      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(2));
+    it.each([2, 3])('sets cycleNumber to the server-returned cycle_number %i', async (cycle) => {
+      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(cycle));
       mockList.mockResolvedValueOnce([makeApiStage(1)]);
       // The reload's calendar fetch reports the same server-side cycle.
       mockProgramCalendar.mockResolvedValueOnce({
@@ -372,7 +372,7 @@ describe('stageService', () => {
         calendar_stage: 1,
         calendar_week: 1,
         current_stage: 1,
-        cycle_number: 2,
+        cycle_number: cycle,
       });
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
@@ -381,7 +381,7 @@ describe('stageService', () => {
         await stageService.beginAgain();
       });
 
-      expect(useStageStore.getState().cycleNumber).toBe(2);
+      expect(useStageStore.getState().cycleNumber).toBe(cycle);
     });
 
     it('reloads stages after setting cycleNumber', async () => {
@@ -412,27 +412,6 @@ describe('stageService', () => {
       // Failure short-circuits: no reload and no cycle bump from a bad response.
       expect(mockList).not.toHaveBeenCalled();
       expect(state.cycleNumber).toBe(1);
-    });
-
-    it('reflects cycle_number 3 when the server returns it', async () => {
-      mockBeginAgainClient.mockResolvedValueOnce(makeProgressRecord(3));
-      mockList.mockResolvedValueOnce([makeApiStage(1)]);
-      // The reload's calendar fetch reports the same server-side cycle.
-      mockProgramCalendar.mockResolvedValueOnce({
-        program_started_at: null,
-        calendar_stage: 1,
-        calendar_week: 1,
-        current_stage: 1,
-        cycle_number: 3,
-      });
-      const { stageService } = require('../stageService');
-      const { useStageStore } = require('../../../../store/useStageStore');
-
-      await act(async () => {
-        await stageService.beginAgain();
-      });
-
-      expect(useStageStore.getState().cycleNumber).toBe(3);
     });
   });
 });

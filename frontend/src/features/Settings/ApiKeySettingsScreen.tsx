@@ -13,13 +13,18 @@ import {
 
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
-import { SETTINGS_BUTTON_PADDING } from './shared/settingsFormLayout';
+import {
+  SETTINGS_BUTTON_PADDING,
+  SETTINGS_CARD_LABEL_LETTER_SPACING,
+  SETTINGS_MONOSPACE_FONT,
+  settingsFormStyles,
+} from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useApiKey } from '@/context/ApiKeyContext';
-import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
@@ -183,8 +188,8 @@ interface ScreenBodyProps {
 
 const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => (
   <>
-    <Text style={styles.title}>BotMason API Key</Text>
-    <Text style={styles.body}>
+    <Text style={settingsFormStyles.title}>BotMason API Key</Text>
+    <Text style={settingsFormStyles.body}>
       Bring your own API key from a supported provider. It is stored only on this device and sent
       with every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
     </Text>
@@ -198,7 +203,7 @@ const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element =
 
 const ProviderDirectory = (): React.JSX.Element => (
   <View style={styles.providerSection} testID="provider-directory">
-    <Text style={styles.inputLabel}>Supported providers</Text>
+    <Text style={settingsFormStyles.inputLabel}>Supported providers</Text>
     {BYOK_PROVIDERS.map((provider) => (
       <View key={provider.id} style={styles.providerRow}>
         <View style={styles.providerInfo}>
@@ -211,7 +216,7 @@ const ProviderDirectory = (): React.JSX.Element => (
           accessibilityLabel={`Get your ${provider.label} API key`}
           accessibilityRole="link"
         >
-          <Text style={styles.link}>Get your API key</Text>
+          <Text style={settingsFormStyles.link}>Get your API key</Text>
         </TouchableOpacity>
       </View>
     ))}
@@ -242,34 +247,36 @@ const ScreenFooter = ({
   <>
     <TouchableOpacity
       onPress={onSave}
-      style={[styles.button, styles.primaryButton]}
+      style={settingsFormStyles.primaryButton}
       disabled={submitting}
       testID="save-key-button"
       accessibilityLabel="Save API key"
       accessibilityRole="button"
       accessibilityState={{ disabled: submitting, busy: submitting }}
     >
-      <Text style={styles.primaryButtonText}>{submitting ? 'Saving…' : 'Save key'}</Text>
+      <Text style={settingsFormStyles.primaryButtonText}>
+        {submitting ? 'Saving…' : 'Save key'}
+      </Text>
     </TouchableOpacity>
     {onOpenTimezone && (
       <TouchableOpacity
         onPress={onOpenTimezone}
-        style={styles.linkRow}
+        style={settingsFormStyles.linkRow}
         testID="open-timezone-settings"
         accessibilityLabel="Time zone settings"
         accessibilityRole="link"
       >
-        <Text style={styles.link}>Time zone settings</Text>
+        <Text style={settingsFormStyles.link}>Time zone settings</Text>
       </TouchableOpacity>
     )}
     {onBack && (
       <TouchableOpacity
         onPress={onBack}
-        style={styles.linkRow}
+        style={settingsFormStyles.linkRow}
         accessibilityLabel="Go back"
         accessibilityRole="link"
       >
-        <Text style={styles.link}>Back</Text>
+        <Text style={settingsFormStyles.link}>Back</Text>
       </TouchableOpacity>
     )}
   </>
@@ -297,7 +304,7 @@ const ScreenBody = ({
     {apiKey && (
       <StoredKeyCard apiKey={apiKey} disabled={submitting} onRequestRemove={onRequestRemove} />
     )}
-    <Text style={styles.inputLabel}>{apiKey ? 'Replace key' : 'Add your key'}</Text>
+    <Text style={settingsFormStyles.inputLabel}>{apiKey ? 'Replace key' : 'Add your key'}</Text>
     <KeyInputRow
       draft={draft}
       reveal={reveal}
@@ -378,13 +385,14 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   const performClear = useClearKeyHandler(form, clearApiKey);
   const handleRequestRemove = useRemoveConfirmation(performClear);
 
-  const { setDraft, setError } = form;
+  const { setDraft, setError, setStatus } = form;
   const onChangeDraft = useCallback(
     (value: string) => {
       setDraft(value);
       setError(null);
+      setStatus(null);
     },
-    [setDraft, setError],
+    [setDraft, setError, setStatus],
   );
   const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
   const { onBack, onOpenTimezone } = useScreenNavHandlers(navigation);
@@ -418,8 +426,6 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   );
 }
 
-const MENLO_MONOSPACE = 'Menlo';
-const STORED_LABEL_LETTER_SPACING = 0.5;
 const PROVIDER_HINT_MARGIN_TOP = 2;
 
 const styles = StyleSheet.create({
@@ -428,13 +434,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: surface.canvas,
-  },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md, color: ink.primary },
-  body: {
-    fontSize: 14,
-    color: ink.soft,
-    marginBottom: SPACING.xl,
-    lineHeight: 20,
   },
   storedCard: {
     borderWidth: 1,
@@ -448,11 +447,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: ink.muted,
     textTransform: 'uppercase',
-    letterSpacing: STORED_LABEL_LETTER_SPACING,
+    letterSpacing: SETTINGS_CARD_LABEL_LETTER_SPACING,
   },
   storedValue: {
     fontSize: 18,
-    fontFamily: MENLO_MONOSPACE,
+    fontFamily: SETTINGS_MONOSPACE_FONT,
     marginTop: SPACING.sm,
     marginBottom: SPACING.lg,
     color: ink.primary,
@@ -462,12 +461,6 @@ const styles = StyleSheet.create({
     color: ink.muted,
     marginBottom: SPACING.xl,
     fontStyle: 'italic',
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: SPACING.sm,
-    color: ink.primary,
   },
   inputRow: { flexDirection: 'row', alignItems: 'stretch', marginBottom: SPACING.md },
   input: {
@@ -496,16 +489,12 @@ const styles = StyleSheet.create({
     padding: SETTINGS_BUTTON_PADDING,
     alignItems: 'center',
   },
-  primaryButton: { backgroundColor: accent.primary, marginTop: SPACING.xs },
-  primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   destructiveButton: {
     backgroundColor: colors.destructive.background,
     borderWidth: 1,
     borderColor: colors.destructive.border,
   },
   destructiveButtonText: { color: colors.destructive.text, fontWeight: '600' },
-  linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
-  link: { color: accent.primary, fontWeight: '600' },
   providerSection: { marginBottom: SPACING.xl },
   providerRow: {
     flexDirection: 'row',

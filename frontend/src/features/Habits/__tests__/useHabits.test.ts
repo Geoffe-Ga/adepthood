@@ -7,16 +7,22 @@ import { useHabits } from '../hooks/useHabits';
 // Mock dependencies
 jest.mock('../../../api', () => ({
   habits: {
-    list: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.resolve([])),
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
+    clearCompletions: jest.fn(() => Promise.resolve()),
   },
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
   },
   goals: {
+    update: jest.fn(() => Promise.resolve({})),
+  },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: jest.fn(() => Promise.reject(new Error('no server hydration configured'))),
     update: jest.fn(() => Promise.resolve({})),
   },
 }));
@@ -239,11 +245,5 @@ describe('useHabits', () => {
     expect(updated?.streak).toBe(0);
     expect(updated?.completions).toEqual([]);
     expect(updated?.start_date).toEqual(newDate);
-  });
-
-  it('emojiHabitIndex tracks which habit is being edited', () => {
-    const { result } = renderHook(() => useHabits());
-
-    expect(result.current.ui.emojiHabitIndex).toBeNull();
   });
 });

@@ -2,14 +2,18 @@ import React, { useCallback, useMemo } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
-import { SETTINGS_BUTTON_PADDING } from './shared/settingsFormLayout';
+import {
+  SETTINGS_CARD_LABEL_LETTER_SPACING,
+  SETTINGS_MONOSPACE_FONT,
+  settingsFormStyles,
+} from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ApiError, users } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
-import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, ink, surface } from '@/design/tokens';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 
 /**
@@ -93,7 +97,7 @@ const ZoneInputSection = ({
   onUseDeviceZone,
 }: ZoneInputSectionProps): React.JSX.Element => (
   <>
-    <Text style={styles.inputLabel}>New time zone</Text>
+    <Text style={settingsFormStyles.inputLabel}>New time zone</Text>
     <TextInput
       style={styles.input}
       placeholder={EXAMPLE_ZONE}
@@ -127,23 +131,23 @@ const ScreenFooter = ({
   <>
     <TouchableOpacity
       onPress={onSave}
-      style={styles.primaryButton}
+      style={settingsFormStyles.primaryButton}
       disabled={submitting}
       testID="save-timezone-button"
       accessibilityLabel="Save time zone"
       accessibilityRole="button"
       accessibilityState={{ disabled: submitting, busy: submitting }}
     >
-      <Text style={styles.primaryButtonText}>{submitting ? 'Saving…' : 'Save'}</Text>
+      <Text style={settingsFormStyles.primaryButtonText}>{submitting ? 'Saving…' : 'Save'}</Text>
     </TouchableOpacity>
     {onBack && (
       <TouchableOpacity
         onPress={onBack}
-        style={styles.linkRow}
+        style={settingsFormStyles.linkRow}
         accessibilityLabel="Go back"
         accessibilityRole="link"
       >
-        <Text style={styles.link}>Back</Text>
+        <Text style={settingsFormStyles.link}>Back</Text>
       </TouchableOpacity>
     )}
   </>
@@ -158,8 +162,8 @@ const ScreenBody = ({
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
   <ScreenScaffold scroll testID="timezone-settings-screen">
-    <Text style={styles.title}>Time zone</Text>
-    <Text style={styles.body}>
+    <Text style={settingsFormStyles.title}>Time zone</Text>
+    <Text style={settingsFormStyles.body}>
       Streaks and daily stats count days in this time zone. Update it if you moved or if it was
       detected wrong at signup.
     </Text>
@@ -182,19 +186,21 @@ export default function TimezoneSettingsScreen({ navigation }: Props = {}): Reac
   // Depend on the stable useState setters, not ``state`` itself — the hook
   // returns a fresh object every render, so a ``[state]`` dependency would
   // silently defeat the memoization.
-  const { setDraft, setError } = state;
+  const { setDraft, setError, setStatus } = state;
   const onChangeDraft = useCallback(
     (value: string) => {
       setDraft(value);
       setError(null);
+      setStatus(null);
     },
-    [setDraft, setError],
+    [setDraft, setError, setStatus],
   );
 
   const onUseDeviceZone = useCallback(() => {
     setDraft(detectDeviceTimezone());
     setError(null);
-  }, [setDraft, setError]);
+    setStatus(null);
+  }, [setDraft, setError, setStatus]);
 
   const onBack = useMemo(
     () => (navigation?.goBack ? () => navigation.goBack?.() : undefined),
@@ -213,17 +219,7 @@ export default function TimezoneSettingsScreen({ navigation }: Props = {}): Reac
   );
 }
 
-const MENLO_MONOSPACE = 'Menlo';
-const CURRENT_LABEL_LETTER_SPACING = 0.5;
-
 const styles = StyleSheet.create({
-  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md, color: ink.primary },
-  body: {
-    fontSize: 14,
-    color: ink.soft,
-    marginBottom: SPACING.xl,
-    lineHeight: 20,
-  },
   currentCard: {
     borderWidth: 1,
     borderColor: surface.hairline,
@@ -236,18 +232,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: ink.muted,
     textTransform: 'uppercase',
-    letterSpacing: CURRENT_LABEL_LETTER_SPACING,
+    letterSpacing: SETTINGS_CARD_LABEL_LETTER_SPACING,
   },
   currentValue: {
     fontSize: 18,
-    fontFamily: MENLO_MONOSPACE,
+    fontFamily: SETTINGS_MONOSPACE_FONT,
     marginTop: SPACING.sm,
-    color: ink.primary,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: SPACING.sm,
     color: ink.primary,
   },
   input: {
@@ -270,14 +260,4 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
   secondaryButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
-  primaryButton: {
-    borderRadius: BORDER_RADIUS.md,
-    padding: SETTINGS_BUTTON_PADDING,
-    alignItems: 'center',
-    backgroundColor: accent.primary,
-    marginTop: SPACING.xs,
-  },
-  primaryButtonText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
-  linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
-  link: { color: accent.primary, fontWeight: '600' },
 });

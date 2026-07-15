@@ -122,12 +122,12 @@ const MissedDaysBody = ({
         <Calendar
           onDayPress={reset.onPick}
           markedDates={{
-            [selectedDateString ?? '']: {
+            [selectedDateString]: {
               selected: true,
               selectedColor: STAGE_COLORS[habit.stage],
             },
           }}
-          minDate={new Date().toISOString()}
+          minDate={toISODate(new Date())}
         />
       ) : (
         <MissedDaysActions

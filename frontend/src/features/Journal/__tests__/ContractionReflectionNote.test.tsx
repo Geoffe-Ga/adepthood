@@ -160,25 +160,31 @@ describe('ContractionReflectionNote — non-punitive intent', () => {
   });
 });
 
-describe('ContractionReflectionNote — no chat UI', () => {
-  it('does not render a sender testID', () => {
-    const { queryByTestId } = render(<ContractionReflectionNote contraction={contraction()} />);
-    expect(queryByTestId('sender')).toBeNull();
-  });
+type RenderedNode = {
+  type: string;
+  children: (RenderedNode | string)[] | null;
+};
 
-  it('does not render an avatar testID', () => {
-    const { queryByTestId } = render(<ContractionReflectionNote contraction={contraction()} />);
-    expect(queryByTestId('avatar')).toBeNull();
-  });
+// Depth-first list of host-component type names (e.g. 'View', 'Text', 'TextInput').
+function hostTypes(node: RenderedNode | RenderedNode[] | string | null): string[] {
+  if (node === null) return [];
+  if (typeof node === 'string') return [];
+  if (Array.isArray(node)) return node.flatMap((child) => hostTypes(child));
+  const out: string[] = [node.type];
+  const children = node.children;
+  if (children === null) return out;
+  for (const child of children) out.push(...hostTypes(child));
+  return out;
+}
 
-  it('does not render a reply testID', () => {
-    const { queryByTestId } = render(<ContractionReflectionNote contraction={contraction()} />);
-    expect(queryByTestId('reply')).toBeNull();
-  });
-
-  it('does not render a "Send" text element', () => {
-    const { queryByText } = render(<ContractionReflectionNote contraction={contraction()} />);
-    expect(queryByText('Send')).toBeNull();
+describe('ContractionReflectionNote — not a chat surface', () => {
+  it('renders static content with no text-entry composer', () => {
+    const { toJSON } = render(<ContractionReflectionNote contraction={contraction()} />);
+    const types = hostTypes(toJSON());
+    // Guard the walker: the note really renders Text content.
+    expect(types).toContain('Text');
+    // A reply/chat composer would mount a TextInput; a reflection note never does.
+    expect(types).not.toContain('TextInput');
   });
 });
 

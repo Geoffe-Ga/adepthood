@@ -286,5 +286,36 @@ describe('habitStorage', () => {
       const queue = await loadPendingCheckIns();
       expect(queue).toEqual([]);
     });
+
+    test('aborts the write and preserves the stored queue on a transient RMW read', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('transient read'));
+
+      await expect(
+        savePendingCheckIn({ goal_id: 2, did_complete: true, timestamp: 't2' }),
+      ).resolves.toBeUndefined();
+
+      expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+    });
+
+    test('self-heals corrupt queue JSON inside the RMW then writes the single new check-in', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      mockAsyncStorage.getItem.mockResolvedValueOnce('not valid json{{{');
+      const checkIn = { goal_id: 3, did_complete: true, timestamp: 't3' };
+
+      await savePendingCheckIn(checkIn);
+
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/pending_checkins');
+      expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
+        '@adepthood/pending_checkins',
+        JSON.stringify([checkIn]),
+      );
+
+      warnSpy.mockRestore();
+    });
   });
 });

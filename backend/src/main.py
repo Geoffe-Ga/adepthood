@@ -50,6 +50,7 @@ from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
 from routers.reflections import router as reflections_router
 from routers.stages import router as stages_router
+from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
 from seed_content import seed_content
@@ -89,7 +90,6 @@ ALLOWED_HEADERS = [
     "Authorization",
     "Content-Type",
     "X-LLM-API-Key",
-    "X-Admin-API-Key",
     "X-Request-ID",
 ]
 # Headers the browser is allowed to read from the response.  Without
@@ -258,17 +258,17 @@ install_trace_id_logging()
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:
-    """Run the three idempotent seeders, with isolation and a stages prerequisite.
+    """Run the idempotent seeders, with isolation and a stages prerequisite.
 
-    ``seed_practices`` and ``seed_content`` both read from the seeded
+    Each dependent seeder (``seed_practices``, ``seed_practice_recipes``,
+    ``seed_content``, ``seed_goal_group_templates``) reads from the seeded
     ``CourseStage`` rows, so a ``seed_stages`` failure must short-circuit
     — otherwise the dependents run against an empty stages table and log
-    a misleading ``seed_complete inserted=0``. ``seed_practices`` and
-    ``seed_content`` are independent of each other, so each is isolated
-    in its own try/except: a failure in one (e.g. a new mode landing in
-    a CHECK constraint before the seed list catches up) must not starve
-    the other. Successes log the inserted count so a quiet deploy is
-    still verifiable from the boot log.
+    a misleading ``seed_complete inserted=0``. The dependents are
+    independent of each other, so each is isolated in its own try/except:
+    a failure in one (e.g. a new mode landing in a CHECK constraint before
+    the seed list catches up) must not starve the others. Successes log the
+    inserted count so a quiet deploy is still verifiable from the boot log.
     """
     try:
         inserted = await seed_stages(session)
@@ -458,6 +458,7 @@ app.include_router(goals_router)
 app.include_router(stages_router)
 app.include_router(users_router)
 app.include_router(depth_preferences_router)
+app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
 

@@ -103,7 +103,7 @@ describe('ritualReducer — metronome', () => {
 });
 
 describe('ritualReducer — interval_bell', () => {
-  it('fires 4 interval cues + start + end for interval_minutes=5 over 20 minutes', () => {
+  it('fires 3 interior interval cues + start + end for interval_minutes=5 over 20 minutes', () => {
     const config: IntervalBellConfig = {
       mode: 'interval_bell',
       duration_minutes: 20,
@@ -114,7 +114,7 @@ describe('ritualReducer — interval_bell', () => {
       { type: 'START', now: 0 },
       { type: 'TICK', now: 20 * MIN },
     ]);
-    expect(s.cuesStruck).toBe(6);
+    expect(s.cuesStruck).toBe(5);
     expect(s.status).toBe('complete');
   });
 

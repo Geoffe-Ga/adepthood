@@ -26,6 +26,7 @@ from typing import TypedDict
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
@@ -62,36 +63,21 @@ async def _aspect_labels_by_stage(
     return {row.stage_number: row.aspect for row in result.all()}
 
 
-async def _primary_aspect_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
-    """Count non-deleted entries per stage tagged with that stage as primary.
+async def _aspect_counts(
+    session: AsyncSession, user_id: int, aspect_column: Mapped[int | None]
+) -> dict[int, int]:
+    """Count non-deleted entries per stage tagged with that stage on ``aspect_column``.
 
-    One ``GROUP BY`` aggregate over ``primary_aspect`` (no per-stage loop).
+    One ``GROUP BY`` aggregate over the given aspect column (no per-stage loop).
     """
     result = await session.execute(
-        select(JournalEntry.primary_aspect, func.count())
+        select(aspect_column, func.count())
         .where(
             JournalEntry.user_id == user_id,
             col(JournalEntry.deleted_at).is_(None),
-            col(JournalEntry.primary_aspect).is_not(None),
+            aspect_column.is_not(None),
         )
-        .group_by(col(JournalEntry.primary_aspect))
-    )
-    return {row[0]: row[1] for row in result.all()}
-
-
-async def _secondary_aspect_counts(session: AsyncSession, user_id: int) -> dict[int, int]:
-    """Count non-deleted entries per stage tagged with that stage as secondary.
-
-    One ``GROUP BY`` aggregate over ``secondary_aspect`` (no per-stage loop).
-    """
-    result = await session.execute(
-        select(JournalEntry.secondary_aspect, func.count())
-        .where(
-            JournalEntry.user_id == user_id,
-            col(JournalEntry.deleted_at).is_(None),
-            col(JournalEntry.secondary_aspect).is_not(None),
-        )
-        .group_by(col(JournalEntry.secondary_aspect))
+        .group_by(aspect_column)
     )
     return {row[0]: row[1] for row in result.all()}
 
@@ -103,8 +89,8 @@ async def _chord_tag_weighted_counts(session: AsyncSession, user_id: int) -> dic
     * n_secondary`` per stage, over non-deleted entries only, using two constant
     grouped-count queries (no N+1).
     """
-    primary = await _primary_aspect_counts(session, user_id)
-    secondary = await _secondary_aspect_counts(session, user_id)
+    primary = await _aspect_counts(session, user_id, col(JournalEntry.primary_aspect))
+    secondary = await _aspect_counts(session, user_id, col(JournalEntry.secondary_aspect))
     weighted: dict[int, float] = {}
     for stage, count in primary.items():
         weighted[stage] = weighted.get(stage, 0.0) + WHEEL_PRIMARY_TAG_WEIGHT * count

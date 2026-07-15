@@ -237,6 +237,15 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
   completions: [],
 });
 
+const buildTierGoals = (habitName: string, idFor: (tierIndex: number) => number) =>
+  GOAL_TIERS.map((t, ti) => ({
+    id: idFor(ti),
+    title: `${t.label} goal for ${habitName}`,
+    ...DEFAULT_GOAL_CONFIG,
+    tier: t.tier,
+    target: t.target,
+  }));
+
 const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
   newHabits.map((habit, index) => ({
     ...habit,
@@ -244,13 +253,7 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
     streak: 0,
     revealed: false,
     completions: [] as Habit['completions'],
-    goals: GOAL_TIERS.map((t, ti) => ({
-      id: index * 3 + ti + 1,
-      title: `${t.label} goal for ${habit.name}`,
-      ...DEFAULT_GOAL_CONFIG,
-      tier: t.tier,
-      target: t.target,
-    })),
+    goals: buildTierGoals(habit.name, (ti) => index * 3 + ti + 1),
   }));
 
 /**
@@ -262,22 +265,17 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
 const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => {
   const stage = stageAtIndex(existingCount);
   const tempId = -Date.now();
+  const name = input.name.trim();
   return {
     id: tempId,
     stage,
-    name: input.name.trim(),
+    name,
     icon: input.icon,
     streak: 0,
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
     start_date: new Date(),
-    goals: GOAL_TIERS.map((t, ti) => ({
-      id: tempId - ti - 1,
-      title: `${t.label} goal for ${input.name.trim()}`,
-      ...DEFAULT_GOAL_CONFIG,
-      tier: t.tier,
-      target: t.target,
-    })),
+    goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
     sort_order: existingCount,
@@ -646,6 +644,18 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
 };
 
 /**
+ * Build a rejection handler that only alerts, leaving local state untouched.
+ * Used when an earlier write already succeeded durably (e.g. the start-date
+ * PUT) so a later step's failure must not roll the durable change back — it
+ * only surfaces that the follow-up step did not complete.
+ */
+const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
+  return (err: unknown) => {
+    Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
+  };
+};
+
+/**
  * Optimistically apply a new unlock (``revealed``) state and PUT each affected
  * row to the API. Shared by the bulk reveal/re-lock affordances and the
  * single-habit unlock so all three persist the flag server-side rather than
@@ -826,9 +836,8 @@ export const habitManager = {
 
   /**
    * Atomically update the shared unit fields across every tier goal of a
-   * habit (issue #289). One optimistic apply, one batch PUT, one rollback
-   * closure — replaces the GoalUnitEditor's three-call fan-out whose
-   * partial failure split tiers between old and new units server-side.
+   * habit: one optimistic apply, one batch PUT, one rollback closure — so a
+   * partial failure can never split tiers between old and new units.
    */
   updateGoalUnits: (
     habitId: number,
@@ -865,11 +874,9 @@ export const habitManager = {
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
-    // BUG-FE-HABIT-005: serialize per-habit notification rescheduling and
-    // write the freshly-returned ids back onto the habit before
-    // persisting.  The previous ``void updateHabitNotifications(...)``
-    // discarded the return value, so a second rapid edit would still
-    // see the pre-first-edit ``notificationIds`` and double-schedule.
+    // Serialize per-habit notification rescheduling and write the freshly
+    // returned ids back onto the habit before persisting, so a rapid second
+    // edit reschedules against fresh ``notificationIds`` instead of double-scheduling.
     if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
     else void persistHabits(next);
     if (!updatedHabit.id) return;
@@ -1091,14 +1098,25 @@ export const habitManager = {
 
   /**
    * Reset a habit's start date: clear the streak + completions locally,
-   * persist, then PUT the new start date so that half of the reset reaches
-   * the server. Only ``start_date`` is durable — the PUT carries no streak
-   * and does not delete the habit's goal-completion rows, so the local
-   * streak/completions clear is optimistic and is rebuilt from the surviving
-   * server rows on the next ``loadHabits``. Without the PUT even the new
-   * start date would revert to the stale server value. On failure the
-   * rollback restores both the store and the on-disk snapshot and alerts the
-   * user.
+   * persist, then run two server writes in sequence — first PUT the new start
+   * date, and only once that resolves bulk-clear the habit's server-side
+   * goal-completion rows via the clear-completions endpoint. Clearing
+   * server-side means a later ``loadHabits`` refetch shows no stale
+   * completions rather than rebuilding a streak from rows the reset was meant
+   * to wipe. Without the PUT even the new start date would revert to the stale
+   * server value. Sequencing matters because the clear is irreversible: if it
+   * ran concurrently and the PUT failed, the rollback would restore the local
+   * completions while the server had already dropped them, silently losing
+   * history behind a "previous state was restored" message. Ordering the
+   * reversible PUT first means a PUT failure never reaches the clear.
+   *
+   * The two stages fail differently and are handled separately. A PUT failure
+   * changes nothing durably, so it fully rolls the store + on-disk snapshot
+   * back to the previous state. A clear failure happens only after the PUT has
+   * already persisted the new start date, so a full rollback would wrongly
+   * revert that durable date; instead the optimistic reset is kept and the
+   * user is told only the check-in clear failed, so retrying re-runs the
+   * idempotent reset.
    */
   setNewStartDate: (habitId: number, newDate: Date): void => {
     const prev = getHabits();
@@ -1107,9 +1125,18 @@ export const habitManager = {
     void persistHabits(next);
     const updated = next.find((h) => h.id === habitId);
     if (!updated?.id) return;
+    const updatedId = updated.id;
     habitsApi
-      .update(updated.id, toApiPayload(updated))
-      .catch(
+      .update(updatedId, toApiPayload(updated))
+      .then(
+        () =>
+          habitsApi
+            .clearCompletions(updatedId)
+            .catch(
+              warnOnFailure(
+                "Your new start date was saved, but we couldn't clear the old check-ins. Try the reset again.",
+              ),
+            ),
         revertOnFailure(
           prev,
           "We couldn't save the new start date. Your previous state was restored — check your connection and try again.",

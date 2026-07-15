@@ -96,7 +96,7 @@ def _additive_streak_from_day_totals(day_totals: dict[date, float], user_timezon
     Because only completed days are passed on, a most-recent
     ``completed_units == 0`` "did not complete" row is ignored like an absent
     day.  That keeps this DB path in lockstep with the in-memory
-    :func:`domain.habit_stats.compute_habit_streak` path, which applies the same
+    :func:`services.streaks.compute_habit_streak` path, which applies the same
     completed-days filter + grace gate.
     """
     completed_days = sorted((d for d in day_totals if day_totals[d] > 0), reverse=True)

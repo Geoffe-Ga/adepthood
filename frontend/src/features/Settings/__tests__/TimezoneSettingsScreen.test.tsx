@@ -91,6 +91,34 @@ describe('TimezoneSettingsScreen', () => {
     expect(setUserTimezone).not.toHaveBeenCalled();
   });
 
+  test('clears the success banner once the draft changes after a save', async () => {
+    setAuthState('Europe/Paris');
+    mockUpdateMyTimezone.mockResolvedValueOnce({ timezone: 'America/Los_Angeles' });
+    const { getByTestId, queryByTestId } = render(<TimezoneSettingsScreen />);
+
+    fireEvent.changeText(getByTestId('timezone-input'), 'America/Los_Angeles');
+    fireEvent.press(getByTestId('save-timezone-button'));
+    await waitFor(() => expect(getByTestId('timezone-status')).toBeTruthy());
+
+    fireEvent.changeText(getByTestId('timezone-input'), 'America/New_York');
+
+    expect(queryByTestId('timezone-status')).toBeNull();
+  });
+
+  test('clears the success banner when the device zone is applied after a save', async () => {
+    setAuthState('Europe/Paris');
+    mockUpdateMyTimezone.mockResolvedValueOnce({ timezone: 'America/Los_Angeles' });
+    const { getByTestId, queryByTestId } = render(<TimezoneSettingsScreen />);
+
+    fireEvent.changeText(getByTestId('timezone-input'), 'America/Los_Angeles');
+    fireEvent.press(getByTestId('save-timezone-button'));
+    await waitFor(() => expect(getByTestId('timezone-status')).toBeTruthy());
+
+    fireEvent.press(getByTestId('use-device-timezone-button'));
+
+    expect(queryByTestId('timezone-status')).toBeNull();
+  });
+
   test('"Use device time zone" fills the input with the detected zone', () => {
     setAuthState('UTC');
     const { getByTestId } = render(<TimezoneSettingsScreen />);

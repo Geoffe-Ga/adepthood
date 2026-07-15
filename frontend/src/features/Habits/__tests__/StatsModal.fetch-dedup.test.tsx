@@ -7,6 +7,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React, { useSyncExternalStore } from 'react';
 
+import type * as ApiModule from '../../../api';
 import HabitsScreen from '../HabitsScreen';
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
@@ -44,54 +45,77 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ setOptions: mockSetOptions }),
 }));
 
-jest.mock('../../../api', () => ({
-  habits: {
-    // One unlocked habit (past start_date) so the tile renders and is pressable.
-    list: () =>
-      Promise.resolve([
-        {
-          id: 1,
-          name: 'Meditate',
-          icon: '🧘',
-          stage: 'Beige',
-          streak: 0,
-          energy_cost: 1,
-          energy_return: 1,
-          start_date: new Date(2020, 0, 1),
-          goals: [
-            {
-              title: 'Low',
-              tier: 'low',
-              target: 1,
-              target_unit: 'u',
-              frequency: 1,
-              frequency_unit: 'per_day',
-              is_additive: true,
-            },
-          ],
-          completions: [],
-          revealed: true,
-        },
-      ]),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    getStats: (...args: unknown[]) => {
-      mockGetStats(...args);
-      return Promise.resolve({
-        day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        values: [0, 0, 0, 0, 0, 0, 0],
-        completions_by_day: [0, 0, 0, 0, 0, 0, 0],
-        longest_streak: 0,
-        current_streak: 0,
-        total_completions: 0,
-        completion_rate: 0,
-        completion_dates: [],
-      });
+jest.mock('../../../api', () => {
+  // Keep the real ``toLocalHabit`` mapper the load path delegates to; stub only
+  // the network namespaces this screen exercises.
+  const actual: typeof ApiModule = jest.requireActual('../../../api');
+  return {
+    ...actual,
+    // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+    uiFlags: {
+      get: jest.fn(() =>
+        Promise.resolve({
+          has_seen_welcome: false,
+          energy_scaffolding_archived: false,
+        }),
+      ),
+      update: jest.fn(() =>
+        Promise.resolve({
+          has_seen_welcome: false,
+          energy_scaffolding_archived: false,
+        }),
+      ),
     },
-  },
-  goalCompletions: { create: jest.fn() },
-}));
+    habits: {
+      // One unlocked habit (past start_date) so the tile renders and is pressable.
+      // Its id is deliberately distinct from FALLBACK_HABITS[0].id (1) so the
+      // getStats assertion fails if the screen ever falls back to the demo seed.
+      listAll: () =>
+        Promise.resolve([
+          {
+            id: 7,
+            name: 'Meditate',
+            icon: '🧘',
+            stage: 'Beige',
+            streak: 0,
+            energy_cost: 1,
+            energy_return: 1,
+            start_date: new Date(2020, 0, 1),
+            goals: [
+              {
+                title: 'Low',
+                tier: 'low',
+                target: 1,
+                target_unit: 'u',
+                frequency: 1,
+                frequency_unit: 'per_day',
+                is_additive: true,
+              },
+            ],
+            completions: [],
+            revealed: true,
+          },
+        ]),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      getStats: (...args: unknown[]) => {
+        mockGetStats(...args);
+        return Promise.resolve({
+          day_labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+          values: [0, 0, 0, 0, 0, 0, 0],
+          completions_by_day: [0, 0, 0, 0, 0, 0, 0],
+          longest_streak: 0,
+          current_streak: 0,
+          total_completions: 0,
+          completion_rate: 0,
+          completion_dates: [],
+        });
+      },
+    },
+    goalCompletions: { create: jest.fn() },
+  };
+});
 
 jest.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
@@ -142,6 +166,6 @@ describe('Habits stats modal fetch dedup', () => {
     fireEvent.press(getAllByTestId('habit-tile')[0]!);
 
     await waitFor(() => expect(mockGetStats).toHaveBeenCalledTimes(1));
-    expect(mockGetStats).toHaveBeenCalledWith(1, 'test-token');
+    expect(mockGetStats).toHaveBeenCalledWith(7, 'test-token');
   });
 });

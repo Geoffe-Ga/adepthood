@@ -1,33 +1,21 @@
 // frontend/navigation/BottomTabs.tsx
 
-import {
-  BottomTabBar,
-  createBottomTabNavigator,
-  type BottomTabBarProps,
-} from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  BookOpen,
-  Compass,
-  Flower2,
-  NotebookPen,
-  Settings,
-  Sprout,
-  type LucideIcon,
-} from 'lucide-react-native';
+import { Settings } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, TouchableOpacity } from 'react-native';
 
-import type { JournalTag } from '../api';
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
-import { accent, ink, SPACING, surface, touchTarget } from '../design/tokens';
+import { accent, SPACING, touchTarget } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
 
+import { NAV_DESTINATIONS, type NavDestination } from './destinations';
 import type { RootStackParamList } from './RootStack';
 
 import { useAuth } from '@/context/AuthContext';
@@ -43,17 +31,7 @@ export type RootTabParamList = {
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
   Course: { stageNumber?: number } | undefined;
-  Journal:
-    | {
-        tag?: JournalTag;
-        stageNumber?: number;
-        contentTitle?: string;
-        practiceSessionId?: number;
-        userPracticeId?: number;
-        practiceName?: string;
-        practiceDuration?: number;
-      }
-    | undefined;
+  Journal: undefined;
   Map: undefined;
 };
 
@@ -82,38 +60,21 @@ const CourseTab = withBoundary('Course', CourseScreen);
 const JournalTab = withBoundary('Journal', JournalShelfScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
-const TAB_ICON_SIZE = 24;
-const TAB_ICON_STROKE = 2;
 const SETTINGS_ICON_SIZE = 24;
 
-/** Returns a tab-bar icon renderer with shared size/stroke for every entry. */
-const makeTabIcon =
-  (Icon: LucideIcon) =>
-  ({ color }: { color: string }): React.JSX.Element => (
-    <Icon color={color} size={TAB_ICON_SIZE} strokeWidth={TAB_ICON_STROKE} />
-  );
-
-type TabConfig = {
-  name: keyof RootTabParamList;
-  component: React.ComponentType<object>;
-  icon: LucideIcon;
+/** The single screen-component mapping, keyed by route so registry lookup is total. */
+const SCREEN_COMPONENT_BY_NAME: Readonly<
+  Record<keyof RootTabParamList, React.ComponentType<object>>
+> = {
+  Journal: JournalTab,
+  Habits: HabitsTab,
+  Practice: PracticeTab,
+  Course: CourseTab,
+  Map: MapTab,
 };
 
-/** Which depth-ring flag each optional tab depends on, keyed for the enable map. */
+/** Which depth-ring flag each optional route depends on, keyed for the enable map. */
 type RingKey = 'habits' | 'practices' | 'course';
-
-/** The three ring tabs, in the fixed order they slot between Journal and Map. */
-const RING_TABS: ReadonlyArray<{ key: RingKey; config: TabConfig }> = [
-  { key: 'habits', config: { name: 'Habits', component: HabitsTab, icon: Sprout } },
-  { key: 'practices', config: { name: 'Practice', component: PracticeTab, icon: Flower2 } },
-  { key: 'course', config: { name: 'Course', component: CourseTab, icon: BookOpen } },
-];
-
-/** Journal always leads; Map always trails — neither is ring-gated. */
-const LEADING_TABS: ReadonlyArray<TabConfig> = [
-  { name: 'Journal', component: JournalTab, icon: NotebookPen },
-];
-const TRAILING_TABS: ReadonlyArray<TabConfig> = [{ name: 'Map', component: MapTab, icon: Compass }];
 
 /** Route name of the always-present home the redirect falls back to. */
 const REDIRECT_TARGET = 'Journal' as const;
@@ -125,25 +86,30 @@ const RING_FLAG_BY_ROUTE: Readonly<Record<string, RingKey>> = {
   Course: 'course',
 };
 
-/** Live snapshot of the three ring flags, keyed to match ``RING_TABS``. */
+/** Live snapshot of the three ring flags, keyed to match the registry rings. */
 type RingEnabledMap = Record<RingKey, boolean>;
 
 /**
- * Subscribe to the three ring toggles and assemble the visible tab list in the
- * fixed order ``[Journal, ...enabledRings, Map]``. Reactive: a store flip
- * re-renders the caller with the tab added or removed live.
+ * Subscribe to the three ring toggles and derive the visible destination list
+ * from ``NAV_DESTINATIONS``, dropping any ring-gated route whose flag is off.
+ * The registry fixes the order ``[Journal, Habits, Practice, Course, Map]``.
+ * Reactive: a store flip re-renders the caller with the route added or removed.
  */
-const useEnabledTabs = (): { tabs: ReadonlyArray<TabConfig>; enabled: RingEnabledMap } => {
+const useVisibleDestinations = (): {
+  destinations: ReadonlyArray<NavDestination>;
+  enabled: RingEnabledMap;
+} => {
   const enabled: RingEnabledMap = {
     habits: useDepthPreferencesStore(selectEnableHabits),
     practices: useDepthPreferencesStore(selectEnablePractices),
     course: useDepthPreferencesStore(selectEnableCourse),
   };
 
-  const enabledRings = RING_TABS.filter((ring) => enabled[ring.key]).map((ring) => ring.config);
-  const tabs = [...LEADING_TABS, ...enabledRings, ...TRAILING_TABS];
+  const destinations = NAV_DESTINATIONS.filter(
+    (destination) => destination.ring === undefined || enabled[destination.ring],
+  );
 
-  return { tabs, enabled };
+  return { destinations, enabled };
 };
 
 /**
@@ -173,16 +139,15 @@ const useRingRedirect = (props: BottomTabBarProps, enabled: RingEnabledMap): voi
 };
 
 /**
- * The default bottom tab bar, augmented with the ring focus-redirect. Rendered
- * via ``Tab.Navigator``'s ``tabBar`` prop so it lives inside the navigator and
- * can read the tab navigator's focused route straight from ``props.state``.
+ * Ring focus-redirect host, mounted via ``Tab.Navigator``'s ``tabBar`` prop so it
+ * lives inside the navigator and can read the focused route from ``props.state``.
+ * Renders nothing — the drawer is primary navigation, so no bar is drawn and no
+ * bar height is reserved — while the redirect effect stays mounted.
  */
-const RingAwareTabBar = (
-  props: BottomTabBarProps & { enabled: RingEnabledMap },
-): React.JSX.Element => {
+const RingAwareTabBar = (props: BottomTabBarProps & { enabled: RingEnabledMap }): null => {
   const { enabled, ...tabBarProps } = props;
   useRingRedirect(tabBarProps, enabled);
-  return <BottomTabBar {...tabBarProps} />;
+  return null;
 };
 
 /** Fetch the current ring toggles once on mount, keyed off the auth token. */
@@ -214,12 +179,13 @@ const TabHeaderRight = ({ onSettings }: TabHeaderRightProps): React.JSX.Element 
 );
 
 /**
- * Application-wide bottom tab navigation.
- * Each tab corresponds to a major feature area.
+ * Application-wide navigation shell. The drawer is the primary way to move
+ * between feature areas, so this navigator draws no bottom bar; it hosts the
+ * registry-derived screens and the header Settings gear.
  */
 const BottomTabs = (): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { tabs, enabled } = useEnabledTabs();
+  const { destinations, enabled } = useVisibleDestinations();
 
   useLoadDepthPreferences();
 
@@ -241,24 +207,10 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName={REDIRECT_TARGET}
       tabBar={renderTabBar}
-      screenOptions={{
-        // Warm tab bar (#803): raised paper ground + hairline top edge; active
-        // terracotta vs muted ink, both AA on the raised ground.
-        tabBarActiveTintColor: accent.primary,
-        tabBarInactiveTintColor: ink.muted,
-        // borderTopWidth is intentionally omitted — RN Navigation defaults it to
-        // StyleSheet.hairlineWidth; we only retint the existing edge.
-        tabBarStyle: { backgroundColor: surface.raised, borderTopColor: surface.hairline },
-        headerRight: renderHeaderRight,
-      }}
+      screenOptions={{ headerRight: renderHeaderRight }}
     >
-      {tabs.map(({ name, component, icon }) => (
-        <Tab.Screen
-          key={name}
-          name={name}
-          component={component}
-          options={{ tabBarIcon: makeTabIcon(icon) }}
-        />
+      {destinations.map(({ name }) => (
+        <Tab.Screen key={name} name={name} component={SCREEN_COMPONENT_BY_NAME[name]} />
       ))}
     </Tab.Navigator>
   );

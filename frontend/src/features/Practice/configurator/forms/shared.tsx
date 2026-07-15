@@ -125,6 +125,19 @@ export const NumericField = ({
   />
 );
 
+interface DurationRowProps {
+  value: number;
+  onChange: (next: number) => void;
+  testID: string;
+}
+
+/** "Duration (minutes)" numeric row shared by the timed configurator forms. */
+export const DurationRow = ({ value, onChange, testID }: DurationRowProps): React.JSX.Element => (
+  <LabeledRow label="Duration (minutes)">
+    <NumericField value={value} onChange={(next) => onChange(next ?? 0)} testID={testID} />
+  </LabeledRow>
+);
+
 interface ToggleRowProps {
   label: string;
   value: boolean;

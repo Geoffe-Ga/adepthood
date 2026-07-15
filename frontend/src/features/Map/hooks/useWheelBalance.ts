@@ -1,11 +1,8 @@
-/** Fetch-on-mount wheel-of-wholeness balance; empty map on error reads all-thin. */
-
 import { useEffect, useState } from 'react';
 
 import { wheel } from '../../../api';
 import { clampProgress } from '../services/stageService';
 
-/** Fetch-on-mount wheel balance: fullness per stage, plus loading/error state. */
 export interface WheelBalanceState {
   /** Clamped 0..1 fullness keyed by stage number; ``{}`` on error/loading. */
   fullnessByStage: Record<number, number>;
@@ -17,7 +14,7 @@ export interface WheelBalanceState {
 const toFullnessByStage = (aspects: { stage_number: number; fullness: number }[]) =>
   Object.fromEntries(aspects.map((a) => [a.stage_number, clampProgress(a.fullness)]));
 
-/** Load the wheel balance once on mount; empty map + ``error`` on any failure. */
+/** Fetch-on-mount wheel-of-wholeness balance; empty map + ``error`` on failure reads all-thin. */
 export function useWheelBalance(): WheelBalanceState {
   const [fullnessByStage, setFullnessByStage] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
@@ -31,8 +28,9 @@ export function useWheelBalance(): WheelBalanceState {
       // itself is unaffected by a failed wheel read.
       setError(err instanceof Error ? err.message : 'Failed to load wheel balance');
     };
-    // ``Promise.resolve`` wraps the call so a synchronous throw (not just a
-    // rejected promise) routes through the same all-thin fallback path.
+    // ``Promise.resolve`` wraps the call so a synchronous throw (e.g. a
+    // partially-available api module leaving ``wheel`` undefined) routes through
+    // the same all-thin fallback path as a rejected promise.
     Promise.resolve()
       .then(() => wheel.get())
       .then((balance) => {

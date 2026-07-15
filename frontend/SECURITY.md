@@ -28,6 +28,16 @@ web throws `TypeError`. The platform branch in `secureStringStore.ts`
 exists to prevent that crash; the alternative would be the auth flow
 failing end-to-end on every web load.
 
+### Concurrent write ordering
+
+Store mutations (`save`/`clear`) on both platforms run through a per-key
+serialized write lane (`serializedWrite.ts`, marker `BUG-FE-STORAGE-002`),
+so a stale proactive-refresh write issued before a subsequent login or
+logout can no longer settle _after_ it via keychain/`localStorage` latency
+and strand a stale token. Reads (`load`) stay unserialized. This is a
+storage-layer complement to the `expectedPriorToken` identity guards in
+`AuthContext.tsx`, which independently protect React state.
+
 ### The XSS-window risk
 
 A single successful XSS exploit on the web build yields **full account

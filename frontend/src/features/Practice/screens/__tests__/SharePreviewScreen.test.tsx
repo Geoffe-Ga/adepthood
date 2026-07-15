@@ -127,20 +127,19 @@ describe('SharePreviewScreen', () => {
   it('renders the revoked detail copy when the API returns 410 share_link_revoked', async () => {
     mockPreview.mockRejectedValueOnce(new ApiError(410, 'share_link_revoked'));
     const { view } = renderScreen('tok-1');
-    const banner = await view.findByTestId('share-preview-error-preview');
-    expect(banner.props.children).toBeTruthy();
+    expect(await view.findByText('This share link has been revoked.')).toBeTruthy();
   });
 
   it('renders the expired detail copy when the API returns 410 share_link_expired', async () => {
     mockPreview.mockRejectedValueOnce(new ApiError(410, 'share_link_expired'));
     const { view } = renderScreen('tok-1');
-    await view.findByTestId('share-preview-error-preview');
+    expect(await view.findByText('This share link has expired.')).toBeTruthy();
   });
 
   it('renders the exhausted detail copy when the API returns 410 share_link_exhausted', async () => {
     mockPreview.mockRejectedValueOnce(new ApiError(410, 'share_link_exhausted'));
     const { view } = renderScreen('tok-1');
-    await view.findByTestId('share-preview-error-preview');
+    expect(await view.findByText('This share link has reached its use limit.')).toBeTruthy();
   });
 
   it('renders the self-import banner when the API returns 400 cannot_import_own_practice', async () => {

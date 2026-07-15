@@ -5,13 +5,11 @@ import React from 'react';
 
 type AuthStatus = 'loading' | 'authenticated' | 'reauth-required' | 'anonymous';
 
-// Control mock state per test. ``token`` + ``isLoading`` are kept so
-// legacy callers that still read them keep working; the navigator
-// itself now gates on ``authStatus`` (BUG-NAV-001 / BUG-NAV-002).
-let mockAuthState: { token: string | null; authStatus: AuthStatus; isLoading: boolean } = {
+// Control mock state per test. The navigator gates on ``authStatus``
+// (BUG-NAV-001 / BUG-NAV-002); ``token`` is kept for the routes that read it.
+let mockAuthState: { token: string | null; authStatus: AuthStatus } = {
   token: null,
   authStatus: 'anonymous',
-  isLoading: false,
 };
 
 jest.mock('@/context/AuthContext', () => ({
@@ -121,7 +119,7 @@ import App, { linking } from '@/App';
 import { useWelcomeStore } from '@/store/useWelcomeStore';
 
 beforeEach(() => {
-  mockAuthState = { token: null, authStatus: 'anonymous', isLoading: false };
+  mockAuthState = { token: null, authStatus: 'anonymous' };
   // This suite asserts the auth-status → shell contract; the #836 first-run
   // welcome gate is exercised separately. Seed the flag as seen so an authed
   // render reaches the shell rather than the WelcomeScreen.
@@ -130,35 +128,35 @@ beforeEach(() => {
 
 describe('App auth flow', () => {
   it('shows auth screens when user is anonymous', () => {
-    mockAuthState = { token: null, authStatus: 'anonymous', isLoading: false };
+    mockAuthState = { token: null, authStatus: 'anonymous' };
     const { getByText } = render(<App />);
 
     expect(getByText('LoginScreen')).toBeTruthy();
   });
 
   it('shows loading indicator while authStatus is loading', () => {
-    mockAuthState = { token: null, authStatus: 'loading', isLoading: true };
+    mockAuthState = { token: null, authStatus: 'loading' };
     const { getByTestId } = render(<App />);
 
     expect(getByTestId('auth-loading')).toBeTruthy();
   });
 
   it('shows main app when user is authenticated', () => {
-    mockAuthState = { token: 'valid-jwt', authStatus: 'authenticated', isLoading: false };
+    mockAuthState = { token: 'valid-jwt', authStatus: 'authenticated' };
     const { getByText } = render(<App />);
 
     expect(getByText('BottomTabs')).toBeTruthy();
   });
 
   it('does not show auth screens when authenticated', () => {
-    mockAuthState = { token: 'valid-jwt', authStatus: 'authenticated', isLoading: false };
+    mockAuthState = { token: 'valid-jwt', authStatus: 'authenticated' };
     const { queryByText } = render(<App />);
 
     expect(queryByText('LoginScreen')).toBeNull();
   });
 
   it('does not show main app when anonymous', () => {
-    mockAuthState = { token: null, authStatus: 'anonymous', isLoading: false };
+    mockAuthState = { token: null, authStatus: 'anonymous' };
     const { queryByText } = render(<App />);
 
     expect(queryByText('BottomTabs')).toBeNull();
@@ -167,7 +165,7 @@ describe('App auth flow', () => {
   // BUG-NAV-001: a 401 must not unmount the tabs. When authStatus is
   // 'reauth-required' we show BottomTabs *and* the ReauthSheet overlay.
   it('keeps BottomTabs mounted and shows ReauthSheet when reauth-required', () => {
-    mockAuthState = { token: null, authStatus: 'reauth-required', isLoading: false };
+    mockAuthState = { token: null, authStatus: 'reauth-required' };
     const { getByText } = render(<App />);
 
     expect(getByText('BottomTabs')).toBeTruthy();

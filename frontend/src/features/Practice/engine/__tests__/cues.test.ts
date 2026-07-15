@@ -122,7 +122,7 @@ describe('scheduledCues — metronome', () => {
 });
 
 describe('scheduledCues — interval_bell', () => {
-  it('expands interval_minutes=5 over duration=20 into 4 intervals + start + end, tagging the bell tone', () => {
+  it('expands interval_minutes=5 over duration=20 into 3 interior intervals + start + end, dropping the endpoint collision and tagging the bell tone', () => {
     const config: IntervalBellConfig = {
       mode: 'interval_bell',
       duration_minutes: 20,
@@ -131,13 +131,50 @@ describe('scheduledCues — interval_bell', () => {
     };
     const cues = scheduledCues(config);
     const intervalCues = cues.filter((c) => c.kind === 'interval_bell');
-    expect(intervalCues.map((c) => c.atMs)).toEqual([5 * MIN, 10 * MIN, 15 * MIN, 20 * MIN]);
+    expect(intervalCues.map((c) => c.atMs)).toEqual([5 * MIN, 10 * MIN, 15 * MIN]);
     expect(cues.filter((c) => c.kind === 'start_bell')).toHaveLength(1);
     expect(cues.filter((c) => c.kind === 'end_bell')).toHaveLength(1);
     // Interval cues carry the configured bell tone; boundary cues carry none.
     expect(intervalCues.every((c) => c.tone === 'bowl')).toBe(true);
     const boundaryCues = cues.filter((c) => c.kind !== 'interval_bell');
     expect(boundaryCues.every((c) => c.tone === undefined)).toBe(true);
+  });
+
+  it('schedules exactly one cue at the endpoint and it is the end_bell when the interval divides the duration', () => {
+    const cues = scheduledCues({
+      mode: 'interval_bell',
+      duration_minutes: 20,
+      interval_minutes: 5,
+      bell_tone: 'bowl',
+    });
+    const atEnd = cues.filter((c) => c.atMs === 20 * MIN);
+    expect(atEnd.map((c) => c.kind)).toEqual(['end_bell']);
+  });
+
+  it('keeps the final interval cue when the interval does not divide the duration', () => {
+    const cues = scheduledCues({
+      mode: 'interval_bell',
+      duration_minutes: 22,
+      interval_minutes: 5,
+      bell_tone: 'chime',
+    });
+    const intervalCues = cues.filter((c) => c.kind === 'interval_bell');
+    expect(intervalCues.map((c) => c.atMs)).toEqual([5 * MIN, 10 * MIN, 15 * MIN, 20 * MIN]);
+    const atEnd = cues.filter((c) => c.atMs === 22 * MIN);
+    expect(atEnd.map((c) => c.kind)).toEqual(['end_bell']);
+  });
+
+  it('emits only start and end when the interval equals the duration', () => {
+    const cues = scheduledCues({
+      mode: 'interval_bell',
+      duration_minutes: 10,
+      interval_minutes: 10,
+      bell_tone: 'gong',
+    });
+    expect(cues).toEqual([
+      { atMs: 0, kind: 'start_bell' },
+      { atMs: 10 * MIN, kind: 'end_bell' },
+    ]);
   });
 
   it('uses cue_offsets_minutes verbatim, tagging the tone (chime), and degrades to untoned start+end when neither offset field is set (gong)', () => {

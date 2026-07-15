@@ -119,5 +119,3 @@ export const stageService = {
     await stageService.loadStages(token);
   },
 };
-
-export type StageService = typeof stageService;

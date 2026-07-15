@@ -5,8 +5,8 @@ import type { RitualControls, RitualState } from '../../engine/types';
 import RitualControlsBar from '../RitualControlsBar';
 import { useSessionSurface } from '../sessionSurface';
 
-import { PrimaryButton } from './PrimaryButton';
 import { SessionContainer } from './SessionContainer';
+import { SessionCtaButton } from './SessionCtaButton';
 import { SessionTimerLabel } from './SessionTimerLabel';
 
 import { BORDER_RADIUS, SPACING } from '@/design/tokens';
@@ -80,7 +80,7 @@ const ShellFooter = ({
 }: FooterProps): React.JSX.Element => {
   if (state.status === 'idle') {
     return (
-      <PrimaryButton
+      <SessionCtaButton
         label="Begin meditation"
         accessibilityLabel="Begin meditation"
         onPress={controls.start}

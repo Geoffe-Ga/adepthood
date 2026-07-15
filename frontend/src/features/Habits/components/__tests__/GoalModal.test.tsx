@@ -470,10 +470,19 @@ describe('GoalModal log-unit guards', () => {
     jest.clearAllMocks();
   });
 
-  it('skips logging when the habit has no id', () => {
-    const { getByText, props } = renderModal(makeHabit({ id: 0 }));
+  it('skips logging when the habit has no id (synthetic onboarding state)', () => {
+    const { getByText, props } = renderModal(makeHabit({ id: undefined as unknown as number }));
     fireEvent.press(getByText('Log Units'));
     expect(props.onLogUnit).not.toHaveBeenCalled();
+  });
+
+  it('logs when the habit id is 0 (falsy but a real id)', () => {
+    const { getByText, props } = renderModal(makeHabit({ id: 0 }));
+    fireEvent.press(getByText('Log Units'));
+    const calls = (props.onLogUnit as unknown as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [habitId] = calls[0] as [number, number, Date];
+    expect(habitId).toBe(0);
   });
 
   it('falls back to an amount of 1 when the log-amount field is non-numeric', () => {

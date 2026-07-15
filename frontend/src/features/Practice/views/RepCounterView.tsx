@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import type { RepCounterConfig, RitualControls, RitualState } from '../engine/types';
+import { MS_PER_MINUTE } from '../engine/types';
 
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
@@ -19,7 +20,8 @@ interface Props {
 const RepCounterView = ({ config, state, controls }: Props): React.JSX.Element => {
   const surface = useSessionSurface();
   const canTap = state.status === 'running';
-  const timeCapMs = config.time_cap_minutes != null ? config.time_cap_minutes * 60_000 : null;
+  const timeCapMs =
+    config.time_cap_minutes != null ? config.time_cap_minutes * MS_PER_MINUTE : null;
   const remaining = timeCapMs !== null ? Math.max(0, timeCapMs - state.elapsedMs) : null;
   return (
     <SessionContainer testID="rep-counter-view">
