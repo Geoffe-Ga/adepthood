@@ -268,6 +268,9 @@ async def test_content_body_404_for_drip_locked_chapter(
         db_session, stage_number=1, release_day=0, title="Opening"
     )
     # Fill earlier ordinals so "Late Chapter" sits near the end of the stage.
+    # Each filler gets its own content ref — one ``content://`` reference per
+    # stage is a DB-enforced invariant (``ix_stagecontent_stage_content_ref_
+    # unique``, migration b4c5d6e7f8a1), and the helper already seeded beige-1.
     for day in (1, 2, 3):
         db_session.add(
             StageContent(
@@ -275,7 +278,7 @@ async def test_content_body_404_for_drip_locked_chapter(
                 title=f"Chapter {day}",
                 content_type="chapter",
                 release_day=day,
-                url=content_ref(f"beige-{day}"),
+                url=content_ref(f"beige-fill-{day}"),
             )
         )
     late = StageContent(
