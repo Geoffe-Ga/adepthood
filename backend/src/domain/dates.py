@@ -87,6 +87,20 @@ def ensure_aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def compute_next_reset(now: datetime) -> datetime:
+    """Return the first moment of the calendar month following ``now`` in UTC.
+
+    Example: ``2026-04-15T12:34:56Z`` → ``2026-05-01T00:00:00Z``.  The result
+    is always timezone-aware (UTC) so it can be compared safely against
+    ``datetime.now(UTC)`` in SQL WHERE clauses.
+    """
+    utc = ensure_aware(now).astimezone(UTC)
+    year, month = utc.year, utc.month
+    if month == 12:  # noqa: PLR2004 - December rolls to January of next year
+        return datetime(year + 1, 1, 1, tzinfo=UTC)
+    return datetime(year, month + 1, 1, tzinfo=UTC)
+
+
 def now_in_tz(user_or_tz: _HasTimezone | str | None) -> datetime:
     """Return ``datetime.now`` in the user's IANA timezone.
 

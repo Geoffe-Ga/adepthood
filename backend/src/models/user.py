@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Optional
 from sqlalchemy import Boolean, Column, DateTime, String
 from sqlmodel import Field, Relationship, SQLModel
 
-from services.usage import compute_next_reset
+from domain.dates import compute_next_reset
 
 if TYPE_CHECKING:
     from .habit import Habit
