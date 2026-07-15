@@ -1,10 +1,12 @@
 /**
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
- * editorial library (#829): a warm ``ScreenScaffold`` + serif ``ScreenHeader``,
- * search on the warm palette, entries grouped by recency (This week / This month
- * / Earlier) as lifted paper tiles with a reading-time + "saved … ago" caption,
- * the weekly prompt promoted to its own band, and an inviting empty state with a
- * call to action. Tapping a page opens the entry screen by id.
+ * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
+ * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
+ * serif ``ScreenHeader``, the weekly prompt, a ``ReflectionInvitationBand``, and
+ * ``SearchBar`` on the warm palette. Below it, entries group by recency (This
+ * week / This month / Earlier) as lifted paper tiles with a reading-time +
+ * "saved … ago" caption, over an inviting empty state with a call to action.
+ * Tapping a page opens the entry screen by id.
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';

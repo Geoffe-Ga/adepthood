@@ -8,8 +8,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Animated } from 'react-native';
 
-export { usePressScale, PRESS_DURATION_MS, PRESS_SCALE } from '@/hooks/usePressScale';
-export type { PressScale } from '@/hooks/usePressScale';
+export { usePressScale, PRESS_SCALE } from '@/hooks/usePressScale';
 
 /** Sheet settle-in: a brief fade + a few-px lift into place. */
 export const SETTLE_DURATION_MS = 220;
