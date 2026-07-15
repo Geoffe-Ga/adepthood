@@ -54,9 +54,6 @@ _MAX_PROMPT_FILE_SIZE = 50 * 1024
 # OpenAI/Anthropic are ~200 chars; this cap prevents header-size DoS.
 LLM_API_KEY_MAX_LENGTH = 256
 
-# Provider-specific key prefixes. Anthropic keys share the ``sk-`` prefix with
-# OpenAI, so their check is the more specific ``sk-ant-``.
-
 # Identifier the stub provider reports as its "model" in usage logs.  Kept as a
 # module constant so callers can branch on it without magic strings.
 STUB_MODEL_NAME = "stub"
