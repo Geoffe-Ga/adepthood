@@ -135,6 +135,8 @@ export interface HabitTileProps {
   onLongPress?: (_habit: Habit) => void;
   onIconPress?: (_index: number) => void;
   onUnlockHabit?: (_habitId: number) => void;
+  /** Long-press-a-star fill logging; ``date`` backfills a past day (omit for today). */
+  onLogUnit?: (_habitId: number, _amount: number, _date?: Date) => void;
   /**
    * IANA timezone used to bucket completions into the user's calendar day
    * for the progress bar / "Achieved Today" display. Defaults to UTC when

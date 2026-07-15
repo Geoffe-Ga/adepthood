@@ -431,7 +431,7 @@ const useHabitTileRenderer = (
     actions,
     setSelectedHabit,
   );
-  const { unlockHabit } = actions;
+  const { unlockHabit, logUnit } = actions;
   const renderHabitTile = useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
       // Unlock is governed solely by the persisted ``revealed`` flag — locked by
@@ -453,11 +453,12 @@ const useHabitTileRenderer = (
           onLongPress={handleLongPress}
           onIconPress={handleIconPress}
           onUnlockHabit={unlockHabit}
+          onLogUnit={logUnit}
           tz={tz}
         />
       );
     },
-    [pageOffset, tz, handleOpenGoals, handleLongPress, handleIconPress, unlockHabit],
+    [pageOffset, tz, handleOpenGoals, handleLongPress, handleIconPress, unlockHabit, logUnit],
   );
   return renderHabitTile;
 };
