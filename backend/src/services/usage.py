@@ -13,9 +13,10 @@ atomic SQL statements around them without duplicating policy.
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 
-from domain.dates import ensure_aware
+from domain.dates import compute_next_reset
+
+__all__ = ["DEFAULT_MONTHLY_CAP", "compute_next_reset", "get_monthly_cap"]
 
 # Default monthly cap when ``BOTMASON_MONTHLY_CAP`` is not set.  Chosen as a
 # conservative free-tier that covers a handful of reflections per day without
@@ -47,17 +48,3 @@ def get_monthly_cap() -> int:
     if parsed < _MIN_CAP:
         return DEFAULT_MONTHLY_CAP
     return parsed
-
-
-def compute_next_reset(now: datetime) -> datetime:
-    """Return the first moment of the calendar month following ``now`` in UTC.
-
-    Example: ``2026-04-15T12:34:56Z`` → ``2026-05-01T00:00:00Z``.  The result
-    is always timezone-aware (UTC) so it can be compared safely against
-    ``datetime.now(UTC)`` in SQL WHERE clauses.
-    """
-    utc = ensure_aware(now).astimezone(UTC)
-    year, month = utc.year, utc.month
-    if month == 12:  # noqa: PLR2004 - December rolls to January of next year
-        return datetime(year + 1, 1, 1, tzinfo=UTC)
-    return datetime(year, month + 1, 1, tzinfo=UTC)

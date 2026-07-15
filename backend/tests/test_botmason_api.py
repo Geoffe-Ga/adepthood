@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import pathlib
-from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
@@ -37,7 +36,6 @@ from services.botmason import (
 )
 from services.usage import (
     DEFAULT_MONTHLY_CAP,
-    compute_next_reset,
     get_monthly_cap,
 )
 
@@ -637,23 +635,6 @@ def test_get_monthly_cap_rejects_negative(monkeypatch: pytest.MonkeyPatch) -> No
 def test_get_monthly_cap_allows_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "0")
     assert get_monthly_cap() == 0
-
-
-def test_compute_next_reset_mid_month() -> None:
-    result = compute_next_reset(datetime(2026, 4, 15, 12, 34, 56, tzinfo=UTC))
-    assert result == datetime(2026, 5, 1, tzinfo=UTC)
-
-
-def test_compute_next_reset_december_rollover() -> None:
-    result = compute_next_reset(datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
-    assert result == datetime(2027, 1, 1, tzinfo=UTC)
-
-
-def test_compute_next_reset_normalises_naive_input() -> None:
-    # A naive datetime is interpreted as UTC rather than silently crashing on
-    # mismatched comparisons later.
-    result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC))
-    assert result == datetime(2026, 7, 1, tzinfo=UTC)
 
 
 # ── Issue #402: live-provider activation ────────────────────────────────

@@ -325,10 +325,12 @@ async def add_balance(
     SQL statement — no lost-update window between read and write.
 
     BUG-BM-011: a ``WalletAudit`` row is staged for every successful
-    grant.  ``actor_user_id`` defaults to ``user_id`` for the legacy
-    "user tops up their own wallet" path, but the admin endpoint
-    overrides it with the granting admin's id so the audit row records
-    the actor distinct from the recipient.
+    grant.  ``actor_user_id`` defaults to ``user_id``, so the only
+    production caller -- an admin topping up their own wallet -- records
+    a ``self_grant`` (actor == recipient).  A distinct actor would be
+    logged as ``admin_grant``, a forward-looking seam reserved for a
+    future cross-user grant path (e.g. a Stripe webhook or referral
+    credit); no such caller exists yet.
     """
     result = await session.execute(
         update(User)
