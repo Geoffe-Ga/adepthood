@@ -90,11 +90,6 @@ def test_missing_id_is_minted() -> None:
 
 _SANITY_MAX_TRACE_ID = 100
 
-# A 32-char UUID4 hex is the shape minted by ``_normalise_trace_id`` when the
-# inbound value is rejected.  Tests assert against this so a regression that
-# accidentally lets a hostile value through still trips the length check.
-_MINTED_LEN = 32
-
 
 def test_pathologically_long_id_is_rejected_and_replaced() -> None:
     """Values longer than the cap are silently replaced by a fresh UUID."""
