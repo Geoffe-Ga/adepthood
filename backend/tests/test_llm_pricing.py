@@ -18,7 +18,6 @@ from services.llm_pricing import (
     MODEL_PRICING,
     ModelPricing,
     estimate_cost_usd,
-    get_model_pricing,
 )
 
 
@@ -93,15 +92,15 @@ class TestEstimateCostUsd:
         assert int(cost.as_tuple().exponent) == -6
 
 
-class TestGetModelPricing:
+class TestModelPricingLookup:
     def test_returns_pricing_for_known_model(self) -> None:
-        pricing = get_model_pricing("gpt-4o-mini")
+        pricing = MODEL_PRICING.get("gpt-4o-mini")
         assert pricing is not None
         assert pricing.input_usd_per_million > 0
         assert pricing.output_usd_per_million > 0
 
     def test_returns_none_for_unknown_model(self) -> None:
-        assert get_model_pricing("unknown-model") is None
+        assert MODEL_PRICING.get("unknown-model") is None
 
 
 class TestModelPricingTable:
@@ -139,7 +138,7 @@ class TestAllowlistPricingReconciliation:
             model
             for spec in PROVIDER_REGISTRY.values()
             for model in spec.allowed_models
-            if get_model_pricing(model) is None
+            if MODEL_PRICING.get(model) is None
         )
         assert unpriced == [], f"allowlisted models missing a price: {unpriced}"
 

@@ -81,11 +81,6 @@ MODEL_PRICING: dict[str, ModelPricing] = {
 }
 
 
-def get_model_pricing(model: str) -> ModelPricing | None:
-    """Return the :class:`ModelPricing` for ``model`` or ``None`` when unknown."""
-    return MODEL_PRICING.get(model)
-
-
 def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> Decimal | None:
     """Estimate the USD cost of a single LLM call as a quantised :class:`Decimal`.
 
