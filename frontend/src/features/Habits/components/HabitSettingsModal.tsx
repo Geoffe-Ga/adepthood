@@ -14,6 +14,8 @@ import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
 import ModalHeader from './ModalHeader';
 
+const LOCK_TOGGLE_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
+
 const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
   if (current === 'daily') return 'weekly';
   if (current === 'weekly') return 'custom';
@@ -186,6 +188,25 @@ const NotifToggleRow = ({
     <Switch
       value={isEnabled}
       onValueChange={(value) => onChange('notificationFrequency', value ? 'daily' : 'off')}
+    />
+  </View>
+);
+
+const LockToggleRow = ({
+  editedHabit,
+  handleChange,
+}: {
+  editedHabit: Habit;
+  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
+}) => (
+  <View style={styles.settingRow}>
+    <Text style={styles.editSettingLabel}>Unlocked:</Text>
+    <Switch
+      testID="habit-settings-lock-toggle"
+      accessibilityLabel="Unlocked"
+      hitSlop={LOCK_TOGGLE_HIT_SLOP}
+      value={editedHabit.revealed === true}
+      onValueChange={(value) => handleChange('revealed', value)}
     />
   </View>
 );
@@ -389,6 +410,7 @@ const SettingsForm = ({
       onRemoveTime={onRemoveTime}
       onToggleDay={onToggleDay}
     />
+    <LockToggleRow editedHabit={editedHabit} handleChange={handleChange} />
     <FormActionButtons onSave={onSave} onDelete={onDelete} />
   </ScrollView>
 );

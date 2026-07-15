@@ -325,6 +325,60 @@ describe('HabitSettingsModal missing optional notification arrays', () => {
   });
 });
 
+describe('HabitSettingsModal lock toggle', () => {
+  it('renders ON for an unlocked habit', () => {
+    const { getByTestId } = renderModal({ habit: { ...baseHabit, revealed: true } });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    expect(toggle.props.value).toBe(true);
+  });
+
+  it('renders OFF for a locked habit', () => {
+    const { getByTestId } = renderModal();
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    expect(toggle.props.value).toBe(false);
+  });
+
+  it('commits locking on save', () => {
+    const { getByTestId, getByText, onUpdate } = renderModal({
+      habit: { ...baseHabit, revealed: true },
+    });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+
+    fireEvent(toggle, 'valueChange', false);
+    fireEvent.press(getByText('Save Changes'));
+
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ revealed: false }));
+  });
+
+  it('commits unlocking on save', () => {
+    const { getByTestId, getByText, onUpdate } = renderModal({
+      habit: { ...baseHabit, revealed: false },
+    });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+
+    fireEvent(toggle, 'valueChange', true);
+    fireEvent.press(getByText('Save Changes'));
+
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ revealed: true }));
+  });
+
+  it('exposes an accessibility label that matches the visible unlocked framing', () => {
+    const { getByTestId } = renderModal();
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    const label = toggle.props.accessibilityLabel as string;
+
+    expect(label).toBe('Unlocked');
+  });
+
+  it('is the third Switch, after notifications and milestone toggles', () => {
+    const { UNSAFE_root } = renderModal();
+    const switches = UNSAFE_root.findAllByType(Switch);
+
+    expect(switches).toHaveLength(3);
+    expect(switches[2]!.props.testID).toBe('habit-settings-lock-toggle');
+  });
+});
+
 describe('HabitSettingsModal actions', () => {
   it('opens the reorder modal with the full habit list', () => {
     const { getByText, onOpenReorderModal } = renderModal();
