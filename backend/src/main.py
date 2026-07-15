@@ -90,7 +90,6 @@ ALLOWED_HEADERS = [
     "Authorization",
     "Content-Type",
     "X-LLM-API-Key",
-    "X-Admin-API-Key",
     "X-Request-ID",
 ]
 # Headers the browser is allowed to read from the response.  Without
