@@ -158,8 +158,9 @@ describe('useActivePractice', () => {
     const { result } = renderHook(() => useActivePractice(5));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.error).toEqual(expect.any(String));
-    expect(result.current.error).not.toBeNull();
+    expect(result.current.error).toBe(
+      "We couldn't load your practices. Check your connection, then tap Retry to try again.",
+    );
   });
 
   it('a silent refresh keeps isLoading unchanged while it revalidates', async () => {
@@ -220,8 +221,9 @@ describe('useActivePractice', () => {
       await result.current.selectPractice(17);
     });
 
-    expect(result.current.error).toEqual(expect.any(String));
-    expect(result.current.error).not.toBeNull();
+    expect(result.current.error).toBe(
+      "We couldn't save your practice selection. Check your connection and try again.",
+    );
   });
 
   it('selectPractice guards against a second concurrent call while one is in flight', async () => {
