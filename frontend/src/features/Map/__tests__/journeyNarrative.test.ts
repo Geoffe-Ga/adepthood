@@ -86,6 +86,12 @@ describe('formatMinutes', () => {
     expect(formatMinutes(59.4)).toBe('59 min');
   });
 
+  it('promotes durations that round up to 60 minutes into the hours branch', () => {
+    expect(formatMinutes(59.5)).toBe('1 hr');
+    expect(formatMinutes(59.6)).toBe('1 hr');
+    expect(formatMinutes(59.99)).toBe('1 hr');
+  });
+
   it('switches to hours at the 60-minute boundary, singular at exactly 1 hour', () => {
     expect(formatMinutes(60)).toBe('1 hr');
   });
