@@ -37,9 +37,20 @@ function sanitize(value: unknown): RecentPractice[] {
 
 /** Read the recent-practice list; self-heals (returns []) on missing/corrupt data. */
 export async function loadRecentPractices(): Promise<RecentPractice[]> {
+  let raw: string | null;
   try {
-    const raw = await AsyncStorage.getItem(RECENT_PRACTICES_KEY);
-    if (raw === null) return [];
+    raw = await AsyncStorage.getItem(RECENT_PRACTICES_KEY);
+  } catch (err) {
+    // A transient read leaves the stored list intact for a later retry;
+    // clearing here would delete good data on a momentary blip.
+    console.warn(
+      `[storage] transient read error for ${RECENT_PRACTICES_KEY}, keeping stored data`,
+      err,
+    );
+    return [];
+  }
+  if (raw === null) return [];
+  try {
     return sanitize(JSON.parse(raw));
   } catch (err) {
     await resetCorruptKey(RECENT_PRACTICES_KEY, err);
