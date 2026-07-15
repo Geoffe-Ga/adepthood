@@ -120,19 +120,23 @@ def _draft_from_item(item: object) -> MarginaliaDraft | None:
     return None
 
 
-def _load_notes(raw: str) -> list[object]:
-    """Parse the completion to its ``notes`` list; [] on any malformed input."""
+def _load_json_list(raw: str, key: str) -> list[object]:
+    """Parse ``raw`` JSON and return its ``key`` list; [] on any malformed input."""
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
-    notes = payload.get("notes") if isinstance(payload, dict) else None
-    return notes if isinstance(notes, list) else []
+    value = payload.get(key) if isinstance(payload, dict) else None
+    return value if isinstance(value, list) else []
 
 
 def _parse_drafts(raw: str) -> list[MarginaliaDraft]:
     """Defensively parse the model's JSON into drafts; never raise on bad input."""
-    return [draft for item in _load_notes(raw) if (draft := _draft_from_item(item)) is not None]
+    return [
+        draft
+        for item in _load_json_list(raw, "notes")
+        if (draft := _draft_from_item(item)) is not None
+    ]
 
 
 def _sanitize_note(note: str) -> str | None:

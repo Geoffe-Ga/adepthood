@@ -13,12 +13,11 @@ dropped.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from domain.care import MEDICATION_GUARDRAIL
-from domain.resonance import ResonanceLLM, _overlaps, _quote_span
+from domain.resonance import ResonanceLLM, _load_json_list, _overlaps, _quote_span
 from security import TextTooLongError, sanitize_user_text
 
 # Domain-level literals so this module stays free of DB/model imports (mirrors
@@ -104,19 +103,13 @@ def _hit_from_item(item: object) -> _HitDraft | None:
     return None
 
 
-def _load_hits(raw: str) -> list[object]:
-    """Defensively parse the model payload into a list of items (empty on junk)."""
-    try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    hits = payload.get("hits") if isinstance(payload, dict) else None
-    return hits if isinstance(hits, list) else []
-
-
 def _parse_hit_drafts(raw: str) -> list[_HitDraft]:
     """Turn the raw payload into well-formed drafts, dropping malformed items."""
-    return [draft for item in _load_hits(raw) if (draft := _hit_from_item(item)) is not None]
+    return [
+        draft
+        for item in _load_json_list(raw, "hits")
+        if (draft := _hit_from_item(item)) is not None
+    ]
 
 
 def _sanitize_label(quote: str) -> str | None:
