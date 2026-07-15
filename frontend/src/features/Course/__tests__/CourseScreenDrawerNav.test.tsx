@@ -3,9 +3,11 @@
 // drawer. Mirrors CourseDrawer.test.tsx's headerLeftStore harness, adding a
 // stable navigate spy so the shared nav rows have somewhere to route.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { render, waitFor, fireEvent } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
+import CourseScreen from '../CourseScreen';
 
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
@@ -96,10 +98,6 @@ jest.mock('react-native-safe-area-context', () => {
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
-
-// eslint-disable-next-line import/order
-const { render, waitFor, fireEvent } = require('@testing-library/react-native');
-const CourseScreen = require('../CourseScreen').default;
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
   headerLeftStore.listeners.add(onChange);

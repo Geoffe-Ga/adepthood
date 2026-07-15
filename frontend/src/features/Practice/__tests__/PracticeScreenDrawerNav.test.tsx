@@ -1,11 +1,19 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 // RED coverage for the shared DrawerNavSection wired into the Practice header
 // drawer. Mirrors PracticeScreen.test.tsx's "header drawer" harness.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { render, waitFor, fireEvent } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
-import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
+import type {
+  FrequencyResponse,
+  PracticeInsightsResponse,
+  PracticeItem,
+  PracticeSessionResponse,
+  UserPractice,
+  WeekCountResponse,
+} from '../../../api';
+import PracticeScreen from '../PracticeScreen';
 
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
@@ -54,29 +62,45 @@ const sampleFrequency: FrequencyResponse = {
   banner_text: 'You are in the Beige frequency of APTITUDE.',
 };
 
-const mockPracticesList = (jest.fn() as any).mockResolvedValue([samplePractice()]);
-const mockUserPracticesList = (jest.fn() as any).mockResolvedValue([]);
-const mockUserPracticesCreate = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
-const mockUserPracticesCustomize = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
-const mockPracticeSessionsCreate = (jest.fn() as any).mockResolvedValue({
-  id: 100,
-  user_practice_id: 10,
-  duration_minutes: 10,
-  timestamp: '2026-04-12T10:30:00Z',
-  reflection: null,
-  mode: 'meditation_timer',
-  mode_metadata: null,
-  completed: true,
-  insight: null,
-});
-const mockWeekCount = (jest.fn() as any).mockResolvedValue({ count: 2 });
-const mockInsights = (jest.fn() as any).mockRejectedValue(new Error('insights unavailable'));
-const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
+const mockPracticesList = jest
+  .fn<(...args: unknown[]) => Promise<PracticeItem[]>>()
+  .mockResolvedValue([samplePractice()]);
+const mockUserPracticesList = jest
+  .fn<(...args: unknown[]) => Promise<UserPractice[]>>()
+  .mockResolvedValue([]);
+const mockUserPracticesCreate = jest
+  .fn<(...args: unknown[]) => Promise<UserPractice>>()
+  .mockResolvedValue(sampleUserPractice());
+const mockUserPracticesCustomize = jest
+  .fn<(...args: unknown[]) => Promise<UserPractice>>()
+  .mockResolvedValue(sampleUserPractice());
+const mockPracticeSessionsCreate = jest
+  .fn<(...args: unknown[]) => Promise<PracticeSessionResponse>>()
+  .mockResolvedValue({
+    id: 100,
+    user_practice_id: 10,
+    duration_minutes: 10,
+    timestamp: '2026-04-12T10:30:00Z',
+    reflection: null,
+    mode: 'meditation_timer',
+    mode_metadata: null,
+    completed: true,
+    insight: null,
+  });
+const mockWeekCount = jest
+  .fn<(...args: unknown[]) => Promise<WeekCountResponse>>()
+  .mockResolvedValue({ count: 2 });
+const mockInsights = jest
+  .fn<(...args: unknown[]) => Promise<PracticeInsightsResponse>>()
+  .mockRejectedValue(new Error('insights unavailable'));
+const mockFrequency = jest
+  .fn<(...args: unknown[]) => Promise<FrequencyResponse>>()
+  .mockResolvedValue(sampleFrequency);
 
 jest.mock('../../../api', () => ({
   practices: {
     listAll: (...args: unknown[]) => mockPracticesList(...args),
-    get: jest.fn() as any,
+    get: jest.fn(),
   },
   userPractices: {
     create: (...args: unknown[]) => mockUserPracticesCreate(...args),
@@ -142,10 +166,10 @@ jest.mock('@react-navigation/native', () => {
 jest.mock('expo-av', () => ({
   Audio: {
     Sound: {
-      createAsync: (jest.fn() as any).mockResolvedValue({
+      createAsync: jest.fn<() => Promise<unknown>>().mockResolvedValue({
         sound: {
-          replayAsync: (jest.fn() as any).mockResolvedValue(undefined),
-          unloadAsync: (jest.fn() as any).mockResolvedValue(undefined),
+          replayAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+          unloadAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
           setOnPlaybackStatusUpdate: jest.fn(),
         },
       }),
@@ -154,20 +178,16 @@ jest.mock('expo-av', () => ({
 }));
 
 jest.mock('expo-keep-awake', () => ({
-  activateKeepAwakeAsync: (jest.fn() as any).mockResolvedValue(undefined),
+  activateKeepAwakeAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
   deactivateKeepAwake: jest.fn(),
   useKeepAwake: jest.fn(),
 }));
 
 jest.mock('expo-haptics', () => ({
-  impactAsync: (jest.fn() as any).mockResolvedValue(undefined),
-  selectionAsync: (jest.fn() as any).mockResolvedValue(undefined),
+  impactAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  selectionAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
-
-// eslint-disable-next-line import/order
-const { render, waitFor, fireEvent } = require('@testing-library/react-native');
-const PracticeScreen = require('../PracticeScreen').default;
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
   headerLeftStore.listeners.add(onChange);
