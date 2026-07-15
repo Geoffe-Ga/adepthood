@@ -1,10 +1,10 @@
-"""RED tests -- LLM cost-metering pipeline (LLMUsageLog writes on resonance + essay).
+"""LLM cost-metering pipeline (LLMUsageLog writes on resonance + essay).
 
-Covers the write path both endpoints must call before their commit:
+Covers the write path both endpoints call before their commit:
 ``record_llm_usage`` accumulating one row per successful ``complete()`` call,
 skipping stub-provider responses, and recording ``None`` cost for an unpriced
-model. These tests fail against current code because neither ``run_resonance``
-nor ``expand_marginalia_essay`` writes any ``LLMUsageLog`` row yet.
+model. Both ``run_resonance`` and ``expand_marginalia_essay`` await
+``record_llm_usage`` before committing, so these tests assert that contract.
 """
 
 from __future__ import annotations

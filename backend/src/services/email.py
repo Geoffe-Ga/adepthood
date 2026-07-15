@@ -1,9 +1,7 @@
 """Email-sending port + adapters used by the password-recovery flow.
 
-The application has no production email provider yet (``grep -r smtp``
-in the codebase returns nothing).  Rather than ship password recovery
-without an email path, this module defines the smallest possible port
--- a single ``send`` coroutine -- and two adapters:
+This module defines the smallest possible port -- a single ``send``
+coroutine -- and two adapters:
 
 * :class:`ConsoleEmailSender` (default, used in dev and tests) writes
   the rendered email to the application logger so a developer can copy
@@ -157,7 +155,6 @@ class RecordingEmailSender:
         """Append ``message`` to :attr:`sent` (verbatim) so tests can assert on it."""
         # Discard the redaction hint -- tests need to assert on the raw
         # body, and the keyword exists only for Protocol conformance.
-        # ``del`` satisfies ruff ARG002 without a noqa comment.
         del redact_for_log
         self.sent.append(message)
 
@@ -177,8 +174,10 @@ class SmtpEmailSender:
 
     Connects per-message; for the password-recovery cadence (a handful
     of mails per user lifetime) a connection pool is unnecessary
-    overhead.  Uses STARTTLS over plain port if available, then
-    AUTH PLAIN with the configured credentials.
+    overhead.  STARTTLS is mandatory -- ``_connect`` upgrades the plain
+    connection unconditionally, so a relay that does not offer it raises
+    -- then authenticates with whatever mechanism the server advertises
+    for the configured credentials.
     """
 
     host: str
@@ -223,7 +222,6 @@ class SmtpEmailSender:
         """
         # Discard the redaction hint -- the recipient needs the full
         # link, and the keyword exists only for Protocol conformance.
-        # ``del`` satisfies ruff ARG002 without a noqa comment.
         del redact_for_log
         try:
             await asyncio.to_thread(self._send_blocking, message)
