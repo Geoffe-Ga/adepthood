@@ -31,14 +31,7 @@ export async function resetCorruptKey(key: string, err: unknown): Promise<void> 
  * `try` whose `catch` clears the key — silently deletes good data on a
  * momentary read blip, which is the bug this helper exists to prevent.
  */
-export async function getJsonArray<T>(key: string): Promise<T[] | null> {
-  let raw: string | null;
-  try {
-    raw = await AsyncStorage.getItem(key);
-  } catch (err: unknown) {
-    console.warn(`[storage] transient read error for ${key}, keeping stored data`, err);
-    return null;
-  }
+async function parseJsonArrayOrHeal<T>(key: string, raw: string | null): Promise<T[] | null> {
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -51,4 +44,30 @@ export async function getJsonArray<T>(key: string): Promise<T[] | null> {
     await resetCorruptKey(key, err);
     return null;
   }
+}
+
+export async function getJsonArray<T>(key: string): Promise<T[] | null> {
+  let raw: string | null;
+  try {
+    raw = await AsyncStorage.getItem(key);
+  } catch (err: unknown) {
+    console.warn(`[storage] transient read error for ${key}, keeping stored data`, err);
+    return null;
+  }
+  return parseJsonArrayOrHeal<T>(key, raw);
+}
+
+/**
+ * Read a JSON array as the read leg of a read-modify-write.
+ *
+ * Unlike `getJsonArray`, a transient `getItem` rejection is NOT swallowed —
+ * it PROPAGATES to the caller. `getJsonArray` is a fail-safe read that
+ * returns `null` on a momentary blip; an RMW caller must instead abort its
+ * write on that blip, because falling back to an empty array would clobber
+ * intact stored data with the write's fallback. Corrupt JSON and a valid
+ * non-array payload still self-heal to `null`; a missing key returns `null`.
+ */
+export async function getJsonArrayForUpdate<T>(key: string): Promise<T[] | null> {
+  const raw = await AsyncStorage.getItem(key);
+  return parseJsonArrayOrHeal<T>(key, raw);
 }
