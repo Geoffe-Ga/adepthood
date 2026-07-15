@@ -43,6 +43,17 @@ jest.mock('../../../api', () => ({
     }),
   },
   goalCompletions: { create: jest.fn() as any },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: (jest.fn() as any).mockResolvedValue({
+      has_seen_welcome: false,
+      energy_scaffolding_archived: false,
+    }),
+    update: (jest.fn() as any).mockResolvedValue({
+      has_seen_welcome: false,
+      energy_scaffolding_archived: true,
+    }),
+  },
 }));
 
 jest.mock('../../../context/AuthContext', () => ({

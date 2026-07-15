@@ -36,8 +36,8 @@ export const useHabits = (): UseHabitsReturn => {
   const error = useHabitStore((s) => s.error);
   const storeSetHabits = useHabitStore((s) => s.setHabits);
   const { showToast } = useToast();
-  const { userTimezone } = useAuth();
-  const ui = useHabitUI();
+  const { userTimezone, token } = useAuth();
+  const ui = useHabitUI(token);
   useBootstrapHabits(userTimezone);
   const actions = useHabitActions(ui, showToast, userTimezone);
 

@@ -31,6 +31,11 @@ jest.mock('../../../api', () => ({
     }),
   },
   goalCompletions: { create: jest.fn() },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: (jest.fn() as any).mockRejectedValue(new Error('no server hydration configured')),
+    update: jest.fn(),
+  },
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
