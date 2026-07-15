@@ -7,7 +7,7 @@ import { MS_PER_MINUTE } from '../engine/types';
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SessionContainer } from './shared';
+import { SESSION_CAPTION_LABEL, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -71,9 +71,7 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
   },
   unit: {
-    fontSize: 14,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
+    ...SESSION_CAPTION_LABEL,
     marginTop: SPACING.xs,
   },
   timeCap: {

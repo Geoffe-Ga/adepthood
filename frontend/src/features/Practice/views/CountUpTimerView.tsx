@@ -6,7 +6,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SUCCESS_FILL, SessionContainer } from './shared';
+import { SESSION_CAPTION_LABEL, SUCCESS_FILL, SessionContainer } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
 
@@ -48,11 +48,9 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xxl,
   },
   label: {
-    fontSize: 14,
+    ...SESSION_CAPTION_LABEL,
     marginTop: SPACING.xs,
     marginBottom: SPACING.xl,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
   },
   endButton: {
     paddingVertical: SPACING.md,

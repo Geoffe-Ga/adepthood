@@ -6,7 +6,7 @@ import type { MetronomeConfig, RitualControls, RitualState } from '../engine/typ
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SessionContainer } from './shared';
+import { SESSION_CAPTION_LABEL, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -69,9 +69,7 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xl,
   },
   label: {
-    fontSize: 14,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
+    ...SESSION_CAPTION_LABEL,
     marginBottom: SPACING.xl,
   },
   dot: {
