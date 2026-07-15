@@ -3,7 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import { PrimaryButton } from '../PrimaryButton';
+import { SessionCtaButton } from '../SessionCtaButton';
 
 import { colors } from '@/design/tokens';
 
@@ -14,12 +14,12 @@ const flatten = (style: unknown): Record<string, unknown> => {
   return flattened;
 };
 
-describe('PrimaryButton', () => {
+describe('SessionCtaButton', () => {
   it('renders the label text', () => {
     const { getByText } = render(
-      <PrimaryButton
+      <SessionCtaButton
         label="Begin meditation"
-        testID="primary-probe"
+        testID="cta"
         accessibilityLabel="Begin meditation"
       />,
     );
@@ -28,69 +28,79 @@ describe('PrimaryButton', () => {
 
   it('exposes the button accessibility role', () => {
     const { getByTestId } = render(
-      <PrimaryButton label="Begin" testID="primary-probe" accessibilityLabel="Begin" />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin" />,
     );
-    expect(getByTestId('primary-probe').props.accessibilityRole).toBe('button');
+    expect(getByTestId('cta').props.accessibilityRole).toBe('button');
   });
 
   it('forwards the accessibilityLabel', () => {
     const { getByTestId } = render(
-      <PrimaryButton label="Begin" testID="primary-probe" accessibilityLabel="Begin meditation" />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin meditation" />,
     );
-    expect(getByTestId('primary-probe').props.accessibilityLabel).toBe('Begin meditation');
+    expect(getByTestId('cta').props.accessibilityLabel).toBe('Begin meditation');
   });
 
   it('fires onPress when enabled', () => {
     const onPress = jest.fn();
     const { getByTestId } = render(
-      <PrimaryButton
-        label="Begin"
-        testID="primary-probe"
-        accessibilityLabel="Begin"
-        onPress={onPress}
-      />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin" onPress={onPress} />,
     );
-    fireEvent.press(getByTestId('primary-probe'));
+    fireEvent.press(getByTestId('cta'));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
   it('does not call onPress when disabled', () => {
     const onPress = jest.fn();
     const { getByTestId } = render(
-      <PrimaryButton
+      <SessionCtaButton
         label="Begin"
-        testID="primary-probe"
+        testID="cta"
         accessibilityLabel="Begin"
         onPress={onPress}
         disabled
       />,
     );
-    fireEvent.press(getByTestId('primary-probe'));
+    fireEvent.press(getByTestId('cta'));
     expect(onPress).not.toHaveBeenCalled();
   });
 
   it('dims to opacity 0.5 when disabled, via a flat style array', () => {
     const { getByTestId } = render(
-      <PrimaryButton label="Begin" testID="primary-probe" accessibilityLabel="Begin" disabled />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin" disabled />,
     );
-    const flattened = flatten(getByTestId('primary-probe').props.style);
+    const flattened = flatten(getByTestId('cta').props.style);
     expect(flattened.opacity).toBe(0.5);
   });
 
   it('reflects disabled in accessibilityState', () => {
     const { getByTestId } = render(
-      <PrimaryButton label="Begin" testID="primary-probe" accessibilityLabel="Begin" disabled />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin" disabled />,
     );
-    expect(getByTestId('primary-probe').props.accessibilityState).toEqual({ disabled: true });
+    expect(getByTestId('cta').props.accessibilityState).toEqual({ disabled: true });
   });
 
-  it('fills the background with the primary token', () => {
+  it('fills the background with the primary token by default', () => {
     const { getByTestId } = render(
-      <PrimaryButton label="Begin" testID="primary-probe" accessibilityLabel="Begin" />,
+      <SessionCtaButton label="Begin" testID="cta" accessibilityLabel="Begin" />,
     );
-    const flattened = StyleSheet.flatten(getByTestId('primary-probe').props.style) as {
+    const flattened = StyleSheet.flatten(getByTestId('cta').props.style) as {
       backgroundColor?: string;
     };
     expect(flattened.backgroundColor).toBe(colors.primary);
+  });
+
+  it('fills the background with the success token for the success variant', () => {
+    const { getByTestId } = render(
+      <SessionCtaButton
+        label="Save session"
+        testID="cta"
+        accessibilityLabel="Save session and reflect"
+        variant="success"
+      />,
+    );
+    const flattened = StyleSheet.flatten(getByTestId('cta').props.style) as {
+      backgroundColor?: string;
+    };
+    expect(flattened.backgroundColor).toBe(colors.success);
   });
 });

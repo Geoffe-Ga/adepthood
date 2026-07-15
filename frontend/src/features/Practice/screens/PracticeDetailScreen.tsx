@@ -28,6 +28,7 @@ import {
   surfaceShadow,
 } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
+import { resolvePickableMode } from '@/features/Practice/components/ModePicker';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import StageSelector from '@/features/Practice/components/StageSelector';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
@@ -249,7 +250,7 @@ const DetailHeader = ({ practice }: DetailHeaderProps): React.JSX.Element => (
       {practice.name}
     </Text>
     <View style={styles.metaRow}>
-      <BadgeChip label={practice.mode ?? 'meditation_timer'} testID="practice-detail-mode-badge" />
+      <BadgeChip label={resolvePickableMode(practice.mode)} testID="practice-detail-mode-badge" />
       <BadgeChip label={`Stage ${practice.stage_number}`} testID="practice-detail-stage-badge" />
       <BadgeChip
         label={formatDuration(practice.default_duration_minutes)}

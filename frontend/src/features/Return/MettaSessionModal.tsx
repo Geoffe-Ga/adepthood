@@ -30,7 +30,7 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { CALM_SURFACE, SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
-import { PrimaryButton, SessionContainer } from '@/features/Practice/views/shared';
+import { SessionContainer, SessionCtaButton } from '@/features/Practice/views/shared';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 /** The first phrase index — a running session always opens on the opening wish. */
@@ -98,7 +98,7 @@ function IdlePhase({
     <>
       <Text style={styles.heading}>{METTA_SESSION_HEADING}</Text>
       {weekTitle ? <Text style={styles.weekTitle}>{weekTitle}</Text> : null}
-      <PrimaryButton
+      <SessionCtaButton
         label={METTA_SESSION_BEGIN}
         onPress={onBegin}
         testID="metta-session-begin"
@@ -119,7 +119,7 @@ function RunningPhase({
   return (
     <>
       <Text style={styles.phrase}>{phrase}</Text>
-      <PrimaryButton
+      <SessionCtaButton
         label={METTA_SESSION_ADVANCE}
         onPress={onAdvance}
         testID="metta-session-advance"

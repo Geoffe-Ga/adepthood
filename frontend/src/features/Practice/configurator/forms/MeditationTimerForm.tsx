@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import type { MeditationTimerConfig } from '../../engine/types';
 
-import { LabeledRow, NumericField, ToggleRow } from './shared';
+import { DurationRow, ToggleRow } from './shared';
 
 interface Props {
   value: MeditationTimerConfig;
@@ -20,13 +20,11 @@ const MeditationTimerForm = ({
   const update = (patch: Partial<MeditationTimerConfig>) => onChange({ ...value, ...patch });
   return (
     <View testID={`${idPrefix}-form`}>
-      <LabeledRow label="Duration (minutes)">
-        <NumericField
-          value={value.duration_minutes}
-          onChange={(next) => update({ duration_minutes: next ?? 0 })}
-          testID={`${idPrefix}-duration`}
-        />
-      </LabeledRow>
+      <DurationRow
+        value={value.duration_minutes}
+        onChange={(duration_minutes) => update({ duration_minutes })}
+        testID={`${idPrefix}-duration`}
+      />
       <ToggleRow
         label="Start bell"
         value={value.start_bell ?? true}

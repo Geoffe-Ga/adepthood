@@ -47,7 +47,11 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
-import { MODE_CATEGORIES, type PickableMode } from '@/features/Practice/components/ModePicker';
+import {
+  MODE_CATEGORIES,
+  resolvePickableMode,
+  type PickableMode,
+} from '@/features/Practice/components/ModePicker';
 import StageSelector from '@/features/Practice/components/StageSelector';
 import { MIN_STAGE } from '@/features/Practice/constants';
 import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
@@ -365,7 +369,7 @@ interface RecentRowProps {
 }
 
 const RecentRow = ({ recent, onDetail }: RecentRowProps): React.JSX.Element => {
-  const mode = (recent.mode ?? 'meditation_timer') as PickableMode;
+  const mode = resolvePickableMode(recent.mode);
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const rounded = Math.round(recent.durationMinutes);
   return (
@@ -578,7 +582,7 @@ const PracticeRowComponent = ({
   onDetail,
   onUse,
 }: PracticeRowProps): React.JSX.Element => {
-  const mode = (practice.mode ?? 'meditation_timer') as PickableMode;
+  const mode = resolvePickableMode(practice.mode);
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const rounded = Math.round(practice.default_duration_minutes);
   const subtitle = `${label} · ${formatDuration(rounded)}`;
@@ -635,7 +639,7 @@ function applyFilters(
       if (!haystack.includes(needle)) return false;
     }
     if (modes !== null) {
-      const mode = (item.mode ?? 'meditation_timer') as PickableMode;
+      const mode = resolvePickableMode(item.mode);
       if (!modes.has(mode)) return false;
     }
     return true;

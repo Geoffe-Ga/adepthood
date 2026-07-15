@@ -7,7 +7,9 @@
  * uses for `PracticeRecipeStepInput`).
  */
 
-export type RecipeMode = 'sense_grounding' | 'tallied_grounding';
+import type { RecipeMode } from '@/api';
+
+export type { RecipeMode };
 
 export interface DraftStep {
   /** Stable client-side id so React's key prop survives reordering. */
