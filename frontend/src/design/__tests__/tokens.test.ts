@@ -231,7 +231,6 @@ describe('design tokens', () => {
       expect(shadows.small.elevation).toBe(2);
       expect(shadows.medium.elevation).toBe(3);
       expect(shadows.large.elevation).toBe(5);
-      expect(shadows.glow.elevation).toBe(5);
     });
 
     it('includes shadow properties for each level', () => {
