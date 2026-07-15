@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import curriculum
 from models.course_stage import CourseStage
-from seed_helpers import existing_system_keys
+from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
 
 #: The curriculum dataset does not carry per-Stage overview URLs; they are a
 #: seeder concern and default to empty until populated elsewhere.
@@ -47,7 +47,11 @@ STAGE_DEFINITIONS: list[dict[str, str | int]] = [
 async def seed_stages(session: AsyncSession) -> int:
     """Insert stage definitions if they don't already exist.
 
-    Returns the number of stages inserted.
+    Returns the number of stages inserted.  The commit is race-safe: two
+    workers booting concurrently (uvicorn ``--workers N``) can both pass the
+    existence check on a fresh database, so the loser's commit hits the
+    ``ix_coursestage_stage_number_unique`` index (migration ``b4c5d6e7f8a1``)
+    and yields as a no-op instead of duplicating every stage.
     """
     existing = await existing_system_keys(session, CourseStage.stage_number)
 
@@ -59,5 +63,5 @@ async def seed_stages(session: AsyncSession) -> int:
             inserted += 1
 
     if inserted:
-        await session.commit()
+        return await commit_or_yield_to_race_winner(session, inserted)
     return inserted

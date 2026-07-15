@@ -30,6 +30,7 @@ from sqlmodel import select
 from content_config import ChapterRecord, all_chapter_records
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
+from seed_helpers import commit_or_yield_to_race_winner
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,10 @@ async def seed_content(session: AsyncSession) -> int:
     inserted, dirty = _reconcile_all(session, stage_map, existing)
 
     if dirty:
-        await session.commit()
+        # Race-safe commit: a peer worker that seeded the same chapters
+        # between our existence read and this commit trips the
+        # ``ix_stagecontent_stage_content_ref_unique`` index (migration
+        # ``b4c5d6e7f8a1``); the loser rolls back and reports 0 inserts.
+        inserted = await commit_or_yield_to_race_winner(session, inserted)
     _warn_unmapped_manifest_stages(stage_map)
     return inserted

@@ -105,6 +105,19 @@ covering "one manifest stage is unmapped, do the mapped stages still
 seed?"; that gap is now pinned by a test asserting Stage 1 serves its
 17 chapters even when stages 4–10 have no `CourseStage` row.
 
+Seeding is also **multi-worker safe**. The production image boots
+uvicorn with `--workers 2`, so every seeder runs once per worker,
+concurrently, on each deploy. Against a fresh database both workers'
+existence checks used to pass and every `CourseStage` row landed twice
+— with all the content mapped onto only one of the duplicate ids, so
+the course endpoints (which resolve stages with an unordered
+`.first()`) served the content-less duplicate: "No Content Yet" with
+all-200 responses. Migration `b4c5d6e7f8a1` deduplicates any such rows
+(preserving read-marks) and adds unique indexes on
+`coursestage.stage_number` and `stagecontent (course_stage_id, url)`
+for `content://` rows; the seeders yield to the race winner when those
+indexes reject their insert, logging `inserted=0`.
+
 ## How the app serves it
 
 * `StageContent.url` holds a local `content://<chapter-id>` reference —

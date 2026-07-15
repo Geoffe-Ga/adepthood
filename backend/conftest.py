@@ -78,6 +78,19 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # user-submitted practices are exempt via the partial ``WHERE`` clause.
     'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practice_preset_stage_lower_name_unique_test" '
     "ON practice (stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL",
+    # coursestage: one row per stage_number. Closes the two-worker startup
+    # seeder race that duplicated every stage on a fresh database and left
+    # the Course screen serving the content-less duplicate ("No Content
+    # Yet" with all-200 responses). Mirrors production migration
+    # ``b4c5d6e7f8a1``.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_number_unique_test" '
+    "ON coursestage (stage_number)",
+    # stagecontent: one ``content://`` reference per stage — the seeder's
+    # stable chapter identity. Scoped to the content:// scheme so legacy
+    # rows with empty/CMS urls stay unconstrained. Mirrors production
+    # migration ``b4c5d6e7f8a1``.
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_stagecontent_stage_content_ref_unique_test" '
+    "ON stagecontent (course_stage_id, url) WHERE url LIKE 'content://%'",
 )
 
 # Concurrency-only indexes: the regular ``db_session`` fixture deliberately
