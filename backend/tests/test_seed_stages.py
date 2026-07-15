@@ -34,27 +34,6 @@ async def test_seed_stages_idempotent(db_session: AsyncSession) -> None:
     assert len(stages) == len(STAGE_DEFINITIONS)
 
 
-@pytest.mark.asyncio
-async def test_seed_stages_definitions_valid() -> None:
-    """All definitions should have the required fields."""
-    required_fields = {
-        "stage_number",
-        "title",
-        "subtitle",
-        "overview_url",
-        "category",
-        "aspect",
-        "spiral_dynamics_color",
-        "growing_up_stage",
-        "divine_gender_polarity",
-        "relationship_to_free_will",
-        "free_will_description",
-    }
-    for defn in STAGE_DEFINITIONS:
-        msg = f"Missing fields in stage {defn.get('stage_number')}"
-        assert required_fields.issubset(defn.keys()), msg
-
-
 # Golden values pinned from the pre-refactor STAGE_DEFINITIONS literal so a
 # migration to a curriculum-backed source cannot silently change behavior.
 _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
@@ -219,9 +198,3 @@ def test_stage_definitions_match_golden_values() -> None:
         for field in _GOLDEN_FIELDS:
             msg = f"stage {golden['stage_number']} field {field!r} mismatch"
             assert actual[field] == golden[field], msg
-
-
-def test_stage_definitions_overview_url_is_empty_for_all() -> None:
-    """overview_url golden value is the empty string for every stage."""
-    for defn in STAGE_DEFINITIONS:
-        assert defn["overview_url"] == ""

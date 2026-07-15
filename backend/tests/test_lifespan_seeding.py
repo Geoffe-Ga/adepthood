@@ -40,9 +40,9 @@ _EXPECTED_PRACTICE_COUNT = len(PRESET_PRACTICES)
 def _expected_content_count() -> int:
     """Rows the content seeder should produce in this environment.
 
-    Sourced from ``desired_content_records()`` — manifest chapters (none
-    in the test environment until a content pin is vendored).  Computed at
-    call time because the manifest is runtime data.
+    Sourced from ``desired_content_records()`` — the vendored manifest's
+    chapters plus site resources, which are present in the test environment.
+    Computed at call time because the manifest is runtime data.
     """
     return len(desired_content_records())
 
