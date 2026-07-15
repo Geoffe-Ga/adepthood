@@ -22,9 +22,10 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
-# One million — the denominator for provider rate cards.  ``Decimal``
-# constants are constructed via ``str`` so ``Decimal(1_000_000)`` does
-# not accidentally absorb float-precision noise — the literal is exact.
+# One million — the denominator for provider rate cards.  An int literal
+# is exact in ``Decimal``, so no string quoting is needed here; the module
+# reserves ``Decimal("...")`` for the fractional constants (e.g.
+# ``_COST_QUANTUM``) where a bare float literal would absorb precision noise.
 _TOKENS_PER_MILLION = Decimal(1000000)
 
 # Six decimal places of precision for stored cost — same scale used by
@@ -79,11 +80,6 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "claude-opus-4-7": _price("15.00", "75.00"),
     "claude-sonnet-4-6": _price("3.00", "15.00"),
 }
-
-
-def get_model_pricing(model: str) -> ModelPricing | None:
-    """Return the :class:`ModelPricing` for ``model`` or ``None`` when unknown."""
-    return MODEL_PRICING.get(model)
 
 
 def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> Decimal | None:
