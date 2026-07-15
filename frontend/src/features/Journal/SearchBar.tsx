@@ -1,7 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { accent, ink, radius, SPACING, surface } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  accent,
+  editorialType,
+  ink,
+  radius,
+  surface,
+  touchTarget,
+  uiType,
+} from '@/design/tokens';
 
 const DEBOUNCE_DELAY_MS = 300;
 
@@ -36,9 +46,9 @@ interface ExpandedSearchBarProps {
 
 /** The result line: "No results …" when a query came back empty, else the count. */
 function resultLine(searchQuery: string, resultCount: number): string {
-  return resultCount === 0
-    ? `No results for '${searchQuery}'`
-    : `${resultCount} results for '${searchQuery}'`;
+  if (resultCount === 0) return `No results for '${searchQuery}'`;
+  const noun = resultCount === 1 ? 'result' : 'results';
+  return `${resultCount} ${noun} for '${searchQuery}'`;
 }
 
 /** The warm-palette text field; owns its own accent-on-focus border. */
@@ -119,11 +129,8 @@ const SearchBar = ({ onSearch, resultCount, searchQuery }: SearchBarProps): Reac
   const [text, setText] = useState(searchQuery ?? '');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // BUG-FE-JOURNAL-105: keep local ``text`` in sync with the controlling
-  // ``searchQuery`` prop.  Without this, a parent that programmatically
-  // resets the query (e.g. clearing on tab change) leaves the input
-  // showing the stale text -- and a pending debounce would then re-fire
-  // ``onSearch(stale)`` and clobber the parent's reset.
+  // Keep the local text in sync when the parent resets the searchQuery prop
+  // (e.g. clearing on tab change), so the field mirrors the controlled value.
   useEffect(() => {
     setText((current) => (current === (searchQuery ?? '') ? current : (searchQuery ?? '')));
   }, [searchQuery]);
@@ -188,51 +195,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   searchToggle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: touchTarget.minimum,
+    height: touchTarget.minimum,
+    borderRadius: BORDER_RADIUS.circle,
     backgroundColor: surface.sunken,
     alignItems: 'center',
     justifyContent: 'center',
   },
   searchIcon: {
-    fontSize: 16,
+    ...uiType.button,
     color: ink.soft,
-    fontWeight: '600',
   },
   searchTextInput: {
     flex: 1,
     marginHorizontal: SPACING.sm,
-    height: 36,
+    height: touchTarget.minimum,
     paddingHorizontal: SPACING.md,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: surface.hairline,
     backgroundColor: surface.raised,
-    fontSize: 14,
+    fontSize: editorialType.note.fontSize,
     color: ink.primary,
   },
   searchTextInputFocused: {
     borderColor: accent.primary,
   },
   searchClear: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: touchTarget.minimum,
+    height: touchTarget.minimum,
+    borderRadius: BORDER_RADIUS.circle,
     backgroundColor: surface.sunken,
     alignItems: 'center',
     justifyContent: 'center',
   },
   searchClearText: {
-    fontSize: 14,
+    ...uiType.button,
     color: ink.soft,
-    fontWeight: '600',
   },
   searchResultCount: {
-    fontSize: 12,
+    ...editorialType.caption,
     color: ink.muted,
     marginTop: SPACING.xs,
-    marginLeft: 44,
+    marginLeft: touchTarget.minimum + SPACING.sm,
   },
 });
 
