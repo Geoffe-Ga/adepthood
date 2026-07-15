@@ -8,7 +8,7 @@ import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { SessionContainer } from './shared';
+import { SESSION_BIG_TIME, SESSION_CAPTION_LABEL, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -104,15 +104,11 @@ const OffsetRow = ({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   label: {
-    fontSize: 14,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
+    ...SESSION_CAPTION_LABEL,
     marginTop: SPACING.xl,
   },
   time: {
-    fontSize: 48,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
+    ...SESSION_BIG_TIME,
     marginVertical: SPACING.md,
   },
   list: { width: '100%', maxHeight: 220, marginVertical: SPACING.md },

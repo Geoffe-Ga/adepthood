@@ -32,6 +32,7 @@ import {
   PRIMARY_FILL,
   SESSION_BUTTON_BASE,
   SESSION_BUTTON_TEXT,
+  SESSION_CAPTION_LABEL,
   SessionContainer,
   SessionCtaButton,
 } from './shared';
@@ -374,10 +375,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   elapsedLabel: {
-    fontSize: 14,
+    ...SESSION_CAPTION_LABEL,
     marginTop: SPACING.xs,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
   },
   begin: { ...SESSION_BUTTON_BASE, ...PRIMARY_FILL, marginBottom: SPACING.xl },
   beginText: { ...SESSION_BUTTON_TEXT },

@@ -44,3 +44,17 @@ export const MEDITATION_TIMER_LABEL: TextStyle = {
   fontVariant: ['tabular-nums'],
   marginBottom: SPACING.lg,
 };
+
+/** Uppercase small-caps caption label under a session readout. */
+export const SESSION_CAPTION_LABEL: TextStyle = {
+  fontSize: 14,
+  textTransform: 'uppercase',
+  letterSpacing: 2,
+};
+
+/** Large tabular time readout used by the interval-bell session views. */
+export const SESSION_BIG_TIME: TextStyle = {
+  fontSize: 48,
+  fontWeight: '300',
+  fontVariant: ['tabular-nums'],
+};

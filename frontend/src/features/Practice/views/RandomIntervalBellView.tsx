@@ -16,7 +16,7 @@ import { MS_PER_SECOND, RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from
 import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SessionContainer } from './shared';
+import { SESSION_BIG_TIME, SESSION_CAPTION_LABEL, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -196,15 +196,11 @@ function nextBellHint(
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   label: {
-    fontSize: 14,
-    textTransform: 'uppercase',
-    letterSpacing: 2,
+    ...SESSION_CAPTION_LABEL,
     marginTop: SPACING.xl,
   },
   time: {
-    fontSize: 48,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
+    ...SESSION_BIG_TIME,
     marginVertical: SPACING.md,
   },
   count: {

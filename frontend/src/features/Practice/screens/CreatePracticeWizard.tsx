@@ -68,6 +68,7 @@ export const PRACTICE_NAME_MAX = 120;
 export const PRACTICE_DESCRIPTION_MAX = 1_000;
 export const PRACTICE_INSTRUCTIONS_MAX = 2_000;
 const PRACTICE_NAME_MIN = 1;
+const DEFAULT_SUGGESTED_MINUTES = 10;
 
 type WizardStep = 'entry' | 'mode' | 'configure' | 'metadata';
 
@@ -448,7 +449,7 @@ const InstructionsField = ({ state, setState }: MetadataFieldProps): React.JSX.E
 );
 
 const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => {
-  const suggested = state.config ? suggestedDurationFor(state.config) : 10;
+  const suggested = state.config ? suggestedDurationFor(state.config) : DEFAULT_SUGGESTED_MINUTES;
   return (
     <FieldLabel label="Default duration (minutes)">
       <TextInput

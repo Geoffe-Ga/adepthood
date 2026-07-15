@@ -1,5 +1,6 @@
 // Rider-Waite-Smith deck content (78 cards) for the card_meditation practice mode.
 
+import { slugifyCore } from '../../utils/slugify';
 import { MAJOR_ARCANA } from '../tarot';
 
 import type { CardMeta } from './index';
@@ -13,10 +14,7 @@ type CardRow = readonly [slug: string, name: string, keyword: string, symbolism:
 
 /** Derive a card slug from its display name; shared with the major_arcana_text deck. */
 export function deriveSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '_')
-    .replaceAll(/^_+|_+$/g, '');
+  return slugifyCore(name);
 }
 
 // Major arcana derive from the canonical MAJOR_ARCANA (tarot.ts) so the two decks cannot drift.
