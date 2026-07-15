@@ -40,7 +40,7 @@ export const colors = {
     // headings where AAA isn't required and the softer hue reads nicer.
     primary: '#333333',
     secondary: '#666666',
-    secondaryAccessible: '#555555', // 7.22:1 on #f8f8f8 — AAA normal text
+    secondaryAccessible: '#555555', // 7.02:1 on #f8f8f8 — AAA normal text
     tertiary: '#999999',
     tertiaryAccessible: '#707070', // 5.25:1 on #f8f8f8 — AA normal text
     light: '#ffffff',
@@ -335,13 +335,6 @@ export const shadows = {
     shadowRadius: 4,
     elevation: 5,
   },
-  glow: {
-    shadowColor: colors.paper.ink,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-  },
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -372,7 +365,7 @@ export const tileDensity = { paddingV: 0.5, barGap: 0.5 } as const;
 /** React Navigation's default bottom tab-bar content height; bump if the tab bar is restyled taller. */
 export const BOTTOM_TAB_BAR_CONTENT_HEIGHT = 49;
 
-/** WCAG-AA on the white modal card: #555 = 7.22:1 on #ffffff (AAA normal). */
+/** WCAG-AA on the white modal card: #555 = 7.46:1 on #ffffff (AAA normal). */
 export const CHART_AXIS_LABEL_COLOR = '#555555';
 
 export const CHART_STYLE = {
@@ -384,12 +377,6 @@ export const CHART_STYLE = {
 } as const;
 
 export const breakpoints = { xs: 0, sm: 360, md: 600, lg: 900, xl: 1200 } as const;
-
-export const elevation = {
-  sm: 1,
-  md: 3,
-  lg: 6,
-} as const;
 
 /** Responsive font sizes based on viewport width. */
 export const typography = (width: number) => {
