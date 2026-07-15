@@ -15,10 +15,10 @@ import logging
 import os
 import re
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import anthropic
 import httpx
@@ -29,10 +29,14 @@ from errors import bad_request, payment_required
 from security import sanitize_user_text
 
 if TYPE_CHECKING:
-    from anthropic.types import MessageParam
-    from openai.types.chat import ChatCompletionMessageParam
+    from anthropic.types import Message, MessageParam
+    from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
+
+# Awaited result type threaded through the retry helper so concrete provider
+# response types survive the retry wrapper instead of being erased to ``object``.
+_ResultT = TypeVar("_ResultT")
 
 # Default system prompt used when no external prompt file is configured.
 _DEFAULT_SYSTEM_PROMPT = (
@@ -568,19 +572,20 @@ def _is_retryable(exc: Exception) -> bool:
     return status_code is not None and int(status_code) in _RETRYABLE_STATUS_CODES
 
 
-async def _retry_on_transient(
-    coro_factory: Callable[[], object],
-) -> object:
+async def _retry_on_transient(  # noqa: UP047
+    coro_factory: Callable[[], Awaitable[_ResultT]],
+) -> _ResultT:
     """Retry a provider call on transient failures (BUG-JOURNAL-006).
 
     Only retries 429 / 5xx / network errors.  Uses exponential backoff
     (1s, 2s) with at most ``_MAX_RETRIES`` attempts.  Non-retryable errors
-    are re-raised immediately.
+    are re-raised immediately.  Generic over the awaited result so the caller
+    keeps the provider's concrete response type.
     """
     last_exc: BaseException | None = None
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            return await coro_factory()  # type: ignore[misc]
+            return await coro_factory()
         except Exception as exc:
             last_exc = exc
             if not _is_retryable(exc) or attempt == _MAX_RETRIES:
@@ -727,7 +732,7 @@ async def _call_openai(
     messages = _build_messages(user_message, conversation_history, system_prompt)
     max_tokens = _dynamic_max_tokens(conversation_history)
 
-    async def _do_call() -> object:
+    async def _do_call() -> ChatCompletion:
         return await client.chat.completions.create(
             model=model,
             messages=cast("list[ChatCompletionMessageParam]", messages),
@@ -737,7 +742,7 @@ async def _call_openai(
     completion = await _retry_on_transient(_do_call)
     usage = getattr(completion, "usage", None)
     return LLMResponse(
-        text=str(completion.choices[0].message.content or ""),  # type: ignore[attr-defined]
+        text=str(completion.choices[0].message.content or ""),
         provider="openai",
         model=model,
         prompt_tokens=extract_token_count(usage, "prompt_tokens"),
@@ -766,7 +771,7 @@ async def _call_anthropic(
     )
     max_tokens = _dynamic_max_tokens(conversation_history)
 
-    async def _do_call() -> object:
+    async def _do_call() -> Message:
         return await client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -775,7 +780,7 @@ async def _call_anthropic(
         )
 
     response = await _retry_on_transient(_do_call)
-    block = response.content[0]  # type: ignore[attr-defined]
+    block = response.content[0]
     text = str(block.text) if hasattr(block, "text") else str(block)
     usage = getattr(response, "usage", None)
     return LLMResponse(
