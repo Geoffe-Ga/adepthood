@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .prompt_response import PromptResponse
     from .stage_progress import StageProgress
     from .user_depth_preferences import UserDepthPreferences
+    from .user_ui_flags import UserUiFlags
 
 
 def _default_reset_date() -> datetime:
@@ -129,6 +130,10 @@ class User(SQLModel, table=True):
     responses: list["PromptResponse"] = Relationship(back_populates="user")
     stage_progress: Optional["StageProgress"] = Relationship(back_populates="user")
     depth_preferences: Optional["UserDepthPreferences"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"passive_deletes": True},
+    )
+    ui_flags: Optional["UserUiFlags"] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"passive_deletes": True},
     )

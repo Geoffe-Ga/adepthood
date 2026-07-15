@@ -2316,3 +2316,154 @@ def test_hier_reflection_migration_round_trip_on_sqlite(
     assert "reflection_level" in journal_cols_final
     assert "reflection_scope_key" in journal_cols_final
     assert _table_exists(db_url, "promotedquote")
+
+
+# -- useruiflags table migration round-trip -----------------------------------
+
+# down_revision is a9b0c1d2e3f4 (the promotedquote.stale migration, current head).
+_USER_UI_FLAGS_BASE_REVISION = "a9b0c1d2e3f4"  # pragma: allowlist secret
+_USER_UI_FLAGS_REVISION = "b4c5d6e7f8a1"  # pragma: allowlist secret
+
+
+def _bootstrap_user_table_for_ui_flags(sync_url: str) -> None:
+    """Pre-create a minimal ``user`` table with two seeded rows.
+
+    Mirrors the schema the ui-flags migration expects to find at
+    ``a9b0c1d2e3f4``. Two rows are seeded to prove the migration performs
+    no backfill even though existing users are present.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'alice@example.com')"))
+        conn.execute(text("INSERT INTO user (id, email) VALUES (2, 'bob@example.com')"))
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_user_ui_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the ui-flags migration.
+
+    Bootstraps a minimal ``user`` table with two pre-existing rows and stamps
+    the DB at ``a9b0c1d2e3f4`` (the current chain head before this migration)
+    so the round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "user_ui_flags_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_user_table_for_ui_flags(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _USER_UI_FLAGS_BASE_REVISION)
+    return cfg
+
+
+def _ui_flags_row_count(db_url: str) -> int:
+    """Return the number of rows in ``useruiflags``."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            count: int = conn.execute(text("SELECT count(*) FROM useruiflags")).scalar_one()
+            return count
+    finally:
+        engine.dispose()
+
+
+def _insert_ui_flags_row_with_defaults(db_url: str, user_id: int) -> None:
+    """Insert a ``useruiflags`` row naming only ``user_id`` (raises on constraint violation)."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO useruiflags (user_id) VALUES (:u)"),
+                {"u": user_id},
+            )
+    finally:
+        engine.dispose()
+
+
+def _ui_flags_row(db_url: str, user_id: int) -> dict[str, Any]:
+    """Fetch a single ``useruiflags`` row by ``user_id``."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT user_id, has_seen_welcome, energy_scaffolding_archived"
+                        " FROM useruiflags WHERE user_id = :u"
+                    ),
+                    {"u": user_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_user_ui_flags_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_user_ui_flags: Config,
+) -> None:
+    """Round-trip the ui-flags migration: upgrade creates an empty table; downgrade drops it.
+
+    Phase 1: upgrade creates ``useruiflags`` with zero rows despite two
+    pre-existing users -- the no-backfill design provisions rows only on
+    first GET, not via migration.
+    Phase 2: an insert naming only ``user_id`` proves both flag columns are
+    NOT NULL with a DB-level default of false.
+    Phase 3: a second insert for the same ``user_id`` violates the unique
+    constraint on that column.
+    Phase 4: downgrade drops the table entirely.
+    Phase 5: re-upgrade is idempotent -- the table is recreated empty.
+    """
+    cfg = alembic_sqlite_config_user_ui_flags
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade creates the table with zero rows (no backfill).
+    command.upgrade(cfg, _USER_UI_FLAGS_REVISION)
+    assert _table_exists(db_url, "useruiflags")
+    cols = _columns_of(db_url, "useruiflags")
+    assert {
+        "id",
+        "user_id",
+        "has_seen_welcome",
+        "energy_scaffolding_archived",
+    }.issubset(cols)
+    assert _ui_flags_row_count(db_url) == 0, (
+        "Existing users must not be backfilled; rows are provisioned on first GET."
+    )
+
+    # Phase 2: an insert naming only user_id proves both flags are NOT NULL
+    # with a DB-level default of false.
+    _insert_ui_flags_row_with_defaults(db_url, user_id=1)
+    row = _ui_flags_row(db_url, user_id=1)
+    assert bool(row["has_seen_welcome"]) is False
+    assert bool(row["energy_scaffolding_archived"]) is False
+
+    # Phase 3: user_id carries a unique constraint -- a second row for the
+    # same user is rejected.
+    with pytest.raises(IntegrityError):
+        _insert_ui_flags_row_with_defaults(db_url, user_id=1)
+
+    # Phase 4: downgrade drops the table entirely.
+    command.downgrade(cfg, _USER_UI_FLAGS_BASE_REVISION)
+    assert not _table_exists(db_url, "useruiflags")
+
+    # Phase 5: re-upgrade reproduces the empty table (idempotent cycle).
+    command.upgrade(cfg, _USER_UI_FLAGS_REVISION)
+    assert _table_exists(db_url, "useruiflags")
+    assert _ui_flags_row_count(db_url) == 0

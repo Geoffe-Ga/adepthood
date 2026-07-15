@@ -30,6 +30,7 @@ from .stage_progress import StageProgress
 from .user import User
 from .user_depth_preferences import UserDepthPreferences
 from .user_practice import UserPractice
+from .user_ui_flags import UserUiFlags
 from .wallet_audit import WalletAudit
 
 __all__ = [
@@ -64,5 +65,6 @@ __all__ = [
     "User",
     "UserDepthPreferences",
     "UserPractice",
+    "UserUiFlags",
     "WalletAudit",
 ]
