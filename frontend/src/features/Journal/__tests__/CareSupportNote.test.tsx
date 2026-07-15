@@ -12,7 +12,7 @@ import React from 'react';
  *   and the re-opener brings resources back (not a dead-end).
  * - Renders nothing when ``care`` is null.
  * - Meets the 44dp ``touchTarget.minimum`` on interactive elements.
- * - Carries no chat/bot affordances (no sender, avatar, reply testIDs).
+ * - Is a static reflection surface (no TextInput composer), not a chatbot.
  */
 import CareSupportNote from '../CareSupportNote';
 
@@ -64,6 +64,23 @@ function StyleSheetMin(node: { props: { style: unknown } }): number {
     minWidth?: number;
   };
   return Math.min(flat.minHeight ?? 0, flat.minWidth ?? 0);
+}
+
+type RenderedNode = {
+  type: string;
+  children: (RenderedNode | string)[] | null;
+};
+
+// Depth-first list of host-component type names (e.g. 'View', 'Text', 'TextInput').
+function hostTypes(node: RenderedNode | RenderedNode[] | string | null): string[] {
+  if (node === null) return [];
+  if (typeof node === 'string') return [];
+  if (Array.isArray(node)) return node.flatMap((child) => hostTypes(child));
+  const out: string[] = [node.type];
+  const children = node.children;
+  if (children === null) return out;
+  for (const child of children) out.push(...hostTypes(child));
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -243,28 +260,17 @@ describe('CareSupportNote — touch-target requirements', () => {
 });
 
 // ---------------------------------------------------------------------------
-// No chat/bot affordances
+// Static reflection surface — not a chat/bot composer
 // ---------------------------------------------------------------------------
 
-describe('CareSupportNote — no chat UI', () => {
-  it('does not render a sender testID', () => {
-    const { queryByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(queryByTestId('sender')).toBeNull();
-  });
-
-  it('does not render an avatar testID', () => {
-    const { queryByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(queryByTestId('avatar')).toBeNull();
-  });
-
-  it('does not render a reply testID', () => {
-    const { queryByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(queryByTestId('reply')).toBeNull();
-  });
-
-  it('does not render a "Send" text element', () => {
-    const { queryByText } = render(<CareSupportNote care={carePayload()} />);
-    expect(queryByText('Send')).toBeNull();
+describe('CareSupportNote — not a chat surface', () => {
+  it('renders static content with no text-entry composer', () => {
+    const { toJSON } = render(<CareSupportNote care={carePayload()} />);
+    const types = hostTypes(toJSON());
+    // Guard the walker: the card really renders Text content.
+    expect(types).toContain('Text');
+    // A reply/chat composer would mount a TextInput; a reflection card never does.
+    expect(types).not.toContain('TextInput');
   });
 });
 

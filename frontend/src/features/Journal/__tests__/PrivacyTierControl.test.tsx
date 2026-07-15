@@ -158,11 +158,11 @@ describe('PrivacyTierControl — accessibility', () => {
     expect(intimateLabel.length).toBeGreaterThan(0);
   });
 
-  it('options carry role "radio" or "button" (segmented-control semantics)', () => {
+  it('every option carries the exact accessibilityRole "radio"', () => {
     const { getByTestId } = renderControl('personal');
-    const publicRole: string = getByTestId('privacy-tier-public').props.accessibilityRole;
-    // RNTL renders accessibilityRole as 'radio' or 'button' for segmented controls.
-    expect(['radio', 'button']).toContain(publicRole);
+    for (const tier of ['public', 'personal', 'intimate'] as const) {
+      expect(getByTestId(`privacy-tier-${tier}`).props.accessibilityRole).toBe('radio');
+    }
   });
 
   it('all touch targets meet the 44dp minimum', () => {

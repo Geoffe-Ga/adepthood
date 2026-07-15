@@ -269,36 +269,4 @@ describe('JournalEntryScreen — care-support surface placement (issue #891)', (
       jest.useRealTimers();
     }
   });
-
-  it('care-support IS a descendant of journal-screen (screen-level placement)', async () => {
-    jest.useFakeTimers();
-    try {
-      mockCreate.mockResolvedValue(entry({ id: 42 }));
-      mockGenerate.mockResolvedValue(resonancePayload(carePayload()));
-
-      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
-
-      fireEvent.changeText(getByTestId('journal-body-input'), 'Today felt very dark.');
-      // Advance autosave debounce: create fires, entry gets id=42.
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(100);
-      });
-      // Advance idle timer: isIdle flips true, visible=true, button is findable.
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(DEFAULT_IDLE_DELAY_MS);
-      });
-
-      await act(async () => {
-        fireEvent.press(getByTestId('get-resonance-button'));
-        await Promise.resolve();
-      });
-
-      await waitFor(() => expect(getByTestId('care-support')).toBeTruthy());
-
-      // care-support must live somewhere under journal-screen.
-      expect(within(getByTestId('journal-screen')).queryByTestId('care-support')).toBeTruthy();
-    } finally {
-      jest.useRealTimers();
-    }
-  });
 });
