@@ -179,7 +179,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   8: {
     stageNumber: 8,
     persona: 'Adept',
-    descriptor: 'Nonduality',
+    descriptor: 'Nondual',
     practice: 'Deep Intuition',
     arrowLabel: 'Nondual',
     textColor: '#6d92a6',
@@ -197,7 +197,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   6: {
     stageNumber: 6,
     persona: 'Shadow Glorifier',
-    descriptor: 'Pluralistic',
+    descriptor: 'Pluralist',
     practice: 'Shadow Work',
     arrowLabel: 'Embodied',
     textColor: '#7cb273',
@@ -206,7 +206,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   5: {
     stageNumber: 5,
     persona: 'Status Seeker',
-    descriptor: 'Achievest',
+    descriptor: 'Achievist',
     practice: 'Wim Hof Method',
     arrowLabel: 'Intellectual',
     textColor: '#dc9a5b',
@@ -233,7 +233,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   2: {
     stageNumber: 2,
     persona: 'Pleasure Seeker',
-    descriptor: 'Magic',
+    descriptor: 'Magick',
     practice: 'Divination',
     arrowLabel: 'Receptivity',
     textColor: '#5d4e9e',
