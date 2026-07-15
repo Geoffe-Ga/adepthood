@@ -54,7 +54,6 @@ export const useHabits = (): UseHabitsReturn => {
       showEnergyCTA: ui.showEnergyCTA,
       showArchiveMessage: ui.showArchiveMessage,
       archiveEnergyCTA: ui.archiveEnergyCTA,
-      emojiHabitIndex: ui.emojiHabitIndex,
     },
     setHabitsForTesting: storeSetHabits,
   };

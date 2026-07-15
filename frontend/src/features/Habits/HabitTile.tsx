@@ -41,7 +41,7 @@ import {
 /** A tile that is not wired to log units keeps the star as a tooltip-only touch target. */
 const NOOP_LOG_UNIT: NonNullable<HabitTileProps['onLogUnit']> = () => {};
 
-/** Marker star size: a touch larger than the bar so it reads as a sitting marker. */
+/** Marker star size: tracks the bar's nominal thickness (spacing(2)) so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
 
 /** Round to at most two decimals and drop trailing zeros so the fraction reads cleanly. */
@@ -177,8 +177,6 @@ const HabitHeader = ({
   );
 };
 
-const TOTAL_HABITS = MAX_HABITS;
-
 /** Tile border thickness so the aptitude/stage color reads clearly at a glance. */
 export const TILE_BORDER_WIDTH = 3;
 
@@ -193,7 +191,7 @@ const habitGridChrome = (scale: number, gridGutter: number): number =>
 export const useTileLayout = () => {
   const { contentWidth, height, columns, scale, gridGutter } = useResponsive();
   const insets = useSafeAreaInsets();
-  const rows = columns === 2 ? TOTAL_HABITS / columns : TOTAL_HABITS;
+  const rows = columns === 2 ? MAX_HABITS / columns : MAX_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
   const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
   const availableHeight = height - insets.top - bottomBarReserve - chrome;
@@ -464,7 +462,8 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
     stretch: stretchMarker,
   } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
 
-  // SG is unconditionally visible (the prior ``hasCleared`` gate caused user-reported confusion).
+  // Each marker is visible whenever its tier's goal exists — the stretch marker is
+  // no longer gated on ``hasCleared`` (that gate caused user-reported confusion).
   // ``met`` is only computed when the goal exists — an absent tier has no goal to achieve.
   const markers: TileMarkerSpec[] = [
     {

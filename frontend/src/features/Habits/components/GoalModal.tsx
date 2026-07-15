@@ -842,7 +842,7 @@ const buildPendingGoalEdit = (
   habitId: number | undefined,
 ): PendingGoalEdit | null => {
   const goal = tier === 'low' ? tiers.lowGoal : tiers.clearGoal;
-  if (!goal || !habitId) return null;
+  if (!goal || habitId == null) return null;
   const stretchTarget = tiers.stretchGoal ? getGoalTarget(tiers.stretchGoal) : goal.target;
   const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
   const tierLabel = tier === 'low' ? 'Low Grit' : 'Clear Goal';
@@ -932,7 +932,8 @@ function useGoalConfirm(
     setPending(null);
   };
   const applyPending = () => {
-    if (pending && habitId) onUpdateGoal(habitId, { ...pending.goal, target: pending.newTarget });
+    if (pending && habitId != null)
+      onUpdateGoal(habitId, { ...pending.goal, target: pending.newTarget });
     setPending(null);
   };
   return { onConfirm, pending, cancelPending, applyPending };
@@ -1149,7 +1150,7 @@ const useLogState = (
   const [logDate, setLogDate] = useState<Date>(() => new Date());
 
   const handleLogUnit = () => {
-    if (!habit.id) return;
+    if (habit.id == null) return;
     const parsed = Number.parseFloat(logAmount);
     onLogUnit(habit.id, Number.isNaN(parsed) ? 1 : parsed, logDate);
     setLogAmount('1');

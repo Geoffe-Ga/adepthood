@@ -28,15 +28,6 @@ export interface Habit {
   sort_order?: number | null;
 
   // --- Client-only fields (not from API) ---
-  /**
-   * Total progress toward the habit goals.
-   *
-   * This value is derived from the sum of all completion units
-   * recorded in the `completions` array and should not be set
-   * directly. It is kept optional to encourage calculating the
-   * current progress programmatically via `calculateTodaysProgress`.
-   */
-  progress?: number;
   completions?: Completion[];
   /** Device-local notification IDs managed by expo-notifications. */
   notificationIds?: string[];
@@ -215,7 +206,6 @@ export interface HabitsUIFlags {
   showEnergyCTA: boolean;
   showArchiveMessage: boolean;
   archiveEnergyCTA: () => void;
-  emojiHabitIndex: number | null;
 }
 
 export interface UseHabitsReturn {

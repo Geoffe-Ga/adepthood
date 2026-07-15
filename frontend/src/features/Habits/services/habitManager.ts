@@ -237,6 +237,15 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
   completions: [],
 });
 
+const buildTierGoals = (habitName: string, idFor: (tierIndex: number) => number) =>
+  GOAL_TIERS.map((t, ti) => ({
+    id: idFor(ti),
+    title: `${t.label} goal for ${habitName}`,
+    ...DEFAULT_GOAL_CONFIG,
+    tier: t.tier,
+    target: t.target,
+  }));
+
 const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
   newHabits.map((habit, index) => ({
     ...habit,
@@ -244,13 +253,7 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
     streak: 0,
     revealed: false,
     completions: [] as Habit['completions'],
-    goals: GOAL_TIERS.map((t, ti) => ({
-      id: index * 3 + ti + 1,
-      title: `${t.label} goal for ${habit.name}`,
-      ...DEFAULT_GOAL_CONFIG,
-      tier: t.tier,
-      target: t.target,
-    })),
+    goals: buildTierGoals(habit.name, (ti) => index * 3 + ti + 1),
   }));
 
 /**
@@ -262,22 +265,17 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
 const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => {
   const stage = stageAtIndex(existingCount);
   const tempId = -Date.now();
+  const name = input.name.trim();
   return {
     id: tempId,
     stage,
-    name: input.name.trim(),
+    name,
     icon: input.icon,
     streak: 0,
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
     start_date: new Date(),
-    goals: GOAL_TIERS.map((t, ti) => ({
-      id: tempId - ti - 1,
-      title: `${t.label} goal for ${input.name.trim()}`,
-      ...DEFAULT_GOAL_CONFIG,
-      tier: t.tier,
-      target: t.target,
-    })),
+    goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
     sort_order: existingCount,
@@ -838,9 +836,8 @@ export const habitManager = {
 
   /**
    * Atomically update the shared unit fields across every tier goal of a
-   * habit (issue #289). One optimistic apply, one batch PUT, one rollback
-   * closure — replaces the GoalUnitEditor's three-call fan-out whose
-   * partial failure split tiers between old and new units server-side.
+   * habit: one optimistic apply, one batch PUT, one rollback closure — so a
+   * partial failure can never split tiers between old and new units.
    */
   updateGoalUnits: (
     habitId: number,
@@ -877,11 +874,9 @@ export const habitManager = {
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
-    // BUG-FE-HABIT-005: serialize per-habit notification rescheduling and
-    // write the freshly-returned ids back onto the habit before
-    // persisting.  The previous ``void updateHabitNotifications(...)``
-    // discarded the return value, so a second rapid edit would still
-    // see the pre-first-edit ``notificationIds`` and double-schedule.
+    // Serialize per-habit notification rescheduling and write the freshly
+    // returned ids back onto the habit before persisting, so a rapid second
+    // edit reschedules against fresh ``notificationIds`` instead of double-scheduling.
     if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
     else void persistHabits(next);
     if (!updatedHabit.id) return;
