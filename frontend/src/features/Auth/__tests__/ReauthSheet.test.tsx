@@ -16,7 +16,6 @@ jest.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     token: null,
     authStatus: 'reauth-required',
-    isLoading: false,
     login: mockLogin,
     signup: jest.fn(),
     logout: jest.fn(),

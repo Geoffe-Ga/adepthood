@@ -87,7 +87,6 @@ import { useWelcomeStore } from '@/store/useWelcomeStore';
 type MockAuth = {
   token: string | null;
   authStatus: AuthStatus;
-  isLoading: boolean;
   // ``userTimezone`` mirrors the production AuthContextValue default so a
   // navigator render at any auth state has a non-null TZ string available.
   userTimezone: string;
@@ -104,7 +103,6 @@ function buildAuth(overrides: Partial<MockAuth> = {}): MockAuth {
   return {
     token: null,
     authStatus: 'anonymous',
-    isLoading: false,
     userTimezone: 'UTC',
     setUserTimezone: jest.fn(),
     login: jest.fn(() => Promise.resolve()),
@@ -122,7 +120,6 @@ function mockAuthStatus(status: AuthStatus, token: string | null = null) {
     buildAuth({
       authStatus: status,
       token,
-      isLoading: status === 'loading',
     }),
   );
 }

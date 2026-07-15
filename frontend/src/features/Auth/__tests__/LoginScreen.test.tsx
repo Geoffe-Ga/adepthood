@@ -6,7 +6,7 @@ import React from 'react';
 jest.mock('@/context/AuthContext', () => {
   const login = jest.fn(() => Promise.resolve());
   return {
-    useAuth: () => ({ login, isLoading: false, token: null }),
+    useAuth: () => ({ login, token: null }),
     _mockLogin: login,
   };
 });

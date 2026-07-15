@@ -95,12 +95,12 @@ afterEach(() => {
 
 describe('AuthContext', () => {
   describe('initial state', () => {
-    it('starts with isLoading true while checking stored token', () => {
+    it('starts in the loading state while checking stored token', () => {
       // Never resolve loadToken so we stay in loading state
       mockLoadToken.mockReturnValue(new Promise(() => {}));
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      expect(result.current.isLoading).toBe(true);
+      expect(result.current.authStatus).toBe('loading');
       expect(result.current.token).toBeNull();
     });
 
@@ -108,7 +108,7 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue(null);
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       expect(result.current.token).toBeNull();
     });
@@ -117,7 +117,7 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue('stored-jwt');
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       expect(result.current.token).toBe('stored-jwt');
     });
@@ -126,7 +126,7 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue('stored-jwt');
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       expect(mockSetTokenGetter).toHaveBeenCalled();
       // Call the registered getter to verify it returns the token
@@ -140,7 +140,7 @@ describe('AuthContext', () => {
       mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await act(async () => {
         await result.current.login('user@test.com', 'password123');
@@ -158,7 +158,7 @@ describe('AuthContext', () => {
       mockAuth.login.mockRejectedValue(new Error('Invalid credentials'));
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await expect(
         act(async () => {
@@ -176,7 +176,7 @@ describe('AuthContext', () => {
       mockAuth.signup.mockResolvedValue({ token: 'signup-jwt', user_id: 2 });
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await act(async () => {
         await result.current.signup('new@test.com', 'password123');
@@ -197,12 +197,12 @@ describe('AuthContext', () => {
       expect(result.current.token).toBe('signup-jwt');
     });
 
-    // BUG-AUTH-002: must not persist the user_id=0 anti-enumeration token (see schemas.ts:57).
+    // BUG-AUTH-002: must not persist the user_id=0 anti-enumeration token (see ``authResponseSchema`` in schemas.ts).
     it('rejects the anti-enumeration sentinel without persisting the token', async () => {
       mockAuth.signup.mockResolvedValue({ token: 'dummy-jwt', user_id: 0 });
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await expect(
         act(async () => {
@@ -422,13 +422,6 @@ describe('AuthContext', () => {
       });
       expect(result.current.authStatus).toBe('anonymous');
     });
-
-    it("isLoading mirrors authStatus === 'loading' for backwards compatibility", () => {
-      mockLoadToken.mockReturnValue(new Promise(() => {}));
-      const { result } = renderHook(() => useAuth(), { wrapper });
-      expect(result.current.isLoading).toBe(true);
-      expect(result.current.authStatus).toBe('loading');
-    });
   });
 
   describe('token expiration on startup', () => {
@@ -438,7 +431,7 @@ describe('AuthContext', () => {
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       expect(result.current.token).toBeNull();
       expect(mockClearToken).toHaveBeenCalled();
@@ -450,7 +443,7 @@ describe('AuthContext', () => {
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       expect(result.current.token).toBe('valid-jwt');
       expect(mockClearToken).not.toHaveBeenCalled();
@@ -635,7 +628,7 @@ describe('AuthContext', () => {
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       // Token should remain as-is when refresh fails
       expect(result.current.token).toBe('near-expiry-jwt');
@@ -928,7 +921,7 @@ describe('AuthContext', () => {
         timezone: 'America/Los_Angeles',
       });
       const { result } = renderHook(() => useAuth(), { wrapper });
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await act(async () => {
         await result.current.confirmPasswordReset('a'.repeat(43), 'new-password-123');
@@ -951,7 +944,7 @@ describe('AuthContext', () => {
         user_id: 7,
       });
       const { result } = renderHook(() => useAuth(), { wrapper });
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await act(async () => {
         await result.current.confirmPasswordReset('b'.repeat(43), 'longenough');
@@ -968,7 +961,7 @@ describe('AuthContext', () => {
       });
       mockAuth.confirmPasswordReset.mockRejectedValue(failure);
       const { result } = renderHook(() => useAuth(), { wrapper });
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await expect(
         act(async () => {

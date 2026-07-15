@@ -220,7 +220,6 @@ function mockAuthenticated(): void {
   jest.spyOn(AuthContextModule, 'useAuth').mockReturnValue({
     token: 'jwt',
     authStatus: 'authenticated' as AuthStatus,
-    isLoading: false,
     userTimezone: 'UTC',
     setUserTimezone: jest.fn(),
     login: jest.fn(() => Promise.resolve()),
