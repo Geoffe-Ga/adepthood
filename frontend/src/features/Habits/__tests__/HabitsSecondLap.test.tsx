@@ -51,6 +51,21 @@ jest.mock('../../../api', () => {
   const actual: typeof ApiModule = jest.requireActual('../../../api');
   return {
     ...actual,
+    // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+    uiFlags: {
+      get: jest.fn(() =>
+        Promise.resolve({
+          has_seen_welcome: false,
+          energy_scaffolding_archived: false,
+        }),
+      ),
+      update: jest.fn(() =>
+        Promise.resolve({
+          has_seen_welcome: false,
+          energy_scaffolding_archived: false,
+        }),
+      ),
+    },
     habits: {
       listAll: jest.fn() as any,
       create: jest.fn() as any,
