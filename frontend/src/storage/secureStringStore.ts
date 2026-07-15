@@ -49,6 +49,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
+import { serialize } from './serializedWrite';
+
 // ``expo-secure-store`` v55 has no web implementation — its web module is
 // literally ``export default {}``, so calling ``SecureStore.setItemAsync``
 // throws ``TypeError: … is not a function``. On web we fall back to
@@ -83,16 +85,23 @@ export function createSecureStringStore(
       // value — bouncing the user to login, or producing a 401-guaranteed
       // empty Bearer header on the next call. Defence in depth at the store.
       const trimmed = value.trim();
+      // Reject empty/whitespace BEFORE the lane so a bad save never occupies a
+      // FIFO slot (and rejects without waiting behind a prior in-flight write).
       if (!trimmed) throw new EmptyErrorCtor();
-      if (isWeb) {
-        // BUG-FE-AUTH-007: web persists to localStorage — XSS risk accepted
-        // until the backend httpOnly-cookie session migration ships. See the
-        // file-header note. Reviewers: any new web persistence path MUST go
-        // through this same ``isWeb`` branch (or be replaced by a cookie).
-        await AsyncStorage.setItem(storageKey, trimmed);
-        return;
-      }
-      await SecureStore.setItemAsync(storageKey, trimmed);
+      // BUG-FE-STORAGE-002: serialize mutations per key so a stale save that
+      // settles late cannot clobber a fresher save/clear (e.g. a mid-await
+      // re-login writing the previous token over the new one).
+      await serialize(storageKey, async () => {
+        if (isWeb) {
+          // BUG-FE-AUTH-007: web persists to localStorage — XSS risk accepted
+          // until the backend httpOnly-cookie session migration ships. See the
+          // file-header note. Reviewers: any new web persistence path MUST go
+          // through this same ``isWeb`` branch (or be replaced by a cookie).
+          await AsyncStorage.setItem(storageKey, trimmed);
+          return;
+        }
+        await SecureStore.setItemAsync(storageKey, trimmed);
+      });
     },
 
     async load(): Promise<string | null> {
@@ -104,12 +113,16 @@ export function createSecureStringStore(
     },
 
     async clear(): Promise<void> {
-      if (isWeb) {
-        // BUG-FE-AUTH-007: web clears localStorage — see the file-header note.
-        await AsyncStorage.removeItem(storageKey);
-        return;
-      }
-      await SecureStore.deleteItemAsync(storageKey);
+      // BUG-FE-STORAGE-002: share the save lane so a clear cannot be undone by
+      // a save that was issued earlier but settles after it.
+      await serialize(storageKey, async () => {
+        if (isWeb) {
+          // BUG-FE-AUTH-007: web clears localStorage — see the file-header note.
+          await AsyncStorage.removeItem(storageKey);
+          return;
+        }
+        await SecureStore.deleteItemAsync(storageKey);
+      });
     },
   };
 }
