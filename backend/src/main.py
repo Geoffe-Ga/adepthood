@@ -25,7 +25,7 @@ from middleware import (
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
-from observability import install_trace_id_logging
+from observability import configure_logging, install_trace_id_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -272,9 +272,12 @@ async def _seed_startup_data(session: AsyncSession) -> None:
     """
     try:
         inserted = await seed_stages(session)
-        logger.info("seed_complete", extra={"seeder": "stages", "inserted": inserted})
+        # Name and count ride in the message itself — ``extra`` fields
+        # don't render through a plain formatter, and the deploy-verify
+        # contract (docs/content.md) reads the boot log text.
+        logger.info("seed_complete seeder=%s inserted=%d", "stages", inserted)
     except Exception:
-        logger.exception("seed_failed", extra={"seeder": "stages"})
+        logger.exception("seed_failed seeder=%s", "stages", extra={"seeder": "stages"})
         await session.rollback()
         return
 
@@ -286,9 +289,9 @@ async def _seed_startup_data(session: AsyncSession) -> None:
     ):
         try:
             inserted = await seeder(session)
-            logger.info("seed_complete", extra={"seeder": name, "inserted": inserted})
+            logger.info("seed_complete seeder=%s inserted=%d", name, inserted)
         except Exception:
-            logger.exception("seed_failed", extra={"seeder": name})
+            logger.exception("seed_failed seeder=%s", name, extra={"seeder": name})
             await session.rollback()
 
 
@@ -335,6 +338,13 @@ def _log_content_status() -> None:
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the application."""
+    # First thing on boot: give the root logger a real handler.  Uvicorn
+    # only configures its own ``uvicorn.*`` loggers, so without this every
+    # app record below WARNING — including every ``seed_complete`` /
+    # ``content_loaded`` line this very function emits — is silently
+    # dropped, and a production seeding failure looks identical to a
+    # successful boot.
+    configure_logging()
     # Deliberate lazy imports: ``models`` registers every SQLModel table
     # with the metadata exactly once at startup (the unused name is the
     # point), and ``_get_secret_key`` would import-cycle at module load.

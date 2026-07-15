@@ -27,6 +27,7 @@ from main import _log_botmason_provider, _log_content_status, _seed_startup_data
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
+from observability import remove_app_log_handlers_for_tests
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
 from services.content_repository import reset_content_repository_for_tests
@@ -317,3 +318,46 @@ def test_stub_in_development_does_not_warn(
     _log_botmason_provider()
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_seed_complete_logs_carry_seeder_name_and_count(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Success logs must be verifiable from the boot log text alone.
+
+    ``extra={...}`` fields don't render through a plain formatter, so a
+    bare ``seed_complete`` message is indistinguishable from another
+    seeder's — the deploy-verification contract in docs/content.md needs
+    the seeder name and inserted count in the message itself.
+    """
+    caplog.set_level(logging.INFO, logger="main")
+    await _seed_startup_data(db_session)
+
+    messages = [r.getMessage() for r in caplog.records if "seed_complete" in r.getMessage()]
+    assert any("seeder=stages" in m and "inserted=10" in m for m in messages), messages
+    assert any("seeder=content" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_lifespan_configures_app_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot must leave the root logger with a real handler.
+
+    Uvicorn only configures its own ``uvicorn.*`` loggers; without this,
+    every app INFO record (seed results, content pin, access log) is
+    silently dropped in production and deploys cannot be verified.
+    """
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    remove_app_log_handlers_for_tests()
+    try:
+        async with _isolated_factory_patch(), lifespan(app):
+            pass
+        handlers = [
+            h for h in logging.getLogger().handlers if getattr(h, "_adepthood_app_handler", False)
+        ]
+        assert handlers, "lifespan must install the app log handler"
+    finally:
+        remove_app_log_handlers_for_tests()
