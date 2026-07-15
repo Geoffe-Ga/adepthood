@@ -357,9 +357,7 @@ function useCourseViewer(selectedStage: number) {
 
   return {
     viewingItem,
-    setViewingItem,
     viewingResource,
-    setViewingResource,
     viewingIntro,
     handleContentPress,
     handleResourcePress,
@@ -516,20 +514,16 @@ const CourseScreenDrawer = ({
 };
 
 /** Stage-selector and drawer navigation callbacks. A drawer chapter tap switches
- *  to that chapter's stage, opens the reader (``handleContentPress`` already
- *  guards locked items — never a raw ``setViewingItem`` that would bypass the
- *  lock check), then closes the drawer. */
+ *  to that chapter's stage, opens the reader through ``handleContentPress`` (which
+ *  guards locked items), then closes the drawer. */
 function useCourseNavigation(
   setSelectedStage: (_stageNumber: number) => void,
   viewer: ReturnType<typeof useCourseViewer>,
   drawer: ScreenDrawerState,
 ) {
   const handleStageSelect = useCallback(
-    (stageNumber: number) => {
-      setSelectedStage(stageNumber);
-      viewer.setViewingItem(null);
-    },
-    [setSelectedStage, viewer],
+    (stageNumber: number) => setSelectedStage(stageNumber),
+    [setSelectedStage],
   );
 
   const handleChapterPress = useCallback(
