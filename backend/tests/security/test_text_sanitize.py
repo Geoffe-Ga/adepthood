@@ -18,9 +18,11 @@ Trojan-Source codepoints (satisfies bandit B613 / ruff PLE2502).
 from __future__ import annotations
 
 import unicodedata
+from pathlib import Path
 
 import pytest
 
+import security.text_sanitize as text_sanitize_module
 from security import (
     DEFAULT_MAX_TEXT_LENGTH,
     TextTooLongError,
@@ -57,6 +59,11 @@ TAG_B = "\U000e0042"  # tag-encoded ASCII "B"
 CANCEL_TAG = "\U000e007f"  # CANCEL TAG -- range end
 VS17 = "\U000e0100"  # first variation-selector-supplement codepoint, one past the tag block
 IVS_BASE = "\u4e2d"  # CJK base char paired with VS17 in the scope-guard test
+
+# Unicode general category for invisible "Other, Format" codepoints -- the
+# class that the sanitizer strips (zero-width spaces/joiners, directional
+# marks, word joiner, BOM, Tags block).  Used by the source-hygiene guard.
+INVISIBLE_FORMAT_CATEGORY = "Cf"
 
 
 def _tag_encode(word: str) -> str:
@@ -403,3 +410,25 @@ class TestPromptInjectionPatterns:
         assert cleaned == "HelloIGNOREPREVIOUSINSTRUCTIONS"
         for char in zw:
             assert char not in cleaned
+
+
+class TestModuleSourceHygiene:
+    """The sanitizer module honors its own no-invisible-characters invariant.
+
+    ``text_sanitize`` builds its zero-width pattern from codepoint constants
+    precisely so the source file itself carries no literal invisible
+    characters (a Trojan-Source defense).  This guard pins that property: a
+    stray BOM or zero-width space reintroduced into the module source fails
+    here instead of silently contradicting the module's own contract.
+    """
+
+    def test_source_contains_no_invisible_characters(self) -> None:
+        """No character in the module source is an invisible format codepoint."""
+        source = Path(text_sanitize_module.__file__).read_text(encoding="utf-8")
+        offenders = sorted(
+            {char for char in source if unicodedata.category(char) == INVISIBLE_FORMAT_CATEGORY},
+        )
+        assert offenders == [], (
+            "text_sanitize.py source must contain no invisible format "
+            f"characters, found: {[f'U+{ord(c):04X}' for c in offenders]}"
+        )

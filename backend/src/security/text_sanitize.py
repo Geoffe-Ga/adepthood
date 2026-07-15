@@ -74,7 +74,7 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 # The pattern is built from codepoint constants so the source file itself
 # contains no invisible characters (Trojan-Source defense).  Ranges expand to
 # ``[lo-hi]``; the lone BOM gets a single ``chr`` so we don't emit a
-# redundant ``[﻿-﻿]`` range.
+# redundant ``[U+FEFF-U+FEFF]`` range.
 _ZERO_WIDTH_RANGES = (
     (0x200B, 0x200F),
     (0x202A, 0x202E),
