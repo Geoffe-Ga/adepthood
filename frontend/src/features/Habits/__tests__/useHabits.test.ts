@@ -20,6 +20,11 @@ jest.mock('../../../api', () => ({
   goals: {
     update: jest.fn(() => Promise.resolve({})),
   },
+  // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
+  uiFlags: {
+    get: jest.fn(() => Promise.reject(new Error('no server hydration configured'))),
+    update: jest.fn(() => Promise.resolve({})),
+  },
 }));
 
 jest.mock('../../../storage/habitStorage', () => ({

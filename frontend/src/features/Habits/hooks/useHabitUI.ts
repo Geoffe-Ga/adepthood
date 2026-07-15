@@ -7,8 +7,22 @@ import {
 import { selectHabitById, useHabitStore } from '../../../store/useHabitStore';
 import type { Habit, HabitScreenMode } from '../Habits.types';
 
+import { uiFlags } from '@/api';
+
 /** Toast dismissal delay for the archive-CTA acknowledgement message. */
 const ARCHIVE_MESSAGE_DURATION_MS = 3000;
+
+// Server is source of truth after login (account-scoped ``GET /ui-flags``); the
+// local cache is only an offline fallback when the GET rejects. Kept flat to
+// stay well under the cognitive-complexity budget.
+async function resolveEnergyArchived(token?: string): Promise<boolean> {
+  try {
+    const flags = await uiFlags.get(token);
+    return flags.energy_scaffolding_archived;
+  } catch {
+    return loadEnergyScaffoldingArchived();
+  }
+}
 
 export interface HabitUIState {
   /** Currently selected habit, derived from the store by ID. */
@@ -32,21 +46,25 @@ export interface HabitUIState {
  * only `selectedHabitId` here; the habit is resolved via a selector so that
  * updates to the store propagate automatically — no stale closures.
  */
-export const useHabitUI = (): HabitUIState => {
+export const useHabitUI = (token?: string | null): HabitUIState => {
+  const normalizedToken = token ?? undefined;
   const [selectedHabitId, setSelectedHabitId] = useState<number | null>(null);
   const selectedHabit = useHabitStore(selectHabitById(selectedHabitId)) ?? null;
   const [mode, setMode] = useState<HabitScreenMode>('normal');
   const [emojiHabitIndex, setEmojiHabitIndex] = useState<number | null>(null);
   // Start hidden so a previously-archived CTA never flashes before the async
-  // storage read resolves; the effect reveals it only when it isn't archived.
+  // read resolves; the effect reveals it only when it isn't archived.
   const [showEnergyCTA, setShowEnergyCTA] = useState(false);
   const [showArchiveMessage, setShowArchiveMessage] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    loadEnergyScaffoldingArchived()
+    resolveEnergyArchived(normalizedToken)
       .then((archived) => {
-        if (!cancelled) setShowEnergyCTA(!archived);
+        if (cancelled) return;
+        setShowEnergyCTA(!archived);
+        // Re-seed the offline cache so it matches the server-resolved value.
+        saveEnergyScaffoldingArchived(archived).catch(console.warn);
       })
       .catch((err: unknown) => {
         console.warn('[useHabitUI] failed to load energy-CTA archived state', err);
@@ -54,7 +72,7 @@ export const useHabitUI = (): HabitUIState => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [normalizedToken]);
 
   const setSelectedHabit = useCallback((habit: Habit | null) => {
     setSelectedHabitId(habit?.id ?? null);
@@ -67,7 +85,10 @@ export const useHabitUI = (): HabitUIState => {
     saveEnergyScaffoldingArchived(true).catch((err: unknown) => {
       console.warn('[useHabitUI] failed to persist energy-CTA archived state', err);
     });
-  }, []);
+    uiFlags.update({ energy_scaffolding_archived: true }, normalizedToken).catch((err: unknown) => {
+      console.warn('[useHabitUI] failed to sync energy-CTA archived state', err);
+    });
+  }, [normalizedToken]);
 
   return {
     selectedHabit,
