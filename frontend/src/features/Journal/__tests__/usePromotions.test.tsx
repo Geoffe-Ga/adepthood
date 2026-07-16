@@ -325,7 +325,7 @@ describe('usePromotions', () => {
     expect(result.current.retryPromote).toBeNull();
   });
 
-  it('unmounting while the promoted notice timer is pending does not throw', async () => {
+  it('clears the pending promoted-notice timer on unmount so no callback leaks', async () => {
     jest.useFakeTimers();
     try {
       mockCreate.mockResolvedValue(quote({ id: 9 }));
@@ -335,8 +335,14 @@ describe('usePromotions', () => {
         await result.current.promote(2, 19);
       });
       expect(result.current.promoted).toBe(true);
+      // The auto-clear timer is armed while the notice is showing.
+      expect(jest.getTimerCount()).toBe(1);
 
-      expect(() => unmount()).not.toThrow();
+      unmount();
+
+      // Unmount must clear that timer. A leaked timer would still be pending
+      // here and later fire its state update on the torn-down hook.
+      expect(jest.getTimerCount()).toBe(0);
     } finally {
       jest.useRealTimers();
     }
