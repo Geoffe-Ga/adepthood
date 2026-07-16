@@ -296,6 +296,25 @@ describe('PracticeDetailScreen — cross-stage copy', () => {
     expect(nav.popToTop).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards an edited name from the copy dialog to the create payload', async () => {
+    setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    mockPracticesCreate.mockResolvedValueOnce(copiedDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(copiedAssignment);
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    fireEvent.changeText(view.getByTestId('practice-copy-dialog-name'), 'My forest reset');
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+      await flushPromises();
+    });
+    expect(mockPracticesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ stage_number: 6, name: 'My forest reset' }),
+    );
+  });
+
   it('cancelling the copy dialog makes zero API calls and leaves the screen in place', async () => {
     setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
@@ -366,7 +385,7 @@ describe('PracticeDetailScreen — Duplicate & edit', () => {
       expect.objectContaining({
         prefill: expect.objectContaining({
           config: samplePractice.mode_config,
-          name: 'Forest grounding (copy)',
+          name: 'Forest grounding',
           duration: 5,
           stageNumber: 4,
         }),

@@ -69,3 +69,44 @@ describe('CopyToStageDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 });
+
+describe('CopyToStageDialog — editable name', () => {
+  it('prefills the name field verbatim with practiceName and autofocuses it', () => {
+    const { getByTestId } = render(<CopyToStageDialog {...baseProps} />);
+    const nameInput = getByTestId('practice-copy-dialog-name');
+    expect(nameInput.props.value).toBe('Forest grounding');
+    expect(nameInput.props.autoFocus).toBe(true);
+  });
+
+  it('passes the edited name to onConfirm when the confirm control is pressed', () => {
+    const onConfirm = jest.fn();
+    const { getByTestId } = render(<CopyToStageDialog {...baseProps} onConfirm={onConfirm} />);
+    fireEvent.changeText(getByTestId('practice-copy-dialog-name'), 'Woodland grounding');
+    fireEvent.press(getByTestId('practice-copy-dialog-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith('Woodland grounding');
+  });
+
+  it('passes the unedited practiceName to onConfirm when the name is left as-is', () => {
+    const onConfirm = jest.fn();
+    const { getByTestId } = render(<CopyToStageDialog {...baseProps} onConfirm={onConfirm} />);
+    fireEvent.press(getByTestId('practice-copy-dialog-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith('Forest grounding');
+  });
+
+  it('disables confirm and shows "Name is required." when the name is trimmed empty', () => {
+    const { getByTestId, getByText } = render(<CopyToStageDialog {...baseProps} />);
+    fireEvent.changeText(getByTestId('practice-copy-dialog-name'), '   ');
+    expect(getByTestId('practice-copy-dialog-confirm').props.accessibilityState?.disabled).toBe(
+      true,
+    );
+    expect(getByText(/Name is required\./)).toBeTruthy();
+  });
+
+  it('reseeds the name field from practiceName each time the dialog reopens with a different name', () => {
+    const { getByTestId, rerender } = render(<CopyToStageDialog {...baseProps} />);
+    fireEvent.changeText(getByTestId('practice-copy-dialog-name'), 'Edited once');
+    rerender(<CopyToStageDialog {...baseProps} visible={false} />);
+    rerender(<CopyToStageDialog {...baseProps} visible practiceName="Steady breath" />);
+    expect(getByTestId('practice-copy-dialog-name').props.value).toBe('Steady breath');
+  });
+});

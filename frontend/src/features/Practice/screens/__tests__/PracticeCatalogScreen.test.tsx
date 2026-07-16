@@ -615,6 +615,32 @@ describe('PracticeCatalogScreen — cross-stage copy', () => {
     expect(JSON.parse(raw as string)[0].id).toBe(501);
   });
 
+  it('forwards an edited name from the copy dialog to the create payload', async () => {
+    const createdDraft: PracticeItem = { ...presetA, id: 501, stage_number: 6, approved: false };
+    const assignedCopy: UserPractice = {
+      id: 1,
+      user_id: 9,
+      practice_id: 501,
+      stage_number: 6,
+      start_date: '2026-07-15',
+      end_date: null,
+    };
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    mockPracticesCreate.mockResolvedValueOnce(createdDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedCopy);
+    const view = render(<PracticeCatalogScreen initialStage={6} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    fireEvent.changeText(view.getByTestId('practice-copy-dialog-name'), 'My breath anchor');
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+      await flushPromises();
+    });
+    expect(mockPracticesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ stage_number: 6, name: 'My breath anchor' }),
+    );
+  });
+
   it('cancelling the copy dialog makes zero API calls and stays put', async () => {
     mockPracticesList.mockResolvedValueOnce([presetA]);
     const view = render(<PracticeCatalogScreen initialStage={6} />);

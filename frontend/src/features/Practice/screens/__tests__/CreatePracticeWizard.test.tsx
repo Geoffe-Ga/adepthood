@@ -295,23 +295,86 @@ describe('CreatePracticeWizard — metadata + submit', () => {
   });
 });
 
-describe('CreatePracticeWizard — prefill mode', () => {
-  it('opens directly on the configurator when a prefill arrives', () => {
-    const { view } = renderScreen({
-      prefill: {
-        config: {
-          mode: 'random_interval_bell',
-          duration_minutes: 25,
-          min_interval_seconds: 30,
-          max_interval_seconds: 90,
-          bell_tone: 'chime',
-        },
-        name: 'Copy of awareness bells',
-        duration: 25,
+describe('CreatePracticeWizard — prefill mode (name step first)', () => {
+  beforeEach(() => {
+    mockPracticesCreate.mockReset();
+    mockUserPracticesCreate.mockReset();
+  });
+
+  const prefillOptions: RenderOptions = {
+    prefill: {
+      config: {
+        mode: 'random_interval_bell',
+        duration_minutes: 25,
+        min_interval_seconds: 30,
+        max_interval_seconds: 90,
+        bell_tone: 'chime',
       },
-    });
+      name: 'Awareness bells',
+      duration: 25,
+    },
+  };
+
+  it('opens on the name step with the original name prefilled verbatim and autofocused', () => {
+    const { view } = renderScreen(prefillOptions);
+    expect(view.getByTestId('create-practice-step-name')).toBeTruthy();
+    const nameInput = view.getByTestId('create-practice-name');
+    expect(nameInput.props.value).toBe('Awareness bells');
+    expect(nameInput.props.autoFocus).toBe(true);
+    expect(view.queryByTestId('create-practice-step-configure')).toBeNull();
+  });
+
+  it('reads "Step 1 of 3" on the name step of a copy flow', () => {
+    const { view } = renderScreen(prefillOptions);
+    expect(view.getByText('Step 1 of 3')).toBeTruthy();
+  });
+
+  it('disables Continue and shows "Name is required." when the name is trimmed empty', () => {
+    const { view } = renderScreen(prefillOptions);
+    fireEvent.changeText(view.getByTestId('create-practice-name'), '   ');
+    const next = view.getByTestId('create-practice-name-next');
+    expect(next.props.accessibilityState?.disabled).toBe(true);
+    expect(view.getByText(/Name is required\./)).toBeTruthy();
+  });
+
+  it('enables Continue by default and advances to configure on tap', () => {
+    const { view } = renderScreen(prefillOptions);
+    const next = view.getByTestId('create-practice-name-next');
+    expect(next.props.accessibilityState?.disabled).toBe(false);
+    fireEvent.press(next);
     expect(view.getByTestId('create-practice-step-configure')).toBeTruthy();
     expect(view.getByTestId('random-interval-bell-duration').props.value).toBe('25');
+  });
+
+  it('allows duplicate names (no uniqueness error on the name step)', () => {
+    const { view } = renderScreen(prefillOptions);
+    // Re-typing the exact same name the original had is not an error.
+    fireEvent.changeText(view.getByTestId('create-practice-name'), 'Awareness bells');
+    const next = view.getByTestId('create-practice-name-next');
+    expect(next.props.accessibilityState?.disabled).toBe(false);
+    expect(view.queryByText(/Name is required\./)).toBeNull();
+  });
+
+  it('Back from configure in a copy flow returns to the name step, not the mode step', () => {
+    const { view } = renderScreen(prefillOptions);
+    fireEvent.press(view.getByTestId('create-practice-name-next'));
+    fireEvent.press(view.getByTestId('create-practice-back'));
+    expect(view.getByTestId('create-practice-step-name')).toBeTruthy();
+    expect(view.queryByTestId('create-practice-step-mode')).toBeNull();
+  });
+
+  it('submits the edited (trimmed) name, not the original prefill name', async () => {
+    mockPracticesCreate.mockResolvedValueOnce(createdPractice);
+    const { view } = renderScreen(prefillOptions);
+    fireEvent.changeText(view.getByTestId('create-practice-name'), '  Morning bells  ');
+    fireEvent.press(view.getByTestId('create-practice-name-next'));
+    fireEvent.press(view.getByTestId('create-practice-configure-next'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('create-practice-submit'));
+      await flushPromises();
+    });
+    const payload = mockPracticesCreate.mock.calls[0]?.[0];
+    expect(payload?.name).toBe('Morning bells');
   });
 });
 

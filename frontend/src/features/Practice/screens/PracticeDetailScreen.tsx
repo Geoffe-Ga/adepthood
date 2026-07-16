@@ -122,7 +122,7 @@ function DetailCopyDialog({
       homeStage={practice.stage_number}
       targetStage={state.copyTarget ?? practice.stage_number}
       busy={state.assigning}
-      onConfirm={() => void state.confirmCopy()}
+      onConfirm={(name) => void state.confirmCopy(name)}
       onCancel={state.cancelCopy}
     />
   );
@@ -223,7 +223,7 @@ interface PracticeDetailHook {
   assign: (stageNumber: number) => Promise<void>;
   openCopy: (targetStage: number) => void;
   cancelCopy: () => void;
-  confirmCopy: () => Promise<void>;
+  confirmCopy: (name: string) => Promise<void>;
 }
 
 const withAssignError = (prev: ScreenState, err: unknown): ScreenState => ({
@@ -240,7 +240,7 @@ function useCopyFlow(
 ): {
   openCopy: (targetStage: number) => void;
   cancelCopy: () => void;
-  confirmCopy: () => Promise<void>;
+  confirmCopy: (name: string) => Promise<void>;
 } {
   const openCopy = useCallback(
     (targetStage: number) =>
@@ -256,20 +256,23 @@ function useCopyFlow(
     () => setState((prev) => ({ ...prev, copyTarget: null })),
     [setState],
   );
-  const confirmCopy = useCallback(async () => {
-    const target = state.copyTarget;
-    const source = state.practice;
-    if (target === null || source === null) return;
-    setState((prev) => ({ ...prev, assigning: true, actionError: null }));
-    try {
-      await copyPracticeToStage(source, target);
-      setState((prev) => ({ ...prev, assigning: false, copyTarget: null }));
-      onAssigned?.();
-    } catch (err) {
-      // No rollback: an orphaned draft may remain, so surface the error and stay.
-      setState((prev) => ({ ...withAssignError(prev, err), copyTarget: null }));
-    }
-  }, [state.copyTarget, state.practice, setState, onAssigned]);
+  const confirmCopy = useCallback(
+    async (name: string) => {
+      const target = state.copyTarget;
+      const source = state.practice;
+      if (target === null || source === null) return;
+      setState((prev) => ({ ...prev, assigning: true, actionError: null }));
+      try {
+        await copyPracticeToStage(source, target, name);
+        setState((prev) => ({ ...prev, assigning: false, copyTarget: null }));
+        onAssigned?.();
+      } catch (err) {
+        // No rollback: an orphaned draft may remain, so surface the error and stay.
+        setState((prev) => ({ ...withAssignError(prev, err), copyTarget: null }));
+      }
+    },
+    [state.copyTarget, state.practice, setState, onAssigned],
+  );
   return { openCopy, cancelCopy, confirmCopy };
 }
 
@@ -333,7 +336,7 @@ function navigateToCopy(props: PracticeDetailScreenProps, practice: PracticeItem
   props.navigation.navigate('CreatePractice', {
     prefill: {
       config: practice.mode_config,
-      name: `${practice.name} (copy)`,
+      name: practice.name,
       description: practice.description,
       instructions: practice.instructions,
       duration: Math.round(practice.default_duration_minutes),
