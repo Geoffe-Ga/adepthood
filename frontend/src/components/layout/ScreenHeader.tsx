@@ -71,5 +71,3 @@ const styles = StyleSheet.create({
     marginLeft: rhythm.blockGap,
   },
 });
-
-export default ScreenHeader;
