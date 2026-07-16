@@ -5,6 +5,18 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import type { PromotedQuote } from '@/api';
 import { ApiError } from '@/api';
 
+/** A never-settling promise plus its resolve, for pinning in-flight state. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (_value: T) => void;
+} {
+  let resolve: (_value: T) => void = () => {};
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 /** A pending promoted quote anchored near the head of a body. */
 function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
@@ -37,7 +49,7 @@ jest.mock('@/api', () => {
   };
 });
 
-const { usePromotions } = require('../usePromotions');
+const { usePromotions, PROMOTED_NOTICE_MS } = require('../usePromotions');
 
 beforeEach(() => {
   mockCreate.mockReset();
@@ -99,6 +111,24 @@ describe('usePromotions', () => {
     });
     expect(result.current.quotes).toEqual([]);
     expect(mockRemove).toHaveBeenCalledWith(5);
+  });
+
+  it('a failed removePromotion clears a pending promote retry so the notice is not mis-contexted', async () => {
+    mockCreate.mockRejectedValue(new ApiError(422, 'anchor_out_of_range'));
+    mockRemove.mockRejectedValue(new ApiError(500, 'boom'));
+    const seeded = quote({ id: 5 });
+    const { result } = renderHook(() => usePromotions({ entryId: 7, initialQuotes: [seeded] }));
+
+    await act(async () => {
+      await result.current.promote(0, 9999);
+    });
+    expect(result.current.retryPromote).not.toBeNull();
+
+    await act(async () => {
+      await result.current.removePromotion(5);
+    });
+    expect(result.current.retryPromote).toBeNull();
+    expect(result.current.hint).toBeTruthy();
   });
 
   it('removePromotion reverts the optimistic removal on error and sets a hint', async () => {
@@ -184,5 +214,103 @@ describe('usePromotions', () => {
     await waitFor(() =>
       expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([3, 9]),
     );
+  });
+
+  it('promoting is false initially, true while the create POST is in flight, false after it resolves', async () => {
+    const { promise, resolve } = deferred<PromotedQuote>();
+    mockCreate.mockReturnValue(promise);
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+    expect(result.current.promoting).toBe(false);
+
+    let promotePromise: Promise<void> = Promise.resolve();
+    act(() => {
+      promotePromise = result.current.promote(2, 19);
+    });
+    expect(result.current.promoting).toBe(true);
+
+    await act(async () => {
+      resolve(quote({ id: 9 }));
+      await promotePromise;
+    });
+    expect(result.current.promoting).toBe(false);
+  });
+
+  it('promoting returns to false after a create rejection', async () => {
+    mockCreate.mockRejectedValue(new ApiError(422, 'boom'));
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+
+    await act(async () => {
+      await result.current.promote(2, 19);
+    });
+    expect(result.current.promoting).toBe(false);
+  });
+
+  it('promoted is false initially, true after a successful promote, and auto-clears after PROMOTED_NOTICE_MS', async () => {
+    jest.useFakeTimers();
+    try {
+      mockCreate.mockResolvedValue(quote({ id: 9 }));
+      const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+      expect(result.current.promoted).toBe(false);
+
+      await act(async () => {
+        await result.current.promote(2, 19);
+      });
+      expect(result.current.promoted).toBe(true);
+
+      act(() => {
+        jest.advanceTimersByTime(PROMOTED_NOTICE_MS);
+      });
+      expect(result.current.promoted).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('retryPromote is null until a promote fails, then re-posts the same span and clears on success', async () => {
+    mockCreate.mockRejectedValueOnce(new ApiError(500, 'boom'));
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+    expect(result.current.retryPromote).toBeNull();
+
+    await act(async () => {
+      await result.current.promote(2, 19);
+    });
+    expect(result.current.retryPromote).not.toBeNull();
+
+    mockCreate.mockResolvedValueOnce(quote({ id: 9 }));
+    await act(async () => {
+      await result.current.retryPromote!();
+    });
+    expect(mockCreate).toHaveBeenNthCalledWith(2, 7, { anchor_start: 2, anchor_end: 19 });
+    expect(result.current.retryPromote).toBeNull();
+    expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([9]);
+  });
+
+  it('a failed removePromotion sets a hint and leaves retryPromote null', async () => {
+    mockRemove.mockRejectedValue(new ApiError(500, 'boom'));
+    const seeded = quote({ id: 5 });
+    const { result } = renderHook(() => usePromotions({ entryId: 7, initialQuotes: [seeded] }));
+
+    await act(async () => {
+      await result.current.removePromotion(5);
+    });
+    expect(result.current.hint).toBeTruthy();
+    expect(result.current.retryPromote).toBeNull();
+  });
+
+  it('unmounting while the promoted notice timer is pending does not throw', async () => {
+    jest.useFakeTimers();
+    try {
+      mockCreate.mockResolvedValue(quote({ id: 9 }));
+      const { result, unmount } = renderHook(() => usePromotions({ entryId: 7 }));
+
+      await act(async () => {
+        await result.current.promote(2, 19);
+      });
+      expect(result.current.promoted).toBe(true);
+
+      expect(() => unmount()).not.toThrow();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

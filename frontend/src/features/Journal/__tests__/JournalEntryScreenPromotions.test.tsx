@@ -9,8 +9,22 @@ import { StyleSheet } from 'react-native';
 // TextInput, or promoted-quote spans -- every testID below is missing until
 // the implementation-specialist wires `usePromotions` + the new affordance
 // into `JournalEntryScreen`/`ReadColumn`.
+import { PROMOTED_NOTICE_MS } from '../usePromotions';
+
 import type { JournalMessage, PromotedQuote } from '@/api';
 import { touchTarget } from '@/design/tokens';
+
+/** A never-settling promise plus its resolve, for pinning in-flight screen state. */
+function deferredPromote(): {
+  promise: Promise<PromotedQuote>;
+  resolve: (_value: PromotedQuote) => void;
+} {
+  let resolve: (_value: PromotedQuote) => void = () => {};
+  const promise = new Promise<PromotedQuote>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -296,5 +310,140 @@ describe('JournalEntryScreen -- reopening a finished entry hydrates promoted-quo
     expect(await findByTestId('quote-highlight-12')).toBeTruthy();
     expect(await findByTestId('quote-highlight-34')).toBeTruthy();
     expect(mockPromotionsList).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, retry)', () => {
+  async function confirmSelection(screen: ReturnType<typeof renderScreen>): Promise<void> {
+    fireEvent.press(await screen.findByTestId('promote-quote-button'));
+    const input = screen.getByTestId('quote-select-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
+  }
+
+  async function promoteOne(screen: ReturnType<typeof renderScreen>): Promise<void> {
+    mockPromote.mockResolvedValue(promotedQuote({ id: 90 }));
+    await confirmSelection(screen);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    });
+    await screen.findByTestId('quote-highlight-90');
+  }
+
+  it('shows an in-flight notice while the promote POST is pending and clears it on resolution', async () => {
+    const { promise, resolve } = deferredPromote();
+    mockPromote.mockReturnValue(promise);
+    const screen = renderScreen({ entryId: 7 });
+    await confirmSelection(screen);
+
+    fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    expect(await screen.findByTestId('quote-promotion-inflight')).toBeTruthy();
+    expect(screen.getByTestId('journal-body-read')).toBeTruthy();
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolve(promotedQuote({ id: 90 }));
+      await promise;
+    });
+    await waitFor(() => expect(screen.queryByTestId('quote-promotion-inflight')).toBeNull());
+  });
+
+  it('shows a transient success notice that auto-dismisses after PROMOTED_NOTICE_MS', async () => {
+    mockPromote.mockResolvedValue(promotedQuote({ id: 90 }));
+    const screen = renderScreen({ entryId: 7 });
+    await confirmSelection(screen);
+
+    jest.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      });
+      expect(screen.getByTestId('quote-promotion-success')).toBeTruthy();
+
+      act(() => {
+        jest.advanceTimersByTime(PROMOTED_NOTICE_MS);
+      });
+      expect(screen.queryByTestId('quote-promotion-success')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a failed promote shows the error notice and retry re-posts the same anchors', async () => {
+    mockPromote.mockRejectedValueOnce({ status: 500, detail: 'boom' });
+    mockPromote.mockResolvedValueOnce(promotedQuote({ id: 90 }));
+    const screen = renderScreen({ entryId: 7 });
+    await confirmSelection(screen);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    });
+
+    expect(await screen.findByTestId('quote-promotion-error')).toBeTruthy();
+    const retryButton = screen.getByTestId('quote-promotion-retry');
+
+    await act(async () => {
+      fireEvent.press(retryButton);
+    });
+    expect(mockPromote).toHaveBeenNthCalledWith(2, 7, { anchor_start: 2, anchor_end: 19 });
+    expect(await screen.findByTestId('quote-highlight-90')).toBeTruthy();
+    expect(screen.queryByTestId('quote-select-input')).toBeNull();
+  });
+
+  it('the anchored remove affordance shows the tapped quote text', async () => {
+    const screen = renderScreen({ entryId: 7 });
+    await promoteOne(screen);
+
+    fireEvent.press(screen.getByTestId('quote-highlight-90'));
+    expect(await screen.findByTestId('promotion-remove-90')).toBeTruthy();
+    const quoteText = screen.getByTestId('promotion-remove-quote-90');
+    expect(quoteText.props.children).toEqual(
+      expect.stringContaining(promotedQuote({ id: 90 }).anchor_text),
+    );
+  });
+
+  it('pressing elsewhere in the body dismisses the revealed remove affordance', async () => {
+    const screen = renderScreen({ entryId: 7 });
+    await promoteOne(screen);
+
+    fireEvent.press(screen.getByTestId('quote-highlight-90'));
+    expect(await screen.findByTestId('promotion-remove-90')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('journal-body-read'));
+    expect(screen.queryByTestId('promotion-remove-90')).toBeNull();
+  });
+
+  it('a failed remove restores the quote highlight and shows a legible error notice', async () => {
+    mockRemovePromotion.mockRejectedValue({ status: 500, detail: 'boom' });
+    const screen = renderScreen({ entryId: 7 });
+    await promoteOne(screen);
+
+    fireEvent.press(screen.getByTestId('quote-highlight-90'));
+    const removeButton = await screen.findByTestId('promotion-remove-90');
+    await act(async () => {
+      fireEvent.press(removeButton);
+    });
+    expect(await screen.findByTestId('quote-highlight-90')).toBeTruthy();
+    expect(await screen.findByTestId('quote-promotion-error')).toBeTruthy();
+  });
+
+  it('a failed remove after a failed promote drops the mis-contexted promote retry', async () => {
+    mockPromotionsList.mockResolvedValue([promotedQuote({ id: 90 })]);
+    mockPromote.mockRejectedValue({ status: 500, detail: 'boom' });
+    mockRemovePromotion.mockRejectedValue({ status: 500, detail: 'boom' });
+    const screen = renderScreen({ entryId: 7 });
+    await screen.findByTestId('quote-highlight-90');
+
+    await confirmSelection(screen);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    });
+    expect(await screen.findByTestId('quote-promotion-retry')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('quote-highlight-90'));
+    const removeButton = await screen.findByTestId('promotion-remove-90');
+    await act(async () => {
+      fireEvent.press(removeButton);
+    });
+    expect(await screen.findByTestId('quote-promotion-error')).toBeTruthy();
+    expect(screen.queryByTestId('quote-promotion-retry')).toBeNull();
   });
 });
