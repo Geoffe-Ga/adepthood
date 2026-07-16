@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   declineText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
 });

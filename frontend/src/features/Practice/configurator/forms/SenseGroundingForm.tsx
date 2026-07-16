@@ -167,7 +167,7 @@ const localStyles = StyleSheet.create({
     backgroundColor: surface.sunken,
     minHeight: 32,
   },
-  smallButtonText: { ...editorialType.caption, color: ink.primary },
+  smallButtonText: { ...editorialType.action, color: ink.primary },
   disabled: { opacity: 0.4 },
   addButton: { marginTop: SPACING.sm },
 });

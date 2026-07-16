@@ -114,7 +114,7 @@ describe('design tokens', () => {
       expect(STAGE_COLORS['Orange']).toBe('#f29f67');
       expect(STAGE_COLORS['Green']).toBe('#6fcf97');
       expect(STAGE_COLORS['Yellow']).toBe('#f2e96d');
-      expect(STAGE_COLORS['Turquoise']).toBe('#50c9c3');
+      expect(STAGE_COLORS['Teal']).toBe('#50c9c3');
       expect(STAGE_COLORS['Ultraviolet']).toBe('#8e44ad');
       expect(STAGE_COLORS['Clear Light']).toBe('#ffffff');
     });
@@ -130,7 +130,12 @@ describe('design tokens', () => {
     it('lists all ten stages in progression order', () => {
       expect(STAGE_ORDER).toHaveLength(10);
       expect(STAGE_ORDER[0]).toBe('Beige');
+      expect(STAGE_ORDER[7]).toBe('Teal');
       expect(STAGE_ORDER[9]).toBe('Clear Light');
+    });
+
+    it('names stage 8 with the APTITUDE canon "Teal", not the legacy name', () => {
+      expect(STAGE_ORDER).not.toContain('Turquoise');
     });
 
     it('contains exactly the same keys as STAGE_COLORS', () => {
@@ -145,6 +150,12 @@ describe('design tokens', () => {
       expect(resolveStageColor('Beige')).toBe(STAGE_COLORS['Beige']);
       expect(resolveStageColor('Purple')).toBe(STAGE_COLORS['Purple']);
       expect(resolveStageColor('Clear Light')).toBe(STAGE_COLORS['Clear Light']);
+    });
+
+    it('resolves the legacy "Turquoise" name to the stage-8 Teal hex', () => {
+      // A server on the pre-rename dataset can still send "Turquoise"; it
+      // must resolve to the Teal swatch, not the neutral-gray fallback.
+      expect(resolveStageColor('Turquoise')).toBe(STAGE_COLORS['Teal']);
     });
 
     it('falls back to the neutral gray for an unrecognized color name', () => {

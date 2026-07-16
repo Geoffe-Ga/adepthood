@@ -32,7 +32,7 @@ export const welcomeStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   skipLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
   },
   panel: {

@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   acceptText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.background,
   },
   dismiss: {
@@ -115,7 +115,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dismissText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
 });

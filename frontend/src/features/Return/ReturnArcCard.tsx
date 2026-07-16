@@ -216,7 +216,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.background,
   },
   leave: {
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   leaveText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
 });

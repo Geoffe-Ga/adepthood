@@ -27,7 +27,7 @@ export const journalHeroStyles = StyleSheet.create({
     color: onShowcase.soft,
   },
   positionCue: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: onShowcase.muted,
     marginTop: SPACING.xs,
   },

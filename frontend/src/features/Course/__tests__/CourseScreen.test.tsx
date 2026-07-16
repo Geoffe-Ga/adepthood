@@ -168,6 +168,17 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
+// Drain the microtask queue across several ticks so a resolved fetch fully
+// propagates through the loading -> loaded state chain before we assert,
+// regardless of chain depth -- no wall-clock polling.
+const flushMicrotasks = async (): Promise<void> => {
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+};
+
 describe('CourseScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -186,11 +197,26 @@ describe('CourseScreen', () => {
   });
 
   it('renders stage selector after loading', async () => {
-    const { getByTestId } = render(<CourseScreen />);
+    // Control when the stage list settles so the loading -> loaded transition is
+    // driven by an explicit resolution, not a wall-clock waitFor that flakes on
+    // slow runners.
+    let resolveStages: (_stages: Stage[]) => void = () => undefined;
+    mockStagesList.mockReturnValue(
+      new Promise<Stage[]>((resolve) => {
+        resolveStages = resolve;
+      }),
+    );
 
-    await waitFor(() => {
-      expect(getByTestId('stage-selector')).toBeTruthy();
-    });
+    const { getByTestId, queryByTestId } = render(<CourseScreen />);
+
+    // Until the stage list resolves the screen holds the loading spinner.
+    expect(getByTestId('course-loading')).toBeTruthy();
+    expect(queryByTestId('stage-selector')).toBeNull();
+
+    resolveStages(sampleStages);
+    await flushMicrotasks();
+
+    expect(getByTestId('stage-selector')).toBeTruthy();
   });
 
   it('renders the stage selector and content list inside the shared content-capped container', async () => {
@@ -348,15 +374,6 @@ describe('CourseScreen', () => {
       const call = deferredCalls[index];
       if (!call) throw new Error(`No deferred stageContentAll call at index ${index}`);
       call.resolve(content);
-    };
-
-    // Several ticks so a resolved Promise.all fully propagates through state, regardless of chain depth.
-    const flushMicrotasks = async (): Promise<void> => {
-      for (let i = 0; i < 4; i += 1) {
-        await act(async () => {
-          await Promise.resolve();
-        });
-      }
     };
 
     const { getByTestId, getByText, queryByText } = render(<CourseScreen />);
