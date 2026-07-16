@@ -9,6 +9,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -53,7 +54,12 @@ import {
   TITLE_BY_STAGE,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
-import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
+import {
+  stageService,
+  isStageUnlocked,
+  isEndOfCycle,
+  highestCompletedStage,
+} from './services/stageService';
 import { type StageData } from './stageData';
 import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
@@ -811,18 +817,19 @@ interface MapGridProps {
 }
 
 // Optional decorative backdrop. The grid is fully legible without it (#766), so
-// a missing PNG is a faint no-op rather than a third-party placeholder.
-const MapBackdrop = (): React.JSX.Element =>
-  MAP_BACKGROUND_URI ? (
-    <Image
-      source={{ uri: MAP_BACKGROUND_URI }}
-      resizeMode="contain"
-      style={styles.backdrop}
-      testID="map-background"
-    />
-  ) : (
-    <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
-  );
+// a missing PNG is a faint no-op rather than a third-party placeholder. The
+// absolute-fill layer is always non-interactive so it never intercepts touches
+// meant for the grid or its surrounding padding; the art (when configured) sits
+// inside the same non-interactive wrapper.
+export const MapBackdrop = ({
+  uri = MAP_BACKGROUND_URI,
+}: {
+  uri?: string | null;
+}): React.JSX.Element => (
+  <View style={styles.backdrop} testID="map-background" pointerEvents="none">
+    {uri ? <Image source={{ uri }} resizeMode="contain" style={StyleSheet.absoluteFill} /> : null}
+  </View>
+);
 
 interface JourneyHeaderProps {
   currentStage: number;
@@ -1013,10 +1020,6 @@ const useLensFocus = (
 
   return { focusedStage, setFocusedStage, handleSelectStage, handleOpenStage };
 };
-
-/** Highest stage number whose progress has reached 100%, or 0 when none. */
-const highestCompletedStage = (stages: readonly StageData[]): number =>
-  stages.reduce((max, s) => (s.progress >= FULL_PROGRESS ? Math.max(max, s.stageNumber) : max), 0);
 
 interface CompletionCelebration {
   active: boolean;

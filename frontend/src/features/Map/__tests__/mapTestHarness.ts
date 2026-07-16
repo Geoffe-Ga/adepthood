@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global jest */
+import { FULLY_COMPLETE } from '../../../domain/stageProgression';
 import type { StageData } from '../stageData';
 
 /**
@@ -210,6 +211,11 @@ export function mockStageServiceModule() {
     isStageUnlocked: mockIsStageUnlocked,
     isEndOfCycle: (stagesByNumber: Record<number, { progress: number }>, currentStage: number) =>
       mockMapState.isEndOfCycle(stagesByNumber, currentStage),
+    highestCompletedStage: (stages: ReadonlyArray<{ progress: number; stageNumber: number }>) =>
+      stages.reduce(
+        (max, s) => (s.progress >= FULLY_COMPLETE ? Math.max(max, s.stageNumber) : max),
+        0,
+      ),
   };
 }
 
