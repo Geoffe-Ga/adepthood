@@ -147,7 +147,7 @@ const {
   renderHook,
 } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
-const { useCourseDrawerContent } = require('../CourseDrawer');
+const { default: CourseDrawer, useCourseDrawerContent } = require('../CourseDrawer');
 /* eslint-enable import/order */
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
@@ -455,5 +455,26 @@ describe('Course header drawer', () => {
     expect(mockStageContent.mock.calls.filter((c) => c[0] === 3).length).toBe(
       stage3CallsBefore + 1,
     );
+  });
+
+  it('a gap stage number absent from stages renders no header and no never-resolving spinner', () => {
+    const gappyStages = [makeStage({ stage_number: 3, id: 3 })];
+    const { queryByTestId } = render(
+      <CourseDrawer
+        stages={gappyStages}
+        selectedStage={3}
+        sections={{}}
+        onChapterPress={jest.fn()}
+        onRetry={jest.fn()}
+      />,
+    );
+
+    expect(queryByTestId('course-drawer-stage-1')).toBeNull();
+    expect(queryByTestId('course-drawer-stage-2')).toBeNull();
+    expect(queryByTestId('course-drawer-loading-1')).toBeNull();
+    expect(queryByTestId('course-drawer-loading-2')).toBeNull();
+
+    expect(queryByTestId('course-drawer-stage-3')).toBeTruthy();
+    expect(queryByTestId('course-drawer-loading-3')).toBeTruthy();
   });
 });
