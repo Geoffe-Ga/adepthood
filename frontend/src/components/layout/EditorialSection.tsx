@@ -43,5 +43,3 @@ const styles = StyleSheet.create({
     marginBottom: rhythm.blockGap,
   },
 });
-
-export default EditorialSection;

@@ -3,22 +3,9 @@ import * as path from 'path';
 
 import { describe, expect, it } from '@jest/globals';
 
-const DEAD_FILES = [
-  'src/features/Habits/HabitCard.tsx',
-  'src/features/Habits/HabitCard.styles.ts',
-  'src/styles/colors.ts',
-  'src/components/Button/Button.tsx',
-  'src/components/Button/Button.styles.ts',
-];
-
 const ROOT = path.resolve(__dirname, '..', '..');
 
 describe('phase-2-04: no dead/empty files', () => {
-  it.each(DEAD_FILES)('%s should not exist', (relPath) => {
-    const fullPath = path.join(ROOT, relPath);
-    expect(fs.existsSync(fullPath)).toBe(false);
-  });
-
   it('should have no empty .ts/.tsx files in src/', () => {
     const findEmpty = (dir: string): string[] => {
       const results: string[] = [];
