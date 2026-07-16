@@ -48,17 +48,6 @@ export interface Goal {
   goal_group_id?: number | null;
 }
 
-export interface GoalGroup {
-  id: number;
-  name: string;
-  icon?: string | null;
-  description?: string | null;
-  user_id?: number | null;
-  shared_template: boolean;
-  source?: string | null;
-  goals: Goal[];
-}
-
 export interface Completion {
   id?: string;
   timestamp: Date;
@@ -107,12 +96,6 @@ export interface StatsModalProps {
   habit: Habit | null;
   stats: HabitStatsData | null;
   onClose: () => void;
-}
-
-export interface EditableGoalProps {
-  goal: Goal;
-  onUpdate: (_updatedGoal: Goal) => void;
-  isEditing: boolean;
 }
 
 export interface HabitTileProps {
