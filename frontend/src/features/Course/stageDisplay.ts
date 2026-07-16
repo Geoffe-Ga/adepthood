@@ -35,3 +35,19 @@ export function isCompleted(stageNumber: number, stageById: Map<number, Stage>):
   const stage = stageById.get(stageNumber);
   return stage != null && stage.progress >= COMPLETE_PROGRESS;
 }
+
+/** Glyph marking a completed stage. */
+export const STAGE_COMPLETED_GLYPH = '✓';
+/** Glyph marking a locked stage. */
+export const STAGE_LOCKED_GLYPH = '🔒';
+
+/**
+ * Resolve a stage's status glyph by the shared precedence completed → locked →
+ * none, so the pill row and the drawer header mark a stage identically. Returns
+ * null for an open stage (unlocked and not yet complete).
+ */
+export function stageStatusGlyph(unlocked: boolean, completed: boolean): string | null {
+  if (completed) return STAGE_COMPLETED_GLYPH;
+  if (!unlocked) return STAGE_LOCKED_GLYPH;
+  return null;
+}

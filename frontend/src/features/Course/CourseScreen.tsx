@@ -457,29 +457,27 @@ const StagePanel = ({
   stageContent,
   viewer,
 }: StagePanelProps): React.JSX.Element => {
-  const header = useMemo(
-    () => (
-      <StageHeader
-        selectedStage={selectedStage}
-        selectedStageData={selectedStageData}
-        stageContent={stageContent}
-        viewer={viewer}
-      />
-    ),
-    [selectedStage, selectedStageData, stageContent, viewer],
-  );
-
   // While loading or after a failed fetch the list is empty so the header stays
   // pinned and the loading/error state renders in ListEmptyComponent.
   const items =
     stageContent.loadingContent || stageContent.error ? EMPTY_CONTENT : stageContent.content;
 
+  // The header is inlined rather than memoized: stageContent and viewer are
+  // fresh object literals every render, so a useMemo keyed on them never hit
+  // its cache and only added indirection.
   return (
     <ContentArea
       content={items}
       loadingContent={stageContent.loadingContent}
       error={stageContent.error}
-      header={header}
+      header={
+        <StageHeader
+          selectedStage={selectedStage}
+          selectedStageData={selectedStageData}
+          stageContent={stageContent}
+          viewer={viewer}
+        />
+      }
       onContentPress={viewer.handleContentPress}
       onRetry={stageContent.retry}
     />

@@ -20,6 +20,15 @@ const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
 const STAGE_COVER_ARC = 4;
 
+// Shared uppercase small-caps label face (muted); consumers add per-use margins.
+const upperLabel = {
+  fontSize: 12,
+  fontWeight: '600',
+  color: ink.muted,
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+} as const;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -139,11 +148,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stageDetailLabel: {
-    fontSize: 12,
-    color: ink.muted,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...upperLabel,
   },
   stageDetailValue: {
     fontSize: 12,
@@ -162,11 +167,7 @@ const styles = StyleSheet.create({
     ...surfaceShadow.card,
   },
   introCardLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ink.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...upperLabel,
     marginBottom: 2,
   },
   introCardTitle: {
@@ -417,11 +418,7 @@ const styles = StyleSheet.create({
     backgroundColor: surface.canvas,
   },
   resourcesHeading: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ink.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...upperLabel,
     marginBottom: SPACING.sm,
   },
   resourcesRow: {

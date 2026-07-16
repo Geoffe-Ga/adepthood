@@ -23,12 +23,14 @@ import {
 import { course as courseApi, type ContentItem, type Stage } from '../../api';
 import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../design/tokens';
 
-import { getStageColor, isCompleted, isUnlocked } from './stageDisplay';
+import {
+  getStageColor,
+  isCompleted,
+  isUnlocked,
+  STAGE_LOCKED_GLYPH,
+  stageStatusGlyph,
+} from './stageDisplay';
 
-/** Glyph shown on a completed stage header. */
-const COMPLETED_GLYPH = '✓';
-/** Glyph shown on a locked stage header or chapter row. */
-const LOCKED_GLYPH = '🔒';
 /** Copy for the inline per-section retry row after a failed fetch. */
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
 /** Dim factor applied to a locked chapter row. */
@@ -112,13 +114,6 @@ export function useCourseDrawerContent(
   return { sections, retry: loadStage };
 }
 
-/** Resolve the status glyph for a stage header, or null for an open stage. */
-function headerGlyph(unlocked: boolean, completed: boolean): string | null {
-  if (completed) return COMPLETED_GLYPH;
-  if (!unlocked) return LOCKED_GLYPH;
-  return null;
-}
-
 interface StageHeaderProps {
   stageNumber: number;
   title: string;
@@ -138,7 +133,7 @@ const StageHeader = ({
   isSelected,
 }: StageHeaderProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
-  const glyph = headerGlyph(unlocked, completed);
+  const glyph = stageStatusGlyph(unlocked, completed);
   return (
     <View
       testID={`course-drawer-stage-${stageNumber}`}
@@ -176,16 +171,13 @@ const ChapterRow = ({ stageNumber, item, onChapterPress }: ChapterRowProps): Rea
       accessibilityLabel={locked ? `${item.title}, locked` : item.title}
       accessibilityState={{ disabled: locked }}
       disabled={locked}
-      onPress={() => {
-        if (locked) return;
-        onChapterPress(stageNumber, item);
-      }}
+      onPress={() => onChapterPress(stageNumber, item)}
       style={[styles.chapterRow, locked && styles.chapterRowLocked]}
     >
       <Text style={[type(width).body, styles.chapterRowLabel]} numberOfLines={1}>
         {item.title}
       </Text>
-      {locked ? <Text style={styles.chapterRowGlyph}>{LOCKED_GLYPH}</Text> : null}
+      {locked ? <Text style={styles.chapterRowGlyph}>{STAGE_LOCKED_GLYPH}</Text> : null}
     </TouchableOpacity>
   );
 };

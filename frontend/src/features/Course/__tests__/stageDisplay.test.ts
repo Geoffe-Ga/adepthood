@@ -6,7 +6,15 @@ import { describe, it, expect } from '@jest/globals';
 
 import type { Stage } from '../../../api';
 import { colors, resolveStageColor, STAGE_ORDER } from '../../../design/tokens';
-import { getStageColor, isCompleted, isUnlocked, totalStageCount } from '../stageDisplay';
+import {
+  getStageColor,
+  isCompleted,
+  isUnlocked,
+  STAGE_COMPLETED_GLYPH,
+  STAGE_LOCKED_GLYPH,
+  stageStatusGlyph,
+  totalStageCount,
+} from '../stageDisplay';
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -94,5 +102,23 @@ describe('isCompleted', () => {
   it('returns false at progress 0', () => {
     const stage = makeStage({ stage_number: 1, progress: 0 });
     expect(isCompleted(1, new Map([[1, stage]]))).toBe(false);
+  });
+});
+
+describe('stageStatusGlyph', () => {
+  it('returns the completed glyph for a completed stage', () => {
+    expect(stageStatusGlyph(true, true)).toBe(STAGE_COMPLETED_GLYPH);
+  });
+
+  it('returns the lock glyph for a locked, incomplete stage', () => {
+    expect(stageStatusGlyph(false, false)).toBe(STAGE_LOCKED_GLYPH);
+  });
+
+  it('returns null for an open (unlocked, incomplete) stage', () => {
+    expect(stageStatusGlyph(true, false)).toBeNull();
+  });
+
+  it('prioritizes completed over locked when a stage is both', () => {
+    expect(stageStatusGlyph(false, true)).toBe(STAGE_COMPLETED_GLYPH);
   });
 });
