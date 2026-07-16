@@ -142,12 +142,15 @@ jest.mock('../../../api', () => ({
 }));
 
 const mockNavigate = jest.fn() as any;
+// Mutable route params so a test can simulate a second Map->Course deep-link
+// reaching the already-mounted Course tab by reassigning this between renders.
+let mockRouteParams: { stageNumber?: number } | undefined;
 // CourseScreen installs its header-left drawer toggle through useAppNavigation
 // (useScreenDrawer), which calls navigation.setOptions in a layout effect on
 // every mount -- without this mock every test below would crash reading
 // setOptions off an undefined navigation object.
 jest.mock('../../../navigation/hooks', () => ({
-  useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
+  useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: mockRouteParams }),
   useAppNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
 }));
 // The reflect action now pushes the root-stack JournalEntry via useNavigation.
@@ -182,6 +185,7 @@ const flushMicrotasks = async (): Promise<void> => {
 describe('CourseScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
@@ -319,6 +323,54 @@ describe('CourseScreen', () => {
       expect(mockStageContent).toHaveBeenCalledWith(1);
       expect(mockStageProgress).toHaveBeenCalledWith(1);
     });
+  });
+
+  it('selects the stage from a NEW navigation to the already-mounted Course tab', async () => {
+    // First mount carries no route param, so the screen derives the current
+    // stage (completed_count + 1 = 2) as the default selection.
+    const { getByTestId, rerender } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    });
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(false);
+
+    // A second Map->Course deep-link reaches the still-mounted tab carrying a
+    // different stage number; the displayed stage must follow it.
+    mockRouteParams = { stageNumber: 1 };
+    await act(async () => {
+      rerender(<CourseScreen />);
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+    });
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(false);
+  });
+
+  it('does not refetch when re-navigating to the already-selected stage', async () => {
+    // First mount already targets stage 1 via the route param.
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, rerender } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+    });
+    const contentCallsAfterMount = mockStageContent.mock.calls.length;
+    const stagesCallsAfterMount = mockStagesList.mock.calls.length;
+
+    // Re-navigating to Course with the same stage number (a fresh params
+    // object) must not thrash state, refire the stage-list load, or trigger
+    // another content fetch.
+    mockRouteParams = { stageNumber: 1 };
+    await act(async () => {
+      rerender(<CourseScreen />);
+    });
+    await flushMicrotasks();
+
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+    expect(mockStageContent.mock.calls.length).toBe(contentCallsAfterMount);
+    expect(mockStagesList.mock.calls.length).toBe(stagesCallsAfterMount);
   });
 
   it('keeps the current stage content when a stale fetch for a previously-selected stage resolves late', async () => {
@@ -598,6 +650,7 @@ describe('CourseScreen', () => {
 describe('single scroll surface', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
@@ -673,6 +726,7 @@ describe('single scroll surface', () => {
 describe('CourseScreen Spiral-Dynamics accent colors', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
