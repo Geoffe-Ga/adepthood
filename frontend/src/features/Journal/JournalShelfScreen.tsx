@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import { excerpt } from './excerpt';
 import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
@@ -49,11 +50,6 @@ const WORDS_PER_MINUTE = 200;
 const FIRST_PROMPT = 'What brought you here?';
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
-
-function excerpt(body: string): string {
-  const flat = body.replace(/\s+/g, ' ').trim();
-  return flat.length > EXCERPT_MAX ? `${flat.slice(0, EXCERPT_MAX).trimEnd()}…` : flat;
-}
 
 /** Estimated reading time in whole minutes (≥1). */
 function readingMinutes(body: string): number {
@@ -157,7 +153,7 @@ function PageCard({
           <Text style={styles.cardDate}>{formatDate(entry.timestamp)}</Text>
         </View>
         <Text style={styles.cardExcerpt} numberOfLines={2}>
-          {excerpt(entry.message)}
+          {excerpt(entry.message, EXCERPT_MAX)}
         </Text>
         <Text style={styles.cardCaption}>{pageCaption(entry, now)}</Text>
       </TouchableOpacity>
