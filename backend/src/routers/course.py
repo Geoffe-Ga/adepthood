@@ -14,6 +14,7 @@ from sqlmodel import col, select
 
 from content_config import CONTENT_REF_SCHEME, content_ref
 from database import get_session
+from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_DURATIONS_DAYS
 from domain.course import (
     compute_days_elapsed,
@@ -80,7 +81,9 @@ async def _get_stage_by_number(session: AsyncSession, stage_number: int) -> Cour
     return stage
 
 
-async def _day_in_stage_for_user(session: AsyncSession, user_id: int, stage_number: int) -> int:
+async def _day_in_stage_for_user(
+    session: AsyncSession, user_id: int, stage_number: int, tz: str
+) -> int:
     """The 1-based day the user is on within ``stage_number`` for the drip.
 
     First course access provisions a ``current_stage=1`` StageProgress row
@@ -102,7 +105,7 @@ async def _day_in_stage_for_user(session: AsyncSession, user_id: int, stage_numb
     duration = _stage_duration_days(stage_number)
     if progress.current_stage > stage_number:
         return duration
-    calendar_day = calendar_day_in_stage(resolve_program_anchor(progress), stage_number)
+    calendar_day = calendar_day_in_stage(resolve_program_anchor(progress), stage_number, tz=tz)
     if progress.current_stage == stage_number:
         started_day = compute_days_elapsed(progress.stage_started_at) + 1
         return max(calendar_day, started_day)
@@ -142,10 +145,10 @@ async def _ordinal_position(session: AsyncSession, item: StageContent) -> int:
 
 
 async def _content_item_is_locked(
-    session: AsyncSession, user_id: int, stage: CourseStage, item: StageContent
+    session: AsyncSession, user_id: int, stage: CourseStage, item: StageContent, tz: str
 ) -> bool:
     """Whether ``item`` is drip-locked for the user under the proportional model."""
-    day = await _day_in_stage_for_user(session, user_id, stage.stage_number)
+    day = await _day_in_stage_for_user(session, user_id, stage.stage_number, tz)
     if stage.id is None:
         raise RuntimeError("CourseStage from database must have an id")
     total = await _stage_content_count(session, stage.id)
@@ -188,19 +191,21 @@ def _items_to_raw_dicts(items: list[StageContent]) -> list[dict[str, object]]:
     ]
 
 
-async def _check_stage_unlocked(session: AsyncSession, user_id: int, stage_number: int) -> None:
+async def _check_stage_unlocked(
+    session: AsyncSession, user_id: int, stage_number: int, tz: str
+) -> None:
     """Raise 403 if the given stage is locked for the user.
 
     Used by endpoints that take ``stage_number`` directly (1..10 are
     public knowledge), so the 403 carries no enumeration risk.
     """
     progress = await get_user_progress(session, user_id)
-    if not is_stage_unlocked(stage_number, progress):
+    if not is_stage_unlocked(stage_number, progress, tz=tz):
         raise forbidden("stage_locked")
 
 
 async def _is_stage_unlocked_for_user(
-    session: AsyncSession, user_id: int, stage_number: int
+    session: AsyncSession, user_id: int, stage_number: int, tz: str
 ) -> bool:
     """Predicate form of :func:`_check_stage_unlocked`.
 
@@ -209,11 +214,11 @@ async def _is_stage_unlocked_for_user(
     raising a 403 the attacker could observe directly.
     """
     progress = await get_user_progress(session, user_id)
-    return is_stage_unlocked(stage_number, progress)
+    return is_stage_unlocked(stage_number, progress, tz=tz)
 
 
 async def _listing_unlocked_count(
-    session: AsyncSession, user_id: int, stage: CourseStage, total_items: int
+    session: AsyncSession, user_id: int, stage: CourseStage, total_items: int, tz: str
 ) -> int:
     """Chapters to reveal in the stage listing.
 
@@ -224,9 +229,9 @@ async def _listing_unlocked_count(
     urls out of reach; item detail and mark-read stay gated. An unlocked
     stage keeps its proportional drip count unchanged.
     """
-    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
         return 0
-    day = await _day_in_stage_for_user(session, user_id, stage.stage_number)
+    day = await _day_in_stage_for_user(session, user_id, stage.stage_number, tz)
     return unlocked_chapter_count(
         total=total_items,
         duration_days=_stage_duration_days(stage.stage_number),
@@ -239,6 +244,7 @@ async def list_stage_content(
     stage_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[ContentItemResponse] | list[ContentItemResponse]:
     """List content for a stage with drip-feed gating applied.
@@ -270,7 +276,7 @@ async def list_stage_content(
     )
     items = list(result.scalars().all())
 
-    unlocked = await _listing_unlocked_count(session, current_user, stage, len(items))
+    unlocked = await _listing_unlocked_count(session, current_user, stage, len(items), user_tz)
     content_ids = [item.id for item in items if item.id is not None]
     read_ids = await _read_ids_for_user(session, current_user, content_ids)
 
@@ -289,6 +295,7 @@ async def get_content_item(
     content_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ContentItemResponse:
     """Get a single content item with lock/read status.
 
@@ -302,7 +309,7 @@ async def get_content_item(
     item, stage = await _load_content_with_stage(session, content_id)
     # BUG-COURSE-004: mask locked-stage access as 404 so locked content
     # is indistinguishable from nonexistent content over the wire.
-    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number):
+    if not await _is_stage_unlocked_for_user(session, current_user, stage.stage_number, user_tz):
         raise not_found("content")
 
     item_id = item.id
@@ -311,7 +318,7 @@ async def get_content_item(
         raise RuntimeError(msg)
     read_ids = await _read_ids_for_user(session, current_user, [item_id])
 
-    is_locked = await _content_item_is_locked(session, current_user, stage, item)
+    is_locked = await _content_item_is_locked(session, current_user, stage, item, user_tz)
     enriched = enrich_content_item(
         _items_to_raw_dicts([item])[0], is_locked=is_locked, read_content_ids=read_ids
     )
@@ -343,6 +350,7 @@ async def _resolve_unlocked_content(
     session: AsyncSession,
     user_id: int,
     content_id: int,
+    tz: str,
 ) -> StageContent:
     """Fetch ``content_id`` and gate on the parent stage being unlocked.
 
@@ -354,7 +362,7 @@ async def _resolve_unlocked_content(
     testable.
     """
     item, stage = await _load_content_with_stage(session, content_id)
-    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
         raise not_found("content")
     return item
 
@@ -396,6 +404,7 @@ async def mark_content_read(
     content_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ContentCompletionResponse:
     """Mark a content item as read. Idempotent — repeated calls return existing record.
 
@@ -405,7 +414,7 @@ async def mark_content_read(
     loser via ``IntegrityError`` and the existing row is returned —
     closes the BUG-COURSE-002 TOCTOU.
     """
-    await _resolve_unlocked_content(session, current_user, content_id)
+    await _resolve_unlocked_content(session, current_user, content_id, user_tz)
 
     existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
@@ -433,10 +442,11 @@ async def get_course_progress(
     stage_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> CourseProgressResponse:
     """Get read-progress for a stage's content; 403 when the caller has not unlocked it."""
     stage = await _get_stage_by_number(session, stage_number)
-    await _check_stage_unlocked(session, current_user, stage_number)
+    await _check_stage_unlocked(session, current_user, stage_number, user_tz)
     result = await session.execute(
         select(StageContent).where(StageContent.course_stage_id == stage.id)
     )
@@ -447,7 +457,7 @@ async def get_course_progress(
 
     read_ids = await _read_ids_for_user(session, current_user, _content_ids_from_items(items))
     progress_pct = round((len(read_ids) / len(items)) * 100, 2)
-    day = await _day_in_stage_for_user(session, current_user, stage_number)
+    day = await _day_in_stage_for_user(session, current_user, stage_number, user_tz)
 
     # ``total_items`` stays the whole-stage count (not the unlocked count)
     # so "stage complete" only fires when everything is read; the drip only
@@ -520,7 +530,7 @@ async def _load_content_with_stage(
 
 
 async def _resolve_released_content_ref(
-    session: AsyncSession, user_id: int, content_id: int
+    session: AsyncSession, user_id: int, content_id: int, tz: str
 ) -> str:
     """Gate on stage-unlock + proportional drip, return the local chapter id.
 
@@ -534,9 +544,9 @@ async def _resolve_released_content_ref(
     mask.
     """
     item, stage = await _load_content_with_stage(session, content_id)
-    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
         raise not_found("content")
-    if await _content_item_is_locked(session, user_id, stage, item):
+    if await _content_item_is_locked(session, user_id, stage, item, tz):
         raise not_found("content")
     reference = item.url or ""
     if not reference.startswith(_CONTENT_REF_PREFIX):
@@ -551,6 +561,7 @@ async def get_content_body(
     content_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ContentBodyResponse:
     """Return raw Markdown for a content item from the vendored content.
 
@@ -559,7 +570,7 @@ async def get_content_body(
     URL cannot be used as an enumeration oracle.  The drip-feed unlock
     check is applied here too: locked-day content never escapes.
     """
-    chapter_id = await _resolve_released_content_ref(session, current_user, content_id)
+    chapter_id = await _resolve_released_content_ref(session, current_user, content_id, user_tz)
     return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
 
 
@@ -612,6 +623,7 @@ async def _require_unlocked_stage(
     session: AsyncSession,
     user_id: int,
     stage_number: int,
+    tz: str,
 ) -> None:
     """Require the stage to exist and be unlocked for ``user_id``.
 
@@ -620,7 +632,7 @@ async def _require_unlocked_stage(
     from a nonexistent one over the wire.
     """
     await _get_stage_by_number(session, stage_number)
-    if not await _is_stage_unlocked_for_user(session, user_id, stage_number):
+    if not await _is_stage_unlocked_for_user(session, user_id, stage_number, tz):
         raise not_found("content")
 
 
@@ -629,6 +641,7 @@ async def get_stage_introduction(
     stage_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> StageIntroResponse:
     """Return a stage's course-introduction metadata.
 
@@ -636,7 +649,7 @@ async def get_stage_introduction(
     stage with no intro both return ``content_not_found`` (BUG-COURSE-004) so
     neither acts as an enumeration oracle.
     """
-    await _require_unlocked_stage(session, current_user, stage_number)
+    await _require_unlocked_stage(session, current_user, stage_number, user_tz)
     intro = get_content_repository().get_stage_intro(stage_number)
     if intro is None:
         raise not_found("content")
@@ -656,6 +669,7 @@ async def get_stage_intro_body(
     stage_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ContentBodyResponse:
     """Return raw Markdown for a stage's course introduction.
 
@@ -663,7 +677,7 @@ async def get_stage_intro_body(
     :func:`_read_local_body`, so an unknown stage keeps the 404 mask and a
     broken repository surfaces as ``502 content_unavailable``.
     """
-    await _require_unlocked_stage(session, current_user, stage_number)
+    await _require_unlocked_stage(session, current_user, stage_number, user_tz)
     return _read_local_body(
         lambda: get_content_repository().read_intro_body(stage_number),
         f"stage-{stage_number}-intro",

@@ -7,8 +7,9 @@ never revoked.  ``max(advancement, calendar)`` on both gates.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -210,3 +211,51 @@ def test_calendar_tz_never_revokes_advancement_ahead_of_it() -> None:
     )
     early = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
     assert is_stage_unlocked(3, progress, now=early, tz="America/Los_Angeles") is True
+
+
+# ── /stages/program-calendar reads the caller's timezone ───────────────
+
+
+@pytest.mark.asyncio
+async def test_program_calendar_reflects_pacific_first_local_day_of_stage_two(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The calendar-stage view is computed in the caller's timezone, not UTC.
+
+    A Pacific user on the first local calendar day of stage 2 sees
+    ``calendar_stage == 2``; the UTC default still reads day 20 of stage 1
+    and reports ``calendar_stage == 1``.
+    """
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "pacificcalendar@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    user_id = resp.json()["user_id"]
+
+    la = ZoneInfo("America/Los_Angeles")
+    stage_one_duration = 21
+    start_date = datetime.now(la).date() - timedelta(days=stage_one_duration)
+    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
+    anchor = anchor_local.astimezone(UTC).replace(tzinfo=None)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
+
+    calendar_resp = await async_client.get("/stages/program-calendar", headers=headers)
+    assert calendar_resp.status_code == HTTPStatus.OK
+    body = calendar_resp.json()
+    assert body["calendar_stage"] == 2
+    expected_calendar_week = 4
+    assert body["calendar_week"] == expected_calendar_week

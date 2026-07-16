@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -54,6 +55,45 @@ async def _signup(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
+
+
+async def _signup_with_timezone(
+    client: AsyncClient,
+    username: str,
+    timezone: str,
+) -> tuple[dict[str, str], int]:
+    """Create a user with an explicit IANA timezone; returns (auth headers, user_id)."""
+    resp = await client.post(
+        "/auth/signup",
+        json={
+            "email": f"{username}@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": timezone,
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
+
+
+_STAGE_ONE_DURATION_DAYS = 21
+_DRIP_ISOLATION_DAY_IN_STAGE = 8
+_EXPECTED_NEXT_UNLOCK_DAY_LOCAL = 15
+
+
+def _pacific_anchor_for_stage_two_day(day_in_stage: int) -> datetime:
+    """UTC-naive anchor placing "now" on local day ``day_in_stage`` of stage 2 in LA time.
+
+    Stage 1 runs ``_STAGE_ONE_DURATION_DAYS`` days; anchoring at 23:59 local
+    time makes the UTC-default calendar read one calendar day behind Pacific
+    time regardless of when the test runs.
+    """
+    la = ZoneInfo("America/Los_Angeles")
+    start_date = datetime.now(la).date() - timedelta(
+        days=_STAGE_ONE_DURATION_DAYS + day_in_stage - 1
+    )
+    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
+    return anchor_local.astimezone(UTC).replace(tzinfo=None)
 
 
 async def _seed_stage_with_content(
@@ -982,6 +1022,92 @@ async def test_progress_endpoint_rejects_locked_stage(
     resp = await async_client.get("/course/stages/2/progress", headers=headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.json()["detail"] == "stage_locked"
+
+
+# ── Timezone-aware stage-unlock gating ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_course_progress_unlocked_on_pacific_first_local_day_of_stage_two(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The stage-unlock gate reads the caller's timezone, not UTC.
+
+    A Pacific user on the first local calendar day of stage 2 can read the
+    stage-2 progress surface; the UTC default still reads day 20 of stage 1
+    and 403s.
+    """
+    headers, user_id = await _signup_with_timezone(
+        async_client, "pacificcourse", "America/Los_Angeles"
+    )
+    await _seed_stage_with_content(db_session, stage_number=2)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=_pacific_anchor_for_stage_two_day(1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/course/stages/2/progress", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_content_item_not_masked_on_pacific_first_local_day_of_stage_two(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The BUG-COURSE-004 404 mask must not hide a stage the caller's local calendar opened."""
+    headers, user_id = await _signup_with_timezone(
+        async_client, "pacificcontent", "America/Los_Angeles"
+    )
+    _, items = await _seed_stage_with_content(db_session, stage_number=2)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=_pacific_anchor_for_stage_two_day(1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/course/content/{items[0].id}", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_next_unlock_day_reflects_pacific_local_day_not_utc_lag(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``_day_in_stage_for_user`` must thread the caller's timezone into the drip day count.
+
+    The user has already advanced into stage 2, so the stage-unlock gate
+    passes regardless of timezone threading -- isolating the drip day count
+    itself: at Pacific local day 8 of stage 2, two chapters are unlocked and
+    the next opens on day 15; the UTC default reads local day 7 (one
+    chapter fewer unlocked) and reports the next opening on day 8.
+    """
+    headers, user_id = await _signup_with_timezone(
+        async_client, "pacificdrip", "America/Los_Angeles"
+    )
+    await _seed_stage_with_content(db_session, stage_number=2)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=2,
+            completed_stages=[1],
+            stage_started_at=datetime.now(UTC) - timedelta(days=1),
+            program_started_at=_pacific_anchor_for_stage_two_day(_DRIP_ISOLATION_DAY_IN_STAGE),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/course/stages/2/progress", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["next_unlock_day"] == _EXPECTED_NEXT_UNLOCK_DAY_LOCAL
 
 
 def test_compute_days_elapsed_logs_on_future_timestamp(
