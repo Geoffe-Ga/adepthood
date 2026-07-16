@@ -25,7 +25,7 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
     apiKey: null,
     isLoading: false,
     loadError: null,
-    saveApiKey: jest.fn(() => Promise.resolve()),
+    saveApiKey: jest.fn(() => Promise.resolve({ persisted: true })),
     clearApiKey: jest.fn(() => Promise.resolve()),
   };
   const value = { ...base, ...partial } as ReturnType<typeof useApiKey>;
@@ -370,5 +370,24 @@ describe('ApiKeySettingsScreen', () => {
     const formError = await findByTestId('api-key-error');
     expect(formError).toBeTruthy();
     expect(getByTestId('api-key-storage-error').props.children).toBe(SECURE_STORAGE_WARNING);
+  });
+
+  test('shows only the storage warning, not the success status, when the write does not persist', async () => {
+    const state = setApiKeyState({
+      loadError: new Error('disk full'),
+      saveApiKey: jest.fn(() => Promise.resolve({ persisted: false })),
+    });
+    const { getByTestId, findByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    await act(async () => {
+      fireEvent.press(getByTestId('save-key-button'));
+    });
+
+    await waitFor(() => expect(state.saveApiKey).toHaveBeenCalledWith(VALID_KEY));
+    expect(await findByTestId('api-key-storage-error')).toBeTruthy();
+    expect(queryByTestId('api-key-status')).toBeNull();
+    expect(queryByTestId('api-key-error')).toBeNull();
+    expect(getByTestId('api-key-input').props.value).toBe('');
   });
 });

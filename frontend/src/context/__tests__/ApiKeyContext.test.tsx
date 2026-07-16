@@ -155,12 +155,14 @@ describe('ApiKeyProvider', () => {
     );
     await waitFor(() => expect(ctx?.isLoading).toBe(false));
 
+    let result: { persisted: boolean } | undefined;
     await act(async () => {
-      await ctx!.saveApiKey('sk-new');
+      result = await ctx!.saveApiKey('sk-new');
     });
 
     expect(mockStorage.saveLlmApiKey).toHaveBeenCalledWith('sk-new');
     expect(ctx!.apiKey).toBe('sk-new');
+    expect(result).toEqual({ persisted: true });
   });
 
   test('clearApiKey deletes the stored key and resets state', async () => {
@@ -253,13 +255,15 @@ describe('ApiKeyProvider', () => {
     );
     await waitFor(() => expect(ctx?.isLoading).toBe(false));
 
+    let result: { persisted: boolean } | undefined;
     await act(async () => {
-      await ctx!.saveApiKey('sk-fallback');
+      result = await ctx!.saveApiKey('sk-fallback');
     });
 
     expect(ctx!.loadError).toBeInstanceOf(Error);
     expect(ctx!.loadError?.message).toBe('disk full');
     expect(ctx!.apiKey).toBe('sk-fallback');
+    expect(result).toEqual({ persisted: false });
     warnSpy.mockRestore();
   });
 
