@@ -153,10 +153,12 @@ describe('ChapterReader', () => {
       content_type: 'chapter',
       body_markdown: 'retried body\n',
     });
-    const { findByTestId, findByText } = render(
+    const { findByTestId, findByText, getByText, queryByText } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     await findByText(/please try again/i);
+    expect(getByText('Try again')).toBeTruthy();
+    expect(queryByText('Try Again')).toBeNull();
     fireEvent.press(await findByTestId('reader-retry-button'));
     await findByText(/retried body/);
   });

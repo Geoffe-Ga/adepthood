@@ -6,6 +6,7 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { colors, SPACING } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
+import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
 
 /**
@@ -131,15 +132,7 @@ const ErrorView = ({ message, onRetry }: ErrorViewProps): React.JSX.Element => (
   <View style={styles.readerError} testID="reader-error">
     <Text style={styles.readerErrorTitle}>This page couldn’t load right now</Text>
     <Text style={styles.readerErrorSubtitle}>{message}</Text>
-    <TouchableOpacity
-      onPress={onRetry}
-      style={styles.retryButton}
-      testID="reader-retry-button"
-      accessibilityRole="button"
-      accessibilityLabel="Try again"
-    >
-      <Text style={styles.retryText}>Try Again</Text>
-    </TouchableOpacity>
+    <RetryButton onRetry={onRetry} testID="reader-retry-button" />
   </View>
 );
 
