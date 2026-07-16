@@ -92,16 +92,31 @@ updates:
       # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
       - dependency-name: "expo-keep-awake"
         versions: [">=15.0.0"]
+      # react-native-chart-kit 7.x peer-requires react >=19.1 and
+      # react-native >=0.81 — an Expo-SDK-scale pairing, not adaptable in
+      # isolation. Same SDK-managed rule — unpin at the SDK upgrade (#885).
+      - dependency-name: "react-native-chart-kit"
+        versions: [">=7.0.0"]
       # react-test-renderer must match the React major exactly (18.3.1, paired
       # with RN 0.76); 19.x needs React 19. It moves with the React upgrade, not
       # on its own — unpin when React itself moves to 19.
       - dependency-name: "react-test-renderer"
         versions: [">=19.0.0"]
+      # @testing-library/react-native 14.x requires React 19 / RN >=0.78 /
+      # Node ^22.13 and replaces react-test-renderer with a React-19-paired Test
+      # Renderer. It moves with the React upgrade, not on its own — unpin with
+      # the React 19 upgrade.
+      - dependency-name: "@testing-library/react-native"
+        versions: [">=14.0.0"]
       # TypeScript 6/7 is the native-port line, unsupported by the expo / jest /
       # eslint toolchain we run; adopt it via a deliberate migration, not a
       # Dependabot bump. Unpin when the toolchain supports the 6+ line.
       - dependency-name: "typescript"
         versions: [">=6.0.0"]
+      # @babel/core 8.x engines require Node ^22.18 || >=24.11; frontend CI is
+      # pinned to Node 20 (.nvmrc). Unpin when CI Node moves to 22+.
+      - dependency-name: "@babel/core"
+        versions: [">=8.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
