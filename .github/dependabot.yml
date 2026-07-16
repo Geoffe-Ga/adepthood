@@ -117,6 +117,12 @@ updates:
       # pinned to Node 20 (.nvmrc). Unpin when CI Node moves to 22+.
       - dependency-name: "@babel/core"
         versions: [">=8.0.0"]
+      # eslint-plugin-import + eslint-plugin-react cap their eslint peer at ^9
+      # and have no eslint-10 release; adopting eslint 10 ERESOLVE-fails. Unpin
+      # when both plugins ship eslint-10 support (or after an import-x /
+      # react-plugin migration).
+      - dependency-name: "eslint"
+        versions: [">=10.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
