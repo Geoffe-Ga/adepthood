@@ -4,6 +4,31 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import type { MettaReturnState, ReturnArc, ReturnWeek } from '@/api';
 
+type RealUseState = (_initial: unknown) => [unknown, (_next: unknown) => void];
+
+// When armed, record every state dispatch so the unmount-guard tests can assert
+// that no dispatch reaches the hook after it has been torn down — the one signal
+// React 18 leaves observable (a post-unmount setState is otherwise a silent no-op).
+let mockUnmountTrackingArmed = false;
+const mockPostUnmountDispatches: unknown[] = [];
+
+function mockWrapUseState(realUseState: unknown): (_initial: unknown) => [unknown, unknown] {
+  const useStateFn = realUseState as RealUseState;
+  return (initial) => {
+    const [value, setValue] = useStateFn(initial);
+    const trackedSetValue = (next: unknown): void => {
+      if (mockUnmountTrackingArmed) mockPostUnmountDispatches.push(next);
+      setValue(next);
+    };
+    return [value, trackedSetValue];
+  };
+}
+
+jest.mock('react', () => {
+  const actual = jest.requireActual('react') as Record<string, unknown>;
+  return { ...actual, useState: mockWrapUseState(actual.useState) };
+});
+
 const mockState = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<MettaReturnState>>;
 const mockStart = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<ReturnArc>>;
 const mockPause = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<ReturnArc>>;
@@ -94,6 +119,9 @@ beforeEach(() => {
   mockUseContractionSignalActive.mockReturnValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadDismissed.mockResolvedValue(false);
+
+  mockUnmountTrackingArmed = false;
+  mockPostUnmountDispatches.length = 0;
 });
 
 describe('useMettaReturn', () => {
@@ -267,7 +295,10 @@ describe('useMettaReturn', () => {
     expect(result.current.arc).toBeNull();
   });
 
-  it('unmount guard: a late state resolution does not set state after unmount', async () => {
+  it('unmount guard: a late state resolution dispatches no state update on the dead hook', async () => {
+    // A post-unmount setState is a silent no-op in React 18, so asserting on
+    // `eligible` cannot distinguish the guard from its removal. Arm the state-
+    // dispatch tracker instead and assert the late resolution reaches no setter.
     let resolveState: (_value: MettaReturnState) => void = () => {};
     mockState.mockReturnValue(
       new Promise<MettaReturnState>((resolve) => {
@@ -276,13 +307,59 @@ describe('useMettaReturn', () => {
     );
     const { result, unmount } = renderHook(() => useMettaReturn());
     unmount();
+    mockUnmountTrackingArmed = true;
 
     await act(async () => {
       resolveState(stateResult({ eligible: true, arc: null }));
       await Promise.resolve();
     });
 
-    // The hook must never flip eligible on a dead instance after unmount.
+    expect(mockPostUnmountDispatches).toHaveLength(0);
     expect(result.current.eligible).toBe(false);
+  });
+
+  it('unmount guard: a late cached-dismissal resolution dispatches no state update on the dead hook', async () => {
+    // The cache read carries its own unmount guard; with the server call left
+    // pending it cannot mask a stray dispatch from the late cache resolution.
+    let resolveCache: (_value: boolean) => void = () => {};
+    mockLoadDismissed.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveCache = resolve;
+      }),
+    );
+    mockState.mockReturnValue(new Promise<MettaReturnState>(() => {}));
+    const { result, unmount } = renderHook(() => useMettaReturn());
+    unmount();
+    mockUnmountTrackingArmed = true;
+
+    await act(async () => {
+      resolveCache(true);
+      await Promise.resolve();
+    });
+
+    expect(mockPostUnmountDispatches).toHaveLength(0);
+    expect(result.current.offerVisible).toBe(false);
+  });
+
+  it('revert guard: a cache resolution arriving after the server does not revert the applied flag', async () => {
+    // The server answer wins: a slow cache read resolving afterwards must not
+    // re-suppress an offer the server already un-dismissed (episode reset).
+    mockUseContractionSignalActive.mockReturnValue(true);
+    let resolveCache: (_value: boolean) => void = () => {};
+    mockLoadDismissed.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveCache = resolve;
+      }),
+    );
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.offerVisible).toBe(true));
+
+    await act(async () => {
+      resolveCache(true);
+      await Promise.resolve();
+    });
+
+    expect(result.current.offerVisible).toBe(true);
   });
 });
