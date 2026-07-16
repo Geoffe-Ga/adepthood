@@ -71,8 +71,8 @@ describe('drawerStageLabel', () => {
   });
 
   it('appends a locked marker when locked is true', () => {
-    expect(drawerStageLabel('Wisdom', 'Nondual', { locked: true, current: false })).toBe(
-      'Wisdom, Nondual, locked',
+    expect(drawerStageLabel('Wisdom', 'True Self', { locked: true, current: false })).toBe(
+      'Wisdom, True Self, locked',
     );
   });
 
