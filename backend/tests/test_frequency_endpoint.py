@@ -106,13 +106,13 @@ async def test_frequency_stage_1_no_selection_falls_back_to_preset(
     preset_id = await _fetch_preset_id(db_session, 1)
     assert body["stage_number"] == 1
     assert body["color"] == "Beige"
-    assert body["aspect"] == "Body"
+    assert body["aspect"] == "Agency"
     assert body["practice_name"] == STAGE_TO_PRESET_NAME[1]
     assert body["practice_id"] == preset_id
     assert body["user_practice_id"] is None
     assert body["banner_text"] == render_banner_text(
         color="Beige",
-        aspect="Body",
+        aspect="Agency",
         practice_name=STAGE_TO_PRESET_NAME[1],
     )
 
@@ -147,13 +147,13 @@ async def test_frequency_stage_5_with_selection_returns_user_practice(
 
     assert body["stage_number"] == 5
     assert body["color"] == "Orange"
-    assert body["aspect"] == "Mind"
+    assert body["aspect"] == "Intellectual Understanding"
     assert body["practice_name"] == STAGE_TO_PRESET_NAME[5]
     assert body["practice_id"] == preset_id
     assert body["user_practice_id"] == user_practice_id
     assert body["banner_text"] == render_banner_text(
         color="Orange",
-        aspect="Mind",
+        aspect="Intellectual Understanding",
         practice_name=STAGE_TO_PRESET_NAME[5],
     )
 
@@ -201,7 +201,7 @@ async def test_frequency_uses_custom_name_when_set(
     assert custom_name in body["banner_text"]
     assert body["banner_text"] == render_banner_text(
         color="Beige",
-        aspect="Body",
+        aspect="Agency",
         practice_name=custom_name,
     )
 
@@ -295,14 +295,15 @@ def test_banner_template_renders_three_slots_in_order() -> None:
     """
     rendered = render_banner_text(
         color="Orange",
-        aspect="Mind",
+        aspect="Intellectual Understanding",
         practice_name="Wim Hof method",
     )
     expected = (
         "You are in the Orange frequency of APTITUDE. That means you are "
-        "working on Mind. Your practice is Wim Hof method but you are "
-        "encouraged to replace it if another tradition has a practice that "
-        "deals with Mind that calls to you more."
+        "working on Intellectual Understanding. Your practice is Wim Hof "
+        "method but you are encouraged to replace it if another tradition "
+        "has a practice that deals with Intellectual Understanding that "
+        "calls to you more."
     )
     assert rendered == expected
 
@@ -404,10 +405,10 @@ async def test_frequency_respects_stage_progress(
     assert resp.status_code == HTTPStatus.OK, resp.text
     body = resp.json()
 
-    # Stage 3 = Red / Emotion (per seed_stages._STAGE_DEFINITIONS).
+    # Stage 3 = Red / Self-Love (per seed_stages.STAGE_DEFINITIONS).
     assert body["stage_number"] == 3
     assert body["color"] == "Red"
-    assert body["aspect"] == "Emotion"
+    assert body["aspect"] == "Self-Love"
     assert body["practice_name"] == STAGE_TO_PRESET_NAME[3]
     assert body["user_practice_id"] is None
 

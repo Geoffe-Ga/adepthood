@@ -24,7 +24,8 @@ from models.practice_session import PracticeSession
 from models.stage_content import StageContent
 from models.user_practice import UserPractice
 
-# Canonical ten Aspects in stage_number order (sourced from seed_stages.py)
+# Synthetic aspect labels for the fixture rows, in stage_number order; these
+# are local test values, not the canonical seed ontology from seed_stages.py.
 _CANONICAL_ASPECTS = [
     "Body",  # stage 1
     "Body",  # stage 2
