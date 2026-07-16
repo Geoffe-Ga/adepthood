@@ -88,7 +88,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   stage_locked:
     "You haven't unlocked this stage yet. Finish the earlier stages first — this practice will be waiting when you get there.",
   stage_number_mismatch:
-    'This practice belongs to a different stage. Open it from that stage to use it.',
+    'This practice belongs to a different stage. Make a copy for your stage to use it there.',
   active_practice_exists_for_stage:
     'Another change to this stage just went through. Pull down to refresh, then try switching again.',
   habits_must_not_be_empty:

@@ -5,7 +5,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Alert, StyleSheet } from 'react-native';
 
-import type { PracticeItem } from '@/api';
+import type { PracticeItem, UserPractice } from '@/api';
 import { surface } from '@/design/tokens';
 
 // Async practice load settling is marginal against Jest's 5s default under CI parallel-worker contention; give this suite headroom.
@@ -89,11 +89,23 @@ const mockRoute: { params?: { stageNumber?: number } } = { params: undefined };
 const mockPracticesList = jest.fn() as jest.MockedFunction<
   (opts: { stageNumber: number; includeMine?: boolean }) => Promise<PracticeItem[]>
 >;
+const mockPracticesCreate = jest.fn() as jest.MockedFunction<
+  (payload: Record<string, unknown>) => Promise<PracticeItem>
+>;
+const mockUserPracticesCreate = jest.fn() as jest.MockedFunction<
+  (payload: { practice_id: number; stage_number: number }) => Promise<UserPractice>
+>;
 
 jest.mock('@/api', () => ({
   practices: {
     listAll: (...args: unknown[]) =>
       (mockPracticesList as unknown as (...a: unknown[]) => Promise<PracticeItem[]>)(...args),
+    create: (...args: unknown[]) =>
+      (mockPracticesCreate as unknown as (...a: unknown[]) => Promise<PracticeItem>)(...args),
+  },
+  userPractices: {
+    create: (...args: unknown[]) =>
+      (mockUserPracticesCreate as unknown as (...a: unknown[]) => Promise<UserPractice>)(...args),
   },
 }));
 
@@ -298,10 +310,10 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
       (id: number, stage: number) => Promise<void>
     >;
     mockPracticesList.mockResolvedValueOnce([presetA]);
-    const view = render(<PracticeCatalogScreen initialStage={2} setActive={setActive} />);
+    const view = render(<PracticeCatalogScreen initialStage={1} setActive={setActive} />);
     await waitForLoad();
     fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
-    expect(setActive).toHaveBeenCalledWith(1, 2);
+    expect(setActive).toHaveBeenCalledWith(1, 1);
     await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
   });
 
@@ -311,7 +323,7 @@ describe('PracticeCatalogScreen — defaults wiring', () => {
       throw new Error('boom');
     }) as jest.MockedFunction<(id: number, stage: number) => Promise<void>>;
     mockPracticesList.mockResolvedValueOnce([presetA]);
-    const view = render(<PracticeCatalogScreen initialStage={2} setActive={setActive} />);
+    const view = render(<PracticeCatalogScreen initialStage={1} setActive={setActive} />);
     await waitForLoad();
     fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
@@ -549,5 +561,82 @@ describe('PracticeCatalogScreen — footer suppression', () => {
     expect(flat.backgroundColor).not.toBe(surface.canvas);
     // Must positively declare itself as non-expanding.
     expect(flat.flex).toBe(0);
+  });
+});
+
+describe('PracticeCatalogScreen — cross-stage copy', () => {
+  beforeEach(() => {
+    mockPracticesList.mockReset();
+    mockPracticesCreate.mockReset();
+    mockUserPracticesCreate.mockReset();
+    mockNavigation.navigate.mockReset();
+    mockNavigation.goBack.mockReset();
+    mockRoute.params = undefined;
+  });
+
+  it('shows the copy dialog with no API calls when the row differs from the browsing stage', async () => {
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={6} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    expect(view.getByTestId('practice-copy-dialog')).toBeTruthy();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    expect(mockNavigation.goBack).not.toHaveBeenCalled();
+  });
+
+  it('confirming the copy dialog creates a draft at the browsing stage, assigns it, records it, and goes back', async () => {
+    const createdDraft: PracticeItem = { ...presetA, id: 501, stage_number: 6, approved: false };
+    const assignedCopy: UserPractice = {
+      id: 1,
+      user_id: 9,
+      practice_id: 501,
+      stage_number: 6,
+      start_date: '2026-07-15',
+      end_date: null,
+    };
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    mockPracticesCreate.mockResolvedValueOnce(createdDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedCopy);
+    const view = render(<PracticeCatalogScreen initialStage={6} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+      await flushPromises();
+    });
+    expect(mockPracticesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ stage_number: 6, name: presetA.name }),
+    );
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 501, stage_number: 6 });
+    await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
+    const raw = await AsyncStorage.getItem('@adepthood/recent_practices');
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw as string)[0].id).toBe(501);
+  });
+
+  it('cancelling the copy dialog makes zero API calls and stays put', async () => {
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={6} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    fireEvent.press(view.getByTestId('practice-copy-dialog-cancel'));
+    expect(view.queryByTestId('practice-copy-dialog')).toBeNull();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    expect(mockNavigation.goBack).not.toHaveBeenCalled();
+  });
+
+  it('keeps the direct same-stage Use behavior when the row matches the browsing stage', async () => {
+    mockPracticesList.mockResolvedValueOnce([presetA]);
+    const view = render(<PracticeCatalogScreen initialStage={1} />);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    expect(view.queryByTestId('practice-copy-dialog')).toBeNull();
+    await waitFor(() =>
+      expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 }),
+    );
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
   });
 });

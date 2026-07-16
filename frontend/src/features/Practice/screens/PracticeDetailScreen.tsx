@@ -27,12 +27,15 @@ import {
   surface,
   surfaceShadow,
 } from '@/design/tokens';
+import CopyToStageDialog from '@/features/Practice/components/CopyToStageDialog';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import { resolvePickableMode } from '@/features/Practice/components/ModePicker';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import StageSelector from '@/features/Practice/components/StageSelector';
+import { copyPracticeToStage } from '@/features/Practice/utils/copyPracticeToStage';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { programStage, useProgramStore } from '@/store/useProgramStore';
 
 export type PracticeDetailScreenProps = NativeStackScreenProps<
   RootStackParamList,
@@ -46,6 +49,8 @@ interface ScreenState {
   assigning: boolean;
   loading: boolean;
   pickerOpen: boolean;
+  // Target stage while the confirm-and-copy dialog is open; null when closed.
+  copyTarget: number | null;
 }
 
 function initialState(actionError: string | null): ScreenState {
@@ -56,16 +61,73 @@ function initialState(actionError: string | null): ScreenState {
     assigning: false,
     loading: true,
     pickerOpen: false,
+    copyTarget: null,
   };
 }
 
 /**
- * Top-level screen — fetches a single practice and exposes the action row.
- *
- * "Use for stage" opens a 1-10 stage picker that writes via
- * ``userPractices.create``; "Customize a copy" replays the wizard with
- * this practice's mode_config pre-filled.
+ * Which "use this practice" path applies: the picker when the current stage is
+ * unknown, a direct assign when it matches the practice's home stage, or a
+ * confirm-and-copy when it differs.
  */
+export function resolveUseAction(
+  currentStage: number | null,
+  homeStage: number,
+): 'picker' | 'assign' | 'copy' {
+  if (currentStage === null) return 'picker';
+  return currentStage === homeStage ? 'assign' : 'copy';
+}
+
+/** Routes the "use for current stage" and picker taps to assign vs copy. */
+function useDetailUseHandlers(
+  state: PracticeDetailHook,
+  practice: PracticeItem,
+): { onUseForCurrentStage: () => void; onPickStage: (stage: number) => void } {
+  const anchor = useProgramStore((s) => s.programStartDate);
+  const currentStage = programStage(anchor);
+  const onUseForCurrentStage = (): void => {
+    if (currentStage === null) {
+      state.openPicker();
+      return;
+    }
+    if (resolveUseAction(currentStage, practice.stage_number) === 'assign') {
+      void state.assign(currentStage);
+      return;
+    }
+    state.openCopy(currentStage);
+  };
+  const onPickStage = (stage: number): void => {
+    if (stage === practice.stage_number) {
+      void state.assign(stage);
+      return;
+    }
+    // ``openCopy`` also closes the picker, so one dispatch covers both.
+    state.openCopy(stage);
+  };
+  return { onUseForCurrentStage, onPickStage };
+}
+
+/** The cross-stage confirm-and-copy dialog for the detail screen. */
+function DetailCopyDialog({
+  state,
+  practice,
+}: {
+  state: PracticeDetailHook;
+  practice: PracticeItem;
+}): React.JSX.Element {
+  return (
+    <CopyToStageDialog
+      visible={state.copyTarget !== null}
+      practiceName={practice.name}
+      homeStage={practice.stage_number}
+      targetStage={state.copyTarget ?? practice.stage_number}
+      busy={state.assigning}
+      onConfirm={() => void state.confirmCopy()}
+      onCancel={state.cancelCopy}
+    />
+  );
+}
+
 /** The loaded detail view (practice guaranteed non-null); owns the share sheet. */
 function LoadedDetail({
   props,
@@ -77,6 +139,8 @@ function LoadedDetail({
   practice: PracticeItem;
 }): React.JSX.Element {
   const [shareOpen, setShareOpen] = useState(false);
+  const { onUseForCurrentStage, onPickStage } = useDetailUseHandlers(state, practice);
+
   return (
     <ScreenScaffold scroll style={styles.scaffold} testID="practice-detail-screen">
       <DetailHeader practice={practice} />
@@ -88,23 +152,15 @@ function LoadedDetail({
       )}
       <ActionRow
         practice={practice}
-        // A practice is catalogued for exactly one stage and the backend
-        // rejects assigning it anywhere else (BUG-PRACTICE-004), so the
-        // one-tap path targets the practice's own stage rather than the
-        // store's ``currentStage`` (which is derived differently from the
-        // stage the catalog filtered by and could mismatch -> silent 400).
-        onUseForCurrentStage={() => void state.assign(practice.stage_number)}
+        onUseForCurrentStage={onUseForCurrentStage}
         onUseForStage={state.openPicker}
         onCustomizeCopy={() => navigateToCopy(props, practice)}
         onShare={() => setShareOpen(true)}
       />
       {state.pickerOpen && (
-        <StagePicker
-          assigning={state.assigning}
-          onPick={state.assign}
-          onClose={state.closePicker}
-        />
+        <StagePicker assigning={state.assigning} onPick={onPickStage} onClose={state.closePicker} />
       )}
+      <DetailCopyDialog state={state} practice={practice} />
       <ShareSheet
         visible={shareOpen}
         practiceId={practice.id}
@@ -160,10 +216,14 @@ interface PracticeDetailHook {
   assigning: boolean;
   loading: boolean;
   pickerOpen: boolean;
+  copyTarget: number | null;
   reload: () => void;
   openPicker: () => void;
   closePicker: () => void;
   assign: (stageNumber: number) => Promise<void>;
+  openCopy: (targetStage: number) => void;
+  cancelCopy: () => void;
+  confirmCopy: () => Promise<void>;
 }
 
 const withAssignError = (prev: ScreenState, err: unknown): ScreenState => ({
@@ -171,6 +231,47 @@ const withAssignError = (prev: ScreenState, err: unknown): ScreenState => ({
   assigning: false,
   actionError: formatApiError(err, { fallback: 'Could not assign practice.' }),
 });
+
+/** Confirm-and-copy callbacks for the cross-stage dialog. */
+function useCopyFlow(
+  state: ScreenState,
+  setState: React.Dispatch<React.SetStateAction<ScreenState>>,
+  onAssigned?: () => void,
+): {
+  openCopy: (targetStage: number) => void;
+  cancelCopy: () => void;
+  confirmCopy: () => Promise<void>;
+} {
+  const openCopy = useCallback(
+    (targetStage: number) =>
+      setState((prev) => ({
+        ...prev,
+        copyTarget: targetStage,
+        pickerOpen: false,
+        actionError: null,
+      })),
+    [setState],
+  );
+  const cancelCopy = useCallback(
+    () => setState((prev) => ({ ...prev, copyTarget: null })),
+    [setState],
+  );
+  const confirmCopy = useCallback(async () => {
+    const target = state.copyTarget;
+    const source = state.practice;
+    if (target === null || source === null) return;
+    setState((prev) => ({ ...prev, assigning: true, actionError: null }));
+    try {
+      await copyPracticeToStage(source, target);
+      setState((prev) => ({ ...prev, assigning: false, copyTarget: null }));
+      onAssigned?.();
+    } catch (err) {
+      // No rollback: an orphaned draft may remain, so surface the error and stay.
+      setState((prev) => ({ ...withAssignError(prev, err), copyTarget: null }));
+    }
+  }, [state.copyTarget, state.practice, setState, onAssigned]);
+  return { openCopy, cancelCopy, confirmCopy };
+}
 
 function usePracticeDetail(
   practiceId: number,
@@ -222,7 +323,9 @@ function usePracticeDetail(
     [practiceId, onAssigned],
   );
 
-  return { ...state, reload, openPicker, closePicker, assign };
+  const { openCopy, cancelCopy, confirmCopy } = useCopyFlow(state, setState, onAssigned);
+
+  return { ...state, reload, openPicker, closePicker, assign, openCopy, cancelCopy, confirmCopy };
 }
 
 function navigateToCopy(props: PracticeDetailScreenProps, practice: PracticeItem) {
