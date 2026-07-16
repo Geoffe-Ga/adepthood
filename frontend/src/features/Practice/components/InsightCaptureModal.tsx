@@ -7,8 +7,12 @@
  *   - **Save**: POST the session row with the typed insight attached and
  *     dismiss.
  *   - **Save & journal with BotMason** (when ``onJournal`` is wired): POST
- *     then hand off to the Journal tab with ``practiceSessionId`` so
- *     BotMason has context. Hidden when the parent does not wire the handler.
+ *     then hand off via ``onJournal``. The parent (ritual-11's `PracticeScreen`)
+ *     wires this to a ``navigation.navigate('JournalEntry', …)`` into the
+ *     ``RootStack.JournalEntry`` screen, passing ``practiceSessionId``,
+ *     ``userPracticeId``, and a ``prefillTitle`` so the long-form entry opens
+ *     pre-linked to this session. Hidden when the parent does not wire the
+ *     handler.
  *   - **Skip**: POST the session row *without* an insight. Analytics still
  *     need the row; only the free-text field is omitted.
  *
