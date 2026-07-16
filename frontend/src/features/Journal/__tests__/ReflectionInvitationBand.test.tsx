@@ -84,10 +84,10 @@ beforeEach(() => {
 
 describe('ReflectionInvitationBand', () => {
   it('renders the band with level-appropriate copy when a reflection is due', async () => {
-    const { findByTestId, getByTestId } = render(<ReflectionInvitationBand />);
-    const band = await findByTestId('journal-reflection-band');
-    expect(band).toBeTruthy();
-    expect(getByTestId('journal-reflection-band')).toBeTruthy();
+    const { findByText } = render(<ReflectionInvitationBand />);
+    // The default due window is a week reflection at scope c1:w14, so the band's
+    // title must read the week-level copy rather than a generic fallback.
+    expect(await findByText('Week 14 Reflection')).toBeTruthy();
   });
 
   it('shows the stage title alongside stage-level copy', async () => {

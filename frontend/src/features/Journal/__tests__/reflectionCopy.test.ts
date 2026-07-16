@@ -1,8 +1,21 @@
-// RED: `reflectionCopy` does not exist yet -- these imports fail until the
-// implementation-specialist adds `reflectionTitle` and `formatBlockquote`.
 import { describe, it, expect } from '@jest/globals';
 
-import { reflectionTitle, formatBlockquote } from '../reflectionCopy';
+import { reflectionTitle, formatBlockquote, sourceAttribution } from '../reflectionCopy';
+
+import type { ReflectionSourceItem } from '@/api';
+
+function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSourceItem {
+  return {
+    kind: 'entry',
+    id: 1,
+    title: null,
+    timestamp: '2026-06-15T12:00:00Z',
+    body: 'went for a daily walk',
+    reflection_level: null,
+    promoted_quotes: [],
+    ...overrides,
+  };
+}
 
 describe('reflectionTitle', () => {
   it('titles a week reflection from its week-number scope key', () => {
@@ -49,9 +62,22 @@ describe('formatBlockquote', () => {
     const block = formatBlockquote('went for a daily walk', 'Runs');
     expect(block.endsWith('\n\n')).toBe(true);
   });
+});
+
+describe('sourceAttribution', () => {
+  it('uses the source title when one is present', () => {
+    expect(sourceAttribution(sourceItem({ title: 'Morning Pages' }))).toBe('Morning Pages');
+  });
 
   it('falls back to a formatted date attribution when no title is given', () => {
-    const block = formatBlockquote('went for a daily walk', 'Jun 1, 2026');
-    expect(block).toContain('Jun 1, 2026');
+    const attribution = sourceAttribution(sourceItem({ title: null }));
+    expect(attribution).toContain('Jun');
+    expect(attribution).toContain('2026');
+  });
+
+  it('treats a whitespace-only title as no title and falls back to the date', () => {
+    const attribution = sourceAttribution(sourceItem({ title: '   ' }));
+    expect(attribution).toContain('Jun');
+    expect(attribution).toContain('2026');
   });
 });
