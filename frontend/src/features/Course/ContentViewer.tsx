@@ -32,7 +32,7 @@ const ViewerFooter = ({
       {marking ? (
         <ActivityIndicator testID="mark-read-loading" size="small" color={colors.text.light} />
       ) : (
-        <Text style={[styles.markReadText, isRead && styles.markReadTextDone]}>
+        <Text style={[styles.buttonLabelOnAccent, isRead && styles.markReadTextDone]}>
           {isRead ? '✓ Read' : 'Mark as Read'}
         </Text>
       )}
@@ -45,7 +45,7 @@ const ViewerFooter = ({
         accessibilityRole="button"
         accessibilityLabel="Reflect in Journal"
       >
-        <Text style={styles.reflectText}>Reflect in Journal</Text>
+        <Text style={styles.buttonLabelOnAccent}>Reflect in Journal</Text>
       </TouchableOpacity>
     )}
   </View>
