@@ -1,9 +1,10 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type { PracticeItem, UserPractice } from '@/api';
+import { useProgramStore } from '@/store/useProgramStore';
 
 const samplePractice: PracticeItem = {
   id: 77,
@@ -33,7 +34,27 @@ const assignedUserPractice: UserPractice = {
   end_date: null,
 };
 
+const copiedDraft: PracticeItem = {
+  ...samplePractice,
+  id: 501,
+  stage_number: 6,
+  approved: false,
+  submitted_by_user_id: 9,
+};
+
+const copiedAssignment: UserPractice = {
+  id: 2,
+  user_id: 9,
+  practice_id: 501,
+  stage_number: 6,
+  start_date: '2026-07-15',
+  end_date: null,
+};
+
 const mockPracticesGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<PracticeItem>>;
+const mockPracticesCreate = jest.fn() as jest.MockedFunction<
+  (payload: Record<string, unknown>) => Promise<PracticeItem>
+>;
 const mockUserPracticesCreate = jest.fn() as jest.MockedFunction<
   (payload: { practice_id: number; stage_number: number }) => Promise<UserPractice>
 >;
@@ -42,6 +63,8 @@ jest.mock('@/api', () => ({
   practices: {
     get: (...args: unknown[]) =>
       (mockPracticesGet as unknown as (...a: unknown[]) => Promise<PracticeItem>)(...args),
+    create: (...args: unknown[]) =>
+      (mockPracticesCreate as unknown as (...a: unknown[]) => Promise<PracticeItem>)(...args),
   },
   userPractices: {
     create: (...args: unknown[]) =>
@@ -98,6 +121,20 @@ async function waitForLoad() {
   });
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+// STAGE_DURATIONS_DAYS is 21 days per stage through stage 8; these offsets land
+// mid-stage-4 (the practice's home stage) and mid-stage-6 (a different stage).
+const HOME_STAGE_DAYS_AGO = 70;
+const OTHER_STAGE_DAYS_AGO = 110;
+
+function setAnchorDaysAgo(days: number): void {
+  useProgramStore.getState().hydrateProgramStartDate(new Date(Date.now() - days * DAY_MS));
+}
+
+afterEach(() => {
+  useProgramStore.getState().hydrateProgramStartDate(null);
+});
+
 describe('PracticeDetailScreen — read-only summary', () => {
   beforeEach(() => {
     mockPracticesGet.mockReset();
@@ -139,10 +176,13 @@ describe('PracticeDetailScreen — read-only summary', () => {
 describe('PracticeDetailScreen — Use for stage', () => {
   beforeEach(() => {
     mockPracticesGet.mockReset();
+    mockPracticesCreate.mockReset();
     mockUserPracticesCreate.mockReset();
+    useProgramStore.getState().hydrateProgramStartDate(null);
   });
 
-  it("uses the practice's own stage in one tap and returns to the Practice screen", async () => {
+  it("calls userPractices.create directly for the current stage when it matches the practice's home stage", async () => {
+    setAnchorDaysAgo(HOME_STAGE_DAYS_AGO);
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
     const nav = makeNav();
@@ -152,10 +192,9 @@ describe('PracticeDetailScreen — Use for stage', () => {
       fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
       await flushPromises();
     });
-    // The practice is catalogued for stage 4, so the one-tap path targets that
-    // stage (the backend rejects any other) rather than the store's current
-    // stage. No picker is opened, and the screen pops back to Practice.
     expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 77, stage_number: 4 });
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(view.queryByTestId('practice-copy-dialog')).toBeNull();
     expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
     expect(nav.popToTop).toHaveBeenCalledTimes(1);
   });
@@ -180,6 +219,7 @@ describe('PracticeDetailScreen — Use for stage', () => {
   });
 
   it('does not render a write-only success banner on assign success', async () => {
+    setAnchorDaysAgo(HOME_STAGE_DAYS_AGO);
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
     mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
     const nav = makeNav();
@@ -203,19 +243,108 @@ describe('PracticeDetailScreen — Use for stage', () => {
     expect(view.getByTestId('share-sheet')).toBeTruthy();
   });
 
-  it('surfaces an action error and stays put if assignment fails', async () => {
+  it('closes the stage picker without writing when Cancel is tapped', async () => {
     mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
+    expect(view.getByTestId('practice-detail-stage-picker')).toBeTruthy();
+    fireEvent.press(view.getByTestId('practice-detail-stage-pick-cancel'));
+    expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('PracticeDetailScreen — cross-stage copy', () => {
+  beforeEach(() => {
+    mockPracticesGet.mockReset();
+    mockPracticesCreate.mockReset();
+    mockUserPracticesCreate.mockReset();
+    useProgramStore.getState().hydrateProgramStartDate(null);
+  });
+
+  it('shows the copy dialog instead of assigning when the current stage differs from the home stage', async () => {
+    setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    expect(view.getByTestId('practice-copy-dialog')).toBeTruthy();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    expect(nav.popToTop).not.toHaveBeenCalled();
+  });
+
+  it('confirming the copy dialog creates a draft at the target stage, assigns it, and returns', async () => {
+    setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    mockPracticesCreate.mockResolvedValueOnce(copiedDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(copiedAssignment);
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+      await flushPromises();
+    });
+    expect(mockPracticesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ stage_number: 6, name: 'Forest grounding' }),
+    );
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 501, stage_number: 6 });
+    expect(nav.popToTop).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelling the copy dialog makes zero API calls and leaves the screen in place', async () => {
+    setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const nav = makeNav();
+    const { view } = renderScreen(77, nav);
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    fireEvent.press(view.getByTestId('practice-copy-dialog-cancel'));
+    expect(view.queryByTestId('practice-copy-dialog')).toBeNull();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    expect(nav.popToTop).not.toHaveBeenCalled();
+  });
+
+  it('opens the stage picker instead of assigning when there is no program anchor', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    expect(view.getByTestId('practice-detail-stage-picker')).toBeTruthy();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+  });
+
+  it('shows the copy dialog when a picker selection differs from the home stage', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
+    fireEvent.press(view.getByTestId('practice-detail-stage-pick-6'));
+    expect(view.getByTestId('practice-copy-dialog')).toBeTruthy();
+    expect(mockPracticesCreate).not.toHaveBeenCalled();
+    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an action error without navigating away when the assign step fails after a successful copy', async () => {
+    setAnchorDaysAgo(OTHER_STAGE_DAYS_AGO);
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    mockPracticesCreate.mockResolvedValueOnce(copiedDraft);
     mockUserPracticesCreate.mockRejectedValueOnce(new Error('nope'));
     const nav = makeNav();
     const { view } = renderScreen(77, nav);
     await waitForLoad();
-    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
     await act(async () => {
-      fireEvent.press(view.getByTestId('practice-detail-stage-pick-2'));
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
       await flushPromises();
     });
     expect(view.getByTestId('practice-detail-action-error')).toBeTruthy();
-    // A failed assignment must not navigate away — the user stays to see the error.
     expect(nav.popToTop).not.toHaveBeenCalled();
   });
 });
@@ -255,19 +384,6 @@ describe('PracticeDetailScreen — Duplicate & edit', () => {
     expect(button.props.accessibilityState?.disabled).toBe(true);
     fireEvent.press(button);
     expect(nav.navigate).not.toHaveBeenCalled();
-  });
-});
-
-describe('PracticeDetailScreen — stage picker cancel', () => {
-  it('closes the stage picker without writing when Cancel is tapped', async () => {
-    mockPracticesGet.mockResolvedValueOnce(samplePractice);
-    const { view } = renderScreen();
-    await waitForLoad();
-    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
-    expect(view.getByTestId('practice-detail-stage-picker')).toBeTruthy();
-    fireEvent.press(view.getByTestId('practice-detail-stage-pick-cancel'));
-    expect(view.queryByTestId('practice-detail-stage-picker')).toBeNull();
-    expect(mockUserPracticesCreate).not.toHaveBeenCalled();
   });
 });
 

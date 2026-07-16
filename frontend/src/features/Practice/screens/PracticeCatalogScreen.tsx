@@ -46,6 +46,7 @@ import {
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
+import CopyToStageDialog from '@/features/Practice/components/CopyToStageDialog';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import {
   MODE_CATEGORIES,
@@ -55,6 +56,7 @@ import {
 import StageSelector from '@/features/Practice/components/StageSelector';
 import { MIN_STAGE } from '@/features/Practice/constants';
 import { useRecentPractices } from '@/features/Practice/hooks/useRecentPractices';
+import { copyPracticeToStage } from '@/features/Practice/utils/copyPracticeToStage';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import type { RecentPractice } from '@/storage/recentPracticesStorage';
@@ -85,9 +87,25 @@ interface CatalogState {
  * before the user picks a chip; pass ``initialStage`` to align with the
  * user's current stage when this screen is the catalog tab.
  */
-export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Element {
-  // Destructure so the useCallback deps below are stable field refs, not the
-  // ``props`` object (a fresh ref each render that would defeat memoization).
+interface CatalogScreenModel {
+  stageNumber: number;
+  setStageNumber: (stage: number) => void;
+  modeCategory: string | null;
+  setModeCategory: (category: string | null) => void;
+  query: string;
+  setQuery: (query: string) => void;
+  state: CatalogState;
+  reload: () => void;
+  onDetail: (id: number) => void;
+  onCreate: () => void;
+  recents: readonly RecentPractice[];
+  catalogUse: CatalogUse;
+  sections: CatalogSection[];
+  renderItem: (info: { item: PracticeItem }) => React.JSX.Element;
+}
+
+/** Wires the catalog screen's filter state, data, navigation, and copy flow. */
+function useCatalogScreen(props: CatalogProps): CatalogScreenModel {
   const { initialStage, loadPractices, navigateToDetail, navigateToCreate, setActive } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const seededStage = useSeededStage(initialStage);
@@ -103,8 +121,51 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
   );
   const setActivePractice = useCatalogSetActive(stageNumber, navigation, setActive);
   const { recents, record } = useRecentPractices();
-  const onUse = useRecordedUse(setActivePractice, record);
-  const { sections, renderItem } = useCatalogList(state, query, modeCategory, onDetail, onUse);
+  const catalogUse = useCatalogUse(stageNumber, navigation, record, setActivePractice);
+  const { sections, renderItem } = useCatalogList(
+    state,
+    query,
+    modeCategory,
+    onDetail,
+    catalogUse.onUse,
+  );
+
+  return {
+    stageNumber,
+    setStageNumber,
+    modeCategory,
+    setModeCategory,
+    query,
+    setQuery,
+    state,
+    reload,
+    onDetail,
+    onCreate,
+    recents,
+    catalogUse,
+    sections,
+    renderItem,
+  };
+}
+
+/** The cross-stage confirm-and-copy dialog, rendered only while a copy is offered. */
+function CatalogCopyDialog({ use }: { use: CatalogUse }): React.JSX.Element | null {
+  if (use.copyState === null) return null;
+  return (
+    <CopyToStageDialog
+      visible
+      practiceName={use.copyState.practice.name}
+      homeStage={use.copyState.practice.stage_number}
+      targetStage={use.copyState.targetStage}
+      busy={use.busy}
+      onConfirm={use.confirmCopy}
+      onCancel={use.cancelCopy}
+    />
+  );
+}
+
+export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Element {
+  const s = useCatalogScreen(props);
   const insets = useSafeAreaInsets();
   const containerStyle = [styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }];
 
@@ -112,45 +173,102 @@ export function PracticeCatalogScreen(props: CatalogProps = {}): React.JSX.Eleme
     <View style={containerStyle} testID="practice-catalog-safe-area">
       <SectionList<PracticeItem, CatalogSection>
         testID="practice-catalog-screen"
-        sections={state.loading || state.error !== null ? [] : sections}
+        sections={s.state.loading || s.state.error !== null ? [] : s.sections}
         keyExtractor={catalogKeyExtractor}
-        renderItem={renderItem}
+        renderItem={s.renderItem}
         renderSectionHeader={renderSectionHeader}
-        renderSectionFooter={makeSectionFooter(onCreate, sections)}
+        renderSectionFooter={makeSectionFooter(s.onCreate, s.sections)}
         ListHeaderComponent={
           <CatalogHeader
-            query={query}
-            onQueryChange={setQuery}
-            stageNumber={stageNumber}
-            onStage={setStageNumber}
-            modeCategory={modeCategory}
-            onMode={setModeCategory}
-            onCreate={onCreate}
-            recents={recents}
-            onDetail={onDetail}
+            query={s.query}
+            onQueryChange={s.setQuery}
+            stageNumber={s.stageNumber}
+            onStage={s.setStageNumber}
+            modeCategory={s.modeCategory}
+            onMode={s.setModeCategory}
+            onCreate={s.onCreate}
+            recents={s.recents}
+            onDetail={s.onDetail}
           />
         }
-        ListFooterComponent={<CatalogStatus state={state} onRetry={reload} />}
+        ListFooterComponent={<CatalogStatus state={s.state} onRetry={s.reload} />}
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         stickySectionHeadersEnabled={false}
       />
+      <CatalogCopyDialog use={s.catalogUse} />
     </View>
   );
 }
 
-/** "Use this practice" — snapshot it into the recents list, then set it active. */
-function useRecordedUse(
-  setActivePractice: (id: number) => void,
+interface CopyDialogState {
+  practice: PracticeItem;
+  targetStage: number;
+}
+
+interface CatalogUse {
+  onUse: (practice: PracticeItem) => void;
+  copyState: CopyDialogState | null;
+  busy: boolean;
+  confirmCopy: () => void;
+  cancelCopy: () => void;
+}
+
+/** Create the copy draft, record it, and return to the Practice screen; an
+ * error keeps the user in place behind an alert. */
+async function runCatalogCopy(
+  active: CopyDialogState,
   record: (_entry: RecentPractice) => void,
-): (practice: PracticeItem) => void {
-  return useCallback(
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+): Promise<void> {
+  try {
+    const draft = await copyPracticeToStage(active.practice, active.targetStage);
+    record(toRecentPractice(draft));
+    navigation.goBack();
+  } catch (err) {
+    Alert.alert('Could not set practice', formatApiError(err, { fallback: 'Try again.' }));
+  }
+}
+
+/**
+ * One-tap "Use" for a catalog row. When the row's home stage matches the stage
+ * being browsed, it snapshots into recents and assigns directly (today's
+ * behaviour). When the stages differ, it opens a declinable confirm-and-copy
+ * dialog: confirming creates a user-owned copy at the browsing stage.
+ */
+function useCatalogUse(
+  stageNumber: number,
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+  record: (_entry: RecentPractice) => void,
+  setActivePractice: (id: number) => void,
+): CatalogUse {
+  const [copyState, setCopyState] = useState<CopyDialogState | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onUse = useCallback(
     (practice: PracticeItem) => {
-      record(toRecentPractice(practice));
-      setActivePractice(practice.id);
+      if (practice.stage_number === stageNumber) {
+        record(toRecentPractice(practice));
+        setActivePractice(practice.id);
+        return;
+      }
+      setCopyState({ practice, targetStage: stageNumber });
     },
-    [record, setActivePractice],
+    [stageNumber, record, setActivePractice],
   );
+
+  const cancelCopy = useCallback(() => setCopyState(null), []);
+
+  const confirmCopy = useCallback(() => {
+    if (copyState === null || busy) return;
+    setBusy(true);
+    void runCatalogCopy(copyState, record, navigation).finally(() => {
+      setBusy(false);
+      setCopyState(null);
+    });
+  }, [copyState, busy, record, navigation]);
+
+  return { onUse, copyState, busy, confirmCopy, cancelCopy };
 }
 
 /** Snapshot a catalog item into the persisted recent-practice shape. */
