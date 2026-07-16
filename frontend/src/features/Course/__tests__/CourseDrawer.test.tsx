@@ -8,7 +8,7 @@ import { useSyncExternalStore, type ReactElement } from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
-import { resolveStageColor, STAGE_ORDER } from '../../../design/tokens';
+import { ink, resolveStageColor, STAGE_ORDER, surface } from '../../../design/tokens';
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -64,8 +64,8 @@ const TEN_STAGES: Stage[] = STAGE_ORDER.map((colorName, index) => {
 // Distinct chapter titles per stage, so grouping is independently checkable.
 // Stage 2 (the initially-selected stage) carries a locked chapter to pin the
 // "locked chapter row inside an unlocked stage" behavior. Stage 4 (locked)
-// carries a fixture too, so a wrongly-fetched locked section would be
-// detectable -- correct behavior never fetches it, so its title never shows.
+// models the titles-only contract a locked stage's own listing returns: every
+// item is locked with no url.
 const contentByStage: Record<number, ContentItem[]> = {
   1: [chapterItem(101, 'Stage 1 Chapter A')],
   2: [
@@ -73,7 +73,7 @@ const contentByStage: Record<number, ContentItem[]> = {
     chapterItem(202, 'Stage 2 Chapter B', { is_locked: true }),
   ],
   3: [chapterItem(301, 'Stage 3 Chapter A')],
-  4: [chapterItem(401, 'Stage 4 Secret Chapter')],
+  4: [chapterItem(401, 'Stage 4 Secret Chapter', { is_locked: true })],
 };
 
 const sampleProgress: CourseProgress = {
@@ -135,9 +135,20 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
-// eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+// These modules are required after the jest.mock calls above so the mocks are
+// in place before the module-under-test loads; import/order is off for the block.
+/* eslint-disable import/order */
+const {
+  render,
+  waitFor,
+  fireEvent,
+  act,
+  within,
+  renderHook,
+} = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
+const { useCourseDrawerContent } = require('../CourseDrawer');
+/* eslint-enable import/order */
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
   headerLeftStore.listeners.add(onChange);
@@ -209,37 +220,64 @@ describe('Course header drawer', () => {
     expect(within(getByTestId('course-drawer-stage-2')).getByText('✓')).toBeTruthy();
     expect(within(getByTestId('course-drawer-stage-4')).getByText('🔒')).toBeTruthy();
 
-    // The header's color equals the shared resolver applied to the stage's own API color.
-    const stage1Style = StyleSheet.flatten(getByTestId('course-drawer-stage-1').props.style) ?? {};
-    expect((stage1Style as { backgroundColor?: string }).backgroundColor).toBe(
+    // Map-legend idiom: the stage color lives on a small swatch, not the header
+    // row itself. The swatch's color equals the shared resolver applied to the
+    // stage's own API color.
+    const swatch1Style =
+      StyleSheet.flatten(getByTestId('course-drawer-swatch-1').props.style) ?? {};
+    expect((swatch1Style as { backgroundColor?: string }).backgroundColor).toBe(
       resolveStageColor('Beige'),
     );
-    const stage3Style = StyleSheet.flatten(getByTestId('course-drawer-stage-3').props.style) ?? {};
-    expect((stage3Style as { backgroundColor?: string }).backgroundColor).toBe(
+    const swatch3Style =
+      StyleSheet.flatten(getByTestId('course-drawer-swatch-3').props.style) ?? {};
+    expect((swatch3Style as { backgroundColor?: string }).backgroundColor).toBe(
       resolveStageColor('Red'),
     );
+
+    // The header row no longer carries the stage color as its background.
+    const header1Style = StyleSheet.flatten(getByTestId('course-drawer-stage-1').props.style) ?? {};
+    expect((header1Style as { backgroundColor?: string }).backgroundColor).not.toBe(
+      resolveStageColor('Beige'),
+    );
+
+    // Title text uses the ink scale, not a light-on-color treatment.
+    const title1 = within(getByTestId('course-drawer-stage-1')).getByText('Stage 1');
+    const title1Style = StyleSheet.flatten(title1.props.style) ?? {};
+    expect((title1Style as { color?: string }).color).toBe(ink.primary);
+
+    // The selected stage (stage 2) marks its header row with a sunken fill.
+    const header2Style = StyleSheet.flatten(getByTestId('course-drawer-stage-2').props.style) ?? {};
+    expect((header2Style as { backgroundColor?: string }).backgroundColor).toBe(surface.sunken);
   });
 
-  it('renders a locked stage header as disabled and never fetches or selects it on press', async () => {
-    const { getByTestId, getByLabelText, queryByText } = render(<CourseScreenWithHeader />);
+  it('renders a locked stage header as disabled, with its titles-only chapter rows below it, and pressing the header selects nothing', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
     await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByTestId('course-drawer-stage-4')).toBeTruthy());
+
+    // Locked stages fetch too, now that a locked stage's own listing returns a
+    // titles-only contract instead of being skipped.
+    await waitFor(() =>
+      expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true),
+    );
 
     const header4 = getByTestId('course-drawer-stage-4');
     expect(header4.props.accessibilityState.disabled).toBe(true);
 
-    const stageContentCallCount = mockStageContent.mock.calls.length;
+    await waitFor(() => expect(getByTestId('course-drawer-chapter-401')).toBeTruthy());
+    const row401 = getByTestId('course-drawer-chapter-401');
+    expect(row401.props.accessibilityState.disabled).toBe(true);
+    expect(within(row401).getByText('🔒')).toBeTruthy();
+
     const stageProgressCallCount = mockStageProgress.mock.calls.length;
 
     fireEvent.press(header4);
 
-    expect(mockStageContent.mock.calls.length).toBe(stageContentCallCount);
     expect(mockStageProgress.mock.calls.length).toBe(stageProgressCallCount);
-    expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(false);
-    // Its content is never rendered -- correct behavior never fetches a locked section.
-    expect(queryByText('Stage 4 Secret Chapter')).toBeNull();
+    expect(queryByTestId('chapter-reader')).toBeNull();
+    expect(getByTestId('course-drawer-stage-2').props.accessibilityState.selected).toBe(true);
+    expect(header4.props.accessibilityState.selected).toBe(false);
   });
 
   it('tapping a chapter in a different stage selects it, opens the viewer, closes the drawer, and refetches', async () => {
@@ -286,7 +324,7 @@ describe('Course header drawer', () => {
     expect(getByTestId('screen-drawer-panel')).toBeTruthy();
   });
 
-  it('fetches content lazily per unlocked stage only when the drawer first opens, and caches across reopens', async () => {
+  it('fetches content for every stage when the drawer first opens, and caches across reopens', async () => {
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
     await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
     await waitFor(() => expect(mockStageContent).toHaveBeenCalledWith(2));
@@ -299,15 +337,10 @@ describe('Course header drawer', () => {
 
     await waitFor(() => {
       const fetched = new Set(mockStageContent.mock.calls.map((call) => call[0]));
-      expect(fetched.has(1)).toBe(true);
-      expect(fetched.has(2)).toBe(true);
-      expect(fetched.has(3)).toBe(true);
+      for (let n = 1; n <= 10; n += 1) {
+        expect(fetched.has(n)).toBe(true);
+      }
     });
-
-    const fetchedAfterOpen = new Set(mockStageContent.mock.calls.map((call) => call[0]));
-    for (let n = 4; n <= 10; n += 1) {
-      expect(fetchedAfterOpen.has(n)).toBe(false);
-    }
 
     const callCountAfterOpen = mockStageContent.mock.calls.length;
 
@@ -317,6 +350,66 @@ describe('Course header drawer', () => {
     fireEvent.press(getByLabelText('Open Course menu'));
 
     expect(mockStageContent.mock.calls.length).toBe(callCountAfterOpen);
+  });
+
+  it('a stage with no section entry at drawer-open time gets fetched; a stage that already has one is never refetched', async () => {
+    const nineStages = TEN_STAGES.slice(0, 9);
+    const { result, rerender } = renderHook(
+      ({ stages, isOpen }: { stages: Stage[]; isOpen: boolean }) =>
+        useCourseDrawerContent(stages, isOpen),
+      { initialProps: { stages: nineStages, isOpen: false } },
+    );
+
+    expect(mockStageContent).not.toHaveBeenCalled();
+
+    rerender({ stages: nineStages, isOpen: true });
+    await waitFor(() => {
+      for (let n = 1; n <= 9; n += 1) {
+        expect(result.current.sections[n]?.status).toBe('loaded');
+      }
+    });
+    expect(mockStageContent.mock.calls.length).toBe(9);
+    expect(result.current.sections[10]).toBeUndefined();
+
+    // Stage 10 becomes known while the drawer stays open: it has no section
+    // entry yet, so it must fetch even though the drawer already opened once.
+    rerender({ stages: TEN_STAGES, isOpen: true });
+    await waitFor(() => expect(result.current.sections[10]?.status).toBe('loaded'));
+    expect(mockStageContent.mock.calls.some((call) => call[0] === 10)).toBe(true);
+
+    const callCountAfterTenLoaded = mockStageContent.mock.calls.length;
+
+    // Every stage now has an entry: closing and reopening triggers no new fetches.
+    rerender({ stages: TEN_STAGES, isOpen: false });
+    rerender({ stages: TEN_STAGES, isOpen: true });
+    expect(mockStageContent.mock.calls.length).toBe(callCountAfterTenLoaded);
+  });
+
+  it('a locked-stage fetch failure renders only the header, with no retry row and no spinner', async () => {
+    mockStageContent.mockImplementation((stageNumber: number) => {
+      if (stageNumber === 4) {
+        return Promise.reject(new Error('stage 4 fetch failed'));
+      }
+      return Promise.resolve(contentByStage[stageNumber] ?? []);
+    });
+
+    const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Course menu'));
+
+    await waitFor(() =>
+      expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true),
+    );
+    await waitFor(() => expect(getByTestId('course-drawer-stage-4')).toBeTruthy());
+
+    // Let the rejection settle before asserting on its absence.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(queryByTestId('course-drawer-retry-4')).toBeNull();
+    expect(queryByTestId('course-drawer-loading-4')).toBeNull();
   });
 
   it('shows a per-section retry when exactly one unlocked stage fails, and retry reloads only that stage', async () => {
