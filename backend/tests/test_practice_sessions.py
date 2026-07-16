@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,7 +18,9 @@ from sqlmodel import col, select
 from main import app
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.stage_progress import StageProgress
 from models.user import User
+from models.user_practice import UserPractice
 from schemas.practice import WeekCountResponse
 
 _DEFAULT_DURATION = 5.0
@@ -1311,3 +1314,128 @@ async def test_week_count_uses_user_timezone_sunday_evening(
     assert resp.status_code == HTTPStatus.OK
     # The session is BEFORE this week's start in LA time, so it must NOT count.
     assert resp.json()["count"] == 0
+
+
+# -- stage-lock gate on session creation -------------------------------------
+
+
+async def _insert_stage_two_user_practice(db_session: AsyncSession, user_id: int) -> int:
+    """Insert a stage-2 UserPractice row directly and return its id.
+
+    Bypasses the selection endpoint's own gate so these tests exercise only
+    the session-creation stage-lock check, not the (separately tested)
+    selection gate.
+    """
+    practice = Practice(
+        stage_number=2,
+        name="LockedStagePractice",
+        description="Sit quietly",
+        instructions="Close your eyes and breathe",
+        default_duration_minutes=10,
+        approved=True,
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=2,
+        start_date=datetime.now(UTC).date(),
+    )
+    db_session.add(user_practice)
+    await db_session.commit()
+    await db_session.refresh(user_practice)
+    return cast("int", user_practice.id)
+
+
+@pytest.mark.asyncio
+async def test_log_session_for_locked_stage_is_forbidden(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A fresh user with no StageProgress cannot log a session against a stage-2 pick."""
+    headers, user_id = await _signup(async_client, "lockedsession")
+    up_id = await _insert_stage_two_user_practice(db_session, user_id)
+
+    resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "stage_locked"
+
+
+@pytest.mark.asyncio
+async def test_log_session_for_future_stage_succeeds_once_unlocked(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The session gate reads the caller's timezone: it 403s while locked, 201s once open.
+
+    The first Pacific calendar day of stage 2 opens the gate, mirroring the
+    selection-endpoint calendar unlock -- proving the gate is evaluated in
+    the caller's local time, not UTC.
+    """
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "pacificsession@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    user_id = resp.json()["user_id"]
+    up_id = await _insert_stage_two_user_practice(db_session, user_id)
+
+    locked_resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert locked_resp.status_code == HTTPStatus.FORBIDDEN
+    assert locked_resp.json()["detail"] == "stage_locked"
+
+    la = ZoneInfo("America/Los_Angeles")
+    start_date = datetime.now(la).date() - timedelta(days=21)
+    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
+    anchor = anchor_local.astimezone(UTC).replace(tzinfo=None)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
+
+    unlocked_resp = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert unlocked_resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_locked_stage_session_with_idempotency_key_burns_no_spend(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A rejected locked-stage attempt must not burn its Idempotency-Key.
+
+    A retry with the same key, after the stage unlocks, must still create a
+    session -- the earlier 403 must not have recorded a spend row.
+    """
+    headers, user_id = await _signup(async_client, "lockedidem")
+    up_id = await _insert_stage_two_user_practice(db_session, user_id)
+    idem_headers = {**headers, "Idempotency-Key": "locked-stage-key-001"}
+    payload = _session_payload(up_id)
+
+    locked_resp = await async_client.post("/practice-sessions/", json=payload, headers=idem_headers)
+    assert locked_resp.status_code == HTTPStatus.FORBIDDEN
+    assert locked_resp.json()["detail"] == "stage_locked"
+
+    db_session.add(StageProgress(user_id=user_id, current_stage=2, completed_stages=[1]))
+    await db_session.commit()
+
+    unlocked_resp = await async_client.post(
+        "/practice-sessions/", json=payload, headers=idem_headers
+    )
+    assert unlocked_resp.status_code == HTTPStatus.CREATED

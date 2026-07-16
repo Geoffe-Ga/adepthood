@@ -128,7 +128,7 @@ async def test_frequency_stage_5_with_selection_returns_user_practice(
     await _seed_catalog(db_session)
     headers, user_id = await _signup(async_client, "orange-user")
 
-    # Unlock stage 5 so the selection clears the stage gate.
+    # Advance the user to stage 5 so the frequency banner resolves that stage.
     db_session.add(StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 3, 4]))
     await db_session.commit()
 
@@ -514,7 +514,7 @@ async def test_frequency_stage_number_override_honours_user_selection(
     await _seed_catalog(db_session)
     headers, user_id = await _signup(async_client, "override-selector")
 
-    # Unlock stage 5 so the selection clears the stage gate.
+    # Advance the user to stage 5 so the frequency banner resolves that stage.
     db_session.add(StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 3, 4]))
     await db_session.commit()
 

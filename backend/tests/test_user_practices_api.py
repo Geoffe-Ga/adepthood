@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import cast
-from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -165,17 +164,17 @@ async def test_select_practice_rejects_stage_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_select_practice_rejects_locked_stage(
+async def test_select_practice_allows_future_locked_stage(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-PRACTICE-004: user cannot enrol in a practice for a locked stage.
+    """Selecting a practice for a not-yet-unlocked stage now succeeds (forward planning).
 
-    Fresh user has no progress → stage 2 is locked.  Submitting a stage-2
-    practice (catalog-consistent) must still 403 because the user has not
-    completed stage 1.  Without this gate the chain-unlock invariant could
-    be bypassed via the practice-enrolment surface.
+    Fresh user has no progress, so stage 2 is locked -- but assignment is no
+    longer gated on unlock status. The chain-unlock invariant is still
+    enforced where it actually matters (logging a session), so a stage-2
+    catalog-consistent pick opens a normal row for later.
     """
-    headers, _ = await _signup(async_client, "lockedstage")
+    headers, _ = await _signup(async_client, "futurestage")
     practice = await _seed_practice(db_session, name="Stage2Practice", stage_number=2)
 
     resp = await async_client.post(
@@ -183,52 +182,10 @@ async def test_select_practice_rejects_locked_stage(
         json={"practice_id": practice.id, "stage_number": 2},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "stage_locked"
-
-
-@pytest.mark.asyncio
-async def test_select_practice_first_local_day_of_new_stage_is_unlocked(
-    async_client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """The first Pacific calendar day of stage 2 unlocks the pick, not day 22 UTC.
-
-    Anchored to real local dates (DST-proof) rather than a fixed literal so
-    the test is independent of the wall clock it happens to run under.
-    """
-    resp = await async_client.post(
-        "/auth/signup",
-        json={
-            "email": "pacificpicker@example.com",
-            "password": "securepassword123",  # pragma: allowlist secret
-            "timezone": "America/Los_Angeles",
-        },
-    )
-    assert resp.status_code == HTTPStatus.OK
-    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
-    user_id = resp.json()["user_id"]
-    practice = await _seed_practice(db_session, name="Stage2Pacific", stage_number=2)
-
-    la = ZoneInfo("America/Los_Angeles")
-    start_date = datetime.now(la).date() - timedelta(days=21)
-    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
-    anchor = anchor_local.astimezone(UTC).replace(tzinfo=None)
-    db_session.add(
-        StageProgress(
-            user_id=user_id,
-            current_stage=1,
-            completed_stages=[],
-            program_started_at=anchor,
-        )
-    )
-    await db_session.commit()
-
-    create_resp = await async_client.post(
-        "/user-practices/",
-        json={"practice_id": practice.id, "stage_number": 2},
-        headers=headers,
-    )
-    assert create_resp.status_code == HTTPStatus.CREATED
+    assert resp.status_code == HTTPStatus.CREATED
+    data = resp.json()
+    assert data["stage_number"] == 2
+    assert data["end_date"] is None
 
 
 # -- List user-practices ----------------------------------------------------
@@ -239,7 +196,8 @@ async def test_list_user_practices(async_client: AsyncClient, db_session: AsyncS
     headers, user_id = await _signup(async_client)
     p1 = await _seed_practice(db_session, name="P1", stage_number=1)
     p2 = await _seed_practice(db_session, name="P2", stage_number=2)
-    # Unlock stage 2 so the second enrolment clears the BUG-PRACTICE-004 gate.
+    # A mid-program user with two selections across stages; the second
+    # enrolment succeeds on its own since selection is not stage-gated.
     db_session.add(StageProgress(user_id=user_id, current_stage=2, completed_stages=[1]))
     await db_session.commit()
 
