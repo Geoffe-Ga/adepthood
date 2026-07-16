@@ -4,17 +4,12 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import React from 'react';
 
 /**
- * RED tests for the JournalEntryScreen care-surface placement (issue #891).
- *
- * Requirements:
+ * Covers the JournalEntryScreen care-surface placement:
  * - When a resonance pass yields ``care``, ``CareSupportNote`` (testID
  *   ``"care-support"``) mounts at the SCREEN level — a direct sibling of
  *   ``JournalPage`` inside ``journal-screen``, NOT anywhere inside
  *   ``journal-margin-column`` or ``journal-sheet``.
  * - On an ordinary pass (no care), ``care-support`` is absent entirely.
- *
- * These tests fail until the implementation-specialist wires ``care`` from
- * ``useResonance`` into ``JournalEntryScreen``.
  */
 import type { CareResponse, JournalMessage, ResonanceResponse } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';

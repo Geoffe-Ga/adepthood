@@ -4,16 +4,11 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 /**
- * RED tests for the JournalEntryScreen contraction-reflection surface.
- *
- * Requirements:
+ * Covers the JournalEntryScreen contraction-reflection surface:
  * - A resonance pass returning ``contraction`` mounts
  *   ``ContractionReflectionNote`` (testID ``"contraction-reflection"``).
  * - An ordinary pass (no contraction) renders nothing for it.
  * - The care surface and the contraction surface can coexist on one pass.
- *
- * These tests fail until the implementation-specialist wires ``contraction``
- * from ``useResonance`` into ``JournalEntryScreen``.
  */
 import type { CareResponse, ContractionReflection, JournalMessage, ResonanceResponse } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';

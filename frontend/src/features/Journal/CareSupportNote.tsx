@@ -13,14 +13,13 @@
  * (mirrors ``ContractionReflectionNote``).
  */
 import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { reflectionCardStyles } from './noteCards';
 import ReflectionDismiss from './ReflectionDismiss';
 
 import type { CareResource, CareResponse } from '@/api';
 import CareResourceCard from '@/components/care/CareResourceCard';
-import { SPACING, accent, editorialType, touchTarget } from '@/design/tokens';
 
 const DISMISS_LABEL = 'Dismiss';
 const REOPEN_LABEL = 'Show support options';
@@ -35,15 +34,13 @@ export interface CareSupportNoteProps {
 /** The collapsed state: a single affordance that restores the resource list. */
 function ReopenControl({ onPress }: { onPress: () => void }): React.JSX.Element {
   return (
-    <TouchableOpacity
-      style={styles.reopen}
-      onPress={onPress}
-      accessibilityRole="button"
+    <ReflectionDismiss
+      variant="reopen"
+      label={REOPEN_LABEL}
       accessibilityLabel={REOPEN_A11Y}
       testID="care-reopen"
-    >
-      <Text style={styles.reopenText}>{REOPEN_LABEL}</Text>
-    </TouchableOpacity>
+      onPress={onPress}
+    />
   );
 }
 
@@ -88,21 +85,5 @@ function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | nu
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  reopen: {
-    minHeight: touchTarget.minimum,
-    minWidth: touchTarget.minimum,
-    alignSelf: 'flex-start',
-    paddingHorizontal: SPACING.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reopenText: {
-    ...editorialType.note,
-    fontWeight: '600',
-    color: accent.primary,
-  },
-});
 
 export default CareSupportNote;
