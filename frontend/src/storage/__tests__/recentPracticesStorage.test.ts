@@ -8,6 +8,7 @@ import {
   MAX_RECENT_PRACTICES,
   type RecentPractice,
 } from '../recentPracticesStorage';
+import { _resetSerializedWriteForTests } from '../serializedWrite';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -25,6 +26,7 @@ function makePractice(id: number): RecentPractice {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  _resetSerializedWriteForTests();
 });
 
 describe('loadRecentPractices', () => {
@@ -105,5 +107,25 @@ describe('recordRecentPractice', () => {
     expect(parsed).toHaveLength(MAX_RECENT_PRACTICES);
     expect(parsed[0]!.id).toBe(999);
     expect(parsed.map((p) => p.id)).not.toContain(MAX_RECENT_PRACTICES);
+  });
+
+  test('two concurrent recordings both survive instead of clobbering each other', async () => {
+    const store: { raw: string | null } = { raw: null };
+    mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(store.raw));
+    mockAsyncStorage.setItem.mockImplementation((_key: string, value: string) => {
+      store.raw = value;
+      return Promise.resolve();
+    });
+
+    await Promise.all([
+      recordRecentPractice(makePractice(1)),
+      recordRecentPractice(makePractice(2)),
+    ]);
+
+    const parsed = JSON.parse(store.raw as string) as RecentPractice[];
+    expect(parsed.map((p) => p.id)).toEqual([2, 1]);
+
+    mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(null));
+    mockAsyncStorage.setItem.mockImplementation(() => Promise.resolve());
   });
 });
