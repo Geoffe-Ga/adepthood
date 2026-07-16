@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   retry: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
   },

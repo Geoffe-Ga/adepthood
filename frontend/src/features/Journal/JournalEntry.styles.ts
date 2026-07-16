@@ -150,8 +150,8 @@ const styles = StyleSheet.create({
     marginBottom: journalLayout.marginNoteGap,
   },
   controlLink: {
-    ...editorialType.caption,
-    color: colors.paper.inkSoft,
+    ...editorialType.action,
+    color: accent.primary,
     paddingTop: spacing(2),
   },
   /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.inkSoft,
   },
   privacyTierLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   privacyTierLabelSelected: {
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
   },
   aspectChordTriggerLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   /** Section label above a row of Aspect chips (primary / secondary). */
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.inkSoft,
   },
   aspectChordChipLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   aspectChordChipLabelSelected: {
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
   },
   aspectChordClearLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
 });

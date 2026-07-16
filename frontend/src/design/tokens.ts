@@ -463,6 +463,17 @@ export const fonts = {
   sans: sansStack,
 } as const;
 
+/**
+ * WCAG-legibility floor (in dp) for tappable/interactive text. Companion to
+ * ``touchTarget``: where ``touchTarget`` is the tap-AREA floor, this is the
+ * floor for the text a reader is meant to tap or press, so an interactive label
+ * reads as legible chrome rather than a fine-print footnote. The 13px caption
+ * face sits below this floor and is metadata-only; interactive labels use
+ * ``editorialType.action`` (and the ui button face) at this size instead.
+ * Declared above ``editorialType`` and ``uiType`` so both can source it.
+ */
+export const INTERACTIVE_TEXT_MIN = 16;
+
 export const editorialType = {
   serif: serifStack,
   display: { fontFamily: serifStack, fontSize: 34, lineHeight: 42, fontWeight: '700' as const },
@@ -470,6 +481,14 @@ export const editorialType = {
   body: { fontFamily: serifStack, fontSize: 18, lineHeight: 29, fontWeight: '400' as const },
   note: { fontFamily: serifStack, fontSize: 15, lineHeight: 24, fontWeight: '400' as const },
   caption: { fontFamily: serifStack, fontSize: 13, lineHeight: 20, fontWeight: '400' as const },
+  // Interactive/tappable label face — serif to stay editorial, sized to the
+  // interactive floor. caption is metadata-only and below the tappable floor.
+  action: {
+    fontFamily: serifStack,
+    fontSize: INTERACTIVE_TEXT_MIN,
+    lineHeight: 24,
+    fontWeight: '600' as const,
+  },
   marginNote: {
     fontFamily: serifStack,
     fontSize: 14,
@@ -529,7 +548,7 @@ export const type = (width: number) => {
 
 /** Typography for interactive chrome, so button/label sizing lives in tokens. */
 export const uiType = {
-  button: { fontSize: 16, fontWeight: '600' as const },
+  button: { fontSize: INTERACTIVE_TEXT_MIN, fontWeight: '600' as const },
 } as const;
 
 // ---------------------------------------------------------------------------
