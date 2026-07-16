@@ -4,7 +4,7 @@
 // stage than the one the catalog is currently paging.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { resetCorruptKey } from './jsonStore';
+import { getJsonArrayForUpdate, resetCorruptKey } from './jsonStore';
 import { serialize } from './serializedWrite';
 
 const RECENT_PRACTICES_KEY = '@adepthood/recent_practices';
@@ -63,10 +63,28 @@ export async function loadRecentPractices(): Promise<RecentPractice[]> {
  * Move ``entry`` to the front of the recent list (deduped by id), then persist.
  * Runs through the serialized write lane so concurrent appenders can't both
  * read the same list and clobber each other's prepend.
+ *
+ * The read leg uses ``getJsonArrayForUpdate`` rather than the fail-safe
+ * ``loadRecentPractices``: a transient read failure must PROPAGATE so the
+ * write aborts, because falling back to an empty list here would overwrite an
+ * intact on-disk list with a single-item array. Corrupt/non-array JSON still
+ * self-heals to ``null`` and the write proceeds from an empty list.
  */
 export async function recordRecentPractice(entry: RecentPractice): Promise<void> {
   await serialize(RECENT_PRACTICES_KEY, async () => {
-    const existing = await loadRecentPractices();
+    let stored: RecentPractice[] | null;
+    try {
+      stored = await getJsonArrayForUpdate<RecentPractice>(RECENT_PRACTICES_KEY);
+    } catch (err: unknown) {
+      // A transient read must abort the write; falling back to [] here would
+      // overwrite an intact on-disk list with a single-item array.
+      console.warn(
+        '[storage] transient read during recent-practice record, aborting write to preserve list',
+        err,
+      );
+      return;
+    }
+    const existing = sanitize(stored ?? []);
     const deduped = existing.filter((item) => item.id !== entry.id);
     const next = [entry, ...deduped].slice(0, MAX_RECENT_PRACTICES);
     await AsyncStorage.setItem(RECENT_PRACTICES_KEY, JSON.stringify(next));
