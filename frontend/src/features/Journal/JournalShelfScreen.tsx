@@ -20,7 +20,7 @@ import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import { promptTitleForWeek } from './promptTitle';
-import { formatDate, groupByRecency, type ShelfSection } from './recency';
+import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
 import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
@@ -43,7 +43,6 @@ import { MS_PER_DAY } from '@/utils/dateUtils';
 const SEARCH_MIN_LENGTH = 3;
 const SEARCH_MAX_LENGTH = 64; // mirrors the backend JOURNAL_SEARCH_MAX_LENGTH guard
 const EXCERPT_MAX = 140;
-const MONTH_DAYS = 30;
 const WORDS_PER_MINUTE = 200;
 
 // A single curated opening invitation for a brand-new journal (no rotation).

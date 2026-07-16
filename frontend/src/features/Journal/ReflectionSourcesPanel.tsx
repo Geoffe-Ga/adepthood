@@ -63,8 +63,8 @@ export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
   /**
    * Fold a pending quote into the reflection body. Resolves ``true`` when it was
-   * marked included (keep the dim), ``false``/reject to revert the dim, or
-   * ``undefined`` on a legacy fire-and-forget caller (keep the dim).
+   * marked included (keep the dim), ``false``/reject to revert the dim. May
+   * return nothing, in which case no confirmation state is shown.
    */
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
@@ -393,7 +393,7 @@ function SourceFeed({
 /**
  * Own the "which pending quotes are folded in" dim and reconcile it with the
  * fold-in outcome: dim on tap, revert on a ``false``/rejected result, keep the
- * dim on ``true`` or a legacy fire-and-forget (``undefined``) caller.
+ * dim on ``true`` or when no outcome is reported (skip the confirmation state).
  */
 function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQuote']): {
   includedIds: ReadonlySet<number>;
@@ -406,7 +406,7 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
       const { id } = entry.quote;
       setIncludedIds((prev) => withId(prev, id)); // Dim optimistically.
       const outcome = onInsertQuote(entry.quote, entry.item);
-      if (outcome == null) return; // Legacy fire-and-forget caller: keep the dim.
+      if (outcome == null) return; // No outcome reported — skip the confirmation state.
       let foldedIn = false;
       try {
         foldedIn = await outcome;

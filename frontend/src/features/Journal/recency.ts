@@ -8,7 +8,7 @@ import { MS_PER_DAY } from '@/utils/dateUtils';
 /** Days within which an entry counts as "This week". */
 const WEEK_DAYS = 7;
 /** Days within which an entry counts as "This month". */
-const MONTH_DAYS = 30;
+export const MONTH_DAYS = 30;
 
 /** The recency bands, in display order. */
 const RECENCY_ORDER = ['This week', 'This month', 'Earlier'] as const;

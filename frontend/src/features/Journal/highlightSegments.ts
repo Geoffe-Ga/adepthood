@@ -78,10 +78,9 @@ function usableAnchors(length: number, notes: Marginalia[], quotes: PromotedQuot
 }
 
 /**
- * Segment the body against the merged note + quote anchor stream. The same
- * first-wins cursor-skip rule as the notes-only path resolves overlaps: the
- * earliest-starting anchor wins and any anchor overlapping a committed range is
- * skipped.
+ * Segment the body against the merged note + quote anchor stream. Overlaps
+ * resolve first-wins: the earliest-starting anchor wins and any anchor
+ * overlapping a committed range is skipped.
  *
  * All slicing happens in CODE-POINT space (``chars``), matching the anchor
  * contract, so a non-BMP character (emoji / astral) never shifts a boundary or

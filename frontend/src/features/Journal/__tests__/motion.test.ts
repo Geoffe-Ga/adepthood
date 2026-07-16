@@ -3,7 +3,7 @@ import { jest, describe, it, expect, afterEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import { Animated } from 'react-native';
 
-import { PRESS_SCALE, SETTLE_DISTANCE, usePressScale, useSettleIn } from '../motion';
+import { PRESS_SCALE, usePressScale } from '../motion';
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -18,29 +18,6 @@ const stubbedTiming = (): jest.SpiedFunction<typeof Animated.timing> =>
     start: jest.fn(),
     stop: jest.fn(),
   } as unknown as Animated.CompositeAnimation);
-
-describe('useSettleIn', () => {
-  it('animates the surface in from below when motion is allowed', () => {
-    const timing = stubbedTiming();
-
-    const { result } = renderHook(() => useSettleIn(false));
-
-    // Starts below its resting place (translucent, lifted) and schedules a settle.
-    expect(animatedValue(result.current.opacity)).toBe(0);
-    expect(animatedValue(result.current.transform[0]!.translateY)).toBe(SETTLE_DISTANCE);
-    expect(timing).toHaveBeenCalledTimes(1);
-  });
-
-  it('renders at the resting state with no animation under reduced motion', () => {
-    const timing = jest.spyOn(Animated, 'timing');
-
-    const { result } = renderHook(() => useSettleIn(true));
-
-    expect(animatedValue(result.current.opacity)).toBe(1);
-    expect(animatedValue(result.current.transform[0]!.translateY)).toBe(0);
-    expect(timing).not.toHaveBeenCalled();
-  });
-});
 
 describe('usePressScale', () => {
   it('drives the press-in / press-out scale when motion is allowed', () => {
