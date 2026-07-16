@@ -78,16 +78,15 @@ async def test_seed_stages_race_loser_yields_to_winner(db_session: AsyncSession)
     """A stale existence read must not duplicate stages — the loser rolls back.
 
     Simulates the two-worker boot race: the peer's rows are committed, but
-    this worker's ``existing_system_keys`` SELECT ran before that commit and
-    saw nothing.
+    this worker's existence SELECT ran before that commit and saw nothing.
     """
     first = await seed_stages(db_session)
     assert first == len(STAGE_DEFINITIONS)
 
-    async def _stale_read(*_args: object, **_kwargs: object) -> set[int]:
-        return set()
+    async def _stale_read(*_args: object, **_kwargs: object) -> dict[int, CourseStage]:
+        return {}
 
-    with patch("seed_stages.existing_system_keys", new=_stale_read):
+    with patch("seed_stages._load_existing_stages", new=_stale_read):
         second = await seed_stages(db_session)
 
     assert second == 0, "race loser must report 0 inserts, not raise"
