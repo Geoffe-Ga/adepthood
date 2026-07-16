@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from dependencies.timezone import current_user_timezone
 from domain.program_calendar import calendar_week, resolve_program_anchor
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
@@ -38,7 +40,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 
-async def _get_user_week(session: AsyncSession, user_id: int) -> int:
+async def _get_user_week(
+    session: AsyncSession, user_id: int, tz: str, *, now: datetime | None = None
+) -> int:
     """The user's current week: completion-derived OR calendar, whichever leads.
 
     Completion model: ``count(responses) + 1`` — the count only ever
@@ -46,9 +50,12 @@ async def _get_user_week(session: AsyncSession, user_id: int) -> int:
     endpoint rejects ``week_number > user_week``), so ``count + 1`` is
     the first unfinished week and a single POST cannot skip ahead.
 
-    Calendar model (issue #386): ``calendar_week(program anchor)`` — the
-    same date-derived schedule the frontend renders, so a user eight days
-    into the program can read week 2 without having answered week 1.
+    Calendar model: ``calendar_week(program anchor)`` — the same
+    date-derived schedule the frontend renders, so a user eight days into
+    the program can read week 2 without having answered week 1.  The week
+    is computed in the caller's timezone ``tz`` (the anchor's local
+    calendar), so week boundaries flip at the user's local midnight rather
+    than UTC.  ``now`` is an injectable clock seam for deterministic tests.
 
     ``max`` of the two: time opens weeks, completions can run ahead of a
     backdated anchor, and both are server-computed so neither adds a
@@ -60,11 +67,13 @@ async def _get_user_week(session: AsyncSession, user_id: int) -> int:
     completed = int(result.scalar() or 0)
     completion_week = completed + 1
     progress = await get_user_progress(session, user_id)
-    time_week = calendar_week(resolve_program_anchor(progress)) if progress else 1
+    time_week = calendar_week(resolve_program_anchor(progress), now, tz=tz) if progress else 1
     return int(max(1, min(max(completion_week, time_week), TOTAL_WEEKS)))
 
 
-async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number: int) -> None:
+async def _check_week_unlocked(
+    session: AsyncSession, user_id: int, week_number: int, tz: str
+) -> None:
     """Raise 403 when ``week_number`` is past the user's current week.
 
     Both :func:`get_prompt_by_week` and :func:`submit_prompt_response`
@@ -73,7 +82,7 @@ async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number:
     Factored into a shared helper so the two endpoints cannot drift out
     of sync.
     """
-    user_week = await _get_user_week(session, user_id)
+    user_week = await _get_user_week(session, user_id, tz)
     if week_number > user_week:
         raise forbidden("week_locked")
 
@@ -82,9 +91,10 @@ async def _check_week_unlocked(session: AsyncSession, user_id: int, week_number:
 async def get_current_prompt(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> PromptDetail:
     """Return the prompt for the user's current week in the program."""
-    week = await _get_user_week(session, current_user)
+    week = await _get_user_week(session, current_user, user_tz)
     question = get_prompt_for_week(week)
     if question is None:
         raise not_found("prompt")
@@ -183,6 +193,7 @@ async def get_prompt_by_week(
     week_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> PromptDetail:
     """Get a specific week's prompt and the user's response (if any).
 
@@ -194,7 +205,7 @@ async def get_prompt_by_week(
     question = get_prompt_for_week(week_number)
     if question is None:
         raise not_found("prompt")
-    await _check_week_unlocked(session, current_user, week_number)
+    await _check_week_unlocked(session, current_user, week_number, user_tz)
 
     result = await session.execute(
         select(PromptResponse).where(
@@ -242,6 +253,7 @@ async def submit_prompt_response(
     payload: PromptSubmit,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> PromptDetail:
     """Submit a response to a weekly prompt. Prevents duplicate responses.
 
@@ -262,7 +274,7 @@ async def submit_prompt_response(
     question = get_prompt_for_week(week_number)
     if question is None:
         raise not_found("prompt")
-    await _check_week_unlocked(session, current_user, week_number)
+    await _check_week_unlocked(session, current_user, week_number, user_tz)
 
     # Sanitize once at the boundary (BUG-PROMPT-003); both PromptResponse and
     # JournalEntry receive the cleaned text so the two rows agree byte-for-byte

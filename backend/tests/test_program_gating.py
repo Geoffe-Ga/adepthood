@@ -16,9 +16,13 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from dependencies.timezone import current_user_timezone
+from domain.program_calendar import calendar_week, resolve_program_anchor
 from domain.stage_progress import is_stage_unlocked
+from main import app
 from models.stage_progress import StageProgress
 from models.user import User
+from routers.prompts import _get_user_week
 
 
 async def _signup(client: AsyncClient, username: str = "anchored") -> dict[str, str]:
@@ -259,3 +263,121 @@ async def test_program_calendar_reflects_pacific_first_local_day_of_stage_two(
     assert body["calendar_stage"] == 2
     expected_calendar_week = 4
     assert body["calendar_week"] == expected_calendar_week
+
+
+# ── Weekly prompt gate reads the caller's timezone ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_user_week_computes_calendar_week_in_caller_timezone(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A near-midnight anchor reads program week 4 in Pacific but week 3 in UTC at one instant."""
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "tzweekhelper@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    user_id = resp.json()["user_id"]
+
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=datetime(2026, 1, 1, 3, 0, tzinfo=UTC).replace(tzinfo=None),
+        )
+    )
+    await db_session.commit()
+
+    pinned = datetime(2026, 1, 21, 12, 0, tzinfo=UTC)
+    la_week = await _get_user_week(db_session, user_id, tz="America/Los_Angeles", now=pinned)
+    utc_week = await _get_user_week(db_session, user_id, tz="UTC", now=pinned)
+
+    assert la_week == 4
+    assert utc_week == 3
+
+
+@pytest.mark.asyncio
+async def test_prompts_current_endpoint_uses_resolved_caller_timezone(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /prompts/current computes week_number from the resolved caller timezone, not UTC."""
+    la = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime.now(UTC)
+    now_la = now_utc.astimezone(la)
+    utc_ahead = now_utc.date() != now_la.date()
+    days_back = 27 if utc_ahead else 28
+    anchor_hour = 10 if utc_ahead else 23
+    start_date = now_la.date() - timedelta(days=days_back)
+    anchor_local = datetime.combine(start_date, time(anchor_hour, 0), tzinfo=la)
+    anchor = anchor_local.astimezone(UTC).replace(tzinfo=None)
+
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "wiredweektz@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    user_id = resp.json()["user_id"]
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=1,
+        completed_stages=[],
+        program_started_at=anchor,
+    )
+    db_session.add(progress)
+    await db_session.commit()
+    await db_session.refresh(progress)
+
+    app.dependency_overrides[current_user_timezone] = lambda: "America/Los_Angeles"
+    try:
+        current_resp = await async_client.get("/prompts/current", headers=headers)
+    finally:
+        app.dependency_overrides.pop(current_user_timezone, None)
+
+    assert current_resp.status_code == HTTPStatus.OK
+    expected_week = calendar_week(resolve_program_anchor(progress), tz="America/Los_Angeles")
+    assert current_resp.json()["week_number"] == expected_week
+
+
+@pytest.mark.asyncio
+async def test_prompts_current_endpoint_falls_back_to_utc_without_override(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A caller with no non-UTC timezone still gets the UTC-derived week (regression guard)."""
+    anchor = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=25)
+
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "utcfallbackweek@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    user_id = resp.json()["user_id"]
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
+    progress = StageProgress(
+        user_id=user_id,
+        current_stage=1,
+        completed_stages=[],
+        program_started_at=anchor,
+    )
+    db_session.add(progress)
+    await db_session.commit()
+    await db_session.refresh(progress)
+
+    current_resp = await async_client.get("/prompts/current", headers=headers)
+
+    assert current_resp.status_code == HTTPStatus.OK
+    expected_week = calendar_week(resolve_program_anchor(progress), tz="UTC")
+    assert current_resp.json()["week_number"] == expected_week
