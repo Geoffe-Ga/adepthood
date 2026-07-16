@@ -52,7 +52,11 @@ router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 
 
 async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice:
-    """Fetch and validate the catalog practice (exists + approved)."""
+    """Fetch and validate the catalog practice (exists + approved).
+
+    Backs the read/GET path only; the write paths use
+    :func:`_resolve_selectable_practice`.
+    """
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
     practice = result.scalars().first()
     if practice is None:
@@ -65,15 +69,16 @@ async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice
 async def _resolve_selectable_practice(
     session: AsyncSession, practice_id: int, current_user: int
 ) -> Practice:
-    """Fetch a practice the caller is allowed to *select* for a stage.
+    """Fetch a practice the caller is allowed to *select* or customize.
 
-    Unlike :func:`_resolve_practice` (the read/customize path), this write
-    path permits an approved catalog practice **or** the caller's own draft:
-    ``practice.submitted_by_user_id == current_user`` clears an unapproved
-    row so an author can activate the practice they just submitted. A
-    non-owner selecting someone else's still-pending submission continues to
-    receive 400 ``practice_not_approved``; a missing row 404s exactly as the
-    read path does.
+    Both write paths (selection and customize) use this resolver, whereas
+    :func:`_resolve_practice` backs the read/GET path. Unlike that read
+    path, this one permits an approved catalog practice **or** the caller's
+    own draft: ``practice.submitted_by_user_id == current_user`` clears an
+    unapproved row so an author can activate or customize the practice they
+    just submitted. A non-owner selecting someone else's still-pending
+    submission continues to receive 400 ``practice_not_approved``; a missing
+    row 404s exactly as the read path does.
     """
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
     practice = result.scalars().first()
@@ -675,7 +680,9 @@ async def customize_user_practice(
     400 ``mode_mismatch`` because mode changes are conceptually a
     practice replacement, not a tweak.
     """
-    practice = await _resolve_practice(session, user_practice.practice_id)
+    practice = await _resolve_selectable_practice(
+        session, user_practice.practice_id, user_practice.user_id
+    )
     fields_set = payload.model_fields_set
 
     if "mode_config_override" in fields_set:
