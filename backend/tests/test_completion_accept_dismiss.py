@@ -110,6 +110,37 @@ async def _seed_user_practice(session: AsyncSession, user_id: int) -> int:
     return user_practice.id
 
 
+async def _seed_locked_user_practice(session: AsyncSession, user_id: int) -> int:
+    """Seed a Practice + UserPractice assigned to a locked future stage (stage 2).
+
+    A fresh user has no ``StageProgress``, so stage 2 is locked. Forward-planning
+    a practice there is allowed, but journaling it into a real session must not be.
+    """
+    practice = Practice(
+        stage_number=2,
+        name="Sit",
+        description="A sit.",
+        instructions="Sit and breathe.",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=2,
+        start_date=date(2025, 1, 1),
+    )
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+    assert user_practice.id is not None
+    return user_practice.id
+
+
 async def _seed_suggestion(
     session: AsyncSession,
     *,
@@ -315,6 +346,38 @@ async def test_accept_practice_is_idempotent(
     assert second.status_code == HTTPStatus.OK
     assert second.json()["check_in"] is None
     assert await _practice_session_count(db_session, up_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_practice_for_locked_stage_is_forbidden(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Accepting a suggestion for a locked-stage practice must 403 and log nothing.
+
+    Forward-planning a practice into a future stage is allowed, but journal
+    attestation cannot log a real session there before the stage unlocks --
+    the same access boundary the direct session endpoint enforces.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    entry_id = await _create_entry(async_client, headers)
+    up_id = await _seed_locked_user_practice(db_session, user_id)
+    sug_id = await _seed_practice_suggestion(
+        db_session, entry_id=entry_id, user_id=user_id, user_practice_id=up_id
+    )
+
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "stage_locked"
+    assert await _practice_session_count(db_session, up_id) == 0
+    suggestion = (
+        await db_session.execute(
+            select(CompletionSuggestion).where(col(CompletionSuggestion.id) == sug_id)
+        )
+    ).scalar_one()
+    await db_session.refresh(suggestion)
+    assert suggestion.status == SuggestionStatus.PENDING
 
 
 @pytest.mark.asyncio

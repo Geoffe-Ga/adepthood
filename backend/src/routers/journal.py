@@ -23,8 +23,8 @@ from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import MarginaliaAnchored, generate_essay, generate_marginalia
 from domain.safety import assess_distress
-from domain.stage_progress import get_user_progress
-from errors import bad_gateway, conflict, not_found, unprocessable
+from domain.stage_progress import get_user_progress, is_stage_unlocked
+from errors import bad_gateway, conflict, forbidden, not_found, unprocessable
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -916,7 +916,7 @@ def _attested_duration(practice: Practice, user_practice: UserPractice) -> float
 
 
 async def _accept_pending_practice(
-    session: AsyncSession, suggestion: CompletionSuggestion, current_user: int
+    session: AsyncSession, suggestion: CompletionSuggestion, current_user: int, user_tz: str
 ) -> AcceptSuggestionResponse:
     """Log a journal-attested PracticeSession for a pending practice suggestion.
 
@@ -924,8 +924,16 @@ async def _accept_pending_practice(
     ``accept-suggestion:practice:{id}`` (already recorded ⇒ no second session),
     backstopping the suggestion-status guard. Practices carry no streak, so
     ``check_in`` is ``None``.
+
+    A practice may be *assigned* to a future stage for forward planning, but
+    planning is not access: attesting a real session via the journal is gated
+    by the same timezone-aware stage-unlock check the session endpoint applies,
+    so a suggestion for a locked stage is rejected (403) before any write.
     """
     user_practice, practice = await _resolve_suggestion_practice(session, suggestion, current_user)
+    progress = await get_user_progress(session, current_user)
+    if not is_stage_unlocked(user_practice.stage_number, progress, tz=user_tz):
+        raise forbidden("stage_locked")
     key = f"accept-suggestion:practice:{suggestion.id}"
     if await recorded_session_id(session, current_user, key) is None:
         practice_session = PracticeSession(
@@ -985,7 +993,7 @@ async def accept_suggestion(
     if suggestion.status == SuggestionStatus.ACCEPTED:
         return await _already_accepted_response(session, suggestion, current_user, user_tz)
     if suggestion.target_type == CompletionTargetType.PRACTICE:
-        return await _accept_pending_practice(session, suggestion, current_user)
+        return await _accept_pending_practice(session, suggestion, current_user, user_tz)
     return await _accept_pending_habit(session, suggestion, current_user, user_tz)
 
 
