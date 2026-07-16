@@ -1,10 +1,11 @@
 /**
  * The Map header-drawer body: a compact legend of all ten stages rendered as
  * ``ScreenDrawer`` children (the panel supplies the scroll surface, so this maps
- * plain rows). Each row shows the stage's color swatch, persona/descriptor, and
- * its wheel-of-wholeness balance read; the current stage is marked, and a locked
- * stage carries a padlock plus its calendar unlock estimate. Tapping any row —
- * locked or not — glides the magnifier lens to that stage and closes the drawer.
+ * plain rows). Each row shows the stage's color swatch, its category, and — when
+ * present — its Aspect; the current stage is marked, and a locked stage carries a
+ * padlock plus its calendar unlock estimate. Tapping any row — locked or not —
+ * glides the magnifier lens to that stage, opens its detail modal, and closes the
+ * drawer.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
@@ -14,13 +15,20 @@ import { useDaysUntilStage } from '../../store/useProgramProgression';
 
 import { useJourneySummary } from './hooks/useJourneySummary';
 import { unlockTimeline } from './journeyNarrative';
-import { STAGE_DISPLAY, type StageDisplay } from './mapLayout';
+import { MAP_ROWS, STAGE_DISPLAY, type StageDisplay } from './mapLayout';
 import { isStageUnlocked } from './services/stageService';
 import { STAGE_COUNT, type StageData } from './stageData';
-import { balanceLabelSuffix, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { drawerStageLabel } from './stageLegend';
 
 /** Glyph shown on a locked stage row. */
 const LOCKED_GLYPH = '🔒';
+
+/** Stage number → its category (the containing MAP_ROWS row's rightLabel). */
+const CATEGORY_BY_STAGE: Readonly<Record<number, string>> = Object.fromEntries(
+  MAP_ROWS.flatMap((row) =>
+    row.stageNumbers.map((stageNumber): [number, string] => [stageNumber, row.rightLabel]),
+  ),
+);
 /** Diameter of the current-stage marker dot in dp. */
 const MARKER_SIZE = 10;
 /** Side of the square color swatch in dp. */
@@ -61,28 +69,28 @@ const UnlockRow = ({ stageNumber }: { stageNumber: number }): React.JSX.Element 
 interface LegendRowProps {
   stageNumber: number;
   display: StageDisplay;
-  fullness: number;
   locked: boolean;
   selected: boolean;
   onSelectStage: (_stageNumber: number) => void;
 }
 
-/** One tappable legend row: swatch, persona/descriptor, balance read, and the
+/** One tappable legend row: swatch, category, optional Aspect line, and the
  *  current-stage marker or a locked stage's padlock + unlock estimate. */
 const LegendRow = ({
   stageNumber,
   display,
-  fullness,
   locked,
   selected,
   onSelectStage,
 }: LegendRowProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
+  const category = CATEGORY_BY_STAGE[stageNumber] ?? '';
+  const aspect = display.arrowLabel;
   return (
     <TouchableOpacity
       testID={`map-drawer-stage-${stageNumber}`}
       accessibilityRole="button"
-      accessibilityLabel={stageNodeLabel(display, fullness)}
+      accessibilityLabel={drawerStageLabel(category, aspect, { locked, current: selected })}
       accessibilityState={{ selected }}
       onPress={() => onSelectStage(stageNumber)}
       style={[styles.row, selected ? styles.rowSelected : null, locked ? styles.rowLocked : null]}
@@ -92,15 +100,14 @@ const LegendRow = ({
         style={[styles.swatch, { backgroundColor: display.textColor }]}
       />
       <View style={styles.rowBody}>
-        <Text style={[type(width).label, styles.persona]} numberOfLines={1}>
-          {display.persona}
+        <Text style={[type(width).label, styles.category]} numberOfLines={1}>
+          {category}
         </Text>
-        <Text style={[type(width).caption, styles.descriptor]} numberOfLines={1}>
-          {display.descriptor}
-        </Text>
-        <Text style={[type(width).caption, styles.balanceRead]}>
-          {balanceLabelSuffix(fullness)}
-        </Text>
+        {aspect ? (
+          <Text style={[type(width).caption, styles.aspect]} numberOfLines={1}>
+            {aspect}
+          </Text>
+        ) : null}
         {locked ? <UnlockRow stageNumber={stageNumber} /> : null}
       </View>
       {selected ? (
@@ -116,11 +123,9 @@ export interface MapDrawerProps {
   lookup: Readonly<Record<number, StageData | undefined>>;
   /** The stage the journey currently rests on, marked selected in the list. */
   currentStage: number;
-  /** Wheel-of-wholeness fullness (0..1) by stage; absent reads thin. */
-  fullnessByStage: Readonly<Record<number, number>>;
   /** Which pass through the arc the user is on; past 1 it captions the cycle. */
   cycleNumber: number;
-  /** Glide the magnifier lens to a stage and close the drawer. */
+  /** Glide the lens to a stage, open its detail modal, and close the drawer. */
   onSelectStage: (_stageNumber: number) => void;
 }
 
@@ -128,7 +133,6 @@ export interface MapDrawerProps {
 export default function MapDrawer({
   lookup,
   currentStage,
-  fullnessByStage,
   cycleNumber,
   onSelectStage,
 }: MapDrawerProps): React.JSX.Element {
@@ -145,7 +149,6 @@ export default function MapDrawer({
             key={stageNumber}
             stageNumber={stageNumber}
             display={display}
-            fullness={fullnessByStage[stageNumber] ?? THIN_FULLNESS}
             locked={stage ? !isStageUnlocked(stage, currentStage) : true}
             selected={stageNumber === currentStage}
             onSelectStage={onSelectStage}
@@ -191,14 +194,11 @@ const styles = StyleSheet.create({
   rowBody: {
     flex: 1,
   },
-  persona: {
+  category: {
     color: ink.primary,
   },
-  descriptor: {
+  aspect: {
     color: ink.soft,
-  },
-  balanceRead: {
-    color: ink.muted,
   },
   unlock: {
     color: ink.muted,

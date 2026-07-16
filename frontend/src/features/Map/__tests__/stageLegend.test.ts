@@ -1,7 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 import { STAGE_DISPLAY } from '../mapLayout';
-import { balanceLabelSuffix, stageNodeLabel, THIN_FULLNESS } from '../stageLegend';
+import {
+  balanceLabelSuffix,
+  drawerStageLabel,
+  stageNodeLabel,
+  THIN_FULLNESS,
+} from '../stageLegend';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 const requireDisplay = (stageNumber: number) => {
@@ -47,5 +52,45 @@ describe('stageNodeLabel', () => {
 describe('THIN_FULLNESS', () => {
   it('is the absent-fullness fallback of zero', () => {
     expect(THIN_FULLNESS).toBe(0);
+  });
+});
+
+describe('drawerStageLabel', () => {
+  it('joins the category and Aspect with a comma when an aspect is given', () => {
+    expect(drawerStageLabel('Yes-And-Ness', 'Agency', { locked: false, current: false })).toBe(
+      'Yes-And-Ness, Agency',
+    );
+  });
+
+  it('omits the Aspect segment when aspect is empty', () => {
+    expect(drawerStageLabel('Being', '', { locked: false, current: false })).toBe('Being');
+  });
+
+  it('omits the Aspect segment for a title stage with no arrow label, keeping the category', () => {
+    expect(drawerStageLabel('Awareness', '', { locked: false, current: false })).toBe('Awareness');
+  });
+
+  it('appends a locked marker when locked is true', () => {
+    expect(drawerStageLabel('Wisdom', 'Nondual', { locked: true, current: false })).toBe(
+      'Wisdom, Nondual, locked',
+    );
+  });
+
+  it('appends a current marker when current is true', () => {
+    expect(drawerStageLabel('Understanding', 'Embodied', { locked: false, current: true })).toBe(
+      'Understanding, Embodied, current',
+    );
+  });
+
+  it('appends both markers, current before locked, when both are true', () => {
+    expect(drawerStageLabel('Love', 'Self-Love', { locked: true, current: true })).toBe(
+      'Love, Self-Love, current, locked',
+    );
+  });
+
+  it('carries no state markers when neither locked nor current is true', () => {
+    expect(drawerStageLabel('Wisdom', 'Systems', { locked: false, current: false })).toBe(
+      'Wisdom, Systems',
+    );
   });
 });
