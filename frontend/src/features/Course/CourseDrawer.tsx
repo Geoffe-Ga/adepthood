@@ -23,7 +23,7 @@ import {
 import { course as courseApi, type ContentItem, type Stage } from '../../api';
 import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../design/tokens';
 
-import { getStageColor, isCompleted, isUnlocked, totalStageCount } from './stageDisplay';
+import { getStageColor, isCompleted, isUnlocked } from './stageDisplay';
 
 /** Glyph shown on a completed stage header. */
 const COMPLETED_GLYPH = '✓';
@@ -301,7 +301,7 @@ const StageSection = ({
 };
 
 export interface CourseDrawerProps {
-  /** Every stage in the course; the drawer renders one section per stage. */
+  /** Every stage in the course; only present stages render (gap numbers are skipped). */
   stages: Stage[];
   /** The stage currently shown on the screen, marked selected in the list. */
   selectedStage: number;
@@ -322,7 +322,7 @@ export default function CourseDrawer({
   onRetry,
 }: CourseDrawerProps): React.JSX.Element {
   const stageById = useMemo(() => new Map(stages.map((s) => [s.stage_number, s])), [stages]);
-  const stageNumbers = Array.from({ length: totalStageCount(stages) }, (_, i) => i + 1);
+  const stageNumbers = useMemo(() => [...stageById.keys()].sort((a, b) => a - b), [stageById]);
   return (
     <View testID="course-drawer">
       {stageNumbers.map((stageNumber) => (
