@@ -212,6 +212,28 @@ async def _is_stage_unlocked_for_user(
     return is_stage_unlocked(stage_number, progress)
 
 
+async def _listing_unlocked_count(
+    session: AsyncSession, user_id: int, stage: CourseStage, total_items: int
+) -> int:
+    """Chapters to reveal in the stage listing.
+
+    A stage still locked for the user is shown as a titles-only table of
+    contents: every item locked with its ``url`` nulled -- the same shape
+    the drip produces at ``unlocked_count == 0``. This deliberately shows
+    the whole chapter map in the course drawer while keeping bodies and
+    urls out of reach; item detail and mark-read stay gated. An unlocked
+    stage keeps its proportional drip count unchanged.
+    """
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number):
+        return 0
+    day = await _day_in_stage_for_user(session, user_id, stage.stage_number)
+    return unlocked_chapter_count(
+        total=total_items,
+        duration_days=_stage_duration_days(stage.stage_number),
+        day_in_stage=day,
+    )
+
+
 @router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
     stage_number: int,
@@ -230,18 +252,16 @@ async def list_stage_content(
     count in the database.  Stage content lists are small (tens of items
     per stage) so paginating in Python after fetching is fine.
 
-    The sibling endpoints (``get_content_item``, ``mark_content_read``)
-    gate on :func:`_check_stage_unlocked`; this listing used to skip it
-    and leak titles + release_days for future stages while only nulling
-    ``url``.  Aligning the unlock gate here closes the last read path
-    for locked-stage metadata.
+    A stage still locked for the user returns a titles-only listing on
+    purpose: the course drawer renders the full chapter map (every item
+    locked with ``url`` nulled) while bodies and urls stay protected.
+    Item detail (``get_content_item``) and ``mark_content_read`` remain
+    gated -- only this table-of-contents view is open on a locked stage.
     """
-    # 404-then-403: missing stages return not_found regardless of caller so a
-    # nonexistent stage_number can't be distinguished from a locked one by
-    # response code (callers for this endpoint don't see a content_id oracle,
-    # so the existence of stages 1..10 is already public knowledge).
+    # A missing stage still 404s here so a nonexistent stage_number can't be
+    # confused with a real one; stages 1..10 are public knowledge, and the
+    # listing itself is open (titles-only when locked) so there's no oracle.
     stage = await _get_stage_by_number(session, stage_number)
-    await _check_stage_unlocked(session, current_user, stage_number)
 
     result = await session.execute(
         select(StageContent)
@@ -250,12 +270,7 @@ async def list_stage_content(
     )
     items = list(result.scalars().all())
 
-    day = await _day_in_stage_for_user(session, current_user, stage_number)
-    unlocked = unlocked_chapter_count(
-        total=len(items),
-        duration_days=_stage_duration_days(stage_number),
-        day_in_stage=day,
-    )
+    unlocked = await _listing_unlocked_count(session, current_user, stage, len(items))
     content_ids = [item.id for item in items if item.id is not None]
     read_ids = await _read_ids_for_user(session, current_user, content_ids)
 
