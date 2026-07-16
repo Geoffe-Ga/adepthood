@@ -109,6 +109,28 @@ describe('recordRecentPractice', () => {
     expect(parsed.map((p) => p.id)).not.toContain(MAX_RECENT_PRACTICES);
   });
 
+  test('a transient read failure preserves the intact on-disk list', async () => {
+    const intact = [makePractice(1), makePractice(2)];
+    const rawOnDisk = JSON.stringify(intact);
+    const store: { raw: string | null } = { raw: rawOnDisk };
+    mockAsyncStorage.getItem
+      .mockRejectedValueOnce(new Error('transient read'))
+      .mockImplementation(() => Promise.resolve(store.raw));
+    mockAsyncStorage.setItem.mockImplementation((_key: string, value: string) => {
+      store.raw = value;
+      return Promise.resolve();
+    });
+
+    await recordRecentPractice(makePractice(3));
+
+    expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+    expect(store.raw).toBe(rawOnDisk);
+
+    mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(null));
+    mockAsyncStorage.setItem.mockImplementation(() => Promise.resolve());
+  });
+
   test('two concurrent recordings both survive instead of clobbering each other', async () => {
     const store: { raw: string | null } = { raw: null };
     mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(store.raw));
