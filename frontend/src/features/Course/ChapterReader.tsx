@@ -6,7 +6,7 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { colors, SPACING } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
-import { stripFrontmatter, stripLeadingTitleHeading } from './stripFrontmatter';
+import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
 
 /**
  * Small-caps eyebrow shown above the sheet title, keyed by content type.
@@ -239,11 +239,10 @@ function useContentBody(source: ChapterReaderSource): {
 }
 
 function renderBody(body: ContentBody): React.ReactElement {
-  const stripped = stripFrontmatter(body.body_markdown);
-  if (stripped.trim() === '') {
+  if (body.body_markdown.trim() === '') {
     return <EmptyView />;
   }
-  const markdown = stripLeadingTitleHeading(stripped, body.title);
+  const markdown = stripLeadingTitleHeading(body.body_markdown, body.title);
   return (
     <ScrollView
       style={styles.readerScroll}
