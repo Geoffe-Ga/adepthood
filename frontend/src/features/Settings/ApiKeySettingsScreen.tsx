@@ -23,6 +23,7 @@ import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import type { ApiKeySaveResult } from '@/context/ApiKeyContext';
 import { useApiKey } from '@/context/ApiKeyContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -325,15 +326,17 @@ const ScreenBody = ({
 function useSaveKeyHandler(
   form: SettingsFormState,
   setReveal: Dispatch<SetStateAction<boolean>>,
-  saveApiKey: (_k: string) => Promise<void>,
+  saveApiKey: (_k: string) => Promise<ApiKeySaveResult>,
 ): () => Promise<void> {
   const { draft, setDraft, setStatus } = form;
   const validate = useCallback(() => validateUserApiKey(draft)?.message ?? null, [draft]);
   const perform = useCallback(async () => {
-    await saveApiKey(draft.trim());
+    const result = await saveApiKey(draft.trim());
     setDraft('');
     setReveal(false);
-    setStatus('API key saved on this device.');
+    if (result.persisted) {
+      setStatus('API key saved on this device.');
+    }
   }, [draft, saveApiKey, setDraft, setReveal, setStatus]);
   const onError = useCallback(
     (err: unknown) =>

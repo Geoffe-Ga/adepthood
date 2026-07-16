@@ -23,6 +23,15 @@ import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeySt
  * in any API response — it lives only on the device.
  */
 
+/** Outcome of a {@link ApiKeyContextValue.saveApiKey} call. */
+export interface ApiKeySaveResult {
+  /**
+   * True when the write reached SecureStore; false when it fell back to
+   * session-only because the SecureStore write failed.
+   */
+  persisted: boolean;
+}
+
 interface ApiKeyContextValue {
   /** Current user-owned key, or null if none is stored. */
   apiKey: string | null;
@@ -35,8 +44,12 @@ interface ApiKeyContextValue {
    * visible instead of the app silently running with a blank, non-persisted key.
    */
   loadError: Error | null;
-  /** Persist a new key to SecureStore and update context state. */
-  saveApiKey: (_key: string) => Promise<void>;
+  /**
+   * Persist a new key and update context state. Resolves with
+   * ``persisted: true`` when the write reached SecureStore, or
+   * ``persisted: false`` when it fell back to session-only (the write failed).
+   */
+  saveApiKey: (_key: string) => Promise<ApiKeySaveResult>;
   /** Remove the stored key (SecureStore + context state). */
   clearApiKey: () => Promise<void>;
 }
@@ -98,16 +111,19 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const saveApiKey = useCallback(async (key: string) => {
+  const saveApiKey = useCallback(async (key: string): Promise<ApiKeySaveResult> => {
+    let persisted = false;
     try {
       await saveLlmApiKey(key);
       setLoadError(null);
+      persisted = true;
     } catch (err: unknown) {
       console.warn('[ApiKeyContext] SecureStore save failed', err);
       setLoadError(err instanceof Error ? err : new Error(String(err)));
       // Set state anyway so the key is at least usable this session.
     }
     setApiKey(key);
+    return { persisted };
   }, []);
 
   const clearApiKey = useCallback(async () => {
