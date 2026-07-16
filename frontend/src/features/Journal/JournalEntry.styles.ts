@@ -10,6 +10,7 @@ import { StyleSheet } from 'react-native';
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
   editorialType,
   journalLayout,
@@ -18,6 +19,10 @@ import {
   spacing,
   touchTarget,
 } from '@/design/tokens';
+
+/** Warm left rule on the live quote preview, in dp — mirrors the reflection
+ *  panel's pending-quote stripe so both promote surfaces read as one language. */
+const PREVIEW_STRIPE_WIDTH = 3;
 
 /**
  * Bottom inset reserving room for the floating "Get Resonance" button so page
@@ -158,6 +163,32 @@ const styles = StyleSheet.create({
   quoteSelectActions: {
     flexDirection: 'row',
     gap: SPACING.md,
+    paddingTop: spacing(1),
+    alignItems: 'center',
+  },
+  /** Warm guiding line above the field: how to select a passage to promote. */
+  quoteSelectInstruction: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingBottom: spacing(1),
+  },
+  /** Highlighted card echoing the chosen passage back before it is promoted. */
+  quoteSelectPreview: {
+    backgroundColor: colors.paper.quoteHighlight,
+    borderRadius: BORDER_RADIUS.md,
+    borderLeftWidth: PREVIEW_STRIPE_WIDTH,
+    borderLeftColor: accent.primary,
+    padding: SPACING.md,
+    marginTop: spacing(1),
+  },
+  quoteSelectPreviewText: {
+    ...editorialType.note,
+    color: colors.paper.ink,
+  },
+  /** Warm (not alarming) nudge shown when confirm is tapped with no selection. */
+  quoteSelectHint: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
     paddingTop: spacing(1),
   },
   /** Privacy tier chooser block above the growing body. */

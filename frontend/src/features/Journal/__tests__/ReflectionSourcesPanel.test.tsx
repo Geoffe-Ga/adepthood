@@ -211,10 +211,10 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 9 });
   });
 
-  it('does not fire onPromoteSpan on a collapsed selection and stays on the selection surface', async () => {
+  it('pressing the confirm guard on a collapsed selection shows a hint and never calls onPromoteSpan', async () => {
     const onPromoteSpan = jest.fn(() => Promise.resolve(true));
     const items = [item({ id: 1 })];
-    const { getByTestId } = render(
+    const { getByTestId, findByTestId } = render(
       <ReflectionSourcesPanel
         items={items}
         onInsertQuote={jest.fn()}
@@ -225,9 +225,8 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     fireEvent.press(getByTestId('source-promote-entry-1'));
     const input = getByTestId('source-select-entry-1-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 5, end: 5 } } });
-    await act(async () => {
-      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
-    });
+    fireEvent.press(getByTestId('source-select-entry-1-confirm-guard'));
+    expect(await findByTestId('source-select-entry-1-hint')).toBeTruthy();
     expect(onPromoteSpan).not.toHaveBeenCalled();
     expect(getByTestId('source-select-entry-1-input')).toBeTruthy();
   });

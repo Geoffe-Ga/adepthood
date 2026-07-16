@@ -151,15 +151,28 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     expect(mockPromote).not.toHaveBeenCalled();
   });
 
-  it('confirming a collapsed selection promotes nothing and stays in selection mode', async () => {
+  it('entering selection mode renders the instruction line', async () => {
+    const { findByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    expect(await findByTestId('quote-select-instruction')).toBeTruthy();
+  });
+
+  it('a nonempty selection renders the live preview', async () => {
+    const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const input = getByTestId('quote-select-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
+    expect(await findByTestId('quote-select-preview')).toBeTruthy();
+  });
+
+  it('pressing the confirm guard on a collapsed selection shows a hint and promotes nothing', async () => {
     const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
     fireEvent.press(await findByTestId('promote-quote-button'));
     const input = getByTestId('quote-select-input');
     // A caret tap with no highlighted span reports start === end.
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 5, end: 5 } } });
-    await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
-    });
+    fireEvent.press(getByTestId('quote-select-confirm-guard'));
+    expect(await findByTestId('quote-select-hint')).toBeTruthy();
     expect(mockPromote).not.toHaveBeenCalled();
     expect(getByTestId('quote-select-input')).toBeTruthy(); // still selecting
   });
