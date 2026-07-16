@@ -89,17 +89,21 @@ async def _check_stage_eligibility(
     current_user: int,
     practice: Practice,
     payload_stage_number: int,
+    user_tz: str,
 ) -> None:
     """Gate on catalog-stage agreement + chain-unlock.
 
     Kept separate from :func:`_resolve_practice` so the 400/403 split stays
     explicit: mismatched stage is a client-side input error, locked stage is
-    an authorization failure against server-owned progression.
+    an authorization failure against server-owned progression.  ``user_tz``
+    threads the caller's timezone into the calendar unlock so the server
+    counts the same calendar days the client does (matching the frontend's
+    local-midnight convention).
     """
     if practice.stage_number != payload_stage_number:
         raise bad_request("stage_number_mismatch")
     progress = await get_user_progress(session, current_user)
-    if not is_stage_unlocked(payload_stage_number, progress):
+    if not is_stage_unlocked(payload_stage_number, progress, tz=user_tz):
         raise forbidden("stage_locked")
 
 
@@ -165,7 +169,7 @@ async def create_user_practice(
     streak math that hangs off it.
     """
     practice = await _resolve_selectable_practice(session, payload.practice_id, current_user)
-    await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
+    await _check_stage_eligibility(session, current_user, practice, payload.stage_number, user_tz)
 
     # ``start_date`` is the user-facing "I started this practice today"
     # label (BUG-HABIT-006), not an internal audit timestamp -- so it

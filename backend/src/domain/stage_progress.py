@@ -120,18 +120,23 @@ def completed_stage_gap(completed: set[int], current_stage: int) -> tuple[set[in
 
 
 def is_stage_unlocked(
-    stage_number: int, progress: StageProgress | None, now: datetime | None = None
+    stage_number: int,
+    progress: StageProgress | None,
+    now: datetime | None = None,
+    *,
+    tz: str | None = None,
 ) -> bool:
     """Return True iff the stage is open by advancement OR by the calendar.
 
     Advancement: ``N <= current_stage``, which only moves via the
     validated router path (advance must equal ``current + 1``).
-    Calendar (issue #386): ``N <= calendar_stage(anchor)``, the same
-    date-derived schedule the frontend renders, so the server never 403s
-    a stage the user can see is open.  ``max`` of the two means time can
-    OPEN stages but never revoke advancement-granted access — and the
-    calendar itself is server-computed, so a client cannot skip ahead of
-    the schedule.
+    Calendar: ``N <= calendar_stage(anchor)``, the same date-derived
+    schedule the frontend renders, evaluated in the caller's timezone
+    (``tz``; UTC when None) so the server counts the same calendar days
+    the client does and never 403s a stage the user can see is open.
+    ``max`` of the two means time can OPEN stages but never revoke
+    advancement-granted access — and the calendar itself is
+    server-computed, so a client cannot skip ahead of the schedule.
     """
     if stage_number == _STAGE_1:
         return True
@@ -139,7 +144,7 @@ def is_stage_unlocked(
         return False
     unlocked_through = max(
         progress.current_stage,
-        calendar_stage(resolve_program_anchor(progress), now),
+        calendar_stage(resolve_program_anchor(progress), now, tz=tz),
     )
     return stage_number <= unlocked_through
 

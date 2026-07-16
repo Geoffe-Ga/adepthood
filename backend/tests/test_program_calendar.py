@@ -16,6 +16,7 @@ from domain.program_calendar import (
     calendar_day_in_stage,
     calendar_stage,
     calendar_week,
+    elapsed_days,
     resolve_program_anchor,
 )
 from domain.weekly_prompts import TOTAL_WEEKS
@@ -177,6 +178,59 @@ def test_calendar_math_agrees_across_naive_and_aware_utc_representations() -> No
     assert calendar_day_in_stage(naive_anchor, 1, aware_now) == calendar_day_in_stage(
         _ANCHOR, 1, aware_now
     )
+
+
+# ── tz-aware calendar math (local-midnight boundary) ────────────────────
+
+_TZ_LA = "America/Los_Angeles"
+# Deliberately non-midnight UTC so a UTC-date diff and a PT-date diff can
+# disagree: 2026-01-01T20:00Z is still 2026-01-01 in Pacific (noon PST).
+_TZ_ANCHOR = datetime(2026, 1, 1, 20, 0, tzinfo=UTC)
+
+
+def test_elapsed_days_and_stage_flip_at_pacific_local_midnight() -> None:
+    """The stage flips at PT local midnight, not at a UTC-timedelta floor."""
+    now = datetime(2026, 1, 22, 8, 0, tzinfo=UTC)  # 2026-01-22T00:00 PST
+    assert elapsed_days(_TZ_ANCHOR, now, tz=_TZ_LA) == 21
+    assert calendar_stage(_TZ_ANCHOR, now, tz=_TZ_LA) == 2
+
+
+def test_elapsed_days_and_stage_one_local_second_before_the_flip() -> None:
+    now = datetime(2026, 1, 22, 7, 59, 59, tzinfo=UTC)  # 2026-01-21T23:59:59 PST
+    assert elapsed_days(_TZ_ANCHOR, now, tz=_TZ_LA) == 20
+    assert calendar_stage(_TZ_ANCHOR, now, tz=_TZ_LA) == 1
+
+
+def test_calendar_stage_does_not_unlock_early_west_of_utc() -> None:
+    """UTC's date has already rolled to the 22nd, but Pacific has not."""
+    now = datetime(2026, 1, 22, 5, 0, tzinfo=UTC)  # 2026-01-21T21:00 PST
+    assert calendar_stage(_TZ_ANCHOR, now, tz=_TZ_LA) == 1
+
+
+def test_elapsed_days_defaults_to_utc_calendar_dates() -> None:
+    """``tz=None`` still fixes the wall-clock-truncation mismatch, via UTC dates."""
+    now = datetime(2026, 1, 22, 0, 30, tzinfo=UTC)
+    assert elapsed_days(_TZ_ANCHOR, now) == 21
+
+
+def test_elapsed_days_with_tz_floors_a_pre_anchor_now_at_zero() -> None:
+    assert elapsed_days(_TZ_ANCHOR, _TZ_ANCHOR - timedelta(days=3), tz=_TZ_LA) == 0
+
+
+def test_elapsed_days_with_tz_accepts_a_naive_anchor() -> None:
+    naive_anchor = _TZ_ANCHOR.replace(tzinfo=None)
+    now = datetime(2026, 1, 22, 8, 0, tzinfo=UTC)
+    assert elapsed_days(naive_anchor, now, tz=_TZ_LA) == 21
+
+
+def test_calendar_week_forwards_tz_to_the_local_midnight_boundary() -> None:
+    now = datetime(2026, 1, 22, 8, 0, tzinfo=UTC)
+    assert calendar_week(_TZ_ANCHOR, now, tz=_TZ_LA) == 4
+
+
+def test_calendar_day_in_stage_forwards_tz_to_the_local_midnight_boundary() -> None:
+    now = datetime(2026, 1, 22, 8, 0, tzinfo=UTC)
+    assert calendar_day_in_stage(_TZ_ANCHOR, 2, now, tz=_TZ_LA) == 1
 
 
 # ── resolve_program_anchor ──────────────────────────────────────────────
