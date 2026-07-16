@@ -26,7 +26,7 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
     isLoading: false,
     loadError: null,
     saveApiKey: jest.fn(() => Promise.resolve({ persisted: true })),
-    clearApiKey: jest.fn(() => Promise.resolve()),
+    clearApiKey: jest.fn(() => Promise.resolve({ cleared: true })),
   };
   const value = { ...base, ...partial } as ReturnType<typeof useApiKey>;
   mockUseApiKey.mockReturnValue(value);
@@ -284,6 +284,29 @@ describe('ApiKeySettingsScreen', () => {
 
     const status = await findByTestId('api-key-status');
     expect(status.props.children).toContain('removed from this device');
+    alertSpy.mockRestore();
+  });
+
+  test('shows only the storage warning, not the removed status, when the delete does not clear', async () => {
+    const state = setApiKeyState({
+      apiKey: VALID_KEY,
+      loadError: new Error('locked'),
+      clearApiKey: jest.fn(() => Promise.resolve({ cleared: false })),
+    });
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
+      const destructive = buttons?.find((b) => b.style === 'destructive');
+      destructive?.onPress?.();
+    });
+
+    const { getByTestId, findByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-button'));
+    });
+
+    await waitFor(() => expect(state.clearApiKey).toHaveBeenCalled());
+    expect(await findByTestId('api-key-storage-error')).toBeTruthy();
+    expect(queryByTestId('api-key-status')).toBeNull();
+    expect(queryByTestId('api-key-error')).toBeNull();
     alertSpy.mockRestore();
   });
 
