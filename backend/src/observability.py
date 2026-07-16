@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import os
 import re
 import uuid
+from typing import IO
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -132,6 +134,97 @@ def install_trace_id_logging() -> None:
     root = logging.getLogger()
     if not any(isinstance(f, TraceIdLogFilter) for f in root.filters):
         root.addFilter(TraceIdLogFilter())
+
+
+# Marker attribute stamped on the handler ``configure_logging`` installs, so
+# repeated calls (multi-worker boots, lifespan re-entry in tests) can find
+# the existing handler instead of stacking a duplicate.
+_APP_HANDLER_MARKER = "_adepthood_app_handler"
+
+#: Boot log format. ``trace_id`` is stamped by the handler-level
+#: :class:`TraceIdLogFilter` (records outside a request carry
+#: :data:`NO_TRACE`), so the format never KeyErrors.
+_APP_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s [%(trace_id)s] %(message)s"
+
+#: Level applied when ``LOG_LEVEL`` is unset or not a recognised level name.
+_DEFAULT_LOG_LEVEL = logging.INFO
+
+
+def _resolve_log_level() -> int:
+    """Map the ``LOG_LEVEL`` env var to a logging level, defaulting to INFO.
+
+    A typo'd value must not crash boot — logging is the tool for seeing
+    problems, so it fails soft to the INFO default.
+    """
+    name = os.getenv("LOG_LEVEL", "").upper()
+    level = logging.getLevelNamesMapping().get(name)
+    return level if level is not None else _DEFAULT_LOG_LEVEL
+
+
+def _build_app_handler(stream: IO[str] | None, level: int) -> logging.Handler:
+    """Construct the marked app stream handler ``configure_logging`` installs.
+
+    The :class:`TraceIdLogFilter` is attached to the *handler* (not the
+    logger): logger-level filters never run for records propagated from
+    child loggers, so the handler is the only seam that guarantees every
+    formatted record carries a ``trace_id`` attribute.
+    """
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(_APP_LOG_FORMAT))
+    handler.addFilter(TraceIdLogFilter())
+    setattr(handler, _APP_HANDLER_MARKER, True)
+    return handler
+
+
+def _apply_log_level(root: logging.Logger, handlers: list[logging.Handler], level: int) -> None:
+    """Set ``level`` on the app handlers and open the root logger to it.
+
+    The root logger's default WARNING level would drop INFO records
+    before any handler sees them; opening it to the configured level
+    lets the handler apply its own threshold.
+    """
+    for handler in handlers:
+        handler.setLevel(level)
+    if root.level == 0 or root.level > level:
+        root.setLevel(level)
+
+
+def configure_logging(stream: IO[str] | None = None) -> None:
+    """Give the root logger a real stream handler (idempotent).
+
+    The production image starts uvicorn with no ``--log-config``, and
+    uvicorn only configures its own ``uvicorn.*`` loggers — the root
+    logger is left handler-less, so every application record below
+    WARNING (``seed_complete``, ``content_loaded``, the per-request
+    access lines) is silently dropped by :data:`logging.lastResort`.
+    That made a production seeding failure indistinguishable from a
+    successful boot.  Called from the lifespan startup hook so every
+    worker gets exactly one handler.
+
+    ``stream`` defaults to stderr (the ``StreamHandler`` default); tests
+    inject a ``StringIO`` to assert on output.
+    """
+    root = logging.getLogger()
+    level = _resolve_log_level()
+    handlers = [h for h in root.handlers if getattr(h, _APP_HANDLER_MARKER, False)]
+    if not handlers:
+        handlers = [_build_app_handler(stream, level)]
+        root.addHandler(handlers[0])
+    _apply_log_level(root, handlers, level)
+
+
+def remove_app_log_handlers_for_tests() -> None:
+    """Detach every handler ``configure_logging`` installed.
+
+    Public on purpose — keeps the test contract on the module's public
+    API instead of a private marker attribute, mirroring
+    ``reset_content_repository_for_tests``.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if getattr(handler, _APP_HANDLER_MARKER, False):
+            root.removeHandler(handler)
 
 
 # Width that keeps log records small enough to flow through SQLite/

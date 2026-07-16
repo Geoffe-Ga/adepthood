@@ -22,6 +22,7 @@ from sqlmodel import select
 
 import curriculum
 from models.course_stage import CourseStage
+from seed_helpers import commit_or_yield_to_race_winner
 
 #: The curriculum dataset does not carry per-Stage overview URLs; they are a
 #: seeder concern and default to empty until populated elsewhere.
@@ -97,6 +98,17 @@ def _insert_or_reconcile(
     return 0, _apply_definition(stage, definition)
 
 
+async def _load_existing_stages(session: AsyncSession) -> dict[int, CourseStage]:
+    """Return the CourseStage rows already present, keyed by ``stage_number``.
+
+    The read is factored out so a concurrent-boot race can be simulated: a
+    peer worker's rows may be committed while this worker's existence read
+    still returns nothing.
+    """
+    result = await session.execute(select(CourseStage))
+    return {stage.stage_number: stage for stage in result.scalars()}
+
+
 async def seed_stages(session: AsyncSession) -> int:
     """Insert missing stage definitions and reconcile existing ones in place.
 
@@ -106,9 +118,14 @@ async def seed_stages(session: AsyncSession) -> int:
     number of Stages inserted (in-place updates are not counted). The session
     is committed when there were inserts or in-place changes, and skipped
     otherwise so a re-run of identical data is a true no-op.
+
+    The commit is race-safe: two workers booting concurrently (uvicorn
+    ``--workers N``) can both pass the existence check on a fresh database, so
+    the loser's insert hits the ``ix_coursestage_stage_number_unique`` index
+    (migration ``e8f9a0b1c2d3``) and yields as a no-op instead of duplicating
+    every Stage.
     """
-    result = await session.execute(select(CourseStage))
-    existing = {stage.stage_number: stage for stage in result.scalars()}
+    existing = await _load_existing_stages(session)
 
     inserted = 0
     dirty = False
@@ -118,5 +135,5 @@ async def seed_stages(session: AsyncSession) -> int:
         dirty = dirty or changed
 
     if dirty:
-        await session.commit()
+        return await commit_or_yield_to_race_winner(session, inserted)
     return inserted

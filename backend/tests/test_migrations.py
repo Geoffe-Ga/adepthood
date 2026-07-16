@@ -2467,3 +2467,183 @@ def test_user_ui_flags_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _USER_UI_FLAGS_REVISION)
     assert _table_exists(db_url, "useruiflags")
     assert _ui_flags_row_count(db_url) == 0
+
+
+# -- course-content seeder-race dedupe + unique indexes ----------------------
+
+# down_revision is b4c5d6e7f8a1 (the useruiflags migration, current head).
+_COURSE_DEDUPE_BASE_REVISION = "b4c5d6e7f8a1"  # pragma: allowlist secret
+_COURSE_DEDUPE_REVISION = "e8f9a0b1c2d3"  # pragma: allowlist secret
+
+
+def _bootstrap_course_tables(sync_url: str) -> None:
+    """Pre-create minimal course tables mirroring the pre-migration schema."""
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE coursestage ("
+                " id INTEGER PRIMARY KEY,"
+                " stage_number INTEGER NOT NULL,"
+                " title VARCHAR NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE stagecontent ("
+                " id INTEGER PRIMARY KEY,"
+                " course_stage_id INTEGER NOT NULL REFERENCES coursestage (id),"
+                " title VARCHAR NOT NULL,"
+                " content_type VARCHAR NOT NULL,"
+                " release_day INTEGER NOT NULL,"
+                " url VARCHAR NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE contentcompletion ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " content_id INTEGER NOT NULL REFERENCES stagecontent (id),"
+                " CONSTRAINT uq_contentcompletion_user_content"
+                "  UNIQUE (user_id, content_id))"
+            )
+        )
+    engine.dispose()
+
+
+def _seed_race_duplicates(sync_url: str) -> None:
+    """Replay the two-worker boot race: every stage duplicated, content split.
+
+    Mirrors the corruption observed when two uvicorn workers seed a fresh
+    database concurrently: stage 1 exists twice (ids 1 and 11); the first id
+    owns no content, the second owns two copies of the same chapter.  One
+    user read the keeper's copy AND the dupe's copy (the collision case the
+    completion re-point must survive), another read only the dupe's copy
+    (the plain re-point case).
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO coursestage (id, stage_number, title) VALUES"
+                " (1, 1, 'Survival'), (11, 1, 'Survival'),"
+                " (2, 2, 'Magick'), (12, 2, 'Magick')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO stagecontent"
+                " (id, course_stage_id, title, content_type, release_day, url) VALUES"
+                " (101, 11, 'What is Beige?', 'chapter', 0, 'content://s01-c01'),"
+                " (102, 11, 'What is Beige?', 'chapter', 0, 'content://s01-c01'),"
+                " (103, 11, 'Why Beige Matters', 'chapter', 1, 'content://s01-c02'),"
+                " (104, 12, 'What is Purple?', 'chapter', 0, 'content://s02-c01')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO contentcompletion (id, user_id, content_id) VALUES"
+                " (1, 1, 101), (2, 1, 102),"  # collision: same user read both copies
+                " (3, 2, 102)"  # plain re-point: only the dupe copy read
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_course_dedupe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    """Alembic config over a SQLite DB seeded with race-duplicated course rows."""
+    db_path = tmp_path / "course_dedupe_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_course_tables(sync_url)
+    _seed_race_duplicates(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _COURSE_DEDUPE_BASE_REVISION)
+    return cfg
+
+
+def _rows(db_url: str, sql: str) -> list[tuple[Any, ...]]:
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return [tuple(row) for row in conn.execute(text(sql)).all()]
+    finally:
+        engine.dispose()
+
+
+def test_course_dedupe_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_course_dedupe: Config,
+) -> None:
+    """The dedupe migration heals race-duplicated course rows and locks the door.
+
+    Phase 1 (upgrade): duplicate CourseStage rows collapse onto the lowest id
+    per stage_number, StageContent re-points onto the keeper stage, duplicate
+    ``content://`` rows collapse onto the lowest id, ContentCompletion
+    re-points without violating its (user_id, content_id) uniqueness, and the
+    two unique indexes reject fresh duplicates.
+    Phase 2 (downgrade): the indexes drop (dedupe is deliberately one-way).
+    Phase 3: re-upgrade on the already-clean DB is a no-op that succeeds.
+    """
+    cfg = alembic_sqlite_config_course_dedupe
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _COURSE_DEDUPE_REVISION)
+
+    # One CourseStage per stage_number, keeper = lowest id.
+    stages = _rows(db_url, "SELECT id, stage_number FROM coursestage ORDER BY stage_number")
+    assert stages == [(1, 1), (2, 2)]
+
+    # Content re-pointed onto the keeper stages and deduped by content ref.
+    contents = _rows(
+        db_url,
+        "SELECT id, course_stage_id, url FROM stagecontent ORDER BY id",
+    )
+    assert contents == [
+        (101, 1, "content://s01-c01"),
+        (103, 1, "content://s01-c02"),
+        (104, 2, "content://s02-c01"),
+    ]
+
+    # Read-marks survive: user 1's collision collapsed to one row on the
+    # keeper; user 2's mark re-pointed onto the keeper.
+    completions = _rows(
+        db_url,
+        "SELECT user_id, content_id FROM contentcompletion ORDER BY user_id",
+    )
+    assert completions == [(1, 101), (2, 101)]
+
+    # The unique indexes are installed and enforce.
+    assert "ix_coursestage_stage_number_unique" in _index_names(db_url, "coursestage")
+    assert "ix_stagecontent_stage_content_ref_unique" in _index_names(db_url, "stagecontent")
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn, pytest.raises(IntegrityError):
+            conn.execute(text("INSERT INTO coursestage (stage_number, title) VALUES (1, 'dupe')"))
+        with engine.begin() as conn, pytest.raises(IntegrityError):
+            conn.execute(
+                text(
+                    "INSERT INTO stagecontent"
+                    " (course_stage_id, title, content_type, release_day, url)"
+                    " VALUES (1, 'dupe', 'chapter', 0, 'content://s01-c01')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    # Phase 2: downgrade drops the indexes (rows stay deduped by design).
+    command.downgrade(cfg, _COURSE_DEDUPE_BASE_REVISION)
+    assert "ix_coursestage_stage_number_unique" not in _index_names(db_url, "coursestage")
+    assert "ix_stagecontent_stage_content_ref_unique" not in _index_names(db_url, "stagecontent")
+
+    # Phase 3: re-upgrade on the clean DB succeeds (dedupe CTEs match nothing).
+    command.upgrade(cfg, _COURSE_DEDUPE_REVISION)
+    assert "ix_coursestage_stage_number_unique" in _index_names(db_url, "coursestage")

@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.practice_modes import PracticeMode
@@ -387,8 +388,17 @@ async def seed_practice_recipes(session: AsyncSession) -> int:
     from a peer process winning the race is converted to a no-op so
     concurrent worker startup does not crash.
     """
-    tags_inserted = await _seed_system_tags(session)
-    recipes_inserted = await _seed_system_recipes(session)
+    try:
+        tags_inserted = await _seed_system_tags(session)
+        recipes_inserted = await _seed_system_recipes(session)
+    except IntegrityError:
+        # Race-loser at FLUSH time: ``_insert_recipe_with_steps`` flushes to
+        # obtain the recipe PK, which executes the pending tag INSERTs early
+        # — before the race-safe commit below could arbitrate.  A peer
+        # worker already seeded these rows; yield exactly as the commit
+        # helper would.
+        await session.rollback()
+        return 0
     total = tags_inserted + recipes_inserted
     if not total:
         return 0
