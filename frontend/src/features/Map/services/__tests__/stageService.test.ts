@@ -340,6 +340,49 @@ describe('stageService', () => {
     });
   });
 
+  describe('highestCompletedStage', () => {
+    it('returns 0 when no stage has reached full progress', () => {
+      const { highestCompletedStage } = require('../stageService');
+      expect(
+        highestCompletedStage([
+          { stageNumber: 1, progress: 0.9 },
+          { stageNumber: 2, progress: 0 },
+        ]),
+      ).toBe(0);
+    });
+
+    it('returns 0 for an empty list', () => {
+      const { highestCompletedStage } = require('../stageService');
+      expect(highestCompletedStage([])).toBe(0);
+    });
+
+    it('returns the highest stage number whose progress is exactly complete', () => {
+      const { highestCompletedStage } = require('../stageService');
+      expect(
+        highestCompletedStage([
+          { stageNumber: 1, progress: 1 },
+          { stageNumber: 3, progress: 1 },
+          { stageNumber: 2, progress: 0.5 },
+        ]),
+      ).toBe(3);
+    });
+
+    it('counts progress past the completion threshold as complete', () => {
+      const { highestCompletedStage } = require('../stageService');
+      expect(highestCompletedStage([{ stageNumber: 4, progress: 1.2 }])).toBe(4);
+    });
+
+    it('ignores completed stages with a lower number than an earlier complete stage', () => {
+      const { highestCompletedStage } = require('../stageService');
+      expect(
+        highestCompletedStage([
+          { stageNumber: 5, progress: 1 },
+          { stageNumber: 2, progress: 1 },
+        ]),
+      ).toBe(5);
+    });
+  });
+
   describe('beginAgain action', () => {
     function makeProgressRecord(cycleNumber: number): StageProgressRecord {
       return {

@@ -254,13 +254,6 @@ const rememberVerticalVelocity = (
   origin.current.lastY = nextY;
 };
 
-const settleStageWithMomentum = (
-  centerY: number,
-  velocityY: number,
-  gridHeight: number,
-  anchors: StageAnchors,
-): number => inertialStageTarget(centerY, velocityY, gridHeight, anchors);
-
 const dragCenterOnRail = (
   event: GestureResponderEvent,
   origin: DragOrigin,
@@ -278,7 +271,7 @@ const dragCenterOnRail = (
 const settleDraggedLens = (params: LensDragParams, dragOrigin: DragOrigin): void => {
   const { motion, gridHeight, anchors } = params;
   motion.dragging.current = false;
-  const settled = settleStageWithMomentum(
+  const settled = inertialStageTarget(
     motion.lastCenter.current.y,
     dragOrigin.velocityY,
     gridHeight,
