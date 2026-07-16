@@ -179,12 +179,14 @@ describe('ApiKeyProvider', () => {
     );
     await waitFor(() => expect(ctx?.apiKey).toBe('sk-existing'));
 
+    let result: { cleared: boolean } | undefined;
     await act(async () => {
-      await ctx!.clearApiKey();
+      result = await ctx!.clearApiKey();
     });
 
     expect(mockStorage.clearLlmApiKey).toHaveBeenCalled();
     expect(ctx!.apiKey).toBeNull();
+    expect(result).toEqual({ cleared: true });
   });
 
   test('useApiKey throws when used outside a provider', () => {
@@ -283,13 +285,15 @@ describe('ApiKeyProvider', () => {
     );
     await waitFor(() => expect(ctx?.apiKey).toBe('sk-existing'));
 
+    let result: { cleared: boolean } | undefined;
     await act(async () => {
-      await ctx!.clearApiKey();
+      result = await ctx!.clearApiKey();
     });
 
     expect(ctx!.loadError).toBeInstanceOf(Error);
     expect(ctx!.loadError?.message).toBe('locked');
     expect(ctx!.apiKey).toBeNull();
+    expect(result).toEqual({ cleared: false });
     warnSpy.mockRestore();
   });
 });

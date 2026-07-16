@@ -23,7 +23,7 @@ import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import type { ApiKeySaveResult } from '@/context/ApiKeyContext';
+import type { ApiKeyClearResult, ApiKeySaveResult } from '@/context/ApiKeyContext';
 import { useApiKey } from '@/context/ApiKeyContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -348,13 +348,15 @@ function useSaveKeyHandler(
 
 function useClearKeyHandler(
   form: SettingsFormState,
-  clearApiKey: () => Promise<void>,
+  clearApiKey: () => Promise<ApiKeyClearResult>,
 ): () => Promise<void> {
   const { setStatus } = form;
   const validate = useCallback(() => null, []);
   const perform = useCallback(async () => {
-    await clearApiKey();
-    setStatus('API key removed from this device.');
+    const result = await clearApiKey();
+    if (result.cleared) {
+      setStatus('API key removed from this device.');
+    }
   }, [clearApiKey, setStatus]);
   const onError = useCallback(
     (err: unknown) =>
