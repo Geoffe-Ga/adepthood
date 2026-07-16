@@ -35,10 +35,23 @@ credentials surface.)
 
 ## Provenance
 
-The dataset's top-level `provenance` block records where its copy came from:
+The dataset's top-level `provenance` block records where its copy came from,
+split into two keys because the Stage-identifying attributes and the
+per-phase manifestation copy are pulled from two different sources:
 
-- `source` — *The Archetypal Wavelength* spreadsheet, "Expanded List" sheet
-  (the same sheet `wavelength-demo` and `WavelengthWatch` quote verbatim).
+- `stage_attributes_source` — the seven per-Stage identifying fields
+  (`category`, `aspect`, `spiral_dynamics_color`, `growing_up_stage`,
+  `divine_gender_polarity`, `relationship_to_free_will`,
+  `free_will_description`) come from `APTITUDE Complete Map.csv` in the
+  `aptitude-course` repository's `database_of_course_curriculum`, including
+  the December 2025 supersessions recorded in that repository's `CLAUDE.md`
+  (Stage 4 aspect "Community Love"; Stage 8 color "Teal", aspect "True Self
+  Connection", free-will archetype "True Self Embodier"). This is the
+  canonical APTITUDE ontology, not the *Archetypal Wavelength* spreadsheet.
+- `manifestations_source` — the titles, subtitles, and six-phase `Rx`
+  (integrated) / `OD` (shadow) manifestation copy come from *The Archetypal
+  Wavelength* spreadsheet, "Expanded List" sheet (the same sheet
+  `wavelength-demo` and `WavelengthWatch` quote verbatim).
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
@@ -48,6 +61,11 @@ The dataset's top-level `provenance` block records where its copy came from:
 The `Rx`/`OD` copy in the JSON is quoted from that vendored markdown so the
 three apps stay in sync with the sheet without adepthood needing live access to
 the spreadsheet (privacy posture, #893).
+
+`dataset_version` is `2.0.0`. The `1.x` series shipped with a wrong,
+non-canonical vocabulary for the seven stage-attribute fields; correcting
+them to the `stage_attributes_source` above is a breaking data change, hence
+the major bump rather than a patch or minor.
 
 ## What the loader guarantees
 
@@ -85,9 +103,15 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    ```
 
 5. Commit the JSON diff. Because the seeder derives `STAGE_DEFINITIONS` from the
-   dataset at import time, no seeder code change is needed; the golden-value
-   test in `test_seed_stages.py` will flag any unintended change to a Stage's
-   identifying attributes so a copy refresh cannot silently alter seeded rows.
+   dataset at import time, no seeder code change is needed. Seeding is
+   insert-plus-reconcile: on the next startup, `seed_stages()` inserts any
+   Stage missing from the table and updates the curriculum-sourced fields of
+   Stages already there that have drifted from the dataset, so a correction
+   like this propagates to already-seeded databases without a migration. The
+   seeder-owned `overview_url` is never touched by reconciliation and rows are
+   never deleted. The golden-value test in `test_seed_stages.py` still flags
+   any unintended change to a Stage's identifying attributes, so a copy
+   refresh cannot silently alter seeded rows.
 
 ## Consumers
 
