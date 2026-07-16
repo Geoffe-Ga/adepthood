@@ -200,12 +200,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.tier.clear,
   },
   acceptText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.background,
-    fontWeight: '600',
   },
   dismissText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   disabled: {

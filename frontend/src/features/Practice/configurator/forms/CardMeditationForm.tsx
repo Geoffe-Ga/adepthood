@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     backgroundColor: surface.sunken,
   },
-  photoButtonText: { ...editorialType.caption, fontWeight: '500', color: ink.primary },
+  photoButtonText: { ...editorialType.action, color: ink.primary },
   photoError: { ...editorialType.caption, color: colors.danger },
   photoThumb: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: BORDER_RADIUS.sm },
 });

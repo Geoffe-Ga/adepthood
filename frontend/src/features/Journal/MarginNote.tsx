@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing(0.5),
   },
   open: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
   },

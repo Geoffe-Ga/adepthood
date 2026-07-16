@@ -586,9 +586,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionLink: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
-    fontWeight: '600',
   },
   promoteOpener: {
     minHeight: touchTarget.minimum,
@@ -596,9 +595,8 @@ const styles = StyleSheet.create({
     paddingTop: spacing(1),
   },
   promoteOpenerLink: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
-    fontWeight: '600',
   },
   promoteHint: {
     ...editorialType.caption,
