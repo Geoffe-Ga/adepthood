@@ -49,6 +49,30 @@ updates:
       # rule as expo-av — unpin at the SDK 53 upgrade (#885).
       - dependency-name: "expo-notifications"
         versions: [">=0.30.0"]
+      # Expo SDK 52 pins react-native to 0.76.x; 0.77+ needs React 19 / SDK 55+
+      # and ERESOLVE-fails install here. RN's 0.x minors are effective majors,
+      # so they must not ride the patch-minor group — unpin at the SDK 53
+      # upgrade (#885).
+      - dependency-name: "react-native"
+        versions: [">=0.77.0"]
+      # Expo SDK 52 pins expo-status-bar to ~2.0.x; 3.x targets SDK 53+. Expo
+      # packages move together with the SDK via `expo install`, not piecemeal —
+      # unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-status-bar"
+        versions: [">=3.0.0"]
+      # Expo SDK 52 pins @expo/metro-runtime to ~4.0.x; 5.x targets SDK 53+.
+      # Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "@expo/metro-runtime"
+        versions: [">=5.0.0"]
+      # Expo SDK 52 pins expo-secure-store to ~55.0.x; 56.x targets SDK 53+.
+      # Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-secure-store"
+        versions: [">=56.0.0"]
+      # react-native-reanimated 4.x requires the New Architecture pairing that
+      # ships with newer SDKs; SDK 52 pins ~3.16/3.17. Same SDK-managed rule —
+      # unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "react-native-reanimated"
+        versions: [">=4.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
