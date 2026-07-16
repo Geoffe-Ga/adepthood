@@ -15,6 +15,10 @@ import {
 
 const JUSTIFY_SPACE_BETWEEN = 'space-between' as const;
 
+const SECTION_TITLE_FONT_SIZE = 13;
+const SECTION_TITLE_LETTER_SPACING = 0.5;
+const FREQ_CHIP_FONT_SIZE = 14;
+
 // Device dimensions (for responsive layouts)
 
 //------------------
@@ -130,11 +134,26 @@ export const styles = StyleSheet.create({
   settingsContainer: {
     marginTop: SPACING.md,
   },
-  settingGroup: {
+  settingsSection: {
     marginVertical: SPACING.md,
     borderBottomWidth: 1,
     borderColor: surface.hairline,
     paddingBottom: SPACING.md,
+  },
+  sectionTitle: {
+    fontSize: SECTION_TITLE_FONT_SIZE,
+    fontWeight: '600',
+    color: ink.soft,
+    textTransform: 'uppercase',
+    letterSpacing: SECTION_TITLE_LETTER_SPACING,
+    marginBottom: SPACING.sm,
+    fontFamily: fonts.sans,
+  },
+  utilityRow: {
+    marginVertical: SPACING.md,
+  },
+  saveRow: {
+    marginBottom: SPACING.md,
   },
   settingRow: {
     flexDirection: 'row',
@@ -339,23 +358,35 @@ export const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // ===== Frequency Button =====
-  frequencyButton: {
-    backgroundColor: surface.sunken,
+  // ===== Frequency Chips =====
+  freqChipRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginVertical: SPACING.sm,
+  },
+  freqChip: {
+    flex: 1,
+    minHeight: touchTarget.minimum,
+    borderRadius: BORDER_RADIUS.circle,
     borderWidth: 1,
     borderColor: surface.hairline,
-    minHeight: touchTarget.minimum,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xs,
-    flex: 1,
-    marginLeft: SPACING.md,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: SPACING.md,
   },
-  frequencyButtonText: {
-    color: ink.primary,
+  freqChipSelected: {
+    backgroundColor: accent.primary,
+    borderColor: accent.primary,
+  },
+  freqChipText: {
+    color: ink.soft,
     fontFamily: fonts.sans,
-    fontSize: 16,
+    fontSize: FREQ_CHIP_FONT_SIZE,
+    textTransform: 'capitalize',
+  },
+  freqChipTextSelected: {
+    color: accent.onPrimary,
   },
 
   // ===== Stats Modal =====
