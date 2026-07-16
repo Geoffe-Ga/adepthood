@@ -184,3 +184,29 @@ def test_is_stage_unlocked_accepts_an_explicit_now() -> None:
     later = datetime.now(UTC) + timedelta(days=22)
     assert is_stage_unlocked(2, progress, now=later) is True
     assert is_stage_unlocked(3, progress, now=later) is False
+
+
+def test_is_stage_unlocked_flips_at_pacific_local_midnight_not_utc() -> None:
+    """The first local calendar day of stage 2 in Pacific time unlocks it."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=1,
+        completed_stages=[],
+        program_started_at=datetime(2026, 1, 1, 20, 0, tzinfo=UTC),
+    )
+    at_local_midnight = datetime(2026, 1, 22, 8, 0, tzinfo=UTC)
+    one_second_earlier = datetime(2026, 1, 22, 7, 59, 59, tzinfo=UTC)
+    assert is_stage_unlocked(2, progress, now=at_local_midnight, tz="America/Los_Angeles") is True
+    assert is_stage_unlocked(2, progress, now=one_second_earlier, tz="America/Los_Angeles") is False
+
+
+def test_calendar_tz_never_revokes_advancement_ahead_of_it() -> None:
+    """A user already advanced past the tz-derived calendar keeps that access."""
+    progress = StageProgress(
+        user_id=1,
+        current_stage=3,
+        completed_stages=[1, 2],
+        program_started_at=datetime(2026, 1, 1, 20, 0, tzinfo=UTC),
+    )
+    early = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+    assert is_stage_unlocked(3, progress, now=early, tz="America/Los_Angeles") is True

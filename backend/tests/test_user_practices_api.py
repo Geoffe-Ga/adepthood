@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -183,6 +184,50 @@ async def test_select_practice_rejects_locked_stage(
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.json()["detail"] == "stage_locked"
+
+
+@pytest.mark.asyncio
+async def test_select_practice_first_local_day_of_new_stage_is_unlocked(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The first Pacific calendar day of stage 2 unlocks the pick, not day 22 UTC.
+
+    Anchored to real local dates (DST-proof) rather than a fixed literal so
+    the test is independent of the wall clock it happens to run under.
+    """
+    resp = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "pacificpicker@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": "America/Los_Angeles",
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    user_id = resp.json()["user_id"]
+    practice = await _seed_practice(db_session, name="Stage2Pacific", stage_number=2)
+
+    la = ZoneInfo("America/Los_Angeles")
+    start_date = datetime.now(la).date() - timedelta(days=21)
+    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
+    anchor = anchor_local.astimezone(UTC).replace(tzinfo=None)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
+
+    create_resp = await async_client.post(
+        "/user-practices/",
+        json={"practice_id": practice.id, "stage_number": 2},
+        headers=headers,
+    )
+    assert create_resp.status_code == HTTPStatus.CREATED
 
 
 # -- List user-practices ----------------------------------------------------
