@@ -87,6 +87,16 @@ function useStagesLoader() {
     void init();
   }, [init]);
 
+  // A warm Course tab stays mounted, so a later Map->Course deep-link changes
+  // only the route param. Follow a changed non-null incoming stage number here;
+  // a null param (no deep-link) leaves the derived default untouched, and a
+  // same-number re-navigation is a no-op because the effect keys on the number.
+  useEffect(() => {
+    if (routeStageNumber !== null) {
+      setSelectedStage(routeStageNumber);
+    }
+  }, [routeStageNumber]);
+
   return { allStages, selectedStage, setSelectedStage, loading, error, retry: init };
 }
 
