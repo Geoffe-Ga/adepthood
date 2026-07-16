@@ -3,7 +3,6 @@ import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } f
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  BOTTOM_TAB_BAR_CONTENT_HEIGHT,
   colors,
   SPACING,
   STAGE_COLORS,
@@ -193,7 +192,7 @@ export const useTileLayout = () => {
   const insets = useSafeAreaInsets();
   const rows = columns === 2 ? MAX_HABITS / columns : MAX_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
-  const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
+  const bottomBarReserve = insets.bottom;
   const availableHeight = height - insets.top - bottomBarReserve - chrome;
   const rowPitch = availableHeight / rows;
   // Floor to whole pixels so the reserved stack never rounds above the viewport.

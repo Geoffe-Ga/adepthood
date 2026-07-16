@@ -90,7 +90,7 @@ const widths = [320, 390, 600, 900, 1200];
 
 const colorValues = Object.values(STAGE_COLORS);
 
-// Proves SOME reserve exists beyond the raw per-row split; the realistic budget lives in HabitTileFit.test.tsx.
+// Per-row footprint is the min-height box plus the two inter-row margins (interior padding excluded); the realistic budget lives in HabitTileFit.test.tsx.
 const CHROME_RESERVE = SPACING.sm;
 
 const assertTileLayout = (tile: any, height: number, expectedColumns: number): void => {
@@ -98,8 +98,7 @@ const assertTileLayout = (tile: any, height: number, expectedColumns: number): v
     ? tile.props.style.reduce((acc: any, s: any) => ({ ...acc, ...s }), {})
     : tile.props.style;
 
-  const verticalPadding = style.paddingVertical ?? style.padding ?? 0;
-  const tileHeight = (style.minHeight ?? 0) + 2 * verticalPadding + 2 * (style.margin ?? 0);
+  const tileHeight = (style.minHeight ?? 0) + 2 * (style.margin ?? 0);
 
   const rows = expectedColumns === 2 ? 5 : 10;
   const maxTileHeight = (height - CHROME_RESERVE) / rows;

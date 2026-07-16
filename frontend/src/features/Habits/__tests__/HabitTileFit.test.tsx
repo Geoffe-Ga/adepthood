@@ -5,13 +5,7 @@ import { Text, StyleSheet } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import renderer from 'react-test-renderer';
 
-import {
-  spacing,
-  SPACING,
-  touchTarget,
-  tileDensity,
-  BOTTOM_TAB_BAR_CONTENT_HEIGHT,
-} from '../../../design/tokens';
+import { spacing, SPACING, touchTarget, tileDensity } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { useTileLayout, HabitTile } from '../HabitTile';
 
@@ -73,11 +67,11 @@ describe('useTileLayout fit invariant', () => {
     expect(tileMinHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
     // Concrete expected density at the target profile: a chrome-model drift or a
     // token change breaks this independently of the reconstructed budget below.
-    const EXPECTED_TILE_MIN_HEIGHT = 57;
+    const EXPECTED_TILE_MIN_HEIGHT = 62;
     expect(tileMinHeight).toBe(EXPECTED_TILE_MIN_HEIGHT);
 
     const chrome = computeChrome(scale, gridGutter);
-    const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
+    const bottomBarReserve = insets.bottom;
     const stackHeight = TOTAL_HABITS * (tileMinHeight + gridGutter);
     const totalHeight = stackHeight + insets.top + bottomBarReserve + chrome;
 
@@ -90,6 +84,17 @@ describe('useTileLayout fit invariant', () => {
     const { tileMinHeight } = renderTileLayout(insets);
 
     expect(tileMinHeight).toBe(touchTarget.minimum);
+  });
+
+  it('reclaims the retired tab-bar band on a small screen', () => {
+    mockWindowDimensions(360, 640);
+    const insets: Insets = { top: 24, bottom: 0, left: 0, right: 0 };
+    const { tileMinHeight } = renderTileLayout(insets);
+
+    // Computed density for this small profile — coincidentally equal to the
+    // removed tab-bar constant, not a reintroduction of it.
+    const EXPECTED_SMALL_SCREEN_TILE_MIN_HEIGHT = 49;
+    expect(tileMinHeight).toBe(EXPECTED_SMALL_SCREEN_TILE_MIN_HEIGHT);
   });
 });
 
