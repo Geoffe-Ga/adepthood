@@ -5,6 +5,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { resetCorruptKey } from './jsonStore';
+import { serialize } from './serializedWrite';
 
 const RECENT_PRACTICES_KEY = '@adepthood/recent_practices';
 
@@ -58,10 +59,16 @@ export async function loadRecentPractices(): Promise<RecentPractice[]> {
   }
 }
 
-/** Move ``entry`` to the front of the recent list (deduped by id), then persist. */
+/**
+ * Move ``entry`` to the front of the recent list (deduped by id), then persist.
+ * Runs through the serialized write lane so concurrent appenders can't both
+ * read the same list and clobber each other's prepend.
+ */
 export async function recordRecentPractice(entry: RecentPractice): Promise<void> {
-  const existing = await loadRecentPractices();
-  const deduped = existing.filter((item) => item.id !== entry.id);
-  const next = [entry, ...deduped].slice(0, MAX_RECENT_PRACTICES);
-  await AsyncStorage.setItem(RECENT_PRACTICES_KEY, JSON.stringify(next));
+  await serialize(RECENT_PRACTICES_KEY, async () => {
+    const existing = await loadRecentPractices();
+    const deduped = existing.filter((item) => item.id !== entry.id);
+    const next = [entry, ...deduped].slice(0, MAX_RECENT_PRACTICES);
+    await AsyncStorage.setItem(RECENT_PRACTICES_KEY, JSON.stringify(next));
+  });
 }
