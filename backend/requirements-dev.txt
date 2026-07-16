@@ -7,7 +7,7 @@ pre-commit
 pytest
 pytest-cov
 # Type stubs for the runtime jsonschema dependency (issues #389/#390).
-types-jsonschema>=4.0
+types-jsonschema>=4.26.0.20260518
 radon>=6.0
 ruff
 vulture>=2.13
