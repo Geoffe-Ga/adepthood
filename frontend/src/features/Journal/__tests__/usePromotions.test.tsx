@@ -174,6 +174,19 @@ describe('usePromotions', () => {
     expect(mockList).toHaveBeenCalledWith(7);
   });
 
+  it('on hydration, a fetched quote wins an id collision with a seeded quote', async () => {
+    const seeded = quote({ id: 5, anchor_text: 'stale in-memory copy' });
+    const fetched = quote({ id: 5, anchor_text: 'fresh server copy' });
+    mockList.mockResolvedValue([fetched]);
+    const { result } = renderHook(() => usePromotions({ entryId: 7, initialQuotes: [seeded] }));
+
+    await waitFor(() =>
+      expect(result.current.quotes.map((q: PromotedQuote) => q.anchor_text)).toEqual([
+        'fresh server copy',
+      ]),
+    );
+  });
+
   it('never calls promotions.list when entryId is 0 (unsaved entry)', async () => {
     renderHook(() => usePromotions({ entryId: 0 }));
 
@@ -214,6 +227,21 @@ describe('usePromotions', () => {
     await waitFor(() =>
       expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([3, 9]),
     );
+  });
+
+  it('resets to empty on an entryId change so a prior entry cannot union into the new one', async () => {
+    mockList.mockResolvedValueOnce([quote({ id: 5, anchor_start: 1 })]);
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => usePromotions({ entryId: id }),
+      { initialProps: { id: 7 } },
+    );
+    await waitFor(() => expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([5]));
+
+    mockList.mockResolvedValueOnce([quote({ id: 8, anchor_start: 2 })]);
+    rerender({ id: 9 });
+
+    await waitFor(() => expect(result.current.quotes.map((q: PromotedQuote) => q.id)).toEqual([8]));
+    expect(mockList).toHaveBeenNthCalledWith(2, 9);
   });
 
   it('promoting is false initially, true while the create POST is in flight, false after it resolves', async () => {

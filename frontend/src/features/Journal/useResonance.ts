@@ -10,7 +10,6 @@
  */
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type Dispatch,
@@ -18,6 +17,7 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
 import { optimisticRemove } from './optimisticRemove';
 
 import { completionSuggestions, resonance } from '@/api';
@@ -79,55 +79,6 @@ export interface UseResonanceResult {
   dismissSuggestion: (_id: number) => Promise<void>;
 }
 
-/** Union of two anchored lists, keyed by id (incoming wins), sorted by anchor span. */
-function mergeByIdSorted<T extends { id: number; anchor_start: number }>(
-  existing: T[],
-  incoming: T[],
-): T[] {
-  const byId = new Map<number, T>();
-  for (const item of existing) byId.set(item.id, item);
-  for (const item of incoming) byId.set(item.id, item);
-  return [...byId.values()].sort((a, b) => a.anchor_start - b.anchor_start);
-}
-
-/** State updater that folds a loaded snapshot under any state that outran it. */
-function mergeSnapshotUnder<T extends { id: number; anchor_start: number }>(
-  snapshot: T[],
-): (_prev: T[]) => T[] {
-  return (prev) => mergeByIdSorted(snapshot, prev);
-}
-
-/**
- * Load a list-shaped resource once on open; silent on failure (id only).
- * Merges the loaded snapshot into current state by id (server rows as existing,
- * in-memory as incoming) so a slow load can't clobber state that advanced past
- * its snapshot (generate deltas, accepted flips, essay-bearing notes). Resets to
- * an empty list on each entry change (deps are stable), so a prior entry's rows
- * can't union into a new one while same-entry late loads still merge under state.
- */
-function useLoadOnOpen<T extends { id: number; anchor_start: number }>(
-  routeEntryId: number | null,
-  load: (_id: number) => Promise<{ items: T[] }>,
-  apply: Dispatch<SetStateAction<T[]>>,
-): void {
-  useEffect(() => {
-    if (routeEntryId == null) return undefined;
-    // Start each entry from empty so a prior entry's rows can't union into it.
-    apply([]);
-    let active = true;
-    void load(routeEntryId)
-      .then((res) => {
-        if (active) apply(mergeSnapshotUnder(res.items));
-      })
-      .catch(() => {
-        // A failed initial load shouldn't block writing; stay silent here.
-      });
-    return () => {
-      active = false;
-    };
-  }, [routeEntryId, load, apply]);
-}
-
 interface SuggestionsApi {
   suggestions: CompletionSuggestion[];
   /** Check-in (streak) per accepted suggestion id, for the confirmed card. */
@@ -145,7 +96,7 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
   );
   const pendingIdsRef = useRef<Set<number>>(new Set());
 
-  useLoadOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
+  useHydrateOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
 
   const mergeFromGenerate = useCallback((incoming: CompletionSuggestion[]) => {
     setSuggestions((prev) => mergeByIdSorted(prev, incoming));
@@ -290,7 +241,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   const [privateMessage, setPrivateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useLoadOnOpen(routeEntryId, resonance.list, setMarginalia);
+  useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
   const sug = useSuggestions(routeEntryId, setError);
   const { loading, requestResonance } = useGeneratePass({
     flush,

@@ -11,6 +11,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
 import { optimisticRemove } from './optimisticRemove';
 
 import { promotions } from '@/api';
@@ -54,61 +55,18 @@ function byAnchorThenId(a: PromotedQuote, b: PromotedQuote): number {
   return a.anchor_start - b.anchor_start || a.id - b.id;
 }
 
-/** Re-insert a reverted quote, keeping the list ordered by anchor then id. */
+/** Re-insert a quote, keeping the list ordered by anchor then id and deduped. */
 function insertSorted(quotes: PromotedQuote[], quote: PromotedQuote): PromotedQuote[] {
-  return [...quotes, quote].sort(byAnchorThenId);
+  return mergeByIdSorted(quotes, [quote], byAnchorThenId);
 }
 
 /**
- * Union the fetched quotes into the current list by id, keeping the ordered
- * invariant. A merge (rather than a blind replace) preserves a quote an
- * in-flight ``promote`` already appended, and dedupes when the server echoes it.
+ * Adapt ``promotions.list``'s bare array into the ``{ items }`` shape the shared
+ * hydrate hook expects. Named at module scope so its identity is stable and the
+ * hydration effect doesn't re-run on every render.
  */
-function mergeById(prev: PromotedQuote[], incoming: PromotedQuote[]): PromotedQuote[] {
-  const byId = new Map<number, PromotedQuote>(prev.map((q) => [q.id, q]));
-  for (const q of incoming) byId.set(q.id, q);
-  return [...byId.values()].sort(byAnchorThenId);
-}
-
-/** The sentinel for an unsaved entry — nothing to hydrate until it has a real id. */
-const UNSAVED_ENTRY_ID = 0;
-
-/**
- * A state updater that unions the fetched quotes into the *latest* list. Named
- * at module scope (not an inline updater) so the hydration effect stays flat,
- * and functional so it can't clobber a concurrent optimistic add or removal.
- */
-function mergeFetched(fetched: PromotedQuote[]): (_prev: PromotedQuote[]) => PromotedQuote[] {
-  return (prev) => mergeById(prev, fetched);
-}
-
-/**
- * Rehydrate a reopened entry's quotes. Keyed by ``entryId`` and skipped for the
- * unsaved-entry sentinel; the ``cancelled`` flag stops a slow response from
- * setting state after unmount or an id change. Merges (never replaces) so a
- * quote an in-flight ``promote`` already appended survives.
- */
-function useHydrateOnOpen(
-  entryId: number,
-  setQuotes: Dispatch<SetStateAction<PromotedQuote[]>>,
-  setHint: (_hint: string | null) => void,
-): void {
-  useEffect(() => {
-    if (entryId <= UNSAVED_ENTRY_ID) return undefined;
-    let cancelled = false;
-    const hydrate = async (): Promise<void> => {
-      try {
-        const fetched = await promotions.list(entryId);
-        if (!cancelled) setQuotes(mergeFetched(fetched));
-      } catch (err) {
-        if (!cancelled) setHint(formatApiError(err));
-      }
-    };
-    void hydrate();
-    return () => {
-      cancelled = true;
-    };
-  }, [entryId, setQuotes, setHint]);
+function listPromotions(entryId: number): Promise<{ items: PromotedQuote[] }> {
+  return promotions.list(entryId).then((items) => ({ items }));
 }
 
 /** The span most recently handed to ``promote`` — held so a retry re-posts it. */
@@ -215,7 +173,9 @@ export function usePromotions({
   const quotesRef = useRef(quotes);
   quotesRef.current = quotes;
 
-  useHydrateOnOpen(entryId, setQuotes, setHint);
+  // ``'snapshot'``: on reopen the fetched server copy wins an id collision — the
+  // hook's original semantics, preserved so this dedup stays behaviour-neutral.
+  useHydrateOnOpen(entryId, listPromotions, setQuotes, byAnchorThenId, setHint, 'snapshot');
   const { promote, retryPromote, promoting, promoted, clearRetry } = usePromoteAction(
     entryId,
     setQuotes,
