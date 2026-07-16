@@ -123,6 +123,34 @@ updates:
       # react-plugin migration).
       - dependency-name: "eslint"
         versions: [">=10.0.0"]
+      # eslint-plugin-unicorn 65.x requires eslint >=10.4 and Node >=22, neither
+      # of which we run (eslint is pinned <10 above; CI Node is 20). Unpin with
+      # the ESLint-10 / Node-22 migration — see the eslint entry above.
+      - dependency-name: "eslint-plugin-unicorn"
+        versions: [">=65.0.0"]
+      # Jest 30 needs jest-environment-node / babel-jest ^30, but RN 0.76 tooling
+      # pins the jest-29 line. Jest moves with the SDK toolchain, not on its own —
+      # unpin at the Expo SDK 53 upgrade (#885).
+      - dependency-name: "jest"
+        versions: [">=30.0.0"]
+      # @types/jest must match the jest major; it pairs with jest 30 and moves
+      # with it — unpin at the Expo SDK 53 upgrade (#885).
+      - dependency-name: "@types/jest"
+        versions: [">=30.0.0"]
+      # React 19 pairs with the RN 0.78+ / Expo SDK upgrade and ERESOLVE-fails
+      # against the RN 0.76 pins here. React moves with the SDK, not via a bot
+      # bump — unpin at the Expo SDK 53 upgrade (#885).
+      - dependency-name: "react"
+        versions: [">=19.0.0"]
+      # @types/react must match the react major; it pairs with react 19 and moves
+      # with it — unpin at the Expo SDK 53 upgrade (#885).
+      - dependency-name: "@types/react"
+        versions: [">=19.0.0"]
+      # Expo SDK 53+ upgrades deliberately via `expo install` tooling as part of
+      # the SDK epic, never via a Dependabot bump (a bare `expo` bump desyncs the
+      # whole managed toolchain). Unpin at the Expo SDK 53 upgrade (#885).
+      - dependency-name: "expo"
+        versions: [">=53.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
