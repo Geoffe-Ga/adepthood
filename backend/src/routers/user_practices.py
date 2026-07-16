@@ -51,34 +51,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 
 
-async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice:
-    """Fetch and validate the catalog practice (exists + approved).
-
-    Backs the read/GET path only; the write paths use
-    :func:`_resolve_selectable_practice`.
-    """
-    result = await session.execute(select(Practice).where(Practice.id == practice_id))
-    practice = result.scalars().first()
-    if practice is None:
-        raise not_found("practice")
-    if not practice.approved:
-        raise bad_request("practice_not_approved")
-    return practice
-
-
 async def _resolve_selectable_practice(
     session: AsyncSession, practice_id: int, current_user: int
 ) -> Practice:
-    """Fetch a practice the caller is allowed to *select* or customize.
+    """Fetch a practice the caller is allowed to *select*, customize, or view.
 
-    Both write paths (selection and customize) use this resolver, whereas
-    :func:`_resolve_practice` backs the read/GET path. Unlike that read
-    path, this one permits an approved catalog practice **or** the caller's
-    own draft: ``practice.submitted_by_user_id == current_user`` clears an
-    unapproved row so an author can activate or customize the practice they
-    just submitted. A non-owner selecting someone else's still-pending
-    submission continues to receive 400 ``practice_not_approved``; a missing
-    row 404s exactly as the read path does.
+    The write paths (selection and customize) and the GET-one read path all
+    share this resolver. It permits an approved catalog practice **or** the
+    caller's own draft: ``practice.submitted_by_user_id == current_user``
+    clears an unapproved row so an author can activate, customize, or view the
+    practice they just submitted. A non-owner reaching someone else's
+    still-pending submission continues to receive 400 ``practice_not_approved``;
+    a missing row 404s.
     """
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
     practice = result.scalars().first()
@@ -98,9 +82,9 @@ async def _check_stage_eligibility(
 ) -> None:
     """Gate on catalog-stage agreement + chain-unlock.
 
-    Kept separate from :func:`_resolve_practice` so the 400/403 split stays
-    explicit: mismatched stage is a client-side input error, locked stage is
-    an authorization failure against server-owned progression.  ``user_tz``
+    Kept separate from :func:`_resolve_selectable_practice` so the 400/403
+    split stays explicit: mismatched stage is a client-side input error,
+    locked stage is an authorization failure against server-owned progression.  ``user_tz``
     threads the caller's timezone into the calendar unlock so the server
     counts the same calendar days the client does (matching the frontend's
     local-midnight convention).
@@ -320,8 +304,16 @@ async def _resolve_effective_fields(
     batches catalog lookups via :func:`_load_catalog_map`. The config
     is resolved via :func:`_safe_resolve_config` so a corrupt stored
     override falls through to ``None`` rather than crashing the GET.
+
+    Resolution uses the approved-OR-owner
+    :func:`_resolve_selectable_practice` scoped to ``user_practice.user_id``
+    so the row's owner can view a selection backed by their own unapproved
+    draft, mirroring the write paths. Ownership is already enforced upstream
+    by ``require_owned_user_practice``, so a foreign draft stays unreachable.
     """
-    practice = await _resolve_practice(session, user_practice.practice_id)
+    practice = await _resolve_selectable_practice(
+        session, user_practice.practice_id, user_practice.user_id
+    )
     name = effective_name(practice, user_practice)
     return name, _safe_resolve_config(user_practice, practice)
 
@@ -472,9 +464,10 @@ async def _frequency_from_active(
 ) -> FrequencyResponse:
     """Build the banner from an active ``UserPractice`` selection.
 
-    ``_resolve_practice`` 400s on unapproved rows; for the banner path
-    we only need the catalog row to exist (the user already selected
-    it, so its approval state shouldn't break their read view).
+    ``_resolve_selectable_practice`` still 400s on a *foreign* unapproved
+    row; for the banner path we only need the catalog row to exist (the
+    user already selected it, so its approval state shouldn't break their
+    read view).
     """
     practice_row = (
         (await session.execute(select(Practice).where(Practice.id == active.practice_id)))
