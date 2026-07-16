@@ -249,6 +249,68 @@ export const brightenColor = (hex: string): string => {
   );
 };
 
+/** Black glyph foreground, chosen when it out-contrasts white on a fill. */
+export const GLYPH_ON_LIGHT_FILL = '#000000';
+
+/** White glyph foreground, chosen when it out-contrasts black on a fill. */
+export const GLYPH_ON_DARK_FILL = '#ffffff';
+
+/** Threshold below which an sRGB channel linearizes as a plain scaled value. */
+const SRGB_LINEAR_THRESHOLD = 0.03928;
+/** Divisor applied to channels at or below the linear threshold. */
+const SRGB_LINEAR_DIVISOR = 12.92;
+/** Offset folded into the gamma expansion of above-threshold channels. */
+const SRGB_GAMMA_OFFSET = 0.055;
+/** Scale applied inside the gamma expansion of above-threshold channels. */
+const SRGB_GAMMA_SCALE = 1.055;
+/** Exponent of the sRGB gamma expansion. */
+const SRGB_GAMMA_EXPONENT = 2.4;
+/** Per-channel luminance weights (Rec. 709) for relative luminance. */
+const LUMINANCE_WEIGHTS = { r: 0.2126, g: 0.7152, b: 0.0722 };
+/** Additive term that keeps the WCAG contrast ratio finite near black. */
+const CONTRAST_FLARE = 0.05;
+
+/** Linearize a single 0-255 sRGB channel per the WCAG definition. */
+const linearizeChannel = (channel: number): number => {
+  const x = channel / 255;
+  return x <= SRGB_LINEAR_THRESHOLD
+    ? x / SRGB_LINEAR_DIVISOR
+    : ((x + SRGB_GAMMA_OFFSET) / SRGB_GAMMA_SCALE) ** SRGB_GAMMA_EXPONENT;
+};
+
+/** WCAG relative luminance of an [r, g, b] triple. */
+const relativeLuminance = ([r, g, b]: [number, number, number]): number =>
+  LUMINANCE_WEIGHTS.r * linearizeChannel(r) +
+  LUMINANCE_WEIGHTS.g * linearizeChannel(g) +
+  LUMINANCE_WEIGHTS.b * linearizeChannel(b);
+
+/** WCAG contrast ratio between two relative luminances. */
+const contrastRatio = (a: number, b: number): number => {
+  const hi = Math.max(a, b);
+  const lo = Math.min(a, b);
+  return (hi + CONTRAST_FLARE) / (lo + CONTRAST_FLARE);
+};
+
+/**
+ * Pick a maximal-contrast dark or light glyph foreground for a given fill so
+ * the glyph clears WCAG AA (>= 4.5:1) on every Spiral-Dynamics stage color --
+ * including near-white fills like "Clear Light" where a canvas-tinted glyph is
+ * effectively invisible. This reproduces the black/white on-fill decision
+ * already made by the Practice frequency palette
+ * (features/Practice/data/colorPalette.ts) rather than adding a second
+ * stage-to-text palette. Unparseable hex falls back to the dark-fill glyph.
+ */
+export const readableGlyphOn = (fillHex: string): string => {
+  const rgb = parseHexRgb(fillHex);
+  if (!rgb) return GLYPH_ON_DARK_FILL;
+  const fillLuminance = relativeLuminance(rgb);
+  const blackLuminance = relativeLuminance([0, 0, 0]);
+  const whiteLuminance = relativeLuminance([255, 255, 255]);
+  const blackContrast = contrastRatio(blackLuminance, fillLuminance);
+  const whiteContrast = contrastRatio(whiteLuminance, fillLuminance);
+  return blackContrast >= whiteContrast ? GLYPH_ON_LIGHT_FILL : GLYPH_ON_DARK_FILL;
+};
+
 // ---------------------------------------------------------------------------
 // Spacing
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Stage } from '../../api';
+import { readableGlyphOn } from '../../design/tokens';
 
 import styles from './Course.styles';
 import { getStageColor, isCompleted, isUnlocked, totalStageCount } from './stageDisplay';
@@ -29,32 +30,37 @@ const StagePill = ({
   isActive,
   color,
   onSelectStage,
-}: StagePillProps): React.JSX.Element => (
-  <TouchableOpacity
-    testID={`stage-pill-${stageNumber}`}
-    accessible
-    accessibilityRole="button"
-    accessibilityLabel={`Stage ${stageNumber}${!unlocked ? ', locked' : ''}${completed ? ', completed' : ''}`}
-    accessibilityState={{ selected: isActive, disabled: !unlocked }}
-    disabled={!unlocked}
-    onPress={() => onSelectStage(stageNumber)}
-    style={[
-      styles.stagePill,
-      { backgroundColor: color },
-      isActive && styles.stagePillActive,
-      !unlocked && styles.stagePillLocked,
-      completed && !isActive && styles.stagePillCompleted,
-    ]}
-  >
-    {completed ? (
-      <Text style={styles.stagePillCheck}>{'✓'}</Text>
-    ) : !unlocked ? (
-      <Text style={styles.stagePillLock}>{'🔒'}</Text>
-    ) : (
-      <Text style={styles.stagePillText}>{stageNumber}</Text>
-    )}
-  </TouchableOpacity>
-);
+}: StagePillProps): React.JSX.Element => {
+  // The glyph rides directly on the stage fill, so pick a foreground that
+  // clears WCAG AA against this pill's color rather than a fixed canvas tint.
+  const glyphColor = readableGlyphOn(color);
+  return (
+    <TouchableOpacity
+      testID={`stage-pill-${stageNumber}`}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`Stage ${stageNumber}${!unlocked ? ', locked' : ''}${completed ? ', completed' : ''}`}
+      accessibilityState={{ selected: isActive, disabled: !unlocked }}
+      disabled={!unlocked}
+      onPress={() => onSelectStage(stageNumber)}
+      style={[
+        styles.stagePill,
+        { backgroundColor: color },
+        isActive && styles.stagePillActive,
+        !unlocked && styles.stagePillLocked,
+        completed && !isActive && styles.stagePillCompleted,
+      ]}
+    >
+      {completed ? (
+        <Text style={[styles.stagePillCheck, { color: glyphColor }]}>{'✓'}</Text>
+      ) : !unlocked ? (
+        <Text style={[styles.stagePillLock, { color: glyphColor }]}>{'🔒'}</Text>
+      ) : (
+        <Text style={[styles.stagePillText, { color: glyphColor }]}>{stageNumber}</Text>
+      )}
+    </TouchableOpacity>
+  );
+};
 
 const StageSelector = ({
   stages: stagesList,

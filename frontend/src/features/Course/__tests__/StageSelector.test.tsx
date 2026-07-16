@@ -3,7 +3,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { render, fireEvent, within } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import type { Stage } from '../../../api';
 import { colors, STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
@@ -13,6 +13,31 @@ function backgroundColorOf(style: StyleProp<ViewStyle>): string {
   const flat = StyleSheet.flatten(style) ?? {};
   return (flat.backgroundColor as string | undefined) ?? '';
 }
+
+function glyphColorOf(style: StyleProp<TextStyle>): string {
+  const flat = StyleSheet.flatten(style) ?? {};
+  return (flat.color as string | undefined) ?? '';
+}
+
+/** WCAG relative luminance of a #rrggbb color. */
+const luminance = (hex: string): number => {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
+  if (!match) throw new Error(`not a 6-digit hex: ${hex}`);
+  const channels = [match[1], match[2], match[3]].map((pair) => {
+    const c = Number.parseInt(pair!, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+};
+
+const contrast = (a: string, b: string): number => {
+  const la = luminance(a);
+  const lb = luminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+const AA_NORMAL = 4.5;
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -216,5 +241,107 @@ describe('StageSelector', () => {
     expect(within(pill1).getByText('✓')).toBeTruthy();
     expect(within(pill1).queryByText('🔒')).toBeNull();
     expect(pill1.props.accessibilityLabel).toBe('Stage 1, locked, completed');
+  });
+
+  describe('glyph contrast (WCAG AA)', () => {
+    it('renders the number glyph readably on a light stage fill', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Clear Light',
+          is_unlocked: true,
+          progress: 0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      const glyph = within(pill).getByText('1');
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it('renders the completed checkmark readably on a light stage fill', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Clear Light',
+          is_unlocked: true,
+          progress: 1.0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      const glyph = within(pill).getByText('✓');
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it('renders the completed checkmark readably on the Ultraviolet dark stage fill', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Ultraviolet',
+          is_unlocked: true,
+          progress: 1.0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      const glyph = within(pill).getByText('✓');
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it('renders the lock glyph readably on a light stage fill', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Clear Light',
+          is_unlocked: false,
+          progress: 0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      const glyph = within(pill).getByText('🔒');
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it('renders the lock glyph readably on the Ultraviolet dark stage fill', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Ultraviolet',
+          is_unlocked: false,
+          progress: 0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      const glyph = within(pill).getByText('🔒');
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
   });
 });
