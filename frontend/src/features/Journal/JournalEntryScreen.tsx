@@ -61,7 +61,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Default idle delay before an edit is persisted. */
-export const AUTOSAVE_DELAY_MS = 1500;
+const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
@@ -109,7 +109,7 @@ function savedHintLabel(state: SaveState): string {
  * journal entry server-side — so we never also ``journal.create``); the practice
  * ids link a session/stage reflection to its source.
  */
-export interface SaveContext {
+interface SaveContext {
   weekNumber?: number;
   practiceSessionId?: number;
   userPracticeId?: number;

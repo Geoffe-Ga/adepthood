@@ -4,14 +4,11 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 /**
- * RED tests for ``ContractionReflectionNote``.
- *
- * These tests fail until the implementation-specialist creates
- * ``frontend/src/features/Journal/ContractionReflectionNote.tsx``: a warm,
- * declinable "tend your foundation" reflection surface driven by the
- * resonance-pass ``contraction`` field. It is not punitive copy — the note
- * must never read as failure, demotion, or ranking language, and a dismiss
- * always fully hides the surface (no forced re-open, unlike CareSupportNote).
+ * Covers ``ContractionReflectionNote``: a warm, declinable "tend your
+ * foundation" reflection surface driven by the resonance-pass ``contraction``
+ * field. The copy must never read as failure, demotion, or ranking language,
+ * and a dismiss always fully hides the surface (no forced re-open, unlike
+ * CareSupportNote).
  */
 import ContractionReflectionNote from '../ContractionReflectionNote';
 
