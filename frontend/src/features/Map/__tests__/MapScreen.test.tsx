@@ -799,7 +799,7 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.alignSelf).toBe('flex-end');
   });
 
-  it('nests the locked stage 8 (Nondual) countdown inside its right-corner block', () => {
+  it('nests the locked stage 8 (True Self) countdown inside its right-corner block', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const block = tree.root.findByProps({ testID: 'aspect-label-8' });

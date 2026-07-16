@@ -140,7 +140,7 @@ describe('MapScreen header drawer', () => {
     expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
     // The lens headline reflects the newly focused stage (stage 8's arrow label).
     const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
-    expect(headline.props.children).toBe('Nondual');
+    expect(headline.props.children).toBe('True Self');
   });
 
   it('opens the stage-detail modal for the tapped stage, and closes the drawer', () => {

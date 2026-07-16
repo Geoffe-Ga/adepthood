@@ -279,7 +279,7 @@ describe('MagnifierLens', () => {
         );
       });
       // Caption follows immediately; the glide raises the frost wash as it starts.
-      expect(headlineText(tree)).toBe('Nondual');
+      expect(headlineText(tree)).toBe('True Self');
       expect(frostRaiseCount(timing)).toBe(1);
     } finally {
       timing.mockRestore();
