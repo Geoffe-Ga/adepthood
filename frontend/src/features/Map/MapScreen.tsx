@@ -1075,7 +1075,6 @@ interface MapScreenDrawerProps {
   drawer: ScreenDrawerState;
   lookup: StageLookup;
   currentStage: number;
-  fullnessByStage: FullnessLookup;
   cycleNumber: number;
   onSelectStage: (_stageNumber: number) => void;
 }
@@ -1085,7 +1084,6 @@ const MapScreenDrawer = ({
   drawer,
   lookup,
   currentStage,
-  fullnessByStage,
   cycleNumber,
   onSelectStage,
 }: MapScreenDrawerProps): React.JSX.Element => (
@@ -1094,7 +1092,6 @@ const MapScreenDrawer = ({
     <MapDrawer
       lookup={lookup}
       currentStage={currentStage}
-      fullnessByStage={fullnessByStage}
       cycleNumber={cycleNumber}
       onSelectStage={onSelectStage}
     />
@@ -1157,7 +1154,6 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
         drawer={props.drawer}
         lookup={props.lookup}
         currentStage={props.currentStage}
-        fullnessByStage={props.fullnessByStage}
         cycleNumber={props.cycleNumber}
         onSelectStage={props.onDrawerSelectStage}
       />
@@ -1165,17 +1161,19 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
   </View>
 );
 
-/** Map header drawer: a row tap closes it and glides the lens to that stage. */
+/** Map header drawer: a row tap closes it, glides the lens, and opens the modal. */
 const useMapDrawer = (
   lens: LensFocus,
 ): { drawer: ScreenDrawerState; onDrawerSelectStage: (_stageNumber: number) => void } => {
   const drawer = useScreenDrawer('Map');
-  // A drawer row tap is a pure select-and-highlight: the map is not scrollable,
-  // so close the drawer and glide the magnifier lens to the tapped stage.
+  // A drawer row tap closes the drawer, glides the magnifier lens to the tapped
+  // stage, and opens that stage's detail modal (falling back to glide-only when
+  // the stage isn't loaded yet, since handleOpenStage no-ops on a missing stage).
   const onDrawerSelectStage = useCallback(
     (stageNumber: number) => {
       drawer.close();
       lens.setFocusedStage(stageNumber);
+      lens.handleOpenStage(stageNumber);
     },
     [drawer, lens],
   );
