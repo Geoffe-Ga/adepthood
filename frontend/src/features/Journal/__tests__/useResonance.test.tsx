@@ -156,6 +156,30 @@ describe('useResonance', () => {
     expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 9]);
   });
 
+  it('on a slow load resolving after a generate, the generated note wins an id collision', async () => {
+    let resolveLoad: (_v: { items: Marginalia[] }) => void = () => {};
+    mockList.mockReturnValue(
+      new Promise<{ items: Marginalia[] }>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    mockGenerate.mockResolvedValue(
+      resonancePayload({ marginalia: [note({ id: 9, note: 'generated copy' })] }),
+    );
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    await act(async () => {
+      resolveLoad({ items: [note({ id: 9, note: 'stale server copy' })] });
+    });
+
+    expect(result.current.marginalia.map((m: Marginalia) => m.note)).toEqual(['generated copy']);
+  });
+
   it('replaces the prior entry notes and suggestions when routeEntryId changes to a different entry', async () => {
     mockList.mockResolvedValueOnce({ items: [note({ id: 1 })] });
     mockSugList.mockResolvedValueOnce({ items: [suggestion({ id: 1 })] });

@@ -173,7 +173,9 @@ export function usePromotions({
   const quotesRef = useRef(quotes);
   quotesRef.current = quotes;
 
-  useHydrateOnOpen(entryId, listPromotions, setQuotes, byAnchorThenId, setHint);
+  // ``'snapshot'``: on reopen the fetched server copy wins an id collision — the
+  // hook's original semantics, preserved so this dedup stays behaviour-neutral.
+  useHydrateOnOpen(entryId, listPromotions, setQuotes, byAnchorThenId, setHint, 'snapshot');
   const { promote, retryPromote, promoting, promoted, clearRetry } = usePromoteAction(
     entryId,
     setQuotes,

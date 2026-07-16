@@ -174,6 +174,19 @@ describe('usePromotions', () => {
     expect(mockList).toHaveBeenCalledWith(7);
   });
 
+  it('on hydration, a fetched quote wins an id collision with a seeded quote', async () => {
+    const seeded = quote({ id: 5, anchor_text: 'stale in-memory copy' });
+    const fetched = quote({ id: 5, anchor_text: 'fresh server copy' });
+    mockList.mockResolvedValue([fetched]);
+    const { result } = renderHook(() => usePromotions({ entryId: 7, initialQuotes: [seeded] }));
+
+    await waitFor(() =>
+      expect(result.current.quotes.map((q: PromotedQuote) => q.anchor_text)).toEqual([
+        'fresh server copy',
+      ]),
+    );
+  });
+
   it('never calls promotions.list when entryId is 0 (unsaved entry)', async () => {
     renderHook(() => usePromotions({ entryId: 0 }));
 

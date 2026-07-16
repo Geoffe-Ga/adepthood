@@ -27,6 +27,19 @@ export function byAnchorStart<T extends { anchor_start: number }>(a: T, b: T): n
   return a.anchor_start - b.anchor_start;
 }
 
+/**
+ * Which row wins when a loaded snapshot and the current in-memory list collide
+ * on an id. ``'prev'`` keeps the in-memory row — the right call for marginalia
+ * and suggestions, where an accepted flip or an essay-bearing note must outrank
+ * a plain re-fetch. ``'snapshot'`` keeps the freshly fetched row — the right
+ * call for promotions, whose reopened server copy is the canonical one. Each
+ * hook injects its own choice; the scaffolding stays behaviour-neutral.
+ */
+export type CollisionWinner = 'prev' | 'snapshot';
+
+/** The behaviour-neutral default: the in-memory list wins an id collision. */
+const DEFAULT_WINNER: CollisionWinner = 'prev';
+
 /** Union of two anchored lists, keyed by id (incoming wins), sorted by ``compare``. */
 export function mergeByIdSorted<T extends AnchoredRow>(
   existing: T[],
@@ -41,16 +54,24 @@ export function mergeByIdSorted<T extends AnchoredRow>(
 
 /**
  * A state updater that folds a loaded ``snapshot`` under whatever state outran
- * it (server rows as existing, in-memory as incoming — so a slow load can't
- * clobber an optimistic add, accepted flip, or essay-bearing note). Named at
- * module scope (not an inline updater) so the hydration effect stays flat and
- * within the nested-callback budget.
+ * it. With the default ``'prev'`` winner the in-memory rows win an id collision
+ * (so a slow load can't clobber an optimistic add, accepted flip, or
+ * essay-bearing note); with ``'snapshot'`` the fetched rows win (promotions,
+ * whose reopened server copy is canonical). Named at module scope (not an inline
+ * updater) so the hydration effect stays flat and within the nested-callback
+ * budget.
  */
 export function mergeSnapshotUnder<T extends AnchoredRow>(
   snapshot: T[],
   compare: (_a: T, _b: T) => number = byAnchorStart,
+  winner: CollisionWinner = DEFAULT_WINNER,
 ): (_prev: T[]) => T[] {
-  return (prev) => mergeByIdSorted(snapshot, prev, compare);
+  // ``mergeByIdSorted`` lets the second (incoming) list win a collision, so the
+  // winning side is passed second: prev for ``'prev'``, snapshot for ``'snapshot'``.
+  return (prev) =>
+    winner === 'snapshot'
+      ? mergeByIdSorted(prev, snapshot, compare)
+      : mergeByIdSorted(snapshot, prev, compare);
 }
 
 /**
@@ -62,7 +83,8 @@ export function mergeSnapshotUnder<T extends AnchoredRow>(
  * so a prior entry's rows can't union into a new one while same-entry late loads
  * still merge under state. The first real load preserves any seeded state (e.g.
  * ``usePromotions``' ``initialQuotes``); ``onError`` (when given) reports a
- * failed load, else it stays silent.
+ * failed load, else it stays silent. ``winner`` picks who wins an id collision
+ * between the snapshot and current state (see {@link CollisionWinner}).
  */
 export function useHydrateOnOpen<T extends AnchoredRow>(
   entryId: number | null,
@@ -70,6 +92,7 @@ export function useHydrateOnOpen<T extends AnchoredRow>(
   apply: Dispatch<SetStateAction<T[]>>,
   compare: (_a: T, _b: T) => number = byAnchorStart,
   onError?: (_message: string) => void,
+  winner: CollisionWinner = DEFAULT_WINNER,
 ): void {
   // True once a real entry has loaded, so the reset fires only on a subsequent
   // entry change — never on the first mount, which would wipe seeded state.
@@ -81,7 +104,7 @@ export function useHydrateOnOpen<T extends AnchoredRow>(
     let active = true;
     void load(entryId)
       .then((res) => {
-        if (active) apply(mergeSnapshotUnder(res.items, compare));
+        if (active) apply(mergeSnapshotUnder(res.items, compare, winner));
       })
       .catch((err) => {
         if (active && onError) onError(formatApiError(err));
@@ -89,5 +112,5 @@ export function useHydrateOnOpen<T extends AnchoredRow>(
     return () => {
       active = false;
     };
-  }, [entryId, load, apply, compare, onError]);
+  }, [entryId, load, apply, compare, onError, winner]);
 }
