@@ -232,10 +232,10 @@ function useContentBody(source: ChapterReaderSource): {
 }
 
 function renderBody(body: ContentBody): React.ReactElement {
-  if (body.body_markdown.trim() === '') {
+  const markdown = stripLeadingTitleHeading(body.body_markdown, body.title);
+  if (markdown.trim() === '') {
     return <EmptyView />;
   }
-  const markdown = stripLeadingTitleHeading(body.body_markdown, body.title);
   return (
     <ScrollView
       style={styles.readerScroll}

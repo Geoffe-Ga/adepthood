@@ -186,6 +186,21 @@ describe('ChapterReader', () => {
     await findByText(/hasn['’]t been written yet/i);
   });
 
+  // A body that is only its duplicate title heading strips down to nothing, so
+  // it must fall through to the empty state — not a headed, bodyless sheet.
+  it('shows the empty state when the body is only its duplicate title heading', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Chapter One',
+      content_type: 'chapter',
+      body_markdown: '# Chapter One\n\n',
+    });
+    const { findByTestId, queryByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByTestId('reader-empty');
+    expect(queryByTestId('reader-markdown')).toBeNull();
+  });
+
   // A single in-paragraph newline (soft break) must reflow to a space.
   it('reflows hard-wrapped lines within a paragraph into a single visual line', async () => {
     mockContentBody.mockResolvedValueOnce({
