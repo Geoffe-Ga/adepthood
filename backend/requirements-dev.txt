@@ -10,7 +10,7 @@ pytest-cov
 types-jsonschema>=4.26.0.20260518
 radon>=6.0.1
 ruff
-vulture>=2.13
+vulture>=2.16
 xenon>=0.9.3
 pydantic
 sqlmodel
