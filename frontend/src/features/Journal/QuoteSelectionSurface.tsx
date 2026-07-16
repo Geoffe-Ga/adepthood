@@ -11,7 +11,7 @@
  * ``ReflectionSourcesPanel``; ``testID`` prefixes every element so more than one
  * surface can coexist on a page.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   Pressable,
   Text,
@@ -24,6 +24,7 @@ import {
 
 import { utf16ToCodePoint } from './codePoints';
 import styles from './JournalEntry.styles';
+import { useWebSelectionListener } from './webSelectionListener';
 
 import { Button } from '@/components/Button';
 
@@ -65,6 +66,7 @@ interface SelectionSurfaceState {
   isEmpty: boolean;
   previewSlice: string;
   hintVisible: boolean;
+  emitSpan: (_startUtf16: number, _endUtf16: number) => void;
   handleSelectionChange: (_event: SelectionChangeEvent) => void;
   showHint: () => void;
 }
@@ -82,19 +84,26 @@ function useSelectionSurfaceState(
   const [span, setSpan] = useState<Utf16Span>({ start: 0, end: 0 });
   const [hintVisible, setHintVisible] = useState(false);
 
-  const handleSelectionChange = useCallback(
-    (event: SelectionChangeEvent) => {
-      const { start, end } = event.nativeEvent.selection;
-      setSpan({ start, end });
+  const emitSpan = useCallback(
+    (startUtf16: number, endUtf16: number) => {
+      setSpan({ start: startUtf16, end: endUtf16 });
       onSelectionChange({
-        start: utf16ToCodePoint(body, start),
-        end: utf16ToCodePoint(body, end),
+        start: utf16ToCodePoint(body, startUtf16),
+        end: utf16ToCodePoint(body, endUtf16),
       });
-      if (end > start) {
+      if (endUtf16 > startUtf16) {
         setHintVisible(false);
       }
     },
     [body, onSelectionChange, setSpan, setHintVisible],
+  );
+
+  const handleSelectionChange = useCallback(
+    (event: SelectionChangeEvent) => {
+      const { start, end } = event.nativeEvent.selection;
+      emitSpan(start, end);
+    },
+    [emitSpan],
   );
 
   const showHint = useCallback(() => setHintVisible(true), [setHintVisible]);
@@ -110,6 +119,7 @@ function useSelectionSurfaceState(
     isEmpty,
     previewSlice: isEmpty ? '' : body.slice(span.start, span.end),
     hintVisible,
+    emitSpan,
     handleSelectionChange,
     showHint,
   };
@@ -118,6 +128,7 @@ function useSelectionSurfaceState(
 interface SelectionBodyProps {
   body: string;
   onSelectionChange: (_event: SelectionChangeEvent) => void;
+  inputRef: React.RefObject<TextInput>;
   testID: string;
 }
 
@@ -129,10 +140,12 @@ interface SelectionBodyProps {
 const SelectionBody = React.memo(function SelectionBody({
   body,
   onSelectionChange,
+  inputRef,
   testID,
 }: SelectionBodyProps): React.JSX.Element {
   return (
     <TextInput
+      ref={inputRef}
       style={styles.bodyInput}
       value={body}
       multiline
@@ -202,15 +215,22 @@ function QuoteSelectionSurface({
   onCancel,
   testID = DEFAULT_TEST_ID,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
-  const { isEmpty, previewSlice, hintVisible, handleSelectionChange, showHint } =
+  const { isEmpty, previewSlice, hintVisible, emitSpan, handleSelectionChange, showHint } =
     useSelectionSurfaceState(body, onSelectionChange);
+  const inputRef = useRef<TextInput>(null);
+  useWebSelectionListener(inputRef, emitSpan);
 
   return (
     <View>
       <Text style={styles.quoteSelectInstruction} testID={`${testID}-instruction`}>
         {INSTRUCTION_COPY}
       </Text>
-      <SelectionBody body={body} onSelectionChange={handleSelectionChange} testID={testID} />
+      <SelectionBody
+        body={body}
+        onSelectionChange={handleSelectionChange}
+        inputRef={inputRef}
+        testID={testID}
+      />
       {!isEmpty && (
         <View style={styles.quoteSelectPreview}>
           <Text style={styles.quoteSelectPreviewText} testID={`${testID}-preview`}>
