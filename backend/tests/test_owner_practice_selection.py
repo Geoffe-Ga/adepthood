@@ -135,7 +135,7 @@ async def test_owner_can_select_own_unapproved_practice(
 ) -> None:
     """Author selecting their own unapproved draft must return 201.
 
-    Today this returns 400 practice_not_approved because _resolve_practice
+    Today this returns 400 practice_not_approved because the selection path
     rejects any unapproved row without an ownership check.  After the fix a
     new resolver (_resolve_selectable_practice) allows the row when
     practice.submitted_by_user_id == current_user.
