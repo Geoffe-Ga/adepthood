@@ -171,7 +171,7 @@ export const STAGE_COLORS: Record<string, string> = {
   Orange: '#f29f67',
   Green: '#6fcf97',
   Yellow: '#f2e96d',
-  Turquoise: '#50c9c3',
+  Teal: '#50c9c3',
   Ultraviolet: '#8e44ad',
   'Clear Light': '#ffffff',
 };
@@ -184,10 +184,17 @@ export const STAGE_ORDER: readonly string[] = [
   'Orange',
   'Green',
   'Yellow',
-  'Turquoise',
+  'Teal',
   'Ultraviolet',
   'Clear Light',
 ];
+
+// Pre-rename Spiral-Dynamics name for stage 8, mapped to its canonical name so
+// a server still on the old dataset resolves to the Teal hex rather than the
+// neutral-gray fallback.
+const LEGACY_STAGE_ALIASES: Record<string, string> = {
+  Turquoise: 'Teal',
+};
 
 /**
  * Resolve a Spiral-Dynamics color name to its hex value, falling back to the
@@ -195,8 +202,13 @@ export const STAGE_ORDER: readonly string[] = [
  * resolution used across the Course stage cover, progress bar, and pill
  * selector — keep it here so the fallback can never silently diverge.
  */
-export const resolveStageColor = (spiralColor: string | undefined): string =>
-  spiralColor ? (STAGE_COLORS[spiralColor] ?? colors.neutral) : colors.neutral;
+export const resolveStageColor = (spiralColor: string | undefined): string => {
+  if (!spiralColor) {
+    return colors.neutral;
+  }
+  const canonical = LEGACY_STAGE_ALIASES[spiralColor] ?? spiralColor;
+  return STAGE_COLORS[canonical] ?? colors.neutral;
+};
 
 /** How far each channel is pushed from the gray point when brightening. */
 const SATURATION_BOOST = 1.7;

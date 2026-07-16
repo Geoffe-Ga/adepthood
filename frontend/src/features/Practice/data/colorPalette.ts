@@ -16,10 +16,17 @@ export const SPIRAL_DYNAMICS_COLORS = [
   'Orange',
   'Green',
   'Yellow',
-  'Turquoise',
+  'Teal',
   'Ultraviolet',
   'Clear Light',
 ] as const;
+
+// Pre-rename Spiral-Dynamics name for stage 8. A server still on the old
+// dataset can send this label; it maps to the canonical Teal swatch so the
+// banner never falls back to the neutral Clear-Light white.
+const LEGACY_COLOR_ALIASES: Readonly<Record<string, SpiralDynamicsColor>> = Object.freeze({
+  Turquoise: 'Teal',
+});
 
 export type SpiralDynamicsColor = (typeof SPIRAL_DYNAMICS_COLORS)[number];
 
@@ -38,7 +45,7 @@ export const COLOR_PALETTE: Readonly<Record<SpiralDynamicsColor, ColorSwatch>> =
   Orange: { bg: '#f29f67', text: '#000000' },
   Green: { bg: '#6fcf97', text: '#000000' },
   Yellow: { bg: '#f2e96d', text: '#000000' },
-  Turquoise: { bg: '#50c9c3', text: '#000000' },
+  Teal: { bg: '#50c9c3', text: '#000000' },
   Ultraviolet: { bg: '#8e44ad', text: '#ffffff' },
   'Clear Light': { bg: '#ffffff', text: '#000000' },
 });
@@ -48,11 +55,13 @@ export function isSpiralDynamicsColor(value: string): value is SpiralDynamicsCol
 }
 
 /**
- * Look up the swatch for a server-supplied colour string. Falls back to the
- * neutral "Clear Light" swatch if the server sends a label the frontend
+ * Look up the swatch for a server-supplied colour string. Recognises the
+ * legacy "Turquoise" name for stage 8 as an alias of Teal, then falls back to
+ * the neutral "Clear Light" swatch if the server sends a label the frontend
  * palette hasn't catalogued yet — the banner stays legible instead of
  * crashing on a typo from a future content drop.
  */
 export function swatchFor(color: string): ColorSwatch {
-  return isSpiralDynamicsColor(color) ? COLOR_PALETTE[color] : COLOR_PALETTE['Clear Light'];
+  const canonical = LEGACY_COLOR_ALIASES[color] ?? color;
+  return isSpiralDynamicsColor(canonical) ? COLOR_PALETTE[canonical] : COLOR_PALETTE['Clear Light'];
 }
