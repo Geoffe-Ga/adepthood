@@ -157,25 +157,98 @@ async def test_list_content_stage_not_found(
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
+_LOCKED_LISTING_KEYS = {
+    "id",
+    "title",
+    "content_type",
+    "release_day",
+    "url",
+    "is_locked",
+    "is_read",
+}
+
+
 @pytest.mark.asyncio
-async def test_list_content_rejects_locked_stage(
+async def test_list_content_locked_stage_returns_titles_only(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """BUG-COURSE-001: listing content for a locked stage must 403.
+    """A locked stage's listing is titles-only, not a 403.
 
-    The sibling single-item endpoints gate on ``_check_stage_unlocked``;
-    until this fix ``list_stage_content`` leaked every item's title and
-    release_day (only the URL was nulled) so a never-enrolled user could
-    enumerate the full 36-stage drip schedule.
+    The course drawer's table of contents needs to show every stage's
+    chapter titles up front so a user can preview what is ahead; only the
+    body and url stay gated behind unlock. This is a deliberate product
+    contract, not a leak: every item comes back locked and url-less.
     """
     headers, _ = await _signup(async_client, "locked")
     # Seed content for stage 2 without giving the user any progress.
+    _, items = await _seed_stage_with_content(db_session, stage_number=2)
+
+    resp = await async_client.get("/course/stages/2/content", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert len(data) == len(items)
+
+    expected_order = sorted(items, key=lambda item: (item.release_day, item.id))
+    assert [d["id"] for d in data] == [item.id for item in expected_order]
+
+    for entry in data:
+        assert set(entry.keys()) == _LOCKED_LISTING_KEYS
+        assert entry["is_locked"] is True
+        assert entry["url"] is None
+        assert entry["is_read"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_content_locked_stage_paginated(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The paginated envelope also returns titles-only rows for a locked stage."""
+    headers, _ = await _signup(async_client, "locked_paginated")
+    content_items = [
+        {
+            "title": f"Chapter {day}",
+            "content_type": "essay",
+            "release_day": day,
+            "url": f"https://cms.example.com/s2-{day}",
+        }
+        for day in range(5)
+    ]
+    expected_count = len(content_items)
+    await _seed_stage_with_content(db_session, stage_number=2, content_items=content_items)
+
+    resp = await async_client.get(
+        "/course/stages/2/content", params={"paginate": "true"}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    envelope = resp.json()
+    assert envelope["total"] == expected_count
+    assert len(envelope["items"]) == expected_count
+    for entry in envelope["items"]:
+        assert set(entry.keys()) == _LOCKED_LISTING_KEYS
+        assert entry["is_locked"] is True
+        assert entry["url"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_content_locked_stage_does_not_provision_progress(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Reading a locked stage's titles-only listing never provisions StageProgress."""
+    headers, user_id = await _signup(async_client, "locked_no_provision")
+
+    before = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    assert before.scalars().first() is None
+
     await _seed_stage_with_content(db_session, stage_number=2)
 
     resp = await async_client.get("/course/stages/2/content", headers=headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "stage_locked"
+    assert resp.status_code == HTTPStatus.OK
+
+    after = await db_session.execute(select(StageProgress).where(StageProgress.user_id == user_id))
+    assert after.scalars().first() is None
 
 
 @pytest.mark.asyncio
