@@ -3,15 +3,20 @@ import { type PracticeCreatePayload, type PracticeItem, practices, userPractices
 /**
  * Build the ``POST /practices/`` payload for a cross-stage copy.
  *
- * The name is carried over verbatim (no "(copy)" suffix — that decoration
- * belongs to the "Duplicate & edit" flow, not this one). ``mode`` and
- * ``mode_config`` are included only when the source defines them so the
- * payload never carries ``undefined`` values the server would reject.
+ * The copy carries the caller-supplied name when given (trimmed), and falls
+ * back to the source practice's own name otherwise. Duplicate names are
+ * allowed: the name is used verbatim, with no automatic suffix or prefix.
+ * ``mode`` and ``mode_config`` are included only when the source defines them
+ * so the payload never carries ``undefined`` values the server would reject.
  */
-function buildCopyPayload(practice: PracticeItem, targetStage: number): PracticeCreatePayload {
+function buildCopyPayload(
+  practice: PracticeItem,
+  targetStage: number,
+  nameOverride?: string,
+): PracticeCreatePayload {
   const payload: PracticeCreatePayload = {
     stage_number: targetStage,
-    name: practice.name,
+    name: (nameOverride ?? practice.name).trim(),
     description: practice.description,
     instructions: practice.instructions,
     default_duration_minutes: practice.default_duration_minutes,
@@ -36,8 +41,9 @@ function buildCopyPayload(practice: PracticeItem, targetStage: number): Practice
 export async function copyPracticeToStage(
   practice: PracticeItem,
   targetStage: number,
+  nameOverride?: string,
 ): Promise<PracticeItem> {
-  const draft = await practices.create(buildCopyPayload(practice, targetStage));
+  const draft = await practices.create(buildCopyPayload(practice, targetStage, nameOverride));
   await userPractices.create({ practice_id: draft.id, stage_number: targetStage });
   return draft;
 }

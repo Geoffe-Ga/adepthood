@@ -210,19 +210,20 @@ interface CatalogUse {
   onUse: (practice: PracticeItem) => void;
   copyState: CopyDialogState | null;
   busy: boolean;
-  confirmCopy: () => void;
+  confirmCopy: (name: string) => void;
   cancelCopy: () => void;
 }
 
-/** Create the copy draft, record it, and return to the Practice screen; an
- * error keeps the user in place behind an alert. */
+/** Create the copy draft under the edited name, record it, and return to the
+ * Practice screen; an error keeps the user in place behind an alert. */
 async function runCatalogCopy(
   active: CopyDialogState,
+  name: string,
   record: (_entry: RecentPractice) => void,
   navigation: NativeStackNavigationProp<RootStackParamList>,
 ): Promise<void> {
   try {
-    const draft = await copyPracticeToStage(active.practice, active.targetStage);
+    const draft = await copyPracticeToStage(active.practice, active.targetStage, name);
     record(toRecentPractice(draft));
     navigation.goBack();
   } catch (err) {
@@ -259,14 +260,17 @@ function useCatalogUse(
 
   const cancelCopy = useCallback(() => setCopyState(null), []);
 
-  const confirmCopy = useCallback(() => {
-    if (copyState === null || busy) return;
-    setBusy(true);
-    void runCatalogCopy(copyState, record, navigation).finally(() => {
-      setBusy(false);
-      setCopyState(null);
-    });
-  }, [copyState, busy, record, navigation]);
+  const confirmCopy = useCallback(
+    (name: string) => {
+      if (copyState === null || busy) return;
+      setBusy(true);
+      void runCatalogCopy(copyState, name, record, navigation).finally(() => {
+        setBusy(false);
+        setCopyState(null);
+      });
+    },
+    [copyState, busy, record, navigation],
+  );
 
   return { onUse, copyState, busy, confirmCopy, cancelCopy };
 }

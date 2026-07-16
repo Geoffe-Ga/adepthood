@@ -117,6 +117,22 @@ describe('copyPracticeToStage', () => {
     expect(mockPracticesCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the trimmed nameOverride in the create payload when provided', async () => {
+    mockPracticesCreate.mockResolvedValueOnce(createdDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
+    await copyPracticeToStage(practiceWithMode, 6, '  Edited breath  ');
+    const [payload] = mockPracticesCreate.mock.calls[0] as [{ name: string }];
+    expect(payload.name).toBe('Edited breath');
+  });
+
+  it('falls back to practice.name when nameOverride is omitted', async () => {
+    mockPracticesCreate.mockResolvedValueOnce(createdDraft);
+    mockUserPracticesCreate.mockResolvedValueOnce(assignedUserPractice);
+    await copyPracticeToStage(practiceWithMode, 6);
+    const [payload] = mockPracticesCreate.mock.calls[0] as [{ name: string }];
+    expect(payload.name).toBe('Steady breath');
+  });
+
   it('omits mode and mode_config from the create payload when the source practice has neither', async () => {
     const noModePractice: PracticeItem = {
       ...practiceWithMode,
