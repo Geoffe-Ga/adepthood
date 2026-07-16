@@ -2,6 +2,8 @@
 /* global describe, it, expect */
 import {
   BORDER_RADIUS,
+  GLYPH_ON_DARK_FILL,
+  GLYPH_ON_LIGHT_FILL,
   SPACING,
   STAGE_COLORS,
   STAGE_ORDER,
@@ -10,6 +12,7 @@ import {
   contentLayout,
   journalLayout,
   radius,
+  readableGlyphOn,
   resolveStageColor,
   shadows,
   spacing,
@@ -17,6 +20,26 @@ import {
   type,
   typography,
 } from '../tokens';
+
+/** WCAG relative luminance of a #rrggbb color. */
+const luminance = (hex: string): number => {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
+  if (!match) throw new Error(`not a 6-digit hex: ${hex}`);
+  const channels = [match[1], match[2], match[3]].map((pair) => {
+    const c = Number.parseInt(pair!, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+};
+
+const contrast = (a: string, b: string): number => {
+  const la = luminance(a);
+  const lb = luminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+const AA_NORMAL = 4.5;
 
 describe('design tokens', () => {
   describe('colors', () => {
@@ -294,6 +317,41 @@ describe('design tokens', () => {
         journalLayout.pageMaxWidth + journalLayout.marginColumnWidth,
       );
       expect(contentLayout.maxWidth).toBe(900);
+    });
+  });
+
+  describe('readableGlyphOn', () => {
+    it('exports the black and white glyph fill constants', () => {
+      expect(GLYPH_ON_LIGHT_FILL).toBe('#000000');
+      expect(GLYPH_ON_DARK_FILL).toBe('#ffffff');
+    });
+
+    it('clears WCAG AA contrast against every stage pill fill', () => {
+      STAGE_ORDER.forEach((name) => {
+        const fill = STAGE_COLORS[name]!;
+        const glyphColor = readableGlyphOn(fill);
+        expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
+    });
+
+    it('picks the black glyph fill for light stage colors', () => {
+      expect(readableGlyphOn('#ffffff')).toBe(GLYPH_ON_LIGHT_FILL); // Clear Light
+      expect(readableGlyphOn('#f2e96d')).toBe(GLYPH_ON_LIGHT_FILL); // Yellow
+      expect(readableGlyphOn('#d8cbb8')).toBe(GLYPH_ON_LIGHT_FILL); // Beige
+      expect(readableGlyphOn('#cc5b5b')).toBe(GLYPH_ON_LIGHT_FILL); // Red
+    });
+
+    it('picks the white glyph fill for a dark stage color', () => {
+      expect(readableGlyphOn('#8e44ad')).toBe(GLYPH_ON_DARK_FILL); // Ultraviolet
+    });
+
+    it('clears WCAG AA contrast for the neutral fallback fill', () => {
+      const glyphColor = readableGlyphOn(colors.neutral);
+      expect(contrast(glyphColor, colors.neutral)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it('falls back to the dark-fill glyph color for an unparseable hex', () => {
+      expect(readableGlyphOn('not-a-hex')).toBe(GLYPH_ON_DARK_FILL);
     });
   });
 });

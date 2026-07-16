@@ -63,15 +63,12 @@ const styles = StyleSheet.create({
   stagePillText: {
     fontSize: 14,
     fontWeight: '700',
-    color: surface.canvas,
   },
   stagePillCheck: {
     fontSize: 16,
-    color: surface.canvas,
   },
   stagePillLock: {
     fontSize: 14,
-    color: surface.canvas,
   },
 
   // Stage cover — the showcase "book cover" for the selected stage.
