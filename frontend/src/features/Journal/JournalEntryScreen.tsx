@@ -1180,14 +1180,11 @@ function useQuoteInteraction(
   const onSelectionChange = useCallback((span: CodePointSpan) => {
     selectionRef.current = span;
   }, []);
-  // A collapsed/empty selection (a caret tap, no highlighted span) can't be
-  // promoted — stay in selection mode rather than post a span the server would
-  // only reject. Otherwise leave selection mode first so a 422 returns the
-  // reader to their place in the read view; ``promote`` never throws (it maps
-  // failures to a hint).
+  // Leave selection mode first so a 422 returns the reader to their place in the
+  // read view; ``promote`` never throws (it maps failures to a hint). The surface
+  // only enables confirm for a non-empty span, so no empty-span guard is needed.
   const confirmSelection = useCallback(async () => {
     const { start, end } = selectionRef.current;
-    if (end <= start) return;
     setSelecting(false);
     await promote(start, end);
   }, [promote]);

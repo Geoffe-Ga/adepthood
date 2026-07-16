@@ -327,7 +327,6 @@ function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
   const confirmSelection = useCallback(
     async (item: ReflectionSourceItem, key: string): Promise<void> => {
       const { start, end } = selectionRef.current;
-      if (end <= start) return; // An empty selection promotes nothing; stay put.
       setSelectingKey(null);
       if (onPromoteSpan == null) return;
       const ok = await onPromoteSpan(item, { anchor_start: start, anchor_end: end });
