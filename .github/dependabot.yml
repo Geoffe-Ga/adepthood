@@ -83,6 +83,25 @@ updates:
       # unpin at the SDK 53 upgrade (#885).
       - dependency-name: "react-native-reanimated"
         versions: [">=4.0.0"]
+      # Expo SDK 52 pins expo-image-picker to ~16.0.x; 17.x targets SDK 53+.
+      # Expo packages move together with the SDK via `expo install`, not
+      # piecemeal — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-image-picker"
+        versions: [">=17.0.0"]
+      # Expo SDK 52 pins expo-keep-awake to ~14.0.x; 15.x targets SDK 53+. Same
+      # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-keep-awake"
+        versions: [">=15.0.0"]
+      # react-test-renderer must match the React major exactly (18.3.1, paired
+      # with RN 0.76); 19.x needs React 19. It moves with the React upgrade, not
+      # on its own — unpin when React itself moves to 19.
+      - dependency-name: "react-test-renderer"
+        versions: [">=19.0.0"]
+      # TypeScript 6/7 is the native-port line, unsupported by the expo / jest /
+      # eslint toolchain we run; adopt it via a deliberate migration, not a
+      # Dependabot bump. Unpin when the toolchain supports the 6+ line.
+      - dependency-name: "typescript"
+        versions: [">=6.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
