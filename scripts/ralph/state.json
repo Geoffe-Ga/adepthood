@@ -1,12 +1,12 @@
 {
-  "completed_since_groom": 3,
-  "total_completed": 582,
+  "completed_since_groom": 4,
+  "total_completed": 583,
   "groom_interval": 10,
   "last_groom_at": "2026-07-16T12:11:48.582002",
-  "completed_since_deslop": 8,
+  "completed_since_deslop": 9,
   "deslop_interval": 30,
   "last_deslop_at": "2026-07-16T11:55:07.851894",
-  "last_completed_issue": 1737,
+  "last_completed_issue": 1742,
   "started_at": null,
   "parallel_enabled": true,
   "max_workers": 2
