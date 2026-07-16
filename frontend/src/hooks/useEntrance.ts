@@ -1,7 +1,7 @@
 /**
  * App-wide entrance motion: a brief fade + small upward settle when an element
- * mounts, staggerable by index. Mirrors the journal's ``useSettleIn`` but lives
- * in the shared layer so any screen can adopt the same vocabulary.
+ * mounts, staggerable by index. Lives in the shared layer so any screen —
+ * including the journal's floated surfaces — can adopt the same vocabulary.
  *
  * Fully disabled under reduced motion — the value starts at its resting state
  * (opacity 1, no offset) and no animation is scheduled, so layout is identical.

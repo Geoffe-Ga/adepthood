@@ -31,7 +31,6 @@ import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
-import { useSettleIn } from './motion';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
@@ -56,8 +55,8 @@ import type {
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
 import { colors } from '@/design/tokens';
+import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
-import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Default idle delay before an edit is persisted. */
@@ -1259,9 +1258,9 @@ function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: ()
 const PROMOTING_COPY = 'Promoting…';
 const PROMOTED_COPY = 'Promoted';
 
-/** Transient success confirmation that settles in (motion-safe via useSettleIn). */
+/** Transient success confirmation that settles in (motion-safe via useEntrance). */
 function PromotedNotice(): React.JSX.Element {
-  const settle = useSettleIn(useReducedMotion());
+  const settle = useEntrance();
   return (
     <Animated.Text
       style={[styles.promotionSuccess, settle]}
@@ -1671,7 +1670,6 @@ function useJournalEntryController(
     resonance,
     quote,
     reflection,
-    isIdle,
     ...gate,
     handleTitle,
     handleBody,
@@ -1729,7 +1727,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
 
 function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const settle = useSettleIn(useReducedMotion());
+  const settle = useEntrance();
   const notes = ctl.resonance.marginalia;
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');

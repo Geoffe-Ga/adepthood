@@ -63,7 +63,7 @@ function AcceptedCard({
   targetType: CompletionSuggestion['target_type'];
   checkIn: CheckInResult | null;
 }): React.JSX.Element {
-  const streak = streakLabel(checkIn);
+  const streak = targetType === 'practice' ? null : streakLabel(checkIn);
   const label = targetType === 'practice' ? LOGGED_LABEL : CHECKED_LABEL;
   return (
     <View style={styles.card} testID={`suggestion-${id}`}>
