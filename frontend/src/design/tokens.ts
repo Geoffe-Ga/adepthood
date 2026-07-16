@@ -171,7 +171,7 @@ export const STAGE_COLORS: Record<string, string> = {
   Orange: '#f29f67',
   Green: '#6fcf97',
   Yellow: '#f2e96d',
-  Turquoise: '#50c9c3',
+  Teal: '#50c9c3',
   Ultraviolet: '#8e44ad',
   'Clear Light': '#ffffff',
 };
@@ -184,10 +184,17 @@ export const STAGE_ORDER: readonly string[] = [
   'Orange',
   'Green',
   'Yellow',
-  'Turquoise',
+  'Teal',
   'Ultraviolet',
   'Clear Light',
 ];
+
+// Pre-rename Spiral-Dynamics name for stage 8, mapped to its canonical name so
+// a server still on the old dataset resolves to the Teal hex rather than the
+// neutral-gray fallback.
+const LEGACY_STAGE_ALIASES: Record<string, string> = {
+  Turquoise: 'Teal',
+};
 
 /**
  * Resolve a Spiral-Dynamics color name to its hex value, falling back to the
@@ -195,8 +202,13 @@ export const STAGE_ORDER: readonly string[] = [
  * resolution used across the Course stage cover, progress bar, and pill
  * selector — keep it here so the fallback can never silently diverge.
  */
-export const resolveStageColor = (spiralColor: string | undefined): string =>
-  spiralColor ? (STAGE_COLORS[spiralColor] ?? colors.neutral) : colors.neutral;
+export const resolveStageColor = (spiralColor: string | undefined): string => {
+  if (!spiralColor) {
+    return colors.neutral;
+  }
+  const canonical = LEGACY_STAGE_ALIASES[spiralColor] ?? spiralColor;
+  return STAGE_COLORS[canonical] ?? colors.neutral;
+};
 
 /** How far each channel is pushed from the gray point when brightening. */
 const SATURATION_BOOST = 1.7;
@@ -362,9 +374,6 @@ export const touchTarget = {
 /** Habit-tile density in spacing UNITS (fed to `spacing(n, scale)`), not px. */
 export const tileDensity = { paddingV: 0.5, barGap: 0.5 } as const;
 
-/** React Navigation's default bottom tab-bar content height; bump if the tab bar is restyled taller. */
-export const BOTTOM_TAB_BAR_CONTENT_HEIGHT = 49;
-
 /** WCAG-AA on the white modal card: #555 = 7.46:1 on #ffffff (AAA normal). */
 export const CHART_AXIS_LABEL_COLOR = '#555555';
 
@@ -463,6 +472,17 @@ export const fonts = {
   sans: sansStack,
 } as const;
 
+/**
+ * WCAG-legibility floor (in dp) for tappable/interactive text. Companion to
+ * ``touchTarget``: where ``touchTarget`` is the tap-AREA floor, this is the
+ * floor for the text a reader is meant to tap or press, so an interactive label
+ * reads as legible chrome rather than a fine-print footnote. The 13px caption
+ * face sits below this floor and is metadata-only; interactive labels use
+ * ``editorialType.action`` (and the ui button face) at this size instead.
+ * Declared above ``editorialType`` and ``uiType`` so both can source it.
+ */
+export const INTERACTIVE_TEXT_MIN = 16;
+
 export const editorialType = {
   serif: serifStack,
   display: { fontFamily: serifStack, fontSize: 34, lineHeight: 42, fontWeight: '700' as const },
@@ -470,6 +490,14 @@ export const editorialType = {
   body: { fontFamily: serifStack, fontSize: 18, lineHeight: 29, fontWeight: '400' as const },
   note: { fontFamily: serifStack, fontSize: 15, lineHeight: 24, fontWeight: '400' as const },
   caption: { fontFamily: serifStack, fontSize: 13, lineHeight: 20, fontWeight: '400' as const },
+  // Interactive/tappable label face — serif to stay editorial, sized to the
+  // interactive floor. caption is metadata-only and below the tappable floor.
+  action: {
+    fontFamily: serifStack,
+    fontSize: INTERACTIVE_TEXT_MIN,
+    lineHeight: 24,
+    fontWeight: '600' as const,
+  },
   marginNote: {
     fontFamily: serifStack,
     fontSize: 14,
@@ -529,7 +557,7 @@ export const type = (width: number) => {
 
 /** Typography for interactive chrome, so button/label sizing lives in tokens. */
 export const uiType = {
-  button: { fontSize: 16, fontWeight: '600' as const },
+  button: { fontSize: INTERACTIVE_TEXT_MIN, fontWeight: '600' as const },
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -3,10 +3,12 @@
  * ``ScreenDrawer`` children (the panel already supplies the scroll surface, so
  * this maps plain sections rather than nesting its own list).
  *
- * Chapter content for each unlocked stage is fetched lazily and independently
- * the first time the drawer opens, cached across reopens, and a per-section
- * failure surfaces an inline retry row instead of blanking that stage while its
- * siblings keep their chapters (audit-ux-04 pattern).
+ * Chapter content for every stage is fetched lazily and independently while the
+ * drawer is open (locked stages return titles-only rows), gated per stage so a
+ * stage that is not yet known at the first open still loads on a later open, and
+ * the cache survives close/reopen. A failed fetch for an unlocked stage shows an
+ * inline retry row while its siblings keep their chapters; a failed fetch for a
+ * locked stage degrades to a header-only row (audit-ux-04 pattern).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -31,6 +33,8 @@ const LOCKED_GLYPH = '🔒';
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
 /** Dim factor applied to a locked chapter row. */
 const LOCKED_ROW_OPACITY = 0.5;
+/** Side of the square stage-color swatch in dp. */
+const SWATCH_SIZE = 14;
 
 /** Load state for one stage's chapter list within the drawer. */
 type DrawerSection =
@@ -42,15 +46,19 @@ type DrawerSection =
 export type DrawerSections = Readonly<Record<number, DrawerSection | undefined>>;
 
 /**
- * Lazily load each unlocked stage's chapters the first time the drawer opens,
- * caching the results so reopening never refetches. Each stage loads on its own
- * promise so a slow or failing stage never blocks its siblings, and a per-stage
- * sequence guard drops stale responses (unmount or a retry supersedes them).
+ * Lazily load every stage's chapters while the drawer is open, caching the
+ * results so reopening never refetches. Each stage loads on its own promise so a
+ * slow or failing stage never blocks its siblings, and a per-stage sequence
+ * guard drops stale responses (unmount or a retry supersedes them).
+ *
+ * Loading is gated per stage on the absence of a section entry, not on a
+ * one-shot open latch: a stage that has no entry yet fetches, while any stage
+ * already loading, loaded, or errored is skipped. So a stage that becomes known
+ * after the first open still loads on a later open, and the effect converges
+ * (each fetch seeds a ``loading`` entry, making re-runs no-ops).
  *
  * This hook lives above the drawer panel (which unmounts when closed) so its
- * cache survives close/reopen. It assumes ``stages`` is effectively static for
- * the life of the mount: the first open latches the set of stages to load, so a
- * stage that becomes unlocked afterward would need a remount to fetch.
+ * cache survives close/reopen.
  */
 export function useCourseDrawerContent(
   stages: Stage[],
@@ -59,7 +67,6 @@ export function useCourseDrawerContent(
   const [sections, setSections] = useState<Record<number, DrawerSection>>({});
   const requestSeq = useRef<Record<number, number>>({});
   const mountedRef = useRef(true);
-  const hasOpened = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -90,18 +97,17 @@ export function useCourseDrawerContent(
       });
   }, []);
 
-  const unlockedStageNumbers = useMemo(
-    () => stages.filter((s) => s.is_unlocked).map((s) => s.stage_number),
-    [stages],
-  );
-
   useEffect(() => {
-    if (!isOpen || hasOpened.current) return;
-    hasOpened.current = true;
-    for (const stageNumber of unlockedStageNumbers) {
-      loadStage(stageNumber);
+    if (!isOpen) return;
+    // Fetch every stage that has no entry yet; loading/loaded/errored stages
+    // already carry an entry, so re-runs (including reopens) become no-ops.
+    for (const stage of stages) {
+      const stageNumber = stage.stage_number;
+      if (sections[stageNumber] === undefined) {
+        loadStage(stageNumber);
+      }
     }
-  }, [isOpen, unlockedStageNumbers, loadStage]);
+  }, [isOpen, stages, sections, loadStage]);
 
   return { sections, retry: loadStage };
 }
@@ -137,8 +143,12 @@ const StageHeader = ({
     <View
       testID={`course-drawer-stage-${stageNumber}`}
       accessibilityState={{ disabled: !unlocked, selected: isSelected }}
-      style={[styles.stageHeader, { backgroundColor: color }]}
+      style={[styles.stageHeader, isSelected ? styles.stageHeaderSelected : null]}
     >
+      <View
+        testID={`course-drawer-swatch-${stageNumber}`}
+        style={[styles.swatch, { backgroundColor: color }]}
+      />
       <Text style={[type(width).label, styles.stageHeaderTitle]} numberOfLines={1}>
         {title}
       </Text>
@@ -208,7 +218,7 @@ interface StageSectionBodyProps {
   onRetry: (_stageNumber: number) => void;
 }
 
-/** The rows below an unlocked stage header: chapters, a retry, or a spinner. */
+/** The rows below a stage header: chapters, a retry, or a loading spinner. */
 const StageSectionBody = ({
   stageNumber,
   section,
@@ -251,7 +261,8 @@ interface StageSectionProps {
   onRetry: (_stageNumber: number) => void;
 }
 
-/** One stage: a header plus, when unlocked, its lazily-loaded chapter rows. */
+/** One stage: a header plus its lazily-loaded chapter rows; a failed locked
+ *  stage renders header-only. */
 const StageSection = ({
   stageNumber,
   stageById,
@@ -263,6 +274,10 @@ const StageSection = ({
   const unlocked = isUnlocked(stageNumber, stageById);
   const completed = isCompleted(stageNumber, stageById);
   const title = stageById.get(stageNumber)?.title ?? `Stage ${stageNumber}`;
+  // A failed fetch on a locked stage degrades to a header-only row: no retry, no
+  // spinner. Every other state (including a failed unlocked stage) shows a body.
+  const status = section?.status;
+  const showBody = !(status === 'error' && !unlocked);
   return (
     <View style={styles.section}>
       <StageHeader
@@ -273,7 +288,7 @@ const StageSection = ({
         completed={completed}
         isSelected={isSelected}
       />
-      {unlocked ? (
+      {showBody ? (
         <StageSectionBody
           stageNumber={stageNumber}
           section={section}
@@ -332,7 +347,6 @@ const styles = StyleSheet.create({
   stageHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: SPACING.sm,
     minHeight: touchTarget.minimum,
     paddingHorizontal: SPACING.md,
@@ -340,13 +354,21 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm,
     borderRadius: radius.sm,
   },
+  stageHeaderSelected: {
+    backgroundColor: surface.sunken,
+  },
+  swatch: {
+    width: SWATCH_SIZE,
+    height: SWATCH_SIZE,
+    borderRadius: radius.sm,
+  },
   stageHeaderTitle: {
     flex: 1,
-    color: surface.canvas,
+    color: ink.primary,
     fontWeight: '700',
   },
   stageHeaderGlyph: {
-    color: surface.canvas,
+    color: ink.muted,
   },
   sectionLoading: {
     alignSelf: 'flex-start',

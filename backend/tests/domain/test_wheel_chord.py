@@ -29,6 +29,8 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 
+# Synthetic aspect labels for the fixture rows; local test values, not the
+# canonical seed ontology from seed_stages.py.
 _CANONICAL_ASPECTS = [
     "Body",
     "Body",

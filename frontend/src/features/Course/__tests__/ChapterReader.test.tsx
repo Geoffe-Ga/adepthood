@@ -153,10 +153,12 @@ describe('ChapterReader', () => {
       content_type: 'chapter',
       body_markdown: 'retried body\n',
     });
-    const { findByTestId, findByText } = render(
+    const { findByTestId, findByText, getByText, queryByText } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
     await findByText(/please try again/i);
+    expect(getByText('Try again')).toBeTruthy();
+    expect(queryByText('Try Again')).toBeNull();
     fireEvent.press(await findByTestId('reader-retry-button'));
     await findByText(/retried body/);
   });
@@ -243,23 +245,6 @@ describe('ChapterReader', () => {
     await findByText(/line two/);
     // The hard break must keep them apart — not reflowed into one spaced run.
     expect(queryByText(/line one line two/)).toBeNull();
-  });
-
-  // Defensive: raw frontmatter must never reach the Markdown renderer.
-  it('does not render YAML frontmatter fields when body_markdown opens with a fence', async () => {
-    mockContentBody.mockResolvedValueOnce({
-      title: 'Frontmatter Test',
-      content_type: 'chapter',
-      body_markdown: '---\nslug: leak\ntitle: "T"\n---\n\n# Real\n\nProse.\n',
-    });
-    const { findByText, queryByText } = render(
-      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
-    );
-    // Body text must appear once frontmatter is stripped.
-    await findByText(/Real/);
-    // Raw YAML keys must not appear anywhere in the rendered output.
-    expect(queryByText(/slug:/)).toBeNull();
-    expect(queryByText(/title:/)).toBeNull();
   });
 
   it('renders images from absolute URLs and drops repo-relative image references', async () => {

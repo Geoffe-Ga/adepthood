@@ -407,6 +407,66 @@ async def test_customize_strips_surrounding_whitespace_on_custom_name(
     assert resp.json()["effective_name"] == "My Sit"
 
 
+# -- Owner-drafted (unapproved) practices ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_customize_allows_owner_of_unapproved_draft(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Customizing your own unapproved draft practice must succeed."""
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(db_session, approved=False, submitted_by_user_id=user_id)
+    up_id = await _create_user_practice(async_client, db_session, headers, user_id, practice)
+
+    override = _timer_cfg(25)
+    resp = await async_client.patch(
+        f"/user-practices/{up_id}/customize",
+        json={"custom_name": "My Draft Sit", "mode_config_override": override},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["custom_name"] == "My Draft Sit"
+    assert body["effective_name"] == "My Draft Sit"
+    assert body["effective_config"]["duration_minutes"] == 25
+
+    persisted = await db_session.get(UserPractice, up_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.custom_name == "My Draft Sit"
+    assert persisted.mode_config_override is not None
+    assert persisted.mode_config_override["duration_minutes"] == 25
+
+
+@pytest.mark.asyncio
+async def test_customize_rejects_foreign_unapproved_draft(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression pin: guards the owner-only carve-out on unapproved drafts."""
+    owner_headers, owner_id = await _signup(async_client, username="owner")
+    _, other_id = await _signup(async_client, username="other")
+    practice = await _seed_practice(db_session, approved=False, submitted_by_user_id=other_id)
+
+    user_practice = UserPractice(
+        user_id=owner_id,
+        practice_id=practice.id,
+        stage_number=practice.stage_number,
+        start_date=datetime.now(UTC).date(),
+    )
+    db_session.add(user_practice)
+    await db_session.commit()
+    await db_session.refresh(user_practice)
+
+    resp = await async_client.patch(
+        f"/user-practices/{user_practice.id}/customize",
+        json={"custom_name": "stolen draft"},
+        headers=owner_headers,
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "practice_not_approved" in resp.text
+
+
 # -- List endpoint coverage -------------------------------------------------
 
 

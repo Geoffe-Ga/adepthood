@@ -18,8 +18,8 @@ from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
-from domain.stage_progress import get_user_progress, is_stage_unlocked
-from errors import bad_request, conflict, forbidden, not_found
+from domain.stage_progress import get_user_progress
+from errors import bad_request, conflict, not_found
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -51,29 +51,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/user-practices", tags=["user-practices"])
 
 
-async def _resolve_practice(session: AsyncSession, practice_id: int) -> Practice:
-    """Fetch and validate the catalog practice (exists + approved)."""
-    result = await session.execute(select(Practice).where(Practice.id == practice_id))
-    practice = result.scalars().first()
-    if practice is None:
-        raise not_found("practice")
-    if not practice.approved:
-        raise bad_request("practice_not_approved")
-    return practice
-
-
 async def _resolve_selectable_practice(
     session: AsyncSession, practice_id: int, current_user: int
 ) -> Practice:
-    """Fetch a practice the caller is allowed to *select* for a stage.
+    """Fetch a practice the caller is allowed to *select*, customize, or view.
 
-    Unlike :func:`_resolve_practice` (the read/customize path), this write
-    path permits an approved catalog practice **or** the caller's own draft:
-    ``practice.submitted_by_user_id == current_user`` clears an unapproved
-    row so an author can activate the practice they just submitted. A
-    non-owner selecting someone else's still-pending submission continues to
-    receive 400 ``practice_not_approved``; a missing row 404s exactly as the
-    read path does.
+    The write paths (selection and customize) and the GET-one read path all
+    share this resolver. It permits an approved catalog practice **or** the
+    caller's own draft: ``practice.submitted_by_user_id == current_user``
+    clears an unapproved row so an author can activate, customize, or view the
+    practice they just submitted. A non-owner reaching someone else's
+    still-pending submission continues to receive 400 ``practice_not_approved``;
+    a missing row 404s.
     """
     result = await session.execute(select(Practice).where(Practice.id == practice_id))
     practice = result.scalars().first()
@@ -84,23 +73,18 @@ async def _resolve_selectable_practice(
     return practice
 
 
-async def _check_stage_eligibility(
-    session: AsyncSession,
-    current_user: int,
-    practice: Practice,
-    payload_stage_number: int,
-) -> None:
-    """Gate on catalog-stage agreement + chain-unlock.
+def _check_stage_agreement(practice: Practice, payload_stage_number: int) -> None:
+    """Enforce that the payload's stage matches the practice's catalog stage.
 
-    Kept separate from :func:`_resolve_practice` so the 400/403 split stays
-    explicit: mismatched stage is a client-side input error, locked stage is
-    an authorization failure against server-owned progression.
+    Kept separate from :func:`_resolve_selectable_practice` so the input
+    validation stays explicit: a mismatched stage is a client-side input
+    error (400). The chain-unlock gate that once lived here was intentionally
+    removed so a user can assign a practice to a *future* stage for forward
+    planning — planning ahead is not access, and the unlock gate now lives on
+    the session-logging path where access actually happens.
     """
     if practice.stage_number != payload_stage_number:
         raise bad_request("stage_number_mismatch")
-    progress = await get_user_progress(session, current_user)
-    if not is_stage_unlocked(payload_stage_number, progress):
-        raise forbidden("stage_locked")
 
 
 async def _free_stage_slot(
@@ -165,7 +149,7 @@ async def create_user_practice(
     streak math that hangs off it.
     """
     practice = await _resolve_selectable_practice(session, payload.practice_id, current_user)
-    await _check_stage_eligibility(session, current_user, practice, payload.stage_number)
+    _check_stage_agreement(practice, payload.stage_number)
 
     # ``start_date`` is the user-facing "I started this practice today"
     # label (BUG-HABIT-006), not an internal audit timestamp -- so it
@@ -311,8 +295,16 @@ async def _resolve_effective_fields(
     batches catalog lookups via :func:`_load_catalog_map`. The config
     is resolved via :func:`_safe_resolve_config` so a corrupt stored
     override falls through to ``None`` rather than crashing the GET.
+
+    Resolution uses the approved-OR-owner
+    :func:`_resolve_selectable_practice` scoped to ``user_practice.user_id``
+    so the row's owner can view a selection backed by their own unapproved
+    draft, mirroring the write paths. Ownership is already enforced upstream
+    by ``require_owned_user_practice``, so a foreign draft stays unreachable.
     """
-    practice = await _resolve_practice(session, user_practice.practice_id)
+    practice = await _resolve_selectable_practice(
+        session, user_practice.practice_id, user_practice.user_id
+    )
     name = effective_name(practice, user_practice)
     return name, _safe_resolve_config(user_practice, practice)
 
@@ -463,9 +455,10 @@ async def _frequency_from_active(
 ) -> FrequencyResponse:
     """Build the banner from an active ``UserPractice`` selection.
 
-    ``_resolve_practice`` 400s on unapproved rows; for the banner path
-    we only need the catalog row to exist (the user already selected
-    it, so its approval state shouldn't break their read view).
+    ``_resolve_selectable_practice`` still 400s on a *foreign* unapproved
+    row; for the banner path we only need the catalog row to exist (the
+    user already selected it, so its approval state shouldn't break their
+    read view).
     """
     practice_row = (
         (await session.execute(select(Practice).where(Practice.id == active.practice_id)))
@@ -671,7 +664,9 @@ async def customize_user_practice(
     400 ``mode_mismatch`` because mode changes are conceptually a
     practice replacement, not a tweak.
     """
-    practice = await _resolve_practice(session, user_practice.practice_id)
+    practice = await _resolve_selectable_practice(
+        session, user_practice.practice_id, user_practice.user_id
+    )
     fields_set = payload.model_fields_set
 
     if "mode_config_override" in fields_set:

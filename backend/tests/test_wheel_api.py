@@ -16,7 +16,8 @@ from models.habit import Habit
 
 _TOTAL_STAGES = 10
 
-# Canonical aspect per stage (mirrors seed_stages.py)
+# Synthetic aspect label per fixture stage; local test values, not the
+# canonical seed ontology from seed_stages.py.
 _CANONICAL_ASPECTS = [
     "Body",
     "Body",

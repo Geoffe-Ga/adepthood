@@ -123,23 +123,48 @@ describe('HabitSettingsModal energy inputs', () => {
 });
 
 describe('HabitSettingsModal notification frequency', () => {
-  it('cycles daily to weekly to custom and back to daily', () => {
-    const { getByText } = renderModal({
+  it('defaults to the daily chip selected and exposes all three chips as radios', () => {
+    const { getByTestId } = renderModal({
       habit: { ...baseHabit, notificationFrequency: undefined },
     });
-    const frequencyButton = getByText('daily');
+    const daily = getByTestId('habit-settings-frequency-daily');
+    const weekly = getByTestId('habit-settings-frequency-weekly');
+    const custom = getByTestId('habit-settings-frequency-custom');
 
-    fireEvent.press(frequencyButton);
-    getByText('daily');
+    expect(daily.props.accessibilityRole).toBe('radio');
+    expect(weekly.props.accessibilityRole).toBe('radio');
+    expect(custom.props.accessibilityRole).toBe('radio');
+    expect(daily.props.accessibilityState.checked).toBe(true);
+    expect(weekly.props.accessibilityState.checked).toBe(false);
+    expect(custom.props.accessibilityState.checked).toBe(false);
+  });
 
-    fireEvent.press(getByText('daily'));
-    getByText('weekly');
+  it('selects the weekly chip on press and clears the daily selection', () => {
+    const { getByTestId } = renderModal({
+      habit: { ...baseHabit, notificationFrequency: undefined },
+    });
 
-    fireEvent.press(getByText('weekly'));
-    getByText('custom');
+    fireEvent.press(getByTestId('habit-settings-frequency-weekly'));
 
-    fireEvent.press(getByText('custom'));
-    getByText('daily');
+    expect(getByTestId('habit-settings-frequency-weekly').props.accessibilityState.checked).toBe(
+      true,
+    );
+    expect(getByTestId('habit-settings-frequency-daily').props.accessibilityState.checked).toBe(
+      false,
+    );
+  });
+
+  it('selects the custom chip on press and reveals the day picker button', () => {
+    const { getByTestId, getByText } = renderModal({
+      habit: { ...baseHabit, notificationFrequency: undefined },
+    });
+
+    fireEvent.press(getByTestId('habit-settings-frequency-custom'));
+
+    expect(getByTestId('habit-settings-frequency-custom').props.accessibilityState.checked).toBe(
+      true,
+    );
+    getByText('Select days');
   });
 
   it('reveals the day-picker grid and updates the days summary when a day is toggled', () => {
@@ -172,22 +197,20 @@ describe('HabitSettingsModal notification frequency', () => {
 });
 
 describe('HabitSettingsModal notification and milestone toggles', () => {
-  it('turns notifications off and hides frequency controls, then back on', () => {
-    const { getByText, queryByText, UNSAFE_root } = renderModal();
-    const notifSwitch = UNSAFE_root.findAllByType(Switch)[0]!;
+  it('turns notifications off and hides the frequency chip row, then back on', () => {
+    const { getByTestId, queryByTestId } = renderModal();
 
-    fireEvent(notifSwitch, 'valueChange', false);
-    expect(queryByText('Frequency:')).toBeNull();
+    fireEvent(getByTestId('habit-settings-notifications-toggle'), 'valueChange', false);
+    expect(queryByTestId('habit-settings-frequency')).toBeNull();
 
-    fireEvent(notifSwitch, 'valueChange', true);
-    getByText('Frequency:');
+    fireEvent(getByTestId('habit-settings-notifications-toggle'), 'valueChange', true);
+    getByTestId('habit-settings-frequency');
   });
 
   it('toggles milestone notifications independently', () => {
-    const { onUpdate, UNSAFE_root, getByText } = renderModal();
-    const milestoneSwitch = UNSAFE_root.findAllByType(Switch)[1]!;
+    const { onUpdate, getByTestId, getByText } = renderModal();
 
-    fireEvent(milestoneSwitch, 'valueChange', true);
+    fireEvent(getByTestId('habit-settings-milestone-toggle'), 'valueChange', true);
     fireEvent.press(getByText('Save Changes'));
 
     expect(onUpdate).toHaveBeenCalledWith(
@@ -198,7 +221,7 @@ describe('HabitSettingsModal notification and milestone toggles', () => {
 
 describe('HabitSettingsModal notification times', () => {
   it('adds a picked time and ignores a duplicate add', () => {
-    const { getByText, onUpdate, UNSAFE_root } = renderModal();
+    const { getByText, getByTestId, onUpdate, UNSAFE_root } = renderModal();
 
     fireEvent.press(getByText('08:00'));
     const timePicker = UNSAFE_root.findAllByType('DateTimePicker').find(
@@ -206,8 +229,11 @@ describe('HabitSettingsModal notification times', () => {
     )!;
     fireEvent(timePicker, 'onChange', {}, new Date(2024, 0, 1, 9, 5));
 
-    fireEvent.press(getByText('+'));
-    fireEvent.press(getByText('+'));
+    expect(getByTestId('habit-settings-add-time').props.accessibilityLabel).toBe(
+      'Add reminder time',
+    );
+    fireEvent.press(getByTestId('habit-settings-add-time'));
+    fireEvent.press(getByTestId('habit-settings-add-time'));
 
     fireEvent.press(getByText('Save Changes'));
     expect(onUpdate).toHaveBeenCalledWith(
@@ -216,17 +242,18 @@ describe('HabitSettingsModal notification times', () => {
   });
 
   it('removes an added notification time before saving', () => {
-    const { getByText, getAllByText, onUpdate, UNSAFE_root } = renderModal();
+    const { getByText, getByTestId, onUpdate, UNSAFE_root } = renderModal();
 
     fireEvent.press(getByText('08:00'));
     const timePicker = UNSAFE_root.findAllByType('DateTimePicker').find(
       (node: { props: { mode?: string } }) => node.props.mode === 'time',
     )!;
     fireEvent(timePicker, 'onChange', {}, new Date(2024, 0, 1, 9, 5));
-    fireEvent.press(getByText('+'));
+    fireEvent.press(getByTestId('habit-settings-add-time'));
 
-    const removeButtons = getAllByText('×');
-    fireEvent.press(removeButtons[removeButtons.length - 1]!);
+    const removeButton = getByTestId('habit-settings-remove-time-09:05');
+    expect(removeButton.props.accessibilityLabel).toBe('Remove 09:05');
+    fireEvent.press(removeButton);
 
     fireEvent.press(getByText('Save Changes'));
     expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ notificationTimes: [] }));
@@ -293,7 +320,7 @@ describe('HabitSettingsModal time picker platform behavior', () => {
 
 describe('HabitSettingsModal missing optional notification arrays', () => {
   it('adds a time when the habit has no existing notificationTimes array', () => {
-    const { getByText, onUpdate, UNSAFE_root } = renderModal({
+    const { getByText, getByTestId, onUpdate, UNSAFE_root } = renderModal({
       habit: { ...baseHabit, notificationTimes: undefined },
     });
 
@@ -302,7 +329,7 @@ describe('HabitSettingsModal missing optional notification arrays', () => {
       (node: { props: { mode?: string } }) => node.props.mode === 'time',
     )!;
     fireEvent(timePicker, 'onChange', {}, new Date(2024, 0, 1, 9, 5));
-    fireEvent.press(getByText('+'));
+    fireEvent.press(getByTestId('habit-settings-add-time'));
 
     fireEvent.press(getByText('Save Changes'));
     expect(onUpdate).toHaveBeenCalledWith(
@@ -325,6 +352,73 @@ describe('HabitSettingsModal missing optional notification arrays', () => {
   });
 });
 
+describe('HabitSettingsModal lock toggle', () => {
+  it('renders ON for an unlocked habit', () => {
+    const { getByTestId } = renderModal({ habit: { ...baseHabit, revealed: true } });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    expect(toggle.props.value).toBe(true);
+  });
+
+  it('renders OFF for a locked habit', () => {
+    const { getByTestId } = renderModal();
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    expect(toggle.props.value).toBe(false);
+  });
+
+  it('commits locking on save', () => {
+    const { getByTestId, getByText, onUpdate } = renderModal({
+      habit: { ...baseHabit, revealed: true },
+    });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+
+    fireEvent(toggle, 'valueChange', false);
+    fireEvent.press(getByText('Save Changes'));
+
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ revealed: false }));
+  });
+
+  it('commits unlocking on save', () => {
+    const { getByTestId, getByText, onUpdate } = renderModal({
+      habit: { ...baseHabit, revealed: false },
+    });
+    const toggle = getByTestId('habit-settings-lock-toggle');
+
+    fireEvent(toggle, 'valueChange', true);
+    fireEvent.press(getByText('Save Changes'));
+
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ revealed: true }));
+  });
+
+  it('exposes an accessibility label that matches the visible unlocked framing', () => {
+    const { getByTestId } = renderModal();
+    const toggle = getByTestId('habit-settings-lock-toggle');
+    const label = toggle.props.accessibilityLabel as string;
+
+    expect(label).toBe('Unlocked');
+  });
+
+  it('is the first Switch, before notifications and milestone toggles', () => {
+    const { UNSAFE_root } = renderModal();
+    const switches = UNSAFE_root.findAllByType(Switch);
+
+    expect(switches).toHaveLength(3);
+    expect(switches[0]!.props.testID).toBe('habit-settings-lock-toggle');
+    expect(switches[1]!.props.testID).toBe('habit-settings-notifications-toggle');
+    expect(switches[2]!.props.testID).toBe('habit-settings-milestone-toggle');
+  });
+});
+
+describe('HabitSettingsModal section composition', () => {
+  it('renders each section title as visible text', () => {
+    const { getByText } = renderModal();
+    getByText('Habit');
+    getByText('Energy');
+    getByText('Schedule');
+    getByText('Reminders');
+    getByText('Danger Zone');
+  });
+});
+
 describe('HabitSettingsModal actions', () => {
   it('opens the reorder modal with the full habit list', () => {
     const { getByText, onOpenReorderModal } = renderModal();
@@ -344,8 +438,8 @@ describe('HabitSettingsModal actions', () => {
   });
 
   it('closes via the header close button without saving', () => {
-    const { getAllByText, onClose, onUpdate } = renderModal();
-    fireEvent.press(getAllByText('×')[0]!);
+    const { getByTestId, onClose, onUpdate } = renderModal();
+    fireEvent.press(getByTestId('habit-settings-close'));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onUpdate).not.toHaveBeenCalled();
   });

@@ -31,7 +31,7 @@ type FormComponent<M extends ModeConfig['mode']> = React.ComponentType<{
   onChange: (next: Extract<ModeConfig, { mode: M }>) => void;
 }>;
 
-type FormTable = { [K in ModeConfig['mode']]: FormComponent<K> | null };
+type FormTable = { [K in ModeConfig['mode']]: FormComponent<K> };
 
 /** The single source of truth mapping a mode to its configurator form. */
 export const MODE_FORMS: FormTable = {
@@ -69,8 +69,8 @@ const ConfiguratorBody = ({
   onChange,
   renderFallback,
 }: ConfiguratorBodyProps): React.JSX.Element => {
-  const Form = MODE_FORMS[config.mode] as AnyForm | undefined | null;
-  if (Form === null || Form === undefined) {
+  const Form = MODE_FORMS[config.mode] as AnyForm | undefined;
+  if (Form === undefined) {
     return renderFallback(config.mode);
   }
   return <Form value={config} onChange={onChange} />;

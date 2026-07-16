@@ -156,7 +156,7 @@ const localStyles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg,
     backgroundColor: surface.sunken,
   },
-  offsetChipText: { ...editorialType.caption, color: ink.primary },
+  offsetChipText: { ...editorialType.action, color: ink.primary },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   addButton: {
     paddingVertical: SPACING.xs,

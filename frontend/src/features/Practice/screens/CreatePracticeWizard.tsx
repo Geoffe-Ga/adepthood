@@ -11,6 +11,11 @@
  *   3. Metadata + assignment — name, description, instructions,
  *      default_duration_minutes, optional stage_number.
  *
+ * A copy flow (opened with ``route.params.prefill``) instead leads with a
+ * dedicated name step so the user renames the copy first, then flows straight
+ * into the configurator and save — the ordered steps are flow-dependent and
+ * fixed once at init.
+ *
  * On submit the wizard POSTs ``/practices/`` and, when the user pinned a
  * stage, follows with ``POST /user-practices/`` so the new draft is
  * already active for that stage. Submissions navigate to ``PracticeDetail``
@@ -68,11 +73,15 @@ export const PRACTICE_NAME_MAX = 120;
 export const PRACTICE_DESCRIPTION_MAX = 1_000;
 export const PRACTICE_INSTRUCTIONS_MAX = 2_000;
 const PRACTICE_NAME_MIN = 1;
+const DEFAULT_SUGGESTED_MINUTES = 10;
 
-type WizardStep = 'entry' | 'mode' | 'configure' | 'metadata';
+type WizardStep = 'name' | 'entry' | 'mode' | 'configure' | 'metadata';
 
 interface WizardState {
   step: WizardStep;
+  // The ordered steps for this run. A copy (route prefill) starts by naming the
+  // copy; a from-scratch author starts at the entry choice. Set once at init.
+  steps: readonly WizardStep[];
   mode: PickableMode | null;
   config: ModeConfig | null;
   name: string;
@@ -82,8 +91,14 @@ interface WizardState {
   stageNumber: number | null;
 }
 
+// From-scratch flow: choose an entry, pick a mode, configure it, then name+save.
+const STEP_ORDER: readonly WizardStep[] = ['entry', 'mode', 'configure', 'metadata'];
+// Copy flow: name the copy first (prefilled verbatim), then configure and save.
+const COPY_STEP_ORDER: readonly WizardStep[] = ['name', 'configure', 'metadata'];
+
 const EMPTY_STATE: WizardState = {
   step: 'entry',
+  steps: STEP_ORDER,
   mode: null,
   config: null,
   name: '',
@@ -97,7 +112,8 @@ function initialState(initial: InitialPrefill | undefined): WizardState {
   if (initial === undefined) return EMPTY_STATE;
   return {
     ...EMPTY_STATE,
-    step: 'configure',
+    step: 'name',
+    steps: COPY_STEP_ORDER,
     mode: initial.config.mode,
     config: initial.config,
     name: initial.name ?? '',
@@ -106,6 +122,12 @@ function initialState(initial: InitialPrefill | undefined): WizardState {
     duration: initial.duration ?? 0,
     stageNumber: initial.stageNumber ?? null,
   };
+}
+
+/** The step before ``current`` in ``steps``; falls back to ``current`` at the head. */
+function prevStep(steps: readonly WizardStep[], current: WizardStep): WizardStep {
+  const previous = steps[steps.indexOf(current) - 1];
+  return previous ?? current;
 }
 
 interface InitialPrefill {
@@ -118,13 +140,12 @@ interface InitialPrefill {
 }
 
 const STEP_TITLES: Record<WizardStep, string> = {
+  name: 'Name your practice',
   entry: 'How would you like to start?',
   mode: 'Pick a mode',
   configure: 'Configure',
   metadata: 'Name and save',
 };
-
-const STEP_ORDER: readonly WizardStep[] = ['entry', 'mode', 'configure', 'metadata'];
 
 /**
  * Top-level screen — owns wizard state and renders the active step.
@@ -151,7 +172,7 @@ export function CreatePracticeWizard(props: CreatePracticeWizardProps): React.JS
         style={styles.screen}
         testID="create-practice-keyboard-avoider"
       >
-        <StepIndicator step={state.step} />
+        <StepIndicator step={state.step} steps={state.steps} />
         <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
           <StepView
             state={state}
@@ -192,6 +213,14 @@ interface StepViewProps {
 
 const StepView = (props: StepViewProps): React.JSX.Element => {
   switch (props.state.step) {
+    case 'name':
+      return (
+        <NameStep
+          state={props.state}
+          setState={props.setState}
+          onNext={() => props.goTo('configure')}
+        />
+      );
     case 'entry':
       return (
         <EntryStep onPickPreset={props.onPickPreset} onStartScratch={() => props.goTo('mode')} />
@@ -216,7 +245,7 @@ const StepView = (props: StepViewProps): React.JSX.Element => {
               duration: prev.duration === 0 ? suggestedDurationFor(config) : prev.duration,
             }))
           }
-          onBack={() => props.goTo('mode')}
+          onBack={() => props.goTo(prevStep(props.state.steps, 'configure'))}
           onNext={() => props.goTo('metadata')}
         />
       );
@@ -234,11 +263,12 @@ const StepView = (props: StepViewProps): React.JSX.Element => {
 
 interface StepIndicatorProps {
   step: WizardStep;
+  steps: readonly WizardStep[];
 }
 
-const StepIndicator = ({ step }: StepIndicatorProps): React.JSX.Element => {
-  const index = STEP_ORDER.indexOf(step);
-  const label = `Step ${index + 1} of ${STEP_ORDER.length}: ${STEP_TITLES[step]}`;
+const StepIndicator = ({ step, steps }: StepIndicatorProps): React.JSX.Element => {
+  const index = steps.indexOf(step);
+  const label = `Step ${index + 1} of ${steps.length}: ${STEP_TITLES[step]}`;
   return (
     <View
       accessibilityRole="header"
@@ -248,7 +278,7 @@ const StepIndicator = ({ step }: StepIndicatorProps): React.JSX.Element => {
       testID="create-practice-step-indicator"
     >
       <View style={styles.progressTrack}>
-        {STEP_ORDER.map((s, i) => (
+        {steps.map((s, i) => (
           <View
             key={s}
             style={[styles.progressSegment, i <= index && styles.progressSegmentFilled]}
@@ -256,9 +286,39 @@ const StepIndicator = ({ step }: StepIndicatorProps): React.JSX.Element => {
         ))}
       </View>
       <Text style={styles.indicatorStep}>
-        Step {index + 1} of {STEP_ORDER.length}
+        Step {index + 1} of {steps.length}
       </Text>
       <Text style={styles.indicatorTitle}>{STEP_TITLES[step]}</Text>
+    </View>
+  );
+};
+
+interface NameStepProps {
+  state: WizardState;
+  setState: React.Dispatch<React.SetStateAction<WizardState>>;
+  onNext: () => void;
+}
+
+/**
+ * First step of a copy flow: name the copy before touching the config.
+ *
+ * The field is prefilled verbatim with the original name (no automatic
+ * suffix or prefix) and editable; duplicate names are allowed. Continue is
+ * disabled with an inline required message while the trimmed name is empty.
+ */
+const NameStep = ({ state, setState, onNext }: NameStepProps): React.JSX.Element => {
+  const nameEmpty = state.name.trim().length === 0;
+  return (
+    <View testID="create-practice-step-name">
+      <Text style={styles.bodyLead}>Give your copy a name — edit it or keep the original.</Text>
+      <NameField state={state} setState={setState} autoFocus />
+      {nameEmpty && <ErrorList errors={['Name is required.']} />}
+      <NavRow
+        onNext={onNext}
+        nextLabel="Continue"
+        nextDisabled={nameEmpty}
+        nextTestID="create-practice-name-next"
+      />
     </View>
   );
 };
@@ -403,7 +463,12 @@ interface MetadataFieldProps {
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }
 
-const NameField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => (
+interface NameFieldProps extends MetadataFieldProps {
+  /** Autofocus the input when the name step opens as step 1 of a copy flow. */
+  autoFocus?: boolean;
+}
+
+const NameField = ({ state, setState, autoFocus = false }: NameFieldProps): React.JSX.Element => (
   <FieldLabel label="Name">
     <TextInput
       accessibilityLabel="Practice name"
@@ -411,6 +476,7 @@ const NameField = ({ state, setState }: MetadataFieldProps): React.JSX.Element =
       onChangeText={(name) => setState((prev) => ({ ...prev, name }))}
       placeholder="e.g. Awareness bells"
       maxLength={PRACTICE_NAME_MAX}
+      autoFocus={autoFocus}
       style={styles.input}
       testID="create-practice-name"
     />
@@ -448,7 +514,7 @@ const InstructionsField = ({ state, setState }: MetadataFieldProps): React.JSX.E
 );
 
 const DurationField = ({ state, setState }: MetadataFieldProps): React.JSX.Element => {
-  const suggested = state.config ? suggestedDurationFor(state.config) : 10;
+  const suggested = state.config ? suggestedDurationFor(state.config) : DEFAULT_SUGGESTED_MINUTES;
   return (
     <FieldLabel label="Default duration (minutes)">
       <TextInput
@@ -532,7 +598,8 @@ const BackButton = ({ onPress }: BackButtonProps): React.JSX.Element => (
 );
 
 interface NavRowProps {
-  onBack: () => void;
+  // Omitted on step 1 (the name step of a copy flow), which has nothing to go back to.
+  onBack?: () => void;
   onNext: () => void;
   nextLabel: string;
   nextDisabled?: boolean;
@@ -547,7 +614,7 @@ const NavRow = ({
   nextTestID,
 }: NavRowProps): React.JSX.Element => (
   <View style={styles.navRow}>
-    <BackButton onPress={onBack} />
+    {onBack ? <BackButton onPress={onBack} /> : <View />}
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={nextLabel}

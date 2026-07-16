@@ -10,6 +10,7 @@ import { StyleSheet } from 'react-native';
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
   editorialType,
   journalLayout,
@@ -18,6 +19,10 @@ import {
   spacing,
   touchTarget,
 } from '@/design/tokens';
+
+/** Warm left rule on the live quote preview, in dp — mirrors the reflection
+ *  panel's pending-quote stripe so both promote surfaces read as one language. */
+const PREVIEW_STRIPE_WIDTH = 3;
 
 /**
  * Bottom inset reserving room for the floating "Get Resonance" button so page
@@ -145,8 +150,8 @@ const styles = StyleSheet.create({
     marginBottom: journalLayout.marginNoteGap,
   },
   controlLink: {
-    ...editorialType.caption,
-    color: colors.paper.inkSoft,
+    ...editorialType.action,
+    color: accent.primary,
     paddingTop: spacing(2),
   },
   /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
@@ -159,6 +164,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: SPACING.md,
     paddingTop: spacing(1),
+    alignItems: 'center',
+  },
+  /** Warm guiding line above the field: how to select a passage to promote. */
+  quoteSelectInstruction: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingBottom: spacing(1),
+  },
+  /** Highlighted card echoing the chosen passage back before it is promoted. */
+  quoteSelectPreview: {
+    backgroundColor: colors.paper.quoteHighlight,
+    borderRadius: BORDER_RADIUS.md,
+    borderLeftWidth: PREVIEW_STRIPE_WIDTH,
+    borderLeftColor: accent.primary,
+    padding: SPACING.md,
+    marginTop: spacing(1),
+  },
+  quoteSelectPreviewText: {
+    ...editorialType.note,
+    color: colors.paper.ink,
+  },
+  /** Warm (not alarming) nudge shown when confirm is tapped with no selection. */
+  quoteSelectHint: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Quiet in-flight line shown under the body while a promote POST is pending. */
+  promotionInflight: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Transient success confirmation ("Promoted") after a span is raised. */
+  promotionSuccess: {
+    ...editorialType.note,
+    color: colors.successText,
+    paddingTop: spacing(1),
+  },
+  /** Legible (note-sized) error notice for a failed promote/remove. */
+  promotionErrorText: {
+    ...editorialType.note,
+    color: colors.danger,
+    paddingTop: spacing(1),
+  },
+  /** Anchored card revealed beside a tapped promoted span, offering removal. */
+  promotionRemoveCard: {
+    backgroundColor: colors.paper.background,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginTop: spacing(1),
+  },
+  /** Echo of the tapped quote's text inside the remove card. */
+  promotionRemoveQuote: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    fontStyle: 'italic',
+    paddingBottom: spacing(1),
   },
   /** Privacy tier chooser block above the growing body. */
   privacyTierControl: {
@@ -185,7 +250,7 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.inkSoft,
   },
   privacyTierLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   privacyTierLabelSelected: {
@@ -215,7 +280,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
   },
   aspectChordTriggerLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   /** Section label above a row of Aspect chips (primary / secondary). */
@@ -245,7 +310,7 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.inkSoft,
   },
   aspectChordChipLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
   aspectChordChipLabelSelected: {
@@ -258,7 +323,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
   },
   aspectChordClearLabel: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: colors.paper.inkSoft,
   },
 });

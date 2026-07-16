@@ -80,15 +80,13 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   already_responded: "You've already answered this week's prompt. A new one unlocks each week.",
   practice_not_approved:
     "This practice is still pending review, so it isn't available to select yet.",
-  // --- Practice selection (BUG-PRACTICE-012) ---------------------------
-  // ``stage_locked`` (403) and ``stage_number_mismatch`` (400) used to
-  // fall through to the generic per-status copy ("You don't have access"
-  // / "That didn't go through"), which hid *why* assigning a practice
-  // failed. Name the cause and the way forward instead.
+  // ``stage_locked`` (403) is raised across the app whenever a user reaches
+  // for stage-gated content, history, or session logging before that stage
+  // unlocks. The copy stays stage-generic so it reads right everywhere.
   stage_locked:
-    "You haven't unlocked this stage yet. Finish the earlier stages first — this practice will be waiting when you get there.",
+    "You haven't unlocked this stage yet. It opens as you move through the program — everything here will be waiting when you arrive.",
   stage_number_mismatch:
-    'This practice belongs to a different stage. Open it from that stage to use it.',
+    'This practice belongs to a different stage. Make a copy for your stage to use it there.',
   active_practice_exists_for_stage:
     'Another change to this stage just went through. Pull down to refresh, then try switching again.',
   habits_must_not_be_empty:

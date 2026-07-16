@@ -43,9 +43,8 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
   },
   cue: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
-    fontWeight: '600',
     marginTop: SPACING.xs,
   },
 });

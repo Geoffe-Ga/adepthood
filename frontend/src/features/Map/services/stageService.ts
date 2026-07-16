@@ -58,6 +58,12 @@ export const isStageUnlocked = (
   currentStage: number | null,
 ): boolean => stage.isUnlocked || (currentStage !== null && stage.stageNumber <= currentStage);
 
+/** Highest stage number whose progress has reached 100%, or 0 when none is complete — the baseline the completion celebration watches for a rise. */
+export const highestCompletedStage = (
+  stages: readonly Pick<StageData, 'progress' | 'stageNumber'>[],
+): number =>
+  stages.reduce((max, s) => (s.progress >= FULLY_COMPLETE ? Math.max(max, s.stageNumber) : max), 0);
+
 /** True only on the final stage with its progress complete — the gate for the declinable "begin again" affordance. */
 export const isEndOfCycle = (
   stagesByNumber: Record<number, { progress: number } | undefined>,

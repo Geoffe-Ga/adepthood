@@ -297,7 +297,8 @@ const styles = StyleSheet.create({
   markReadButtonDone: {
     backgroundColor: surface.sunken,
   },
-  markReadText: {
+  // Shared label for buttons painted on an accent surface (mark-read, reflect, retry).
+  buttonLabelOnAccent: {
     fontSize: 15,
     fontWeight: '600',
     color: surface.canvas,
@@ -312,11 +313,6 @@ const styles = StyleSheet.create({
     backgroundColor: accent.strong,
     alignItems: 'center',
     marginTop: SPACING.sm,
-  },
-  reflectText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: surface.canvas,
   },
 
   // Loading and empty/error states
@@ -413,11 +409,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
     backgroundColor: accent.primary,
-  },
-  retryText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: surface.canvas,
+    alignItems: 'center',
   },
 
   // Site resources panel

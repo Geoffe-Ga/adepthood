@@ -97,7 +97,6 @@ const styles = StyleSheet.create({
   lightText: { color: colors.text.light, fontSize: 16, fontWeight: '600' },
   dangerText: { color: colors.danger, fontSize: 16, fontWeight: '600' },
   completeText: {
-    color: colors.success,
     fontSize: 16,
     fontWeight: '600',
     paddingVertical: SPACING.md,

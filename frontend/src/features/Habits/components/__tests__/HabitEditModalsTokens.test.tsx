@@ -10,7 +10,7 @@ import type { Habit, HabitSettingsModalProps } from '../../Habits.types';
 import { HabitSettingsModal } from '../HabitSettingsModal';
 import ReorderHabitsModal from '../ReorderHabitsModal';
 
-import { accent, colors, fonts, ink, shadows, surface, surfaceShadow } from '@/design/tokens';
+import { accent, colors, fonts, ink, shadows, surfaceShadow } from '@/design/tokens';
 
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
@@ -180,18 +180,30 @@ describe('Candle & Ink token guard — delete-habit action (habit-settings-delet
   });
 });
 
-// Guard 7: frequency pill background resolves to surface.sunken, not legacy colors.secondary.
-describe('Candle & Ink token guard — frequency pill (habit-settings-frequency)', () => {
-  it('frequency pill background resolves to surface.sunken', () => {
-    const { getByTestId } = renderSettingsModal();
-    const pill = getByTestId('habit-settings-frequency');
-    expect(flatten(pill.props.style).backgroundColor).toBe(surface.sunken);
+// Guard 7: selected frequency chip background resolves to accent.primary, not legacy colors.secondary.
+describe('Candle & Ink token guard — frequency chips (habit-settings-frequency)', () => {
+  it('selected chip background resolves to accent.primary', () => {
+    const { getByTestId } = renderSettingsModal({
+      habit: { ...baseHabit, notificationFrequency: 'daily' },
+    });
+    const selectedChip = getByTestId('habit-settings-frequency-daily');
+    expect(flatten(selectedChip.props.style).backgroundColor).toBe(accent.primary);
   });
 
-  it('frequency pill does NOT use the legacy colors.secondary', () => {
-    const { getByTestId } = renderSettingsModal();
-    const pill = getByTestId('habit-settings-frequency');
-    expect(flatten(pill.props.style).backgroundColor).not.toBe(colors.secondary);
+  it('selected chip does NOT use the legacy colors.secondary', () => {
+    const { getByTestId } = renderSettingsModal({
+      habit: { ...baseHabit, notificationFrequency: 'daily' },
+    });
+    const selectedChip = getByTestId('habit-settings-frequency-daily');
+    expect(flatten(selectedChip.props.style).backgroundColor).not.toBe(colors.secondary);
+  });
+
+  it('unselected chip background does NOT resolve to accent.primary', () => {
+    const { getByTestId } = renderSettingsModal({
+      habit: { ...baseHabit, notificationFrequency: 'daily' },
+    });
+    const unselectedChip = getByTestId('habit-settings-frequency-weekly');
+    expect(flatten(unselectedChip.props.style).backgroundColor).not.toBe(accent.primary);
   });
 });
 

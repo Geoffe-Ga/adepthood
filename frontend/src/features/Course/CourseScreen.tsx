@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -35,6 +35,7 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerContent } from './CourseDrawer';
+import RetryButton from './RetryButton';
 import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
@@ -250,15 +251,7 @@ const CourseErrorState = ({ onRetry }: { onRetry: () => void }): React.JSX.Eleme
     <Text style={styles.emptySubtitle}>
       Something went wrong loading this stage. Check your connection and try again.
     </Text>
-    <TouchableOpacity
-      onPress={onRetry}
-      accessibilityRole="button"
-      accessibilityLabel="Try again"
-      style={styles.retryButton}
-      testID="course-retry"
-    >
-      <Text style={styles.retryText}>Try again</Text>
-    </TouchableOpacity>
+    <RetryButton onRetry={onRetry} testID="course-retry" />
   </View>
 );
 

@@ -92,6 +92,11 @@ describe('practice-selection codes (BUG-PRACTICE-012)', () => {
     expect(msg).not.toMatch(/don't have access/i);
   });
 
+  it('keeps stage_locked copy stage-generic since it now guards logging, not selection', () => {
+    const msg = messageForCode('stage_locked');
+    expect(msg).not.toMatch(/practice/i);
+  });
+
   it('maps stage_number_mismatch to stage-specific guidance', () => {
     expect(messageForCode('stage_number_mismatch')).toMatch(/different stage/i);
   });

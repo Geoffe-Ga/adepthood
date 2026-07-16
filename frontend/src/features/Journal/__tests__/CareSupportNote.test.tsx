@@ -209,6 +209,14 @@ describe('CareSupportNote — dismiss and re-open', () => {
     expect(getByTestId('care-reopen')).toBeTruthy();
   });
 
+  it('gives the re-open control a descriptive accessibilityLabel', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    expect(getByTestId('care-reopen').props.accessibilityLabel).toBe(
+      'Show the support options again',
+    );
+  });
+
   it('re-shows resources after pressing care-reopen (not a dead-end)', () => {
     const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
     fireEvent.press(getByTestId('care-dismiss'));

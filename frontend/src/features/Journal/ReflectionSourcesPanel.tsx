@@ -24,6 +24,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { excerpt } from './excerpt';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { sourceAttribution } from './reflectionCopy';
 
@@ -78,12 +79,6 @@ export interface ReflectionSourcesPanelProps {
 interface PendingEntry {
   quote: PromotedQuoteSummary;
   item: ReflectionSourceItem;
-}
-
-/** A single-line excerpt of a body for a collapsed row. */
-function excerpt(body: string): string {
-  const flat = body.replace(/\s+/g, ' ').trim();
-  return flat.length > EXCERPT_MAX ? `${flat.slice(0, EXCERPT_MAX).trimEnd()}…` : flat;
 }
 
 /** Warm, sentence-case label for a reflection row's level (e.g. "Week reflection"). */
@@ -267,7 +262,7 @@ function SourceRow({
         <Text style={styles.rowTitle}>{sourceAttribution(item)}</Text>
         {expanded ? null : (
           <Text style={styles.rowExcerpt} numberOfLines={2}>
-            {excerpt(item.body)}
+            {excerpt(item.body, EXCERPT_MAX)}
           </Text>
         )}
       </TouchableOpacity>
@@ -327,7 +322,6 @@ function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
   const confirmSelection = useCallback(
     async (item: ReflectionSourceItem, key: string): Promise<void> => {
       const { start, end } = selectionRef.current;
-      if (end <= start) return; // An empty selection promotes nothing; stay put.
       setSelectingKey(null);
       if (onPromoteSpan == null) return;
       const ok = await onPromoteSpan(item, { anchor_start: start, anchor_end: end });
@@ -587,9 +581,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionLink: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
-    fontWeight: '600',
   },
   promoteOpener: {
     minHeight: touchTarget.minimum,
@@ -597,9 +590,8 @@ const styles = StyleSheet.create({
     paddingTop: spacing(1),
   },
   promoteOpenerLink: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: accent.primary,
-    fontWeight: '600',
   },
   promoteHint: {
     ...editorialType.caption,

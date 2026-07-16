@@ -26,10 +26,14 @@ describe('COLOR_PALETTE', () => {
       'Orange',
       'Green',
       'Yellow',
-      'Turquoise',
+      'Teal',
       'Ultraviolet',
       'Clear Light',
     ]);
+  });
+
+  it('does not list the legacy Spiral-Dynamics name as canonical', () => {
+    expect(SPIRAL_DYNAMICS_COLORS).not.toContain('Turquoise');
   });
 });
 
@@ -49,6 +53,12 @@ describe('isSpiralDynamicsColor', () => {
 describe('swatchFor', () => {
   it('returns the catalogued swatch for a known colour', () => {
     expect(swatchFor('Orange')).toBe(COLOR_PALETTE.Orange);
+  });
+
+  it('resolves the legacy "Turquoise" label to the Teal swatch', () => {
+    // A server still on the pre-rename dataset can send "Turquoise" for
+    // stage 8; it must render the Teal swatch, not the white fallback.
+    expect(swatchFor('Turquoise')).toBe(COLOR_PALETTE.Teal);
   });
 
   it('falls back to the neutral "Clear Light" swatch for unknown values', () => {

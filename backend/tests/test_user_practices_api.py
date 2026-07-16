@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import cast
 
 import pytest
 from httpx import AsyncClient
@@ -163,17 +164,17 @@ async def test_select_practice_rejects_stage_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_select_practice_rejects_locked_stage(
+async def test_select_practice_allows_future_locked_stage(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """BUG-PRACTICE-004: user cannot enrol in a practice for a locked stage.
+    """Selecting a practice for a not-yet-unlocked stage now succeeds (forward planning).
 
-    Fresh user has no progress → stage 2 is locked.  Submitting a stage-2
-    practice (catalog-consistent) must still 403 because the user has not
-    completed stage 1.  Without this gate the chain-unlock invariant could
-    be bypassed via the practice-enrolment surface.
+    Fresh user has no progress, so stage 2 is locked -- but assignment is no
+    longer gated on unlock status. The chain-unlock invariant is still
+    enforced where it actually matters (logging a session), so a stage-2
+    catalog-consistent pick opens a normal row for later.
     """
-    headers, _ = await _signup(async_client, "lockedstage")
+    headers, _ = await _signup(async_client, "futurestage")
     practice = await _seed_practice(db_session, name="Stage2Practice", stage_number=2)
 
     resp = await async_client.post(
@@ -181,8 +182,10 @@ async def test_select_practice_rejects_locked_stage(
         json={"practice_id": practice.id, "stage_number": 2},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-    assert resp.json()["detail"] == "stage_locked"
+    assert resp.status_code == HTTPStatus.CREATED
+    data = resp.json()
+    assert data["stage_number"] == 2
+    assert data["end_date"] is None
 
 
 # -- List user-practices ----------------------------------------------------
@@ -193,7 +196,8 @@ async def test_list_user_practices(async_client: AsyncClient, db_session: AsyncS
     headers, user_id = await _signup(async_client)
     p1 = await _seed_practice(db_session, name="P1", stage_number=1)
     p2 = await _seed_practice(db_session, name="P2", stage_number=2)
-    # Unlock stage 2 so the second enrolment clears the BUG-PRACTICE-004 gate.
+    # A mid-program user with two selections across stages; the second
+    # enrolment succeeds on its own since selection is not stage-gated.
     db_session.add(StageProgress(user_id=user_id, current_stage=2, completed_stages=[1]))
     await db_session.commit()
 
@@ -377,6 +381,73 @@ async def test_get_other_users_practice_forbidden(
 
     resp = await async_client.get(f"/user-practices/{up_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+# -- Owner-drafted (unapproved) practices on the GET-one detail path ----------
+
+
+async def _insert_user_practice(db_session: AsyncSession, user_id: int, practice: Practice) -> int:
+    """Insert a UserPractice row directly and return its id.
+
+    Bypasses the POST selection gate so a row backed by an unapproved draft can
+    be set up regardless of ownership — the GET-one path is what these tests
+    exercise, not selection.
+    """
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=practice.stage_number,
+        start_date=datetime.now(UTC).date(),
+    )
+    db_session.add(user_practice)
+    await db_session.commit()
+    await db_session.refresh(user_practice)
+    # ``UserPractice.id`` is ``int | None`` to model the pre-insert state; a
+    # freshly committed + refreshed row always has its primary key set.
+    return cast("int", user_practice.id)
+
+
+@pytest.mark.asyncio
+async def test_get_user_practice_backed_by_own_unapproved_draft(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Viewing a selection backed by your own unapproved draft must return 200."""
+    headers, user_id = await _signup(async_client)
+    practice = await _seed_practice(
+        db_session, approved=False, submitted_by_user_id=user_id, name="My Draft Sit"
+    )
+    up_id = await _insert_user_practice(db_session, user_id, practice)
+
+    resp = await async_client.get(f"/user-practices/{up_id}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    data = resp.json()
+    assert data["id"] == up_id
+    assert data["effective_name"] == "My Draft Sit"
+    assert data["effective_config"]["duration_minutes"] == 10
+
+
+@pytest.mark.asyncio
+async def test_get_user_practice_backed_by_foreign_unapproved_draft_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression pin: the owner-scoped carve-out must not clear a foreign draft.
+
+    The caller owns the ``UserPractice`` row (so ``require_owned_user_practice``
+    passes), but the catalog practice is another user's unapproved submission —
+    the resolver must still 400 ``practice_not_approved``.
+    """
+    owner_headers, owner_id = await _signup(async_client, "detail_owner")
+    _, other_id = await _signup(async_client, "detail_other")
+    practice = await _seed_practice(
+        db_session, approved=False, submitted_by_user_id=other_id, name="Foreign Draft"
+    )
+    up_id = await _insert_user_practice(db_session, owner_id, practice)
+
+    resp = await async_client.get(f"/user-practices/{up_id}", headers=owner_headers)
+
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.json()["detail"] == "practice_not_approved"
 
 
 # -- BUG-PRACTICE-005: single-active-practice TOCTOU --------------------------

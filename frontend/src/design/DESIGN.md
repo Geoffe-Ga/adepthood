@@ -51,6 +51,13 @@ base as `typography()`:
 - **Ramp** — `type(width)` → `{ display, title, heading, body, label, caption }`,
   each `{ fontFamily, fontSize, lineHeight, fontWeight }`; sizes descend and
   scale up from phone → tablet.
+- **Interactive-text floor** — `INTERACTIVE_TEXT_MIN` (16) is the legibility
+  floor for any tappable label; `editorialType.action` (serif, 16/24/600) and
+  `uiType.button` both source it. `editorialType.caption` (13px) is reserved for
+  **non-interactive** metadata — timestamps, eyebrows, hints, explainers — and
+  must never style a control's label. The `interactiveTextFloor` guard test
+  fails if a new `editorialType.caption` usage appears without being audited as
+  non-interactive, so caption sizing cannot silently reach tappable text again.
 
 ## Constraints (carried from the epic)
 

@@ -16,6 +16,7 @@ from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
+from domain.stage_progress import get_user_progress, is_stage_unlocked
 from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -73,6 +74,24 @@ async def _resolve_user_practice_for_session(
     if user_practice.user_id != current_user:
         raise forbidden("forbidden")
     return user_practice
+
+
+async def _require_stage_unlocked_for_session(
+    session: AsyncSession,
+    current_user: int,
+    user_practice: UserPractice,
+    user_tz: str,
+) -> None:
+    """Reject logging a session against a stage the user has not unlocked yet.
+
+    A user may *assign* a practice to a future stage for forward planning, but
+    planning is not access: they cannot record real sessions there until the
+    stage unlocks. ``user_tz`` threads the caller's timezone into the calendar
+    unlock so the server counts the same calendar days the client does.
+    """
+    progress = await get_user_progress(session, current_user)
+    if not is_stage_unlocked(user_practice.stage_number, progress, tz=user_tz):
+        raise forbidden("stage_locked")
 
 
 def _require_chosen_option_key_when_required(
@@ -236,6 +255,7 @@ async def _perform_create_session(
     current_user: int,
     session: AsyncSession,
     idempotency_key: str | None,
+    user_tz: str,
 ) -> PracticeSession:
     """Lookup-or-insert the practice session under the optional idempotency key.
 
@@ -253,6 +273,7 @@ async def _perform_create_session(
     user_practice = await _resolve_user_practice_for_session(
         session, payload.user_practice_id, current_user
     )
+    await _require_stage_unlocked_for_session(session, current_user, user_practice, user_tz)
     practice = await _resolve_practice_with_mode(session, user_practice, payload)
 
     practice_session = _build_practice_session(
@@ -292,6 +313,7 @@ async def create_session(
     payload: PracticeSessionCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> PracticeSession:
     """Log a practice session against a user-practice selection.
@@ -302,6 +324,11 @@ async def create_session(
     sub-dependencies.  The ordering and exception types match the shared
     dep so the IDOR matrix test sees the same 403 for cross-user calls.
 
+    A user may assign a practice to a future stage for forward planning, but
+    logging a real session there is gated: a not-yet-unlocked stage yields 403
+    ``stage_locked`` (evaluated in the caller's timezone) before any row or
+    idempotency spend is written.
+
     Accepts an optional ``Idempotency-Key`` header (BUG-PRACTICE-007): if a
     key is present and a session was already created under the same
     ``(user_id, key)`` pair, the recorded session row is returned without
@@ -310,7 +337,7 @@ async def create_session(
     and workers — the database serialises the check-then-insert race, no
     process-local lock required.
     """
-    return await _perform_create_session(payload, current_user, session, idempotency_key)
+    return await _perform_create_session(payload, current_user, session, idempotency_key, user_tz)
 
 
 @router.get("/", response_model=None)

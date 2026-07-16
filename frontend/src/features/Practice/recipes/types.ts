@@ -7,6 +7,8 @@
  * uses for `PracticeRecipeStepInput`).
  */
 
+import { slugifyCore } from '../utils/slugify';
+
 import type { RecipeMode } from '@/api';
 
 export type { RecipeMode };
@@ -38,10 +40,7 @@ export interface RecipeDraft {
  * `untitled`.
  */
 export function nameToSlug(name: string): string {
-  const cleaned = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  const cleaned = slugifyCore(name);
   if (cleaned.length === 0) return 'untitled';
   if (!/^[a-z]/.test(cleaned)) return `r_${cleaned}`;
   return cleaned;

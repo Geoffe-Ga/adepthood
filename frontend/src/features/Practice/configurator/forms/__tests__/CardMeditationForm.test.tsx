@@ -183,6 +183,44 @@ describe('CardMeditationForm — custom card editor', () => {
     fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
     await waitFor(() => expect(warn).toHaveBeenCalled());
     expect(onChange).not.toHaveBeenCalled();
+    expect(getByTestId('card-meditation-photo-error-0')).toBeTruthy();
+    warn.mockRestore();
+  });
+
+  it('shows no photo-error notice on initial render', () => {
+    const { queryByTestId } = render(
+      <CardMeditationForm value={custom([EMPTY_CARD])} onChange={jest.fn()} />,
+    );
+    expect(queryByTestId('card-meditation-photo-error-0')).toBeNull();
+  });
+
+  it('shows a visible notice after the photo picker rejects', async () => {
+    mockPickCardPhoto.mockRejectedValueOnce(new Error('native module unavailable'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onChange = jest.fn();
+    const { getByTestId } = render(
+      <CardMeditationForm value={custom([EMPTY_CARD])} onChange={onChange} />,
+    );
+    fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
+    await waitFor(() => expect(getByTestId('card-meditation-photo-error-0')).toBeTruthy());
+    expect(onChange).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('clears a shown photo-error notice on the next successful pick', async () => {
+    mockPickCardPhoto
+      .mockRejectedValueOnce(new Error('native module unavailable'))
+      .mockResolvedValueOnce({ uri: 'file:///ok.jpg' });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onChange = jest.fn();
+    const { getByTestId, queryByTestId } = render(
+      <CardMeditationForm value={custom([EMPTY_CARD])} onChange={onChange} />,
+    );
+    fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
+    await waitFor(() => expect(getByTestId('card-meditation-photo-error-0')).toBeTruthy());
+    fireEvent.press(getByTestId('card-meditation-choose-photo-0'));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(queryByTestId('card-meditation-photo-error-0')).toBeNull();
     warn.mockRestore();
   });
 

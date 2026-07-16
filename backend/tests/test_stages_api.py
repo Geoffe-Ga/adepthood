@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -57,6 +58,43 @@ async def _signup(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
+
+
+async def _signup_with_timezone(
+    client: AsyncClient,
+    username: str,
+    timezone: str,
+) -> tuple[dict[str, str], int]:
+    """Create a user with an explicit IANA timezone; returns (auth headers, user_id)."""
+    resp = await client.post(
+        "/auth/signup",
+        json={
+            "email": f"{username}@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "timezone": timezone,
+        },
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    return {"Authorization": f"Bearer {data['token']}"}, data["user_id"]
+
+
+_STAGE_ONE_DURATION_DAYS = 21
+
+
+def _pacific_anchor_for_stage_two_day(day_in_stage: int) -> datetime:
+    """UTC-naive anchor placing "now" on local day ``day_in_stage`` of stage 2 in LA time.
+
+    Stage 1 runs ``_STAGE_ONE_DURATION_DAYS`` days; anchoring at 23:59 local
+    time makes the UTC-default calendar read one calendar day behind Pacific
+    time regardless of when the test runs.
+    """
+    la = ZoneInfo("America/Los_Angeles")
+    start_date = datetime.now(la).date() - timedelta(
+        days=_STAGE_ONE_DURATION_DAYS + day_in_stage - 1
+    )
+    anchor_local = datetime.combine(start_date, time(23, 59), tzinfo=la)
+    return anchor_local.astimezone(UTC).replace(tzinfo=None)
 
 
 async def _seed_stages(db_session: AsyncSession, count: int = 3) -> list[CourseStage]:
@@ -629,6 +667,64 @@ async def test_stage_unlocked_uses_current_stage_only(
     assert data[0]["is_unlocked"] is True
     assert data[1]["is_unlocked"] is True  # current_stage=3 unlocks 1..3
     assert data[2]["is_unlocked"] is True
+
+
+# ── Timezone-aware stage-unlock gating ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_stages_shows_stage_two_unlocked_on_pacific_first_local_day(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``GET /stages`` reads the calendar unlock in the caller's timezone, not UTC.
+
+    A Pacific user on the first local calendar day of stage 2 sees it
+    unlocked; the UTC default still reads day 20 of stage 1 and reports it
+    locked.
+    """
+    headers, user_id = await _signup_with_timezone(
+        async_client, "pacificstages", "America/Los_Angeles"
+    )
+    await _seed_stages(db_session, count=3)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=_pacific_anchor_for_stage_two_day(1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/stages", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data[1]["is_unlocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_stage_history_open_on_pacific_first_local_day_of_stage_two(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``GET /stages/{n}/history`` must honor the same timezone-aware calendar unlock."""
+    headers, user_id = await _signup_with_timezone(
+        async_client, "pacifichistory", "America/Los_Angeles"
+    )
+    await _seed_stages(db_session, count=3)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            program_started_at=_pacific_anchor_for_stage_two_day(1),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/stages/2/history", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
 
 
 # ── User isolation ──────────────────────────────────────────────────────

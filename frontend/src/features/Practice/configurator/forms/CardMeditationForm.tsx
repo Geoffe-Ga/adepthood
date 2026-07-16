@@ -225,14 +225,16 @@ interface CardPhotoFieldProps {
 }
 
 const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.JSX.Element => {
+  const [pickError, setPickError] = React.useState<string | null>(null);
   const choosePhoto = async () => {
+    setPickError(null);
     try {
       const photo = await pickCardPhoto();
       if (photo) onUpdate(index, { image_uri: photo.uri, image_asset_key: null });
     } catch (error) {
-      // A broken native build can reject the permission/picker call; keep the
-      // form usable and leave a dev-only breadcrumb rather than crashing.
+      // Surface a recoverable notice instead of swallowing picker failures.
       if (__DEV__) console.warn('Card photo picker failed:', error);
+      setPickError('Could not open your photos. Please try again.');
     }
   };
   return (
@@ -256,6 +258,11 @@ const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.J
           style={styles.photoThumb}
           testID={`card-meditation-photo-thumb-${index}`}
         />
+      )}
+      {pickError !== null && (
+        <Text style={styles.photoError} testID={`card-meditation-photo-error-${index}`}>
+          {pickError}
+        </Text>
       )}
     </View>
   );
@@ -359,7 +366,8 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     backgroundColor: surface.sunken,
   },
-  photoButtonText: { ...editorialType.caption, fontWeight: '500', color: ink.primary },
+  photoButtonText: { ...editorialType.action, color: ink.primary },
+  photoError: { ...editorialType.caption, color: colors.danger },
   photoThumb: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: BORDER_RADIUS.sm },
 });
 

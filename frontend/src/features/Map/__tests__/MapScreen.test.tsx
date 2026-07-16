@@ -15,7 +15,7 @@ import {
   RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
 } from '../mapLayout';
-import MapScreen from '../MapScreen';
+import MapScreen, { MapBackdrop } from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
@@ -567,6 +567,23 @@ describe('MapScreen', () => {
     expect(tree.root.findByProps({ testID: 'map-wave' })).toBeTruthy();
   });
 
+  it('wraps the configured background PNG in a non-interactive no-op layer', () => {
+    const tree = create(<MapBackdrop uri="file:///bg.png" />);
+    const backdrop = tree.root.findByProps({ testID: 'map-background' });
+    expect(backdrop.props.pointerEvents).toBe('none');
+    // The art renders inside the non-interactive wrapper, not as a bare Image
+    // that could intercept touches in the grid's padding regions.
+    const image = backdrop.findByType(Image);
+    expect(image.props.source).toEqual({ uri: 'file:///bg.png' });
+  });
+
+  it('renders the empty backdrop as a non-interactive no-op when no PNG is configured', () => {
+    const tree = create(<MapBackdrop uri={null} />);
+    const backdrop = tree.root.findByProps({ testID: 'map-background' });
+    expect(backdrop.props.pointerEvents).toBe('none');
+    expect(backdrop.findAllByType(Image)).toHaveLength(0);
+  });
+
   // --- wave overlay follows measured row/cell centers, not nominal bands ---
 
   const MAP_ROW_LABELS = [
@@ -799,7 +816,7 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(flat.alignSelf).toBe('flex-end');
   });
 
-  it('nests the locked stage 8 (Nondual) countdown inside its right-corner block', () => {
+  it('nests the locked stage 8 (True Self) countdown inside its right-corner block', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const block = tree.root.findByProps({ testID: 'aspect-label-8' });

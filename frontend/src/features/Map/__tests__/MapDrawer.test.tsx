@@ -1,7 +1,8 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 // Pure body suite for the Map header drawer's legend: ten stage rows ascending
-// (1 at top), the persona/descriptor/balance-read a11y label, the current-stage
+// (1 at top), each showing a color swatch plus its category and Aspect (no
+// persona/descriptor/balance-read copy in the visible row), the current-stage
 // marker, the locked-row unlock timeline, and the journey summary line.
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -10,11 +11,10 @@ import { act, create } from 'react-test-renderer';
 import { cycleLabel } from '../beginAgain';
 import { journeyRead, unlockTimeline } from '../journeyNarrative';
 import MapDrawer from '../MapDrawer';
-import { STAGE_DISPLAY } from '../mapLayout';
+import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
-import { stageNodeLabel } from '../stageLegend';
-import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
+import { drawerStageLabel } from '../stageLegend';
 
 import { mockMakeStage, mockMapState, resetMapMockState } from './mapTestHarness';
 
@@ -43,6 +43,13 @@ const requireDisplay = (stageNumber: number) => {
   return display;
 };
 
+/** The MAP_ROWS rightLabel (category) that contains the given stage number. */
+const categoryForStage = (stageNumber: number): string => {
+  const row = MAP_ROWS.find((r) => r.stageNumbers.includes(stageNumber));
+  if (!row) throw new Error(`no MAP_ROW for stage ${stageNumber}`);
+  return row.rightLabel;
+};
+
 describe('MapDrawer', () => {
   beforeEach(() => {
     resetMapMockState();
@@ -53,7 +60,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -74,7 +80,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -86,12 +91,50 @@ describe('MapDrawer', () => {
     }
   });
 
-  it('shows persona and descriptor text for every stage', () => {
+  it('shows the category and Aspect text for a stage that has an Aspect', () => {
     const tree = create(
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    for (const n of [1, 5, 6]) {
+      const row = tree.root.findByProps({ testID: `map-drawer-stage-${n}` });
+      expect(
+        row.findAll((node: TestNode) => node.props.children === categoryForStage(n)).length,
+      ).toBeGreaterThan(0);
+      expect(
+        row.findAll((node: TestNode) => node.props.children === requireDisplay(n).arrowLabel)
+          .length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it('shows only the category, with no Aspect text, for stages 9 and 10', () => {
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={1}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    for (const n of [9, 10]) {
+      const row = tree.root.findByProps({ testID: `map-drawer-stage-${n}` });
+      expect(
+        row.findAll((node: TestNode) => node.props.children === categoryForStage(n)).length,
+      ).toBeGreaterThan(0);
+      expect(requireDisplay(n).arrowLabel).toBe('');
+    }
+  });
+
+  it('no longer shows persona, descriptor, or balance-read copy in any row', () => {
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={1}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -100,26 +143,72 @@ describe('MapDrawer', () => {
       const display = requireDisplay(n);
       expect(
         tree.root.findAll((node: TestNode) => node.props.children === display.persona).length,
-      ).toBeGreaterThan(0);
-      expect(
-        tree.root.findAll((node: TestNode) => node.props.children === display.descriptor).length,
-      ).toBeGreaterThan(0);
+      ).toBe(0);
+      // Stage 8's descriptor string coincides with its Aspect, which the row
+      // legitimately shows; assert descriptor removal only where it cannot alias
+      // the rendered Aspect text.
+      if (display.descriptor !== display.arrowLabel) {
+        expect(
+          tree.root.findAll((node: TestNode) => node.props.children === display.descriptor).length,
+        ).toBe(0);
+      }
     }
+    expect(tree.root.findAll((n: TestNode) => n.props.children === 'reads full').length).toBe(0);
+    expect(tree.root.findAll((n: TestNode) => n.props.children === 'reads thin').length).toBe(0);
   });
 
-  it('gives each row an accessibilityLabel matching stageNodeLabel', () => {
+  it('gives an unlocked, non-current row an accessibilityLabel from drawerStageLabel', () => {
     const tree = create(
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{ 3: FULLNESS_ALIVE_THRESHOLD }}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
     );
-    const row = tree.root.findByProps({ testID: 'map-drawer-stage-3' });
+    const row = tree.root.findByProps({ testID: 'map-drawer-stage-2' });
     expect(row.props.accessibilityLabel).toBe(
-      stageNodeLabel(requireDisplay(3), FULLNESS_ALIVE_THRESHOLD),
+      drawerStageLabel(categoryForStage(2), requireDisplay(2).arrowLabel, {
+        locked: false,
+        current: false,
+      }),
+    );
+  });
+
+  it('gives the current row an accessibilityLabel carrying the current marker', () => {
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={5}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    const row = tree.root.findByProps({ testID: 'map-drawer-stage-5' });
+    expect(row.props.accessibilityLabel).toBe(
+      drawerStageLabel(categoryForStage(5), requireDisplay(5).arrowLabel, {
+        locked: false,
+        current: true,
+      }),
+    );
+  });
+
+  it('gives a locked row an accessibilityLabel carrying the locked marker', () => {
+    mockMapState.daysUntilStage = 5;
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={1}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    const row = tree.root.findByProps({ testID: 'map-drawer-stage-8' });
+    expect(row.props.accessibilityLabel).toBe(
+      drawerStageLabel(categoryForStage(8), requireDisplay(8).arrowLabel, {
+        locked: true,
+        current: false,
+      }),
     );
   });
 
@@ -128,7 +217,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -137,44 +225,11 @@ describe('MapDrawer', () => {
     expect(row.props.accessibilityRole).toBe('button');
   });
 
-  it('shows a reads-full caption when fullness meets the alive threshold', () => {
-    const tree = create(
-      <MapDrawer
-        lookup={buildLookup()}
-        currentStage={1}
-        fullnessByStage={{ 2: FULLNESS_ALIVE_THRESHOLD }}
-        cycleNumber={1}
-        onSelectStage={jest.fn()}
-      />,
-    );
-    const row = tree.root.findByProps({ testID: 'map-drawer-stage-2' });
-    expect(row.findAll((n: TestNode) => n.props.children === 'reads full').length).toBeGreaterThan(
-      0,
-    );
-  });
-
-  it('shows a reads-thin caption when fullness is absent', () => {
-    const tree = create(
-      <MapDrawer
-        lookup={buildLookup()}
-        currentStage={1}
-        fullnessByStage={{}}
-        cycleNumber={1}
-        onSelectStage={jest.fn()}
-      />,
-    );
-    const row = tree.root.findByProps({ testID: 'map-drawer-stage-4' });
-    expect(row.findAll((n: TestNode) => n.props.children === 'reads thin').length).toBeGreaterThan(
-      0,
-    );
-  });
-
   it('marks only the current stage row selected, with its current marker', () => {
     const tree = create(
       <MapDrawer
         lookup={buildLookup()}
         currentStage={5}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -193,7 +248,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -214,7 +268,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={lookup}
         currentStage={STAGE_COUNT}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -230,7 +283,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -246,7 +298,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -262,7 +313,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={onSelectStage}
       />,
@@ -279,7 +329,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={onSelectStage}
       />,
@@ -296,7 +345,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={3}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,
@@ -312,7 +360,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={2}
         onSelectStage={jest.fn()}
       />,
@@ -327,7 +374,6 @@ describe('MapDrawer', () => {
       <MapDrawer
         lookup={buildLookup()}
         currentStage={1}
-        fullnessByStage={{}}
         cycleNumber={1}
         onSelectStage={jest.fn()}
       />,

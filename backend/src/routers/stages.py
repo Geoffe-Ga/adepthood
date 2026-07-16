@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
@@ -92,6 +93,7 @@ async def _stage_responses_with_progress(
     session: AsyncSession,
     user_id: int,
     stages: list[CourseStage],
+    tz: str,
 ) -> list[StageResponse]:
     """Overlay batched progress onto a page of stages (issue #473).
 
@@ -100,7 +102,7 @@ async def _stage_responses_with_progress(
     report ``0.0`` without entering the batch.
     """
     progress = await get_user_progress(session, user_id)
-    unlocked = {s.stage_number: is_stage_unlocked(s.stage_number, progress) for s in stages}
+    unlocked = {s.stage_number: is_stage_unlocked(s.stage_number, progress, tz=tz) for s in stages}
     unlocked_numbers = [n for n, ok in unlocked.items() if ok]
     batch = await compute_stage_progress_batch(session, user_id, unlocked_numbers)
     return [_overlay_stage(s, unlocked, batch) for s in stages]
@@ -110,6 +112,7 @@ async def _stage_responses_with_progress(
 async def list_stages(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
     pagination: Annotated[PaginationParams, Depends()],
 ) -> Page[StageResponse] | list[StageResponse]:
     """List all stages with per-user progress overlay.
@@ -127,7 +130,7 @@ async def list_stages(
     """
     query = select(CourseStage).order_by(col(CourseStage.stage_number).asc())
     stages, total = await paginate_query(session, query, pagination)
-    responses = await _stage_responses_with_progress(session, current_user, stages)
+    responses = await _stage_responses_with_progress(session, current_user, stages, user_tz)
 
     if pagination.paginate:
         return build_page(responses, total, pagination)
@@ -138,6 +141,7 @@ async def list_stages(
 async def get_program_calendar(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ProgramCalendarResponse:
     """The server's view of the date-derived program calendar (issue #386).
 
@@ -156,8 +160,8 @@ async def get_program_calendar(
     anchor = resolve_program_anchor(progress)
     return ProgramCalendarResponse(
         program_started_at=anchor,
-        calendar_stage=calendar_stage(anchor),
-        calendar_week=calendar_week(anchor),
+        calendar_stage=calendar_stage(anchor, tz=user_tz),
+        calendar_week=calendar_week(anchor, tz=user_tz),
         current_stage=progress.current_stage,
         cycle_number=progress.cycle_number,
     )
@@ -197,13 +201,14 @@ async def get_stage_history(
     stage_number: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> StageHistoryResponse:
     """Aggregated practice and habit history for a stage."""
     if not await stage_exists(session, stage_number):
         raise not_found("stage")
 
     progress = await get_user_progress(session, current_user)
-    if not is_stage_unlocked(stage_number, progress):
+    if not is_stage_unlocked(stage_number, progress, tz=user_tz):
         raise forbidden("stage_locked")
 
     practices = await get_stage_practice_history(session, current_user, stage_number)

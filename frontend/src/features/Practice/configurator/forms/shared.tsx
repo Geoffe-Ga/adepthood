@@ -455,7 +455,7 @@ const formStyles = StyleSheet.create({
     borderColor: accent.primary,
   },
   chipText: {
-    ...editorialType.caption,
+    ...editorialType.action,
     color: ink.soft,
   },
   chipTextActive: {

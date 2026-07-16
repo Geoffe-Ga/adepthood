@@ -23,6 +23,24 @@ import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeySt
  * in any API response — it lives only on the device.
  */
 
+/** Outcome of a {@link ApiKeyContextValue.saveApiKey} call. */
+export interface ApiKeySaveResult {
+  /**
+   * True when the write reached SecureStore; false when it fell back to
+   * session-only because the SecureStore write failed.
+   */
+  persisted: boolean;
+}
+
+/** Outcome of a {@link ApiKeyContextValue.clearApiKey} call. */
+export interface ApiKeyClearResult {
+  /**
+   * True when the delete reached SecureStore; false when the key was only
+   * dropped from session state because the SecureStore delete failed.
+   */
+  cleared: boolean;
+}
+
 interface ApiKeyContextValue {
   /** Current user-owned key, or null if none is stored. */
   apiKey: string | null;
@@ -35,10 +53,18 @@ interface ApiKeyContextValue {
    * visible instead of the app silently running with a blank, non-persisted key.
    */
   loadError: Error | null;
-  /** Persist a new key to SecureStore and update context state. */
-  saveApiKey: (_key: string) => Promise<void>;
-  /** Remove the stored key (SecureStore + context state). */
-  clearApiKey: () => Promise<void>;
+  /**
+   * Persist a new key and update context state. Resolves with
+   * ``persisted: true`` when the write reached SecureStore, or
+   * ``persisted: false`` when it fell back to session-only (the write failed).
+   */
+  saveApiKey: (_key: string) => Promise<ApiKeySaveResult>;
+  /**
+   * Remove the stored key (SecureStore + context state). Resolves with
+   * ``cleared: true`` when the delete reached SecureStore, or ``cleared: false``
+   * when the key was only dropped from session state (the delete failed).
+   */
+  clearApiKey: () => Promise<ApiKeyClearResult>;
 }
 
 const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
@@ -68,6 +94,32 @@ function useLlmApiKeyBridge(
   }, [apiKeyRef, setApiKey]);
 }
 
+/**
+ * Load the stored key from SecureStore on mount. On failure, fall back to
+ * in-memory operation (the key stays usable this session via saveApiKey; it
+ * won't persist across launches until the store recovers) and surface the
+ * error so the screen can warn the user.
+ */
+function useLoadStoredApiKey(
+  setApiKey: React.Dispatch<React.SetStateAction<string | null>>,
+  setLoadError: React.Dispatch<React.SetStateAction<Error | null>>,
+  setIsLoading: React.Dispatch<React.SetStateAction<boolean>>,
+): void {
+  useEffect(() => {
+    loadLlmApiKey()
+      .then((stored) => {
+        setApiKey(stored);
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        console.warn('[ApiKeyContext] SecureStore load failed', err);
+        setApiKey(null);
+        setLoadError(err instanceof Error ? err : new Error(String(err)));
+      })
+      .finally(() => setIsLoading(false));
+  }, [setApiKey, setLoadError, setIsLoading]);
+}
+
 export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,45 +132,36 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   apiKeyRef.current = apiKey;
 
   useLlmApiKeyBridge(apiKeyRef, setApiKey);
+  useLoadStoredApiKey(setApiKey, setLoadError, setIsLoading);
 
-  useEffect(() => {
-    loadLlmApiKey()
-      .then((stored) => {
-        setApiKey(stored);
-        setLoadError(null);
-      })
-      .catch((err: unknown) => {
-        console.warn('[ApiKeyContext] SecureStore load failed', err);
-        // Fall back to in-memory operation (key still usable for this session
-        // via saveApiKey; won't persist across launches until the store
-        // recovers).
-        setApiKey(null);
-        setLoadError(err instanceof Error ? err : new Error(String(err)));
-      })
-      .finally(() => setIsLoading(false));
-  }, []);
-
-  const saveApiKey = useCallback(async (key: string) => {
+  const saveApiKey = useCallback(async (key: string): Promise<ApiKeySaveResult> => {
+    let persisted = false;
     try {
       await saveLlmApiKey(key);
       setLoadError(null);
+      persisted = true;
     } catch (err: unknown) {
       console.warn('[ApiKeyContext] SecureStore save failed', err);
       setLoadError(err instanceof Error ? err : new Error(String(err)));
       // Set state anyway so the key is at least usable this session.
     }
     setApiKey(key);
+    return { persisted };
   }, []);
 
-  const clearApiKey = useCallback(async () => {
+  const clearApiKey = useCallback(async (): Promise<ApiKeyClearResult> => {
+    let cleared = false;
     try {
       await clearLlmApiKey();
       setLoadError(null);
+      cleared = true;
     } catch (err: unknown) {
       console.warn('[ApiKeyContext] SecureStore clear failed', err);
       setLoadError(err instanceof Error ? err : new Error(String(err)));
+      // Drop the key from session state anyway so the user isn't stuck with it.
     }
     setApiKey(null);
+    return { cleared };
   }, []);
 
   const value = useMemo(

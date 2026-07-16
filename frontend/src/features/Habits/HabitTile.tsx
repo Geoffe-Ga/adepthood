@@ -3,7 +3,6 @@ import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } f
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  BOTTOM_TAB_BAR_CONTENT_HEIGHT,
   colors,
   SPACING,
   STAGE_COLORS,
@@ -193,7 +192,7 @@ export const useTileLayout = () => {
   const insets = useSafeAreaInsets();
   const rows = columns === 2 ? MAX_HABITS / columns : MAX_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
-  const bottomBarReserve = BOTTOM_TAB_BAR_CONTENT_HEIGHT + insets.bottom;
+  const bottomBarReserve = insets.bottom;
   const availableHeight = height - insets.top - bottomBarReserve - chrome;
   const rowPitch = availableHeight / rows;
   // Floor to whole pixels so the reserved stack never rounds above the viewport.
@@ -512,11 +511,12 @@ interface LockedTileProps {
   onUnlockHabit?: (_habitId: number) => void;
 }
 
-const getLockedTileStyle = (
+const buildTileStyle = (
   stageColor: string,
   scale: number,
   gridGutter: number,
   tileMinHeight: number,
+  overlay: { backgroundColor: string; opacity?: number },
 ) => ({
   flex: 1 as const,
   borderWidth: TILE_BORDER_WIDTH,
@@ -526,10 +526,20 @@ const getLockedTileStyle = (
   margin: gridGutter / 2,
   minHeight: tileMinHeight,
   borderRadius: spacing(1, scale),
-  backgroundColor: LOCKED_BACKGROUND,
-  opacity: LOCKED_OPACITY,
+  ...overlay,
   ...longPressGestureStyle,
 });
+
+const getLockedTileStyle = (
+  stageColor: string,
+  scale: number,
+  gridGutter: number,
+  tileMinHeight: number,
+) =>
+  buildTileStyle(stageColor, scale, gridGutter, tileMinHeight, {
+    backgroundColor: LOCKED_BACKGROUND,
+    opacity: LOCKED_OPACITY,
+  });
 
 const LOCKED_NAME_STYLE = {
   flex: 1 as const,
@@ -612,18 +622,10 @@ const buildUnlockedTileStyle = (
   scale: number,
   gridGutter: number,
   tileMinHeight: number,
-) => ({
-  flex: 1 as const,
-  borderWidth: TILE_BORDER_WIDTH,
-  borderColor: stageColor,
-  paddingVertical: spacing(tileDensity.paddingV, scale),
-  paddingHorizontal: spacing(1, scale),
-  margin: gridGutter / 2,
-  minHeight: tileMinHeight,
-  borderRadius: spacing(1, scale),
-  backgroundColor: surface.canvas,
-  ...longPressGestureStyle,
-});
+) =>
+  buildTileStyle(stageColor, scale, gridGutter, tileMinHeight, {
+    backgroundColor: surface.canvas,
+  });
 
 interface TileProgressSectionProps {
   habit: Habit;

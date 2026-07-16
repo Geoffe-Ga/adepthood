@@ -2,9 +2,11 @@
 /* global describe, it, expect, beforeEach, jest */
 // Integration suite for the Map header drawer wired into MapScreen: the
 // header-left toggle installs via useScreenDrawer, opening it renders the
-// stage legend, and tapping a row closes the drawer and moves the magnifier
-// lens's focus to the tapped stage. Mirrors MapScreen.test.tsx's mock setup so
-// the same harness-driven stages/wheel/progression state applies.
+// stage legend, and tapping a row closes the drawer, moves the magnifier
+// lens's focus to the tapped stage, AND opens the stage-detail modal for that
+// stage (locked or not, since the harness loads all ten stages). Mirrors
+// MapScreen.test.tsx's mock setup so the same harness-driven
+// stages/wheel/progression state applies.
 import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
@@ -138,10 +140,10 @@ describe('MapScreen header drawer', () => {
     expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
     // The lens headline reflects the newly focused stage (stage 8's arrow label).
     const headline = tree.root.findByProps({ testID: 'magnifier-headline' });
-    expect(headline.props.children).toBe('Nondual');
+    expect(headline.props.children).toBe('True Self');
   });
 
-  it('does not open the stage-detail modal when a drawer row is tapped', () => {
+  it('opens the stage-detail modal for the tapped stage, and closes the drawer', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
     openDrawer();
@@ -150,7 +152,20 @@ describe('MapScreen header drawer', () => {
       tree.root.findByProps({ testID: 'map-drawer-stage-3' }).props.onPress();
     });
 
-    expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
+    expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
+  });
+
+  it('opens the stage-detail modal even for a locked drawer row', () => {
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    openDrawer();
+
+    act(() => {
+      tree.root.findByProps({ testID: 'map-drawer-stage-8' }).props.onPress();
+    });
+
+    expect(tree.root.findByProps({ testID: 'stage-modal' })).toBeTruthy();
   });
 
   it('reflects the current cycle number in the drawer journey summary', () => {

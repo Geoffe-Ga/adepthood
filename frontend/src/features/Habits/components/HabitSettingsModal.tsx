@@ -4,7 +4,7 @@ import { View, Text, TouchableOpacity, Modal, Platform, ScrollView, Switch } fro
 
 import { Button } from '../../../components/Button';
 import { TextField } from '../../../components/TextField';
-import { STAGE_COLORS, SPACING } from '../../../design/tokens';
+import { STAGE_COLORS } from '../../../design/tokens';
 import { DAYS_OF_WEEK } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitSettingsModalProps } from '../Habits.types';
@@ -14,33 +14,19 @@ import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
 import ModalHeader from './ModalHeader';
 
-const cycleFrequency = (current: string | undefined): 'daily' | 'weekly' | 'custom' => {
-  if (current === 'daily') return 'weekly';
-  if (current === 'weekly') return 'custom';
-  return 'daily';
-};
+const LOCK_TOGGLE_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
+// Enlarges the 24dp remove-time pill to a 44dp accessible touch target.
+const REMOVE_TIME_HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 };
+const FREQUENCY_OPTIONS = ['daily', 'weekly', 'custom'] as const;
 
-interface NotificationSettingsProps {
-  habit: Habit;
-  notificationTime: string;
-  showTimePicker: boolean;
-  showDaysPicker: boolean;
-  setShowTimePicker: (_v: boolean) => void;
-  setShowDaysPicker: (_v: boolean) => void;
-  onChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
-  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
-  onAddTime: () => void;
-  onRemoveTime: (_time: string) => void;
-  onToggleDay: (_day: string) => void;
-}
+type ChangeHandler = <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
 
-interface NotifFrequencyProps {
-  habit: Habit;
-  showDaysPicker: boolean;
-  setShowDaysPicker: (_v: boolean) => void;
-  onChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
-  onToggleDay: (_day: string) => void;
-}
+const SettingsSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <View style={styles.settingsSection}>
+    <Text style={styles.sectionTitle}>{title}</Text>
+    {children}
+  </View>
+);
 
 const DayPickerGrid = ({
   days,
@@ -67,52 +53,73 @@ const DayPickerGrid = ({
 const formatDaysLabel = (days: string[] | undefined): string =>
   days && days.length > 0 ? days.map((d) => d.substring(0, 3)).join(', ') : 'Select days';
 
-const NotifFrequencySection = ({
+const FrequencyChip = ({
+  value,
+  selected,
+  onSelect,
+}: {
+  value: (typeof FREQUENCY_OPTIONS)[number];
+  selected: boolean;
+  onSelect: (_value: (typeof FREQUENCY_OPTIONS)[number]) => void;
+}) => (
+  <TouchableOpacity
+    testID={`habit-settings-frequency-${value}`}
+    accessibilityRole="radio"
+    accessibilityState={{ checked: selected }}
+    accessibilityLabel={value}
+    style={[styles.freqChip, selected && styles.freqChipSelected]}
+    onPress={() => onSelect(value)}
+  >
+    <Text style={[styles.freqChipText, selected && styles.freqChipTextSelected]}>{value}</Text>
+  </TouchableOpacity>
+);
+
+const FrequencyChipRow = ({ habit, onChange }: { habit: Habit; onChange: ChangeHandler }) => {
+  const current = habit.notificationFrequency ?? 'daily';
+  return (
+    <View
+      testID="habit-settings-frequency"
+      accessibilityRole="radiogroup"
+      style={styles.freqChipRow}
+    >
+      {FREQUENCY_OPTIONS.map((value) => (
+        <FrequencyChip
+          key={value}
+          value={value}
+          selected={current === value}
+          onSelect={(next) => onChange('notificationFrequency', next)}
+        />
+      ))}
+    </View>
+  );
+};
+
+const CustomDaysPicker = ({
   habit,
   showDaysPicker,
   setShowDaysPicker,
-  onChange,
   onToggleDay,
-}: NotifFrequencyProps) => (
+}: {
+  habit: Habit;
+  showDaysPicker: boolean;
+  setShowDaysPicker: (_v: boolean) => void;
+  onToggleDay: (_day: string) => void;
+}) => (
   <>
     <View style={styles.settingRow}>
-      <Text style={styles.editSettingLabel}>Frequency:</Text>
+      <Text style={styles.editSettingLabel}>Days:</Text>
       <TouchableOpacity
-        testID="habit-settings-frequency"
-        style={styles.frequencyButton}
-        onPress={() =>
-          onChange('notificationFrequency', cycleFrequency(habit.notificationFrequency))
-        }
+        style={styles.daysButton}
+        onPress={() => setShowDaysPicker(!showDaysPicker)}
       >
-        <Text style={styles.frequencyButtonText}>{habit.notificationFrequency || 'daily'}</Text>
+        <Text style={styles.daysButtonText}>{formatDaysLabel(habit.notificationDays)}</Text>
       </TouchableOpacity>
     </View>
-    {habit.notificationFrequency === 'custom' && (
-      <View style={styles.settingRow}>
-        <Text style={styles.editSettingLabel}>Days:</Text>
-        <TouchableOpacity
-          style={styles.daysButton}
-          onPress={() => setShowDaysPicker(!showDaysPicker)}
-        >
-          <Text style={styles.daysButtonText}>{formatDaysLabel(habit.notificationDays)}</Text>
-        </TouchableOpacity>
-      </View>
-    )}
     {showDaysPicker && (
       <DayPickerGrid days={habit.notificationDays || []} onToggleDay={onToggleDay} />
     )}
   </>
 );
-
-interface NotifTimeProps {
-  notificationTime: string;
-  showTimePicker: boolean;
-  notifTimes: string[];
-  setShowTimePicker: (_v: boolean) => void;
-  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
-  onAddTime: () => void;
-  onRemoveTime: (_time: string) => void;
-}
 
 const TimesList = ({
   times,
@@ -122,10 +129,16 @@ const TimesList = ({
   onRemoveTime: (_time: string) => void;
 }) => (
   <View style={styles.timesList}>
-    {times.map((time, index) => (
-      <View key={index} style={styles.timeItem}>
+    {times.map((time) => (
+      <View key={time} style={styles.timeItem}>
         <Text style={styles.timeText}>{time}</Text>
-        <TouchableOpacity style={styles.removeTimeButton} onPress={() => onRemoveTime(time)}>
+        <TouchableOpacity
+          testID={`habit-settings-remove-time-${time}`}
+          accessibilityLabel={`Remove ${time}`}
+          hitSlop={REMOVE_TIME_HIT_SLOP}
+          style={styles.removeTimeButton}
+          onPress={() => onRemoveTime(time)}
+        >
           <Text style={styles.removeTimeButtonText}>×</Text>
         </TouchableOpacity>
       </View>
@@ -139,6 +152,16 @@ const parseTimeValue = (timeStr: string): Date => {
   defaultTime.setHours(hours, minutes);
   return defaultTime;
 };
+
+interface NotifTimeProps {
+  notificationTime: string;
+  showTimePicker: boolean;
+  notifTimes: string[];
+  setShowTimePicker: (_v: boolean) => void;
+  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
+  onAddTime: () => void;
+  onRemoveTime: (_time: string) => void;
+}
 
 const NotifTimeSection = ({
   notificationTime,
@@ -156,7 +179,12 @@ const NotifTimeSection = ({
         <TouchableOpacity style={styles.timeButton} onPress={() => setShowTimePicker(true)}>
           <Text style={styles.timeButtonText}>{notificationTime}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.addTimeButton} onPress={onAddTime}>
+        <TouchableOpacity
+          testID="habit-settings-add-time"
+          accessibilityLabel="Add reminder time"
+          style={styles.addTimeButton}
+          onPress={onAddTime}
+        >
           <Text style={styles.addTimeButtonText}>+</Text>
         </TouchableOpacity>
       </View>
@@ -174,105 +202,67 @@ const NotifTimeSection = ({
   </>
 );
 
-const NotifToggleRow = ({
+const NotificationsToggleRow = ({
   isEnabled,
   onChange,
 }: {
   isEnabled: boolean;
-  onChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
+  onChange: ChangeHandler;
 }) => (
   <View style={styles.settingRow}>
     <Text style={styles.editSettingLabel}>Notifications:</Text>
     <Switch
+      testID="habit-settings-notifications-toggle"
       value={isEnabled}
       onValueChange={(value) => onChange('notificationFrequency', value ? 'daily' : 'off')}
     />
   </View>
 );
 
-const NotificationSettings = ({
-  habit,
-  notificationTime,
-  showTimePicker,
-  showDaysPicker,
-  setShowTimePicker,
-  setShowDaysPicker,
-  onChange,
-  onTimeChange,
-  onAddTime,
-  onRemoveTime,
-  onToggleDay,
-}: NotificationSettingsProps) => (
-  <View style={styles.settingGroup}>
-    <NotifToggleRow isEnabled={habit.notificationFrequency !== 'off'} onChange={onChange} />
-    {habit.notificationFrequency !== 'off' && (
-      <>
-        <NotifFrequencySection
-          habit={habit}
-          showDaysPicker={showDaysPicker}
-          setShowDaysPicker={setShowDaysPicker}
-          onChange={onChange}
-          onToggleDay={onToggleDay}
-        />
-        <NotifTimeSection
-          notificationTime={notificationTime}
-          showTimePicker={showTimePicker}
-          notifTimes={habit.notificationTimes || []}
-          setShowTimePicker={setShowTimePicker}
-          onTimeChange={onTimeChange}
-          onAddTime={onAddTime}
-          onRemoveTime={onRemoveTime}
-        />
-      </>
-    )}
-    <View style={styles.settingRow}>
-      <Text style={styles.editSettingLabel}>Milestone Notifications:</Text>
-      <Switch
-        value={habit.milestoneNotifications || false}
-        onValueChange={(value) => onChange('milestoneNotifications', value)}
-      />
-    </View>
+const MilestoneToggleRow = ({ habit, onChange }: { habit: Habit; onChange: ChangeHandler }) => (
+  <View style={styles.settingRow}>
+    <Text style={styles.editSettingLabel}>Milestone Notifications:</Text>
+    <Switch
+      testID="habit-settings-milestone-toggle"
+      value={habit.milestoneNotifications || false}
+      onValueChange={(value) => onChange('milestoneNotifications', value)}
+    />
   </View>
 );
 
-interface SettingsFormProps {
+const LockToggleRow = ({
+  editedHabit,
+  handleChange,
+}: {
+  editedHabit: Habit;
+  handleChange: ChangeHandler;
+}) => (
+  <View style={styles.settingRow}>
+    <Text style={styles.editSettingLabel}>Unlocked:</Text>
+    <Switch
+      testID="habit-settings-lock-toggle"
+      accessibilityLabel="Unlocked"
+      hitSlop={LOCK_TOGGLE_HIT_SLOP}
+      value={editedHabit.revealed === true}
+      onValueChange={(value) => handleChange('revealed', value)}
+    />
+  </View>
+);
+
+interface HabitSectionProps {
   editedHabit: Habit;
   showEmojiSelector: boolean;
   setShowEmojiSelector: (_v: boolean) => void;
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
-  allHabits: Habit[];
-  onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
-  notificationTime: string;
-  showTimePicker: boolean;
-  showDaysPicker: boolean;
-  setShowTimePicker: (_v: boolean) => void;
-  setShowDaysPicker: (_v: boolean) => void;
-  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
-  onAddTime: () => void;
-  onRemoveTime: (_time: string) => void;
-  onToggleDay: (_day: string) => void;
-  onSave: () => void;
-  onDelete: () => void;
+  handleChange: ChangeHandler;
 }
 
-interface BasicFieldsProps {
-  editedHabit: Habit;
-  showEmojiSelector: boolean;
-  setShowEmojiSelector: (_v: boolean) => void;
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
-  allHabits: Habit[];
-  onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
-}
-
-const BasicFields = ({
+const HabitSection = ({
   editedHabit,
   showEmojiSelector,
   setShowEmojiSelector,
   handleChange,
-  allHabits,
-  onOpenReorderModal,
-}: BasicFieldsProps) => (
-  <>
+}: HabitSectionProps) => (
+  <SettingsSection title="Habit">
     <View style={styles.settingRow}>
       <Text style={styles.editSettingLabel}>Name:</Text>
       <TextField
@@ -299,51 +289,153 @@ const BasicFields = ({
       <Text style={styles.editSettingLabel}>Stage:</Text>
       <Text style={styles.settingValue}>{editedHabit.stage}</Text>
     </View>
-    <Button
-      label="Reorder Habits"
-      variant="secondary"
-      onPress={() => onOpenReorderModal(allHabits)}
-      testID="habit-settings-reorder"
-      style={{ marginVertical: SPACING.md }}
-    />
-  </>
+    <LockToggleRow editedHabit={editedHabit} handleChange={handleChange} />
+  </SettingsSection>
 );
 
-const EnergyAndDateSection = ({
+const EnergySection = ({
   editedHabit,
   handleChange,
 }: {
   editedHabit: Habit;
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
+  handleChange: ChangeHandler;
 }) => (
-  <>
-    <View style={styles.settingRow}>
-      <Text style={styles.editSettingLabel}>Energy Rating:</Text>
-    </View>
+  <SettingsSection title="Energy">
     <EnergyCostReturnEditor
       cost={editedHabit.energy_cost}
       energyReturn={editedHabit.energy_return}
       onCommitCost={(value) => handleChange('energy_cost', value)}
       onCommitReturn={(value) => handleChange('energy_return', value)}
     />
+  </SettingsSection>
+);
+
+const ScheduleSection = ({
+  editedHabit,
+  handleChange,
+}: {
+  editedHabit: Habit;
+  handleChange: ChangeHandler;
+}) => (
+  <SettingsSection title="Schedule">
     <View style={styles.settingRow}>
       <Text style={styles.editSettingLabel}>Start Date:</Text>
       <DateTimePicker
         value={new Date(editedHabit.start_date)}
         mode="date"
         display="default"
-        onChange={(event, date) => date && handleChange('start_date', date)}
+        onChange={(_event, date) => date && handleChange('start_date', date)}
       />
     </View>
-  </>
+  </SettingsSection>
 );
 
-const FormActionButtons = ({ onSave, onDelete }: { onSave: () => void; onDelete: () => void }) => (
-  <View style={styles.buttonGroup}>
-    <Button label="Save Changes" variant="primary" onPress={onSave} testID="habit-settings-save" />
+interface RemindersSectionProps {
+  habit: Habit;
+  notificationTime: string;
+  showTimePicker: boolean;
+  showDaysPicker: boolean;
+  setShowTimePicker: (_v: boolean) => void;
+  setShowDaysPicker: (_v: boolean) => void;
+  onChange: ChangeHandler;
+  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
+  onAddTime: () => void;
+  onRemoveTime: (_time: string) => void;
+  onToggleDay: (_day: string) => void;
+}
+
+const RemindersSection = ({
+  habit,
+  notificationTime,
+  showTimePicker,
+  showDaysPicker,
+  setShowTimePicker,
+  setShowDaysPicker,
+  onChange,
+  onTimeChange,
+  onAddTime,
+  onRemoveTime,
+  onToggleDay,
+}: RemindersSectionProps) => {
+  const notificationsOn = habit.notificationFrequency !== 'off';
+  return (
+    <SettingsSection title="Reminders">
+      <NotificationsToggleRow isEnabled={notificationsOn} onChange={onChange} />
+      {notificationsOn && (
+        <>
+          <FrequencyChipRow habit={habit} onChange={onChange} />
+          {habit.notificationFrequency === 'custom' && (
+            <CustomDaysPicker
+              habit={habit}
+              showDaysPicker={showDaysPicker}
+              setShowDaysPicker={setShowDaysPicker}
+              onToggleDay={onToggleDay}
+            />
+          )}
+          <NotifTimeSection
+            notificationTime={notificationTime}
+            showTimePicker={showTimePicker}
+            notifTimes={habit.notificationTimes || []}
+            setShowTimePicker={setShowTimePicker}
+            onTimeChange={onTimeChange}
+            onAddTime={onAddTime}
+            onRemoveTime={onRemoveTime}
+          />
+        </>
+      )}
+      <MilestoneToggleRow habit={habit} onChange={onChange} />
+    </SettingsSection>
+  );
+};
+
+const UtilityRow = ({
+  allHabits,
+  onOpenReorderModal,
+}: {
+  allHabits: Habit[];
+  onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
+}) => (
+  <View style={styles.utilityRow}>
+    <Button
+      label="Reorder Habits"
+      variant="secondary"
+      onPress={() => onOpenReorderModal(allHabits)}
+      testID="habit-settings-reorder"
+    />
+  </View>
+);
+
+const DangerZoneSection = ({ onDelete }: { onDelete: () => void }) => (
+  <SettingsSection title="Danger Zone">
     <TouchableOpacity testID="habit-settings-delete" style={styles.deleteButton} onPress={onDelete}>
       <Text style={styles.deleteButtonText}>Delete Habit</Text>
     </TouchableOpacity>
+  </SettingsSection>
+);
+
+interface SettingsFormProps {
+  editedHabit: Habit;
+  showEmojiSelector: boolean;
+  setShowEmojiSelector: (_v: boolean) => void;
+  handleChange: ChangeHandler;
+  allHabits: Habit[];
+  onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
+  notificationTime: string;
+  showTimePicker: boolean;
+  showDaysPicker: boolean;
+  setShowTimePicker: (_v: boolean) => void;
+  setShowDaysPicker: (_v: boolean) => void;
+  onTimeChange: (_event: DateTimePickerEvent, _date?: Date) => void;
+  onAddTime: () => void;
+  onRemoveTime: (_time: string) => void;
+  onToggleDay: (_day: string) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}
+
+const SaveRow = ({ onSave }: { onSave: () => void }) => (
+  <View style={styles.saveRow}>
+    <Button label="Save Changes" variant="primary" onPress={onSave} testID="habit-settings-save" />
   </View>
 );
 
@@ -367,16 +459,15 @@ const SettingsForm = ({
   onDelete,
 }: SettingsFormProps) => (
   <ScrollView style={styles.settingsContainer}>
-    <BasicFields
+    <HabitSection
       editedHabit={editedHabit}
       showEmojiSelector={showEmojiSelector}
       setShowEmojiSelector={setShowEmojiSelector}
       handleChange={handleChange}
-      allHabits={allHabits}
-      onOpenReorderModal={onOpenReorderModal}
     />
-    <EnergyAndDateSection editedHabit={editedHabit} handleChange={handleChange} />
-    <NotificationSettings
+    <EnergySection editedHabit={editedHabit} handleChange={handleChange} />
+    <ScheduleSection editedHabit={editedHabit} handleChange={handleChange} />
+    <RemindersSection
       habit={editedHabit}
       notificationTime={notificationTime}
       showTimePicker={showTimePicker}
@@ -389,17 +480,16 @@ const SettingsForm = ({
       onRemoveTime={onRemoveTime}
       onToggleDay={onToggleDay}
     />
-    <FormActionButtons onSave={onSave} onDelete={onDelete} />
+    <UtilityRow allHabits={allHabits} onOpenReorderModal={onOpenReorderModal} />
+    <SaveRow onSave={onSave} />
+    <DangerZoneSection onDelete={onDelete} />
   </ScrollView>
 );
 
 const formatTime = (date: Date): string =>
   `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
-const useNotificationHandlers = (
-  editedHabit: Habit | null,
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void,
-) => {
+const useNotificationHandlers = (editedHabit: Habit | null, handleChange: ChangeHandler) => {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [notificationTime, setNotificationTime] = useState('08:00');
   const [showDaysPicker, setShowDaysPicker] = useState(false);
@@ -449,7 +539,7 @@ const useSettingsHandlers = (
   onUpdate: HabitSettingsModalProps['onUpdate'],
   onDeleteProp: HabitSettingsModalProps['onDelete'],
   onClose: () => void,
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void,
+  handleChange: ChangeHandler,
 ) => {
   const notif = useNotificationHandlers(editedHabit, handleChange);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -487,7 +577,7 @@ interface SettingsBodyProps {
   editedHabit: Habit;
   showEmojiSelector: boolean;
   setShowEmojiSelector: (_v: boolean) => void;
-  handleChange: <K extends keyof Habit>(_field: K, _value: Habit[K]) => void;
+  handleChange: ChangeHandler;
   allHabits: Habit[];
   onClose: () => void;
   onOpenReorderModal: HabitSettingsModalProps['onOpenReorderModal'];
@@ -509,7 +599,7 @@ const SettingsModalBody = ({
       testID="habit-settings-card"
       style={[styles.editModalCard, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
     >
-      <ModalHeader title="Edit Habit" onClose={onClose} />
+      <ModalHeader title="Edit Habit" onClose={onClose} closeTestID="habit-settings-close" />
       <SettingsForm
         editedHabit={editedHabit}
         showEmojiSelector={showEmojiSelector}

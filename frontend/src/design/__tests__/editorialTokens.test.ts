@@ -1,6 +1,14 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { colors, editorialType, journalLayout, journalSheet, paperShadow } from '../tokens';
+import {
+  INTERACTIVE_TEXT_MIN,
+  colors,
+  editorialType,
+  journalLayout,
+  journalSheet,
+  paperShadow,
+  uiType,
+} from '../tokens';
 
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
@@ -118,7 +126,15 @@ describe('editorial tokens', () => {
     });
 
     it('exports the long-form scale + a margin-note style', () => {
-      for (const key of ['display', 'title', 'body', 'note', 'caption', 'marginNote'] as const) {
+      for (const key of [
+        'display',
+        'title',
+        'body',
+        'note',
+        'caption',
+        'marginNote',
+        'action',
+      ] as const) {
         const style = editorialType[key];
         expect(style.fontFamily).toBe(editorialType.serif);
         expect(style.fontSize).toBeGreaterThan(0);
@@ -129,6 +145,21 @@ describe('editorial tokens', () => {
     it('uses a body size in the editorial 17-18px range', () => {
       expect(editorialType.body.fontSize).toBeGreaterThanOrEqual(17);
       expect(editorialType.body.fontSize).toBeLessThanOrEqual(18);
+    });
+
+    it('defines an accessibility floor for tappable text, exactly 16px', () => {
+      // caption is 13px, below the tappable-text floor -- interactive labels
+      // must use editorialType.action (16px) instead. This constant is an
+      // exact accessibility floor, never a >= comparison.
+      expect(INTERACTIVE_TEXT_MIN).toBe(16);
+    });
+
+    it('sizes action to the interactive floor, matching the ui button face', () => {
+      expect(editorialType.action.fontSize).toBe(INTERACTIVE_TEXT_MIN);
+      expect(editorialType.action.fontSize).toBe(uiType.button.fontSize);
+      expect(editorialType.action.lineHeight).toBe(24);
+      expect(editorialType.action.fontWeight).toBe('600');
+      expect(editorialType.action.fontFamily).toBe(editorialType.serif);
     });
   });
 });

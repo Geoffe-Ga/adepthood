@@ -108,7 +108,7 @@ export const HABIT_DEFAULTS: Habit[] = [
   },
   {
     id: 3,
-    stage: 'Turquoise',
+    stage: 'Teal',
     name: 'Limit Caffeine',
     icon: '☕',
     streak: 0,

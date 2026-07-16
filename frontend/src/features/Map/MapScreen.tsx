@@ -9,6 +9,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -53,7 +54,12 @@ import {
   TITLE_BY_STAGE,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
-import { stageService, isStageUnlocked, isEndOfCycle } from './services/stageService';
+import {
+  stageService,
+  isStageUnlocked,
+  isEndOfCycle,
+  highestCompletedStage,
+} from './services/stageService';
 import { type StageData } from './stageData';
 import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
@@ -811,18 +817,19 @@ interface MapGridProps {
 }
 
 // Optional decorative backdrop. The grid is fully legible without it (#766), so
-// a missing PNG is a faint no-op rather than a third-party placeholder.
-const MapBackdrop = (): React.JSX.Element =>
-  MAP_BACKGROUND_URI ? (
-    <Image
-      source={{ uri: MAP_BACKGROUND_URI }}
-      resizeMode="contain"
-      style={styles.backdrop}
-      testID="map-background"
-    />
-  ) : (
-    <View style={styles.backdrop} testID="map-background" pointerEvents="none" />
-  );
+// a missing PNG is a faint no-op rather than a third-party placeholder. The
+// absolute-fill layer is always non-interactive so it never intercepts touches
+// meant for the grid or its surrounding padding; the art (when configured) sits
+// inside the same non-interactive wrapper.
+export const MapBackdrop = ({
+  uri = MAP_BACKGROUND_URI,
+}: {
+  uri?: string | null;
+}): React.JSX.Element => (
+  <View style={styles.backdrop} testID="map-background" pointerEvents="none">
+    {uri ? <Image source={{ uri }} resizeMode="contain" style={StyleSheet.absoluteFill} /> : null}
+  </View>
+);
 
 interface JourneyHeaderProps {
   currentStage: number;
@@ -1014,10 +1021,6 @@ const useLensFocus = (
   return { focusedStage, setFocusedStage, handleSelectStage, handleOpenStage };
 };
 
-/** Highest stage number whose progress has reached 100%, or 0 when none. */
-const highestCompletedStage = (stages: readonly StageData[]): number =>
-  stages.reduce((max, s) => (s.progress >= FULL_PROGRESS ? Math.max(max, s.stageNumber) : max), 0);
-
 interface CompletionCelebration {
   active: boolean;
   message: string;
@@ -1075,7 +1078,6 @@ interface MapScreenDrawerProps {
   drawer: ScreenDrawerState;
   lookup: StageLookup;
   currentStage: number;
-  fullnessByStage: FullnessLookup;
   cycleNumber: number;
   onSelectStage: (_stageNumber: number) => void;
 }
@@ -1085,7 +1087,6 @@ const MapScreenDrawer = ({
   drawer,
   lookup,
   currentStage,
-  fullnessByStage,
   cycleNumber,
   onSelectStage,
 }: MapScreenDrawerProps): React.JSX.Element => (
@@ -1094,7 +1095,6 @@ const MapScreenDrawer = ({
     <MapDrawer
       lookup={lookup}
       currentStage={currentStage}
-      fullnessByStage={fullnessByStage}
       cycleNumber={cycleNumber}
       onSelectStage={onSelectStage}
     />
@@ -1157,7 +1157,6 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
         drawer={props.drawer}
         lookup={props.lookup}
         currentStage={props.currentStage}
-        fullnessByStage={props.fullnessByStage}
         cycleNumber={props.cycleNumber}
         onSelectStage={props.onDrawerSelectStage}
       />
@@ -1165,17 +1164,19 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
   </View>
 );
 
-/** Map header drawer: a row tap closes it and glides the lens to that stage. */
+/** Map header drawer: a row tap closes it, glides the lens, and opens the modal. */
 const useMapDrawer = (
   lens: LensFocus,
 ): { drawer: ScreenDrawerState; onDrawerSelectStage: (_stageNumber: number) => void } => {
   const drawer = useScreenDrawer('Map');
-  // A drawer row tap is a pure select-and-highlight: the map is not scrollable,
-  // so close the drawer and glide the magnifier lens to the tapped stage.
+  // A drawer row tap closes the drawer, glides the magnifier lens to the tapped
+  // stage, and opens that stage's detail modal (falling back to glide-only when
+  // the stage isn't loaded yet, since handleOpenStage no-ops on a missing stage).
   const onDrawerSelectStage = useCallback(
     (stageNumber: number) => {
       drawer.close();
       lens.setFocusedStage(stageNumber);
+      lens.handleOpenStage(stageNumber);
     },
     [drawer, lens],
   );

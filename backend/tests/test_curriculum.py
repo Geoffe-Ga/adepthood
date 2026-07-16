@@ -25,6 +25,89 @@ CANONICAL_PHASE_ORDER = (
     WavelengthPhase.RESTORATION,
 )
 
+_CANONICAL_STAGE_ONTOLOGY: dict[int, dict[str, str]] = {
+    1: {
+        "category": "Yes-And-Ness",
+        "aspect": "Agency",
+        "spiral_dynamics_color": "Beige",
+        "growing_up_stage": "Survival",
+        "divine_gender_polarity": "Divine Masculine",
+        "relationship_to_free_will": "Biological Machine",
+    },
+    2: {
+        "category": "Yes-And-Ness",
+        "aspect": "Receptivity",
+        "spiral_dynamics_color": "Purple",
+        "growing_up_stage": "Magic",
+        "divine_gender_polarity": "Divine Feminine",
+        "relationship_to_free_will": "Archetype Embodier",
+    },
+    3: {
+        "category": "Love",
+        "aspect": "Self-Love",
+        "spiral_dynamics_color": "Red",
+        "growing_up_stage": "Ego-centrism",
+        "divine_gender_polarity": "Divine Masculine",
+        "relationship_to_free_will": "Dominator",
+    },
+    4: {
+        "category": "Love",
+        "aspect": "Community Love",
+        "spiral_dynamics_color": "Blue",
+        "growing_up_stage": "Conformity",
+        "divine_gender_polarity": "Divine Feminine",
+        "relationship_to_free_will": "Victim",
+    },
+    5: {
+        "category": "Understanding",
+        "aspect": "Intellectual Understanding",
+        "spiral_dynamics_color": "Orange",
+        "growing_up_stage": "Achievest",
+        "divine_gender_polarity": "Divine Masculine",
+        "relationship_to_free_will": "Status Seeker",
+    },
+    6: {
+        "category": "Understanding",
+        "aspect": "Embodied Understanding",
+        "spiral_dynamics_color": "Green",
+        "growing_up_stage": "Pluralistic",
+        "divine_gender_polarity": "Divine Feminine",
+        "relationship_to_free_will": "Shadow Glorifier",
+    },
+    7: {
+        "category": "Wisdom",
+        "aspect": "Systems Wisdom",
+        "spiral_dynamics_color": "Yellow",
+        "growing_up_stage": "Integrative",
+        "divine_gender_polarity": "Divine Masculine",
+        "relationship_to_free_will": "Despairing Analyst",
+    },
+    8: {
+        "category": "Wisdom",
+        "aspect": "True Self Connection",
+        "spiral_dynamics_color": "Teal",
+        "growing_up_stage": "Nonduality",
+        "divine_gender_polarity": "Divine Feminine",
+        "relationship_to_free_will": "True Self Embodier",
+    },
+    9: {
+        "category": "Being",
+        "aspect": "Unity",
+        "spiral_dynamics_color": "Ultraviolet",
+        "growing_up_stage": "Effortless Being",
+        "divine_gender_polarity": "Divine Hermaphrodite",
+        "relationship_to_free_will": "Blissy Adept",
+    },
+    10: {
+        "category": "Awareness",
+        "aspect": "Emptiness",
+        "spiral_dynamics_color": "Clear Light",
+        "growing_up_stage": "Pure Awareness",
+        "divine_gender_polarity": "Divine Hermaphrodite",
+        "relationship_to_free_will": "Whole Adept",
+    },
+}
+
 
 def test_wavelength_phase_values_are_human_strings() -> None:
     """Enum values are the human-readable phase names, not member names."""
@@ -81,13 +164,30 @@ def test_stage_curriculum_returns_beige_survival() -> None:
     assert stage.stage_number == 1
     assert stage.title == "Survival"
     assert stage.subtitle == "Active Yes-And-Ness"
-    assert stage.aspect == "Body"
+    assert stage.aspect == "Agency"
     assert stage.spiral_dynamics_color == "Beige"
 
     rising = stage.manifestations[0]
     assert rising.phase == WavelengthPhase.RISING
     assert rising.integrated.name == "Commitment"
     assert rising.shadow.name == "Over-commitment"
+
+
+def test_stage_attributes_match_canonical_ontology() -> None:
+    """Every stage's short attribute fields match the canonical APTITUDE ontology."""
+    fields = (
+        "category",
+        "aspect",
+        "spiral_dynamics_color",
+        "growing_up_stage",
+        "divine_gender_polarity",
+        "relationship_to_free_will",
+    )
+    for stage in all_stages():
+        canonical = _CANONICAL_STAGE_ONTOLOGY[stage.stage_number]
+        for field in fields:
+            msg = f"stage {stage.stage_number} field {field!r} mismatch"
+            assert getattr(stage, field) == canonical[field], msg
 
 
 def test_manifestation_returns_beige_rising() -> None:
@@ -269,9 +369,10 @@ def _require_nonempty_str(value: object) -> None:
 
 
 def test_dataset_carries_provenance_pointer() -> None:
-    """The vendored dataset records where its copy came from (source + extraction)."""
+    """The vendored dataset records where its copy came from (sources + extraction)."""
     provenance = _provenance()
-    _require_nonempty_str(provenance["source"])
+    _require_nonempty_str(provenance["stage_attributes_source"])
+    _require_nonempty_str(provenance["manifestations_source"])
     _require_nonempty_str(provenance["extracted_from"])
     _require_nonempty_str(provenance["refresh_doc"])
 
