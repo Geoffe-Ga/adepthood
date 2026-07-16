@@ -191,6 +191,40 @@ const styles = StyleSheet.create({
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
   },
+  /** Quiet in-flight line shown under the body while a promote POST is pending. */
+  promotionInflight: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Transient success confirmation ("Promoted") after a span is raised. */
+  promotionSuccess: {
+    ...editorialType.note,
+    color: colors.successText,
+    paddingTop: spacing(1),
+  },
+  /** Legible (note-sized) error notice for a failed promote/remove. */
+  promotionErrorText: {
+    ...editorialType.note,
+    color: colors.danger,
+    paddingTop: spacing(1),
+  },
+  /** Anchored card revealed beside a tapped promoted span, offering removal. */
+  promotionRemoveCard: {
+    backgroundColor: colors.paper.background,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginTop: spacing(1),
+  },
+  /** Echo of the tapped quote's text inside the remove card. */
+  promotionRemoveQuote: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    fontStyle: 'italic',
+    paddingBottom: spacing(1),
+  },
   /** Privacy tier chooser block above the growing body. */
   privacyTierControl: {
     paddingBottom: spacing(1),

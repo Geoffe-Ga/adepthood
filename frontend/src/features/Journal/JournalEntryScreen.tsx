@@ -1146,6 +1146,12 @@ interface QuotePromotion {
   quotes: PromotedQuote[];
   /** Warm, declinable copy for the latest failed promote/remove; null otherwise. */
   hint: string | null;
+  /** True while a promote POST is in flight; drives the in-flight notice + busy control. */
+  promoting: boolean;
+  /** True briefly after a successful promote; drives the transient success notice. */
+  promoted: boolean;
+  /** Re-post the last failed span with the same anchors; null unless a promote failed. */
+  retryPromote: (() => Promise<void>) | null;
   /** True while the reader is choosing a span in the selection TextInput. */
   selecting: boolean;
   /** The quote whose "Remove promotion" affordance is currently revealed, if any. */
@@ -1156,13 +1162,21 @@ interface QuotePromotion {
   confirmSelection: () => Promise<void>;
   onQuotePress: (_quote: PromotedQuote) => void;
   confirmRemove: () => void;
+  /** Dismiss the revealed remove card without removing (tap elsewhere in the body). */
+  dismissRemove: () => void;
 }
+
+/** The gesture slice of {@link QuotePromotion} owned by {@link useQuoteInteraction}. */
+type QuoteInteraction = Omit<
+  QuotePromotion,
+  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote'
+>;
 
 /** The read-mode selection/removal gestures over the {@link usePromotions} state. */
 function useQuoteInteraction(
   promote: (_start: number, _end: number) => Promise<void>,
   removePromotion: (_id: number) => Promise<void>,
-): Omit<QuotePromotion, 'quotes' | 'hint'> {
+): QuoteInteraction {
   const [selecting, setSelecting] = useState(false);
   const [removeTargetId, setRemoveTargetId] = useState<number | null>(null);
   // The latest selection, held in a ref so a keystroke-free selection change
@@ -1194,6 +1208,7 @@ function useQuoteInteraction(
     setRemoveTargetId(null);
     if (id != null) void removePromotion(id);
   }, [removeTargetId, removePromotion]);
+  const dismissRemove = useCallback(() => setRemoveTargetId(null), []);
 
   return {
     selecting,
@@ -1204,40 +1219,30 @@ function useQuoteInteraction(
     confirmSelection,
     onQuotePress,
     confirmRemove,
+    dismissRemove,
   };
 }
 
 /** Compose the promoted-quote state with its read-mode selection gestures. */
 function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
-  const { quotes, hint, promote, removePromotion } = usePromotions({ entryId: routeEntryId ?? 0 });
+  const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote } =
+    usePromotions({ entryId: routeEntryId ?? 0 });
   const interaction = useQuoteInteraction(promote, removePromotion);
-  return { quotes, hint, ...interaction };
+  return { quotes, hint, promoting, promoted, retryPromote, ...interaction };
 }
 
-/** Read-mode affordances: a remove offer (when a span is tapped), Promote, Edit. */
+/** Read-mode affordances: the Promote-a-quote action and the Edit link. */
 function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: () => void }) {
   return (
     <>
-      {quote.removeTargetId != null ? (
-        <TouchableOpacity
-          onPress={quote.confirmRemove}
-          accessibilityRole="button"
-          accessibilityLabel="Remove promotion"
-          style={styles.quoteActionButton}
-          testID={`promotion-remove-${quote.removeTargetId}`}
-        >
-          <Text style={styles.controlLink}>Remove promotion</Text>
-        </TouchableOpacity>
-      ) : null}
-      <TouchableOpacity
+      <Button
+        variant="tertiary"
         onPress={quote.startSelecting}
-        accessibilityRole="button"
         accessibilityLabel="Promote a quote"
-        style={styles.quoteActionButton}
         testID="promote-quote-button"
-      >
-        <Text style={styles.controlLink}>Promote a quote</Text>
-      </TouchableOpacity>
+        label="Promote a quote"
+        busy={quote.promoting}
+      />
       <TouchableOpacity
         onPress={onEdit}
         accessibilityRole="button"
@@ -1248,6 +1253,63 @@ function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: ()
       </TouchableOpacity>
     </>
   );
+}
+
+/** Copy for the promote-lifecycle notices (real ellipsis inside the in-flight line). */
+const PROMOTING_COPY = 'Promoting…';
+const PROMOTED_COPY = 'Promoted';
+
+/** Transient success confirmation that settles in (motion-safe via useSettleIn). */
+function PromotedNotice(): React.JSX.Element {
+  const settle = useSettleIn(useReducedMotion());
+  return (
+    <Animated.Text
+      style={[styles.promotionSuccess, settle]}
+      testID="quote-promotion-success"
+      accessibilityRole="text"
+    >
+      {PROMOTED_COPY}
+    </Animated.Text>
+  );
+}
+
+/** The failed-promote notice: a legible error line plus a same-anchors retry. */
+function PromotionErrorNotice({ quote }: { quote: QuotePromotion }): React.JSX.Element {
+  const retry = quote.retryPromote;
+  return (
+    <>
+      <Text style={styles.promotionErrorText} testID="quote-promotion-error">
+        {quote.hint}
+      </Text>
+      {retry != null ? (
+        <Button
+          variant="tertiary"
+          label="Try again"
+          accessibilityLabel="Try again"
+          testID="quote-promotion-retry"
+          onPress={() => void retry()}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * In-flight / error / success feedback for the promote lifecycle, under the body.
+ * An error (``hint``) outranks a lingering success notice so a failed remove that
+ * lands while a prior "Promoted" confirmation is still up reads honestly.
+ */
+function QuotePromotionFeedback({ quote }: { quote: QuotePromotion }): React.JSX.Element | null {
+  if (quote.promoting) {
+    return (
+      <Text style={styles.promotionInflight} testID="quote-promotion-inflight">
+        {PROMOTING_COPY}
+      </Text>
+    );
+  }
+  if (quote.hint != null) return <PromotionErrorNotice quote={quote} />;
+  if (quote.promoted) return <PromotedNotice />;
+  return null;
 }
 
 /** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
@@ -1282,19 +1344,20 @@ function ReadColumn({
           onCancel={quote.cancelSelecting}
         />
       ) : (
-        <HighlightedBody
-          body={body}
-          notes={notes}
-          onOpen={onOpen}
-          quotes={quote.quotes}
-          onQuotePress={quote.onQuotePress}
-        />
+        <>
+          <HighlightedBody
+            body={body}
+            notes={notes}
+            onOpen={onOpen}
+            quotes={quote.quotes}
+            onQuotePress={quote.onQuotePress}
+            removeTargetId={quote.removeTargetId}
+            onConfirmRemove={quote.confirmRemove}
+            onDismissRemove={quote.dismissRemove}
+          />
+          <QuotePromotionFeedback quote={quote} />
+        </>
       )}
-      {quote.hint != null ? (
-        <Text style={styles.savedHint} testID="quote-promotion-error">
-          {quote.hint}
-        </Text>
-      ) : null}
       {quote.selecting ? null : <ReadModeControls quote={quote} onEdit={onEdit} />}
     </ScrollView>
   );
