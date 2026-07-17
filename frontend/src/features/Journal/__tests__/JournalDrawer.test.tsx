@@ -69,6 +69,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
   const onNewEntry = props.onNewEntry ?? jest.fn();
   const onLoadMore = jest.fn();
   const onRetry = jest.fn();
+  const onConfirmBodySearch = jest.fn();
   const result = render(
     <JournalDrawer
       items={props.items ?? []}
@@ -81,9 +82,10 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onNewEntry={onNewEntry}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
+      onConfirmBodySearch={onConfirmBodySearch}
     />,
   );
-  return { ...result, onRowPress, onNewEntry, onLoadMore, onRetry };
+  return { ...result, onRowPress, onNewEntry, onLoadMore, onRetry, onConfirmBodySearch };
 }
 
 describe('JournalDrawer (presentational)', () => {
@@ -240,6 +242,7 @@ function Harness(): React.JSX.Element {
           onNewEntry={() => undefined}
           onLoadMore={loadMore}
           onRetry={retry}
+          onConfirmBodySearch={() => undefined}
         />
       ) : null}
     </View>
