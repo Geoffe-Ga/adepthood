@@ -1,0 +1,330 @@
+name: Graph federate
+
+# Merges adepthood's own code graph with the published knowledge graphs of its
+# satellite repos (Creek-Vault, aptitude-course, wavelength-demo,
+# WavelengthWatch) into one pan-graph and publishes it on the SAME rolling
+# `knowledge-graph` release that graph-build and graph-semantic maintain.
+#
+# This workflow uploads ONLY pan-graph.json + pan-meta.json. It NEVER writes
+# graph.json / graph-meta.json, so it cannot clobber the assets that graph-build
+# (code-only) and graph-semantic (code+semantic) own on the shared release.
+# Three writers, one release, three disjoint asset sets.
+#
+# $0 / no secrets: satellite graphs are fetched over plain public HTTPS (release
+# assets + raw.githubusercontent.com); the only credential is the built-in
+# GITHUB_TOKEN, scoped `contents: write` for the release upsert and confined to
+# the two `gh` steps (own-graph download + publish). The graphify binary and
+# curl never see a write token.
+#
+# GO-PRIVATE CAVEAT (LOUD — READ BEFORE ADDING OR TRUSTING SATELLITES): every
+# satellite fetch below assumes the satellite repo is PUBLIC. If ANY satellite
+# ever goes private, two things break: (1) its plain-HTTPS fetch 404s and that
+# repo silently drops out of the pan-graph, and (2) — the dangerous one — a
+# merged pan-graph containing private-repo structure must NOT keep riding this
+# PUBLIC release. If a satellite goes private you MUST revisit distribution
+# (authenticated fetch + a private artifact store) BEFORE this workflow may
+# legitimately include it. Do NOT "fix" a private satellite by wiring a token
+# into the fetch step here — that would leak private structure onto a public
+# asset.
+
+on:
+  schedule:
+    # 06:10 UTC — after graph-build's 04:40 nightly rebuild has published a fresh
+    # own graph, and clear of graph-semantic's Monday 05:20 weekly pass.
+    - cron: "10 6 * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    # Lets a satellite repo poke a re-federation when its own graph updates.
+    types: [graph-updated]
+
+# Only the rolling-release upsert needs write; every fetch is read-only HTTPS.
+permissions:
+  contents: write
+
+# Its OWN group (not graph-build's / graph-semantic's): all three writers share
+# the one rolling release, so they must never cancel one another. Never cancel
+# in-progress — a cancelled publish would leave the release half-written.
+concurrency:
+  group: graph-federate
+  cancel-in-progress: false
+
+jobs:
+  federate:
+    name: Federate and publish pan-graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # GH_TOKEN is scoped per-step (own-graph download + publish only) so neither
+    # graphify nor curl ever runs with a write-scoped token in its env.
+    env:
+      GRAPH_TAG: knowledge-graph
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        # No step git-pushes (publish rides `gh` + GH_TOKEN, not `git push`), so
+        # the write-scoped token never needs to live in .git/config for the job.
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve pinned graphifyy version
+        id: tool
+        # Cache key + pan-meta provenance both key off the single pin.
+        run: |
+          version="$(sed -n 's/^graphifyy==//p' scripts/graph/requirements.txt)"
+          if [[ -z "$version" ]]; then
+            echo "::error::could not read graphifyy pin from scripts/graph/requirements.txt"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache graphify toolchain
+        # Tool install only — keyed on the graphifyy pin so a version bump busts
+        # it (same key shares graph-build's / graph-semantic's sibling caches).
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: graphifyy-${{ runner.os }}-${{ steps.tool.outputs.version }}
+
+      - name: Install graphify toolchain
+        run: pip install -r scripts/graph/requirements.txt
+
+      - name: Download own graph
+        # The ONLY fatal fetch: without adepthood's own graph there is nothing to
+        # federate. graphify's merge-graphs derives each input's repo tag (its
+        # node-id prefix AND `repo` node attribute) from the graph file's
+        # GRANDPARENT directory name — see distinct_repo_tags in graphify.build —
+        # NOT from the filename. So every input is laid out as
+        # `fed/<repo>/graphify-out/graph.json`, which makes the tag resolve to
+        # `<repo>` (here `adepthood`). A flat `fed/adepthood.json` would collapse
+        # all tags to `repo`, `repo-2`, ... and lose per-repo identity.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p fed/adepthood/graphify-out
+          if ! gh release download "$GRAPH_TAG" --pattern graph.json --dir fed/adepthood/graphify-out --clobber; then
+            echo "::error::adepthood own graph.json missing from release — cannot federate"
+            exit 1
+          fi
+
+      - name: Fetch satellite graphs
+        # NO GH_TOKEN here: satellites are fetched over plain public HTTPS, so the
+        # graphify+curl surface never sees a write token. A satellite that 404s
+        # (unpublished, renamed, or gone private — see the header caveat) degrades
+        # to a ::warning and an excluded repo; it never fails the run.
+        run: |
+          set -euo pipefail
+          mkdir -p fed
+          # name|human-repo|url — ORDER IS SIGNIFICANT: it fixes the merge-graphs
+          # argument order and therefore the deterministic per-repo node-id
+          # prefixes in the pan-graph. All four satellites have default branch
+          # `main` (verified), which the raw.githubusercontent.com URLs pin.
+          satellites=(
+            "creek|Creek-Vault|https://github.com/Geoffe-Ga/Creek-Vault/releases/download/knowledge-graph/graph.json"
+            "course|aptitude-course|https://raw.githubusercontent.com/Geoffe-Ga/aptitude-course/main/graphify-out/graph.json"
+            "demo|wavelength-demo|https://raw.githubusercontent.com/Geoffe-Ga/wavelength-demo/main/graphify-out/graph.json"
+            "watch|WavelengthWatch|https://raw.githubusercontent.com/Geoffe-Ga/WavelengthWatch/main/graphify-out/graph.json"
+          )
+          : > fed/present.txt
+          present=()
+          for entry in "${satellites[@]}"; do
+            IFS='|' read -r name human url <<<"$entry"
+            # Same `fed/<repo>/graphify-out/graph.json` layout as the own graph so
+            # merge-graphs tags this input with the satellite's short name.
+            dest="fed/$name/graphify-out"
+            mkdir -p "$dest"
+            # --connect-timeout bounds a satellite host that accepts the TCP
+            # connection but never responds, so a hung host stays a graceful
+            # skip instead of burning --max-time x --retry and tripping the
+            # job timeout (which would fail the whole run, not just this repo).
+            if curl -fsSL --connect-timeout 20 --retry 2 --max-time 300 -o "$dest/graph.json" "$url" \
+              && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$dest/graph.json"; then
+              echo "satellite $name ($human) fetched and JSON-validated"
+              echo "$name" >> fed/present.txt
+              present+=("$name")
+            else
+              echo "::warning::satellite $name unfetchable — excluded from this pan-graph"
+              rm -rf "fed/$name"
+            fi
+          done
+          # Single source of truth for the meta step: a five-repo manifest with
+          # present flags. adepthood is always present here (its fetch is fatal).
+          # The satellite table is serialized straight out of the bash array so it
+          # can never drift from the loop above.
+          sat_table="$(printf '%s\n' "${satellites[@]}")"
+          PRESENT="${present[*]:-}" SAT_TABLE="$sat_table" python3 - <<'PY'
+          import json
+          import os
+
+          present = set(os.environ.get("PRESENT", "").split())
+          rows = [("adepthood", "Adepthood", "release:knowledge-graph", True)]
+          for line in os.environ.get("SAT_TABLE", "").splitlines():
+              line = line.strip()
+              if not line:
+                  continue
+              name, human, url = line.split("|", 2)
+              rows.append((name, human, url, name in present))
+          manifest = [
+              {"name": name, "repo": human, "source_url": url, "present": is_present}
+              for (name, human, url, is_present) in rows
+          ]
+          with open("fed/repos.json", "w", encoding="utf-8") as handle:
+              json.dump(manifest, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          got = sum(1 for row in manifest if row["present"])
+          print(f"manifest: {got}/{len(manifest)} repos present")
+          PY
+
+      - name: Merge graphs
+        # merge-graphs' --out writes the LITERAL path given (verified against
+        # graphify 0.9.17: cli.py writes out_path directly, no graphify-out/
+        # prefix) and REQUIRES >= 2 inputs. When zero satellites survived, the
+        # lone adepthood input would be rejected, so we fall back to copying it
+        # verbatim. The `repo` node attribute that merge-graphs stamps is left
+        # untouched (no post-processing). No `set -e` here: the post-condition
+        # guard below is the intended failure surface so it can dump `ls -laR`.
+        run: |
+          set -uo pipefail
+          own="fed/adepthood/graphify-out/graph.json"
+          merge_args=()
+          while IFS= read -r name; do
+            [[ -n "$name" ]] && merge_args+=("fed/$name/graphify-out/graph.json")
+          done < fed/present.txt
+          if [[ ${#merge_args[@]} -ge 1 ]]; then
+            graphify merge-graphs "$own" "${merge_args[@]}" --out pan-graph.json
+          else
+            echo "::warning::no satellite graphs present — pan-graph is adepthood-only"
+            cp "$own" pan-graph.json
+          fi
+          # Post-condition guard: tolerate either the literal path or a stray
+          # graphify-out/ landing spot before failing loud.
+          if [[ ! -f pan-graph.json ]]; then
+            if [[ -f graphify-out/pan-graph.json ]]; then
+              mv graphify-out/pan-graph.json pan-graph.json
+            else
+              echo "::error::pan-graph.json was not produced by merge-graphs"
+              ls -laR
+              exit 1
+            fi
+          fi
+
+      - name: Benchmark pan-graph
+        # Non-fatal: a benchmark that trips graphify's graph-size cap (or any
+        # other error) must not block publishing a valid pan-graph. Output is
+        # fenced into the job summary and also echoed to the step log.
+        run: |
+          set -uo pipefail
+          {
+            echo "### Pan-graph benchmark"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          graphify benchmark pan-graph.json | tee -a "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::benchmark failed — pan-graph still publishes"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write pan-meta.json
+        env:
+          GRAPHIFYY_VERSION: ${{ steps.tool.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f pan-graph.json ]]; then
+            echo "::error::pan-graph.json missing — cannot write pan-meta.json"
+            exit 1
+          fi
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          sha="$(git rev-parse --short HEAD)"
+          BUILT_AT="$built_at" SHA="$sha" python3 - pan-graph.json fed/repos.json pan-meta.json <<'PY'
+          import json
+          import os
+          import sys
+
+          graph_path, manifest_path, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+          def edge_list(graph):
+              # Own/satellite graph.json use "edges"; the merged pan-graph is
+              # serialized by networkx node_link_data as "links". Accept either.
+              if "edges" in graph:
+                  return graph["edges"]
+              return graph.get("links", [])
+
+          with open(graph_path, encoding="utf-8") as handle:
+              pan = json.load(handle)
+
+          with open(manifest_path, encoding="utf-8") as handle:
+              manifest = json.load(handle)
+
+          repos = {}
+          repos_present = []
+          repos_missing = []
+          for entry in manifest:
+              human = entry["repo"]
+              is_present = bool(entry["present"])
+              nodes = 0
+              edges = 0
+              source = os.path.join("fed", entry["name"], "graphify-out", "graph.json")
+              if is_present and os.path.exists(source):
+                  with open(source, encoding="utf-8") as src_handle:
+                      per_repo = json.load(src_handle)
+                  nodes = len(per_repo.get("nodes", []))
+                  edges = len(edge_list(per_repo))
+              repos[human] = {
+                  "present": is_present,
+                  "source_url": entry["source_url"],
+                  "nodes": nodes,
+                  "edges": edges,
+              }
+              (repos_present if is_present else repos_missing).append(human)
+
+          meta = {
+              "built_at": os.environ["BUILT_AT"],
+              "sha": os.environ["SHA"],
+              "graphifyy": os.environ["GRAPHIFYY_VERSION"],
+              "kind": "pan-graph",
+              "nodes": len(pan.get("nodes", [])),
+              "edges": len(edge_list(pan)),
+              "repos": repos,
+              "repos_present": repos_present,
+              "repos_missing": repos_missing,
+          }
+          with open(meta_path, "w", encoding="utf-8") as handle:
+              json.dump(meta, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(
+              f"pan-meta: {meta['nodes']:,} nodes / {meta['edges']:,} edges; "
+              f"present={repos_present} missing={repos_missing}"
+          )
+          PY
+
+      - name: Publish pan-graph to rolling release
+        # Uploads pan-graph.json + pan-meta.json TOGETHER in one call so a
+        # pan-graph is never published without its manifest. Upsert the shared
+        # rolling release if it does not exist yet, then --clobber both assets.
+        # Retried once on transient failure, then fails loud.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=("pan-graph.json" "pan-meta.json")
+
+          if ! gh release view "$GRAPH_TAG" >/dev/null 2>&1; then
+            echo "creating rolling release $GRAPH_TAG"
+            gh release create "$GRAPH_TAG" \
+              --title "Knowledge graph (rolling)" \
+              --notes "Rolling knowledge graph for the default branch. Assets are re-uploaded in place on every graph run; do not treat this tag as a version." \
+              --latest=false
+          fi
+
+          upload() {
+            gh release upload "$GRAPH_TAG" "${assets[@]}" --clobber
+          }
+          if ! upload; then
+            echo "release upload failed — retrying once in 10s"
+            sleep 10
+            if ! upload; then
+              echo "::error::release upload failed twice — pan-graph was NOT published"
+              exit 1
+            fi
+          fi
+          echo "published ${#assets[@]} pan-graph asset(s) to release $GRAPH_TAG"
