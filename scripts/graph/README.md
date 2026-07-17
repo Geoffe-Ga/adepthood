@@ -2,7 +2,7 @@
 
 A pinned, reproducible knowledge-graph toolchain. It turns this monorepo into a
 queryable graph of code entities (files, classes, functions, calls, imports)
-using [graphify](https://github.com/Graphify-Labs/graphify) (PyPI `graphifyy`,
+using [graphify](https://github.com/safishamsi/graphify) (PyPI `graphifyy`,
 pinned in [`requirements.txt`](./requirements.txt)).
 
 Code extraction is a **tree-sitter AST** pass: local, deterministic, and free —
@@ -28,6 +28,19 @@ locally whenever you need it.
 Both scripts install the pinned toolchain into the active environment only if
 the `graphify` CLI is missing, then operate on the repo root. Activate your
 `.venv` first so the install lands there.
+
+## Provenance
+
+The PyPI distribution is named `graphifyy` (double-y) while the upstream project
+and CLI are named `graphify` (single-y). The extra `y` is a name-availability
+quirk, not a typosquat: there is **no** `graphify` package on PyPI (the name
+404s), so `graphifyy` has no same-named victim to impersonate. The upstream
+source lives at [`safishamsi/graphify`](https://github.com/safishamsi/graphify),
+which is the homepage/repository declared on the PyPI project page; its summary
+matches this toolchain's purpose — turning a folder of code and docs into a
+queryable knowledge graph for an AI assistant. The project had 185 releases at
+verification time. Verified 2026-07-17 against the pin `graphifyy==0.9.17` in
+[`requirements.txt`](./requirements.txt).
 
 ## `GRAPHIFY_FORCE`
 
