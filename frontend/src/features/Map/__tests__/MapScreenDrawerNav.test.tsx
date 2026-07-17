@@ -8,13 +8,14 @@ import { act, create } from 'react-test-renderer';
 
 import MapScreen from '../MapScreen';
 
-import {
-  mockMakeStage,
-  mockMapState,
-  mockNavigate,
-  mockSetOptions,
-  resetMapMocks,
-} from './mapTestHarness';
+import { mockMakeStage, mockMapState, mockSetOptions, resetMapMocks } from './mapTestHarness';
+
+const mockRootNavigate = jest.fn();
+// The drawer now dispatches through the root stack, not the tab navigator.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
+}));
 
 jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
   jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
@@ -69,6 +70,7 @@ const openDrawer = (): void => {
 describe('Map header drawer nav section', () => {
   beforeEach(() => {
     resetMapMocks();
+    mockRootNavigate.mockClear();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
     useDepthPreferencesStore.setState({
@@ -115,7 +117,7 @@ describe('Map header drawer nav section', () => {
       tree.root.findByProps({ testID: 'drawer-nav-Journal' }).props.onPress();
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('Journal');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
     expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
 
     act(() => tree.unmount());

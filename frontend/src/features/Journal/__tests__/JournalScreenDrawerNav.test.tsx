@@ -16,6 +16,7 @@ const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockNavigate = jest.fn();
+const mockRootNavigate = jest.fn();
 const mockClose = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -26,6 +27,12 @@ jest.mock('@/api', () => ({
 
 jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
+}));
+
+// The drawer now dispatches through the root stack, not the tab navigator.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 function fakeDrawer(): ScreenDrawerState {
@@ -92,7 +99,7 @@ describe('Journal header drawer nav section', () => {
 
     fireEvent.press(getByTestId('drawer-nav-Map'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('Map');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Map' });
     expect(mockClose).toHaveBeenCalled();
   });
 

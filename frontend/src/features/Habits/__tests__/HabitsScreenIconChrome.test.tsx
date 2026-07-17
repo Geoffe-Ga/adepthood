@@ -10,6 +10,12 @@ const mockSetOptions = jest.fn();
 jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ setOptions: mockSetOptions }),
 }));
+// The drawer nav section dispatches through the root stack via useNavigation;
+// stub it so the screen renders outside a real NavigationContainer.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 
 // Mock the API so HabitsScreen loads instantly with an empty list. Plain
 // promise-returning functions avoid the typed-mock `never` inference of
