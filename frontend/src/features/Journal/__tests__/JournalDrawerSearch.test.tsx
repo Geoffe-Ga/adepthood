@@ -355,6 +355,85 @@ describe('useJournalDrawerEntries confirm-gated body search (wiring)', () => {
     expect(getByTestId('journal-drawer-error')).toBeTruthy();
   });
 
+  it('shows the inline searching indicator while a confirmed sweep is still in flight', async () => {
+    const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
+    let resolveSecond: (_value: JournalListResponse) => void = () => undefined;
+    const secondPending = new Promise<JournalListResponse>((resolve) => {
+      resolveSecond = resolve;
+    });
+    mockList.mockResolvedValueOnce(page(firstPage, true));
+    mockList.mockReturnValueOnce(secondPending);
+
+    const { getByTestId, queryByTestId } = render(<Harness />);
+    await openHarness(getByTestId);
+    await typeQuery(getByTestId, 'lighthouse');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-search-deep-search'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    // The second page has not settled: the deep-search sweep is still running,
+    // so its in-flight caption is visible without leaving the results view.
+    expect(getByTestId('journal-drawer-search-loading')).toBeTruthy();
+
+    // Let the sweep settle so no promise is left dangling; the caption clears.
+    await act(async () => {
+      resolveSecond(page([entry(21)], false));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(queryByTestId('journal-drawer-search-loading')).toBeNull();
+  });
+
+  it('surfaces the sweep failure inline while the query is still active', async () => {
+    const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
+    mockList.mockResolvedValueOnce(page(firstPage, true));
+    mockList.mockRejectedValueOnce(new Error('network down'));
+
+    const { getByTestId } = render(<Harness />);
+    await openHarness(getByTestId);
+    await typeQuery(getByTestId, 'lighthouse');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-search-deep-search'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    // No need to clear the query: the failure is surfaced inline beneath the
+    // field, with a retry affordance, while the query is still active.
+    expect(getByTestId('journal-drawer-search-error')).toBeTruthy();
+    expect(getByTestId('journal-drawer-search-retry')).toBeTruthy();
+  });
+
+  it('resumes the sweep from the inline retry row after a failure', async () => {
+    const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
+    const recovered = entry(21, {
+      title: 'Recovered',
+      message: 'A hidden lighthouse keeps watch.',
+    });
+    mockList.mockResolvedValueOnce(page(firstPage, true));
+    mockList.mockRejectedValueOnce(new Error('network down'));
+    mockList.mockResolvedValueOnce(page([recovered], false));
+
+    const { getByTestId, queryByTestId } = render(<Harness />);
+    await openHarness(getByTestId);
+    await typeQuery(getByTestId, 'lighthouse');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-search-deep-search'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(getByTestId('journal-drawer-search-error')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-search-retry'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    expect(queryByTestId('journal-drawer-search-error')).toBeNull();
+    expect(getByTestId('journal-drawer-entry-21')).toBeTruthy();
+  });
+
   it('stops the sweep when a page comes back empty despite reporting more', async () => {
     const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
     mockList.mockResolvedValueOnce(page(firstPage, true));

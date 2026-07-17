@@ -48,6 +48,10 @@ const DEEP_SEARCH_LABEL = 'Search inside entries? This loads your older entries.
 const ERROR_LABEL = 'We could not load your entries.';
 /** Retry affordance shown alongside the error copy. */
 const RETRY_LABEL = 'Tap to retry';
+/** Quiet caption shown while the confirm-triggered deep-search sweep is running. */
+const SEARCH_LOADING_LABEL = 'Searching all your entries...';
+/** Quiet caption shown when the deep-search sweep failed, above its retry row. */
+const SEARCH_ERROR_LABEL = 'We could not finish searching your entries.';
 
 /**
  * Fetch the drawer's entries lazily on its first open and cache them across
@@ -258,6 +262,84 @@ function SearchResults({
   );
 }
 
+interface SearchSweepStatusProps {
+  /** True once the deep body search is confirmed; gates the sweep's status. */
+  active: boolean;
+  /** True while the confirm-triggered page sweep is in flight. */
+  loading: boolean;
+  /** True when that sweep failed. */
+  error: boolean;
+  /** Re-run the sweep after a failure. */
+  onRetry: () => void;
+}
+
+/**
+ * A quiet inline status row shown beneath the search field while the deep body
+ * search is active: a "searching..." caption during the confirm-triggered page
+ * sweep, or a failure caption plus a retry row if that sweep rejected. It keeps
+ * the sweep's in-flight and error states visible without leaving the results
+ * view (which would otherwise swallow both until the query is cleared).
+ */
+function SearchSweepStatus({
+  active,
+  loading,
+  error,
+  onRetry,
+}: SearchSweepStatusProps): React.JSX.Element | null {
+  const { width } = useWindowDimensions();
+  if (!active) return null;
+  if (loading) {
+    return (
+      <View testID="journal-drawer-search-loading" style={styles.searchStatusRow}>
+        <ActivityIndicator size="small" color={accent.primary} />
+        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_LOADING_LABEL}</Text>
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View testID="journal-drawer-search-error" style={styles.searchStatusBlock}>
+        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_ERROR_LABEL}</Text>
+        <DrawerItem testID="journal-drawer-search-retry" label={RETRY_LABEL} onPress={onRetry} />
+      </View>
+    );
+  }
+  return null;
+}
+
+interface SearchViewProps {
+  matches: JournalMessage[];
+  bodySearchActive: boolean;
+  loading: boolean;
+  error: boolean;
+  currentEntryId?: number | null;
+  onRowPress: (_id: number) => void;
+  onConfirmBodySearch: () => void;
+}
+
+/** The active-query view: the sweep status row above the flat, ranked matches. */
+function SearchView({
+  matches,
+  bodySearchActive,
+  loading,
+  error,
+  currentEntryId,
+  onRowPress,
+  onConfirmBodySearch,
+}: SearchViewProps): React.JSX.Element {
+  return (
+    <View>
+      <SearchSweepStatus
+        active={bodySearchActive}
+        loading={loading}
+        error={error}
+        onRetry={onConfirmBodySearch}
+      />
+      <SearchResults matches={matches} currentEntryId={currentEntryId} onRowPress={onRowPress} />
+    </View>
+  );
+}
+
 interface DrawerSearchFieldProps {
   /** Match count for the active query, or undefined to hide the caption. */
   resultCount?: number;
@@ -390,7 +472,15 @@ export default function JournalDrawer({
         onConfirmDeepSearch={handleConfirmDeepSearch}
       />
       {isSearching ? (
-        <SearchResults matches={matches} currentEntryId={currentEntryId} onRowPress={onRowPress} />
+        <SearchView
+          matches={matches}
+          bodySearchActive={bodySearchActive}
+          loading={loading}
+          error={error}
+          currentEntryId={currentEntryId}
+          onRowPress={onRowPress}
+          onConfirmBodySearch={onConfirmBodySearch}
+        />
       ) : (
         <DrawerBody
           sections={groupByRecency(items, now)}
@@ -462,6 +552,21 @@ const styles = StyleSheet.create({
     gap: SPACING.xs,
   },
   errorText: {
+    color: ink.muted,
+  },
+  searchStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  searchStatusBlock: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    gap: SPACING.xs,
+  },
+  searchStatusText: {
     color: ink.muted,
   },
   section: {
