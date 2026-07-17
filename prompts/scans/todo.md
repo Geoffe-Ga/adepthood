@@ -18,6 +18,11 @@ the scan-issue-writer skill as a finding. A run that finds none is a valid,
 successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: rank marker-bearing files by graph centrality with `graphify
+  query` so the highest-leverage markers surface first. If the graph
+  is absent or stale, skip this step and run the analysis as written.
 - Title-slug prefix: `[scan:todo]`
 - Search first-party source only:
   - Backend: `backend/src/`

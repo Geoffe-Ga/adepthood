@@ -19,6 +19,12 @@ evidence and a classified remediation direction (delete / wire-in /
 decision-needed). A run that finds none is a valid, successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from low-degree and isolated nodes as deletion
+  candidates, cross-checked against the high-degree hubs, then confirm every
+  candidate with vulture/knip/ts-prune. If the graph is absent or stale, skip
+  this step and run the analysis as written.
 - Title-slug prefix: `[scan:dead-code]`
 - First-party source only. Record the SHA with `git rev-parse HEAD` first.
 - Backend (Python), note vulture's confidence percentage per hit:
