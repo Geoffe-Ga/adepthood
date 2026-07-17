@@ -70,6 +70,62 @@ shares the same rolling release. It can republish `graph.json` /
 next weekly semantic run re-enriches it — an eventual-consistency property of
 having two writers on one release, not something this workflow resolves.
 
+## Federation (nightly)
+
+`.github/workflows/graph-federate.yml` runs nightly — cron 06:10 UTC, right
+after `graph-build`'s 04:40 code rebuild — plus manual `workflow_dispatch`
+and `repository_dispatch` (event type `graph-updated`, which a satellite
+repo can send to poke a re-federation). It merges adepthood's own code graph
+with the published knowledge graphs of four satellite repos (Creek-Vault,
+aptitude-course, wavelength-demo, WavelengthWatch) into one
+`pan-graph.json`, published on the SAME rolling `knowledge-graph` release
+that `graph-build` and `graph-semantic` maintain.
+
+The five source graphs come from two mechanisms. aptitude-course,
+wavelength-demo, and WavelengthWatch commit theirs in-tree at
+`graphify-out/graph.json` on `main`, fetched over
+`raw.githubusercontent.com`. Creek-Vault's graph is ~30 MB and is never
+committed — it ships as a rolling release asset instead. adepthood's own
+graph comes from its own `knowledge-graph` release, same as above.
+
+An unfetchable satellite logs a `::warning` and is excluded from that
+build; only a missing adepthood-own graph fails the job. `pan-meta.json`
+records exactly which repos made it in — `built_at`, `sha`, `graphifyy`,
+`kind: pan-graph`, `nodes`, `edges`, a per-repo `repos` map (`present`,
+`source_url`, `nodes`, `edges`), plus `repos_present` / `repos_missing`.
+
+Assets publish together — `pan-graph.json` and `pan-meta.json` — never a
+pan-graph without its manifest:
+
+```bash
+gh release download knowledge-graph --pattern 'pan-*.json' --dir graphify-out
+```
+
+$0 / `GITHUB_TOKEN`-only: the built-in token (`contents: write`) covers the
+own-graph download and the release publish; every satellite fetch —
+including Creek-Vault's release asset — is unauthenticated public HTTPS.
+
+**GO-PRIVATE caveat**: every satellite fetch assumes the repo is public. If
+any satellite ever goes private, its fetch starts 404ing *and* — the
+dangerous half — a pan-graph already carrying its structure must move off
+this public release; distribution needs revisiting then (an authenticated
+fetch plus a private artifact store), not a token quietly wired into the
+fetch step.
+
+`repository_dispatch` here is inbound-only: a satellite would need its own
+PAT to send `graph-updated`, which is out of scope for this repo.
+
+**Three writers, one release**: `graph-build` owns `graph.json` /
+`graph-meta.json` (code-only), `graph-semantic` upgrades the same pair to
+`code+semantic`, and `graph-federate` owns `pan-graph.json` /
+`pan-meta.json` — disjoint asset sets, so none of the three can clobber
+another.
+
+**Known interaction**: like the semantic layer, the pan-graph reflects
+whatever each satellite last published — if a satellite hasn't rebuilt its
+own graph recently, federation faithfully merges in a stale snapshot rather
+than freshening it.
+
 ## Commands
 
 ```bash
