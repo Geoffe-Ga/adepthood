@@ -19,6 +19,22 @@ updates:
     # batch plus outstanding majors are never throttled.
     open-pull-requests-limit: 15
 
+  - package-ecosystem: "pip"
+    directory: "/scripts/graph"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    # scripts/graph pins a single build tool (graphifyy). Batch its patch +
+    # minor bumps like the backend entry so the Dependabot → Ralph bridge files
+    # one issue per batch; a major bump stays individual for focused review.
+    groups:
+      graph-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    open-pull-requests-limit: 15
+
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
