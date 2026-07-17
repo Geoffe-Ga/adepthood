@@ -11,6 +11,7 @@ import {
   isUnlocked,
   STAGE_COMPLETED_GLYPH,
   STAGE_LOCKED_GLYPH,
+  stagePillFill,
   stageStatusGlyph,
   totalStageCount,
 } from './stageDisplay';
@@ -39,9 +40,11 @@ const StagePill = ({
   color,
   onSelectStage,
 }: StagePillProps): React.JSX.Element => {
-  // The glyph rides directly on the stage fill, so pick a foreground that
-  // clears WCAG AA against this pill's color rather than a fixed canvas tint.
-  const glyphColor = readableGlyphOn(color);
+  // Locked/completed dimming is baked into the fill, so the glyph rides on the
+  // dimmed color; pick a foreground that clears WCAG AA against that effective
+  // fill rather than the raw stage color or a fixed canvas tint.
+  const effectiveFill = stagePillFill(color, { unlocked, completed, isActive });
+  const glyphColor = readableGlyphOn(effectiveFill);
   // Precedence (completed beats locked) lives once in stageStatusGlyph; each
   // pill only maps the resolved glyph onto its per-state text style.
   const glyph = stageStatusGlyph(unlocked, completed);
@@ -56,10 +59,8 @@ const StagePill = ({
       onPress={() => onSelectStage(stageNumber)}
       style={[
         styles.stagePill,
-        { backgroundColor: color },
+        { backgroundColor: effectiveFill },
         isActive && styles.stagePillActive,
-        !unlocked && styles.stagePillLocked,
-        completed && !isActive && styles.stagePillCompleted,
       ]}
     >
       {glyph === STAGE_COMPLETED_GLYPH ? (

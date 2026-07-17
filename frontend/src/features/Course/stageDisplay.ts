@@ -5,10 +5,37 @@
  * side redefining them.
  */
 import type { Stage } from '../../api';
-import { STAGE_ORDER, resolveStageColor } from '../../design/tokens';
+import { STAGE_ORDER, mixColors, resolveStageColor, surface } from '../../design/tokens';
 
 /** Progress value at which a stage counts as fully completed. */
 const COMPLETE_PROGRESS = 1;
+
+/** Fill weight for a locked pill — mixes 40% stage color into the canvas. */
+const LOCKED_FILL_WEIGHT = 0.4;
+
+/** Fill weight for a completed, non-active pill — a gentler 80% dim. */
+const COMPLETED_FILL_WEIGHT = 0.8;
+
+/**
+ * Resolve the background fill for a stage pill, baking any locked/completed
+ * dimming into the color itself so the glyph can stay full-opacity. Completed
+ * (non-active) wins over locked, matching the prior style precedence; an
+ * unlocked, uncompleted pill keeps its raw stage color.
+ */
+export function stagePillFill(
+  color: string,
+  state: { unlocked: boolean; completed: boolean; isActive: boolean },
+): string {
+  let weight: number;
+  if (state.completed && !state.isActive) {
+    weight = COMPLETED_FILL_WEIGHT;
+  } else if (!state.unlocked) {
+    weight = LOCKED_FILL_WEIGHT;
+  } else {
+    return color;
+  }
+  return mixColors(color, surface.canvas, weight);
+}
 
 /** Derive the total number of stages from the API response (the max number). */
 export function totalStageCount(stages: Stage[]): number {

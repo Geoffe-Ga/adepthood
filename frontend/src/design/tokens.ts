@@ -249,6 +249,25 @@ export const brightenColor = (hex: string): string => {
   );
 };
 
+/**
+ * Alpha-composite a foreground hex over a background hex at the given weight:
+ * each channel becomes fg*weight + bg*(1-weight). Used to bake a stage pill's
+ * dimming into its fill color so the glyph can stay full-opacity while the
+ * effective contrast is computed against the flattened result. Weight 1 returns
+ * the foreground and weight 0 the background. Either input failing to parse as
+ * 6-digit hex returns the foreground unchanged (mirrors brightenColor).
+ */
+export const mixColors = (fgHex: string, bgHex: string, weight: number): string => {
+  const fg = parseHexRgb(fgHex);
+  const bg = parseHexRgb(bgHex);
+  if (!fg || !bg) return fgHex;
+  return toHexColor(
+    fg[0] * weight + bg[0] * (1 - weight),
+    fg[1] * weight + bg[1] * (1 - weight),
+    fg[2] * weight + bg[2] * (1 - weight),
+  );
+};
+
 /** Black glyph foreground, chosen when it out-contrasts white on a fill. */
 export const GLYPH_ON_LIGHT_FILL = '#000000';
 

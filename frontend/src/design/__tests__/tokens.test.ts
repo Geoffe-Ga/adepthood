@@ -11,11 +11,13 @@ import {
   colors,
   contentLayout,
   journalLayout,
+  mixColors,
   radius,
   readableGlyphOn,
   resolveStageColor,
   shadows,
   spacing,
+  surface,
   touchTarget,
   type,
   typography,
@@ -352,6 +354,49 @@ describe('design tokens', () => {
 
     it('falls back to the dark-fill glyph color for an unparseable hex', () => {
       expect(readableGlyphOn('not-a-hex')).toBe(GLYPH_ON_DARK_FILL);
+    });
+  });
+
+  describe('mixColors', () => {
+    it('returns the foreground unchanged at full weight', () => {
+      expect(mixColors('#8e44ad', '#faf6ef', 1)).toBe('#8e44ad');
+    });
+
+    it('returns the background unchanged at zero weight', () => {
+      expect(mixColors('#8e44ad', '#faf6ef', 0)).toBe('#faf6ef');
+    });
+
+    it('mixes black and white to the rounded midpoint at half weight', () => {
+      // 0 * 0.5 + 255 * 0.5 = 127.5, which rounds to 128 = 0x80 per channel.
+      expect(mixColors('#000000', '#ffffff', 0.5)).toBe('#808080');
+    });
+
+    it('returns the unparseable foreground unchanged', () => {
+      expect(mixColors('not-a-hex', '#faf6ef', 0.5)).toBe('not-a-hex');
+    });
+
+    it('returns the foreground unchanged when the background is unparseable', () => {
+      expect(mixColors('#8e44ad', 'not-a-hex', 0.5)).toBe('#8e44ad');
+    });
+  });
+
+  describe('readableGlyphOn against a dimmed fill', () => {
+    // Mirrors the stagePillFill locked/completed fill weights (stageDisplay.ts).
+    const LOCKED_WEIGHT = 0.4;
+    const COMPLETED_WEIGHT = 0.8;
+
+    it.each(STAGE_ORDER)('clears AA on the locked-weight dimmed %s fill', (name) => {
+      const fill = STAGE_COLORS[name]!;
+      const dimmedFill = mixColors(fill, surface.canvas, LOCKED_WEIGHT);
+      const glyphColor = readableGlyphOn(dimmedFill);
+      expect(contrast(glyphColor, dimmedFill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it.each(STAGE_ORDER)('clears AA on the completed-weight dimmed %s fill', (name) => {
+      const fill = STAGE_COLORS[name]!;
+      const dimmedFill = mixColors(fill, surface.canvas, COMPLETED_WEIGHT);
+      const glyphColor = readableGlyphOn(dimmedFill);
+      expect(contrast(glyphColor, dimmedFill)).toBeGreaterThanOrEqual(AA_NORMAL);
     });
   });
 });
