@@ -4,7 +4,7 @@ import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 import { course as courseApi, type ContentItem } from '../../api';
 import { colors } from '../../design/tokens';
 
-import ChapterReader from './ChapterReader';
+import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
 
 interface ViewerFooterProps {
@@ -56,6 +56,8 @@ interface ContentViewerProps {
   onBack: () => void;
   onMarkRead: () => void;
   onReflect?: () => void;
+  onWriteNote?: (_passage: WriteNotePassage) => void;
+  initialScrollOffset?: number;
 }
 
 function useMarkReadHandler(
@@ -101,6 +103,8 @@ const ContentViewer = ({
   onBack,
   onMarkRead,
   onReflect,
+  onWriteNote,
+  initialScrollOffset,
 }: ContentViewerProps): React.JSX.Element => {
   const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead);
 
@@ -109,6 +113,8 @@ const ContentViewer = ({
       source={{ kind: 'content', id: item.id }}
       fallbackTitle={item.title}
       onBack={onBack}
+      onWriteNote={onWriteNote}
+      initialScrollOffset={initialScrollOffset}
       footer={
         <ViewerFooter
           isRead={isRead}

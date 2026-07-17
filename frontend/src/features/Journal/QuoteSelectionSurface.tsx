@@ -51,6 +51,7 @@ const DEFAULT_TEST_ID = 'quote-select';
 
 const INSTRUCTION_COPY = 'Touch and hold a passage, then drag to choose it.';
 const EMPTY_HINT_COPY = 'Choose a passage first — touch and hold the text.';
+const DEFAULT_CONFIRM_LABEL = 'Promote selection';
 
 export interface QuoteSelectionSurfaceProps {
   body: string;
@@ -59,6 +60,8 @@ export interface QuoteSelectionSurfaceProps {
   onConfirm: () => Promise<void>;
   onCancel: () => void;
   testID?: string;
+  /** Label on the confirm Button; defaults to the promote-flow wording. */
+  confirmLabel?: string;
 }
 
 /** The derived view state the surface chrome renders from. */
@@ -166,6 +169,7 @@ interface SelectionActionsProps {
   onCancel: () => void;
   showHint: () => void;
   testID: string;
+  confirmLabel: string;
 }
 
 /**
@@ -178,6 +182,7 @@ function SelectionActions({
   onCancel,
   showHint,
   testID,
+  confirmLabel,
 }: SelectionActionsProps): React.JSX.Element {
   return (
     <View style={styles.quoteSelectActions}>
@@ -189,7 +194,7 @@ function SelectionActions({
       >
         <Button
           variant="primary"
-          label="Promote selection"
+          label={confirmLabel}
           disabled={isEmpty}
           onPress={() => void onConfirm()}
           testID={`${testID}-confirm`}
@@ -214,6 +219,7 @@ function QuoteSelectionSurface({
   onConfirm,
   onCancel,
   testID = DEFAULT_TEST_ID,
+  confirmLabel = DEFAULT_CONFIRM_LABEL,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
   const { isEmpty, previewSlice, hintVisible, emitSpan, handleSelectionChange, showHint } =
     useSelectionSurfaceState(body, onSelectionChange);
@@ -244,6 +250,7 @@ function QuoteSelectionSurface({
         onCancel={onCancel}
         showHint={showHint}
         testID={testID}
+        confirmLabel={confirmLabel}
       />
       {hintVisible && (
         <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>

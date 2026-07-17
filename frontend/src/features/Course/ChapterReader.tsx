@@ -1,14 +1,40 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  Text,
+  TouchableOpacity,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import Markdown from 'react-native-markdown-display';
 
 import { course as courseApi, type ContentBody } from '../../api';
 import { BottomFade } from '../../components/layout/BottomFade';
 import { colors, rhythm, surface } from '../../design/tokens';
+import ConfirmDialog from '../Habits/components/ConfirmDialog';
+import QuoteSelectionSurface, { type CodePointSpan } from '../Journal/QuoteSelectionSurface';
 
 import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
+
+/** A passage folded out of the reader into the journal, with its scroll anchor. */
+export interface WriteNotePassage {
+  text: string;
+  sourceTitle: string;
+  scrollOffset: number;
+}
+
+const SCROLL_EVENT_THROTTLE = 16;
+const PASSAGE_SELECT_TEST_ID = 'passage-select';
+const WRITE_NOTE_AFFORDANCE_LABEL = 'Write a note on a passage';
+const WRITE_NOTE_CONFIRM_LABEL = 'Write a note';
+const WRITE_NOTE_DIALOG_TITLE = 'Write a note on this passage?';
+const WRITE_NOTE_DIALOG_MESSAGE = 'You can pick up right where you left off.';
+const WRITE_NOTE_DIALOG_CANCEL = 'Keep reading';
 
 /**
  * Small-caps eyebrow shown above the sheet title, keyed by content type.
@@ -41,6 +67,10 @@ interface ChapterReaderProps {
    *  mark-read / reflect actions; omitted for untracked site resources. */
   footer?: React.ReactNode;
   onBack: () => void;
+  /** When provided, offers a calm "write a note on a passage" affordance. */
+  onWriteNote?: (_passage: WriteNotePassage) => void;
+  /** Restores the reading ScrollView to this offset on a warm return. */
+  initialScrollOffset?: number;
 }
 
 /**
@@ -232,35 +262,218 @@ function useContentBody(source: ChapterReaderSource): {
   return { body, loading, error, retry };
 }
 
-function renderBody(body: ContentBody): React.ReactElement {
-  const markdown = stripLeadingTitleHeading(body.body_markdown, body.title);
+interface PassageSelection {
+  selecting: boolean;
+  dialogVisible: boolean;
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  beginSelection: () => void;
+  cancelSelection: () => void;
+  handleSelectionChange: (_span: CodePointSpan) => void;
+  openDialog: () => Promise<void>;
+  closeDialog: () => void;
+  confirmNote: () => void;
+}
+
+/**
+ * Own the write-note gesture: track the latest scroll offset, snapshot it at the
+ * moment the affordance is pressed, hold the emitted code-point span, and slice
+ * the passage by code points when the reader confirms.
+ */
+function usePassageSelection(
+  markdown: string,
+  sourceTitle: string,
+  onWriteNote?: (_passage: WriteNotePassage) => void,
+): PassageSelection {
+  const [selecting, setSelecting] = useState(false);
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [span, setSpan] = useState<CodePointSpan | null>(null);
+  const [capturedOffset, setCapturedOffset] = useState(0);
+  const scrollOffsetRef = useRef(0);
+
+  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
+
+  const beginSelection = useCallback(() => {
+    setCapturedOffset(scrollOffsetRef.current);
+    setSelecting(true);
+  }, []);
+
+  const cancelSelection = useCallback(() => setSelecting(false), []);
+  const handleSelectionChange = useCallback((next: CodePointSpan) => setSpan(next), []);
+  const openDialog = useCallback(async () => setDialogVisible(true), []);
+  const closeDialog = useCallback(() => setDialogVisible(false), []);
+
+  const confirmNote = useCallback(() => {
+    if (onWriteNote && span) {
+      const text = Array.from(markdown).slice(span.start, span.end).join('');
+      onWriteNote({ text, sourceTitle, scrollOffset: capturedOffset });
+    }
+    setDialogVisible(false);
+    setSelecting(false);
+  }, [onWriteNote, span, markdown, sourceTitle, capturedOffset]);
+
+  return {
+    selecting,
+    dialogVisible,
+    onScroll,
+    beginSelection,
+    cancelSelection,
+    handleSelectionChange,
+    openDialog,
+    closeDialog,
+    confirmNote,
+  };
+}
+
+interface ReadingSheetProps {
+  markdown: string;
+  eyebrow: string | undefined;
+  title: string;
+  canWriteNote: boolean;
+  initialScrollOffset: number | undefined;
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onBeginNote: () => void;
+}
+
+/** The reading view: the markdown sheet plus the calm write-note invitation. */
+const ReadingSheet = ({
+  markdown,
+  eyebrow,
+  title,
+  canWriteNote,
+  initialScrollOffset,
+  onScroll,
+  onBeginNote,
+}: ReadingSheetProps): React.JSX.Element => (
+  <ScrollView
+    style={styles.readerScroll}
+    contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
+    testID="reader-markdown"
+    onScroll={onScroll}
+    scrollEventThrottle={SCROLL_EVENT_THROTTLE}
+    contentOffset={initialScrollOffset != null ? { x: 0, y: initialScrollOffset } : undefined}
+  >
+    <View style={styles.readerSheet}>
+      <ReaderSheetHeader eyebrow={eyebrow} title={title} />
+      {canWriteNote && (
+        <TouchableOpacity
+          testID="reader-write-note-affordance"
+          onPress={onBeginNote}
+          accessibilityRole="button"
+          accessibilityLabel={WRITE_NOTE_AFFORDANCE_LABEL}
+        >
+          <Text style={styles.readerWriteNoteLink}>{WRITE_NOTE_AFFORDANCE_LABEL}</Text>
+        </TouchableOpacity>
+      )}
+      <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
+        {markdown}
+      </Markdown>
+    </View>
+  </ScrollView>
+);
+
+interface SelectingSheetProps {
+  markdown: string;
+  eyebrow: string | undefined;
+  title: string;
+  selection: PassageSelection;
+}
+
+/** The selection view: the passage-select surface over the confirm dialog. */
+const SelectingSheet = ({
+  markdown,
+  eyebrow,
+  title,
+  selection,
+}: SelectingSheetProps): React.JSX.Element => (
+  <>
+    <ScrollView
+      style={styles.readerScroll}
+      contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
+    >
+      <View style={styles.readerSheet}>
+        <ReaderSheetHeader eyebrow={eyebrow} title={title} />
+        <QuoteSelectionSurface
+          body={markdown}
+          testID={PASSAGE_SELECT_TEST_ID}
+          confirmLabel={WRITE_NOTE_CONFIRM_LABEL}
+          onSelectionChange={selection.handleSelectionChange}
+          onCancel={selection.cancelSelection}
+          onConfirm={selection.openDialog}
+        />
+      </View>
+    </ScrollView>
+    <ConfirmDialog
+      visible={selection.dialogVisible}
+      testID="write-note-dialog"
+      title={WRITE_NOTE_DIALOG_TITLE}
+      message={WRITE_NOTE_DIALOG_MESSAGE}
+      cancelLabel={WRITE_NOTE_DIALOG_CANCEL}
+      cancelTestID="write-note-dialog-cancel"
+      confirmLabel={WRITE_NOTE_CONFIRM_LABEL}
+      confirmTestID="write-note-dialog-confirm"
+      onCancel={selection.closeDialog}
+      onConfirm={selection.confirmNote}
+    />
+  </>
+);
+
+interface ReaderBodyProps {
+  body: ContentBody;
+  onWriteNote?: (_passage: WriteNotePassage) => void;
+  initialScrollOffset?: number;
+}
+
+/** Renders the loaded body: empty notice, reading sheet, or selection surface. */
+const ReaderBody = ({
+  body,
+  onWriteNote,
+  initialScrollOffset,
+}: ReaderBodyProps): React.JSX.Element => {
+  const markdown = useMemo(
+    () => stripLeadingTitleHeading(body.body_markdown, body.title),
+    [body.body_markdown, body.title],
+  );
+  const selection = usePassageSelection(markdown, body.title, onWriteNote);
+  const eyebrow = READER_EYEBROWS[body.content_type];
+
   if (markdown.trim() === '') {
     return <EmptyView />;
   }
+
   return (
     <View style={styles.readerScrollRegion}>
-      <ScrollView
-        style={styles.readerScroll}
-        contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
-        testID="reader-markdown"
-      >
-        <View style={styles.readerSheet}>
-          <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
-          <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
-            {markdown}
-          </Markdown>
-        </View>
-      </ScrollView>
+      {selection.selecting ? (
+        <SelectingSheet
+          markdown={markdown}
+          eyebrow={eyebrow}
+          title={body.title}
+          selection={selection}
+        />
+      ) : (
+        <ReadingSheet
+          markdown={markdown}
+          eyebrow={eyebrow}
+          title={body.title}
+          canWriteNote={onWriteNote != null}
+          initialScrollOffset={initialScrollOffset}
+          onScroll={selection.onScroll}
+          onBeginNote={selection.beginSelection}
+        />
+      )}
       <BottomFade color={surface.desk} testID="reader-bottom-fade" />
     </View>
   );
-}
+};
 
 const ChapterReader = ({
   source,
   fallbackTitle,
   footer,
   onBack,
+  onWriteNote,
+  initialScrollOffset,
 }: ChapterReaderProps): React.JSX.Element => {
   const { body, loading, error, retry } = useContentBody(source);
   const headerTitle = body?.title || fallbackTitle;
@@ -274,7 +487,13 @@ const ChapterReader = ({
         </View>
       )}
       {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
-      {!loading && error === null && body !== null && renderBody(body)}
+      {!loading && error === null && body !== null && (
+        <ReaderBody
+          body={body}
+          onWriteNote={onWriteNote}
+          initialScrollOffset={initialScrollOffset}
+        />
+      )}
       {footer}
     </View>
   );
