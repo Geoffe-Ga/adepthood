@@ -540,33 +540,28 @@ function useCourseNavigation(
   return { handleStageSelect, handleChapterPress };
 }
 
-const CourseScreen = (): React.JSX.Element => {
-  const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
-  const stageContent = useStageContent(selectedStage, allStages.length > 0);
-  const viewer = useCourseViewer(selectedStage);
-  const drawer = useScreenDrawer('Course');
-  const { handleStageSelect, handleChapterPress } = useCourseNavigation(
-    setSelectedStage,
-    viewer,
-    drawer,
-  );
+interface CourseLandingProps {
+  allStages: Stage[];
+  selectedStage: number;
+  stageContent: ReturnType<typeof useStageContent>;
+  viewer: ReturnType<typeof useCourseViewer>;
+  drawer: ScreenDrawerState;
+  onStageSelect: (_stageNumber: number) => void;
+  onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
+}
 
-  const overlay = renderOverlay(viewer, stageContent.handleMarkRead);
-  if (overlay !== null) return overlay;
-
-  if (loading) return <CourseLoadingState />;
-
-  // Stage-list fetch failed: show error+retry, not an empty course.
-  if (error) {
-    return (
-      <SafeAreaView style={styles.container} edges={['bottom']}>
-        <CourseErrorState onRetry={retry} />
-      </SafeAreaView>
-    );
-  }
-
+/** The Course landing view: header, stage selector, the stage-panel scroll
+ *  surface, and the shelf drawer mounted over it. */
+const CourseLanding = ({
+  allStages,
+  selectedStage,
+  stageContent,
+  viewer,
+  drawer,
+  onStageSelect,
+  onChapterPress,
+}: CourseLandingProps): React.JSX.Element => {
   const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
-
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ContentContainer fill>
@@ -576,7 +571,7 @@ const CourseScreen = (): React.JSX.Element => {
         <StageSelector
           stages={allStages}
           selectedStage={selectedStage}
-          onSelectStage={handleStageSelect}
+          onSelectStage={onStageSelect}
         />
         <StagePanel
           selectedStage={selectedStage}
@@ -589,10 +584,61 @@ const CourseScreen = (): React.JSX.Element => {
           drawer={drawer}
           stages={allStages}
           selectedStage={selectedStage}
-          onChapterPress={handleChapterPress}
+          onChapterPress={onChapterPress}
         />
       </ContentContainer>
     </SafeAreaView>
+  );
+};
+
+const CourseScreen = (): React.JSX.Element => {
+  const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
+  const stageContent = useStageContent(selectedStage, allStages.length > 0);
+  const viewer = useCourseViewer(selectedStage);
+  const drawer = useScreenDrawer('Course');
+  const { handleStageSelect, handleChapterPress } = useCourseNavigation(
+    setSelectedStage,
+    viewer,
+    drawer,
+  );
+
+  const overlay = renderOverlay(viewer, stageContent.handleMarkRead);
+  if (overlay !== null) {
+    // Drawer must mount alongside the reader so the hamburger works while reading.
+    return (
+      <>
+        {overlay}
+        <CourseScreenDrawer
+          drawer={drawer}
+          stages={allStages}
+          selectedStage={selectedStage}
+          onChapterPress={handleChapterPress}
+        />
+      </>
+    );
+  }
+
+  if (loading) return <CourseLoadingState />;
+
+  // Stage-list fetch failed: show error+retry, not an empty course.
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <CourseErrorState onRetry={retry} />
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <CourseLanding
+      allStages={allStages}
+      selectedStage={selectedStage}
+      stageContent={stageContent}
+      viewer={viewer}
+      drawer={drawer}
+      onStageSelect={handleStageSelect}
+      onChapterPress={handleChapterPress}
+    />
   );
 };
 
