@@ -15,6 +15,7 @@ from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
+from domain.creek_vault import CreekVaultClient
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_progress import (
     AllStagesCompletedError,
@@ -28,7 +29,6 @@ from domain.stage_progress import (
     next_stage_for,
     stage_exists,
 )
-from domain.wheel import compute_wheel_balance
 from errors import bad_request, conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
@@ -46,6 +46,8 @@ from schemas.stage import (
     StageResponse,
 )
 from schemas.wheel import WheelAspect, WheelBalanceResponse
+from services.creek_vault_wheel import select_wheel_balance
+from services.creek_vault_write import get_creek_vault_client
 
 logger = logging.getLogger(__name__)
 
@@ -193,14 +195,17 @@ async def get_program_calendar(
 async def get_wheel_balance(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
 ) -> WheelBalanceResponse:
     """Per-Aspect fullness for all ten stages, in canonical stage order.
 
     Registered ABOVE ``/{stage_number}`` so the static ``wheel`` path wins
-    route matching. Fullness reuses each stage's ``overall_progress`` signal;
-    a new user sees all zeros.
+    route matching. A connected, capable vault's own reading of the user's
+    corpus wins; otherwise the balance is computed locally, where fullness
+    reuses each stage's ``overall_progress`` signal and a new user sees all
+    zeros.
     """
-    balance = await compute_wheel_balance(session, current_user)
+    balance = await select_wheel_balance(vault_client, session, current_user)
     return WheelBalanceResponse(aspects=[WheelAspect(**item) for item in balance])
 
 

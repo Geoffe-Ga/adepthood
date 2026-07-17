@@ -9,10 +9,23 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.creek_vault import (
+    CONTRACT_VERSION,
+    CreekCapability,
+    HandshakeResult,
+    VaultClassification,
+    VaultIngestRequest,
+    VaultIngestResult,
+    VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
+)
+from main import app
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from services.creek_vault_write import get_creek_vault_client
 
 _TOTAL_STAGES = 10
 
@@ -266,3 +279,114 @@ async def test_wheel_endpoint_user_isolation(
     bob_stage2 = next(a for a in bob_resp.json()["aspects"] if a["stage_number"] == 2)
     assert alice_stage2["fullness"] > 0.0
     assert bob_stage2["fullness"] == 0.0
+
+
+# ── C. Creek Vault classification source ────────────────────────────────────
+
+
+class _WheelVaultClient:
+    """A minimal fake CreekVaultClient exposing only the wheel path."""
+
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        capabilities: frozenset[CreekCapability] = frozenset({CreekCapability.WHEEL}),
+        wheel_result: VaultWheelBalance | None = None,
+    ) -> None:
+        """Store the scripted handshake outcome and wheel result."""
+        self.handshake_calls = 0
+        self._available = available
+        self._capabilities = capabilities
+        self._wheel_result = wheel_result
+
+    async def handshake(self) -> HandshakeResult:
+        """Record the call and return the scripted availability/capabilities."""
+        self.handshake_calls += 1
+        return HandshakeResult(
+            available=self._available,
+            contract_version=CONTRACT_VERSION,
+            ontology_version="1.0.0",
+            capabilities=self._capabilities,
+            attestation=None,
+        )
+
+    def is_available(self) -> bool:
+        """Return the scripted availability."""
+        return self._available
+
+    def supports(self, capability: CreekCapability, /) -> bool:
+        """Return whether ``capability`` is in the scripted capability set."""
+        return capability in self._capabilities
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def wheel(self) -> VaultWheelBalance:
+        """Return the scripted balance."""
+        assert self._wheel_result is not None
+        return self._wheel_result
+
+
+@pytest.mark.asyncio
+async def test_wheel_endpoint_uses_vault_values_when_connected(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A connected, valid vault's fullness values win over local math."""
+    await _seed_all_stages(db_session)
+    headers, user_id = await _signup(async_client, "wheel_vault_connected")
+    # Local computation would give stage 1 fullness == 0.0 (no engagement); the
+    # vault reports a distinct, non-zero value that must win instead.
+    await _seed_habit_with_completion(db_session, user_id, 1)
+    vault_aspects = tuple(
+        VaultWheelAspect(stage_number=n, aspect=f"VaultAspect-{n}", fullness=0.42)
+        for n in range(1, _TOTAL_STAGES + 1)
+    )
+    fake_vault = _WheelVaultClient(wheel_result=VaultWheelBalance(aspects=vault_aspects))
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+
+    resp = await async_client.get("/stages/wheel", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    aspects = resp.json()["aspects"]
+    assert len(aspects) == _TOTAL_STAGES
+    for item in aspects:
+        assert item["fullness"] == 0.42
+        assert item["aspect"] == f"VaultAspect-{item['stage_number']}"
+
+
+@pytest.mark.asyncio
+async def test_wheel_endpoint_falls_back_to_local_when_vault_unavailable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """No usable vault -> the endpoint keeps serving local math, same as before."""
+    await _seed_all_stages(db_session)
+    headers, user_id = await _signup(async_client, "wheel_vault_unavailable")
+    engaged_stage = 3
+    await _seed_habit_with_completion(db_session, user_id, engaged_stage)
+    fake_vault = _WheelVaultClient(available=False)
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+
+    resp = await async_client.get("/stages/wheel", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    aspects = resp.json()["aspects"]
+    engaged = next(a for a in aspects if a["stage_number"] == engaged_stage)
+    assert engaged["fullness"] > 0.0
+    for item in aspects:
+        if item["stage_number"] != engaged_stage:
+            assert item["fullness"] == 0.0
+    # The router must still probe the vault (and degrade) rather than never
+    # wiring it in at all -- this is the delta the vault-consuming wiring adds.
+    assert fake_vault.handshake_calls == 1
