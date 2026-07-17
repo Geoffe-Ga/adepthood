@@ -43,6 +43,14 @@ you read, reason, and dispatch.
    `Explore` sub-agent can widen the fan-out — but if it is not, fall back to
    Read/Grep/Glob directly; never stall the plan on a sub-agent. Prefer extending
    what exists over inventing new structure.
+
+   **Graph first, grep second:** when `graphify-out/graph.json` exists, start
+   with `graphify query "<question>"` on the issue's key nouns and
+   `graphify path "A" "B"` to map the blast radius between the modules the
+   plan will touch; quote each cited node's `source_location`. Fail-soft: a
+   fresh worktree has no graph (`graphify-out/` is git-ignored) — restore via
+   the session hook, build with `./scripts/graph/build.sh` (~2 min, $0), or
+   fall back to Read/Grep/Glob exactly as today. Never stall the plan on it.
 3. **Decide the design.** The smallest coherent change that satisfies the issue
    at threshold quality. Name the interfaces/signatures/models that change.
 4. **Flag the risks** — which of these the issue genuinely touches:
