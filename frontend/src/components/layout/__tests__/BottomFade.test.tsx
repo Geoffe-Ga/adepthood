@@ -26,6 +26,14 @@ const findStopAtOffset = (component: Rendered, offset: string): TestNode =>
 const findGradient = (component: Rendered): TestNode =>
   component.root.find((node: TestNode) => node.props.id === 'bottom-fade-grad');
 
+const findAnyGradient = (component: Rendered): TestNode =>
+  component.root.find(
+    (node: TestNode) => typeof node.props.id === 'string' && node.props.x1 !== undefined,
+  );
+
+const findRect = (component: Rendered): TestNode =>
+  component.root.find((node: TestNode) => typeof node.props.fill === 'string');
+
 describe('BottomFade', () => {
   it('fades from transparent to the canvas surface color, top to bottom', () => {
     const component = renderer.create(<BottomFade />);
@@ -89,5 +97,25 @@ describe('BottomFade', () => {
     expect(getByTestId('bottom-fade').props.pointerEvents).toBe('none');
     fireEvent.press(getByText('Underneath'));
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('fades to the desk surface color when given a color prop, opacity ramp unchanged', () => {
+    const component = renderer.create(<BottomFade color={surface.desk} />);
+    const top = findStopAtOffset(component, '0').props;
+    expect(top.stopColor).toBe(surface.desk);
+    expect(top.stopOpacity).toBe('0');
+    const bottom = findStopAtOffset(component, '1').props;
+    expect(bottom.stopColor).toBe(surface.desk);
+    expect(bottom.stopOpacity).toBe('1');
+  });
+
+  it('gives each instance a distinct gradient id and points its own Rect at it', () => {
+    const first = renderer.create(<BottomFade testID="fade-one" />);
+    const second = renderer.create(<BottomFade testID="fade-two" />);
+    const firstGradientId = findAnyGradient(first).props.id;
+    const secondGradientId = findAnyGradient(second).props.id;
+    expect(firstGradientId).not.toBe(secondGradientId);
+    expect(findRect(first).props.fill).toBe(`url(#${String(firstGradientId)})`);
+    expect(findRect(second).props.fill).toBe(`url(#${String(secondGradientId)})`);
   });
 });
