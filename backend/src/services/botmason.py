@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -37,6 +37,18 @@ logger = logging.getLogger(__name__)
 # Awaited result type threaded through the retry helper so concrete provider
 # response types survive the retry wrapper instead of being erased to ``object``.
 _ResultT = TypeVar("_ResultT")
+
+# Message-content shapes for the provider APIs. A turn's content is either a
+# plain ``str`` (text-only) or a list of typed content parts (text + image
+# blocks) -- both OpenAI and Anthropic accept the list form for multimodal
+# turns. ``object`` values keep the heterogeneous part shapes (nested dicts,
+# strings) expressible without an ``Any`` escape hatch. These are implicit
+# type aliases (bare assignments) rather than ``TypeAlias``-annotated so the
+# module keeps parsing on the 3.11 cross-version job -- the newer ``type``
+# keyword form is a syntax error there.
+ContentPart = dict[str, object]
+MessageContent = str | list[ContentPart]
+ChatMessage = dict[str, MessageContent]
 
 # Default system prompt used when no external prompt file is configured.
 _DEFAULT_SYSTEM_PROMPT = (
@@ -81,6 +93,11 @@ class ProviderSpec:
     tests can keep monkeypatching ``_call_openai`` etc. on the module —
     storing the function object here would freeze the original and silently
     bypass those patches.
+
+    ``vision_models`` is the subset of models that accept image content
+    blocks. It is audited independently of ``allowed_models`` — a model may
+    be allowed for text yet not (yet) certified for vision — so the two sets
+    are written out separately rather than aliased.
     """
 
     #: Required key prefix; more-specific prefixes other providers own.
@@ -91,6 +108,8 @@ class ProviderSpec:
     #: Closed allowlist (BUG-BM-001) — every addition is an audit decision.
     allowed_models: frozenset[str]
     call_name: str
+    #: Vision-capable subset — audited independently of ``allowed_models``.
+    vision_models: frozenset[str]
 
 
 # Anthropic model IDs intentionally mix two formats per Anthropic's naming:
@@ -116,6 +135,9 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         default_model="gpt-4o-mini",
         allowed_models=frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
         call_name="_call_openai",
+        # Explicit, independently-audited vision set (not aliased to
+        # ``allowed_models``): each of these OpenAI models accepts images.
+        vision_models=frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
     ),
     "anthropic": ProviderSpec(
         key_prefix="sk-ant-",
@@ -132,6 +154,16 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
             }
         ),
         call_name="_call_anthropic",
+        # Explicit, independently-audited vision set (not aliased to
+        # ``allowed_models``): each of these Anthropic models accepts images.
+        vision_models=frozenset(
+            {
+                "claude-sonnet-4-20250514",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+            }
+        ),
     ),
 }
 
@@ -168,6 +200,21 @@ class LLMProviderError(RuntimeError):
     """
 
 
+class LLMVisionUnsupportedError(LLMProviderError):
+    """The selected provider/model cannot accept image inputs.
+
+    Callers map this to HTTP 422 (unprocessable content): the request is
+    well-formed but asks a text-only model to look at an image. It is
+    deliberately *never* retried and *never* triggers a silent model
+    substitution — swapping in a different model behind the user's back would
+    change cost and behavior without consent. Because it subclasses
+    :class:`LLMProviderError` (which is not in :data:`_PROVIDER_ERROR_TYPES`),
+    it propagates out of :func:`generate_response` unwrapped, preserving the
+    subclass identity that lets callers distinguish "no vision support" from
+    every other provider failure.
+    """
+
+
 # Genuine provider/transport failures normalized to LLMProviderError; OSError
 # covers ConnectionError/TimeoutError and mirrors what ``_is_retryable`` treats
 # as transient, while the two SDK base classes give an SDK-agnostic catch.
@@ -199,6 +246,84 @@ class LLMResponse:
     def total_tokens(self) -> int:
         """Sum of prompt and completion tokens — always derived, never stored."""
         return self.prompt_tokens + self.completion_tokens
+
+
+# Media types the vision path accepts. Restricting to the three formats every
+# supported provider decodes keeps us from forwarding an exotic type the model
+# would reject after we already burned the request.
+_ALLOWED_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+# Upper bound on a base64-encoded image, in characters. Base64 expands raw
+# bytes by 4/3, so this caps the *decoded* payload at ~5 MB. The ceiling is a
+# DoS / provider-limit guardrail: it stops an oversized attachment from
+# inflating a request body (and provider bill) before the SDK ever sees it.
+_MAX_IMAGE_BASE64_CHARS: int = (5 * 1024 * 1024 * 4) // 3
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePayload:
+    """An immutable, validated base64 image attachment for a vision request.
+
+    ``data`` is the base64-encoded image bytes and ``media_type`` its MIME
+    type. Validation happens at construction so a malformed attachment fails
+    before it reaches any provider. The instance is frozen: once built it
+    cannot be mutated into an invalid state.
+    """
+
+    data: str
+    media_type: str
+
+    def __post_init__(self) -> None:
+        """Reject unsupported media types and oversized payloads.
+
+        The ``ValueError`` names the offending media type and/or the length,
+        but never interpolates ``data`` — image bytes must never appear in an
+        exception message, log line, or traceback (privacy invariant).
+        """
+        if self.media_type not in _ALLOWED_IMAGE_MEDIA_TYPES:
+            msg = f"unsupported image media_type: {self.media_type!r}"
+            raise ValueError(msg)
+        if len(self.data) > _MAX_IMAGE_BASE64_CHARS:
+            msg = f"image base64 length {len(self.data)} exceeds maximum {_MAX_IMAGE_BASE64_CHARS}"
+            raise ValueError(msg)
+
+
+def supports_vision(provider: str, model: str) -> bool:
+    """Return True when ``provider``/``model`` can accept image content blocks.
+
+    The stub provider/model reports ``True`` so local development can exercise
+    the vision path without a real key. Unknown providers report ``False``.
+    Otherwise the answer is whether ``model`` appears in the provider's
+    independently-audited :attr:`ProviderSpec.vision_models` set.
+    """
+    if provider == STUB_PROVIDER_NAME and model == STUB_MODEL_NAME:
+        return True
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is None:
+        return False
+    return model in spec.vision_models
+
+
+def _ensure_vision_capable(
+    provider: str,
+    model: str,
+    images: Sequence[ImagePayload] | None,
+) -> None:
+    """Raise when images are supplied to a provider/model that lacks vision.
+
+    A no-op when ``images`` is falsy. Otherwise, if the resolved provider and
+    model cannot accept image inputs, raises :class:`LLMVisionUnsupportedError`
+    (which callers map to HTTP 422). The message names the provider, model, and
+    image *count* only — never any base64 payload (privacy invariant).
+    """
+    if not images:
+        return
+    if not supports_vision(provider, model):
+        msg = (
+            f"provider {provider!r} model {model!r} does not accept image "
+            f"inputs ({len(images)} image(s) supplied)"
+        )
+        raise LLMVisionUnsupportedError(msg)
 
 
 def get_provider() -> str:
@@ -454,11 +579,62 @@ def _entry_message(entry: dict[str, str]) -> str:
     return entry.get("message", "")
 
 
+def _openai_image_part(image: ImagePayload) -> ContentPart:
+    """Return an OpenAI-shaped image content part for one attachment.
+
+    OpenAI takes images as a ``data:`` URL inside an ``image_url`` block. The
+    base64 ``data`` is embedded verbatim — never sanitized or nonce-wrapped —
+    because it is opaque bytes, not user prose.
+    """
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+    }
+
+
+def _anthropic_image_part(image: ImagePayload) -> ContentPart:
+    """Return an Anthropic-shaped image content part for one attachment.
+
+    Anthropic takes images as a ``base64`` source block carrying the media
+    type and raw base64 ``data`` — embedded verbatim, never sanitized or
+    nonce-wrapped, for the same reason as the OpenAI variant.
+    """
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": image.media_type,
+            "data": image.data,
+        },
+    }
+
+
+def _final_user_turn(
+    user_message: str,
+    nonce: str,
+    image_parts: list[ContentPart] | None,
+) -> ChatMessage:
+    """Build the trailing new-user turn, attaching image parts when present.
+
+    When ``image_parts`` is falsy the content is a plain ``str`` — byte-
+    identical to the pre-vision behavior, so text-only callers are untouched.
+    When images are present the content becomes ``[*image_parts, text_part]``:
+    the image parts pass through verbatim while the sibling text part keeps the
+    full sanitize + nonce wrapper.
+    """
+    wrapped_text = _wrap_user_input(user_message, nonce)
+    if not image_parts:
+        return {"role": "user", "content": wrapped_text}
+    text_part: ContentPart = {"type": "text", "text": wrapped_text}
+    return {"role": "user", "content": [*image_parts, text_part]}
+
+
 def _wrap_history(
     conversation_history: list[dict[str, str]],
     user_message: str,
     nonce: str,
-) -> list[dict[str, str]]:
+    image_parts: list[ContentPart] | None = None,
+) -> list[ChatMessage]:
     """Build the nonce-wrapped turn list: history followed by the new user turn.
 
     Shared by the OpenAI and Anthropic message builders (BUG-BM-004): every
@@ -466,14 +642,17 @@ def _wrap_history(
     the delimiter tags cannot be forged from a prior conversation, while
     assistant turns pass through verbatim.  The system prompt is *not* part
     of this list -- each caller places it where its provider expects.
+
+    ``image_parts`` (already provider-formatted) attach only to the final new
+    user turn; history turns never receive image parts.
     """
-    messages: list[dict[str, str]] = []
+    messages: list[ChatMessage] = []
     for entry in conversation_history:
         role = "assistant" if entry.get("sender") == "bot" else "user"
         message = _entry_message(entry)
         content = _wrap_user_input(message, nonce) if role == "user" else message
         messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": _wrap_user_input(user_message, nonce)})
+    messages.append(_final_user_turn(user_message, nonce, image_parts))
     return messages
 
 
@@ -481,7 +660,8 @@ def _build_messages(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
-) -> list[dict[str, str]]:
+    images: Sequence[ImagePayload] | None = None,
+) -> list[ChatMessage]:
     """Build the message list for the LLM API call.
 
     Returns a list of dicts with ``role`` and ``content`` keys suitable for
@@ -490,11 +670,19 @@ def _build_messages(
     (BUG-BM-004).  The system prompt is augmented with a delimiter
     explanation; every user-role content (including history) is sanitized
     and nonce-wrapped.
+
+    When ``images`` are supplied they are formatted as OpenAI image parts and
+    attached to the final user turn only; without them the final turn's content
+    stays a plain ``str``, byte-identical to the text-only path.
     """
     _check_prompt_injection(user_message)
     nonce = _make_nonce()
-    system_turn = {"role": "system", "content": _augment_system_prompt(system_prompt, nonce)}
-    return [system_turn, *_wrap_history(conversation_history, user_message, nonce)]
+    system_turn: ChatMessage = {
+        "role": "system",
+        "content": _augment_system_prompt(system_prompt, nonce),
+    }
+    image_parts = [_openai_image_part(image) for image in images or ()]
+    return [system_turn, *_wrap_history(conversation_history, user_message, nonce, image_parts)]
 
 
 def _provider_default_model(provider: str) -> str:
@@ -531,7 +719,8 @@ def _build_anthropic_messages(
     user_message: str,
     conversation_history: list[dict[str, str]],
     system_prompt: str,
-) -> tuple[list[dict[str, str]], str]:
+    images: Sequence[ImagePayload] | None = None,
+) -> tuple[list[ChatMessage], str]:
     """Build Anthropic messages + augmented system prompt (BUG-BM-004).
 
     Anthropic takes the system prompt as a separate parameter rather than
@@ -539,10 +728,15 @@ def _build_anthropic_messages(
     tuple — callers pass ``augmented_system`` to ``messages.create(system=...)``.
     The nonce is generated once per call and threaded through both the
     augmented prompt and every user-role wrap.
+
+    When ``images`` are supplied they are formatted as Anthropic image parts
+    and attached to the final user turn only; without them the final turn's
+    content stays a plain ``str``, byte-identical to the text-only path.
     """
     _check_prompt_injection(user_message)
     nonce = _make_nonce()
-    messages = _wrap_history(conversation_history, user_message, nonce)
+    image_parts = [_anthropic_image_part(image) for image in images or ()]
+    messages = _wrap_history(conversation_history, user_message, nonce, image_parts)
     return messages, _augment_system_prompt(system_prompt, nonce)
 
 
@@ -607,6 +801,7 @@ async def generate_response(
     conversation_history: list[dict[str, str]],
     system_prompt: str | None = None,
     api_key: str | None = None,
+    images: Sequence[ImagePayload] | None = None,
 ) -> LLMResponse:
     """Generate a BotMason response using the configured LLM provider.
 
@@ -625,6 +820,13 @@ async def generate_response(
     whether the call routes to OpenAI or Anthropic, so a BYOK key activates
     a real model even when ``BOTMASON_PROVIDER`` is the default ``stub``.
 
+    ``images`` optionally attaches base64 image content blocks to the final
+    user turn. When the resolved provider/model cannot accept images this
+    raises :class:`LLMVisionUnsupportedError` (a 422-mappable subclass of
+    :class:`LLMProviderError`) *before* any network call — it is never retried
+    and never triggers a silent model substitution. The stub provider serves a
+    deterministic canned transcription for image requests instead.
+
     Returns an :class:`LLMResponse` carrying both the generated text and the
     token counts needed to log usage downstream.
     """
@@ -640,13 +842,18 @@ async def generate_response(
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
             # Default: stub provider for development and testing.
+            if images:
+                return _stub_vision_response(user_message, len(images))
             return _stub_response(user_message)
+        # Capability check before dispatch: LLMVisionUnsupportedError is not in
+        # _PROVIDER_ERROR_TYPES, so it escapes this try unwrapped.
+        _ensure_vision_capable(provider, _get_model(provider), images)
         # Resolve by name at call time so test monkeypatches on the module
         # attribute (e.g. ``patch.object(botmason, "_call_openai", ...)``)
         # keep working — the registry never freezes the function objects.
         caller = globals()[spec.call_name]
         result: LLMResponse = await caller(
-            user_message, conversation_history, resolved_prompt, api_key
+            user_message, conversation_history, resolved_prompt, api_key, images
         )
     except _PROVIDER_ERROR_TYPES as exc:
         raise LLMProviderError(str(exc)) from exc
@@ -662,6 +869,30 @@ def _stub_response(user_message: str) -> LLMResponse:
     """
     text = (
         f'BotMason hears you. You said: "{user_message}" — '
+        "Let the Archetypal Wavelength guide your reflection."
+    )
+    return LLMResponse(
+        text=text,
+        provider=STUB_PROVIDER_NAME,
+        model=STUB_MODEL_NAME,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+
+
+def _stub_vision_response(user_message: str, image_count: int) -> LLMResponse:
+    """Return a deterministic canned vision transcription for dev/testing.
+
+    Mirrors :func:`_stub_response` but acknowledges ``image_count`` attached
+    images so the stub vision path is visibly distinct from the text-only stub.
+    The text references only the count — never any base64 payload — so the
+    privacy invariant (image bytes never appear in a response or log) holds for
+    stub traffic too. Token counts are zero because no real model runs, and two
+    calls with the same arguments produce identical text.
+    """
+    text = (
+        f"BotMason gazes at your {image_count} attached image(s) and reflects "
+        f'on your words: "{user_message}" — '
         "Let the Archetypal Wavelength guide your reflection."
     )
     return LLMResponse(
@@ -722,6 +953,7 @@ async def _call_openai(
     conversation_history: list[dict[str, str]],
     system_prompt: str,
     api_key: str | None = None,
+    images: Sequence[ImagePayload] | None = None,
 ) -> LLMResponse:
     """Call the OpenAI chat completions API with timeout and retry."""
     # Model validation precedes key resolution and client construction so a
@@ -729,7 +961,7 @@ async def _call_openai(
     model = _get_model("openai")
     key = _resolve_api_key(api_key)
     client = openai.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
-    messages = _build_messages(user_message, conversation_history, system_prompt)
+    messages = _build_messages(user_message, conversation_history, system_prompt, images)
     max_tokens = _dynamic_max_tokens(conversation_history)
 
     async def _do_call() -> ChatCompletion:
@@ -755,6 +987,7 @@ async def _call_anthropic(
     conversation_history: list[dict[str, str]],
     system_prompt: str,
     api_key: str | None = None,
+    images: Sequence[ImagePayload] | None = None,
 ) -> LLMResponse:
     """Call the Anthropic messages API with timeout and retry."""
     # Model validation first — same zero-side-effect guarantee as OpenAI.
@@ -768,6 +1001,7 @@ async def _call_anthropic(
         user_message,
         conversation_history,
         system_prompt,
+        images,
     )
     max_tokens = _dynamic_max_tokens(conversation_history)
 

@@ -15,12 +15,16 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import openai
 import pytest
 
 from services import botmason
 from services.botmason import (
+    _LLM_TIMEOUT_SECONDS,
     _MAX_RETRIES,
     _RETRY_BASE_DELAY,
+    ImagePayload,
+    _call_openai,
     _is_retryable,
     _retry_on_transient,
 )
@@ -161,3 +165,74 @@ class TestRetryOnTransient:
         expected_delays = [_RETRY_BASE_DELAY * 2**0, _RETRY_BASE_DELAY * 2**1]
         actual_delays = [call.args[0] for call in sleep_mock.call_args_list]
         assert actual_delays == expected_delays
+
+
+def _fake_openai_completion(text: str) -> object:
+    """Build a bare object shaped like an OpenAI ``ChatCompletion`` for a fake client."""
+    message = type("Msg", (), {"content": text})()
+    choice = type("Choice", (), {"message": message})()
+    usage = type("Usage", (), {"prompt_tokens": 5, "completion_tokens": 3})()
+    return type("Completion", (), {"choices": [choice], "usage": usage})()
+
+
+class TestCallOpenAIRetryWithImages:
+    """A vision request retries transient failures exactly like a text-only one."""
+
+    @pytest.mark.asyncio
+    async def test_transient_error_then_success_retries_once_with_images(
+        self, sleep_mock: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        success = _fake_openai_completion("described the image")
+        create_mock = AsyncMock(side_effect=[_FakeStatusCodeError(503), success])
+        constructed_kwargs: dict[str, object] = {}
+
+        class _FakeOpenAIClient:
+            def __init__(self, **kwargs: object) -> None:
+                constructed_kwargs.update(kwargs)
+                completions = type("Completions", (), {"create": staticmethod(create_mock)})()
+                self.chat = type("Chat", (), {"completions": completions})()
+
+        monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
+        image = ImagePayload(data="ZmFrZQ==", media_type="image/png")
+
+        result = await _call_openai(
+            "describe this",
+            [],
+            "SYSTEM PROMPT",
+            api_key="sk-test-key",  # pragma: allowlist secret
+            images=[image],
+        )
+
+        assert result.text == "described the image"
+        assert create_mock.await_count == 2
+        assert sleep_mock.await_count == 1
+        assert constructed_kwargs["timeout"] == _LLM_TIMEOUT_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_persistent_transient_error_exhausts_retries_with_images(
+        self, sleep_mock: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        create_mock = AsyncMock(side_effect=_FakeStatusCodeError(503))
+        constructed_kwargs: dict[str, object] = {}
+
+        class _FakeOpenAIClient:
+            def __init__(self, **kwargs: object) -> None:
+                constructed_kwargs.update(kwargs)
+                completions = type("Completions", (), {"create": staticmethod(create_mock)})()
+                self.chat = type("Chat", (), {"completions": completions})()
+
+        monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
+        image = ImagePayload(data="ZmFrZQ==", media_type="image/png")
+
+        with pytest.raises(_FakeStatusCodeError):
+            await _call_openai(
+                "describe this",
+                [],
+                "SYSTEM PROMPT",
+                api_key="sk-test-key",  # pragma: allowlist secret
+                images=[image],
+            )
+
+        assert create_mock.await_count == _MAX_RETRIES + 1
+        assert sleep_mock.await_count == _MAX_RETRIES
+        assert constructed_kwargs["timeout"] == _LLM_TIMEOUT_SECONDS
