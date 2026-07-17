@@ -125,17 +125,18 @@ async def _released_habits(session: AsyncSession, arc_id: int) -> list[ReleasedH
     """Project an arc's released habits, joined to their habit rows, in a stable order.
 
     A single join query (never N+1) fetches every release row for the arc with
-    its habit's name and icon, ordered by ``released_at`` then ``habit_id`` so
-    the list is deterministic. ``recommitted`` is ``True`` once the release has
-    been re-committed. No owner key or surrogate row id is projected.
+    its habit's name, icon, and live ``revealed`` flag, ordered by ``released_at``
+    then ``habit_id`` so the list is deterministic. ``recommitted`` is derived
+    from *both* the release row and the habit itself — ``recommitted_at`` being
+    stamped OR the habit currently being ``revealed`` — because ``Habit.revealed``
+    is also directly writable through ``PUT /habits/{id}`` (the Habit Settings
+    toggle / bulk-reveal flow), so a habit re-enabled outside the Return must not
+    keep reading as resting. This keeps ``recommitted`` a faithful projection of
+    the single source of truth (``Habit.revealed``) rather than drifting from it.
+    No owner key or surrogate row id is projected.
     """
     result = await session.execute(
-        select(
-            col(MettaReturnHabitRelease.habit_id),
-            col(Habit.name),
-            col(Habit.icon),
-            col(MettaReturnHabitRelease.recommitted_at),
-        )
+        select(MettaReturnHabitRelease, Habit)
         .join(Habit, col(Habit.id) == col(MettaReturnHabitRelease.habit_id))
         .where(col(MettaReturnHabitRelease.arc_id) == arc_id)
         .order_by(
@@ -145,12 +146,12 @@ async def _released_habits(session: AsyncSession, arc_id: int) -> list[ReleasedH
     )
     return [
         ReleasedHabitResponse(
-            habit_id=habit_id,
-            name=name,
-            icon=icon,
-            recommitted=recommitted_at is not None,
+            habit_id=release.habit_id,
+            name=habit.name,
+            icon=habit.icon,
+            recommitted=release.recommitted_at is not None or habit.revealed,
         )
-        for habit_id, name, icon, recommitted_at in result.all()
+        for release, habit in result.all()
     ]
 
 
@@ -474,10 +475,16 @@ async def release_habits(
     caller owns and that is still unlocked is softly paused (``revealed`` flips
     to False, preserving its goals and completions) and recorded as released for
     the arc; ids that are unowned, unknown, or already locked are skipped
-    silently. The arc is locked ``FOR UPDATE`` so concurrent releases serialize,
-    and a truly concurrent duplicate insert trips the ``(arc_id, habit_id)``
-    unique constraint, whose ``IntegrityError`` is caught and treated as success.
-    Returns the arc's full released list.
+    silently. Returns the arc's full released list.
+
+    The arc is locked ``FOR UPDATE`` (:func:`_active_arc_for_update`) so two
+    releases for the same arc fully serialize: the second waits on the arc row,
+    and by the time it runs its ``_existing_releases_by_habit`` pre-check already
+    sees the first's committed rows, so it never re-inserts. The
+    ``(arc_id, habit_id)`` unique constraint is therefore never provoked here,
+    and no ``IntegrityError`` catch is needed — one (which would abort the whole
+    transaction, not a single item) would be dead code that misleadingly implies
+    per-item recovery.
     """
     arc = await _active_arc_for_update(session, user_id)
     if arc is None or arc.id is None:
@@ -485,10 +492,7 @@ async def release_habits(
     arc_id = arc.id
     habits = await _releasable_habits(session, user_id, request.habit_ids)
     await _record_releases(session, user_id, arc_id, habits)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
+    await session.commit()
     return await _released_habits(session, arc_id)
 
 

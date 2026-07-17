@@ -627,6 +627,99 @@ async def test_get_state_released_habits_empty_when_no_active_arc(
 
 
 # ---------------------------------------------------------------------------
+# recommitted stays consistent with Habit.revealed (single source of truth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recommitted_follows_revealed_when_re_enabled_outside_return(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Re-enabling a released habit via ``PUT /habits/{id}`` reads as recommitted.
+
+    ``Habit.revealed`` is directly writable through the habits update endpoint
+    (the Habit Settings "revealed" toggle / bulk-reveal flow), independent of
+    the Return card's recommit button. The released list must project
+    ``recommitted`` from the live ``revealed`` state so the two flags never
+    disagree: a habit re-enabled outside the Return is no longer resting.
+    """
+    headers = await _signup(async_client, "mrh_revealsync27")
+    user = await _get_user(db_session, "mrh_revealsync27@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    habit = await _seed_habit(db_session, user.id, name="Meditate", icon="seedling")
+    assert habit.id is not None
+    habit_id = habit.id
+
+    release_resp = await async_client.post(
+        _RELEASE_URL,
+        headers=headers,
+        json={"habit_ids": [habit_id]},
+    )
+    assert release_resp.status_code == HTTPStatus.OK
+    assert release_resp.json()[0]["recommitted"] is False
+
+    # Re-enable the habit through the ordinary habits update path, NOT recommit.
+    put_resp = await async_client.put(
+        f"/habits/{habit_id}",
+        headers=headers,
+        json={
+            "name": "Meditate",
+            "icon": "seedling",
+            "start_date": "2025-01-01",
+            "energy_cost": 10,
+            "energy_return": 20,
+            "revealed": True,
+        },
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+    assert put_resp.json()["revealed"] is True
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    released = resp.json()["released_habits"]
+    assert len(released) == 1
+    assert released[0]["habit_id"] == habit_id
+    # No stale "resting" affordance: the row reads as recommitted once revealed.
+    assert released[0]["recommitted"] is True
+
+
+@pytest.mark.asyncio
+async def test_recommitted_true_via_normal_recommit_path_in_get_state(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The normal recommit button also flips the GET-state ``recommitted`` flag.
+
+    Pairs with the settings-toggle test above: whether the habit is taken up
+    again through the Return card's recommit endpoint or re-enabled elsewhere,
+    the released list reports it as recommitted rather than still resting.
+    """
+    headers = await _signup(async_client, "mrh_recommitget28")
+    user = await _get_user(db_session, "mrh_recommitget28@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    habit = await _seed_habit(db_session, user.id)
+    assert habit.id is not None
+    habit_id = habit.id
+
+    await async_client.post(_RELEASE_URL, headers=headers, json={"habit_ids": [habit_id]})
+    await async_client.post(_RECOMMIT_URL, headers=headers, json={"habit_ids": [habit_id]})
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    released = resp.json()["released_habits"]
+    assert len(released) == 1
+    assert released[0]["habit_id"] == habit_id
+    assert released[0]["recommitted"] is True
+
+
+# ---------------------------------------------------------------------------
 # No owner-key / row-id leakage
 # ---------------------------------------------------------------------------
 

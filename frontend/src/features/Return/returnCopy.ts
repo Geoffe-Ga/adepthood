@@ -74,6 +74,10 @@ export const RETURN_LETGO_SKIP_A11Y = 'Leave every habit as it is for now';
 /** The let-go empty state — shown when no revealed habits are available to rest. */
 export const RETURN_LETGO_EMPTY = 'There are no active habits to set down right now.';
 
+/** The let-go load-error line — a flaky fetch, distinct from having nothing to rest. */
+export const RETURN_LETGO_ERROR =
+  'These could not load just now — keep everything as it is, or check back in a moment.';
+
 /** Build the per-habit selection label for the let-go picker, naming the habit warmly. */
 export function buildReturnLetGoHabitA11y(name: string): string {
   return `Let ${name} rest for now`;
@@ -117,6 +121,7 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_LETGO_SKIP,
   RETURN_LETGO_SKIP_A11Y,
   RETURN_LETGO_EMPTY,
+  RETURN_LETGO_ERROR,
   RETURN_RECOMMIT_HEADING,
   RETURN_RECOMMIT_BODY,
   RETURN_RECOMMIT_ACTION,

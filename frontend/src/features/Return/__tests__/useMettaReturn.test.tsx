@@ -506,6 +506,31 @@ describe('useMettaReturn — let-go and re-commit', () => {
     ]);
   });
 
+  it('recommit stays silent when the api rejects, never throwing an unhandled rejection', async () => {
+    // Mirrors release's deliberate hardening: a rejected recommit (called as a
+    // fire-and-forget `void recommit(...)`) must resolve gently and leave the
+    // resting list untouched rather than surfacing an unhandled rejection.
+    mockState.mockResolvedValue(
+      stateResult({
+        eligible: true,
+        arc: arc(),
+        released_habits: [releasedHabit({ habit_id: 3, recommitted: false })],
+      }),
+    );
+    mockRecommit.mockRejectedValue(new Error('network error'));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.releasedHabits).toHaveLength(1));
+
+    await act(async () => {
+      await expect(result.current.recommit([3])).resolves.toBeUndefined();
+    });
+
+    expect(mockRecommit).toHaveBeenCalledWith([3]);
+    expect(result.current.releasedHabits).toEqual([
+      releasedHabit({ habit_id: 3, recommitted: false }),
+    ]);
+  });
+
   it('seeds releasedHabits from the loaded state on mount', async () => {
     mockState.mockResolvedValue(
       stateResult({

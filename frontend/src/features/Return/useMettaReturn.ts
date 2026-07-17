@@ -143,8 +143,14 @@ function useLetGoActions(
   );
   const recommit = useCallback(
     async (habitIds: number[]): Promise<void> => {
-      const updated = await mettaReturn.recommit(habitIds);
-      if (mountedRef.current) setReleasedHabits(updated);
+      try {
+        const updated = await mettaReturn.recommit(habitIds);
+        if (mountedRef.current) setReleasedHabits(updated);
+      } catch {
+        // Mirrors `release`'s hardening: recommit is dispatched fire-and-forget
+        // (`void recommit(...)`), so a rejected call resolves silently and leaves
+        // the resting list untouched rather than raising an unhandled rejection.
+      }
     },
     [mountedRef, setReleasedHabits],
   );

@@ -12,6 +12,7 @@ import {
   RETURN_LETGO_SKIP,
   RETURN_LETGO_SKIP_A11Y,
   RETURN_LETGO_EMPTY,
+  RETURN_LETGO_ERROR,
   buildReturnLetGoHabitA11y,
   RETURN_RECOMMIT_HEADING,
   RETURN_RECOMMIT_BODY,
@@ -50,10 +51,16 @@ describe('returnCopy — let-go and re-commit additions', () => {
     RETURN_LETGO_SKIP,
     RETURN_LETGO_SKIP_A11Y,
     RETURN_LETGO_EMPTY,
+    RETURN_LETGO_ERROR,
     RETURN_RECOMMIT_HEADING,
     RETURN_RECOMMIT_BODY,
     RETURN_RECOMMIT_ACTION,
   ];
+
+  it('the load-error line is distinct from the empty-state line', () => {
+    expect(RETURN_LETGO_ERROR).not.toBe(RETURN_LETGO_EMPTY);
+    expect(ranksOrShames(RETURN_LETGO_ERROR)).toBe(false);
+  });
 
   it('every new let-go and re-commit string is appended to RETURN_COPY_ENTRIES', () => {
     for (const entry of newStaticEntries) {

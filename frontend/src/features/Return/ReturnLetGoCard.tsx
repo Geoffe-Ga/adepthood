@@ -11,6 +11,7 @@ import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import {
   RETURN_LETGO_BODY,
   RETURN_LETGO_EMPTY,
+  RETURN_LETGO_ERROR,
   RETURN_LETGO_HEADING,
   RETURN_LETGO_RELEASE,
   RETURN_LETGO_RELEASE_A11Y,
@@ -31,6 +32,7 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { usePressScale } from '@/hooks/usePressScale';
+import type { PressScale } from '@/hooks/usePressScale';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface ReturnLetGoCardProps {
@@ -50,24 +52,35 @@ function toggleSelection(selected: number[], habitId: number): number[] {
     : [...selected, habitId];
 }
 
-/** Load the revealed habits once on mount; ``null`` means the list is still loading. */
-function useRevealedHabits(): ApiHabitWithGoals[] | null {
+/** The revealed-habit load state: ``null`` habits means still loading. */
+interface RevealedHabitsState {
+  revealed: ApiHabitWithGoals[] | null;
+  loadFailed: boolean;
+}
+
+/** Load the revealed habits once on mount, tracking a load failure distinctly. */
+function useRevealedHabits(): RevealedHabitsState {
   const [revealed, setRevealed] = useState<ApiHabitWithGoals[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
     let mounted = true;
     const apply = (all: ApiHabitWithGoals[]): void => {
       if (mounted) setRevealed(all.filter(isRevealed));
     };
     const fallback = (): void => {
-      // A failed load stays silent — the person can still keep every habit as it is.
-      if (mounted) setRevealed([]);
+      // A failed load surfaces a distinct line, never the empty-state copy —
+      // a flaky connection must not read as "you have nothing to release."
+      if (mounted) {
+        setRevealed([]);
+        setLoadFailed(true);
+      }
     };
     void habits.listAll().then(apply).catch(fallback);
     return () => {
       mounted = false;
     };
   }, []);
-  return revealed;
+  return { revealed, loadFailed };
 }
 
 /** A single selectable habit row within the let-go picker. */
@@ -123,9 +136,71 @@ function HabitPicker({
   );
 }
 
+/** The picker, or the distinct load-error line when the habit list failed to load. */
+function LetGoBody({
+  revealed,
+  loadFailed,
+  selected,
+  onToggle,
+}: {
+  revealed: ApiHabitWithGoals[];
+  loadFailed: boolean;
+  selected: number[];
+  onToggle: (_habitId: number) => void;
+}): React.JSX.Element {
+  if (loadFailed) {
+    return (
+      <Text style={styles.empty} testID="return-letgo-error">
+        {RETURN_LETGO_ERROR}
+      </Text>
+    );
+  }
+  return <HabitPicker revealed={revealed} selected={selected} onToggle={onToggle} />;
+}
+
+/** The release + skip button row. Release goes live only once something is chosen. */
+function LetGoActions({
+  nothingChosen,
+  press,
+  onRelease,
+  onSkip,
+}: {
+  nothingChosen: boolean;
+  press: PressScale;
+  onRelease: () => void;
+  onSkip: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.actions}>
+      <TouchableOpacity
+        style={[styles.release, nothingChosen ? styles.releaseDisabled : undefined]}
+        onPress={onRelease}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        disabled={nothingChosen}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: nothingChosen }}
+        accessibilityLabel={RETURN_LETGO_RELEASE_A11Y}
+        testID="return-letgo-release"
+      >
+        <Text style={styles.releaseText}>{RETURN_LETGO_RELEASE}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.skip}
+        onPress={onSkip}
+        accessibilityRole="button"
+        accessibilityLabel={RETURN_LETGO_SKIP_A11Y}
+        testID="return-letgo-skip"
+      >
+        <Text style={styles.skipText}>{RETURN_LETGO_SKIP}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function ReturnLetGoCard({ onRelease, onSkip }: ReturnLetGoCardProps): React.JSX.Element {
   const press = usePressScale(useReducedMotion());
-  const revealed = useRevealedHabits();
+  const { revealed, loadFailed } = useRevealedHabits();
   const [selected, setSelected] = useState<number[]>([]);
 
   const toggle = useCallback((habitId: number): void => {
@@ -146,31 +221,18 @@ function ReturnLetGoCard({ onRelease, onSkip }: ReturnLetGoCardProps): React.JSX
           <View testID="return-letgo-loading" />
         ) : (
           <>
-            <HabitPicker revealed={revealed} selected={selected} onToggle={toggle} />
-            <View style={styles.actions}>
-              <TouchableOpacity
-                style={[styles.release, nothingChosen ? styles.releaseDisabled : undefined]}
-                onPress={() => onRelease(selected)}
-                onPressIn={press.onPressIn}
-                onPressOut={press.onPressOut}
-                disabled={nothingChosen}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: nothingChosen }}
-                accessibilityLabel={RETURN_LETGO_RELEASE_A11Y}
-                testID="return-letgo-release"
-              >
-                <Text style={styles.releaseText}>{RETURN_LETGO_RELEASE}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.skip}
-                onPress={onSkip}
-                accessibilityRole="button"
-                accessibilityLabel={RETURN_LETGO_SKIP_A11Y}
-                testID="return-letgo-skip"
-              >
-                <Text style={styles.skipText}>{RETURN_LETGO_SKIP}</Text>
-              </TouchableOpacity>
-            </View>
+            <LetGoBody
+              revealed={revealed}
+              loadFailed={loadFailed}
+              selected={selected}
+              onToggle={toggle}
+            />
+            <LetGoActions
+              nothingChosen={nothingChosen}
+              press={press}
+              onRelease={() => onRelease(selected)}
+              onSkip={onSkip}
+            />
           </>
         )}
       </View>

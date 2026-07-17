@@ -11,7 +11,7 @@ jest.mock('@/api', () => ({
   },
 }));
 
-import { RETURN_LETGO_EMPTY, buildReturnLetGoHabitA11y } from '../returnCopy';
+import { RETURN_LETGO_EMPTY, RETURN_LETGO_ERROR, buildReturnLetGoHabitA11y } from '../returnCopy';
 import ReturnLetGoCard from '../ReturnLetGoCard';
 
 import type { ApiHabitWithGoals } from '@/api';
@@ -143,6 +143,27 @@ describe('ReturnLetGoCard', () => {
     );
     await waitFor(() => expect(getByText(RETURN_LETGO_EMPTY)).toBeTruthy());
     expect(queryByTestId('return-letgo-habit-1')).toBeNull();
+
+    fireEvent.press(getByTestId('return-letgo-skip'));
+    expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the distinct load-error line (not the empty line) when the list fails to load', async () => {
+    mockListAll.mockRejectedValue(new Error('network down'));
+    const { getByText, queryByText, queryByTestId } = render(
+      <ReturnLetGoCard onRelease={jest.fn()} onSkip={jest.fn()} />,
+    );
+    await waitFor(() => expect(getByText(RETURN_LETGO_ERROR)).toBeTruthy());
+    // A flaky connection must never read as "you have nothing to release."
+    expect(queryByText(RETURN_LETGO_EMPTY)).toBeNull();
+    expect(queryByTestId('return-letgo-error')).toBeTruthy();
+  });
+
+  it('still offers to skip after a failed load so the moment stays declinable', async () => {
+    mockListAll.mockRejectedValue(new Error('network down'));
+    const onSkip = jest.fn();
+    const { getByTestId } = render(<ReturnLetGoCard onRelease={jest.fn()} onSkip={onSkip} />);
+    await waitFor(() => expect(getByTestId('return-letgo-error')).toBeTruthy());
 
     fireEvent.press(getByTestId('return-letgo-skip'));
     expect(onSkip).toHaveBeenCalledTimes(1);
