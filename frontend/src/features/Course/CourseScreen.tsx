@@ -35,7 +35,7 @@ import ChapterReader from './ChapterReader';
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
-import CourseDrawer, { useCourseDrawerContent } from './CourseDrawer';
+import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
 import RetryButton from './RetryButton';
 import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
@@ -501,6 +501,7 @@ const CourseScreenDrawer = ({
   onChapterPress,
 }: CourseScreenDrawerProps): React.JSX.Element => {
   const { sections, retry } = useCourseDrawerContent(stages, drawer.isOpen);
+  const { bodies, status, confirmBodySearch } = useCourseDrawerBodies(sections);
   return (
     <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Course" title="Course">
       <DrawerNavSection currentScreen="Course" onNavigate={drawer.close} />
@@ -508,8 +509,11 @@ const CourseScreenDrawer = ({
         stages={stages}
         selectedStage={selectedStage}
         sections={sections}
+        bodies={bodies}
+        sweepStatus={status}
         onChapterPress={onChapterPress}
         onRetry={retry}
+        onConfirmBodySearch={confirmBodySearch}
       />
     </ScreenDrawer>
   );
