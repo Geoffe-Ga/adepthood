@@ -345,6 +345,10 @@ const styles = StyleSheet.create({
   },
 
   // Native Markdown reader body — floated on a warm paper sheet.
+  // Relative region the bottom fade pins to (its absolute bottom:0 anchors here).
+  readerScrollRegion: {
+    flex: 1,
+  },
   readerScroll: {
     flex: 1,
     backgroundColor: surface.desk,

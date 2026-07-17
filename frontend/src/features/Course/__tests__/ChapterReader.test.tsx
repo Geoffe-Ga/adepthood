@@ -2,10 +2,15 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
 import type * as Api from '../../../api';
+import { rhythm, surface } from '../../../design/tokens';
 import ChapterReader from '../ChapterReader';
+
+interface TestNode {
+  props: Record<string, unknown>;
+}
 
 jest.mock('../../../api', () => ({
   course: {
@@ -365,5 +370,54 @@ describe('ChapterReader', () => {
     const title = await findByTestId('reader-sheet-title');
     expect(title.props.children).toBe('Manifest Title');
     await findByText('Different Heading');
+  });
+
+  it('renders a desk-colored bottom fade beneath the loaded body', async () => {
+    const { findByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const fade = await findByTestId('reader-bottom-fade');
+    const stops = fade.findAll(
+      (node: TestNode) => typeof node.props.offset === 'string' && 'stopColor' in node.props,
+    );
+    expect(stops.length).toBeGreaterThan(0);
+    for (const stop of stops) {
+      expect(stop.props.stopColor).toBe(surface.desk);
+    }
+  });
+
+  it('renders the bottom fade as a sibling overlay, never nested inside the markdown ScrollView', async () => {
+    const { findByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const fade = await findByTestId('reader-bottom-fade');
+    const scrollView = await findByTestId('reader-markdown');
+    const nestedFade = scrollView.findAll(
+      (node: TestNode) => node.props.testID === 'reader-bottom-fade',
+    );
+    expect(nestedFade).toHaveLength(0);
+    expect(fade).toBeTruthy();
+  });
+
+  it('pads the markdown ScrollView content by the bottom-fade height', async () => {
+    const { findByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    const scrollView = await findByTestId('reader-markdown');
+    const flat = StyleSheet.flatten(scrollView.props.contentContainerStyle);
+    expect(flat.paddingBottom).toBe(rhythm.bottomFadeHeight);
+  });
+
+  it('still renders a footer alongside the bottom fade once content has loaded', async () => {
+    const { findByTestId, findByText } = render(
+      <ChapterReader
+        source={{ kind: 'content', id: 1 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+        footer={<Text>FOOTER_HERE</Text>}
+      />,
+    );
+    await findByTestId('reader-bottom-fade');
+    await findByText('FOOTER_HERE');
   });
 });

@@ -36,8 +36,10 @@ instead. Enforced by `__tests__/semanticTokens.test.ts`.
 is the paper ground rising to absorb the last inch of scrolling content — quiet
 and structural, not decorative. It gradients from transparent to `surface.canvas`
 exactly, never black, so the veil reads as more of the same ground rather than a
-grey shadow at the screen's end. `ScreenScaffold` renders it automatically in
-`scroll` mode.
+grey shadow at the screen's end. An optional `color` prop overrides that ground
+for scrollers floated on a different surface — the Course chapter reader passes
+`surface.desk` so its fade dissolves into the desk rather than banding canvas.
+`ScreenScaffold` renders it automatically in `scroll` mode.
 
 ## Palette provenance
 

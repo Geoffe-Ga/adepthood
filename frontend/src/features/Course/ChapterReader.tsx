@@ -3,7 +3,8 @@ import { ActivityIndicator, Image, ScrollView, Text, TouchableOpacity, View } fr
 import Markdown from 'react-native-markdown-display';
 
 import { course as courseApi, type ContentBody } from '../../api';
-import { colors, SPACING } from '../../design/tokens';
+import { BottomFade } from '../../components/layout/BottomFade';
+import { colors, rhythm, surface } from '../../design/tokens';
 
 import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
@@ -237,18 +238,21 @@ function renderBody(body: ContentBody): React.ReactElement {
     return <EmptyView />;
   }
   return (
-    <ScrollView
-      style={styles.readerScroll}
-      contentContainerStyle={{ paddingBottom: SPACING.xxl }}
-      testID="reader-markdown"
-    >
-      <View style={styles.readerSheet}>
-        <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
-        <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
-          {markdown}
-        </Markdown>
-      </View>
-    </ScrollView>
+    <View style={styles.readerScrollRegion}>
+      <ScrollView
+        style={styles.readerScroll}
+        contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
+        testID="reader-markdown"
+      >
+        <View style={styles.readerSheet}>
+          <ReaderSheetHeader eyebrow={READER_EYEBROWS[body.content_type]} title={body.title} />
+          <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
+            {markdown}
+          </Markdown>
+        </View>
+      </ScrollView>
+      <BottomFade color={surface.desk} testID="reader-bottom-fade" />
+    </View>
   );
 }
 

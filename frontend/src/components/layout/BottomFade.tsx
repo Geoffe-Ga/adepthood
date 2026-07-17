@@ -25,20 +25,34 @@ import { rhythm, surface } from '@/design/tokens';
  * content by `rhythm.bottomFadeHeight` (see `ScreenScaffold`'s `scrollContent`
  * style) so the veil only ever covers already-read trailing whitespace, never
  * the last line of real content.
+ *
+ * `color` overrides the ground the veil fades into (defaults to
+ * `surface.canvas`); both gradient stops share it so only the opacity ramps.
  */
-export const BottomFade = ({ testID = 'bottom-fade' }: { testID?: string }): React.JSX.Element => (
-  <View pointerEvents="none" style={styles.overlay} testID={testID}>
-    <Svg width="100%" height="100%">
-      <Defs>
-        <LinearGradient id="bottom-fade-grad" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={surface.canvas} stopOpacity="0" />
-          <Stop offset="1" stopColor={surface.canvas} stopOpacity="1" />
-        </LinearGradient>
-      </Defs>
-      <Rect width="100%" height="100%" fill="url(#bottom-fade-grad)" />
-    </Svg>
-  </View>
-);
+export const BottomFade = ({
+  testID = 'bottom-fade',
+  color = surface.canvas,
+}: {
+  testID?: string;
+  color?: string;
+}): React.JSX.Element => {
+  // Derive a per-instance id so distinct fades never collide on web, where all
+  // gradient ids share one DOM (native scopes Defs per-Svg).
+  const gradientId = `${testID}-grad`;
+  return (
+    <View pointerEvents="none" style={styles.overlay} testID={testID}>
+      <Svg width="100%" height="100%">
+        <Defs>
+          <LinearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={color} stopOpacity="0" />
+            <Stop offset="1" stopColor={color} stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill={`url(#${gradientId})`} />
+      </Svg>
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   overlay: {
