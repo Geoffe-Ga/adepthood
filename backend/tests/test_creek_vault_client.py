@@ -8,6 +8,7 @@ from typing import cast
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from domain.creek_vault import (
     CONTRACT_VERSION,
@@ -19,8 +20,9 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
 )
-from schemas.wheel import WheelAspect, WheelBalanceResponse
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
@@ -383,8 +385,8 @@ async def test_reflect_missing_reflection_returns_empty_string() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wheel_success_returns_wheel_balance_response() -> None:
-    """wheel() parses a vault-computed WheelBalanceResponse payload."""
+async def test_wheel_success_projects_onto_vault_wheel_balance() -> None:
+    """wheel() projects a vault-computed wheel payload onto VaultWheelBalance."""
     transport = ScriptedTransport(
         responses={
             CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
@@ -399,12 +401,27 @@ async def test_wheel_success_returns_wheel_balance_response() -> None:
     client = McpCreekVaultClient(transport=transport)
     await client.handshake()
     result = await client.wheel()
-    assert result == WheelBalanceResponse(
-        aspects=[
-            WheelAspect(stage_number=1, aspect="courage", fullness=0.5),
-            WheelAspect(stage_number=2, aspect="shadow", fullness=0.75),
-        ]
+    assert result == VaultWheelBalance(
+        aspects=(
+            VaultWheelAspect(stage_number=1, aspect="courage", fullness=0.5),
+            VaultWheelAspect(stage_number=2, aspect="shadow", fullness=0.75),
+        )
     )
+
+
+@pytest.mark.asyncio
+async def test_wheel_malformed_fields_raise_validation_error() -> None:
+    """wheel() does not normalize a bad-fields payload; the parse error surfaces."""
+    transport = ScriptedTransport(
+        responses={
+            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
+            CreekCapability.WHEEL.value: {"aspects": [{"stage_number": "not-an-int"}]},
+        }
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    with pytest.raises(ValidationError):
+        await client.wheel()
 
 
 @pytest.mark.asyncio

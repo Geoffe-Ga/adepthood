@@ -56,6 +56,8 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
 )
 from schemas.wheel import WheelBalanceResponse
 
@@ -344,20 +346,35 @@ class McpCreekVaultClient:
         reflection = payload.get("reflection")
         return reflection if isinstance(reflection, str) else ""
 
-    async def wheel(self) -> WheelBalanceResponse:
+    async def wheel(self) -> VaultWheelBalance:
         """Return a vault-computed Wheel-of-Wholeness read, requiring WHEEL.
 
-        A well-formed mapping whose *fields* do not match
-        :class:`WheelBalanceResponse` still raises ``pydantic.ValidationError``
-        here rather than degrading to :class:`CreekVaultUnavailableError`. That
-        is the one un-normalized error path in this client and is deliberate:
-        field-level wheel validation and a response-size ceiling belong with the
-        read/compute path that consumes the wheel. It does not weaken the floor
-        guarantee -- the wheel is an optional read, never a write, and a caller
-        that cannot obtain it falls back to computing the balance locally.
+        The wire payload is validated against :class:`WheelBalanceResponse` (the
+        schema import is legitimate in this adapter layer) and then projected onto
+        the pure-domain :class:`VaultWheelBalance` the seam contract returns, so
+        the domain module carries no schema dependency.
+
+        A well-formed mapping whose *fields* do not match the schema still raises
+        ``pydantic.ValidationError`` here rather than degrading to
+        :class:`CreekVaultUnavailableError`. That is the one un-normalized error
+        path in this client and is deliberate: field-level wheel validation and a
+        response-size ceiling belong with the read/compute path that consumes the
+        wheel. It does not weaken the floor guarantee -- the wheel is an optional
+        read, never a write, and a caller that cannot obtain it falls back to
+        computing the balance locally.
         """
         payload = await self._invoke(CreekCapability.WHEEL, {"consumer": CONSUMER_ID})
-        return WheelBalanceResponse.model_validate(payload)
+        validated = WheelBalanceResponse.model_validate(payload)
+        return VaultWheelBalance(
+            aspects=tuple(
+                VaultWheelAspect(
+                    stage_number=aspect.stage_number,
+                    aspect=aspect.aspect,
+                    fullness=aspect.fullness,
+                )
+                for aspect in validated.aspects
+            ),
+        )
 
 
 class LocalFallbackCreekVaultClient:
@@ -396,7 +413,7 @@ class LocalFallbackCreekVaultClient:
         """Raise: reflection has no local vault to serve it."""
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
 
-    async def wheel(self) -> WheelBalanceResponse:
+    async def wheel(self) -> VaultWheelBalance:
         """Raise: a vault wheel read has no local vault to serve it."""
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 

@@ -36,8 +36,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from schemas.wheel import WheelBalanceResponse
-
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
@@ -208,6 +206,33 @@ class VaultClassification:
     tags: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class VaultWheelAspect:
+    """One Aspect's fullness at a stage, in a vault-computed wheel read.
+
+    A domain-native mirror of the transport's per-Aspect wheel row so the seam's
+    return type stays pure Python; the adapter validates the wire payload against
+    the Pydantic schema and then projects it onto this value.
+    """
+
+    stage_number: int
+    aspect: str
+    fullness: float
+
+
+@dataclass(frozen=True)
+class VaultWheelBalance:
+    """A vault's Wheel-of-Wholeness read: Aspect fullness in canonical order.
+
+    The domain-layer return type of :meth:`CreekVaultClient.wheel` -- a plain,
+    immutable value carrying no FastAPI/DB/schema dependency, exactly as the rest
+    of this module. The concrete adapter owns the (schema-backed) parse and hands
+    back this value, keeping the domain free of the Pydantic response type.
+    """
+
+    aspects: tuple[VaultWheelAspect, ...]
+
+
 class CreekVaultClient(Protocol):
     """The seam adepthood calls into for all vault interaction.
 
@@ -241,5 +266,13 @@ class CreekVaultClient(Protocol):
     async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
         """Produce a Higher Self reflection grounded in the user's own corpus."""
 
-    async def wheel(self) -> WheelBalanceResponse:
-        """Return a Wheel-of-Wholeness balance read from the vault's corpus."""
+    async def wheel(self) -> VaultWheelBalance:
+        """Return a Wheel-of-Wholeness balance read from the vault's corpus.
+
+        Unlike the other capabilities, a wheel payload whose *fields* are
+        malformed is not normalized to :class:`CreekVaultUnavailableError`: the
+        adapter surfaces a parse error so the read/compute path that consumes the
+        wheel owns field-level validation. The wheel is an optional read, never a
+        write, so a caller that cannot obtain it falls back to computing the
+        balance locally.
+        """
