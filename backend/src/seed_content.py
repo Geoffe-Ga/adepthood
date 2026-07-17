@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -331,7 +332,11 @@ async def _prune_stale_rows(
     so no surviving completion still references a stale row when the row is
     deleted (the ``content_id`` FK is enforced and not deferrable).
     Deletion stays inside the caller's transaction; the shared commit point
-    is the sole writer.
+    is the sole writer.  The first flush executes this run's pending inserts
+    early, so on a concurrent seed it can raise the same race-arbitrating
+    ``IntegrityError`` the guarded commit catches; :func:`_reconcile_prune_commit`
+    wraps this call in that same yield-to-the-winner contract rather than
+    letting the exception escape as a spurious seed failure.
     """
     stale = _stale_rows(existing, reconciled_ids)
     if not stale:
@@ -361,6 +366,60 @@ def _warn_pruned(counts: _PruneCounts) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _SeedOutcome:
+    """Result of one reconcile-prune-commit pass.
+
+    ``counts`` is ``None`` only when the process lost the race at the prune
+    flush and rolled back before any prune could persist, so the caller
+    knows to skip the prune-summary WARNING; ``won`` is ``False`` for both
+    the flush-time and commit-time race-loser paths.
+    """
+
+    inserted: int
+    won: bool
+    counts: _PruneCounts | None
+
+
+async def _reconcile_prune_commit(
+    session: AsyncSession,
+    stage_map: dict[int, int],
+    existing: _ExistingRows,
+) -> _SeedOutcome:
+    """Reconcile, prune, and commit under one race-yield contract.
+
+    Both the prune flush and the final commit push this run's pending
+    inserts to the DB, so either can trip the arbitrating unique index when
+    a peer worker seeds concurrently.  A collision at either seam is turned
+    into the same loser no-op — roll back and report 0 inserts — so a
+    concurrent boot never surfaces a spurious ``seed_failed`` ERROR.
+    """
+    result = _reconcile_all(session, stage_map, existing)
+    try:
+        counts = await _prune_stale_rows(
+            session, existing, result.survivors, _reconciled_stage_ids(stage_map)
+        )
+    except IntegrityError:
+        # Race-loser at PRUNE-FLUSH time: ``_prune_stale_rows`` flushes to
+        # give freshly-inserted survivors ids, which pushes this run's
+        # pending ``_reconcile_all`` inserts to the DB early — before the
+        # guarded commit below could arbitrate.  A peer worker already
+        # seeded the same ``content://`` refs, so the flush trips the
+        # ``ix_stagecontent_stage_content_ref_unique`` index (migration
+        # ``e8f9a0b1c2d3``).  Yield exactly as the commit helper would.
+        await session.rollback()
+        return _SeedOutcome(inserted=0, won=False, counts=None)
+
+    if not (result.dirty or counts.rows > 0):
+        # Nothing to commit, so nothing this process could lose or roll back.
+        return _SeedOutcome(inserted=result.inserted, won=True, counts=counts)
+    # Race-safe commit: a peer worker that seeded the same chapters between
+    # our existence read and this commit trips the same unique index; the
+    # loser rolls back and reports 0 inserts.
+    won = await try_commit_yielding_to_race_winner(session)
+    return _SeedOutcome(inserted=result.inserted if won else 0, won=won, counts=counts)
+
+
 async def seed_content(session: AsyncSession) -> int:
     """Reconcile ``StageContent`` rows with the declarative config.
 
@@ -375,25 +434,10 @@ async def seed_content(session: AsyncSession) -> int:
     stage_map = await _load_stage_map(session)
     existing = await _load_existing_keys(session)
 
-    result = _reconcile_all(session, stage_map, existing)
-    counts = await _prune_stale_rows(
-        session, existing, result.survivors, _reconciled_stage_ids(stage_map)
-    )
-
-    if result.dirty or counts.rows > 0:
-        # Race-safe commit: a peer worker that seeded the same chapters
-        # between our existence read and this commit trips the
-        # ``ix_stagecontent_stage_content_ref_unique`` index (migration
-        # ``e8f9a0b1c2d3``); the loser rolls back and reports 0 inserts.
-        won = await try_commit_yielding_to_race_winner(session)
-        inserted = result.inserted if won else 0
-    else:
-        # Nothing to commit, so nothing this process could lose or roll back.
-        won = True
-        inserted = result.inserted
+    outcome = await _reconcile_prune_commit(session, stage_map, existing)
     _warn_unmapped_manifest_stages(stage_map)
-    if won:
+    if outcome.won and outcome.counts is not None:
         # A prune the losing worker rolled back never persisted from here;
         # only the winner reports its tally.
-        _warn_pruned(counts)
-    return inserted
+        _warn_pruned(outcome.counts)
+    return outcome.inserted
