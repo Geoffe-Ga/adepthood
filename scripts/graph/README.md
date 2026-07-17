@@ -14,8 +14,26 @@ web session) can produce or refresh the graph with one command.
 The build writes ~17 MB of artifacts to `graphify-out/graph.json`. With several
 parallel Ralph worktrees each rebuilding it, committing the output would put
 huge, churning diffs into every PR. So `graphify-out/` is git-ignored in this
-repo; distribution happens later via a rolling GitHub Release. Rebuild it
-locally whenever you need it.
+repo; distribution happens via a rolling GitHub Release. Rebuild it locally
+whenever you need it, or fetch the latest published graph in seconds.
+
+## Fetching the published graph
+
+The `graph-build` workflow (`.github/workflows/graph-build.yml`) keeps `main`
+carrying a graph that is at most 24h fresh, published as a **rolling release**
+tagged `knowledge-graph`. It re-uploads three assets in place on every run —
+`graph.json`, `graph-meta.json` (build provenance: `built_at`, `sha`, node /
+edge counts, pinned `graphifyy` version, `kind`), and `GRAPH_REPORT.md` when
+present. Any environment can pull the current graph without rebuilding:
+
+```bash
+gh release download knowledge-graph --pattern graph.json --dir graphify-out
+```
+
+The `knowledge-graph` git tag stays pinned at the commit where the release was
+first created; it is **not** a version marker. The authoritative build identity
+is `graph-meta.json`'s `sha` field, which tracks the commit each upload was
+built from.
 
 ## Commands
 
