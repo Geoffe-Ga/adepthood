@@ -464,8 +464,11 @@ describe('Course header drawer', () => {
         stages={gappyStages}
         selectedStage={3}
         sections={{}}
+        bodies={{}}
+        sweepStatus="idle"
         onChapterPress={jest.fn()}
         onRetry={jest.fn()}
+        onConfirmBodySearch={jest.fn()}
       />,
     );
 
