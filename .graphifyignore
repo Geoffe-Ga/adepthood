@@ -5,3 +5,5 @@ graphify-out/
 .git/
 frontend/dist/
 frontend/coverage/
+.claude/
+frontend/assets/
