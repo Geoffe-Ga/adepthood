@@ -657,6 +657,113 @@ async def test_seed_content_prune_collapses_marks_across_multiple_twins(
 
 
 @pytest.mark.asyncio
+async def test_seed_content_prunes_both_fossils_sharing_one_legacy_url(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Two distinct fossils sharing an identical non-content URL are both pruned.
+
+    Migration ``e8f9a0b1c2d3`` documents that legacy rows may share a
+    non-``content://`` url without being copies of one chapter, so the prune
+    must reach every such row -- not just the last one indexed under that
+    ``(stage, url)`` key -- and rehome each reader's mark.
+    """
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=1)
+    await seed_content(db_session)
+
+    survivor = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .one()
+    )
+
+    shared_url = "https://legacy.example.com/survival"
+    fossils = [
+        StageContent(
+            course_stage_id=survivor.course_stage_id,
+            title="Survival",
+            content_type="chapter",
+            release_day=0,
+            url=shared_url,
+        )
+        for _ in range(2)
+    ]
+    for fossil in fossils:
+        db_session.add(fossil)
+    await db_session.commit()
+    fossil_ids = {fossil.id for fossil in fossils}
+    assert None not in fossil_ids
+
+    readers = [
+        User(email=f"shared-url-reader-{i}@example.com", password_hash="x") for i in range(2)
+    ]
+    for reader in readers:
+        db_session.add(reader)
+    await db_session.commit()
+    for reader, fossil in zip(readers, fossils, strict=True):
+        assert reader.id is not None
+        db_session.add(ContentCompletion(user_id=reader.id, content_id=fossil.id))
+    await db_session.commit()
+
+    await seed_content(db_session)
+
+    remaining_ids = {r.id for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert fossil_ids.isdisjoint(remaining_ids)
+    assert survivor.id in remaining_ids
+
+    completions = (await db_session.execute(select(ContentCompletion))).scalars().all()
+    assert {c.content_id for c in completions} == {survivor.id}
+    assert {c.user_id for c in completions} == {reader.id for reader in readers}
+
+
+@pytest.mark.asyncio
+async def test_seed_content_heals_one_shared_url_row_and_prunes_its_twin(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A shared-url fossil whose title matches the manifest is healed; its twin is pruned.
+
+    Two rows share a non-content url in one stage: one carries a manifest
+    title (claimed by the title fallback and updated to a ``content://``
+    ref), the other does not (pruned).  This exercises the multi-row url
+    bucket surviving a single claim.
+    """
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+
+    shared_url = "https://legacy.example.com/shared"
+    named = StageContent(
+        course_stage_id=stage_one.id,
+        title="Survival",
+        content_type="chapter",
+        release_day=0,
+        url=shared_url,
+    )
+    orphan = StageContent(
+        course_stage_id=stage_one.id,
+        title="Chapter 9",
+        content_type="chapter",
+        release_day=0,
+        url=shared_url,
+    )
+    db_session.add(named)
+    db_session.add(orphan)
+    await db_session.commit()
+    assert named.id is not None
+    assert orphan.id is not None
+
+    install_manifest(_MANIFEST)
+    await seed_content(db_session)
+
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    by_id = {row.id: row for row in rows}
+    assert orphan.id not in by_id
+    assert by_id[named.id].title == "Survival"
+    assert by_id[named.id].url == content_ref("beige-1")
+
+
+@pytest.mark.asyncio
 async def test_seed_content_prunes_nothing_on_fresh_manifest_db(
     db_session: AsyncSession,
     install_manifest: Callable[[dict[str, Any]], None],

@@ -68,22 +68,46 @@ class _ExistingRows:
     ``url`` column), so a manifest title edit must still land on the same
     row.  ``by_url`` is therefore the primary index; ``by_title`` is a
     fallback that heals legacy rows whose ``url`` drifted from the manifest
-    while their title held steady.  Rows are popped from both indexes when
+    while their title held steady.  Rows are removed from both indexes when
     claimed so one DB row can never satisfy two manifest records.
+
+    ``by_url`` maps each ``(course_stage_id, url)`` to the *list* of rows
+    carrying that url, because legacy fossils may share a non-``content://``
+    url without being copies of one chapter.  Keeping every such row means
+    the prune step sees them all, not just the last one indexed.
     """
 
-    by_url: dict[tuple[int, str], StageContent]
+    by_url: dict[tuple[int, str], list[StageContent]]
     by_title: dict[tuple[int, str], StageContent]
 
     def claim(self, course_stage_id: int, record: ChapterRecord) -> StageContent | None:
         """Find and remove the prior row for ``record``: url first, title fallback."""
-        prior = self.by_url.get((course_stage_id, record.url))
+        bucket = self.by_url.get((course_stage_id, record.url))
+        prior = bucket[0] if bucket else None
         if prior is None:
             prior = self.by_title.get((course_stage_id, record.title))
         if prior is not None:
-            self.by_url.pop((course_stage_id, prior.url), None)
-            self.by_title.pop((course_stage_id, prior.title), None)
+            self._discard(course_stage_id, prior)
         return prior
+
+    def _discard(self, course_stage_id: int, row: StageContent) -> None:
+        """Remove ``row`` from both indexes by identity so it cannot reclaim.
+
+        A claimed ``row`` is always still present in its own ``by_url``
+        bucket (every loaded row is indexed there, and rows leave the bucket
+        and ``by_title`` together), so the key is guaranteed to exist.
+        """
+        key = (course_stage_id, row.url)
+        survivors = [candidate for candidate in self.by_url[key] if candidate is not row]
+        if survivors:
+            self.by_url[key] = survivors
+        else:
+            del self.by_url[key]
+        self.by_title.pop((course_stage_id, row.title), None)
+
+    def unclaimed(self) -> list[StageContent]:
+        """Every row no manifest record claimed, across all url buckets."""
+        return [row for bucket in self.by_url.values() for row in bucket]
 
 
 async def _load_existing_keys(session: AsyncSession) -> _ExistingRows:
@@ -91,14 +115,18 @@ async def _load_existing_keys(session: AsyncSession) -> _ExistingRows:
 
     The ``content://<id>`` reference (``url``) is the stable identity, so
     rows are indexed primarily by ``(course_stage_id, url)`` — a title edit
-    on that stable ref updates in place instead of duplicating.  A
-    secondary ``(course_stage_id, title)`` index is a fallback that keeps
-    healing legacy rows whose ``url`` drifted from the manifest.
+    on that stable ref updates in place instead of duplicating.  Each key
+    holds every row with that url so identical-url legacy fossils are all
+    retained.  A secondary ``(course_stage_id, title)`` index is a fallback
+    that keeps healing legacy rows whose ``url`` drifted from the manifest.
     """
     result = await session.execute(select(StageContent))
     rows = list(result.scalars().all())
+    by_url: dict[tuple[int, str], list[StageContent]] = {}
+    for sc in rows:
+        by_url.setdefault((sc.course_stage_id, sc.url), []).append(sc)
     return _ExistingRows(
-        by_url={(sc.course_stage_id, sc.url): sc for sc in rows},
+        by_url=by_url,
         by_title={(sc.course_stage_id, sc.title): sc for sc in rows},
     )
 
@@ -219,11 +247,11 @@ def _reconciled_stage_ids(stage_map: dict[int, int]) -> set[int]:
 def _stale_rows(existing: _ExistingRows, reconciled_ids: set[int]) -> list[StageContent]:
     """Unclaimed rows in reconciled stages — the deletion candidates.
 
-    After reconciliation ``existing.by_url`` holds exactly the rows no
+    After reconciliation ``existing.unclaimed()`` holds exactly the rows no
     manifest record claimed; narrowing to ``reconciled_ids`` keeps the
     prune from ever reaching a stage this run did not reconcile.
     """
-    return [row for row in existing.by_url.values() if row.course_stage_id in reconciled_ids]
+    return [row for row in existing.unclaimed() if row.course_stage_id in reconciled_ids]
 
 
 @dataclass(frozen=True)
