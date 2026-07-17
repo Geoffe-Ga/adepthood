@@ -49,6 +49,7 @@ export const toStageData = (apiStage: Stage): StageData => {
     relationshipToFreeWill: apiStage.relationship_to_free_will,
     freeWillDescription: apiStage.free_will_description,
     overviewUrl: apiStage.overview_url,
+    manifestations: apiStage.manifestations ?? [],
   };
 };
 

@@ -280,6 +280,23 @@ export const journalListResponseSchema = z.object({
 // the whole ModeConfig union on the client.
 // ---------------------------------------------------------------------------
 
+/** One integrated or shadow expression of a stage (mirrors the backend ``StageExpression``). */
+const stageExpressionSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+});
+
+/**
+ * The six canonical Wavelength phases, in order. Pinned as an enum so a drifted
+ * or misspelled phase raises ``ApiValidationError`` at the boundary rather than
+ * rendering an unlabelled block downstream.
+ */
+export const stageManifestationSchema = z.object({
+  phase: z.enum(['Rising', 'Peaking', 'Withdrawal', 'Diminishing', 'Bottoming Out', 'Restoration']),
+  integrated: stageExpressionSchema,
+  shadow: stageExpressionSchema,
+});
+
 /** A course stage row (mirrors the backend ``Stage`` response). */
 export const stageSchema = z.object({
   id: z.number().int(),
@@ -296,6 +313,9 @@ export const stageSchema = z.object({
   free_will_description: z.string(),
   is_unlocked: z.boolean(),
   progress: z.number(),
+  // Per-phase integrated/shadow expressions. Optional so responses predating
+  // the field still validate; the live backend always sends it.
+  manifestations: z.array(stageManifestationSchema).optional(),
 });
 
 /** A user's stage-progress record (mirrors the backend ``StageProgressRecord``). */

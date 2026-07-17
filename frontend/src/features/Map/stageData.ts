@@ -8,7 +8,10 @@
  * here. Stage *content* is fetched from the backend API.
  */
 
+import type { StageManifestation } from '../../api';
+
 export { STAGE_COUNT } from '../../domain/stageProgression';
+export type { StageExpression, StageManifestation } from '../../api';
 
 export interface StageData {
   id: number;
@@ -27,6 +30,9 @@ export interface StageData {
   relationshipToFreeWill: string;
   freeWillDescription: string;
   overviewUrl: string;
+  // How this stage manifests across the six Wavelength phases (integrated +
+  // shadow); an empty array when the backend omits the field.
+  manifestations: StageManifestation[];
 }
 
 /**

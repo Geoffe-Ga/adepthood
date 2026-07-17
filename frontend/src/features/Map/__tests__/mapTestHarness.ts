@@ -32,6 +32,25 @@ export interface StageHistoryData {
   }>;
 }
 
+/** The six canonical Wavelength phases, in order — mirrors the backend curriculum loader. */
+export const DEFAULT_MANIFESTATION_PHASES: readonly string[] = [
+  'Rising',
+  'Peaking',
+  'Withdrawal',
+  'Diminishing',
+  'Bottoming Out',
+  'Restoration',
+];
+
+/** A realistic 6-phase manifestations default (integrated/shadow pairs), so fixtures keep the StageData type valid. */
+function defaultManifestations(): StageData['manifestations'] {
+  return DEFAULT_MANIFESTATION_PHASES.map((phase) => ({
+    phase,
+    integrated: { name: `${phase} integrated`, description: `${phase} integrated description.` },
+    shadow: { name: `${phase} shadow`, description: `${phase} shadow description.` },
+  }));
+}
+
 /** Build a realistic StageData; ``overrides`` owns the per-test seam. */
 export function mockMakeStage(stageNumber: number, overrides: Partial<StageData> = {}): StageData {
   return {
@@ -50,6 +69,7 @@ export function mockMakeStage(stageNumber: number, overrides: Partial<StageData>
     relationshipToFreeWill: 'Free Will',
     freeWillDescription: 'Description of free will.',
     overviewUrl: '',
+    manifestations: defaultManifestations(),
     ...overrides,
   };
 }

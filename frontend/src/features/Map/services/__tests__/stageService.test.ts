@@ -383,6 +383,37 @@ describe('stageService', () => {
     });
   });
 
+  describe('toStageData manifestations mapping', () => {
+    const sampleManifestations = [
+      {
+        phase: 'Rising',
+        integrated: {
+          name: 'Commitment',
+          description: 'A grounded promise to begin showing up.',
+        },
+        shadow: { name: 'Over-commitment', description: 'Taking on too much too fast.' },
+      },
+    ];
+
+    it('maps manifestations through unchanged', () => {
+      const { toStageData } = require('../stageService');
+      const apiStage = makeApiStage(1, { manifestations: sampleManifestations });
+
+      const result = toStageData(apiStage);
+
+      expect(result.manifestations).toEqual(sampleManifestations);
+    });
+
+    it('defaults manifestations to [] when the payload omits the field', () => {
+      const { toStageData } = require('../stageService');
+      const apiStage = makeApiStage(1);
+
+      const result = toStageData(apiStage);
+
+      expect(result.manifestations).toEqual([]);
+    });
+  });
+
   describe('beginAgain action', () => {
     function makeProgressRecord(cycleNumber: number): StageProgressRecord {
       return {

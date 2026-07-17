@@ -12,6 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
+from curriculum import CANONICAL_PHASE_ORDER, CurriculumDataError, stage_curriculum
 from domain.constants import TOTAL_STAGES
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -22,6 +23,7 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
+from routers import stages as stages_router
 
 
 def _stage_data(stage_number: int = 1, **overrides: object) -> dict[str, object]:
@@ -237,6 +239,89 @@ async def test_list_stages_populates_progress_field(
     # Stage 1 is always unlocked, and the user has a practice session,
     # so progress should be > 0.
     assert data[0]["progress"] > 0.0
+
+
+# ── GET /stages manifestations (integrated/shadow phase expressions) ────
+
+_CANONICAL_PHASE_NAMES: tuple[str, ...] = tuple(phase.value for phase in CANONICAL_PHASE_ORDER)
+_MANIFESTATION_COUNT = 6
+
+
+@pytest.mark.asyncio
+async def test_list_stages_includes_six_canonical_manifestations(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Every stage carries its 6 integrated/shadow phase pairs, in canonical order."""
+    headers, _user_id = await _signup(async_client, "manifestations_all")
+    await _seed_stages(db_session, count=TOTAL_STAGES)
+
+    resp = await async_client.get("/stages", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert len(data) == TOTAL_STAGES
+
+    for stage_payload in data:
+        manifestations = stage_payload["manifestations"]
+        assert len(manifestations) == _MANIFESTATION_COUNT
+        assert [m["phase"] for m in manifestations] == list(_CANONICAL_PHASE_NAMES)
+        for m in manifestations:
+            assert m["integrated"]["name"].strip() != ""
+            assert m["integrated"]["description"].strip() != ""
+            assert m["shadow"]["name"].strip() != ""
+            assert m["shadow"]["description"].strip() != ""
+
+
+@pytest.mark.asyncio
+async def test_list_stages_manifestations_match_curriculum_source(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A sampled stage's manifestations mirror the curriculum loader field-for-field."""
+    sample_stage_number = 3
+    headers, _user_id = await _signup(async_client, "manifestations_parity")
+    await _seed_stages(db_session, count=TOTAL_STAGES)
+
+    resp = await async_client.get("/stages", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    stage_payload = next(s for s in data if s["stage_number"] == sample_stage_number)
+
+    expected = stage_curriculum(sample_stage_number)
+    assert len(stage_payload["manifestations"]) == len(expected.manifestations)
+    for actual_m, expected_m in zip(
+        stage_payload["manifestations"],
+        expected.manifestations,
+        strict=True,
+    ):
+        assert actual_m["phase"] == expected_m.phase.value
+        assert actual_m["integrated"]["name"] == expected_m.integrated.name
+        assert actual_m["integrated"]["description"] == expected_m.integrated.description
+        assert actual_m["shadow"]["name"] == expected_m.shadow.name
+        assert actual_m["shadow"]["description"] == expected_m.shadow.description
+
+
+@pytest.mark.asyncio
+async def test_list_stages_manifestations_degrade_to_empty_on_curriculum_error(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A curriculum lookup failure leaves the list intact; that stage's manifestations become []."""
+
+    def _raise_curriculum_error(stage_number: int) -> object:
+        del stage_number
+        raise CurriculumDataError("boom")
+
+    monkeypatch.setattr(stages_router, "stage_curriculum", _raise_curriculum_error)
+
+    headers, _user_id = await _signup(async_client, "manifestations_degrade")
+    await _seed_stages(db_session, count=1)
+
+    resp = await async_client.get("/stages", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.json()
+    assert data[0]["manifestations"] == []
 
 
 # ── GET /stages/{stage_number}/progress ─────────────────────────────────

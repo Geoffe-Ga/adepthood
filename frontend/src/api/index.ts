@@ -1630,6 +1630,20 @@ export const prompts = {
 };
 
 // Stage types and client
+
+/** One medicinal (integrated) or toxic (shadow) face of a stage in one Wavelength phase. */
+export interface StageExpression {
+  name: string;
+  description: string;
+}
+
+/** How a stage manifests across one Wavelength phase: its integrated and shadow expressions. */
+export interface StageManifestation {
+  phase: string;
+  integrated: StageExpression;
+  shadow: StageExpression;
+}
+
 export interface Stage {
   id: number;
   title: string;
@@ -1645,6 +1659,9 @@ export interface Stage {
   free_will_description: string;
   is_unlocked: boolean;
   progress: number;
+  // Per-phase integrated/shadow expressions. Optional so responses predating
+  // the field still type-check; the live backend always sends it.
+  manifestations?: StageManifestation[];
 }
 
 export interface PracticeHistoryItem {

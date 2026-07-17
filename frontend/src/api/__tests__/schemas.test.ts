@@ -328,6 +328,26 @@ describe('per-item paginated schemas', () => {
     expect(() => stageSchema.parse({ ...stage, is_unlocked: undefined })).toThrow();
   });
 
+  const stageManifestation = {
+    phase: 'Rising',
+    integrated: { name: 'Commitment', description: 'A grounded promise to begin showing up.' },
+    shadow: { name: 'Over-commitment', description: 'Taking on too much too fast.' },
+  };
+
+  it('stageSchema accepts a payload with manifestations present', () => {
+    const parsed = stageSchema.parse({ ...stage, manifestations: [stageManifestation] });
+    expect(parsed.manifestations).toHaveLength(1);
+  });
+
+  it('stageSchema accepts a payload with manifestations omitted (optional)', () => {
+    expect(stageSchema.parse(stage).manifestations).toBeUndefined();
+  });
+
+  it('stageSchema rejects an unknown phase name in manifestations', () => {
+    const invalidPhase = { ...stageManifestation, phase: 'Not A Real Phase' };
+    expect(() => stageSchema.parse({ ...stage, manifestations: [invalidPhase] })).toThrow();
+  });
+
   const practiceItem = {
     id: 7,
     stage_number: 2,

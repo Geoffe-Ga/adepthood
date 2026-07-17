@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
@@ -36,7 +37,9 @@ from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.stage import (
     ProgramCalendarResponse,
+    StageExpression,
     StageHistoryResponse,
+    StageManifestation,
     StageProgressRecord,
     StageProgressResponse,
     StageProgressUpdate,
@@ -47,6 +50,24 @@ from schemas.wheel import WheelAspect, WheelBalanceResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stages", tags=["stages"])
+
+
+def _stage_manifestations(stage_number: int) -> list[StageManifestation]:
+    """Return a stage's phase manifestations from the cached curriculum loader."""
+    try:
+        stage = stage_curriculum(stage_number)
+    except CurriculumDataError:
+        return []
+    return [
+        StageManifestation(
+            phase=m.phase.value,
+            integrated=StageExpression(
+                name=m.integrated.name, description=m.integrated.description
+            ),
+            shadow=StageExpression(name=m.shadow.name, description=m.shadow.description),
+        )
+        for m in stage.manifestations
+    ]
 
 
 def _build_stage_response(
@@ -75,6 +96,7 @@ def _build_stage_response(
         free_will_description=stage.free_will_description,
         is_unlocked=unlocked,
         progress=float(stage_progress),
+        manifestations=_stage_manifestations(stage.stage_number),
     )
 
 
