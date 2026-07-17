@@ -1,0 +1,252 @@
+name: Graph semantic
+
+# Weekly LLM semantic pass over the docs/prose corpus. Enriches the same
+# rolling `knowledge-graph` release that graph-build maintains, upgrading it
+# from a code-only AST graph to a `code+semantic` graph whose edges carry
+# meaning extracted from the prose.
+#
+# This runs on a weekly cron and manual dispatch ONLY — never on push or
+# pull_request — because the semantic pass makes paid LLM calls and must not
+# be triggerable by ordinary code changes. It shares the rolling release with
+# graph-build but keeps its OWN concurrency group so the two never cancel each
+# other, and it persists a SHA256-keyed semantic cache back to the release so
+# subsequent runs only pay for prose that actually changed.
+#
+# Secret scoping is a hard requirement: the write-scoped GITHUB_TOKEN lives
+# only on the restore/publish steps, and ANTHROPIC_API_KEY lives only on the
+# extract step, so the third-party extractor never sees a write token.
+
+on:
+  schedule:
+    # Mondays 05:20 UTC — clear of graph-build's 04:40 nightly rebuild.
+    - cron: "20 5 * * 1"
+  workflow_dispatch:
+
+# Only the rolling-release upsert needs write; everything else is read.
+permissions:
+  contents: write
+
+# Its own group (NOT graph-build's) so a nightly code build and a weekly
+# semantic pass never cancel one another. Never cancel in-progress: a
+# cancelled publish would leave the release half-written.
+concurrency:
+  group: graph-semantic
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Extract and publish semantic graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # GH_TOKEN is scoped per-step (restore + publish only); ANTHROPIC_API_KEY is
+    # scoped to the extract step only. The third-party extractor thus runs with
+    # neither a write-scoped git token nor any ability to publish.
+    env:
+      GRAPH_TAG: knowledge-graph
+      OUT_DIR: graphify-out
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        # No step git-pushes (publish rides `gh` + GH_TOKEN, not `git push`), so
+        # the write-scoped token never needs to live in .git/config for the job.
+        with:
+          persist-credentials: false
+
+      - name: Require ANTHROPIC_API_KEY
+        # Guard BEFORE any install so a misconfigured repo fails in seconds, and
+        # a docs-blind graph is never published as code+semantic. Only a boolean
+        # crosses into the run block — never the secret value itself.
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          if [[ "$HAS_KEY" != "true" ]]; then
+            echo "::error::ANTHROPIC_API_KEY is not set — refusing to publish a docs-blind graph as code+semantic. Configure the repo secret and re-run."
+            exit 1
+          fi
+          echo "ANTHROPIC_API_KEY present — proceeding with semantic extraction"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve pinned graphifyy version
+        id: tool
+        # Cache key + graph-meta provenance both key off the single pin.
+        run: |
+          version="$(sed -n 's/^graphifyy==//p' scripts/graph/requirements.txt)"
+          if [[ -z "$version" ]]; then
+            echo "::error::could not read graphifyy pin from scripts/graph/requirements.txt"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache graphify toolchain
+        # Tool install only — keyed on the graphifyy pin so a version bump busts
+        # it. The graph output is NOT cached; it travels via the release.
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: graphifyy-${{ runner.os }}-${{ steps.tool.outputs.version }}
+
+      - name: Install graphify toolchain
+        run: pip install -r scripts/graph/requirements.txt
+
+      - name: Restore prior graph and semantic cache
+        # Shrink-guard baseline + SHA256 cache warm-start. Both downloads may be
+        # absent on the first ever semantic run, so each is guarded — a cold
+        # build simply re-pays the corpus once.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$OUT_DIR"
+          if gh release download "$GRAPH_TAG" --pattern graph.json --dir "$OUT_DIR" --clobber; then
+            echo "restored prior graph.json (shrink-guard baseline)"
+          else
+            echo "no prior graph.json — first semantic run, cold build"
+          fi
+          if gh release download "$GRAPH_TAG" --pattern semantic-cache.tar.gz --dir "$OUT_DIR" --clobber; then
+            tar -xzf "$OUT_DIR/semantic-cache.tar.gz" -C "$OUT_DIR"
+            echo "restored semantic cache"
+          else
+            echo "no semantic cache asset yet — first run pays the full corpus"
+          fi
+
+      - name: Semantic extraction (claude backend)
+        # ANTHROPIC_API_KEY is confined to this step; no GH_TOKEN here so the
+        # third-party extractor never sees a write token. ANTHROPIC_MODEL /
+        # ANTHROPIC_BASE_URL are optional repo-var passthroughs (empty is fine).
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+        run: |
+          graphify extract . --backend claude --out . --token-budget 60000 --max-concurrency 2
+
+      - name: Write cost.json and job summary
+        # extract records token usage in .graphify_analysis.json but does not
+        # emit cost.json — synthesize it here and surface a short summary. Fail
+        # loud if the analysis file is missing (the extract silently no-op'd).
+        run: |
+          set -euo pipefail
+          python3 - "$OUT_DIR/.graphify_analysis.json" "$OUT_DIR/cost.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          analysis_path, cost_path = sys.argv[1], sys.argv[2]
+          if not os.path.exists(analysis_path):
+              sys.stderr.write(
+                  f"::error::{analysis_path} missing — extraction produced no analysis; "
+                  "refusing to publish a cost-blind semantic graph\n"
+              )
+              raise SystemExit(1)
+          with open(analysis_path, encoding="utf-8") as handle:
+              analysis = json.load(handle)
+          tokens = analysis.get("tokens", {})
+          tokens_input = int(tokens.get("input", 0))
+          tokens_output = int(tokens.get("output", 0))
+          with open(cost_path, "w", encoding="utf-8") as handle:
+              json.dump(
+                  {"tokens_input": tokens_input, "tokens_output": tokens_output},
+                  handle,
+                  indent=2,
+                  sort_keys=True,
+              )
+              handle.write("\n")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("### Semantic extraction\n\n")
+                  handle.write(f"- input tokens: {tokens_input:,}\n")
+                  handle.write(f"- output tokens: {tokens_output:,}\n")
+                  handle.write(
+                      "- a near-zero token count means the SHA256 semantic "
+                      "cache was hot (prose unchanged).\n"
+                  )
+          print(f"cost.json: {tokens_input:,} input / {tokens_output:,} output tokens")
+          PY
+
+      - name: Write graph-meta.json
+        env:
+          GRAPHIFYY_VERSION: ${{ steps.tool.outputs.version }}
+        run: |
+          if [[ ! -f "$OUT_DIR/graph.json" ]]; then
+            echo "::error::$OUT_DIR/graph.json missing after extraction — nothing to publish"
+            exit 1
+          fi
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          sha="$(git rev-parse --short HEAD)"
+          BUILT_AT="$built_at" SHA="$sha" python3 - "$OUT_DIR/graph.json" "$OUT_DIR/.graphify_analysis.json" "$OUT_DIR/graph-meta.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          graph_path, analysis_path, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(graph_path, encoding="utf-8") as handle:
+              graph = json.load(handle)
+          tokens = {}
+          if os.path.exists(analysis_path):
+              with open(analysis_path, encoding="utf-8") as handle:
+                  tokens = json.load(handle).get("tokens", {})
+          meta = {
+              "built_at": os.environ["BUILT_AT"],
+              "sha": os.environ["SHA"],
+              "nodes": len(graph.get("nodes", [])),
+              "edges": len(graph.get("edges", [])),
+              "graphifyy": os.environ["GRAPHIFYY_VERSION"],
+              "kind": "code+semantic",
+              "tokens_input": int(tokens.get("input", 0)),
+              "tokens_output": int(tokens.get("output", 0)),
+          }
+          with open(meta_path, "w", encoding="utf-8") as handle:
+              json.dump(meta, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(f"graph-meta: {meta['nodes']:,} nodes / {meta['edges']:,} edges @ {meta['sha']}")
+          PY
+
+      - name: Repack semantic cache
+        # The SHA256 cache MUST be persisted back to the release; without it
+        # every weekly run re-pays the full corpus. Refuse to publish if extract
+        # left no cache directory behind.
+        run: |
+          if [[ ! -d "$OUT_DIR/cache" ]]; then
+            echo "::error::no $OUT_DIR/cache after extraction — refusing to publish; an unpersisted cache re-pays the full corpus every week"
+            exit 1
+          fi
+          tar -czf "$OUT_DIR/semantic-cache.tar.gz" -C "$OUT_DIR" cache
+
+      - name: Publish rolling knowledge-graph release
+        # Upsert: create the tag/release once, then re-upload assets with
+        # --clobber on every run. Upload is retried once on transient failure,
+        # then fails loudly — publishing is never silently skipped.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=("$OUT_DIR/graph.json" "$OUT_DIR/graph-meta.json" "$OUT_DIR/semantic-cache.tar.gz")
+          # GRAPH_REPORT.md is generated by a separate downstream step, not by
+          # extract, so it may be absent here — include it only when present and
+          # let the last full-build report stand otherwise.
+          if [[ -f "$OUT_DIR/GRAPH_REPORT.md" ]]; then
+            assets+=("$OUT_DIR/GRAPH_REPORT.md")
+          fi
+
+          if ! gh release view "$GRAPH_TAG" >/dev/null 2>&1; then
+            echo "creating rolling release $GRAPH_TAG"
+            gh release create "$GRAPH_TAG" \
+              --title "Knowledge graph (rolling)" \
+              --notes "Rolling knowledge graph for the default branch. Assets are re-uploaded in place on every graph run; do not treat this tag as a version." \
+              --latest=false
+          fi
+
+          upload() {
+            gh release upload "$GRAPH_TAG" "${assets[@]}" --clobber
+          }
+          if ! upload; then
+            echo "release upload failed — retrying once in 10s"
+            sleep 10
+            if ! upload; then
+              echo "::error::release upload failed twice — semantic graph was NOT published"
+              exit 1
+            fi
+          fi
+          echo "published ${#assets[@]} asset(s) to release $GRAPH_TAG"

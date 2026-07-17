@@ -35,6 +35,41 @@ first created; it is **not** a version marker. The authoritative build identity
 is `graph-meta.json`'s `sha` field, which tracks the commit each upload was
 built from.
 
+## Semantic layer (weekly)
+
+`.github/workflows/graph-semantic.yml` runs a **weekly LLM semantic pass**
+over the docs/prose corpus — cron Mondays 05:20 UTC, plus manual
+`workflow_dispatch`. It never runs on push or pull_request: the pass makes
+paid LLM calls, so it must not be triggerable by ordinary code changes. It
+runs `graphify extract . --backend claude --token-budget 60000
+--max-concurrency 2` and republishes the same rolling `knowledge-graph`
+release that `graph-build` maintains, upgrading `graph-meta.json`'s `kind`
+from `code-only` (AST only) to `code+semantic` (edges now carry meaning
+extracted from prose).
+
+The workflow **hard-fails** if the `ANTHROPIC_API_KEY` repo secret is
+missing — it refuses to publish a docs-blind graph mislabeled as
+`code+semantic`.
+
+**Cost**: the first run is the expensive one — it pays for the full corpus
+(the vendored course content alone is ~130k+ words), on the order of
+single-digit dollars. graphify's semantic cache is SHA256 content-keyed per
+file, and the workflow persists that cache back to the release as
+`semantic-cache.tar.gz`, restoring it on the next run — so every subsequent
+run only re-extracts prose that actually changed, and typically costs near
+$0. Each run's token counts land in the Actions job summary; a near-zero
+count means the cache was hot.
+
+Assets republished: `graph.json`, `graph-meta.json` (now `kind:
+code+semantic`, with `tokens_input`/`tokens_output`), `semantic-cache.tar.gz`,
+and `GRAPH_REPORT.md` when present.
+
+**Known interaction**: `graph-build.yml`'s nightly forced code-only rebuild
+shares the same rolling release. It can republish `graph.json` /
+`graph-meta.json` and transiently reset `kind` back to `code-only` until the
+next weekly semantic run re-enriches it — an eventual-consistency property of
+having two writers on one release, not something this workflow resolves.
+
 ## Commands
 
 ```bash
