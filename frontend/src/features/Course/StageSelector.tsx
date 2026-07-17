@@ -9,7 +9,10 @@ import {
   getStageColor,
   isCompleted,
   isUnlocked,
+  STAGE_COMPLETED_GLYPH,
+  STAGE_LOCKED_GLYPH,
   stagePillFill,
+  stageStatusGlyph,
   totalStageCount,
 } from './stageDisplay';
 
@@ -42,6 +45,9 @@ const StagePill = ({
   // fill rather than the raw stage color or a fixed canvas tint.
   const effectiveFill = stagePillFill(color, { unlocked, completed, isActive });
   const glyphColor = readableGlyphOn(effectiveFill);
+  // Precedence (completed beats locked) lives once in stageStatusGlyph; each
+  // pill only maps the resolved glyph onto its per-state text style.
+  const glyph = stageStatusGlyph(unlocked, completed);
   return (
     <TouchableOpacity
       testID={`stage-pill-${stageNumber}`}
@@ -57,10 +63,10 @@ const StagePill = ({
         isActive && styles.stagePillActive,
       ]}
     >
-      {completed ? (
-        <Text style={[styles.stagePillCheck, { color: glyphColor }]}>{'✓'}</Text>
-      ) : !unlocked ? (
-        <Text style={[styles.stagePillLock, { color: glyphColor }]}>{'🔒'}</Text>
+      {glyph === STAGE_COMPLETED_GLYPH ? (
+        <Text style={[styles.stagePillCheck, { color: glyphColor }]}>{glyph}</Text>
+      ) : glyph === STAGE_LOCKED_GLYPH ? (
+        <Text style={[styles.stagePillLock, { color: glyphColor }]}>{glyph}</Text>
       ) : (
         <Text style={[styles.stagePillText, { color: glyphColor }]}>{stageNumber}</Text>
       )}
