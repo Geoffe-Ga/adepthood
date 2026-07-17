@@ -272,6 +272,10 @@ export const journalListResponseSchema = z.object({
   has_more: z.boolean(),
 });
 
+/** Handwriting-transcription result: the OCR'd text of one journal page. */
+export const transcribePageSchema = z.object({ text: z.string() });
+export type TranscribePageT = z.infer<typeof transcribePageSchema>;
+
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
 // The deep ``mode_config`` / ``mode_metadata`` payloads are validated

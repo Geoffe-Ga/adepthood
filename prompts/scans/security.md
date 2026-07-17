@@ -15,6 +15,12 @@ Produce ONE issue per actionable CVE/advisory (or confirmed secret leak) with
 the affected dependency path(s) and a concrete, upgrade-first fix strategy.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from entry-point nodes (the router and auth communities)
+  and the dependency edges reaching them (`graphify path`, `graphify affected`).
+  If the graph is absent or stale, skip this step and run the analysis as
+  written.
 - Title-slug prefix: `[scan:security]`. Priority is `P0` (passed by the
   workflow) — these preempt everything.
 - Tools (read-only, installed by the core; verify they exist — a missing tool
