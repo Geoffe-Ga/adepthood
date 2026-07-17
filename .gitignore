@@ -146,3 +146,6 @@ plans/github-issues/COMMIT_*.md
 
 # Ralph parallel worktrees (ephemeral, per-issue isolation)
 .ralph/
+
+# Knowledge-graph build artifacts (rebuilt locally / via release; see scripts/graph/)
+graphify-out/
