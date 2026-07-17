@@ -35,6 +35,18 @@ drives Gates 3–4. The taxonomy you dispatch is mapped in
 `.claude/agents/README.md`.
 
 ## Steps
+
+**Step 0.5 — Orient via graph (fail-soft).** Once you know your issue, query
+its key nouns with `graphify query "<question>"`; before modifying any symbol
+X, run `graphify affected "X"` to see what depends on it; and after the
+implementation lands, run `./scripts/graph/update.sh` (AST-only, no cost) so
+the worktree's graph stays honest. A fresh worktree has no graph
+(`graphify-out/` is git-ignored): restore it by downloading the rolling
+`knowledge-graph` release (`gh release download knowledge-graph --pattern
+graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
+`./scripts/graph/build.sh` (~2 min, $0), or proceed without it exactly as
+today — **never stall on graph absence.**
+
 1. **Read your assignment.** `gh issue view "$RALPH_ISSUE" --comments`.
 2. **Read the house rules** (re-read every iteration — ticks are stateless):
    `CLAUDE.md` (repo root, project config + guardrails) and `AGENTS.md`

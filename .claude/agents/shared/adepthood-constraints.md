@@ -24,6 +24,19 @@ target); the development philosophy in `AGENTS.md`. Build accordingly.
   `backend/conftest.py`). Lives in `backend/`.
 - Layout, commands, and patterns are authoritative in `CLAUDE.md` (repo root).
 
+## Graph first, grep second
+
+When `graphify-out/graph.json` exists, orient with the code graph before
+sweeping files: `graphify query "<question>"` for questions,
+`graphify path "A" "B"` for relationships, `graphify explain "X"` for
+concepts, `graphify affected "X"` for change impact — quoting each cited
+node's `source_location`. Fail-soft: fresh worktrees have no graph
+(`graphify-out/` is git-ignored); restore by downloading the rolling
+`knowledge-graph` release (`gh release download knowledge-graph --pattern
+graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
+`./scripts/graph/build.sh` (~2 min, $0), or proceed with Read/Grep/Glob
+exactly as today. **Never stall on graph absence.**
+
 ## The four gates (the whole game)
 
 | Gate | Check | On pass | On fail |
