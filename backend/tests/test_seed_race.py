@@ -28,7 +28,7 @@ from sqlmodel import select
 
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
-from seed_content import _ExistingRows, seed_content
+from seed_content import _ExistingRows, _load_stage_map, seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_stages import STAGE_DEFINITIONS, seed_stages
 
@@ -108,6 +108,57 @@ async def test_seed_content_race_loser_yields_to_winner(db_session: AsyncSession
         second = await seed_content(db_session)
 
     assert second == 0, "race loser must report 0 inserts, not raise"
+    assert await _count(db_session, StageContent) == baseline
+
+
+@pytest.mark.asyncio
+async def test_seed_content_race_loser_yields_when_prune_flush_collides(
+    db_session: AsyncSession,
+) -> None:
+    """The content seeder must survive losing the race at PRUNE-FLUSH time.
+
+    ``_prune_stale_rows`` calls ``session.flush()`` before the guarded
+    commit, and that flush pushes every pending ``_reconcile_all`` insert
+    to the DB.  On the two-worker boot against a pre-manifest DB that still
+    carries legacy fossil rows, the losing worker reaches the prune with
+    real stale rows present *and* pending manifest inserts, so its flush
+    fires the ``ix_stagecontent_stage_content_ref_unique`` collision before
+    ``try_commit_yielding_to_race_winner`` could arbitrate — the exact
+    escape ``seed_practice_recipes`` already guards at its own flush.
+
+    Deterministic simulation: the peer's manifest rows are committed, a
+    genuine fossil row sits in a reconciled stage, and this worker's
+    existence read is stale (patched to see only the fossil), so reconcile
+    re-stages every manifest chapter and the prune flush collides.
+    """
+    await seed_stages(db_session)
+    first = await seed_content(db_session)
+    assert first > 0, "vendored manifest must seed chapters"
+
+    reconciled_stage_id = (await _load_stage_map(db_session))[1]
+    fossil = StageContent(
+        course_stage_id=reconciled_stage_id,
+        title="Legacy Fossil No Manifest Claims",
+        content_type="reading",
+        release_day=1,
+        url="legacy://orphaned-fossil",
+    )
+    db_session.add(fossil)
+    await db_session.commit()
+    baseline = await _count(db_session, StageContent)
+
+    fossil_only = _ExistingRows(
+        by_url={(reconciled_stage_id, fossil.url): [fossil]},
+        by_title={(reconciled_stage_id, fossil.title): fossil},
+    )
+
+    async def _stale_read(*_args: object, **_kwargs: object) -> _ExistingRows:
+        return fossil_only
+
+    with patch("seed_content._load_existing_keys", new=_stale_read):
+        second = await seed_content(db_session)
+
+    assert second == 0, "race loser must report 0 inserts, not raise at prune flush"
     assert await _count(db_session, StageContent) == baseline
 
 

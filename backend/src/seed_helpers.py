@@ -53,6 +53,24 @@ async def existing_system_keys(
     return {row[0] for row in rows}
 
 
+async def try_commit_yielding_to_race_winner(session: AsyncSession) -> bool:
+    """Commit, reporting whether THIS process won the idempotent-seed race.
+
+    Returns ``True`` when the commit persisted — this process is the race
+    winner — and ``False`` when a concurrent peer already committed the same
+    unique-keyed rows, tripping the arbitrating index; the loser rolls back
+    and reports no win. Exposing the win/loss verdict lets callers suppress
+    side effects — log lines, metrics — that would otherwise claim work this
+    process rolled back rather than persisted.
+    """
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return False
+    return True
+
+
 async def commit_or_yield_to_race_winner(session: AsyncSession, inserted: int) -> int:
     """Commit ``inserted`` new rows, treating a unique-index collision as a no-op.
 
@@ -68,9 +86,4 @@ async def commit_or_yield_to_race_winner(session: AsyncSession, inserted: int) -
     ``Practice(stage_number, name)`` and ``07b8c9d0e1f2`` for the
     ``PracticeTag.slug`` / ``PracticeRecipe.slug`` partial-unique indexes.
     """
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        return 0
-    return inserted
+    return inserted if await try_commit_yielding_to_race_winner(session) else 0
