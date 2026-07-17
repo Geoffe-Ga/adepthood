@@ -1,7 +1,7 @@
 """add metta_return_habit_release table for per-arc habit release records.
 
 Revision ID: d9e0f1a2b3c4
-Revises: c7d8e9f0a1b3
+Revises: f9a0b1c2d3e4
 Create Date: 2026-07-17 00:00:00.000000
 
 Purely additive: ``upgrade`` creates the ``mettareturnhabitrelease`` table (one
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d9e0f1a2b3c4"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "c7d8e9f0a1b3"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "f9a0b1c2d3e4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
