@@ -661,6 +661,38 @@ describe('MapScreen', () => {
   });
 });
 
+describe('MapScreen stage-expressions modal integration', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('shows the stage-expressions section in the modal for a stage with manifestations', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-expressions' })).toBeTruthy();
+  });
+
+  it('omits the stage-expressions section in the modal for a stage with no manifestations', () => {
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) => {
+      const stageNumber = 10 - i;
+      return stageNumber === 1
+        ? mockMakeStage(1, { manifestations: [] })
+        : mockMakeStage(stageNumber);
+    });
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'stage-expressions')).toHaveLength(
+      0,
+    );
+  });
+});
+
 describe('MapScreen center-cell overlay layout', () => {
   beforeEach(() => {
     resetMapMocks();

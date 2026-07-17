@@ -9,6 +9,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
 
 
+class StageExpression(BaseModel):
+    """One integrated or shadow expression of a Wavelength phase."""
+
+    name: str
+    description: str
+
+
+class StageManifestation(BaseModel):
+    """How a stage manifests in one phase, as an integrated/shadow pair."""
+
+    phase: str
+    integrated: StageExpression
+    shadow: StageExpression
+
+
 class StageResponse(BaseModel):
     """Public representation of a CourseStage with user progress overlay."""
 
@@ -26,6 +41,7 @@ class StageResponse(BaseModel):
     free_will_description: str
     is_unlocked: bool = False
     progress: float = 0.0
+    manifestations: list[StageManifestation] = Field(default_factory=list)
 
 
 class ProgramCalendarResponse(BaseModel):

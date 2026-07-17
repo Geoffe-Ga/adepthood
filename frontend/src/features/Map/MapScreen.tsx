@@ -61,6 +61,7 @@ import {
   highestCompletedStage,
 } from './services/stageService';
 import { type StageData } from './stageData';
+import { StageExpressionsSection } from './StageExpressionsSection';
 import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
@@ -738,6 +739,7 @@ const ModalBody = ({ stage, onClose, onNavigate }: ModalBodyProps): React.JSX.El
     <Text style={styles.modalSubtitle}>{stage.subtitle}</Text>
     <StageProgressSection stage={stage} />
     <StageMetadataSection stage={stage} />
+    <StageExpressionsSection manifestations={stage.manifestations} />
     {stage.isUnlocked && (
       <StageHistorySection stageNumber={stage.stageNumber} isUnlocked={stage.isUnlocked} />
     )}
