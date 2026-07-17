@@ -2647,3 +2647,98 @@ def test_course_dedupe_migration_round_trip_on_sqlite(
     # Phase 3: re-upgrade on the clean DB succeeds (dedupe CTEs match nothing).
     command.upgrade(cfg, _COURSE_DEDUPE_REVISION)
     assert "ix_coursestage_stage_number_unique" in _index_names(db_url, "coursestage")
+
+
+# -- backdated journal entry ordering migration round-trip ------------------
+
+# down_revision is e8f9a0b1c2d3 (the course-dedupe migration, current head).
+_BACKDATED_ENTRY_BASE_REVISION = "e8f9a0b1c2d3"  # pragma: allowlist secret
+_BACKDATED_ENTRY_REVISION = "f8a9b0c1d2e3"  # pragma: allowlist secret
+
+
+def _bootstrap_backdated_entry_baseline(sync_url: str) -> None:
+    """Pre-create minimal ``user`` and ``journalentry`` tables for the round-trip fixture.
+
+    Mirrors the shape just before the backdated-entry-ordering migration.
+    Only the columns the new composite index touches (user_id, timestamp, id)
+    are required, so the bootstrap stays narrow rather than replaying the
+    whole preceding chain.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'backdate@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message)"
+                " VALUES (1, 1, 'user', 'Pre-migration entry.')"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_backdated_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``f8a9b0c1d2e3``.
+
+    Bootstraps minimal ``user`` and ``journalentry`` tables and stamps the DB
+    at ``e8f9a0b1c2d3`` (the chain head before this migration) so the
+    round-trip exercises only the new migration.
+    """
+    db_path = tmp_path / "backdated_entry_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_backdated_entry_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _BACKDATED_ENTRY_BASE_REVISION)
+    return cfg
+
+
+def test_backdated_entry_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_backdated_entry: Config,
+) -> None:
+    """Round-trip ``f8a9b0c1d2e3``: upgrade installs the composite ordering index.
+
+    Phase 1: upgrade adds ``ix_journalentry_user_timestamp_id`` on
+    ``(user_id, timestamp, id)`` -- the index the timestamp-DESC/id-DESC list
+    ordering relies on.
+    Phase 2: downgrade drops it.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_backdated_entry
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade installs the composite index.
+    command.upgrade(cfg, _BACKDATED_ENTRY_REVISION)
+    assert "ix_journalentry_user_timestamp_id" in _index_names(db_url, "journalentry")
+
+    # Phase 2: downgrade removes it.
+    command.downgrade(cfg, _BACKDATED_ENTRY_BASE_REVISION)
+    assert "ix_journalentry_user_timestamp_id" not in _index_names(db_url, "journalentry")
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _BACKDATED_ENTRY_REVISION)
+    assert "ix_journalentry_user_timestamp_id" in _index_names(db_url, "journalentry")

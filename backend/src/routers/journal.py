@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -143,6 +143,36 @@ class _ListFilters:
     offset: int = Query(default=0, ge=0)
 
 
+# Noon is the midpoint of the UTC day, so a backdated entry stays on its intended
+# calendar date across every real-world display timezone (~UTC-12..UTC+14): a
+# morning-UTC stamp would render on the prior day for far-west zones and an
+# evening-UTC stamp on the next day for far-east zones. Noon minimizes that
+# off-by-one-day rendering.
+BACKDATED_ENTRY_NOON_UTC_HOUR = 12
+
+
+def _resolve_backdated_timestamp(entry_date: date | None) -> datetime | None:
+    """Map an optional backdate ``entry_date`` to its stored noon-UTC ``timestamp``.
+
+    Returns ``None`` when no date is supplied (the caller then leaves the column's
+    ``default_factory`` to stamp the current instant). A supplied date must not be
+    in the future (relative to today in UTC), else a 422 ``entry_date_in_future``
+    is raised; otherwise it is anchored at noon UTC (see
+    :data:`BACKDATED_ENTRY_NOON_UTC_HOUR`).
+    """
+    if entry_date is None:
+        return None
+    if entry_date > datetime.now(UTC).date():
+        raise unprocessable("entry_date_in_future")
+    return datetime(
+        entry_date.year,
+        entry_date.month,
+        entry_date.day,
+        BACKDATED_ENTRY_NOON_UTC_HOUR,
+        tzinfo=UTC,
+    )
+
+
 @router.post("/", response_model=JournalMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_journal_entry(
     payload: JournalMessageCreate,
@@ -158,6 +188,11 @@ async def create_journal_entry(
     smuggling in log viewers.
     """
     data = payload.model_dump()
+    # ``entry_date`` is not a column: resolve it to a stored ``timestamp`` (or,
+    # when absent, leave it out so the model's default_factory stamps "now").
+    backdated = _resolve_backdated_timestamp(data.pop("entry_date"))
+    if backdated is not None:
+        data["timestamp"] = backdated
     data["message"] = _sanitize_message(data["message"])
     _coerce_reflection_level(data)
     entry = JournalEntry(sender="user", user_id=current_user, **data)
@@ -220,7 +255,7 @@ async def _encrypted_search_page(
             col(JournalEntry.deleted_at).is_(None),
             *_non_search_conditions(filters),
         )
-        .order_by(col(JournalEntry.id).desc())
+        .order_by(col(JournalEntry.timestamp).desc(), col(JournalEntry.id).desc())
     )
     rows = list((await session.execute(query)).scalars().all())
     if len(rows) > _ENCRYPTED_SCAN_WARN_THRESHOLD:
@@ -265,8 +300,14 @@ async def list_journal_entries(
     # Count total before pagination
     total = await count_query_total(session, query)
 
-    # Fetch paginated results, newest first
-    query = query.order_by(col(JournalEntry.id).desc()).offset(filters.offset).limit(filters.limit)
+    # Fetch paginated results, newest first. Order by timestamp DESC so a
+    # backdated entry (higher id, earlier timestamp) lands by its date; id DESC
+    # breaks ties so identical timestamps page stably.
+    query = (
+        query.order_by(col(JournalEntry.timestamp).desc(), col(JournalEntry.id).desc())
+        .offset(filters.offset)
+        .limit(filters.limit)
+    )
     result = await session.execute(query)
     items = list(result.scalars().all())
 

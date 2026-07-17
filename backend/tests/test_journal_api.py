@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -17,6 +18,19 @@ def _message_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {"message": "Today I meditated for 20 minutes."}
     payload.update(overrides)
     return payload
+
+
+def _parse_utc(value: str) -> datetime:
+    """Parse a response timestamp as UTC, treating the naive SQLite form as UTC.
+
+    Postgres returns tz-aware values; the SQLite test backend drops the tzinfo
+    and hands back the bare UTC wall-clock, so a naive value is reattached to UTC
+    rather than shifted by the local offset.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -162,6 +176,132 @@ async def test_list_journal_pagination(async_client: AsyncClient) -> None:
     data2 = resp2.json()
     assert len(data2["items"]) == 1
     assert data2["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_pagination_stable_with_identical_timestamps(async_client: AsyncClient) -> None:
+    """Entries sharing one noon-UTC timestamp still page without dupes or gaps."""
+    headers = await _signup(async_client, "pagination_stab")
+    expected_ts = "2023-03-03T12:00:00+00:00"
+    created_ids: list[int] = []
+    for i in range(5):
+        resp = await async_client.post(
+            "/journal/",
+            json=_message_payload(message=f"Same day entry {i}", entry_date="2023-03-03"),
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+        ts = _parse_utc(resp.json()["timestamp"])
+        assert ts.isoformat() == expected_ts
+        created_ids.append(resp.json()["id"])
+
+    seen: list[int] = []
+    offset = 0
+    limit = 2
+    while True:
+        page = await async_client.get(f"/journal/?limit={limit}&offset={offset}", headers=headers)
+        items = page.json()["items"]
+        if not items:
+            break
+        seen.extend(item["id"] for item in items)
+        offset += limit
+
+    assert sorted(seen) == sorted(created_ids)
+    assert len(seen) == len(set(seen))
+
+
+# ── Backdated entry creation (entry_date) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_without_entry_date_stamps_now(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "backdate_omit")
+    before = datetime.now(UTC)
+    resp = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    after = datetime.now(UTC)
+    assert resp.status_code == HTTPStatus.CREATED
+    ts = _parse_utc(resp.json()["timestamp"])
+    assert before - timedelta(seconds=5) <= ts <= after + timedelta(seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_create_with_entry_date_null_stamps_now(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "backdate_null")
+    before = datetime.now(UTC)
+    resp = await async_client.post(
+        "/journal/", json=_message_payload(entry_date=None), headers=headers
+    )
+    after = datetime.now(UTC)
+    assert resp.status_code == HTTPStatus.CREATED
+    ts = _parse_utc(resp.json()["timestamp"])
+    assert before - timedelta(seconds=5) <= ts <= after + timedelta(seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_create_with_past_entry_date_stamps_noon_utc(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "backdate_past")
+    resp = await async_client.post(
+        "/journal/", json=_message_payload(entry_date="2024-01-15"), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    ts = _parse_utc(resp.json()["timestamp"])
+    assert ts.date().isoformat() == "2024-01-15"
+    assert ts.hour == 12
+    assert ts.minute == 0
+    assert ts.second == 0
+
+
+@pytest.mark.asyncio
+async def test_create_with_entry_date_today_stamps_noon_utc(async_client: AsyncClient) -> None:
+    """The non-UTC boundary case: today-in-UTC must be accepted, stamped noon UTC."""
+    headers = await _signup(async_client, "backdate_today")
+    today = datetime.now(UTC).date()
+    resp = await async_client.post(
+        "/journal/", json=_message_payload(entry_date=today.isoformat()), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    ts = _parse_utc(resp.json()["timestamp"])
+    assert ts.date() == today
+    assert ts.hour == 12
+    assert ts.minute == 0
+    assert ts.second == 0
+
+
+@pytest.mark.asyncio
+async def test_create_with_future_entry_date_returns_422(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "backdate_future")
+    tomorrow = (datetime.now(UTC).date() + timedelta(days=1)).isoformat()
+    resp = await async_client.post(
+        "/journal/", json=_message_payload(entry_date=tomorrow), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "entry_date_in_future"
+
+
+@pytest.mark.asyncio
+async def test_list_orders_by_timestamp_desc_not_id(async_client: AsyncClient) -> None:
+    """A backdated entry has the highest id but must sort by timestamp, not id."""
+    headers = await _signup(async_client, "order_check")
+    await async_client.post(
+        "/journal/", json=_message_payload(message="Fresh one"), headers=headers
+    )
+    await async_client.post(
+        "/journal/", json=_message_payload(message="Fresh two"), headers=headers
+    )
+    backdated = await async_client.post(
+        "/journal/",
+        json=_message_payload(message="Backdated", entry_date="2020-06-01"),
+        headers=headers,
+    )
+    backdated_id = backdated.json()["id"]
+
+    resp = await async_client.get("/journal/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()["items"]
+    assert len(items) == 3
+    assert items[-1]["id"] == backdated_id
+    timestamps = [_parse_utc(item["timestamp"]) for item in items]
+    assert timestamps == sorted(timestamps, reverse=True)
 
 
 # ── Get single entry ────────────────────────────────────────────────────
@@ -569,6 +709,33 @@ async def test_encrypted_search_is_scoped_to_the_requesting_user(
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["message"] == "bob secret kayak"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encryption_key")
+async def test_encrypted_search_orders_by_timestamp_desc(async_client: AsyncClient) -> None:
+    """The encrypted-search path also sorts by timestamp DESC, not id DESC."""
+    headers = await _signup(async_client, "enc_order_check")
+    await async_client.post(
+        "/journal/", json=_message_payload(message="kombucha fresh one"), headers=headers
+    )
+    await async_client.post(
+        "/journal/", json=_message_payload(message="kombucha fresh two"), headers=headers
+    )
+    backdated = await async_client.post(
+        "/journal/",
+        json=_message_payload(message="kombucha backdated", entry_date="2020-06-01"),
+        headers=headers,
+    )
+    backdated_id = backdated.json()["id"]
+
+    resp = await async_client.get("/journal/?search=kombucha", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()["items"]
+    assert len(items) == 3
+    assert items[-1]["id"] == backdated_id
+    timestamps = [_parse_utc(item["timestamp"]) for item in items]
+    assert timestamps == sorted(timestamps, reverse=True)
 
 
 @pytest.mark.asyncio
