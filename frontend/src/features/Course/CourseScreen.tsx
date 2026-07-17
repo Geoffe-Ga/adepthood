@@ -31,6 +31,7 @@ import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
 
+import { deriveChapterNeighbors, type ChapterNav } from './chapterNav';
 import ChapterReader from './ChapterReader';
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
@@ -373,17 +374,39 @@ function useCourseViewer(selectedStage: number) {
 
 // --- Main component ---
 
+function buildChapterNav(
+  viewer: ReturnType<typeof useCourseViewer>,
+  content: ContentItem[],
+  current: ContentItem,
+): ChapterNav {
+  const { prev, next, nextIsDone } = deriveChapterNeighbors(content, current.id);
+  return {
+    canPrev: prev !== null,
+    nextIsDone,
+    onPrev: () => {
+      if (prev !== null) viewer.handleContentPress(prev);
+    },
+    onNext: () => {
+      if (nextIsDone || next === null) viewer.handleBack();
+      else viewer.handleContentPress(next);
+    },
+  };
+}
+
 function renderOverlay(
   viewer: ReturnType<typeof useCourseViewer>,
   onMarkRead: () => void,
+  content: ContentItem[],
 ): React.JSX.Element | null {
   if (viewer.viewingItem) {
+    const nav = buildChapterNav(viewer, content, viewer.viewingItem);
     return (
       <ContentViewer
         item={viewer.viewingItem}
         onBack={viewer.handleBack}
         onMarkRead={onMarkRead}
         onReflect={viewer.handleReflect}
+        nav={nav}
       />
     );
   }
@@ -606,7 +629,7 @@ const CourseScreen = (): React.JSX.Element => {
     drawer,
   );
 
-  const overlay = renderOverlay(viewer, stageContent.handleMarkRead);
+  const overlay = renderOverlay(viewer, stageContent.handleMarkRead, stageContent.content);
   if (overlay !== null) {
     // Drawer must mount alongside the reader so the hamburger works while reading.
     return (
