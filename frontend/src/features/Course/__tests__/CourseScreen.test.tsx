@@ -559,6 +559,77 @@ describe('CourseScreen', () => {
     });
   });
 
+  it('navigates to the next chapter when chapter-nav-next is pressed', async () => {
+    const twoChapters: ContentItem[] = [
+      {
+        id: 1,
+        title: 'Chapter One',
+        content_type: 'chapter',
+        release_day: 0,
+        url: 'content://beige-1',
+        is_locked: false,
+        is_read: false,
+      },
+      {
+        id: 2,
+        title: 'Chapter Two',
+        content_type: 'chapter',
+        release_day: 0,
+        url: 'content://beige-2',
+        is_locked: false,
+        is_read: false,
+      },
+    ];
+    mockStageContent.mockResolvedValue(twoChapters);
+
+    const { getByText, getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Chapter One')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('chapter-nav-next'));
+    });
+
+    await waitFor(() => {
+      expect(mockContentBody).toHaveBeenCalledWith(2);
+    });
+  });
+
+  it('returns to the course list when Done is pressed on the last chapter', async () => {
+    const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Welcome Essay')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('chapter-nav-next'));
+    });
+
+    await waitFor(() => {
+      expect(queryByTestId('chapter-reader')).toBeNull();
+    });
+    expect(getByText('Welcome Essay')).toBeTruthy();
+  });
+
   it('shows empty state when no content exists', async () => {
     mockStageContent.mockResolvedValue([]);
 

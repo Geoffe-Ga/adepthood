@@ -50,6 +50,7 @@ from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
 from routers.reflections import router as reflections_router
 from routers.stages import router as stages_router
+from routers.transcription import router as transcription_router
 from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
@@ -448,6 +449,7 @@ app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
 app.include_router(habits_router)
 app.include_router(journal_router)
+app.include_router(transcription_router)
 app.include_router(reflections_router)
 app.include_router(promotions_router)
 app.include_router(prompts_router)

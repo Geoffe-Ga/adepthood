@@ -50,7 +50,9 @@ class LLMUsageLog(SQLModel, table=True):
     ``journal_entry_id`` points at the journal entry the call was about — the
     user's source entry on the resonance path, the annotated entry on the essay
     path — so a single JOIN reconstructs the call's context and the soft-delete
-    audit trail stays intact.
+    audit trail stays intact. It is ``None`` for a stateless call that has no
+    associated entry (for example, single-page journal transcription), which
+    meters its cost without ever writing a journal row.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -68,4 +70,4 @@ class LLMUsageLog(SQLModel, table=True):
         default=DEFAULT_COST,
         sa_column=Column(Numeric(precision=_COST_PRECISION, scale=_COST_SCALE), nullable=True),
     )
-    journal_entry_id: int = Field(foreign_key="journalentry.id", index=True)
+    journal_entry_id: int | None = Field(default=None, foreign_key="journalentry.id", index=True)

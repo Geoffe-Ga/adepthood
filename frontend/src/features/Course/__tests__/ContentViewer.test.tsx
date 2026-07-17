@@ -5,6 +5,7 @@ import React from 'react';
 
 import type * as Api from '../../../api';
 import type { ContentItem } from '../../../api';
+import type { ChapterNav } from '../chapterNav';
 import ContentViewer from '../ContentViewer';
 
 jest.mock('../../../api', () => ({
@@ -47,6 +48,16 @@ function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
   };
 }
 
+function makeNav(overrides: Partial<ChapterNav> = {}): ChapterNav {
+  return {
+    canPrev: true,
+    nextIsDone: false,
+    onPrev: jest.fn(),
+    onNext: jest.fn(),
+    ...overrides,
+  };
+}
+
 describe('ContentViewer', () => {
   let onBack: jest.Mock;
   let onMarkRead: jest.Mock;
@@ -62,7 +73,7 @@ describe('ContentViewer', () => {
   it('renders the content title initially, then swaps to the live title', async () => {
     const item = makeItem({ title: 'Loading Title' });
     const { getByText, findAllByText } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     expect(getByText('Loading Title')).toBeTruthy();
     await findAllByText('Chapter One');
@@ -70,7 +81,7 @@ describe('ContentViewer', () => {
 
   it('fetches the content body via the API', async () => {
     const item = makeItem();
-    render(<ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />);
+    render(<ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />);
     await waitFor(() => {
       expect(courseApi.contentBody).toHaveBeenCalledWith(item.id);
     });
@@ -79,7 +90,7 @@ describe('ContentViewer', () => {
   it('renders the body as native Markdown', async () => {
     const item = makeItem();
     const { findByTestId, findByText } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     await findByText('Hi.');
@@ -88,7 +99,7 @@ describe('ContentViewer', () => {
   it('calls onBack when back button is pressed', async () => {
     const item = makeItem();
     const { getByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     // Wait until the load settles so we don't hit "state update on unmounted".
     await findByTestId('reader-markdown');
@@ -99,7 +110,7 @@ describe('ContentViewer', () => {
   it('marks content as read when the button is pressed', async () => {
     const item = makeItem();
     const { getByTestId, getByText, findAllByText } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findAllByText('Chapter One');
     expect(getByText('Mark as Read')).toBeTruthy();
@@ -118,7 +129,7 @@ describe('ContentViewer', () => {
   it('shows already-read state when item is pre-read', async () => {
     const item = makeItem({ is_read: true });
     const { getByText, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     expect(getByText('✓ Read')).toBeTruthy();
@@ -127,7 +138,7 @@ describe('ContentViewer', () => {
   it('disables mark-read when already read', async () => {
     const item = makeItem({ is_read: true });
     const { getByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     fireEvent.press(getByTestId('mark-read-button'));
@@ -138,7 +149,13 @@ describe('ContentViewer', () => {
     const item = makeItem({ is_read: true });
     const onReflect = jest.fn();
     const { getByTestId, getByText, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        onReflect={onReflect}
+        nav={makeNav()}
+      />,
     );
     await findByTestId('reader-markdown');
     expect(getByTestId('reflect-button')).toBeTruthy();
@@ -149,7 +166,13 @@ describe('ContentViewer', () => {
     const item = makeItem({ is_read: false });
     const onReflect = jest.fn();
     const { getByTestId, queryByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        onReflect={onReflect}
+        nav={makeNav()}
+      />,
     );
     await findByTestId('reader-markdown');
     expect(queryByTestId('reflect-button')).toBeNull();
@@ -167,7 +190,13 @@ describe('ContentViewer', () => {
     const item = makeItem({ is_read: true });
     const onReflect = jest.fn();
     const { getByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} onReflect={onReflect} />,
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        onReflect={onReflect}
+        nav={makeNav()}
+      />,
     );
     await findByTestId('reader-markdown');
     fireEvent.press(getByTestId('reflect-button'));
@@ -177,7 +206,7 @@ describe('ContentViewer', () => {
   it('omits the reflect button when no callback is provided', async () => {
     const item = makeItem({ is_read: true });
     const { queryByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     expect(queryByTestId('reflect-button')).toBeNull();
@@ -186,7 +215,7 @@ describe('ContentViewer', () => {
   it('does not refetch the body when marking as read', async () => {
     const item = makeItem();
     const { getByTestId, queryByTestId, findByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     expect(courseApi.contentBody).toHaveBeenCalledTimes(1);
@@ -215,6 +244,7 @@ describe('ContentViewer', () => {
         onBack={onBack}
         onMarkRead={onMarkRead}
         onWriteNote={onWriteNote}
+        nav={makeNav()}
       />,
     );
     await findByTestId('reader-write-note-affordance');
@@ -223,7 +253,7 @@ describe('ContentViewer', () => {
   it('omits the write-note affordance when onWriteNote is not forwarded', async () => {
     const item = makeItem();
     const { findByTestId, queryByTestId } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     expect(queryByTestId('reader-write-note-affordance')).toBeNull();
@@ -237,6 +267,7 @@ describe('ContentViewer', () => {
         onBack={onBack}
         onMarkRead={onMarkRead}
         initialScrollOffset={90}
+        nav={makeNav()}
       />,
     );
     const scrollView = await findByTestId('reader-markdown');
@@ -247,7 +278,7 @@ describe('ContentViewer', () => {
     courseApi.contentBody.mockRejectedValueOnce({ detail: 'content_unavailable' });
     const item = makeItem();
     const { findByTestId, getByText, findByText } = render(
-      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-error');
     expect(getByText(/please try again/i)).toBeTruthy();
@@ -259,5 +290,188 @@ describe('ContentViewer', () => {
     });
     fireEvent.press(await findByTestId('reader-retry-button'));
     await findByText(/retry worked/);
+  });
+
+  it('renders the chapter nav buttons below the mark-read button', async () => {
+    const item = makeItem();
+    const { findByTestId, getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+    expect(getByTestId('chapter-nav-back')).toBeTruthy();
+    expect(getByTestId('chapter-nav-next')).toBeTruthy();
+  });
+
+  it('calls nav.onNext when the next button is pressed', async () => {
+    const onNext = jest.fn();
+    const item = makeItem();
+    const { findByTestId, getByTestId } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        nav={makeNav({ onNext })}
+      />,
+    );
+    await findByTestId('reader-markdown');
+    fireEvent.press(getByTestId('chapter-nav-next'));
+    expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls nav.onPrev when the back button is pressed', async () => {
+    const onPrev = jest.fn();
+    const item = makeItem();
+    const { findByTestId, getByTestId } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        nav={makeNav({ onPrev })}
+      />,
+    );
+    await findByTestId('reader-markdown');
+    fireEvent.press(getByTestId('chapter-nav-back'));
+    expect(onPrev).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the chapter nav back button when canPrev is false', async () => {
+    const onPrev = jest.fn();
+    const item = makeItem();
+    const { findByTestId, getByTestId } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        nav={makeNav({ canPrev: false, onPrev })}
+      />,
+    );
+    await findByTestId('reader-markdown');
+    const backButton = getByTestId('chapter-nav-back');
+    expect(backButton.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(backButton);
+    expect(onPrev).not.toHaveBeenCalled();
+  });
+
+  it('shows Done on the next button when nextIsDone is true', async () => {
+    const item = makeItem();
+    const { findByTestId, getByTestId, getByText } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        nav={makeNav({ nextIsDone: true })}
+      />,
+    );
+    await findByTestId('reader-markdown');
+    expect(getByText('Done')).toBeTruthy();
+    expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Done');
+  });
+
+  it('resets read state when navigating to a different, unread chapter', async () => {
+    // Chapter one starts unread; the user marks it read (local state → true).
+    const chapterOne = makeItem({ id: 1, is_read: false });
+    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+    await waitFor(() => {
+      expect(getByText('✓ Read')).toBeTruthy();
+    });
+
+    // Next → keeps ContentViewer mounted and swaps in an unread chapter two.
+    const chapterTwo = makeItem({ id: 2, is_read: false });
+    rerender(
+      <ContentViewer item={chapterTwo} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    // The mark-read UI must reflect chapter two's unread state, not chapter one's.
+    await waitFor(() => {
+      expect(getByText('Mark as Read')).toBeTruthy();
+    });
+    expect(queryByText('✓ Read')).toBeNull();
+    const markReadButton = getByTestId('mark-read-button');
+    expect(markReadButton.props.accessibilityState?.disabled ?? false).toBe(false);
+  });
+
+  it('reflects an already-read chapter when navigating back to it', async () => {
+    // ContentViewer stays mounted while navigating from an unread chapter to a
+    // previously-read one; the read state must follow the incoming item.
+    const unread = makeItem({ id: 3, is_read: false });
+    const { getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={unread} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+    expect(getByText('Mark as Read')).toBeTruthy();
+
+    const alreadyRead = makeItem({ id: 4, is_read: true });
+    rerender(
+      <ContentViewer item={alreadyRead} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('✓ Read')).toBeTruthy();
+    });
+    expect(queryByText('Mark as Read')).toBeNull();
+  });
+
+  it('does not mark the next chapter read when a prior mark-read resolves after navigation', async () => {
+    // Race: the user taps Mark as Read on chapter one, then navigates to chapter
+    // two before the request resolves. ContentViewer stays mounted, so the late
+    // resolution must NOT label the chapter now on screen (two) as read.
+    let resolveMarkRead: (value: typeof HAPPY_COMPLETION) => void = () => {};
+    courseApi.markRead.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMarkRead = resolve;
+        }),
+    );
+
+    const chapterOne = makeItem({ id: 1, is_read: false });
+    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+
+    // Tap Mark as Read — the request is in flight (promise still unresolved).
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+
+    // Navigate Next before the request resolves: chapter two swaps in, unread.
+    const chapterTwo = makeItem({ id: 2, is_read: false });
+    rerender(
+      <ContentViewer item={chapterTwo} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    // Now chapter one's request resolves — it must not touch chapter two's state.
+    await act(async () => {
+      resolveMarkRead(HAPPY_COMPLETION);
+    });
+
+    await waitFor(() => {
+      expect(getByText('Mark as Read')).toBeTruthy();
+    });
+    expect(queryByText('✓ Read')).toBeNull();
+    const markReadButton = getByTestId('mark-read-button');
+    expect(markReadButton.props.accessibilityState?.disabled ?? false).toBe(false);
+  });
+
+  it('shows Next chapter on the next button when nextIsDone is false', async () => {
+    const item = makeItem();
+    const { findByTestId, getByTestId, getByText } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        nav={makeNav({ nextIsDone: false })}
+      />,
+    );
+    await findByTestId('reader-markdown');
+    expect(getByText('Next →')).toBeTruthy();
+    expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Next chapter');
   });
 });
