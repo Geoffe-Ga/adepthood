@@ -60,15 +60,57 @@ run only re-extracts prose that actually changed, and typically costs near
 $0. Each run's token counts land in the Actions job summary; a near-zero
 count means the cache was hot.
 
+After the extract, the workflow re-clusters and re-labels the graph so its
+communities carry stable, LLM-named groupings, then renders an
+agent-crawlable wiki from the result:
+
+1. **Cluster** — `graphify cluster-only . --no-viz --no-label` recomputes
+   communities from graph structure alone and writes an interim,
+   placeholder-named `GRAPH_REPORT.md`. `--no-viz` skips the heavy HTML
+   render (unused by agents); `--no-label` defers naming to the next step
+   so community names are computed exactly once.
+2. **Label** — `graphify label . --missing-only --backend claude
+   --batch-size 100` names communities with the LLM. `--missing-only`
+   names only freshly-created communities, so existing community names
+   stay stable across runs; batching 100 communities per call keeps it
+   cheap. `label` re-clusters and **rewrites `GRAPH_REPORT.md` with the
+   final names** as it runs, so the shipped report reflects the labelled
+   communities, not the interim placeholders from step 1.
+3. **Guard** — `scripts/graph/check_placeholder_labels.py` hard-fails if any
+   community is left with a bare `Community <N>` placeholder, checked in all
+   three artifacts a placeholder could leak through: `.graphify_labels.json`,
+   the graph's node `community_name` fields, and the rewritten
+   `GRAPH_REPORT.md` itself (its quoted community-heading label and its bare
+   navigation-list entries). Verifying the report — a required release asset —
+   rather than trusting the label step's rewrite ordering makes a
+   placeholder-laden report structurally unable to ship. Same refuse-to-publish
+   posture as the `ANTHROPIC_API_KEY` guard above, now applied to placeholder
+   labels.
+4. **Export** — `scripts/graph/wiki_export.py` renders the labelled graph
+   into an agent-crawlable wiki: one `index.md` (a table of every
+   community with node counts and links) plus one
+   `community-<NN>-<slug>.md` article per community, grouping members by
+   source file and calling out god nodes and surprising cross-community
+   bridges. Packed as `wiki.tar.gz`.
+
 Assets republished: `graph.json`, `graph-meta.json` (now `kind:
 code+semantic`, with `tokens_input`/`tokens_output`), `semantic-cache.tar.gz`,
-and `GRAPH_REPORT.md` when present.
+`GRAPH_REPORT.md` (now always regenerated with the final community names by the
+label step and verified placeholder-free by the guard, no longer conditional on
+presence), and `wiki.tar.gz` (new — the community wiki).
+
+```bash
+gh release download knowledge-graph --pattern wiki.tar.gz --dir graphify-out
+```
 
 **Known interaction**: `graph-build.yml`'s nightly forced code-only rebuild
 shares the same rolling release. It can republish `graph.json` /
 `graph-meta.json` and transiently reset `kind` back to `code-only` until the
 next weekly semantic run re-enriches it — an eventual-consistency property of
-having two writers on one release, not something this workflow resolves.
+having two writers on one release, not something this workflow resolves. That
+nightly rebuild does not re-cluster, re-label, or touch the wiki — clustering,
+labelling, and `wiki.tar.gz` are weekly-only, produced solely by this
+workflow.
 
 ## Federation (nightly)
 
@@ -115,11 +157,16 @@ fetch step.
 `repository_dispatch` here is inbound-only: a satellite would need its own
 PAT to send `graph-updated`, which is out of scope for this repo.
 
-**Three writers, one release**: `graph-build` owns `graph.json` /
-`graph-meta.json` (code-only), `graph-semantic` upgrades the same pair to
-`code+semantic`, and `graph-federate` owns `pan-graph.json` /
-`pan-meta.json` — disjoint asset sets, so none of the three can clobber
-another.
+**Three writers, one release**: `graph-build` and `graph-semantic` share
+`graph.json` / `graph-meta.json` (build writes them code-only, semantic
+upgrades them to `code+semantic`) **and** `GRAPH_REPORT.md` (build emits a
+code-only report on its nightly full build; semantic's label step rewrites it
+as a clustered, LLM-labelled one, guarded placeholder-free before publish) —
+those three assets are last-writer-wins between the two, the same
+eventual-consistency property noted above. `wiki.tar.gz`
+is exclusive to `graph-semantic`, and `pan-graph.json` / `pan-meta.json`
+are exclusive to `graph-federate`, so neither of those can be clobbered by
+another writer.
 
 **Known interaction**: like the semantic layer, the pan-graph reflects
 whatever each satellite last published — if a satellite hasn't rebuilt its
