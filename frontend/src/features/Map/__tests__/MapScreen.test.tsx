@@ -5,6 +5,7 @@ import { Image, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import { ink, surface } from '../../../design/tokens';
+import { unlockTimeline } from '../journeyNarrative';
 import styles from '../Map.styles';
 import {
   fitRightLabel,
@@ -937,6 +938,59 @@ describe('MapScreen left-column stage text color', () => {
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { color?: string };
       expect(flat.color).toBe(ink.muted);
+    }
+  });
+});
+
+describe('MapScreen locked title-row unlock estimate', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('renders the centered unlock estimate on the locked EMPTINESS and UNITY title rows', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    for (const stageNumber of [9, 10]) {
+      const estimate = tree.root.findByProps({ testID: `stage-unlock-${stageNumber}` });
+      expect(estimate.props.children).toBe(unlockTimeline(42));
+      const flat = StyleSheet.flatten(estimate.props.style) as {
+        fontSize?: number;
+        color?: string;
+        textAlign?: string;
+      };
+      expect(flat.fontSize).toBe(9);
+      expect(flat.color).toBe(ink.muted);
+      expect(flat.textAlign).toBe('center');
+    }
+  });
+
+  it('omits the unlock estimate on unlocked title rows', () => {
+    mockMapState.derivedStage = 10;
+    const tree = create(<MapScreen />);
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'stage-unlock-9')).toHaveLength(0);
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'stage-unlock-10')).toHaveLength(
+      0,
+    );
+  });
+
+  it('keeps the fitted-title sizing intact while the locked estimate renders', () => {
+    mockMapState.daysUntilStage = 42;
+    const MEASURED_WIDTH = 140;
+    const tree = create(<MapScreen />);
+    for (const title of ['EMPTINESS', 'UNITY']) {
+      const wrapper = tree.root.findByProps({ testID: `title-fit-${title}` });
+      act(() => {
+        (wrapper.props.onLayout as (e: unknown) => void)({
+          nativeEvent: { layout: { width: MEASURED_WIDTH, height: 40 } },
+        });
+      });
+      const node = tree.root.findByProps({ children: title });
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
     }
   });
 });

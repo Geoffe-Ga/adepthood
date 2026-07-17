@@ -10,7 +10,9 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  type StyleProp,
   Text,
+  type TextStyle,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -98,13 +100,20 @@ const LockGlyph = (): React.JSX.Element => (
 );
 
 /** Aspect label / unlock estimate corner within a center cell. */
-type LabelCorner = 'left' | 'right';
+type LabelCorner = 'left' | 'right' | 'center';
+
+/** Text-align variant for each corner, keyed to avoid a nested ternary. */
+const UNLOCK_ALIGN_STYLE: Readonly<Record<LabelCorner, StyleProp<TextStyle>>> = {
+  left: styles.unlockTimelineLeft,
+  right: styles.unlockTimelineRight,
+  center: styles.unlockTimelineCenter,
+};
 
 /**
  * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
  * no program anchor is set. Its text aligns to the block's corner so the copy
- * reads away from the wave strand.
+ * reads away from the wave strand (or centers beneath a fitted title).
  */
 const UnlockTimeline = ({
   stageNumber,
@@ -114,7 +123,7 @@ const UnlockTimeline = ({
   corner: LabelCorner;
 }): React.JSX.Element => {
   const daysUntil = useDaysUntilStage(stageNumber);
-  const alignStyle = corner === 'left' ? styles.unlockTimelineLeft : styles.unlockTimelineRight;
+  const alignStyle = UNLOCK_ALIGN_STYLE[corner];
   return (
     <Text style={[styles.unlockTimeline, alignStyle]} testID={`stage-unlock-${stageNumber}`}>
       {unlockTimeline(daysUntil)}
@@ -258,7 +267,12 @@ const CenterContent = ({
 }): React.JSX.Element | null => {
   const title = TITLE_BY_STAGE[display.stageNumber];
   if (title) {
-    return <FittedTitle title={title} />;
+    return (
+      <>
+        <FittedTitle title={title} />
+        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner="center" /> : null}
+      </>
+    );
   }
   if (!display.arrowLabel) {
     return null;
