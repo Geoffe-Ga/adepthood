@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -465,3 +466,342 @@ def test_desired_content_records_counts(
     records = desired_content_records()
     assert len(records) == len(_MANIFEST["chapters"])
     assert {r.url for r in records} == {content_ref(c["id"]) for c in _MANIFEST["chapters"]}
+
+
+# ── pruning ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prunes_legacy_placeholder_row(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A stale row from a retired manifest chapter is deleted on a reconciled stage."""
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+    db_session.add(
+        StageContent(
+            course_stage_id=stage_one.id,
+            title="Chapter 3",
+            content_type="chapter",
+            release_day=0,
+            url="https://legacy.example.com/3",
+        )
+    )
+    await db_session.commit()
+
+    install_manifest(_MANIFEST)
+    await seed_content(db_session)
+
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    titles = {r.title for r in rows}
+    assert "Chapter 3" not in titles
+    assert {"Survival", "Breath as Anchor"} <= titles
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prunes_duplicate_title_twin_repointing_completion(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A stale twin sharing a claimed title is pruned and its read mark repointed."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=1)
+    await seed_content(db_session)
+
+    survivor = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .one()
+    )
+
+    stale_twin = StageContent(
+        course_stage_id=survivor.course_stage_id,
+        title="Survival",
+        content_type="chapter",
+        release_day=0,
+        url="https://legacy.example.com/survival",
+    )
+    db_session.add(stale_twin)
+    await db_session.commit()
+    assert stale_twin.id is not None
+
+    user = User(email="twin-reader@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.commit()
+    assert user.id is not None
+    db_session.add(ContentCompletion(user_id=user.id, content_id=stale_twin.id))
+    await db_session.commit()
+
+    await seed_content(db_session)
+
+    remaining_ids = {r.id for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert stale_twin.id not in remaining_ids
+    assert survivor.id in remaining_ids
+
+    completions = (await db_session.execute(select(ContentCompletion))).scalars().all()
+    assert len(completions) == 1
+    assert completions[0].content_id == survivor.id
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_completion_collision_drops_stale_mark(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A user with completions on both a stale twin and its survivor keeps only the survivor's."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=1)
+    await seed_content(db_session)
+
+    survivor = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .one()
+    )
+
+    stale_twin = StageContent(
+        course_stage_id=survivor.course_stage_id,
+        title="Survival",
+        content_type="chapter",
+        release_day=0,
+        url="https://legacy.example.com/survival",
+    )
+    db_session.add(stale_twin)
+    await db_session.commit()
+    assert stale_twin.id is not None
+
+    user = User(email="collision-reader@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.commit()
+    assert user.id is not None
+    db_session.add(ContentCompletion(user_id=user.id, content_id=survivor.id))
+    db_session.add(ContentCompletion(user_id=user.id, content_id=stale_twin.id))
+    await db_session.commit()
+
+    await seed_content(db_session)
+
+    completions = (
+        (
+            await db_session.execute(
+                select(ContentCompletion).where(ContentCompletion.user_id == user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(completions) == 1
+    assert completions[0].content_id == survivor.id
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_collapses_marks_across_multiple_twins(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Two stale twins of one survivor with the same reader collapse to a single mark."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=1)
+    await seed_content(db_session)
+
+    survivor = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .one()
+    )
+
+    twin_urls = ["https://legacy.example.com/survival-a", "https://legacy.example.com/survival-b"]
+    twins = [
+        StageContent(
+            course_stage_id=survivor.course_stage_id,
+            title="Survival",
+            content_type="chapter",
+            release_day=0,
+            url=url,
+        )
+        for url in twin_urls
+    ]
+    for twin in twins:
+        db_session.add(twin)
+    await db_session.commit()
+
+    user = User(email="multi-twin-reader@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.commit()
+    assert user.id is not None
+    for twin in twins:
+        assert twin.id is not None
+        db_session.add(ContentCompletion(user_id=user.id, content_id=twin.id))
+    await db_session.commit()
+
+    await seed_content(db_session)
+
+    survivors = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .all()
+    )
+    assert [row.id for row in survivors] == [survivor.id]
+    completions = (
+        (
+            await db_session.execute(
+                select(ContentCompletion).where(ContentCompletion.user_id == user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(completions) == 1
+    assert completions[0].content_id == survivor.id
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prunes_nothing_on_fresh_manifest_db(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A first-ever seed with no stale rows prunes nothing and stays silent."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=4)
+    await seed_content(db_session)
+
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    assert len(rows) == len(_MANIFEST["chapters"])
+
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        second = await seed_content(db_session)
+
+    assert second == 0
+    rows_after = (await db_session.execute(select(StageContent))).scalars().all()
+    assert len(rows_after) == len(_MANIFEST["chapters"])
+    warnings = [record.getMessage() for record in caplog.records]
+    assert not any("content_seed_pruned" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_is_idempotent(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A second seed after a prune has already happened inserts and prunes nothing more."""
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+    db_session.add(
+        StageContent(
+            course_stage_id=stage_one.id,
+            title="Chapter 3",
+            content_type="chapter",
+            release_day=0,
+            url="https://legacy.example.com/3",
+        )
+    )
+    await db_session.commit()
+
+    install_manifest(_MANIFEST)
+    await seed_content(db_session)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        second = await seed_content(db_session)
+
+    assert second == 0
+    rows = (await db_session.execute(select(StageContent))).scalars().all()
+    titles = {r.title for r in rows}
+    assert "Chapter 3" not in titles
+    warnings = [record.getMessage() for record in caplog.records]
+    assert not any("content_seed_pruned" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_scope_spares_unshipped_and_skipped_stages(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Pruning only ever touches stages the current manifest reconciles this run."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=4)
+    await seed_content(db_session)
+
+    stage_five = CourseStage(
+        title="Stage 5",
+        subtitle="Subtitle 5",
+        stage_number=5,
+        overview_url="https://example.com/stage-5",
+        category="test",
+        aspect="test-aspect",
+        spiral_dynamics_color="beige",
+        growing_up_stage="archaic",
+        divine_gender_polarity="masculine",
+        relationship_to_free_will="active",
+        free_will_description="Active Yes-And-Ness",
+    )
+    db_session.add(stage_five)
+    await db_session.commit()
+    assert stage_five.id is not None
+    db_session.add(
+        StageContent(
+            course_stage_id=stage_five.id,
+            title="Unshipped Fossil",
+            content_type="chapter",
+            release_day=0,
+            url="https://legacy.example.com/unshipped",
+        )
+    )
+    await db_session.commit()
+
+    install_manifest(_STAGE_ONE_ONLY_MANIFEST)
+    await seed_content(db_session)
+
+    titles = {r.title for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert "Systems Sight" in titles
+    assert "Unshipped Fossil" in titles
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prunes_fossil_and_drops_orphan_completion(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unclaimed fossil with no survivor is deleted along with its orphaned read mark."""
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+    fossil = StageContent(
+        course_stage_id=stage_one.id,
+        title="Chapter 1",
+        content_type="chapter",
+        release_day=0,
+        url="https://legacy.example.com/1",
+    )
+    db_session.add(fossil)
+    await db_session.commit()
+    assert fossil.id is not None
+
+    user = User(email="fossil-reader@example.com", password_hash="x")
+    db_session.add(user)
+    await db_session.commit()
+    assert user.id is not None
+    db_session.add(ContentCompletion(user_id=user.id, content_id=fossil.id))
+    await db_session.commit()
+
+    install_manifest(_MANIFEST)
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        await seed_content(db_session)
+
+    remaining_ids = {r.id for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert fossil.id not in remaining_ids
+    completions = (await db_session.execute(select(ContentCompletion))).scalars().all()
+    assert completions == []
+
+    prune_records = [r for r in caplog.records if "content_seed_pruned" in r.getMessage()]
+    assert len(prune_records) == 1
+    match = re.search(
+        r"rows=(\d+) completions_repointed=(\d+) completions_deleted=(\d+)",
+        prune_records[0].getMessage(),
+    )
+    assert match is not None
+    assert match.group(1) == "1"
+    assert match.group(2) == "0"
+    assert match.group(3) == "1"
