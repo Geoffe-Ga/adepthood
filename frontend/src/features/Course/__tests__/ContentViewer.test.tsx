@@ -418,6 +418,48 @@ describe('ContentViewer', () => {
     expect(queryByText('Mark as Read')).toBeNull();
   });
 
+  it('does not mark the next chapter read when a prior mark-read resolves after navigation', async () => {
+    // Race: the user taps Mark as Read on chapter one, then navigates to chapter
+    // two before the request resolves. ContentViewer stays mounted, so the late
+    // resolution must NOT label the chapter now on screen (two) as read.
+    let resolveMarkRead: (value: typeof HAPPY_COMPLETION) => void = () => {};
+    courseApi.markRead.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMarkRead = resolve;
+        }),
+    );
+
+    const chapterOne = makeItem({ id: 1, is_read: false });
+    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+
+    // Tap Mark as Read — the request is in flight (promise still unresolved).
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+
+    // Navigate Next before the request resolves: chapter two swaps in, unread.
+    const chapterTwo = makeItem({ id: 2, is_read: false });
+    rerender(
+      <ContentViewer item={chapterTwo} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    // Now chapter one's request resolves — it must not touch chapter two's state.
+    await act(async () => {
+      resolveMarkRead(HAPPY_COMPLETION);
+    });
+
+    await waitFor(() => {
+      expect(getByText('Mark as Read')).toBeTruthy();
+    });
+    expect(queryByText('✓ Read')).toBeNull();
+    const markReadButton = getByTestId('mark-read-button');
+    expect(markReadButton.props.accessibilityState?.disabled ?? false).toBe(false);
+  });
+
   it('shows Next chapter on the next button when nextIsDone is false', async () => {
     const item = makeItem();
     const { findByTestId, getByTestId, getByText } = render(

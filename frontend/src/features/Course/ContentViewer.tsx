@@ -100,14 +100,20 @@ function useMarkReadHandler(
 ): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
   const [marking, setMarking] = useState(false);
   const [isRead, setIsRead] = useState(item.is_read);
+  // Tracks the chapter currently on screen so an in-flight ``markRead`` request
+  // can tell whether the reader still shows the chapter it was fired for.
+  const currentItemIdRef = useRef(item.id);
   // Chapter Next/Back navigation swaps ``item`` while ``ContentViewer`` stays
   // mounted (the reader body re-fetches via its source-keyed effect rather than
   // remounting), so the ``useState`` initializer above never re-runs for the
   // incoming chapter. Resync the local read flag on every item-id change so the
   // Mark-as-Read UI reflects the chapter now on screen instead of the previous
-  // one's stale state.
+  // one's stale state, and clear ``marking`` so the incoming chapter is
+  // immediately markable rather than inheriting the outgoing request's spinner.
   useEffect(() => {
+    currentItemIdRef.current = item.id;
     setIsRead(item.is_read);
+    setMarking(false);
   }, [item.id, item.is_read]);
   // A fast back-tap while ``markRead`` is in flight
   // used to land ``setMarking(false)`` on an unmounted component, firing
@@ -125,16 +131,24 @@ function useMarkReadHandler(
 
   const handleMarkRead = useCallback(async () => {
     if (isRead || marking) return;
+    // The chapter this request belongs to. Fast Next/Back navigation can swap
+    // the on-screen chapter before the request resolves; comparing against the
+    // live ``currentItemIdRef`` prevents a late success from labelling whatever
+    // chapter happens to be showing (a different one) as read.
+    const requestedId = item.id;
     setMarking(true);
     try {
-      await courseApi.markRead(item.id);
+      await courseApi.markRead(requestedId);
       if (!isMountedRef.current) return;
-      setIsRead(true);
+      // Refresh the underlying list regardless: the request did persist for
+      // ``requestedId`` server-side, so its ``is_read`` should update even if the
+      // reader has since navigated elsewhere.
       onMarkRead();
+      if (currentItemIdRef.current === requestedId) setIsRead(true);
     } catch (err) {
       console.error('Failed to mark content as read:', err);
     } finally {
-      if (isMountedRef.current) setMarking(false);
+      if (isMountedRef.current && currentItemIdRef.current === requestedId) setMarking(false);
     }
   }, [isRead, marking, item.id, onMarkRead]);
 
