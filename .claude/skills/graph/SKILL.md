@@ -50,7 +50,8 @@ gh release download knowledge-graph --pattern 'pan-*.json' --dir graphify-out  #
 ```
 
 If the release is unreachable, build a local code-only graph with
-`./scripts/graph/build.sh` (~2 min, offline). If you cannot get a graph at
+`./scripts/graph/build.sh` (~2 min, local AST extract — no LLM or API cost;
+first run pip-installs the pinned toolchain). If you cannot get a graph at
 all, say so and fall back to Grep/Glob rather than inventing an answer.
 
 ### Step 2 — Choose the verb
