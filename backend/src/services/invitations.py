@@ -24,10 +24,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.creek_vault import CreekVaultClient
 from domain.dates import now_in_tz, to_user_date_bucket
 from domain.invitations import (
     ENGAGEMENT_WINDOW_DAYS,
     SUSTAINED_PRACTICE_WEEKS,
+    CorpusThemeSignal,
     HabitSignal,
     InvitationCandidate,
     PracticeSignal,
@@ -41,6 +43,7 @@ from models.invitation_signal import InvitationSignal
 from models.journal_entry import JournalEntry
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
+from services.creek_vault_wheel import fetch_vault_wheel
 
 # Sentinel standing in for a ``None`` target_id in the dedup key, so the
 # outward (null-target) embodied-community candidate dedups against its prior
@@ -162,14 +165,37 @@ async def _gather_active_days(session: AsyncSession, user_id: int, user_timezone
     return len({to_user_date_bucket(ts, user_timezone) for ts in timestamps})
 
 
+async def _gather_corpus_themes(vault_client: CreekVaultClient | None) -> list[CorpusThemeSignal]:
+    """Read the vault's Wheel-of-Wholeness balance as corpus-theme signals, or none.
+
+    With no vault client, or a vault that degrades (unavailable, unsupported, or
+    a malformed payload — all surfaced as a ``None`` wheel), returns ``[]`` so the
+    pass stays behavioral-only. Every validated aspect passes through unfiltered:
+    the domain owns the fullness threshold and the strongest-wins selection.
+    """
+    if vault_client is None:
+        return []
+    items = await fetch_vault_wheel(vault_client)
+    if items is None:
+        return []
+    return [
+        CorpusThemeSignal(stage_number=item["stage_number"], fullness=item["fullness"])
+        for item in items
+    ]
+
+
 async def _gather_aggregates(
-    session: AsyncSession, user_id: int, user_timezone: str
+    session: AsyncSession,
+    user_id: int,
+    user_timezone: str,
+    vault_client: CreekVaultClient | None = None,
 ) -> ReadinessAggregates:
     """Assemble the readiness snapshot from the batched per-source gathers."""
     return ReadinessAggregates(
         habits=await _gather_habit_signals(session, user_id),
         practices=await _gather_practice_signals(session, user_id, user_timezone),
         active_days_in_window=await _gather_active_days(session, user_id, user_timezone),
+        corpus_themes=await _gather_corpus_themes(vault_client),
     )
 
 
@@ -240,6 +266,7 @@ async def generate_invitation_signals(
     session: AsyncSession,
     user_id: int,
     user_timezone: str = "UTC",
+    vault_client: CreekVaultClient | None = None,
 ) -> list[InvitationSignal]:
     """Detect readiness, persist the newly-warranted invitations, and return them.
 
@@ -248,8 +275,12 @@ async def generate_invitation_signals(
     already exists as a signal (dismissed rows included), and inserts only the
     survivors. Returns the rows created by this call — ``[]`` when nothing new
     is warranted, making repeat calls idempotent.
+
+    An optional ``vault_client`` adds the corpus-theme source: a connected,
+    capable vault's Wheel-of-Wholeness reading can warrant a course invitation.
+    A missing or degraded vault leaves the pass behavioral-only.
     """
-    aggregates = await _gather_aggregates(session, user_id, user_timezone)
+    aggregates = await _gather_aggregates(session, user_id, user_timezone, vault_client)
     candidates = compute_invitation_candidates(aggregates)
     if not candidates:
         return []

@@ -26,10 +26,12 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.timezone import current_user_timezone
+from domain.creek_vault import CreekVaultClient
 from errors import not_found
 from models.invitation_signal import InvitationSignal
 from routers.auth import get_current_user
 from schemas.invitations import InvitationResponse
+from services.creek_vault_write import get_creek_vault_client
 from services.invitations import generate_invitation_signals
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -54,16 +56,18 @@ async def list_invitations(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_timezone: Annotated[str, Depends(current_user_timezone)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
 ) -> list[InvitationResponse]:
     """Generate newly-warranted invitations, then return the caller's pending ones.
 
     The generation pass runs first and is idempotent — it inserts only
     coordinates that have no prior row (dismissed rows included), so polling
-    this endpoint never accumulates duplicates. The listing that follows
-    returns only the caller's rows with ``dismissed_at IS NULL``, ordered by
-    ``created_at``; declined and other users' invitations are excluded.
+    this endpoint never accumulates duplicates. A connected vault also feeds a
+    corpus-theme source into that pass. The listing that follows returns only
+    the caller's rows with ``dismissed_at IS NULL``, ordered by ``created_at``;
+    declined and other users' invitations are excluded.
     """
-    await generate_invitation_signals(session, user_id, user_timezone)
+    await generate_invitation_signals(session, user_id, user_timezone, vault_client=vault_client)
     result = await session.execute(
         select(InvitationSignal)
         .where(

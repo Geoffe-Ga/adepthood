@@ -10,11 +10,25 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.constants import TOTAL_STAGES
+from domain.creek_vault import (
+    CONTRACT_VERSION,
+    CreekCapability,
+    HandshakeResult,
+    VaultClassification,
+    VaultIngestRequest,
+    VaultIngestResult,
+    VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
+)
+from main import app
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.invitation_signal import InvitationSignal
 from models.user import User
+from services.creek_vault_write import get_creek_vault_client
 
 _LIST_URL = "/invitations"
 _SUSTAINED_STREAK = 21  # mirrors SUSTAINED_HABIT_STREAK_DAYS in the domain
@@ -527,3 +541,97 @@ async def test_response_shape_has_required_keys_and_excludes_user_id(
         assert isinstance(item["target_type"], str)
         assert isinstance(item["kind"], str)
         assert isinstance(item["created_at"], str)
+
+
+# ---------------------------------------------------------------------------
+# 9. GET /invitations surfaces a Creek Vault corpus-theme candidate
+# ---------------------------------------------------------------------------
+
+
+class _ThemeVaultClient:
+    """A minimal fake CreekVaultClient exposing only the wheel path."""
+
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        capabilities: frozenset[CreekCapability] = frozenset({CreekCapability.WHEEL}),
+        wheel_result: VaultWheelBalance | None = None,
+    ) -> None:
+        """Store the scripted handshake outcome and wheel result."""
+        self._available = available
+        self._capabilities = capabilities
+        self._wheel_result = wheel_result
+
+    async def handshake(self) -> HandshakeResult:
+        """Return the scripted availability/capabilities."""
+        return HandshakeResult(
+            available=self._available,
+            contract_version=CONTRACT_VERSION,
+            ontology_version="1.0.0",
+            capabilities=self._capabilities,
+            attestation=None,
+        )
+
+    def is_available(self) -> bool:
+        """Return the scripted availability."""
+        return self._available
+
+    def supports(self, capability: CreekCapability, /) -> bool:
+        """Return whether ``capability`` is in the scripted capability set."""
+        return capability in self._capabilities
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def wheel(self) -> VaultWheelBalance:
+        """Return the scripted balance."""
+        assert self._wheel_result is not None
+        return self._wheel_result
+
+
+@pytest.mark.asyncio
+async def test_get_invitations_includes_vault_theme_candidate(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A valid vault wheel with an above-threshold theme surfaces alongside behavioral ones."""
+    theme_stage = 6
+    aspects = tuple(
+        VaultWheelAspect(
+            stage_number=n,
+            aspect=f"Aspect-{n}",
+            fullness=0.9 if n == theme_stage else 0.1,
+        )
+        for n in range(1, TOTAL_STAGES + 1)
+    )
+    fake_vault = _ThemeVaultClient(wheel_result=VaultWheelBalance(aspects=aspects))
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "inv_vault_theme9")
+
+    user_result = await db_session.execute(
+        select(User).where(col(User.email) == "inv_vault_theme9@example.com")
+    )
+    user = user_result.scalars().one()
+    assert user.id is not None
+    habit_id = await _make_habit_with_streak(db_session, user.id, streak_days=_SUSTAINED_STREAK)
+
+    resp = await async_client.get(_LIST_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    items = resp.json()
+    course_items = [i for i in items if i["target_type"] == "course"]
+    habit_items = [i for i in items if i["target_type"] == "habit"]
+    assert len(course_items) == 1
+    assert course_items[0]["target_id"] == theme_stage
+    assert course_items[0]["kind"] == "readiness"
+    assert habit_id in [i["target_id"] for i in habit_items]

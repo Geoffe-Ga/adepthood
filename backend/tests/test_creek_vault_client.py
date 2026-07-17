@@ -11,6 +11,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -420,6 +421,25 @@ async def test_wheel_malformed_fields_raise_validation_error() -> None:
         responses={
             CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
             CreekCapability.WHEEL.value: {"aspects": [{"stage_number": "not-an-int"}]},
+        }
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    with pytest.raises(ValidationError):
+        await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_wheel_over_cap_aspect_count_raises_validation_error() -> None:
+    """wheel() rejects an aspect list larger than the schema ceiling."""
+    over_cap = [
+        {"stage_number": n, "aspect": f"Aspect-{n}", "fullness": 0.5}
+        for n in range(1, TOTAL_STAGES + 2)
+    ]
+    transport = ScriptedTransport(
+        responses={
+            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
+            CreekCapability.WHEEL.value: {"aspects": over_cap},
         }
     )
     client = McpCreekVaultClient(transport=transport)

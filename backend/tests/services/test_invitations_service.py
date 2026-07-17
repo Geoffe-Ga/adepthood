@@ -24,6 +24,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from conftest import test_engine
+from domain.constants import TOTAL_STAGES
+from domain.creek_vault import (
+    CONTRACT_VERSION,
+    CreekCapability,
+    HandshakeResult,
+    VaultClassification,
+    VaultIngestRequest,
+    VaultIngestResult,
+    VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
+)
 from domain.dates import now_in_tz, to_user_date_bucket
 from domain.invitations import SUSTAINED_PRACTICE_WEEKS
 from domain.practice_insights import PracticeInsights
@@ -703,3 +715,167 @@ async def test_practice_gather_excludes_sessions_older_than_the_sustained_window
     # _make_practice_with_sessions(weeks=1) seeds 4 rows in the current week;
     # the stale row placed far outside the window must not be among them.
     assert fetched_counts == [4]
+
+
+# ---------------------------------------------------------------------------
+# 18. Creek Vault corpus-theme source: an optional trailing vault_client param
+# ---------------------------------------------------------------------------
+
+
+class _ThemeVaultClient:
+    """A minimal fake CreekVaultClient exposing only the wheel path."""
+
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        capabilities: frozenset[CreekCapability] = frozenset({CreekCapability.WHEEL}),
+        wheel_result: VaultWheelBalance | None = None,
+    ) -> None:
+        """Store the scripted handshake outcome and wheel result."""
+        self.wheel_calls = 0
+        self._available = available
+        self._capabilities = capabilities
+        self._wheel_result = wheel_result
+
+    async def handshake(self) -> HandshakeResult:
+        """Return the scripted availability/capabilities."""
+        return HandshakeResult(
+            available=self._available,
+            contract_version=CONTRACT_VERSION,
+            ontology_version="1.0.0",
+            capabilities=self._capabilities,
+            attestation=None,
+        )
+
+    def is_available(self) -> bool:
+        """Return the scripted availability."""
+        return self._available
+
+    def supports(self, capability: CreekCapability, /) -> bool:
+        """Return whether ``capability`` is in the scripted capability set."""
+        return capability in self._capabilities
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
+        """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError((body, tier_ceiling))
+
+    async def wheel(self) -> VaultWheelBalance:
+        """Record the call and return the scripted balance."""
+        self.wheel_calls += 1
+        assert self._wheel_result is not None
+        return self._wheel_result
+
+
+def _valid_vault_wheel(theme_stage: int, theme_fullness: float) -> VaultWheelBalance:
+    """Ten valid VaultWheelAspect rows with one stage carrying the given fullness."""
+    aspects = tuple(
+        VaultWheelAspect(
+            stage_number=n,
+            aspect=f"Aspect-{n}",
+            fullness=theme_fullness if n == theme_stage else 0.1,
+        )
+        for n in range(1, TOTAL_STAGES + 1)
+    )
+    return VaultWheelBalance(aspects=aspects)
+
+
+@pytest.mark.asyncio
+async def test_valid_vault_wheel_persists_course_readiness_row(
+    db_session: AsyncSession,
+) -> None:
+    """A vault-classified corpus theme above threshold persists a COURSE/readiness row."""
+    user_id = await _make_user(db_session)
+    theme_stage = 8
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(theme_stage, 0.9))
+
+    result = await generate_invitation_signals(db_session, user_id, vault_client=client)
+
+    course_rows = [r for r in result if r.target_type == "course"]
+    assert len(course_rows) == 1
+    assert course_rows[0].target_id == theme_stage
+    assert course_rows[0].kind == "readiness"
+
+    persisted = await _signals_for(db_session, user_id)
+    persisted_course = [r for r in persisted if r.target_type == "course"]
+    assert len(persisted_course) == 1
+    assert persisted_course[0].target_id == theme_stage
+
+
+@pytest.mark.asyncio
+async def test_no_vault_client_yields_behavioral_only(db_session: AsyncSession) -> None:
+    """vault_client=None -> no course candidate is ever considered."""
+    user_id = await _make_user(db_session)
+    await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+
+    result = await generate_invitation_signals(db_session, user_id, vault_client=None)
+
+    assert not any(r.target_type == "course" for r in result)
+    assert any(r.target_type == "habit" for r in result)
+
+
+@pytest.mark.asyncio
+async def test_degraded_vault_yields_behavioral_only(db_session: AsyncSession) -> None:
+    """A vault whose wheel read fails degrades to behavioral-only candidates."""
+    user_id = await _make_user(db_session)
+    await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+    client = _ThemeVaultClient(available=False, wheel_result=_valid_vault_wheel(3, 0.95))
+
+    result = await generate_invitation_signals(db_session, user_id, vault_client=client)
+
+    assert not any(r.target_type == "course" for r in result)
+    assert any(r.target_type == "habit" for r in result)
+
+
+@pytest.mark.asyncio
+async def test_dismissed_course_readiness_row_blocks_regeneration(
+    db_session: AsyncSession,
+) -> None:
+    """A dismissed COURSE/readiness row is never regenerated even if the theme persists."""
+    user_id = await _make_user(db_session)
+    theme_stage = 5
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(theme_stage, 0.9))
+
+    first_batch = await generate_invitation_signals(db_session, user_id, vault_client=client)
+    course_rows = [r for r in first_batch if r.target_type == "course"]
+    assert len(course_rows) == 1
+    row = course_rows[0]
+    row.dismissed_at = datetime.now(UTC)
+    db_session.add(row)
+    await db_session.commit()
+
+    second_batch = await generate_invitation_signals(db_session, user_id, vault_client=client)
+
+    assert not any(r.target_type == "course" for r in second_batch)
+    persisted = await _signals_for(db_session, user_id)
+    course_persisted = [r for r in persisted if r.target_type == "course"]
+    assert len(course_persisted) == 1
+    assert course_persisted[0].dismissed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_behavioral_candidates_identical_with_and_without_vault(
+    db_session: AsyncSession,
+) -> None:
+    """The same shape of habit/practice/community candidates appear with or without a vault."""
+    user_a = await _make_user(db_session, "inv_vault_a@example.com")
+    user_b = await _make_user(db_session, "inv_vault_b@example.com")
+    await _make_habit_with_streak(db_session, user_a, streak_days=_SUSTAINED_STREAK)
+    await _make_habit_with_streak(db_session, user_b, streak_days=_SUSTAINED_STREAK)
+    # Below-threshold theme: no course candidate should leak into the comparison.
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(2, 0.1))
+
+    without_vault = await generate_invitation_signals(db_session, user_a, vault_client=None)
+    with_vault = await generate_invitation_signals(db_session, user_b, vault_client=client)
+
+    without_shapes = {(r.target_type, r.kind) for r in without_vault}
+    with_shapes = {(r.target_type, r.kind) for r in with_vault}
+    assert without_shapes == with_shapes == {("habit", "consistency")}

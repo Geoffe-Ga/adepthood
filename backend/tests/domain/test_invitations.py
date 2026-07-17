@@ -25,9 +25,11 @@ import inspect
 import pytest
 
 from domain.invitations import (
+    CORPUS_THEME_FULLNESS_THRESHOLD,
     HIGH_ENGAGEMENT_ACTIVE_DAYS,
     SUSTAINED_HABIT_STREAK_DAYS,
     SUSTAINED_PRACTICE_WEEKS,
+    CorpusThemeSignal,
     HabitSignal,
     InvitationCandidate,
     PracticeSignal,
@@ -252,3 +254,129 @@ def test_candidate_is_frozen_dataclass() -> None:
     c = InvitationCandidate(target_type="habit", target_id=1, kind="consistency")
     with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
         c.__setattr__("target_type", "mutated")
+
+
+# ---------------------------------------------------------------------------
+# 8. Corpus-theme signal: vault Wheel-of-Wholeness readings feed readiness too
+# ---------------------------------------------------------------------------
+
+
+def test_corpus_theme_signal_is_frozen_dataclass() -> None:
+    """CorpusThemeSignal is a frozen dataclass (immutable value object)."""
+    assert dataclasses.is_dataclass(CorpusThemeSignal), "CorpusThemeSignal must be a dataclass"
+    signal = CorpusThemeSignal(stage_number=1, fullness=0.9)
+    with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
+        signal.__setattr__("fullness", 0.1)
+
+
+def test_corpus_theme_below_threshold_produces_no_candidate() -> None:
+    """A theme fullness just under CORPUS_THEME_FULLNESS_THRESHOLD must stay silent."""
+    below = ReadinessAggregates(
+        habits=[],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[
+            CorpusThemeSignal(stage_number=3, fullness=CORPUS_THEME_FULLNESS_THRESHOLD - 0.0001)
+        ],
+    )
+    candidates = compute_invitation_candidates(below)
+    assert not any(c.target_type == "course" for c in candidates)
+
+
+def test_corpus_theme_at_threshold_produces_one_candidate() -> None:
+    """A theme fullness of exactly CORPUS_THEME_FULLNESS_THRESHOLD (0.75) fires."""
+    at_threshold = ReadinessAggregates(
+        habits=[],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[CorpusThemeSignal(stage_number=6, fullness=CORPUS_THEME_FULLNESS_THRESHOLD)],
+    )
+    candidates = compute_invitation_candidates(at_threshold)
+    assert len(candidates) == 1
+    assert candidates[0].target_type == "course"
+    assert candidates[0].target_id == 6
+    assert candidates[0].kind == "readiness"
+
+
+def test_empty_corpus_themes_produces_no_course_candidate() -> None:
+    """An empty corpus_themes list yields no course candidate."""
+    empty_themes = ReadinessAggregates(
+        habits=[], practices=[], active_days_in_window=0, corpus_themes=[]
+    )
+    candidates = compute_invitation_candidates(empty_themes)
+    assert not any(c.target_type == "course" for c in candidates)
+
+
+def test_corpus_theme_strongest_wins_among_several_above_threshold() -> None:
+    """At most one course candidate: the highest-fullness theme wins."""
+    agg = ReadinessAggregates(
+        habits=[],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[
+            CorpusThemeSignal(stage_number=2, fullness=0.8),
+            CorpusThemeSignal(stage_number=5, fullness=0.95),
+            CorpusThemeSignal(stage_number=9, fullness=0.76),
+        ],
+    )
+    candidates = compute_invitation_candidates(agg)
+    course_candidates = [c for c in candidates if c.target_type == "course"]
+    assert len(course_candidates) == 1
+    assert course_candidates[0].target_id == 5
+
+
+def test_corpus_theme_tie_break_picks_lowest_stage_number() -> None:
+    """Two themes tied at the max fullness resolve to the lowest stage_number."""
+    agg = ReadinessAggregates(
+        habits=[],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[
+            CorpusThemeSignal(stage_number=8, fullness=0.9),
+            CorpusThemeSignal(stage_number=2, fullness=0.9),
+            CorpusThemeSignal(stage_number=5, fullness=0.85),
+        ],
+    )
+    candidates = compute_invitation_candidates(agg)
+    course_candidates = [c for c in candidates if c.target_type == "course"]
+    assert len(course_candidates) == 1
+    assert course_candidates[0].target_id == 2
+
+
+def test_corpus_theme_candidate_shape_is_exact() -> None:
+    """The emitted candidate is exactly the course/stage/readiness coordinate."""
+    agg = ReadinessAggregates(
+        habits=[],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[CorpusThemeSignal(stage_number=4, fullness=1.0)],
+    )
+    candidates = compute_invitation_candidates(agg)
+    assert candidates == [InvitationCandidate(target_type="course", target_id=4, kind="readiness")]
+
+
+def test_corpus_theme_coexists_with_behavioral_candidates() -> None:
+    """A theme candidate and behavioral candidates from the same pass both appear."""
+    agg = ReadinessAggregates(
+        habits=[HabitSignal(habit_id=1, streak_days=SUSTAINED_HABIT_STREAK_DAYS)],
+        practices=[],
+        active_days_in_window=0,
+        corpus_themes=[CorpusThemeSignal(stage_number=7, fullness=0.8)],
+    )
+    candidates = compute_invitation_candidates(agg)
+    types = {c.target_type for c in candidates}
+    assert types == {"habit", "course"}
+
+
+def test_readiness_aggregates_default_corpus_themes_is_empty_and_backward_compatible() -> None:
+    """Constructing ReadinessAggregates without corpus_themes yields prior behavioral output."""
+    agg = ReadinessAggregates(
+        habits=[HabitSignal(habit_id=1, streak_days=SUSTAINED_HABIT_STREAK_DAYS)],
+        practices=[PracticeSignal(practice_id=2, sustained_weeks=SUSTAINED_PRACTICE_WEEKS)],
+        active_days_in_window=HIGH_ENGAGEMENT_ACTIVE_DAYS,
+    )
+    assert agg.corpus_themes == []
+    candidates = compute_invitation_candidates(agg)
+    types = {c.target_type for c in candidates}
+    assert types == {"habit", "practice", "embodied_community"}
+    assert not any(c.target_type == "course" for c in candidates)
