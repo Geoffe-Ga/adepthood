@@ -196,6 +196,67 @@ ARTICLE_COUNT_4="$(find "$OUT4" -maxdepth 1 -name 'community-*.md' 2>/dev/null \
 check "scenario 8: node without a community is skipped (one article only)" \
   "1" "$ARTICLE_COUNT_4"
 
+# --- scenario 9: surprise bridges keyed by (label, file), not label alone -----
+# Two unrelated nodes in different communities share the label "helper()" but
+# live in different files. A surprise bridge touches only the src/a.py one, so
+# it must appear solely in that community's article - never leak into the
+# same-labelled node's community in src/b.py.
+COLLIDE="$WORK/collide.json"
+COLLIDE_ANALYSIS="$WORK/collide_analysis.json"
+python3 - "$COLLIDE" "$COLLIDE_ANALYSIS" <<'PY'
+import json
+import sys
+
+graph_path, analysis_path = sys.argv[1], sys.argv[2]
+nodes = [
+    {"id": "a_helper", "label": "helper()", "source_file": "src/a.py",
+     "source_location": "L1", "community": 0, "community_name": "Alpha"},
+    {"id": "a_core", "label": "core()", "source_file": "src/a.py",
+     "source_location": "L2", "community": 0, "community_name": "Alpha"},
+    {"id": "b_helper", "label": "helper()", "source_file": "src/b.py",
+     "source_location": "L1", "community": 1, "community_name": "Beta"},
+    {"id": "b_core", "label": "core()", "source_file": "src/b.py",
+     "source_location": "L2", "community": 1, "community_name": "Beta"},
+    {"id": "c_widget", "label": "widget()", "source_file": "src/c.py",
+     "source_location": "L1", "community": 2, "community_name": "Gamma"},
+]
+graph = {"directed": True, "multigraph": False, "graph": {},
+         "nodes": nodes, "links": []}
+analysis = {
+    "communities": {"0": ["a_helper"], "1": ["b_helper"], "2": ["c_widget"]},
+    "gods": [],
+    "surprises": [
+        {
+            "source": "helper()",
+            "target": "widget()",
+            "source_files": ["src/a.py", "src/c.py"],
+            "relation": "calls",
+            "why": "alpha reaches into gamma",
+        }
+    ],
+    "questions": [],
+}
+with open(graph_path, "w", encoding="utf-8") as fh:
+    json.dump(graph, fh, indent=2, sort_keys=True)
+with open(analysis_path, "w", encoding="utf-8") as fh:
+    json.dump(analysis, fh, indent=2, sort_keys=True)
+PY
+
+OUT5="$WORK/out5"
+RC=0
+python3 "$SCRIPT" --graph "$COLLIDE" --analysis "$COLLIDE_ANALYSIS" \
+  --out-dir "$OUT5" >"$WORK/run5.log" 2>&1 || RC=$?
+check "scenario 9: exits 0 for a colliding-label graph" "0" "$RC"
+ALPHA_HITS="$(count_occurrences "$OUT5/community-00-alpha.md" "alpha reaches into gamma")"
+BETA_HITS="$(count_occurrences "$OUT5/community-01-beta.md" "alpha reaches into gamma")"
+GAMMA_HITS="$(count_occurrences "$OUT5/community-02-gamma.md" "alpha reaches into gamma")"
+check "scenario 9: surprise appears in the src/a.py community (Alpha)" \
+  "1" "$ALPHA_HITS"
+check "scenario 9: surprise does NOT leak into the same-labelled Beta community" \
+  "0" "$BETA_HITS"
+check "scenario 9: surprise appears in the target community (Gamma)" \
+  "1" "$GAMMA_HITS"
+
 # --- summary ------------------------------------------------------------------
 echo
 echo "wiki export tests: $PASS passed, $FAIL failed"

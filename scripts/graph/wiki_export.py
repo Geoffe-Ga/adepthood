@@ -134,17 +134,39 @@ def render_gods(
     return lines
 
 
+def _surprise_touches(
+    surprise: dict[str, object],
+    member_keys: set[tuple[str, str]],
+    member_labels: set[str],
+) -> bool:
+    """Report whether a surprise bridge has an endpoint in this community.
+
+    Surprises carry display *labels* (not ids) for their endpoints, because
+    that is all ``.graphify_analysis.json`` records. Labels are not unique in
+    a real monorepo — generic names like ``__init__`` or ``render()`` recur
+    across files — so keying on the label alone would misattribute a bridge
+    into every community owning a same-named node. Each surprise also carries
+    ``source_files`` aligned with its ``source``/``target``, so match on the
+    ``(label, source_file)`` pair, which is unique per node, and fall back to
+    label-only matching only when the file list is absent or malformed.
+    """
+    source = str(surprise.get("source", ""))
+    target = str(surprise.get("target", ""))
+    files = surprise.get("source_files")
+    if isinstance(files, list) and len(files) >= 2:
+        source_key = (source, str(files[0]))
+        target_key = (target, str(files[1]))
+        return source_key in member_keys or target_key in member_keys
+    return source in member_labels or target in member_labels
+
+
 def render_surprises(
+    member_keys: set[tuple[str, str]],
     member_labels: set[str],
     surprises: list[dict[str, object]],
 ) -> list[str]:
     """Render cross-community surprise bridges touching this community."""
-    relevant = [
-        s
-        for s in surprises
-        if str(s.get("source", "")) in member_labels
-        or str(s.get("target", "")) in member_labels
-    ]
+    relevant = [s for s in surprises if _surprise_touches(s, member_keys, member_labels)]
     if not relevant:
         return []
     relevant.sort(
@@ -170,10 +192,13 @@ def render_article(
     """Render one community article as Markdown."""
     member_ids = {str(node.get("id", "")) for node in members}
     member_labels = {str(node.get("label", "")) for node in members}
+    member_keys = {
+        (str(node.get("label", "")), str(node.get("source_file", ""))) for node in members
+    }
     lines = [f"# {name}", "", GENERATED_NOTE, ""]
     lines.extend(render_members(members))
     lines.extend(render_gods(member_ids, gods))
-    lines.extend(render_surprises(member_labels, surprises))
+    lines.extend(render_surprises(member_keys, member_labels, surprises))
     lines.append("---")
     lines.append("")
     lines.append("[Back to index](index.md)")
