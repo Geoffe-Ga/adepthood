@@ -184,6 +184,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: ink.soft,
   },
+  magnifierEyebrow: {
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+    color: ink.soft,
+  },
+  magnifierPractice: { fontSize: 9, lineHeight: 11, color: ink.soft },
   // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
     marginBottom: spacing(0.25),

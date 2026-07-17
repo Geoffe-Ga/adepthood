@@ -52,6 +52,9 @@ const lensNode = (tree: ReturnType<typeof create>) =>
 const headlineText = (tree: ReturnType<typeof create>): string =>
   tree.root.findByProps({ testID: 'magnifier-headline' }).props.children as string;
 
+const textByTestId = (tree: ReturnType<typeof create>, testID: string) =>
+  tree.root.findByProps({ testID });
+
 /** Synthetic responder touch event at a page position. */
 const touch = (pageX: number, pageY: number, timestamp = 0) => ({
   nativeEvent: { pageX, pageY, timestamp },
@@ -129,6 +132,12 @@ describe('MagnifierLens', () => {
     expect(headlineText(tree)).toBe('Self-Love');
     const detail = tree.root.findByProps({ testID: 'magnifier-detail' });
     expect(detail.props.children).toBe('Dominator · Power');
+    const eyebrow = textByTestId(tree, 'magnifier-eyebrow');
+    expect(eyebrow.props.children).toBe('3 · RED');
+    expect(eyebrow.props.numberOfLines).toBe(1);
+    const practice = textByTestId(tree, 'magnifier-practice');
+    expect(practice.props.children).toBe('Belly breathing');
+    expect(practice.props.numberOfLines).toBe(1);
   });
 
   it('re-captions when the focused stage prop changes (stage tap glide)', () => {
@@ -147,6 +156,7 @@ describe('MagnifierLens', () => {
       );
     });
     expect(headlineText(tree)).toBe('Intellectual');
+    expect(textByTestId(tree, 'magnifier-eyebrow').props.children).toBe('5 · ORANGE');
   });
 
   it('renders a magnified copy of the wave under the glass', () => {
@@ -253,6 +263,9 @@ describe('MagnifierLens', () => {
     expect(lens.props.accessibilityRole).toBe('button');
     expect(lens.props.accessibilityLabel).toContain('You are here');
     expect(lens.props.accessibilityLabel).toContain('Agency');
+    expect(lens.props.accessibilityLabel).toContain('1 · BEIGE');
+    expect(lens.props.accessibilityLabel).toContain('5-4-3-2-1 grounding');
+    expect(lens.props.accessibilityLabel).toContain('drag to explore');
   });
 
   it('glides with animation when reduced motion is off', () => {

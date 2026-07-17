@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 
+import { STAGE_ORDER } from '../../../design/tokens';
 import {
   clampLensCenter,
   DRAG_TAP_SLOP,
@@ -190,21 +191,35 @@ describe('lensCaption', () => {
     expect(caption.detail).toBe('Dominator · Power');
   });
 
+  it('prefixes the stage number and spiral color as the eyebrow', () => {
+    const caption = lensCaption(4);
+    expect(caption.eyebrow).toBe('4 · BLUE');
+    expect(caption.practice).toBe('Metta');
+  });
+
+  it('uppercases a two-word spiral color name in the eyebrow', () => {
+    expect(lensCaption(10).eyebrow).toBe('10 · CLEAR LIGHT');
+    expect(lensCaption(10).headline).toBe(TITLE_BY_STAGE[10]);
+  });
+
   it('falls back to the UNITY / EMPTINESS titles for the top stages', () => {
     expect(lensCaption(9).headline).toBe(TITLE_BY_STAGE[9]);
     expect(lensCaption(10).headline).toBe(TITLE_BY_STAGE[10]);
   });
 
-  it('covers every stage with a non-empty headline and detail', () => {
+  it('covers every stage with a non-empty headline, detail, eyebrow, and practice', () => {
     for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
       const caption = lensCaption(stage);
       expect(caption.headline.length).toBeGreaterThan(0);
       expect(caption.detail).toContain(STAGE_DISPLAY[stage]?.persona ?? '');
+      expect(caption.eyebrow).toBe(`${stage} · ${(STAGE_ORDER[stage - 1] ?? '').toUpperCase()}`);
+      expect(caption.practice).toBe(STAGE_DISPLAY[stage]?.practice);
+      expect(caption.practice.length).toBeGreaterThan(0);
     }
   });
 
   it('resolves unknown stages to empty strings instead of throwing', () => {
-    expect(lensCaption(99)).toEqual({ headline: '', detail: '' });
+    expect(lensCaption(99)).toEqual({ eyebrow: '', headline: '', detail: '', practice: '' });
   });
 });
 
