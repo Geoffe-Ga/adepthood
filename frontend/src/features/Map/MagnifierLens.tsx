@@ -431,11 +431,17 @@ const LensCaptionBlock = ({
           <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
         </View>
       ) : null}
+      <Text style={styles.magnifierEyebrow} testID="magnifier-eyebrow" numberOfLines={1}>
+        {caption.eyebrow}
+      </Text>
       <Text style={styles.magnifierHeadline} testID="magnifier-headline" numberOfLines={1}>
         {caption.headline}
       </Text>
       <Text style={styles.magnifierDetail} testID="magnifier-detail" numberOfLines={1}>
         {caption.detail}
+      </Text>
+      <Text style={styles.magnifierPractice} testID="magnifier-practice" numberOfLines={1}>
+        {caption.practice}
       </Text>
     </View>
   );
@@ -446,7 +452,7 @@ const lensAccessibilityLabel = (stageNumber: number, isCurrent: boolean): string
   const caption = lensCaption(stageNumber);
   const prefix = isCurrent ? 'You are here. ' : '';
   return (
-    `${prefix}Magnifier over ${caption.headline} — ${caption.detail}. ` +
+    `${prefix}Magnifier over ${caption.headline}, stage ${caption.eyebrow} — ${caption.detail}. Practice: ${caption.practice}. ` +
     'Tap to read about this stage; drag to explore others.'
   );
 };

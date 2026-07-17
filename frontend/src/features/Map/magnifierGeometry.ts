@@ -11,6 +11,8 @@
  * through, so its per-stage resting points sit exactly on the strand.
  */
 
+import { STAGE_ORDER } from '../../design/tokens';
+
 import { STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import { STAGE_COUNT } from './stageData';
 import { centerColumnBounds, stageWavePoint } from './waveGeometry';
@@ -181,23 +183,34 @@ export const magnifierTransform = (
 export const glideDurationMs = (distancePx: number): number =>
   clamp(distancePx * GLIDE_MS_PER_PX, GLIDE_MIN_MS, GLIDE_MAX_MS);
 
-/** The two caption lines the lens shows for the stage under the glass. */
+/** The enriched caption the lens shows for the stage under the glass. */
 export interface LensCaption {
+  /** Stage number + Spiral color name, e.g. "4 · BLUE". */
+  eyebrow: string;
   /** The Aspect word for the stage (or its UNITY / EMPTINESS title). */
   headline: string;
   /** The stage's persona and mode of knowing, dot-separated. */
   detail: string;
+  /** The practice cultivated at this stage. */
+  practice: string;
 }
 
 /**
- * Resolve the caption for a stage under the glass: its Aspect arrow word (or
- * the UNITY / EMPTINESS title carried by stages 9–10) over its persona and
- * descriptor. Unknown stages resolve to empty strings rather than throwing so
- * a transient out-of-range hover can never take the Map down.
+ * Resolve the caption for a stage under the glass: an eyebrow pairing the stage
+ * number with its Spiral color, the Aspect arrow word (or the UNITY / EMPTINESS
+ * title carried by stages 9–10) over its persona and descriptor, and the
+ * stage's cultivated practice. Unknown stages resolve to empty strings rather
+ * than throwing so a transient out-of-range hover can never take the Map down.
  */
 export const lensCaption = (stageNumber: number): LensCaption => {
   const display = STAGE_DISPLAY[stageNumber];
-  if (!display) return { headline: '', detail: '' };
+  if (!display) return { eyebrow: '', headline: '', detail: '', practice: '' };
   const headline = display.arrowLabel || TITLE_BY_STAGE[display.stageNumber] || '';
-  return { headline, detail: `${display.persona} · ${display.descriptor}` };
+  const colorName = (STAGE_ORDER[display.stageNumber - 1] ?? '').toUpperCase();
+  return {
+    eyebrow: `${display.stageNumber} · ${colorName}`,
+    headline,
+    detail: `${display.persona} · ${display.descriptor}`,
+    practice: display.practice,
+  };
 };
