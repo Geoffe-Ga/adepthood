@@ -85,6 +85,10 @@ repos:
         # disputed finding; revisit when upstream ships a patched version.
         args:
           ["-r", "backend/requirements.txt", "--ignore-vuln", "PYSEC-2025-183"]
+      - id: pip-audit
+        name: pip-audit (graph tooling dependencies)
+        files: ^scripts/graph/requirements\.txt$
+        args: ["-r", "scripts/graph/requirements.txt"]
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0

@@ -1,0 +1,7 @@
+.venv/
+frontend/node_modules/
+**/.env*
+graphify-out/
+.git/
+frontend/dist/
+frontend/coverage/
