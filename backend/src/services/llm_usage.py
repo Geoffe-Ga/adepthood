@@ -27,14 +27,16 @@ async def record_llm_usage(
     session: AsyncSession,
     *,
     user_id: int,
-    journal_entry_id: int,
+    journal_entry_id: int | None,
     responses: Sequence[LLMResponse],
 ) -> None:
     """Stage an ``LLMUsageLog`` row for each real (non-stub) response.
 
     ``journal_entry_id`` is the entry the calls were about — the user's source
     entry on the resonance path, the annotated entry on the essay path — so the
-    audit trail reconstructs each call's context with a single JOIN.  Stub
+    audit trail reconstructs each call's context with a single JOIN.  It is
+    ``None`` for a stateless call with no associated entry (for example,
+    single-page journal transcription), which still meters its cost.  Stub
     responses are skipped (zero real tokens, no pricing-table lookup).  No commit
     is issued here; the row shares the caller's transaction with the reflection.
     """
