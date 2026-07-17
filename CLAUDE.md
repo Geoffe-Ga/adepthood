@@ -171,6 +171,20 @@ When working from the phone interface, these skills are available:
 - `/preflight` — Run pre-commit, fix all failures, iterate until green
 - `/review-diff` — Self-review the current branch diff before PR
 
+## Knowledge Graph (graphify)
+
+This repo ships a queryable code graph (see `scripts/graph/`). When
+`graphify-out/graph.json` exists, prefer it over blind grep/read sweeps:
+
+- For codebase questions, run `graphify query "<question>"` first; use
+  `graphify path "A" "B"` for relationships, `graphify explain "X"` for
+  concepts, and `graphify affected "X"` for change impact.
+- When citing a fact from the graph, quote each node's `source_location`.
+- After modifying code, refresh it with `./scripts/graph/update.sh`
+  (AST-only, no cost).
+- If the graph is absent, build it with `./scripts/graph/build.sh` (~2 min)
+  or proceed without it.
+
 ## Playbook (auto-curated)
 
 Concrete "when X, do Y" rules distilled weekly from real failures — flare-filed
