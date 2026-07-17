@@ -69,6 +69,11 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
+interface ReturnToCourse {
+  screen: 'Course';
+  params: { stageNumber?: number; contentId: number; scrollOffset: number };
+}
+
 function renderScreen(
   params?: {
     entryId?: number;
@@ -77,6 +82,8 @@ function renderScreen(
     prefillTitle?: string;
     practiceSessionId?: number;
     userPracticeId?: number;
+    prefillQuote?: { text: string; sourceTitle: string };
+    returnTo?: ReturnToCourse;
   },
   extraProps: Record<string, unknown> = {},
 ) {
@@ -610,5 +617,78 @@ describe('JournalEntryScreen', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  describe('prefillQuote + returnTo', () => {
+    const quote = {
+      text: 'To open your heart not just to yourself, but to others.',
+      sourceTitle: 'The Mood of Blue',
+    };
+    const formattedQuote =
+      '> To open your heart not just to yourself, but to others.\n> — The Mood of Blue\n\n';
+    const returnTo: ReturnToCourse = {
+      screen: 'Course',
+      params: { stageNumber: 2, contentId: 17, scrollOffset: 480 },
+    };
+
+    it('pre-fills the body with the formatted quote block', () => {
+      const { getByTestId } = renderScreen({ prefillQuote: quote });
+      expect(getByTestId('journal-body-input').props.value).toBe(formattedQuote);
+    });
+
+    it('composes with prefillTitle: title and body both pre-fill', () => {
+      const { getByTestId } = renderScreen({
+        prefillQuote: quote,
+        prefillTitle: 'Reflecting on The Mood of Blue',
+      });
+      expect(getByTestId('journal-title-input').props.value).toBe('Reflecting on The Mood of Blue');
+      expect(getByTestId('journal-body-input').props.value).toBe(formattedQuote);
+    });
+
+    it('shows a Back to reading affordance when returnTo is present', () => {
+      const { getByTestId, getByText } = renderScreen({ returnTo });
+      expect(getByTestId('journal-return-to-reading')).toBeTruthy();
+      expect(getByText('Back to reading')).toBeTruthy();
+    });
+
+    it('navigates back to the Course content on Back to reading', () => {
+      const { getByTestId, navigation } = renderScreen({ returnTo });
+      fireEvent.press(getByTestId('journal-return-to-reading'));
+      expect(navigation.navigate).toHaveBeenCalledWith(
+        'Tabs',
+        expect.objectContaining({
+          screen: 'Course',
+          params: { stageNumber: 2, contentId: 17, scrollOffset: 480 },
+        }),
+      );
+    });
+
+    it('hides the return affordance when returnTo is absent', () => {
+      const { queryByTestId } = renderScreen();
+      expect(queryByTestId('journal-return-to-reading')).toBeNull();
+    });
+
+    it('leaves the body blank and hides the return affordance with no params', () => {
+      const { getByTestId, queryByTestId } = renderScreen();
+      expect(getByTestId('journal-body-input').props.value).toBe('');
+      expect(queryByTestId('journal-return-to-reading')).toBeNull();
+    });
+
+    it('flushes the typed draft before navigating away via Back to reading', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getByTestId } = renderScreen({ returnTo }, { autosaveDelayMs: 100 });
+        fireEvent.changeText(getByTestId('journal-body-input'), 'A thought mid-read.');
+        fireEvent.press(getByTestId('journal-return-to-reading'));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(100);
+        });
+        expect(mockCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'A thought mid-read.' }),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 });

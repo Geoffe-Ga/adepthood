@@ -30,7 +30,8 @@ import {
 export type RootTabParamList = {
   Habits: undefined;
   Practice: { stageNumber?: number } | undefined;
-  Course: { stageNumber?: number } | undefined;
+  // contentId/scrollOffset are optional restore hints from a Back-to-reading return.
+  Course: { stageNumber?: number; contentId?: number; scrollOffset?: number } | undefined;
   Journal: undefined;
   Map: undefined;
 };

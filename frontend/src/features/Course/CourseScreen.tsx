@@ -32,7 +32,7 @@ import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
 
 import { deriveChapterNeighbors, type ChapterNav } from './chapterNav';
-import ChapterReader from './ChapterReader';
+import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
@@ -328,14 +328,64 @@ const ContentArea = ({
 
 // --- Hook: viewer actions ---
 
-function useCourseViewer(selectedStage: number) {
+/** The two journal hand-offs from an open chapter: the title-only reflect, and
+ *  the passage-note flow that keeps the reader mounted for a warm return. */
+function useJournalHandoff(
+  selectedStage: number,
+  viewingItem: ContentItem | null,
+  clearViewingItem: () => void,
+) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  const handleReflect = useCallback(() => {
+    if (!viewingItem) return;
+    navigation.navigate('JournalEntry', {
+      prefillTitle: `Stage ${selectedStage} reflection — ${viewingItem.title}`,
+    });
+    clearViewingItem();
+  }, [viewingItem, selectedStage, navigation, clearViewingItem]);
+
+  // Fold the chosen passage into the journal while the reader stays mounted, so
+  // "Back to reading" is a cheap warm return to the same scroll position.
+  const handleWriteNote = useCallback(
+    (passage: WriteNotePassage) => {
+      if (!viewingItem) return;
+      navigation.navigate('JournalEntry', {
+        prefillQuote: { text: passage.text, sourceTitle: passage.sourceTitle },
+        returnTo: {
+          screen: 'Course',
+          params: {
+            stageNumber: selectedStage,
+            contentId: viewingItem.id,
+            scrollOffset: passage.scrollOffset,
+          },
+        },
+      });
+    },
+    [viewingItem, selectedStage, navigation],
+  );
+
+  return { handleReflect, handleWriteNote };
+}
+
+function useCourseViewer(selectedStage: number) {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
   const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
   const [viewingIntro, setViewingIntro] = useState<number | null>(null);
+  // Only set on a warm return; a manual open clears it so no stale scroll leaks.
+  const [restoreOffset, setRestoreOffset] = useState<number | undefined>(undefined);
+
+  const clearViewingItem = useCallback(() => setViewingItem(null), []);
 
   const handleContentPress = useCallback((item: ContentItem) => {
-    if (!item.is_locked) setViewingItem(item);
+    if (item.is_locked) return;
+    setRestoreOffset(undefined);
+    setViewingItem(item);
+  }, []);
+
+  const openForRestore = useCallback((item: ContentItem, offset: number) => {
+    setRestoreOffset(offset);
+    setViewingItem(item);
   }, []);
 
   const handleResourcePress = useCallback((resource: SiteResource) => {
@@ -350,26 +400,55 @@ function useCourseViewer(selectedStage: number) {
     setViewingItem(null);
     setViewingResource(null);
     setViewingIntro(null);
+    setRestoreOffset(undefined);
   }, []);
 
-  const handleReflect = useCallback(() => {
-    if (!viewingItem) return;
-    navigation.navigate('JournalEntry', {
-      prefillTitle: `Stage ${selectedStage} reflection — ${viewingItem.title}`,
-    });
-    setViewingItem(null);
-  }, [viewingItem, selectedStage, navigation]);
+  const { handleReflect, handleWriteNote } = useJournalHandoff(
+    selectedStage,
+    viewingItem,
+    clearViewingItem,
+  );
 
   return {
     viewingItem,
     viewingResource,
     viewingIntro,
+    restoreOffset,
+    openForRestore,
     handleContentPress,
     handleResourcePress,
     handleIntroPress,
     handleBack,
     handleReflect,
+    handleWriteNote,
   };
+}
+
+/** On a return from the journal, auto-open the returned content restored to its
+ *  scroll offset once the stage's content has loaded. The restore is one-shot per
+ *  ``contentId``: the param persists on the route indefinitely, so a ref records
+ *  the id already restored and refuses to re-fire — otherwise backing out of the
+ *  reader (viewing id → null) or revisiting the tab would re-open it unbidden.
+ *  Keyed on primitive params + loaded content (never object identity) so it fires
+ *  once and never loops. */
+function useReaderRestore(
+  content: ContentItem[],
+  currentViewingId: number | null,
+  openForRestore: (_item: ContentItem, _offset: number) => void,
+): void {
+  const route = useAppRoute<'Course'>();
+  const contentId = route.params?.contentId ?? null;
+  const scrollOffset = route.params?.scrollOffset ?? 0;
+  const restoredIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (contentId === null || restoredIdRef.current === contentId) return;
+    if (currentViewingId === contentId) return;
+    const item = content.find((c) => c.id === contentId);
+    if (!item || item.is_locked) return;
+    restoredIdRef.current = contentId;
+    openForRestore(item, scrollOffset);
+  }, [contentId, scrollOffset, currentViewingId, content, openForRestore]);
 }
 
 // --- Main component ---
@@ -407,6 +486,8 @@ function renderOverlay(
         onMarkRead={onMarkRead}
         onReflect={viewer.handleReflect}
         nav={nav}
+        onWriteNote={viewer.handleWriteNote}
+        initialScrollOffset={viewer.restoreOffset}
       />
     );
   }
@@ -622,6 +703,7 @@ const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
   const viewer = useCourseViewer(selectedStage);
+  useReaderRestore(stageContent.content, viewer.viewingItem?.id ?? null, viewer.openForRestore);
   const drawer = useScreenDrawer('Course');
   const { handleStageSelect, handleChapterPress } = useCourseNavigation(
     setSelectedStage,

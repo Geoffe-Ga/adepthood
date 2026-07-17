@@ -5,7 +5,7 @@ import { course as courseApi, type ContentItem } from '../../api';
 import { colors } from '../../design/tokens';
 
 import type { ChapterNav } from './chapterNav';
-import ChapterReader from './ChapterReader';
+import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
 
 const ChapterNavRow = ({ nav }: { nav: ChapterNav }): React.JSX.Element => (
@@ -90,6 +90,8 @@ interface ContentViewerProps {
   onMarkRead: () => void;
   onReflect?: () => void;
   nav: ChapterNav;
+  onWriteNote?: (_passage: WriteNotePassage) => void;
+  initialScrollOffset?: number;
 }
 
 function useMarkReadHandler(
@@ -145,6 +147,8 @@ const ContentViewer = ({
   onMarkRead,
   onReflect,
   nav,
+  onWriteNote,
+  initialScrollOffset,
 }: ContentViewerProps): React.JSX.Element => {
   const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead);
 
@@ -153,6 +157,8 @@ const ContentViewer = ({
       source={{ kind: 'content', id: item.id }}
       fallbackTitle={item.title}
       onBack={onBack}
+      onWriteNote={onWriteNote}
+      initialScrollOffset={initialScrollOffset}
       footer={
         <ViewerFooter
           isRead={isRead}
