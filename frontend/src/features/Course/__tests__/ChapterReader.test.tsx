@@ -201,6 +201,20 @@ describe('ChapterReader', () => {
     expect(queryByTestId('reader-markdown')).toBeNull();
   });
 
+  // An H2 duplicate title heading must also strip down to nothing, not just H1.
+  it('shows the empty state when the body is only its duplicate H2 title heading', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Chapter One',
+      content_type: 'chapter',
+      body_markdown: '## Chapter One\n\n',
+    });
+    const { findByTestId, queryByTestId } = render(
+      <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
+    );
+    await findByTestId('reader-empty');
+    expect(queryByTestId('reader-markdown')).toBeNull();
+  });
+
   // A single in-paragraph newline (soft break) must reflow to a space.
   it('reflows hard-wrapped lines within a paragraph into a single visual line', async () => {
     mockContentBody.mockResolvedValueOnce({
