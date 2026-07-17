@@ -50,6 +50,13 @@ export type RootStackParamList = {
         reflectionLevel?: ReflectionLevel;
         /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflectionLevel``. */
         reflectionScopeKey?: string;
+        /** A passage folded in from the reader; seeds the body as a blockquote. */
+        prefillQuote?: { text: string; sourceTitle: string };
+        /** Where "Back to reading" returns the writer, restoring their scroll. */
+        returnTo?: {
+          screen: 'Course';
+          params: { stageNumber?: number; contentId: number; scrollOffset: number };
+        };
       }
     | undefined;
 };

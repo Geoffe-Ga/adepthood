@@ -34,6 +34,7 @@ import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
+import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
@@ -779,6 +780,12 @@ function useFieldHandlers(
   return { onChangeTitle, onChangeBody };
 }
 
+/** The pre-fill an entry opens with: a title and a body, either possibly ''. */
+interface InitialText {
+  title: string;
+  body: string;
+}
+
 interface EntryState {
   title: string;
   body: string;
@@ -799,17 +806,17 @@ interface EntryState {
 }
 
 /** The entry's editable state (title/body/status/tier) + one-time load-on-open. */
-function useEntryState(routeEntryId: number | null, initialTitle: string): EntryState {
-  const [title, setTitle] = useState(initialTitle);
-  const [body, setBody] = useState('');
+function useEntryState(routeEntryId: number | null, initialText: InitialText): EntryState {
+  const [title, setTitle] = useState(initialText.title);
+  const [body, setBody] = useState(initialText.body);
   const [status, setStatus] = useState<EntryStatus>('draft');
   const [classification, setClassification] = useState<JournalClassification>(DEFAULT_TIER);
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   // Refs mirror the latest text so the change handlers stay referentially stable.
-  const titleRef = useRef(initialTitle);
-  const bodyRef = useRef('');
+  const titleRef = useRef(initialText.title);
+  const bodyRef = useRef(initialText.body);
 
   useEntryLoadEffect(
     routeEntryId,
@@ -909,11 +916,11 @@ function useJournalAutosave(
   routeEntryId: number | null,
   delayMs: number,
   ctx: SaveContext,
-  initialTitle: string,
+  initialText: InitialText,
   onSaved?: () => void,
   onConflict?: () => void,
 ): AutosaveApi {
-  const entry = useEntryState(routeEntryId, initialTitle);
+  const entry = useEntryState(routeEntryId, initialText);
   const { titleRef, bodyRef } = entry;
   // An existing entry is "unsettled" until its load settles: entry.loaded flips
   // true only in the success apply, so it stays false through both the in-flight
@@ -1636,7 +1643,7 @@ function useJournalEntryController(
   autosaveDelayMs: number,
   navigation: ScreenNavigation,
   ctx: SaveContext,
-  initialTitle: string,
+  initialText: InitialText,
 ) {
   const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
@@ -1644,7 +1651,7 @@ function useJournalEntryController(
     routeEntryId,
     autosaveDelayMs,
     ctx,
-    initialTitle,
+    initialText,
     handleSaved,
     onCreateConflict,
   );
@@ -1768,15 +1775,19 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
 
 interface EntryEntrypoint {
   ctx: SaveContext;
-  initialTitle: string;
+  initialText: InitialText;
   bodyPlaceholder: string;
 }
 
-/** Translate the route params into the save context + pre-filled title/placeholder. */
+/** Translate the route params into the save context + pre-filled title/body/placeholder. */
 function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
   const p = params ?? {};
-  const initialTitle =
-    p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
+  const title = p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
+  // A folded-in quote seeds the body as a blockquote; otherwise the body opens blank.
+  const body =
+    p.prefillQuote != null
+      ? formatQuotePrefill(p.prefillQuote.text, p.prefillQuote.sourceTitle)
+      : '';
   return {
     ctx: {
       weekNumber: p.weekNumber,
@@ -1785,7 +1796,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
       reflectionLevel: p.reflectionLevel,
       reflectionScopeKey: p.reflectionScopeKey,
     },
-    initialTitle,
+    initialText: { title, body },
     bodyPlaceholder: p.promptQuestion ?? DEFAULT_BODY_PLACEHOLDER,
   };
 }
@@ -1822,6 +1833,45 @@ function LoadErrorBanner({ message }: { message: string | null }): React.JSX.Ele
         {message}
       </Text>
     </View>
+  );
+}
+
+/** The reader location "Back to reading" returns to, carrying the scroll offset. */
+type CourseReturnTo = NonNullable<RootStackParamList['JournalEntry']>['returnTo'];
+
+/**
+ * "Back to reading" affordance shown only when the writer arrived from the course
+ * reader (``returnTo`` present). Pressing it flushes any typed draft — kicking the
+ * save in flight and cancelling the debounce timer so nothing is lost as this
+ * stack screen unmounts — then returns to the exact Course content they left. The
+ * flush is fired, not awaited, so the return navigation happens immediately while
+ * the persist completes independently of this screen's lifecycle.
+ */
+function ReturnToReadingLink({
+  returnTo,
+  navigation,
+  flush,
+}: {
+  returnTo: CourseReturnTo;
+  navigation: ScreenNavigation;
+  flush: () => Promise<number | null>;
+}): React.JSX.Element | null {
+  const onPress = useCallback(() => {
+    if (returnTo == null) return;
+    void flush();
+    navigation.navigate('Tabs', { screen: returnTo.screen, params: returnTo.params });
+  }, [returnTo, navigation, flush]);
+  if (returnTo == null) return null;
+  return (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Back to reading — return to where you were reading"
+      testID="journal-return-to-reading"
+    >
+      <Text style={styles.controlLink}>Back to reading</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -1935,7 +1985,7 @@ function JournalEntryScreen({
   navigation,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const { ctx, initialTitle, bodyPlaceholder } = readEntrypoint(route.params);
+  const { ctx, initialText, bodyPlaceholder } = readEntrypoint(route.params);
   const currentEntryId = route.params?.entryId ?? null;
   const entryDrawer = useEntryScreenDrawer(navigation);
   const ctl = useJournalEntryController(
@@ -1943,7 +1993,7 @@ function JournalEntryScreen({
     autosaveDelayMs,
     navigation,
     ctx,
-    initialTitle,
+    initialText,
   );
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
@@ -1956,6 +2006,11 @@ function JournalEntryScreen({
           always reads first. Hidden (renders nothing) on healthy passes. */}
       <ContractionReflectionNote contraction={ctl.resonance.contraction} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
+      <ReturnToReadingLink
+        returnTo={route.params?.returnTo}
+        navigation={navigation}
+        flush={ctl.autosave.flush}
+      />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
       <PrivacyResonanceReason

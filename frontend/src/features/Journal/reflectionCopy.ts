@@ -51,6 +51,18 @@ export function formatBlockquote(anchorText: string, attribution: string): strin
   return `\n> ${anchorText}\n> — ${attribution}\n\n`;
 }
 
+/**
+ * A Markdown blockquote prefill for a whole passage carried into a fresh entry.
+ * Every line of ``text`` is quoted, the ``sourceTitle`` is attributed on its own
+ * quoted line, and a trailing blank line separates it from anything the writer
+ * adds. Unlike ``formatBlockquote`` it opens with no leading newline — it is the
+ * top of a new body — and quotes multi-line passages line by line.
+ */
+export function formatQuotePrefill(text: string, sourceTitle: string): string {
+  const quotedLines = text.split('\n').map((line) => `> ${line}`);
+  return `${quotedLines.join('\n')}\n> — ${sourceTitle}\n\n`;
+}
+
 /** ``short`` month/day/year attribution date (e.g. "Jun 1, 2026"); '' if unparseable. */
 function formatSourceDate(timestamp: string): string {
   const date = new Date(timestamp);

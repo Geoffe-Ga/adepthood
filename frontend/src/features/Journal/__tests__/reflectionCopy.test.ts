@@ -1,6 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
 
-import { reflectionTitle, formatBlockquote, sourceAttribution } from '../reflectionCopy';
+import {
+  reflectionTitle,
+  formatBlockquote,
+  formatQuotePrefill,
+  sourceAttribution,
+} from '../reflectionCopy';
 
 import type { ReflectionSourceItem } from '@/api';
 
@@ -61,6 +66,38 @@ describe('formatBlockquote', () => {
   it('closes with a blank line so the inserted quote never runs into surrounding prose', () => {
     const block = formatBlockquote('went for a daily walk', 'Runs');
     expect(block.endsWith('\n\n')).toBe(true);
+  });
+});
+
+describe('formatQuotePrefill', () => {
+  it('formats a single-line passage as an exact blockquote prefill', () => {
+    const prefill = formatQuotePrefill(
+      'To open your heart not just to yourself, but to others.',
+      'The Mood of Blue',
+    );
+    expect(prefill).toBe(
+      '> To open your heart not just to yourself, but to others.\n> — The Mood of Blue\n\n',
+    );
+  });
+
+  it('prefixes every line of a multi-line passage with its own marker', () => {
+    const prefill = formatQuotePrefill('line one\nline two', 'Src');
+    expect(prefill).toBe('> line one\n> line two\n> — Src\n\n');
+  });
+
+  it('includes the attribution on its own quoted line', () => {
+    const prefill = formatQuotePrefill('a passage', 'The Mood of Blue');
+    expect(prefill).toContain('> — The Mood of Blue');
+  });
+
+  it('ends with a trailing blank line', () => {
+    const prefill = formatQuotePrefill('a passage', 'Src');
+    expect(prefill.endsWith('\n\n')).toBe(true);
+  });
+
+  it('does not open with a leading newline', () => {
+    const prefill = formatQuotePrefill('a passage', 'Src');
+    expect(prefill.startsWith('\n')).toBe(false);
   });
 });
 
