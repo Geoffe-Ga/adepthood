@@ -49,4 +49,35 @@ describe('stripLeadingTitleHeading', () => {
     const input = '# Title \n\nProse.\n';
     expect(stripLeadingTitleHeading(input, 'Title')).toBe('Prose.\n');
   });
+
+  it('strips a leading H2 that exactly matches the title', () => {
+    const input = '## Title\n\nProse.\n';
+    expect(stripLeadingTitleHeading(input, 'Title')).toBe('Prose.\n');
+  });
+
+  it('strips a leading H3 that exactly matches the title', () => {
+    const input = '### Title\n\nProse.\n';
+    expect(stripLeadingTitleHeading(input, 'Title')).toBe('Prose.\n');
+  });
+
+  it('strips a leading H6 that exactly matches the title', () => {
+    const input = '###### Title\n\nProse.\n';
+    expect(stripLeadingTitleHeading(input, 'Title')).toBe('Prose.\n');
+  });
+
+  it('preserves a 7-hash line unchanged since it is not a valid ATX heading (exact equality)', () => {
+    const input = '####### Title\n\nProse.\n';
+    expect(stripLeadingTitleHeading(input, 'Title')).toBe(input);
+  });
+
+  it('preserves a hash with no following space unchanged (exact equality)', () => {
+    const input = '#Title\n\nProse.\n';
+    expect(stripLeadingTitleHeading(input, 'Title')).toBe(input);
+  });
+
+  it('consumes the single blank line after a stripped H2 heading', () => {
+    const input = '## Title\n\nProse.\n';
+    const result = stripLeadingTitleHeading(input, 'Title');
+    expect(result.startsWith('\n')).toBe(false);
+  });
 });
