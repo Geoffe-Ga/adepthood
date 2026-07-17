@@ -12,6 +12,8 @@ import {
   isUnlocked,
   STAGE_COMPLETED_GLYPH,
   STAGE_LOCKED_GLYPH,
+  STAGE_STATUS,
+  stageStatus,
   stageStatusGlyph,
   totalStageCount,
 } from '../stageDisplay';
@@ -102,6 +104,24 @@ describe('isCompleted', () => {
   it('returns false at progress 0', () => {
     const stage = makeStage({ stage_number: 1, progress: 0 });
     expect(isCompleted(1, new Map([[1, stage]]))).toBe(false);
+  });
+});
+
+describe('stageStatus', () => {
+  it('returns Completed for a completed, unlocked stage', () => {
+    expect(stageStatus(true, true)).toBe(STAGE_STATUS.Completed);
+  });
+
+  it('prioritizes Completed over Locked when a stage is both', () => {
+    expect(stageStatus(false, true)).toBe(STAGE_STATUS.Completed);
+  });
+
+  it('returns Locked for a locked, incomplete stage', () => {
+    expect(stageStatus(false, false)).toBe(STAGE_STATUS.Locked);
+  });
+
+  it('returns null for an open (unlocked, incomplete) stage', () => {
+    expect(stageStatus(true, false)).toBeNull();
   });
 });
 

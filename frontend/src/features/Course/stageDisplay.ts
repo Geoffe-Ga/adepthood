@@ -68,13 +68,29 @@ export const STAGE_COMPLETED_GLYPH = '✓';
 /** Glyph marking a locked stage. */
 export const STAGE_LOCKED_GLYPH = '🔒';
 
+/** Discriminated marker states for a stage, absent an open (uncompleted, unlocked) stage. */
+export const STAGE_STATUS = { Completed: 'completed', Locked: 'locked' } as const;
+/** A stage's marker status, or null when the stage is open. */
+export type StageStatus = (typeof STAGE_STATUS)[keyof typeof STAGE_STATUS];
+
 /**
- * Resolve a stage's status glyph by the shared precedence completed → locked →
- * none, so the pill row and the drawer header mark a stage identically. Returns
- * null for an open stage (unlocked and not yet complete).
+ * Resolve a stage's marker status by the shared precedence completed → locked →
+ * none, so the pill row and the drawer header classify a stage identically.
+ * Returns null for an open stage (unlocked and not yet complete).
+ */
+export function stageStatus(unlocked: boolean, completed: boolean): StageStatus | null {
+  if (completed) return STAGE_STATUS.Completed;
+  if (!unlocked) return STAGE_STATUS.Locked;
+  return null;
+}
+
+/**
+ * Thin wrapper mapping the resolved stage status onto its glyph, so glyph
+ * consumers share the precedence in stageStatus. Returns null for an open stage.
  */
 export function stageStatusGlyph(unlocked: boolean, completed: boolean): string | null {
-  if (completed) return STAGE_COMPLETED_GLYPH;
-  if (!unlocked) return STAGE_LOCKED_GLYPH;
+  const status = stageStatus(unlocked, completed);
+  if (status === STAGE_STATUS.Completed) return STAGE_COMPLETED_GLYPH;
+  if (status === STAGE_STATUS.Locked) return STAGE_LOCKED_GLYPH;
   return null;
 }

@@ -70,9 +70,6 @@ const styles = StyleSheet.create({
   stagePillCheck: {
     fontSize: 16,
   },
-  stagePillLock: {
-    fontSize: 14,
-  },
 
   // Stage cover — the showcase "book cover" for the selected stage.
   stageCover: {

@@ -1,3 +1,4 @@
+import { Lock } from 'lucide-react-native';
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -10,11 +11,14 @@ import {
   isCompleted,
   isUnlocked,
   STAGE_COMPLETED_GLYPH,
-  STAGE_LOCKED_GLYPH,
+  STAGE_STATUS,
   stagePillFill,
-  stageStatusGlyph,
+  stageStatus,
   totalStageCount,
 } from './stageDisplay';
+
+// Matches the removed stagePillLock fontSize so the tintable icon keeps the emoji's footprint.
+const STAGE_PILL_LOCK_ICON_SIZE = 14;
 
 interface StageSelectorProps {
   stages: Stage[];
@@ -45,9 +49,9 @@ const StagePill = ({
   // fill rather than the raw stage color or a fixed canvas tint.
   const effectiveFill = stagePillFill(color, { unlocked, completed, isActive });
   const glyphColor = readableGlyphOn(effectiveFill);
-  // Precedence (completed beats locked) lives once in stageStatusGlyph; each
-  // pill only maps the resolved glyph onto its per-state text style.
-  const glyph = stageStatusGlyph(unlocked, completed);
+  // Precedence (completed beats locked) lives once in stageStatus; each pill
+  // only maps the resolved status onto its per-state marker.
+  const status = stageStatus(unlocked, completed);
   return (
     <TouchableOpacity
       testID={`stage-pill-${stageNumber}`}
@@ -63,10 +67,10 @@ const StagePill = ({
         isActive && styles.stagePillActive,
       ]}
     >
-      {glyph === STAGE_COMPLETED_GLYPH ? (
-        <Text style={[styles.stagePillCheck, { color: glyphColor }]}>{glyph}</Text>
-      ) : glyph === STAGE_LOCKED_GLYPH ? (
-        <Text style={[styles.stagePillLock, { color: glyphColor }]}>{glyph}</Text>
+      {status === STAGE_STATUS.Completed ? (
+        <Text style={[styles.stagePillCheck, { color: glyphColor }]}>{STAGE_COMPLETED_GLYPH}</Text>
+      ) : status === STAGE_STATUS.Locked ? (
+        <Lock size={STAGE_PILL_LOCK_ICON_SIZE} color={glyphColor} />
       ) : (
         <Text style={[styles.stagePillText, { color: glyphColor }]}>{stageNumber}</Text>
       )}
