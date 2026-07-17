@@ -31,7 +31,9 @@ sweeping files: `graphify query "<question>"` for questions,
 `graphify path "A" "B"` for relationships, `graphify explain "X"` for
 concepts, `graphify affected "X"` for change impact — quoting each cited
 node's `source_location`. Fail-soft: fresh worktrees have no graph
-(`graphify-out/` is git-ignored); restore via the session hook, build with
+(`graphify-out/` is git-ignored); restore by downloading the rolling
+`knowledge-graph` release (`gh release download knowledge-graph --pattern
+graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
 `./scripts/graph/build.sh` (~2 min, $0), or proceed with Read/Grep/Glob
 exactly as today. **Never stall on graph absence.**
 

@@ -54,7 +54,9 @@ Route only the dimensions the diff actually touches — no redundant reviews.
    `graphify affected "X"` to surface dependents the diff did *not* change —
    un-reviewed callers are where regressions hide; quote `source_location`
    when citing one in a finding. Fail-soft: a fresh worktree has no graph
-   (`graphify-out/` is git-ignored) — restore via the session hook, build
+   (`graphify-out/` is git-ignored) — restore by downloading the rolling
+   `knowledge-graph` release (`gh release download knowledge-graph --pattern
+   graph.json --dir graphify-out`, see `scripts/graph/README.md`), build
    with `./scripts/graph/build.sh` (~2 min, $0), or review without it
    exactly as today. Never stall the review on graph absence.
 2. **Primary path — review the applicable dimensions yourself** against each

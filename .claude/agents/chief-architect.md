@@ -48,9 +48,12 @@ you read, reason, and dispatch.
    with `graphify query "<question>"` on the issue's key nouns and
    `graphify path "A" "B"` to map the blast radius between the modules the
    plan will touch; quote each cited node's `source_location`. Fail-soft: a
-   fresh worktree has no graph (`graphify-out/` is git-ignored) — restore via
-   the session hook, build with `./scripts/graph/build.sh` (~2 min, $0), or
-   fall back to Read/Grep/Glob exactly as today. Never stall the plan on it.
+   fresh worktree has no graph (`graphify-out/` is git-ignored) — restore by
+   downloading the rolling `knowledge-graph` release (`gh release download
+   knowledge-graph --pattern graph.json --dir graphify-out`, see
+   `scripts/graph/README.md`), build with `./scripts/graph/build.sh` (~2 min,
+   $0), or fall back to Read/Grep/Glob exactly as today. Never stall the plan
+   on it.
 3. **Decide the design.** The smallest coherent change that satisfies the issue
    at threshold quality. Name the interfaces/signatures/models that change.
 4. **Flag the risks** — which of these the issue genuinely touches:

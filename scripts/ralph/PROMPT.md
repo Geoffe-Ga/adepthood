@@ -41,7 +41,9 @@ its key nouns with `graphify query "<question>"`; before modifying any symbol
 X, run `graphify affected "X"` to see what depends on it; and after the
 implementation lands, run `./scripts/graph/update.sh` (AST-only, no cost) so
 the worktree's graph stays honest. A fresh worktree has no graph
-(`graphify-out/` is git-ignored): restore it via the session hook, build with
+(`graphify-out/` is git-ignored): restore it by downloading the rolling
+`knowledge-graph` release (`gh release download knowledge-graph --pattern
+graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
 `./scripts/graph/build.sh` (~2 min, $0), or proceed without it exactly as
 today — **never stall on graph absence.**
 
