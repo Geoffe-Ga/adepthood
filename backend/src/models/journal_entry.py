@@ -150,12 +150,17 @@ class JournalEntry(SQLModel, table=True):
     # (BUG-JOURNAL-007).  ``ix_journalentry_user_sender_deleted`` is created by
     # migration ``e3f4a5b6c7d8`` (issue #469): ``load_recent_conversation``
     # filters on ``(user_id, sender, deleted_at)`` and orders by ``id DESC``, so
-    # this composite index covers that hot chat read.  Both are declared here so
-    # the model and migrations agree — ``alembic check`` otherwise reports the
-    # indexes as drift and fails CI.
+    # this composite index covers that hot chat read.
+    # ``ix_journalentry_user_timestamp_id`` is created by migration
+    # ``f8a9b0c1d2e3``: the list endpoint orders by ``(timestamp DESC, id DESC)``
+    # (so backdated entries sort by date, not insertion id), and this composite
+    # index over ``(user_id, timestamp, id)`` covers that read.  All are declared
+    # here so the model and migrations agree — ``alembic check`` otherwise reports
+    # the indexes as drift and fails CI.
     __table_args__ = (
         Index("ix_journalentry_deleted_at", "deleted_at"),
         Index("ix_journalentry_user_sender_deleted", "user_id", "sender", "deleted_at"),
+        Index("ix_journalentry_user_timestamp_id", "user_id", "timestamp", "id"),
         _classification_check(),
         _aspect_range_check("primary_aspect", "ck_journalentry_primary_aspect_range"),
         _aspect_range_check("secondary_aspect", "ck_journalentry_secondary_aspect_range"),

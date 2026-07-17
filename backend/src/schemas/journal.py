@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -73,6 +73,10 @@ class JournalMessageCreate(BaseModel):
     secondary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
     reflection_level: ReflectionLevel | None = None
     reflection_scope_key: str | None = None
+    # A calendar date to backdate the entry to; ``None`` stamps the current
+    # instant. Like ``user_id`` and ``sender``, the stored ``timestamp`` is
+    # derived server-side (noon UTC of this date) — clients never set it directly.
+    entry_date: date | None = None
 
     @model_validator(mode="after")
     def _validate_chord(self) -> Self:
