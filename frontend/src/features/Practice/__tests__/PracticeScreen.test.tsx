@@ -372,6 +372,13 @@ describe('PracticeScreen', () => {
     );
   });
 
+  it('fades the bottom edge of the active session into the canvas ground', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(getByTestId('bottom-fade')).toBeTruthy();
+  });
+
   it('renders an active custom (draft) practice by including own drafts in the catalogue fetch', async () => {
     // A user-created practice is an unapproved draft: the backend lets its
     // author select it (POST /user-practices/ succeeds), but the approved-only
@@ -470,11 +477,14 @@ describe('PracticeScreen', () => {
       expect(getByTestId('active-practice-card')).toBeTruthy();
     });
     // Top inset constrains the wrapper viewport (so content can't scroll behind
-    // the notch); bottom inset rides the ScrollView's contentContainerStyle.
+    // the notch); the scroll content pads its bottom by the fade-veil height so
+    // the last line settles above the fade (whose opaque base covers the
+    // home-indicator zone).
+    const { rhythm } = require('../../../design/tokens');
     expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
     const scroll = getByTestId('practice-screen');
     expect(scroll.props.contentContainerStyle).toEqual(
-      expect.arrayContaining([expect.objectContaining({ paddingBottom: 34 })]),
+      expect.arrayContaining([expect.objectContaining({ paddingBottom: rhythm.bottomFadeHeight })]),
     );
   });
 

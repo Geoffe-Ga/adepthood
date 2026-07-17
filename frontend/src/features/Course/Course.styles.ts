@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
   contentListContent: {
     flexGrow: 1,
     paddingTop: SPACING.sm,
-    paddingBottom: SPACING.xl,
+    paddingBottom: rhythm.bottomFadeHeight,
   },
 
   // Native Markdown reader body — floated on a warm paper sheet.

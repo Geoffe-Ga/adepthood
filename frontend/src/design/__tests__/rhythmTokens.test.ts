@@ -15,6 +15,7 @@ describe('rhythm tokens (#825)', () => {
       'sectionGap',
       'blockGap',
       'heroPaddingV',
+      'bottomFadeHeight',
     ]);
   });
 

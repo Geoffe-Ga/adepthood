@@ -43,6 +43,7 @@ import {
   type ScreenDrawerState,
 } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { BottomFade } from '@/components/layout/BottomFade';
 import { ContentContainer } from '@/components/layout/ContentContainer';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import { useAuth } from '@/context/AuthContext';
@@ -53,6 +54,7 @@ import {
   colors,
   editorialType,
   onShowcase,
+  rhythm,
   surface,
   touchTarget,
 } from '@/design/tokens';
@@ -299,7 +301,7 @@ interface ActiveSessionViewProps {
   sessionRef?: React.Ref<ActiveRitualSessionHandle>;
 }
 
-const ActiveSessionView = ({
+const SessionScrollBody = ({
   userPractice,
   practiceName,
   effectiveName,
@@ -311,43 +313,51 @@ const ActiveSessionView = ({
   banner,
   stageNumber,
   sessionRef,
-}: ActiveSessionViewProps): React.JSX.Element => {
+}: ActiveSessionViewProps): React.JSX.Element => (
+  <>
+    {banner}
+    <BeginHero practiceName={effectiveName ?? practiceName} />
+    {/* The primary switch affordance, in the scroll header (not over the
+        timer, so it doesn't intercept mid-session taps). */}
+    <CatalogButton
+      stageNumber={stageNumber}
+      label="Change practice"
+      testID="change-practice-button"
+      icon={<RefreshCw size={16} color={accent.primary} style={styles.browseCatalogIcon} />}
+    />
+    <ActiveRitualSession
+      key={`practice-${userPractice.id}`}
+      ref={sessionRef}
+      userPractice={userPractice}
+      effectiveName={effectiveName ?? practiceName}
+      effectiveConfig={effectiveConfig}
+      userTimezone={userTimezone}
+      onSessionApply={weekly.increment}
+      onSessionRollback={weekly.decrement}
+      onSessionCommitted={() => void weekly.refresh()}
+      onUserPracticeUpdated={onUserPracticeUpdated}
+      onWriteReflection={onWriteReflection}
+    />
+    <WeeklyProgress count={weekly.count} />
+  </>
+);
+
+const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
     // paddingTop lives on the wrapper so the ScrollView's *viewport* starts
-    // below the notch (content can't scroll up behind it); paddingBottom
-    // rides contentContainerStyle so the scroll content clears the home indicator.
+    // below the notch (content can't scroll up behind it); the content pads its
+    // bottom by the fade-veil height so the last line settles above the fade,
+    // whose opaque base in turn covers the home-indicator zone.
     <View style={[styles.screen, { paddingTop: insets.top }]} testID="practice-screen-safe-area">
       <ScrollView
         style={styles.fill}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: rhythm.bottomFadeHeight }]}
         testID="practice-screen"
       >
-        {banner}
-        <BeginHero practiceName={effectiveName ?? practiceName} />
-        {/* The primary switch affordance, in the scroll header (not over the
-            timer, so it doesn't intercept mid-session taps). */}
-        <CatalogButton
-          stageNumber={stageNumber}
-          label="Change practice"
-          testID="change-practice-button"
-          icon={<RefreshCw size={16} color={accent.primary} style={styles.browseCatalogIcon} />}
-        />
-        <ActiveRitualSession
-          key={`practice-${userPractice.id}`}
-          ref={sessionRef}
-          userPractice={userPractice}
-          effectiveName={effectiveName ?? practiceName}
-          effectiveConfig={effectiveConfig}
-          userTimezone={userTimezone}
-          onSessionApply={weekly.increment}
-          onSessionRollback={weekly.decrement}
-          onSessionCommitted={() => void weekly.refresh()}
-          onUserPracticeUpdated={onUserPracticeUpdated}
-          onWriteReflection={onWriteReflection}
-        />
-        <WeeklyProgress count={weekly.count} />
+        <SessionScrollBody {...props} />
       </ScrollView>
+      <BottomFade />
     </View>
   );
 };
@@ -458,7 +468,7 @@ const ErrorView = ({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: surface.canvas },
   fill: { flex: 1 },
-  scrollContent: { padding: SPACING.md, paddingBottom: SPACING.xxl },
+  scrollContent: { padding: SPACING.md },
   centered: {
     flex: 1,
     justifyContent: 'center',
