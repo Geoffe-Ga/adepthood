@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 import pytest
@@ -805,3 +806,67 @@ async def test_seed_content_prunes_fossil_and_drops_orphan_completion(
     assert match.group(1) == "1"
     assert match.group(2) == "0"
     assert match.group(3) == "1"
+
+
+async def _stage_fossil_prune(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """Seed a fossil in a reconciled stage so a prune pass is staged."""
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+    db_session.add(
+        StageContent(
+            course_stage_id=stage_one.id,
+            title="Chapter 1",
+            content_type="chapter",
+            release_day=0,
+            url="https://legacy.example.com/1",
+        )
+    )
+    await db_session.commit()
+    install_manifest(_MANIFEST)
+
+
+async def _lost_race(_session: AsyncSession) -> bool:
+    return False
+
+
+@pytest.mark.asyncio
+async def test_seed_content_race_loser_skips_prune_warning(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A prune the losing worker rolls back must not be logged as persisted.
+
+    Proves a negative; its positive control is the winner test below, which
+    shares ``_stage_fossil_prune`` and asserts the same setup *does* warn.
+    """
+    await _stage_fossil_prune(db_session, install_manifest)
+
+    with (
+        patch("seed_content.try_commit_yielding_to_race_winner", new=_lost_race),
+        caplog.at_level(logging.WARNING, logger="seed_content"),
+    ):
+        inserted = await seed_content(db_session)
+
+    assert inserted == 0, "race loser reports no inserts"
+    warnings = [record.getMessage() for record in caplog.records]
+    assert not any("content_seed_pruned" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_seed_content_race_winner_still_warns_on_prune(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The winning worker whose prune persists still emits the summary WARNING."""
+    await _stage_fossil_prune(db_session, install_manifest)
+
+    with caplog.at_level(logging.WARNING, logger="seed_content"):
+        await seed_content(db_session)
+
+    prune_records = [r for r in caplog.records if "content_seed_pruned" in r.getMessage()]
+    assert len(prune_records) == 1

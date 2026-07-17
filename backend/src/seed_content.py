@@ -37,7 +37,7 @@ from content_config import ChapterRecord, all_chapter_records
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
-from seed_helpers import commit_or_yield_to_race_winner
+from seed_helpers import try_commit_yielding_to_race_winner
 
 logger = logging.getLogger(__name__)
 
@@ -357,9 +357,15 @@ async def seed_content(session: AsyncSession) -> int:
         # between our existence read and this commit trips the
         # ``ix_stagecontent_stage_content_ref_unique`` index (migration
         # ``e8f9a0b1c2d3``); the loser rolls back and reports 0 inserts.
-        inserted = await commit_or_yield_to_race_winner(session, result.inserted)
+        won = await try_commit_yielding_to_race_winner(session)
+        inserted = result.inserted if won else 0
     else:
+        # Nothing to commit, so nothing this process could lose or roll back.
+        won = True
         inserted = result.inserted
     _warn_unmapped_manifest_stages(stage_map)
-    _warn_pruned(counts)
+    if won:
+        # A prune the losing worker rolled back never persisted from here;
+        # only the winner reports its tally.
+        _warn_pruned(counts)
     return inserted
