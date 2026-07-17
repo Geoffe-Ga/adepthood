@@ -3,9 +3,11 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-const mockNavigate = jest.fn();
-jest.mock('@/navigation/hooks', () => ({
-  useAppNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
+const mockRootNavigate = jest.fn();
+// The drawer now dispatches through the root stack, not the tab navigator.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 import DrawerNavSection from '@/components/drawer/DrawerNavSection';
@@ -100,8 +102,8 @@ describe('DrawerNavSection', () => {
 
     fireEvent.press(getByTestId('drawer-nav-Journal'));
 
-    expect(mockNavigate).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith('Journal');
+    expect(mockRootNavigate).toHaveBeenCalledTimes(1);
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
@@ -113,7 +115,7 @@ describe('DrawerNavSection', () => {
 
     fireEvent.press(getByTestId('drawer-nav-Habits'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('Habits');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Habits' });
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 

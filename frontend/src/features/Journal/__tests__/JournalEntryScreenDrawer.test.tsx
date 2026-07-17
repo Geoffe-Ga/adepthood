@@ -62,6 +62,12 @@ jest.mock('@/navigation/hooks', () => ({
   ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: mockSetOptions }),
 }));
+// The drawer nav section dispatches through the root stack via useNavigation;
+// stub it so the entry screen renders outside a real NavigationContainer.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 

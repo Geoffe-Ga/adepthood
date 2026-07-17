@@ -174,7 +174,7 @@ describe('Course header drawer nav section', () => {
     fireEvent.press(getByLabelText('Open Course menu'));
     fireEvent.press(getByTestId('drawer-nav-Journal'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('Journal');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
     expect(queryByTestId('screen-drawer-panel')).toBeNull();
   });
 });

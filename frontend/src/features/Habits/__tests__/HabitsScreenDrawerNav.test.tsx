@@ -6,6 +6,7 @@ import React, { useSyncExternalStore, type ReactElement } from 'react';
 // drawer. Mirrors PracticeScreenDrawerNav.test.tsx's headerLeftStore harness,
 // adding a stable navigate spy so the shared nav rows have somewhere to route.
 const mockNavigate = jest.fn();
+const mockRootNavigate = jest.fn();
 // HabitsScreen installs its header-left drawer toggle through
 // useAppNavigation (useScreenDrawer), which calls navigation.setOptions in a
 // layout effect on every mount. The store relays the installed headerLeft
@@ -21,6 +22,12 @@ const mockSetOptions = jest.fn((opts: { headerLeft?: () => ReactElement }) => {
 });
 jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: mockNavigate, setOptions: mockSetOptions }),
+}));
+
+// The drawer now dispatches through the root stack, not the tab navigator.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 jest.mock('../../../api', () => ({
@@ -155,7 +162,7 @@ describe('Habits header drawer nav section', () => {
     fireEvent.press(getByLabelText('Open Habits menu'));
     fireEvent.press(getByTestId('drawer-nav-Journal'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('Journal');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
     expect(queryByTestId('screen-drawer-panel')).toBeNull();
   });
 });
