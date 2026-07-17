@@ -20,6 +20,7 @@ import {
 } from '../../components/drawer';
 import { Celebration } from '../../components/feedback/Celebration';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { BottomFade } from '../../components/layout/BottomFade';
 import { ContentContainer } from '../../components/layout/ContentContainer';
 import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
@@ -583,6 +584,7 @@ const CourseScreen = (): React.JSX.Element => {
           stageContent={stageContent}
           viewer={viewer}
         />
+        <BottomFade />
         <CourseScreenDrawer
           drawer={drawer}
           stages={allStages}

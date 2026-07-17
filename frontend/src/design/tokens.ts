@@ -366,6 +366,7 @@ export const rhythm = {
   sectionGap: spacing(3), // 24 — between editorial sections
   blockGap: spacing(1.5), // 12 — between blocks within a section
   heroPaddingV: spacing(3), // 24 — vertical breathing room around a screen header
+  bottomFadeHeight: spacing(8), // 64 — height of the BottomFade veil that dissolves a scroller's bottom edge into the canvas ground
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import type { JournalMessage, PromptDetail } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { BottomFade } from '@/components/layout/BottomFade';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import InvitationStack from '@/features/Invitations/InvitationStack';
@@ -450,6 +451,7 @@ function JournalShelfScreen(): React.JSX.Element {
   return (
     <ScreenScaffold testID="journal-shelf">
       <ShelfBody shelf={shelf} nav={nav} prompt={prompt} week={week} now={now} />
+      <BottomFade />
       <JournalScreenDrawer
         drawer={shelfDrawer.drawer}
         onSelectEntry={shelfDrawer.onSelectEntry}

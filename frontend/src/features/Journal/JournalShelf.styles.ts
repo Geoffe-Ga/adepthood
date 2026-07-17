@@ -8,6 +8,7 @@ import {
   colors,
   editorialType,
   ink,
+  rhythm,
   spacing,
   surface,
   surfaceShadow,
@@ -22,7 +23,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: SPACING.xxl,
+    paddingBottom: rhythm.bottomFadeHeight,
     flexGrow: 1,
   },
   sectionHeading: {

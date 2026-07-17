@@ -307,6 +307,30 @@ describe('CourseScreen', () => {
     });
   });
 
+  it('fades the bottom edge of the landing page into the canvas ground', async () => {
+    const { getByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => expect(getByTestId('content-list')).toBeTruthy());
+    expect(getByTestId('bottom-fade')).toBeTruthy();
+  });
+
+  it('does not fade the bottom edge of the chapter reader (desk ground)', async () => {
+    const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Welcome Essay')).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+    });
+    expect(queryByTestId('bottom-fade')).toBeNull();
+  });
+
   it('loads new content when a different stage is selected', async () => {
     const { getByTestId } = render(<CourseScreen />);
 

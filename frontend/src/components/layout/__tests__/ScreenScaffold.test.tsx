@@ -114,4 +114,22 @@ describe('ScreenScaffold', () => {
     expect(flat.paddingHorizontal).toBe(rhythm.screenPaddingH);
     expect(flat.paddingTop).toBe(rhythm.screenPaddingTop);
   });
+
+  it('fades the bottom edge into the canvas ground in scroll mode', () => {
+    const { getByTestId } = render(
+      <ScreenScaffold scroll>
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    expect(getByTestId('bottom-fade')).toBeTruthy();
+  });
+
+  it('does not render the bottom fade in the plain (non-scroll) mode', () => {
+    const { queryByTestId } = render(
+      <ScreenScaffold>
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    expect(queryByTestId('bottom-fade')).toBeNull();
+  });
 });

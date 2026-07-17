@@ -32,6 +32,13 @@ The language began on the journal-resonance surface (`colors.paper`,
 `accent.onPrimary` is a foreground that clears AA on the `accent.primary` fill
 instead. Enforced by `__tests__/semanticTokens.test.ts`.
 
+**Bottom fade** (`components/layout/BottomFade.tsx`, `rhythm.bottomFadeHeight`)
+is the paper ground rising to absorb the last inch of scrolling content — quiet
+and structural, not decorative. It gradients from transparent to `surface.canvas`
+exactly, never black, so the veil reads as more of the same ground rather than a
+grey shadow at the screen's end. `ScreenScaffold` renders it automatically in
+`scroll` mode.
+
 ## Palette provenance
 
 The accent is an **original** terracotta/sienna derived from the app's own

@@ -522,6 +522,11 @@ describe('JournalShelfScreen', () => {
     expect(await findByTestId('journal-hero')).toBeTruthy();
   });
 
+  it('fades the bottom edge of the shelf into the canvas ground', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('bottom-fade')).toBeTruthy();
+  });
+
   it('shows "Journal" as the header title and drops "Your shelf"', async () => {
     const { findByTestId, getByText, queryByText } = render(<JournalShelfScreen />);
     await findByTestId('journal-hero');
