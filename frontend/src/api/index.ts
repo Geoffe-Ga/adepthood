@@ -34,6 +34,7 @@ import {
   stageProgressRecordSchema,
   stageSchema,
   timezoneReadSchema,
+  transcribePageSchema,
   uiFlagsSchema,
   wheelBalanceSchema,
   type AcceptSuggestionResultT,
@@ -63,6 +64,7 @@ import {
   type SuggestionStatusT,
   type Tier,
   type TimezoneReadT,
+  type TranscribePageT,
   type WheelBalanceT,
 } from './schemas';
 
@@ -130,6 +132,55 @@ export class ApiTimeoutError extends Error {
   constructor(path: string, timeoutMs: number) {
     super(`Request timed out after ${timeoutMs}ms: ${path}`);
     this.name = 'ApiTimeoutError';
+  }
+}
+
+/** Transcribed-text result envelope, re-exported for callers of `journal.transcribePage`. */
+export type { TranscribePageT } from './schemas';
+
+/** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
+export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
+
+/**
+ * The stable, UI-facing failure taxonomy for handwriting transcription. Every
+ * server / transport error is collapsed into one of these so callers branch on
+ * a small closed set instead of raw HTTP status + detail strings.
+ */
+export type TranscriptionErrorKind =
+  | 'invalid_image'
+  | 'image_too_large'
+  | 'model_lacks_vision'
+  | 'wallet_exhausted'
+  | 'rate_limited'
+  | 'provider_error'
+  | 'network'
+  | 'timeout'
+  | 'unknown';
+
+/**
+ * Transcription timeout: 60s, double {@link FETCH_TIMEOUT_MS}. Vision models
+ * are markedly slower than text completions; this is p95 latency headroom over
+ * the 30s default so a genuinely-working call is not aborted mid-flight.
+ */
+export const TRANSCRIBE_TIMEOUT_MS = 60_000;
+
+/**
+ * Typed failure for {@link journal.transcribePage}. PRIVACY: the message is a
+ * static per-`kind` string and never interpolates the base64 image payload or
+ * the request body, so it is safe to log or surface. The originating error is
+ * preserved on `cause` for diagnostics.
+ */
+export class TranscriptionError extends Error {
+  kind: TranscriptionErrorKind;
+  status: number | null;
+
+  constructor(kind: TranscriptionErrorKind, status: number | null, cause?: unknown) {
+    // Only forward `cause` when present: passing `{ cause: undefined }` would
+    // stamp an explicit `undefined` cause instead of leaving it unset.
+    super(`transcription failed: ${kind}`, cause === undefined ? undefined : { cause });
+    this.name = 'TranscriptionError';
+    this.kind = kind;
+    this.status = status;
   }
 }
 
@@ -1273,6 +1324,69 @@ export interface JournalListParams {
   offset?: number;
 }
 
+/** Optional bring-your-own-key header for the LLM endpoints. */
+// Resolve the bring-your-own-key header: an explicit per-call key wins, else the
+// key registered by the BYOK provider (ApiKeyContext) at call time so rotations
+// apply immediately. Empty/absent → no header (backend falls back to its env).
+const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
+  const key = apiKey ?? llmApiKeyGetter?.() ?? null;
+  return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
+};
+
+/**
+ * 422 sub-map: the transcription endpoint reuses the generic 422 for several
+ * distinct validation failures, disambiguated by `detail`. Anything not listed
+ * here (including a bare `invalid_image` and the Pydantic array-detail case
+ * that `extractErrorDetail` collapses to `'Request failed'`) is a bad image.
+ */
+const TRANSCRIBE_422_KINDS: Record<string, TranscriptionErrorKind> = {
+  image_too_large: 'image_too_large',
+  model_lacks_vision: 'model_lacks_vision',
+};
+
+/**
+ * Flat status→kind table for the transcription endpoint's `ApiError`s. Statuses
+ * needing detail-level disambiguation (402, 422) are handled before this lookup.
+ */
+const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
+  429: 'rate_limited',
+  502: 'provider_error',
+  0: 'network',
+};
+
+/** Classify an `ApiError` from the transcription endpoint into a stable kind. */
+function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
+  // 402 keyless-BYOK is a client misconfiguration, NOT a spent wallet.
+  if (err.status === 402) {
+    return err.detail === 'llm_key_required' ? 'unknown' : 'wallet_exhausted';
+  }
+  if (err.status === 422) {
+    return TRANSCRIBE_422_KINDS[err.detail] ?? 'invalid_image';
+  }
+  return TRANSCRIBE_STATUS_KINDS[err.status] ?? 'unknown';
+}
+
+/**
+ * Map any thrown error to a {@link TranscriptionError} without ever touching the
+ * request body, so the base64 payload cannot leak into a message or log.
+ */
+function toTranscriptionError(err: unknown): TranscriptionError {
+  if (err instanceof ApiTimeoutError) {
+    return new TranscriptionError('timeout', null, err);
+  }
+  if (err instanceof ApiError) {
+    return new TranscriptionError(classifyTranscribeApiError(err), err.status, err);
+  }
+  // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
+  // the core client does not retry) rather than the synthesized ApiError(0).
+  if (err instanceof TypeError && err.message.toLowerCase().includes('network')) {
+    return new TranscriptionError('network', null, err);
+  }
+  // Schema drift (ApiValidationError) and everything unforeseen collapse here.
+  const status = err instanceof ApiValidationError ? err.status : null;
+  return new TranscriptionError('unknown', status, err);
+}
+
 export const journal = {
   list(params: JournalListParams = {}, token?: string): Promise<JournalListResponse> {
     const query = new URLSearchParams();
@@ -1315,6 +1429,33 @@ export const journal = {
   },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
+  },
+  /**
+   * Transcribe one handwritten journal page from a base64 image. Stateless: it
+   * persists nothing and just returns the OCR'd text. Charges one wallet unit,
+   * so it is deliberately NON-idempotent — there is no auto-retry and callers
+   * must not resend on transient failure without user intent. Supports BYOK via
+   * the optional api key. PRIVACY: the image payload is never logged, and a
+   * {@link TranscriptionError} message never carries it. A 402 disambiguates a
+   * spent wallet (`wallet_exhausted`) from a missing BYOK key (`unknown`).
+   */
+  async transcribePage(
+    { imageBase64, mediaType }: { imageBase64: string; mediaType: MediaType },
+    token?: string,
+    apiKey?: string,
+  ): Promise<TranscribePageT> {
+    try {
+      return await request<TranscribePageT>('/journal/transcribe-page', {
+        method: 'POST',
+        body: { image_base64: imageBase64, media_type: mediaType },
+        token,
+        headers: byokHeaders(apiKey),
+        timeoutMs: TRANSCRIBE_TIMEOUT_MS,
+        schema: transcribePageSchema as unknown as z.ZodType<TranscribePageT>,
+      });
+    } catch (err: unknown) {
+      throw toTranscriptionError(err);
+    }
   },
 };
 
@@ -1411,15 +1552,6 @@ export const reflections = {
       },
     );
   },
-};
-
-/** Optional bring-your-own-key header for the resonance LLM endpoints. */
-// Resolve the bring-your-own-key header: an explicit per-call key wins, else the
-// key registered by the BYOK provider (ApiKeyContext) at call time so rotations
-// apply immediately. Empty/absent → no header (backend falls back to its env).
-const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
-  const key = apiKey ?? llmApiKeyGetter?.() ?? null;
-  return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
 };
 
 /**
