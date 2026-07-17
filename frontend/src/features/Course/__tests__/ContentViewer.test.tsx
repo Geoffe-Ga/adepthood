@@ -328,6 +328,57 @@ describe('ContentViewer', () => {
     expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Done');
   });
 
+  it('resets read state when navigating to a different, unread chapter', async () => {
+    // Chapter one starts unread; the user marks it read (local state → true).
+    const chapterOne = makeItem({ id: 1, is_read: false });
+    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+    await waitFor(() => {
+      expect(getByText('✓ Read')).toBeTruthy();
+    });
+
+    // Next → keeps ContentViewer mounted and swaps in an unread chapter two.
+    const chapterTwo = makeItem({ id: 2, is_read: false });
+    rerender(
+      <ContentViewer item={chapterTwo} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    // The mark-read UI must reflect chapter two's unread state, not chapter one's.
+    await waitFor(() => {
+      expect(getByText('Mark as Read')).toBeTruthy();
+    });
+    expect(queryByText('✓ Read')).toBeNull();
+    const markReadButton = getByTestId('mark-read-button');
+    expect(markReadButton.props.accessibilityState?.disabled ?? false).toBe(false);
+  });
+
+  it('reflects an already-read chapter when navigating back to it', async () => {
+    // ContentViewer stays mounted while navigating from an unread chapter to a
+    // previously-read one; the read state must follow the incoming item.
+    const unread = makeItem({ id: 3, is_read: false });
+    const { getByText, findByTestId, rerender, queryByText } = render(
+      <ContentViewer item={unread} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+    expect(getByText('Mark as Read')).toBeTruthy();
+
+    const alreadyRead = makeItem({ id: 4, is_read: true });
+    rerender(
+      <ContentViewer item={alreadyRead} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('✓ Read')).toBeTruthy();
+    });
+    expect(queryByText('Mark as Read')).toBeNull();
+  });
+
   it('shows Next chapter on the next button when nextIsDone is false', async () => {
     const item = makeItem();
     const { findByTestId, getByTestId, getByText } = render(

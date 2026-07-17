@@ -98,7 +98,16 @@ function useMarkReadHandler(
 ): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
   const [marking, setMarking] = useState(false);
   const [isRead, setIsRead] = useState(item.is_read);
-  // BUG-FE-COURSE-005: a fast back-tap while ``markRead`` is in flight
+  // Chapter Next/Back navigation swaps ``item`` while ``ContentViewer`` stays
+  // mounted (the reader body re-fetches via its source-keyed effect rather than
+  // remounting), so the ``useState`` initializer above never re-runs for the
+  // incoming chapter. Resync the local read flag on every item-id change so the
+  // Mark-as-Read UI reflects the chapter now on screen instead of the previous
+  // one's stale state.
+  useEffect(() => {
+    setIsRead(item.is_read);
+  }, [item.id, item.is_read]);
+  // A fast back-tap while ``markRead`` is in flight
   // used to land ``setMarking(false)`` on an unmounted component, firing
   // the React "state update on an unmounted" warning and (in stricter
   // future versions) tearing down updates of subsequent screens.  The
