@@ -2,11 +2,18 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { render, fireEvent, within } from '@testing-library/react-native';
+import { Lock } from 'lucide-react-native';
 import { StyleSheet } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import type { Stage } from '../../../api';
-import { colors, STAGE_COLORS, STAGE_ORDER, surface } from '../../../design/tokens';
+import {
+  colors,
+  readableGlyphOn,
+  STAGE_COLORS,
+  STAGE_ORDER,
+  surface,
+} from '../../../design/tokens';
 import { stagePillFill } from '../stageDisplay';
 import StageSelector from '../StageSelector';
 
@@ -231,18 +238,21 @@ describe('StageSelector', () => {
     );
   });
 
-  it('renders the lock glyph for a locked, non-completed stage', () => {
+  it('renders a Lock icon (not the emoji) for a locked, non-completed stage', () => {
     const stages = [makeStage({ stage_number: 1, is_unlocked: false, progress: 0 })];
     const { getByTestId } = render(
       <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
     );
 
-    expect(within(getByTestId('stage-pill-1')).getByText('🔒')).toBeTruthy();
+    const pill1 = getByTestId('stage-pill-1');
+    expect(pill1.findByType(Lock)).toBeTruthy();
+    expect(within(pill1).queryByText('🔒')).toBeNull();
+    expect(pill1.props.testID).toBe('stage-pill-1');
   });
 
-  it('prioritizes the completed checkmark over the lock glyph when a stage is both', () => {
+  it('prioritizes the completed checkmark over the Lock icon when a stage is both', () => {
     // Unusual API data (progress complete but is_unlocked false) pins the
-    // ternary order: completed wins the glyph even though the pill is locked.
+    // precedence: completed wins the glyph even though the pill is locked.
     const stages = [makeStage({ stage_number: 1, is_unlocked: false, progress: 1.0 })];
     const { getByTestId } = render(
       <StageSelector stages={stages} selectedStage={1} onSelectStage={onSelectStage} />,
@@ -250,6 +260,7 @@ describe('StageSelector', () => {
 
     const pill1 = getByTestId('stage-pill-1');
     expect(within(pill1).getByText('✓')).toBeTruthy();
+    expect(pill1.findAllByType(Lock)).toHaveLength(0);
     expect(within(pill1).queryByText('🔒')).toBeNull();
     expect(pill1.props.accessibilityLabel).toBe('Stage 1, locked, completed');
   });
@@ -315,7 +326,7 @@ describe('StageSelector', () => {
       expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
     });
 
-    it('renders the lock glyph readably on a light stage fill', () => {
+    it('renders the Lock icon readably on a light stage fill', () => {
       const stages = [
         makeStage({
           stage_number: 1,
@@ -330,12 +341,12 @@ describe('StageSelector', () => {
 
       const pill = getByTestId('stage-pill-1');
       const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
-      const glyph = within(pill).getByText('🔒');
-      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
-      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+      const lockColor = pill.findByType(Lock).props.color as string;
+      expect(contrast(lockColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(lockColor).toBe(readableGlyphOn(fill));
     });
 
-    it('renders the lock glyph readably on the Ultraviolet dark stage fill', () => {
+    it('renders the Lock icon readably on the Ultraviolet dark stage fill', () => {
       const stages = [
         makeStage({
           stage_number: 1,
@@ -350,9 +361,9 @@ describe('StageSelector', () => {
 
       const pill = getByTestId('stage-pill-1');
       const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
-      const glyph = within(pill).getByText('🔒');
-      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
-      expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+      const lockColor = pill.findByType(Lock).props.color as string;
+      expect(contrast(lockColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(lockColor).toBe(readableGlyphOn(fill));
     });
   });
 
@@ -387,6 +398,16 @@ describe('StageSelector', () => {
       return contrast(effGlyph, effFill);
     };
 
+    const effectiveIconContrastOf = (pill: PillInstance): number => {
+      const flat = StyleSheet.flatten(pill.props.style as StyleProp<ViewStyle>) ?? {};
+      const fill = (flat.backgroundColor as string | undefined) ?? '';
+      const opacity = (flat.opacity as number | undefined) ?? FULL_OPACITY;
+      const lockColor = pill.findByType(Lock).props.color as string;
+      const effFill = composite(fill, surface.canvas, opacity);
+      const effIcon = composite(lockColor, surface.canvas, opacity);
+      return contrast(effIcon, effFill);
+    };
+
     it.each(STAGE_ORDER)('locked %s pill clears effective AA contrast on the canvas', (name) => {
       const stages = [
         makeStage({
@@ -405,7 +426,7 @@ describe('StageSelector', () => {
       );
 
       const pill = getByTestId('stage-pill-1');
-      expect(effectiveContrastOf(pill, '🔒')).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(effectiveIconContrastOf(pill)).toBeGreaterThanOrEqual(AA_NORMAL);
     });
 
     it.each(STAGE_ORDER)(
