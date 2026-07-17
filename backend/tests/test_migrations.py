@@ -2742,3 +2742,115 @@ def test_backdated_entry_migration_round_trip_on_sqlite(
     # Phase 3: re-upgrade is idempotent.
     command.upgrade(cfg, _BACKDATED_ENTRY_REVISION)
     assert "ix_journalentry_user_timestamp_id" in _index_names(db_url, "journalentry")
+
+
+# -- Creek Vault write-path vault_ref / vault_tags migration round-trip -----
+#
+# ``alembic check`` itself only runs against a live Postgres database in the
+# ``backend-ci.yml`` migration-drift job (see DEPLOYMENT.md); there is no local
+# SQLite-backed unit test for it anywhere in this file. The column-presence
+# round-trip below is this suite's equivalent drift guard for the new columns,
+# matching every other migration section here.
+
+# down_revision is f8a9b0c1d2e3 (the backdated-entry-ordering migration, current head).
+_CREEK_VAULT_WRITE_BASE_REVISION = "f8a9b0c1d2e3"  # pragma: allowlist secret
+# The implementer must set this to the real revision ID of the migration they
+# author for the Creek Vault write path.
+_CREEK_VAULT_WRITE_REVISION = "c7d8e9f0a1b3"  # pragma: allowlist secret
+
+
+def _bootstrap_creek_vault_write_baseline(sync_url: str) -> None:
+    """Pre-create minimal ``user`` and ``journalentry`` tables for the round-trip fixture.
+
+    Mirrors the shape just before the vault-write columns migration. Only the
+    columns unrelated to the new ``vault_ref`` / ``vault_tags`` pair are needed,
+    so the bootstrap stays narrow rather than replaying the whole preceding chain.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'vault@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message)"
+                " VALUES (1, 1, 'user', 'Pre-migration entry.')"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_creek_vault_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the vault-write columns migration."""
+    db_path = tmp_path / "creek_vault_write_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_creek_vault_write_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CREEK_VAULT_WRITE_BASE_REVISION)
+    return cfg
+
+
+def _journalentry_ids(db_url: str) -> list[int]:
+    """Return every ``journalentry.id`` present, to prove a migration preserves rows."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT id FROM journalentry")).fetchall()
+            return [row[0] for row in rows]
+    finally:
+        engine.dispose()
+
+
+def test_creek_vault_write_migration_adds_and_drops_columns(
+    alembic_sqlite_config_creek_vault_write: Config,
+) -> None:
+    """The vault-write migration adds nullable vault_ref/vault_tags; downgrade drops them.
+
+    This test fails with an Alembic ``CommandError`` (unknown revision) until the
+    implementer authors the migration and sets ``_CREEK_VAULT_WRITE_REVISION`` to
+    its real revision ID -- the correct RED failure mode for a not-yet-written
+    migration, matching the placeholder-revision pattern used elsewhere in this
+    file for other not-yet-authored migrations.
+    """
+    cfg = alembic_sqlite_config_creek_vault_write
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds both nullable columns; the pre-existing row survives.
+    command.upgrade(cfg, _CREEK_VAULT_WRITE_REVISION)
+    cols = _columns_of(db_url, "journalentry")
+    assert {"vault_ref", "vault_tags"}.issubset(cols)
+    assert _journalentry_ids(db_url) == [1]
+
+    # Phase 2: downgrade removes both columns.
+    command.downgrade(cfg, _CREEK_VAULT_WRITE_BASE_REVISION)
+    cols_after = _columns_of(db_url, "journalentry")
+    assert {"vault_ref", "vault_tags"}.isdisjoint(cols_after)
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _CREEK_VAULT_WRITE_REVISION)
+    cols_again = _columns_of(db_url, "journalentry")
+    assert {"vault_ref", "vault_tags"}.issubset(cols_again)

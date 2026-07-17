@@ -18,6 +18,7 @@ from dependencies.ownership import require_owned_journal_entry
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
+from domain.creek_vault import CreekVaultClient
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
@@ -67,6 +68,11 @@ from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
+from services.creek_vault_write import (
+    VaultWriteStatus,
+    get_creek_vault_client,
+    store_and_classify,
+)
 from services.llm_usage import record_llm_usage
 from services.marginalia import (
     BotmasonResonanceLLM,
@@ -173,11 +179,70 @@ def _resolve_backdated_timestamp(entry_date: date | None) -> datetime | None:
     )
 
 
+# PATCH fields whose change re-sends the entry to the Creek Vault. A body edit
+# ('message') or a privacy-tier change ('classification') alters what the vault
+# should hold; a title/status/chord-only PATCH must issue zero vault calls.
+_VAULT_REINGEST_FIELDS = frozenset({"message", "classification"})
+
+
+def _entry_aspect_tags(entry: JournalEntry) -> tuple[int, ...]:
+    """Collect an entry's chord Aspects (primary then secondary) as ingest tags.
+
+    Only the set notes of the chord are forwarded, so a scopeless (freeform)
+    entry sends an empty tuple rather than ``None`` placeholders.
+    """
+    return tuple(a for a in (entry.primary_aspect, entry.secondary_aspect) if a is not None)
+
+
+async def _record_vault_outcome(
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
+) -> None:
+    """Store + classify a committed entry via the Creek Vault, reconciling its ref columns.
+
+    Best-effort: :func:`store_and_classify` never raises a vault error, so a
+    missing, unreachable, or intimate-skipped write leaves the entry saved. The
+    persisted ``vault_ref`` / ``vault_tags`` are reconciled to the outcome:
+
+    - ``INGESTED`` writes the new ref + tags (a re-ingest overwrites any prior ref).
+    - ``SKIPPED_INTIMATE`` clears a prior non-intimate ref/tags, since an entry
+      re-classified intimate must not retain a handle to plaintext it no longer
+      consents to expose (the model documents these columns stay NULL for
+      intimate entries). The vault still holds that plaintext until a retract
+      capability exists -- see :mod:`services.creek_vault_write`.
+    - ``DEGRADED`` / ``UNAVAILABLE`` are transient, so any existing ref is kept
+      untouched rather than dropped on a passing network blip.
+
+    Only a real column change re-commits, so the common no-op paths stay free of
+    a redundant write.
+    """
+    outcome = await store_and_classify(
+        vault_client,
+        body=entry.message,
+        classification=entry.classification,
+        created_at=entry.timestamp,
+        aspect_tags=_entry_aspect_tags(entry),
+    )
+    if outcome.status is VaultWriteStatus.INGESTED:
+        entry.vault_ref = outcome.vault_ref
+        entry.vault_tags = list(outcome.tags)
+    elif outcome.status is VaultWriteStatus.SKIPPED_INTIMATE and (
+        entry.vault_ref is not None or entry.vault_tags is not None
+    ):
+        entry.vault_ref = None
+        entry.vault_tags = None
+    else:
+        return
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+
+
 @router.post("/", response_model=JournalMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_journal_entry(
     payload: JournalMessageCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
 ) -> JournalEntry:
     """Create a journal message for the authenticated user.
 
@@ -207,6 +272,7 @@ async def create_journal_entry(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
+    await _record_vault_outcome(session, entry, vault_client)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
 
@@ -396,6 +462,7 @@ async def update_journal_entry(
     payload: JournalEntryUpdate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
 ) -> JournalEntry:
     """Patch ``message`` / ``title`` / ``status`` on the caller's own entry.
 
@@ -427,6 +494,10 @@ async def update_journal_entry(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
+    # Re-ingest only when the body or privacy tier changed; a title/status/chord
+    # PATCH leaves the vault's copy untouched (and issues zero vault calls).
+    if payload.model_fields_set & _VAULT_REINGEST_FIELDS:
+        await _record_vault_outcome(session, entry, vault_client)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
 
