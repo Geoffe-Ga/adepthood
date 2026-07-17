@@ -2,7 +2,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-import type { MettaReturnState, ReturnArc, ReturnWeek } from '@/api';
+import type { MettaReturnState, ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
 
 type RealUseState = (_initial: unknown) => [unknown, (_next: unknown) => void];
 
@@ -37,6 +37,12 @@ const mockLeave = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<
 const mockDismissOffer = jest.fn() as jest.MockedFunction<
   (_token?: string) => Promise<MettaReturnState>
 >;
+const mockRelease = jest.fn() as jest.MockedFunction<
+  (_habitIds: number[], _token?: string) => Promise<ReleasedHabit[]>
+>;
+const mockRecommit = jest.fn() as jest.MockedFunction<
+  (_habitIds: number[], _token?: string) => Promise<ReleasedHabit[]>
+>;
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
@@ -50,6 +56,9 @@ jest.mock('@/api', () => {
       leave: (...a: unknown[]) => (mockLeave as unknown as (...x: unknown[]) => unknown)(...a),
       dismissOffer: (...a: unknown[]) =>
         (mockDismissOffer as unknown as (...x: unknown[]) => unknown)(...a),
+      release: (...a: unknown[]) => (mockRelease as unknown as (...x: unknown[]) => unknown)(...a),
+      recommit: (...a: unknown[]) =>
+        (mockRecommit as unknown as (...x: unknown[]) => unknown)(...a),
     },
   };
 });
@@ -96,7 +105,18 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
 }
 
 function stateResult(overrides: Partial<MettaReturnState> = {}): MettaReturnState {
-  return { eligible: true, weeks: fiveWeeks(), arc: null, offer_dismissed: false, ...overrides };
+  return {
+    eligible: true,
+    weeks: fiveWeeks(),
+    arc: null,
+    offer_dismissed: false,
+    released_habits: [],
+    ...overrides,
+  };
+}
+
+function releasedHabit(overrides: Partial<ReleasedHabit> = {}): ReleasedHabit {
+  return { habit_id: 1, name: 'Morning pages', icon: '📓', recommitted: false, ...overrides };
 }
 
 beforeEach(() => {
@@ -106,6 +126,8 @@ beforeEach(() => {
   mockResume.mockReset();
   mockLeave.mockReset();
   mockDismissOffer.mockReset();
+  mockRelease.mockReset();
+  mockRecommit.mockReset();
   mockUseContractionSignalActive.mockReset();
   mockSaveDismissed.mockReset();
   mockLoadDismissed.mockReset();
@@ -116,6 +138,8 @@ beforeEach(() => {
   mockResume.mockResolvedValue(arc({ paused: false }));
   mockLeave.mockResolvedValue(arc());
   mockDismissOffer.mockResolvedValue(stateResult({ offer_dismissed: true }));
+  mockRelease.mockResolvedValue([]);
+  mockRecommit.mockResolvedValue([]);
   mockUseContractionSignalActive.mockReturnValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadDismissed.mockResolvedValue(false);
@@ -361,5 +385,99 @@ describe('useMettaReturn', () => {
     });
 
     expect(result.current.offerVisible).toBe(true);
+  });
+});
+
+describe('useMettaReturn — let-go and re-commit', () => {
+  it('letGoVisible starts false and flips true once start() resolves', async () => {
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockStart.mockResolvedValue(arc({ week: 1, focus: 'self' }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.eligible).toBe(true));
+    expect(result.current.letGoVisible).toBe(false);
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.letGoVisible).toBe(true);
+  });
+
+  it('skipLetGo clears letGoVisible without calling the release api', async () => {
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.eligible).toBe(true));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.letGoVisible).toBe(true);
+
+    act(() => {
+      result.current.skipLetGo();
+    });
+
+    expect(result.current.letGoVisible).toBe(false);
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it('release calls the api, replaces releasedHabits with the response, and clears letGoVisible', async () => {
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockRelease.mockResolvedValue([releasedHabit({ habit_id: 7, name: 'Cold plunge' })]);
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.eligible).toBe(true));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.letGoVisible).toBe(true);
+
+    await act(async () => {
+      await result.current.release([7]);
+    });
+
+    expect(mockRelease).toHaveBeenCalledWith([7]);
+    expect(result.current.releasedHabits).toEqual([
+      releasedHabit({ habit_id: 7, name: 'Cold plunge' }),
+    ]);
+    expect(result.current.letGoVisible).toBe(false);
+  });
+
+  it('recommit calls the api and updates releasedHabits from the response', async () => {
+    mockState.mockResolvedValue(
+      stateResult({
+        eligible: true,
+        arc: arc(),
+        released_habits: [releasedHabit({ habit_id: 3, recommitted: false })],
+      }),
+    );
+    mockRecommit.mockResolvedValue([releasedHabit({ habit_id: 3, recommitted: true })]);
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.releasedHabits).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.recommit([3]);
+    });
+
+    expect(mockRecommit).toHaveBeenCalledWith([3]);
+    expect(result.current.releasedHabits).toEqual([
+      releasedHabit({ habit_id: 3, recommitted: true }),
+    ]);
+  });
+
+  it('seeds releasedHabits from the loaded state on mount', async () => {
+    mockState.mockResolvedValue(
+      stateResult({
+        eligible: true,
+        arc: arc(),
+        released_habits: [releasedHabit({ habit_id: 9, name: 'Journaling' })],
+      }),
+    );
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
+
+    expect(result.current.releasedHabits).toEqual([
+      releasedHabit({ habit_id: 9, name: 'Journaling' }),
+    ]);
   });
 });

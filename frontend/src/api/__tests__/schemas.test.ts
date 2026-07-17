@@ -13,6 +13,7 @@ import {
   practiceRecipeSchema,
   practiceSessionResponseSchema,
   promptListResponseSchema,
+  releasedHabitSchema,
   stageSchema,
   userPracticeSchema,
 } from '../schemas';
@@ -522,5 +523,30 @@ describe('practiceTagSchema (audit-contracts-09)', () => {
     expect(practiceTagSchema.parse({ ...tag, owner_user_id: 9 }).owner_user_id).toBe(9);
     expect(() => practiceTagSchema.parse({ ...tag, slug: undefined })).toThrow();
     expect(() => practiceTagSchema.parse({ ...tag, id: '3' })).toThrow();
+  });
+});
+
+describe('releasedHabitSchema', () => {
+  const released = { habit_id: 4, name: 'Cold plunge', icon: '🧊', recommitted: false };
+
+  it('accepts a valid released habit and preserves every field', () => {
+    expect(releasedHabitSchema.parse(released)).toEqual(released);
+    expect(releasedHabitSchema.parse({ ...released, recommitted: true }).recommitted).toBe(true);
+  });
+
+  it('rejects a payload missing the icon field', () => {
+    const { icon: _omit, ...withoutIcon } = released;
+    void _omit;
+    expect(() => releasedHabitSchema.parse(withoutIcon)).toThrow();
+  });
+
+  it('rejects a payload missing the recommitted field', () => {
+    const { recommitted: _omit, ...withoutRecommitted } = released;
+    void _omit;
+    expect(() => releasedHabitSchema.parse(withoutRecommitted)).toThrow();
+  });
+
+  it('rejects a non-numeric habit_id', () => {
+    expect(() => releasedHabitSchema.parse({ ...released, habit_id: '4' })).toThrow();
   });
 });

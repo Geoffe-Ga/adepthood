@@ -15,6 +15,7 @@ import {
   isTier,
   journalListResponseSchema,
   mettaReturnStateSchema,
+  releasedHabitSchema,
   returnArcSchema,
   loginAuthResponseSchema,
   pageSchema,
@@ -50,6 +51,7 @@ import {
   type journalTagSchema,
   type MettaReturnStateT,
   type Page,
+  type ReleasedHabitT,
   type ReturnArcT,
   type ReturnWeekT,
   type PasswordResetAcceptedT,
@@ -1527,6 +1529,7 @@ export const invitations = {
 export type MettaReturnState = MettaReturnStateT;
 export type ReturnArc = ReturnArcT;
 export type ReturnWeek = ReturnWeekT;
+export type ReleasedHabit = ReleasedHabitT;
 
 /**
  * The declinable Return arc surface. ``state`` reports eligibility, the full
@@ -1577,6 +1580,22 @@ export const mettaReturn = {
       method: 'POST',
       token,
       schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
+    });
+  },
+  release(habitIds: number[], token?: string): Promise<ReleasedHabit[]> {
+    return request<ReleasedHabit[]>('/metta-return/arc/release', {
+      method: 'POST',
+      body: { habit_ids: habitIds },
+      token,
+      schema: z.array(releasedHabitSchema) as unknown as z.ZodType<ReleasedHabit[]>,
+    });
+  },
+  recommit(habitIds: number[], token?: string): Promise<ReleasedHabit[]> {
+    return request<ReleasedHabit[]>('/metta-return/arc/recommit', {
+      method: 'POST',
+      body: { habit_ids: habitIds },
+      token,
+      schema: z.array(releasedHabitSchema) as unknown as z.ZodType<ReleasedHabit[]>,
     });
   },
 };

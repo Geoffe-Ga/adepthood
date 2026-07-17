@@ -52,6 +52,51 @@ export const RETURN_COMPLETE_HEADING = 'The circle has come full round';
 export const RETURN_COMPLETE_BODY =
   'Five weeks of loving-kindness, from yourself outward to all beings — every focus met, gently and in your own time. There is nothing more to reach for here; you might simply rest in the warmth you have grown, and set the arc down whenever it feels finished.';
 
+/** The let-go picker heading — an invitation to rest what needs resting. */
+export const RETURN_LETGO_HEADING = 'Set anything down that needs rest';
+
+/** The let-go picker body — releasing framed as tending the foundation, not failing. */
+export const RETURN_LETGO_BODY =
+  'Returning is a good moment to tend the foundation. Choose any habits to let rest for now — they simply pause, waiting for you, and nothing you have already grown is undone.';
+
+/** The release affordance label on the let-go picker. */
+export const RETURN_LETGO_RELEASE = 'Let these rest';
+
+/** The accessibility label for releasing the chosen habits. */
+export const RETURN_LETGO_RELEASE_A11Y = 'Let the chosen habits rest for now';
+
+/** The skip affordance label on the let-go picker. */
+export const RETURN_LETGO_SKIP = 'Keep them all';
+
+/** The accessibility label for skipping the let-go picker. */
+export const RETURN_LETGO_SKIP_A11Y = 'Leave every habit as it is for now';
+
+/** The let-go empty state — shown when no revealed habits are available to rest. */
+export const RETURN_LETGO_EMPTY = 'There are no active habits to set down right now.';
+
+/** Build the per-habit selection label for the let-go picker, naming the habit warmly. */
+export function buildReturnLetGoHabitA11y(name: string): string {
+  return `Let ${name} rest for now`;
+}
+
+/** The re-commit section heading — the habits resting from this Return. */
+export const RETURN_RECOMMIT_HEADING = 'Habits resting from this Return';
+
+/** The re-commit section body — take one up again, or let it keep resting; both are whole. */
+export const RETURN_RECOMMIT_BODY =
+  'These rested while you circled back to steadier ground. Take up any that feel ready again, or let them keep resting — both are whole.';
+
+/** The per-habit re-commit affordance label. */
+export const RETURN_RECOMMIT_ACTION = 'Take it up again';
+
+/** The resting-state label for a habit left at rest. */
+export const RETURN_RECOMMIT_RESTING = 'Still resting';
+
+/** Build the per-habit re-commit label, naming the habit and offering to take it up again. */
+export function buildReturnRecommitA11y(name: string): string {
+  return `Take it up again: ${name}`;
+}
+
 /** Every user-facing Return string, gathered for the balance-not-altitude sweep. */
 export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_HEADING,
@@ -68,4 +113,15 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_ARC_LEAVE_A11Y,
   RETURN_COMPLETE_HEADING,
   RETURN_COMPLETE_BODY,
+  RETURN_LETGO_HEADING,
+  RETURN_LETGO_BODY,
+  RETURN_LETGO_RELEASE,
+  RETURN_LETGO_RELEASE_A11Y,
+  RETURN_LETGO_SKIP,
+  RETURN_LETGO_SKIP_A11Y,
+  RETURN_LETGO_EMPTY,
+  RETURN_RECOMMIT_HEADING,
+  RETURN_RECOMMIT_BODY,
+  RETURN_RECOMMIT_ACTION,
+  RETURN_RECOMMIT_RESTING,
 ];

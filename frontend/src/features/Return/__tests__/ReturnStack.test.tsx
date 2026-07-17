@@ -8,11 +8,16 @@ const mockStart = jest.fn();
 const mockPause = jest.fn();
 const mockResume = jest.fn();
 const mockLeave = jest.fn();
+const mockSkipLetGo = jest.fn();
+const mockRelease = jest.fn();
+const mockRecommit = jest.fn();
 let mockMettaReturn: {
   eligible: boolean;
   weeks: ReturnWeek[];
   arc: ReturnArc | null;
   offerVisible: boolean;
+  letGoVisible?: boolean;
+  releasedHabits?: ReleasedHabit[];
 };
 jest.mock('../useMettaReturn', () => ({
   useMettaReturn: () => ({
@@ -22,12 +27,15 @@ jest.mock('../useMettaReturn', () => ({
     pause: mockPause,
     resume: mockResume,
     leave: mockLeave,
+    skipLetGo: mockSkipLetGo,
+    release: mockRelease,
+    recommit: mockRecommit,
   }),
 }));
 
 import ReturnStack from '../ReturnStack';
 
-import type { ReturnArc, ReturnWeek } from '@/api';
+import type { ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
 
 const makeWeek = (weekNumber: number): ReturnWeek => ({
   week_number: weekNumber,
@@ -50,7 +58,17 @@ beforeEach(() => {
   mockPause.mockClear();
   mockResume.mockClear();
   mockLeave.mockClear();
-  mockMettaReturn = { eligible: false, weeks: [], arc: null, offerVisible: false };
+  mockSkipLetGo.mockClear();
+  mockRelease.mockClear();
+  mockRecommit.mockClear();
+  mockMettaReturn = {
+    eligible: false,
+    weeks: [],
+    arc: null,
+    offerVisible: false,
+    letGoVisible: false,
+    releasedHabits: [],
+  };
 });
 
 describe('ReturnStack', () => {
@@ -139,5 +157,44 @@ describe('ReturnStack', () => {
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-offer-dismiss'));
     expect(mockDismissOffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the let-go card ahead of the arc card when active, not complete, and letGoVisible', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: makeArc(1),
+      offerVisible: false,
+      letGoVisible: true,
+      releasedHabits: [],
+    };
+    const { getByTestId } = render(<ReturnStack />);
+    expect(getByTestId('return-letgo-card')).toBeTruthy();
+  });
+
+  it('does not show the let-go card once the arc is complete, even if letGoVisible is stale-true', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(5)],
+      arc: makeArc(5, true),
+      offerVisible: false,
+      letGoVisible: true,
+      releasedHabits: [],
+    };
+    const { queryByTestId } = render(<ReturnStack />);
+    expect(queryByTestId('return-letgo-card')).toBeNull();
+  });
+
+  it('does not show the let-go card when letGoVisible is false', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: makeArc(1),
+      offerVisible: false,
+      letGoVisible: false,
+      releasedHabits: [],
+    };
+    const { queryByTestId } = render(<ReturnStack />);
+    expect(queryByTestId('return-letgo-card')).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
 import { ApiValidationError, IDEMPOTENCY_KEY_HEADER, mettaReturn } from '../index';
-import type { MettaReturnState, ReturnArc, ReturnWeek } from '../index';
+import type { MettaReturnState, ReleasedHabit, ReturnArc, ReturnWeek } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -48,7 +48,18 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
 }
 
 function state(overrides: Partial<MettaReturnState> = {}): MettaReturnState {
-  return { eligible: true, weeks: fiveWeeks(), arc: null, offer_dismissed: false, ...overrides };
+  return {
+    eligible: true,
+    weeks: fiveWeeks(),
+    arc: null,
+    offer_dismissed: false,
+    released_habits: [],
+    ...overrides,
+  };
+}
+
+function releasedHabit(overrides: Partial<ReleasedHabit> = {}): ReleasedHabit {
+  return { habit_id: 1, name: 'Morning pages', icon: '📓', recommitted: false, ...overrides };
 }
 
 beforeEach(() => {
@@ -89,6 +100,7 @@ describe('mettaReturn.state', () => {
       weeks: fiveWeeks(),
       arc: arc({ week: 3, focus: 'stranger' }),
       offer_dismissed: false,
+      released_habits: [],
     };
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     const result = await mettaReturn.state('tok');
@@ -143,6 +155,32 @@ describe('mettaReturn.state', () => {
     const { complete: _omit, ...withoutComplete } = fullArc as ReturnArc & { complete: boolean };
     void _omit;
     const payload = { eligible: true, weeks: fiveWeeks(), arc: withoutComplete };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('parses released_habits on the state payload', async () => {
+    const payload = state({
+      released_habits: [releasedHabit({ habit_id: 5, name: 'Cold plunge', recommitted: true })],
+    });
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    const result = await mettaReturn.state('tok');
+    expect(result.released_habits).toEqual([
+      releasedHabit({ habit_id: 5, name: 'Cold plunge', recommitted: true }),
+    ]);
+  });
+
+  test('released_habits is empty when no arc has ever released a habit', async () => {
+    const payload = state({ released_habits: [] });
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    const result = await mettaReturn.state('tok');
+    expect(result.released_habits).toEqual([]);
+  });
+
+  test('rejects a state payload with a malformed released_habits entry via Zod', async () => {
+    const { icon: _omit, ...withoutIcon } = releasedHabit();
+    void _omit;
+    const payload = { ...state(), released_habits: [withoutIcon] };
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
@@ -222,5 +260,58 @@ describe('mettaReturn.dismissOffer', () => {
     expect(url).toBe('http://test/metta-return/offer/dismiss');
     expect(init.method).toBe('POST');
     expect(result.offer_dismissed).toBe(true);
+  });
+});
+
+describe('mettaReturn.release', () => {
+  test('POSTs /metta-return/arc/release with the chosen habit ids and parses ReleasedHabit[]', async () => {
+    const payload = [releasedHabit({ habit_id: 3, name: 'Cold plunge', recommitted: false })];
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    const result = await mettaReturn.release([3], 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/metta-return/arc/release');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ habit_ids: [3] });
+    expect(result).toEqual(payload);
+  });
+
+  test('sends every chosen habit id in a single request', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse([
+        releasedHabit({ habit_id: 1 }),
+        releasedHabit({ habit_id: 2, name: 'Evening walk' }),
+      ]),
+    );
+    await mettaReturn.release([1, 2], 'tok');
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ habit_ids: [1, 2] });
+  });
+
+  test('rejects a malformed ReleasedHabit entry via Zod', async () => {
+    const { recommitted: _omit, ...withoutRecommitted } = releasedHabit();
+    void _omit;
+    mockFetch.mockReturnValueOnce(jsonResponse([withoutRecommitted]));
+    await expect(mettaReturn.release([3], 'tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});
+
+describe('mettaReturn.recommit', () => {
+  test('POSTs /metta-return/arc/recommit with the chosen habit ids and parses ReleasedHabit[]', async () => {
+    const payload = [releasedHabit({ habit_id: 3, recommitted: true })];
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+    const result = await mettaReturn.recommit([3], 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/metta-return/arc/recommit');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ habit_ids: [3] });
+    expect(result).toEqual(payload);
+  });
+
+  test('rejects a malformed ReleasedHabit entry via Zod', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([{ habit_id: 3, name: 'Cold plunge' }]));
+    await expect(mettaReturn.recommit([3], 'tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 });

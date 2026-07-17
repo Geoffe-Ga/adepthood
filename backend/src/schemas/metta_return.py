@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Upper bound on how many habits one release request may name. A generous cap
+# that no real caller reaches, present only to reject pathological payloads
+# before any DB work.
+MAX_RELEASE_BATCH = 50
 
 
 class ReturnWeekResponse(BaseModel):
@@ -43,16 +48,45 @@ class ReturnArcResponse(BaseModel):
     complete: bool
 
 
+class ReleaseHabitsRequest(BaseModel):
+    """A request to release (or re-commit) a batch of the caller's habits.
+
+    ``habit_ids`` names the habits to act on; it must hold between one and
+    :data:`MAX_RELEASE_BATCH` ids. An id the caller does not own, that does not
+    exist, or that is not eligible for the action is silently skipped, so an
+    unowned id and a nonexistent id are indistinguishable in the response.
+    """
+
+    habit_ids: list[int] = Field(min_length=1, max_length=MAX_RELEASE_BATCH)
+
+
+class ReleasedHabitResponse(BaseModel):
+    """One released habit projected for the caller, without any owner key.
+
+    Carries the habit's ``name`` and ``icon`` so the caller can render the
+    release without a second lookup, plus ``recommitted`` — ``True`` once the
+    habit has been re-committed in this arc. No ``user_id`` or surrogate row
+    ``id`` is exposed, matching this module's DTO discipline.
+    """
+
+    habit_id: int
+    name: str
+    icon: str
+    recommitted: bool
+
+
 class MettaReturnStateResponse(BaseModel):
     """The full Return surface for the caller.
 
     ``eligible`` gates whether the arc may be started, ``weeks`` is the whole
     five-week sequence in order, ``arc`` is the caller's active arc or ``None``
-    when there is none, and ``offer_dismissed`` is whether the caller has waved
-    away the offer for the current episode.
+    when there is none, ``offer_dismissed`` is whether the caller has waved
+    away the offer for the current episode, and ``released_habits`` is the
+    active arc's released habits (empty when there is no active arc).
     """
 
     eligible: bool
     weeks: list[ReturnWeekResponse]
     arc: ReturnArcResponse | None
     offer_dismissed: bool
+    released_habits: list[ReleasedHabitResponse]
