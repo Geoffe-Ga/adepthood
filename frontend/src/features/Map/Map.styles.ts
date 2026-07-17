@@ -282,6 +282,9 @@ const styles = StyleSheet.create({
   unlockTimelineRight: {
     textAlign: 'right',
   },
+  unlockTimelineCenter: {
+    textAlign: 'center',
+  },
 
   // --- Stage-completion celebration banner ----------------------------------
   celebrationBanner: {
