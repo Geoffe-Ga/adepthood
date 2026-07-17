@@ -41,6 +41,12 @@ const mockSetOptions = jest.fn((opts: { headerLeft?: () => React.ReactElement })
 jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ setOptions: mockSetOptions }),
 }));
+// The drawer nav section dispatches through the root stack via useNavigation;
+// stub it so the screen renders outside a real NavigationContainer.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 
 jest.mock('../../../api', () => {
   // The load path maps API rows through the real toLocalHabit; keep it so the

@@ -3,7 +3,7 @@
 // drawer. Mirrors CourseDrawer.test.tsx's headerLeftStore harness, adding a
 // stable navigate spy so the shared nav rows have somewhere to route.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { render, waitFor, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
@@ -174,7 +174,98 @@ describe('Course header drawer nav section', () => {
     fireEvent.press(getByLabelText('Open Course menu'));
     fireEvent.press(getByTestId('drawer-nav-Journal'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('Journal');
+    expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
     expect(queryByTestId('screen-drawer-panel')).toBeNull();
+  });
+});
+
+// Unlocked chapters for the reading-view drawer tests below. Only stage 1
+// (the default selection with no route param) gets chapters; every other
+// stage resolves empty so the drawer's per-stage fetch loop doesn't collide
+// testIDs across sections.
+const readingChapters: ContentItem[] = [
+  {
+    id: 1,
+    title: 'Chapter One',
+    content_type: 'chapter',
+    release_day: 0,
+    url: null,
+    is_locked: false,
+    is_read: false,
+  },
+  {
+    id: 2,
+    title: 'Chapter Two',
+    content_type: 'chapter',
+    release_day: 0,
+    url: null,
+    is_locked: false,
+    is_read: false,
+  },
+];
+
+describe('Course drawer while reading a chapter', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    headerLeftStore.current = undefined;
+    headerLeftStore.listeners.clear();
+    mockStagesList.mockResolvedValue(TEN_STAGES);
+    mockStageContent.mockImplementation((stageNumber: number) =>
+      Promise.resolve(stageNumber === 1 ? readingChapters : []),
+    );
+    mockStageProgress.mockResolvedValue(sampleProgress);
+    useDepthPreferencesStore.setState({
+      enable_habits: true,
+      enable_practices: true,
+      enable_course: true,
+    });
+  });
+
+  it('opens the drawer over the reader when the hamburger is tapped while reading', async () => {
+    const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Course menu'));
+
+    await waitFor(() => expect(getByTestId('screen-drawer-panel')).toBeTruthy());
+  });
+
+  it('switches the reader in place when a chapter is tapped in the drawer while reading', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Course menu'));
+    await waitFor(() => expect(getByTestId('course-drawer-chapter-2')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('course-drawer-chapter-2'));
+    });
+
+    await waitFor(() => expect(queryByTestId('screen-drawer-panel')).toBeNull());
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+  });
+
+  it('does not leak the landing stage-selector into the reading view when the drawer is open', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('content-card-1'));
+    });
+    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Course menu'));
+
+    expect(queryByTestId('stage-selector')).toBeNull();
   });
 });

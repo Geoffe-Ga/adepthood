@@ -87,6 +87,7 @@ function collectCaptionUsageIds(): string[] {
 // text). Sorted to match the sorted found-set comparison.
 const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'components/care/CareResourceCard.tsx::resourceWhat',
+  'components/drawer/DrawerSearch.tsx::resultCount',
   'features/Course/Course.styles.ts::readerEyebrow',
   'features/Course/Course.styles.ts::sectionBandLabel',
   'features/Course/Course.styles.ts::stageCoverEyebrow',

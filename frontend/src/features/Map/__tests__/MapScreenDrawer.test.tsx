@@ -21,6 +21,12 @@ jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
 jest.mock('../../../navigation/hooks', () =>
   jest.requireActual('./mapTestHarness').mockNavigationModule(),
 );
+// The drawer nav section dispatches through the root stack via useNavigation;
+// stub it so MapScreen renders outside a real NavigationContainer.
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 jest.mock('@react-navigation/bottom-tabs', () =>
   jest.requireActual('./mapTestHarness').mockBottomTabsModule(),
 );
