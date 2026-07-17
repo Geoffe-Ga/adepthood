@@ -19,6 +19,7 @@ system prompt and an operator-supplied ``BOTMASON_SYSTEM_PROMPT``.
 from __future__ import annotations
 
 import re
+from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -30,7 +31,11 @@ import services.botmason as botmason_mod
 from domain.care import MEDICATION_GUARDRAIL
 from services.botmason import (
     _DEFAULT_SYSTEM_PROMPT,
+    _MAX_IMAGE_BASE64_CHARS,
+    ImagePayload,
     LLMProviderError,
+    LLMVisionUnsupportedError,
+    ProviderSpec,
     _augment_system_prompt,
     _build_anthropic_messages,
     _build_messages,
@@ -38,10 +43,25 @@ from services.botmason import (
     _make_nonce,
     _wrap_user_input,
     generate_response,
+    supports_vision,
 )
 
 # Regex for a 16-hex-char nonce as produced by ``_make_nonce``.
 _NONCE_RE = re.compile(r"[0-9a-f]{16}")
+
+
+def _str_leaf(part: object, *keys: str) -> str:
+    """Walk ``keys`` through nested content-part dicts and return the leaf string.
+
+    Keeps the multimodal-assertion sites readable while satisfying mypy strict:
+    every hop is narrowed with ``isinstance`` rather than cast.
+    """
+    value: object = part
+    for key in keys:
+        assert isinstance(value, dict)
+        value = value[key]
+    assert isinstance(value, str)
+    return value
 
 
 class TestMakeNonce:
@@ -113,18 +133,24 @@ class TestBuildMessages:
     def test_system_prompt_first_and_augmented(self) -> None:
         messages = _build_messages("hello", [], "ROOT PROMPT")
         assert messages[0]["role"] == "system"
-        assert messages[0]["content"].startswith("ROOT PROMPT")
-        assert _NONCE_RE.search(messages[0]["content"])
+        system_content = messages[0]["content"]
+        assert isinstance(system_content, str)
+        assert system_content.startswith("ROOT PROMPT")
+        assert _NONCE_RE.search(system_content)
 
     def test_user_message_wrapped_with_same_nonce_as_system(self) -> None:
         """The augmented system prompt and user wrapper must share a nonce."""
         messages = _build_messages("hello", [], "PROMPT")
-        sys_nonces = _NONCE_RE.findall(messages[0]["content"])
-        usr_nonces = _NONCE_RE.findall(messages[-1]["content"])
+        system_content = messages[0]["content"]
+        final_content = messages[-1]["content"]
+        assert isinstance(system_content, str)
+        assert isinstance(final_content, str)
+        sys_nonces = _NONCE_RE.findall(system_content)
+        usr_nonces = _NONCE_RE.findall(final_content)
         # All nonce occurrences in this request resolve to one value.
         all_nonces = set(sys_nonces) | set(usr_nonces)
         assert len(all_nonces) == 1
-        assert messages[-1]["content"].startswith(f"<user_input_{sys_nonces[0]}>")
+        assert final_content.startswith(f"<user_input_{sys_nonces[0]}>")
 
     def test_history_user_messages_wrapped_bot_messages_passthrough(self) -> None:
         history = [
@@ -141,7 +167,11 @@ class TestBuildMessages:
         # the expected wrapping shape from the nonce we extract from the new
         # turn — a regression that drops history wrapping (or uses a
         # different nonce for history vs. new turn) fails this assertion.
-        nonce = _NONCE_RE.search(messages[3]["content"]).group(0)  # type: ignore[union-attr]
+        final_content = messages[3]["content"]
+        assert isinstance(final_content, str)
+        nonce_match = _NONCE_RE.search(final_content)
+        assert nonce_match is not None
+        nonce = nonce_match.group(0)
         assert messages[1]["content"] == f"<user_input_{nonce}>first user turn</user_input_{nonce}>"
         assert messages[3]["content"] == f"<user_input_{nonce}>now</user_input_{nonce}>"
 
@@ -150,7 +180,9 @@ class TestBuildMessages:
         history = [{"sender": "user", "message": "evil\x00\u202epayload"}]
         messages = _build_messages("now", history, "PROMPT")
         # Stripped chars must not appear anywhere in the prompt:
-        prompt_text = "".join(m["content"] for m in messages)
+        contents = [m["content"] for m in messages]
+        assert all(isinstance(content, str) for content in contents)
+        prompt_text = "".join(content for content in contents if isinstance(content, str))
         assert "\x00" not in prompt_text
         assert "\u202e" not in prompt_text
         assert "evilpayload" in messages[1]["content"]
@@ -162,9 +194,15 @@ class TestBuildMessages:
         """
         a = _build_messages("hi", [], "P")
         b = _build_messages("hi", [], "P")
-        nonce_a = _NONCE_RE.search(a[-1]["content"]).group(0)  # type: ignore[union-attr]
-        nonce_b = _NONCE_RE.search(b[-1]["content"]).group(0)  # type: ignore[union-attr]
-        assert nonce_a != nonce_b
+        a_content = a[-1]["content"]
+        b_content = b[-1]["content"]
+        assert isinstance(a_content, str)
+        assert isinstance(b_content, str)
+        a_match = _NONCE_RE.search(a_content)
+        b_match = _NONCE_RE.search(b_content)
+        assert a_match is not None
+        assert b_match is not None
+        assert a_match.group(0) != b_match.group(0)
 
 
 class TestBuildAnthropicMessages:
@@ -263,8 +301,10 @@ class TestBuildMessagesKeyErrorSafety:
         assert len(messages) == expected_turn_count
         # The malformed row produces an empty wrapped user turn rather than a crash.
         assert messages[1]["role"] == "user"
-        assert messages[1]["content"].startswith("<user_input_")
-        assert messages[1]["content"].endswith(">")
+        malformed_content = messages[1]["content"]
+        assert isinstance(malformed_content, str)
+        assert malformed_content.startswith("<user_input_")
+        assert malformed_content.endswith(">")
 
     def test_anthropic_history_entry_missing_message_does_not_raise(self) -> None:
         """Same KeyError safety on the Anthropic builder path.
@@ -284,8 +324,10 @@ class TestBuildMessagesKeyErrorSafety:
         assert len(messages) == expected_turn_count
         assert all(m["role"] in {"user", "assistant"} for m in messages)
         assert messages[0]["role"] == "user"
-        assert messages[0]["content"].startswith("<user_input_")
-        assert messages[0]["content"].endswith(">")
+        malformed_content = messages[0]["content"]
+        assert isinstance(malformed_content, str)
+        assert malformed_content.startswith("<user_input_")
+        assert malformed_content.endswith(">")
         # The augmented system prompt is unaffected by malformed history rows.
         assert _NONCE_RE.search(augmented) is not None
 
@@ -353,7 +395,9 @@ class TestMedicationGuardrailInSystemPrompt:
             "guardrail must be present in the system role message"
         )
         # ...and must NOT live in a user turn (where crafted input could displace it).
-        user_turns_content = " ".join(m["content"] for m in messages if m["role"] == "user")
+        user_contents = [m["content"] for m in messages if m["role"] == "user"]
+        assert all(isinstance(content, str) for content in user_contents)
+        user_turns_content = " ".join(c for c in user_contents if isinstance(c, str))
         assert MEDICATION_GUARDRAIL not in user_turns_content
 
     # --- Anthropic path (_build_anthropic_messages) ---
@@ -525,3 +569,349 @@ class TestGenerateResponseExceptionContract:
         monkeypatch.setenv("LLM_MODEL", "gpt-99-turbo-megamax")
         with pytest.raises(LLMProviderError):
             _get_model("openai")
+
+
+# ── Vision content blocks (image payloads in the LLM provider layer) ──────
+
+_FIXED_NONCE = "deadbeefcafef00d"
+_FAKE_JPEG_B64 = "ZmFrZWJhc2U2NA=="
+
+
+class TestImagePayload:
+    """``ImagePayload`` validates media type and size, and is immutable."""
+
+    def test_valid_media_types_are_accepted(self) -> None:
+        for media_type in ("image/jpeg", "image/png", "image/webp"):
+            image = ImagePayload(data=_FAKE_JPEG_B64, media_type=media_type)
+            assert image.media_type == media_type
+            assert image.data == _FAKE_JPEG_B64
+
+    def test_invalid_media_type_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="media_type"):
+            ImagePayload(data=_FAKE_JPEG_B64, media_type="image/gif")
+
+    def test_invalid_media_type_error_does_not_leak_data(self) -> None:
+        sensitive_data = "NOTLEAKEDBASE64DATA" * 10
+        with pytest.raises(ValueError, match="unsupported image media_type") as excinfo:
+            ImagePayload(data=sensitive_data, media_type="application/pdf")
+        assert sensitive_data not in str(excinfo.value)
+
+    def test_max_image_base64_chars_matches_five_mb_decoded(self) -> None:
+        expected = (5 * 1024 * 1024 * 4) // 3
+        assert expected == _MAX_IMAGE_BASE64_CHARS
+
+    def test_data_at_max_length_is_accepted(self) -> None:
+        at_limit = "a" * _MAX_IMAGE_BASE64_CHARS
+        image = ImagePayload(data=at_limit, media_type="image/png")
+        assert len(image.data) == _MAX_IMAGE_BASE64_CHARS
+
+    def test_oversized_data_raises_value_error(self) -> None:
+        oversized = "a" * (_MAX_IMAGE_BASE64_CHARS + 1)
+        with pytest.raises(ValueError, match="exceeds"):
+            ImagePayload(data=oversized, media_type="image/png")
+
+    def test_oversized_data_error_does_not_leak_data(self) -> None:
+        oversized = "a" * (_MAX_IMAGE_BASE64_CHARS + 1)
+        with pytest.raises(ValueError, match="exceeds maximum") as excinfo:
+            ImagePayload(data=oversized, media_type="image/png")
+        assert oversized not in str(excinfo.value)
+
+    def test_frozen_field_assignment_raises(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
+        with pytest.raises(FrozenInstanceError):
+            image.media_type = "image/jpeg"  # type: ignore[misc]
+
+
+class TestBuildMessagesImagesAnchor:
+    """Byte-identical anchor: text-only calls are unchanged by the ``images`` param.
+
+    With ``_make_nonce`` patched to a fixed value, calling either builder
+    with ``images=None`` or ``images=[]`` must reproduce exactly the output
+    the pre-images builder produced -- proving the text-only path is
+    untouched by the new code path.
+    """
+
+    def test_build_messages_images_none_matches_pre_images_output(self) -> None:
+        history = [
+            {"sender": "user", "message": "first user turn"},
+            {"sender": "bot", "message": "first bot turn"},
+        ]
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            actual = _build_messages("hello", history, "PROMPT", images=None)
+            expected = [
+                {"role": "system", "content": _augment_system_prompt("PROMPT", _FIXED_NONCE)},
+                {
+                    "role": "user",
+                    "content": _wrap_user_input("first user turn", _FIXED_NONCE),
+                },
+                {"role": "assistant", "content": "first bot turn"},
+                {"role": "user", "content": _wrap_user_input("hello", _FIXED_NONCE)},
+            ]
+        assert actual == expected
+        for message in actual:
+            assert isinstance(message["content"], str)
+
+    def test_build_messages_images_empty_list_matches_pre_images_output(self) -> None:
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            actual = _build_messages("hello", [], "PROMPT", images=[])
+            expected = [
+                {"role": "system", "content": _augment_system_prompt("PROMPT", _FIXED_NONCE)},
+                {"role": "user", "content": _wrap_user_input("hello", _FIXED_NONCE)},
+            ]
+        assert actual == expected
+        for message in actual:
+            assert isinstance(message["content"], str)
+
+    def test_build_anthropic_messages_images_none_matches_pre_images_output(self) -> None:
+        history = [
+            {"sender": "user", "message": "old"},
+            {"sender": "bot", "message": "reply"},
+        ]
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            actual_messages, actual_system = _build_anthropic_messages(
+                "new", history, "PROMPT", images=None
+            )
+            expected_messages = [
+                {"role": "user", "content": _wrap_user_input("old", _FIXED_NONCE)},
+                {"role": "assistant", "content": "reply"},
+                {"role": "user", "content": _wrap_user_input("new", _FIXED_NONCE)},
+            ]
+            expected_system = _augment_system_prompt("PROMPT", _FIXED_NONCE)
+        assert actual_messages == expected_messages
+        assert actual_system == expected_system
+        for message in actual_messages:
+            assert isinstance(message["content"], str)
+
+    def test_build_anthropic_messages_images_empty_list_matches_pre_images_output(
+        self,
+    ) -> None:
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            actual_messages, actual_system = _build_anthropic_messages(
+                "hi", [], "PROMPT", images=[]
+            )
+            expected_messages = [{"role": "user", "content": _wrap_user_input("hi", _FIXED_NONCE)}]
+            expected_system = _augment_system_prompt("PROMPT", _FIXED_NONCE)
+        assert actual_messages == expected_messages
+        assert actual_system == expected_system
+
+
+class TestBuildMessagesWithImages:
+    """The final new user turn becomes a list of parts when images are present."""
+
+    def test_openai_final_turn_content_is_image_part_plus_text_part(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/jpeg")
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages = _build_messages("describe this", [], "PROMPT", images=[image])
+        expected_text_part = {
+            "type": "text",
+            "text": _wrap_user_input("describe this", _FIXED_NONCE),
+        }
+        expected_image_part = {
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+        }
+        assert messages[-1]["content"] == [expected_image_part, expected_text_part]
+
+    def test_openai_multiple_images_preserve_order(self) -> None:
+        image_a = ImagePayload(data="aaaa", media_type="image/png")
+        image_b = ImagePayload(data="bbbb", media_type="image/webp")
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages = _build_messages("two images", [], "PROMPT", images=[image_a, image_b])
+        final_content = messages[-1]["content"]
+        assert isinstance(final_content, list)
+        expected_url_count = 2
+        assert _str_leaf(final_content[0], "image_url", "url") == "data:image/png;base64,aaaa"
+        assert _str_leaf(final_content[1], "image_url", "url") == "data:image/webp;base64,bbbb"
+        assert _str_leaf(final_content[expected_url_count], "type") == "text"
+
+    def test_openai_history_turns_never_receive_image_parts(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/jpeg")
+        history = [{"sender": "user", "message": "earlier turn"}]
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages = _build_messages("now with image", history, "PROMPT", images=[image])
+        history_content = messages[1]["content"]
+        assert isinstance(history_content, str)
+        assert history_content == _wrap_user_input("earlier turn", _FIXED_NONCE)
+
+    def test_anthropic_final_turn_content_is_image_part_plus_text_part(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/jpeg")
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages, _augmented = _build_anthropic_messages(
+                "describe this", [], "PROMPT", images=[image]
+            )
+        expected_text_part = {
+            "type": "text",
+            "text": _wrap_user_input("describe this", _FIXED_NONCE),
+        }
+        expected_image_part = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": image.data,
+            },
+        }
+        assert messages[-1]["content"] == [expected_image_part, expected_text_part]
+
+    def test_anthropic_history_turns_never_receive_image_parts(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/jpeg")
+        history = [{"sender": "user", "message": "earlier turn"}]
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages, _augmented = _build_anthropic_messages(
+                "now", history, "PROMPT", images=[image]
+            )
+        history_content = messages[0]["content"]
+        assert isinstance(history_content, str)
+        assert history_content == _wrap_user_input("earlier turn", _FIXED_NONCE)
+
+
+class TestImagePartsBypassSanitization:
+    """Image data is emitted verbatim -- never sanitized, never nonce-wrapped."""
+
+    def test_openai_image_data_is_byte_identical_to_input(self) -> None:
+        raw_data = "notsanitizedZmFrZQ=="
+        image = ImagePayload(data=raw_data, media_type="image/png")
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages = _build_messages("hi", [], "PROMPT", images=[image])
+        content = messages[-1]["content"]
+        assert isinstance(content, list)
+        url = _str_leaf(content[0], "image_url", "url")
+        assert url == f"data:image/png;base64,{raw_data}"
+        assert "<user_input_" not in url
+
+    def test_anthropic_image_data_is_byte_identical_to_input(self) -> None:
+        raw_data = "notsanitizedZmFrZQ=="
+        image = ImagePayload(data=raw_data, media_type="image/png")
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages, _augmented = _build_anthropic_messages("hi", [], "PROMPT", images=[image])
+        content = messages[-1]["content"]
+        assert isinstance(content, list)
+        data = _str_leaf(content[0], "source", "data")
+        assert data == raw_data
+        assert "<user_input_" not in data
+
+    def test_sibling_text_part_is_still_nonce_wrapped_and_sanitized(self) -> None:
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/jpeg")
+        attack = "evil\x00text"
+        with patch.object(botmason_mod, "_make_nonce", return_value=_FIXED_NONCE):
+            messages = _build_messages(attack, [], "PROMPT", images=[image])
+        content = messages[-1]["content"]
+        assert isinstance(content, list)
+        text = _str_leaf(content[1], "text")
+        assert text == _wrap_user_input(attack, _FIXED_NONCE)
+        assert "\x00" not in text
+
+
+class TestSupportsVision:
+    """``supports_vision`` truth table across all registered models."""
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("openai", "gpt-4o-mini"),
+            ("openai", "gpt-4o"),
+            ("openai", "gpt-4-turbo"),
+            ("anthropic", "claude-sonnet-4-20250514"),
+            ("anthropic", "claude-haiku-4-5-20251001"),
+            ("anthropic", "claude-opus-4-7"),
+            ("anthropic", "claude-sonnet-4-6"),
+        ],
+    )
+    def test_real_models_support_vision_under_own_provider(self, provider: str, model: str) -> None:
+        assert supports_vision(provider, model) is True
+
+    def test_model_under_wrong_provider_returns_false(self) -> None:
+        assert supports_vision("openai", "claude-sonnet-4-20250514") is False
+        assert supports_vision("anthropic", "gpt-4o") is False
+
+    def test_unknown_provider_returns_false(self) -> None:
+        assert supports_vision("carrier-pigeon", "gpt-4o") is False
+
+    def test_unknown_model_returns_false(self) -> None:
+        assert supports_vision("openai", "gpt-99-turbo-megamax") is False
+
+    def test_stub_provider_and_model_returns_true(self) -> None:
+        assert supports_vision("stub", "stub") is True
+
+
+def _incapable_openai_spec() -> ProviderSpec:
+    """Return an OpenAI ``ProviderSpec`` whose ``vision_models`` is empty.
+
+    Used to force :func:`generate_response` down the vision-capability-check
+    failure path without needing a real vision-incapable model on the
+    allowlist.
+    """
+    return ProviderSpec(
+        key_prefix="sk-",
+        disallowed_prefixes=("sk-ant-",),
+        default_model="gpt-4o-mini",
+        allowed_models=frozenset({"gpt-4o-mini"}),
+        vision_models=frozenset(),
+        call_name="_call_openai",
+    )
+
+
+class TestGenerateResponseVisionCapabilityError:
+    """Passing images to a vision-incapable provider/model raises the dedicated error."""
+
+    @pytest.mark.asyncio
+    async def test_raises_llm_vision_unsupported_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure_openai_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+        monkeypatch.setitem(botmason_mod.PROVIDER_REGISTRY, "openai", _incapable_openai_spec())
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
+
+        with pytest.raises(LLMVisionUnsupportedError):
+            await generate_response("describe", [], images=[image])
+
+    @pytest.mark.asyncio
+    async def test_vision_unsupported_error_is_an_llm_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Existing ``LLMProviderError`` catchers keep working unmodified."""
+        _configure_openai_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+        monkeypatch.setitem(botmason_mod.PROVIDER_REGISTRY, "openai", _incapable_openai_spec())
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
+
+        with pytest.raises(LLMProviderError) as excinfo:
+            await generate_response("describe", [], images=[image])
+        assert isinstance(excinfo.value, LLMVisionUnsupportedError)
+
+    @pytest.mark.asyncio
+    async def test_error_is_not_double_wrapped_into_plain_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The capability error escapes as its own subclass, never re-wrapped.
+
+        Mirrors ``test_existing_provider_error_is_not_double_wrapped``: the
+        generic ``except _PROVIDER_ERROR_TYPES`` clause in
+        ``generate_response`` must not catch and re-raise this error as a
+        bare ``LLMProviderError``, which would lose the subclass identity
+        callers rely on to distinguish "no vision support" from every other
+        provider failure.
+        """
+        _configure_openai_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+        monkeypatch.setitem(botmason_mod.PROVIDER_REGISTRY, "openai", _incapable_openai_spec())
+        image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
+
+        with pytest.raises(LLMVisionUnsupportedError) as excinfo:
+            await generate_response("describe", [], images=[image])
+        assert type(excinfo.value) is LLMVisionUnsupportedError
+
+    @pytest.mark.asyncio
+    async def test_error_message_contains_no_base64_data(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure_openai_env(monkeypatch)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+        monkeypatch.setitem(botmason_mod.PROVIDER_REGISTRY, "openai", _incapable_openai_spec())
+        sensitive_data = "NOTLEAKEDIMAGEBASE64DATA" * 5
+        image = ImagePayload(data=sensitive_data, media_type="image/png")
+
+        with pytest.raises(LLMVisionUnsupportedError) as excinfo:
+            await generate_response("describe", [], images=[image])
+        assert sensitive_data not in str(excinfo.value)

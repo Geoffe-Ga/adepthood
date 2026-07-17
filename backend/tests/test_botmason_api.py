@@ -28,7 +28,12 @@ import services.botmason as botmason_mod
 from models.user import User
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
+    STUB_MODEL_NAME,
+    STUB_PROVIDER_NAME,
+    ImagePayload,
     LLMResponse,
+    _stub_response,
+    _stub_vision_response,
     generate_response,
     get_system_prompt,
     provider_for_api_key,
@@ -778,3 +783,116 @@ async def test_allowed_model_passes_the_gate(monkeypatch: pytest.MonkeyPatch) ->
 
     result = await generate_response("Hello", [])
     assert result.provider == "openai"
+
+
+# ── Vision content blocks: generate_response seam + stub vision path ────
+
+
+_TEST_IMAGE = ImagePayload(data="ZmFrZWJhc2U2NA==", media_type="image/jpeg")
+
+
+def _forwarded_images(mock_call: AsyncMock) -> object:
+    """Return the ``images`` argument forwarded to a provider call mock.
+
+    Mirrors ``_forwarded_key``: the implementation may forward ``images`` as
+    the 5th positional argument or as the ``images`` keyword.
+    """
+    call = mock_call.await_args
+    assert call is not None, "expected provider mock to have been awaited"
+    args, kwargs = call
+    if "images" in kwargs:
+        return kwargs["images"]
+    if len(args) >= 5:
+        return args[4]
+    return None
+
+
+@pytest.mark.asyncio
+async def test_generate_response_accepts_images_kwarg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``generate_response`` accepts an optional ``images`` sequence."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    result = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+    assert isinstance(result, LLMResponse)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_images_default_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting ``images`` entirely keeps the stub text-only response."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    result = await generate_response("Hello", [])
+    assert "Hello" in result.text
+
+
+@pytest.mark.asyncio
+async def test_generate_response_forwards_images_to_openai_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured provider receives the ``images`` argument on the call path."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
+
+    mock_call = AsyncMock(return_value=_mock_openai_response("saw the image"))
+    with patch.object(botmason_mod, "_call_openai", mock_call):
+        result = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+
+    assert result.text == "saw the image"
+    assert _forwarded_images(mock_call) == [_TEST_IMAGE]
+
+
+# ── Stub vision path ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stub_provider_with_images_returns_deterministic_vision_transcription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub + images returns a canned transcription, distinct from the text-only stub."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    result = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+    assert result.provider == STUB_PROVIDER_NAME
+    assert result.model == STUB_MODEL_NAME
+    assert result.prompt_tokens == 0
+    assert result.completion_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_stub_vision_response_is_identical_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two stub-vision calls with the same image count produce identical text."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    first = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+    second = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+    assert first.text == second.text
+
+
+@pytest.mark.asyncio
+async def test_stub_vision_response_contains_no_image_base64_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The canned vision transcription never echoes the raw image payload."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    secret_image = ImagePayload(data="SECRETIMAGEBASE64DATA" * 5, media_type="image/png")
+    result = await generate_response("What do you see?", [], images=[secret_image])
+    assert secret_image.data not in result.text
+
+
+@pytest.mark.asyncio
+async def test_stub_vision_response_differs_from_text_only_stub_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub vision text is produced by a distinct helper from the text-only stub."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    text_only = await generate_response("What do you see?", [])
+    with_image = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+    assert text_only.text != with_image.text
+
+
+def test_stub_vision_response_helper_is_distinct_from_stub_response() -> None:
+    """The module exposes ``_stub_vision_response`` as a helper separate from ``_stub_response``."""
+    assert hasattr(botmason_mod, "_stub_vision_response")
+    assert id(_stub_vision_response) != id(_stub_response)
