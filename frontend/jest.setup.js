@@ -49,3 +49,46 @@ jest.mock('react-native-safe-area-context', () => {
     SafeAreaView,
   };
 });
+
+// Cancel animation frames that outlive the test that scheduled them.
+//
+// The React Native Jest preset polyfills ``requestAnimationFrame`` as
+// ``setTimeout(cb, 0)`` (see react-native/jest/setup.js). A JS-driven
+// ``Animated`` timing (``useNativeDriver: false``) keeps requesting frames
+// until it finishes, so a component still mounted when its test ends leaves a
+// frame queued. That frame fires on the next tick -- after Jest has torn the
+// environment down -- and throws ``ReferenceError: You are trying to access a
+// property or method of the Jest environment after it has been torn down``,
+// which fails the whole suite even though every ``it()`` passed. Because Jest
+// attributes the error to whichever suite happens to be tearing down at that
+// instant, it lands on a different, innocent suite on almost every run, making
+// the failure a cross-suite flake no per-suite cleanup can reliably contain.
+//
+// Tracking every outstanding frame and cancelling the stragglers after each
+// test bounds that escaping work at its scheduler: anything still pending when
+// a test finishes was, by definition, never awaited, so cancelling it changes
+// no in-test behavior while making the leak structurally impossible.
+const outstandingAnimationFrames = new Set();
+const scheduleAnimationFrame = global.requestAnimationFrame;
+const clearAnimationFrame = global.cancelAnimationFrame;
+
+global.requestAnimationFrame = (callback) => {
+  const handle = scheduleAnimationFrame((time) => {
+    outstandingAnimationFrames.delete(handle);
+    callback(time);
+  });
+  outstandingAnimationFrames.add(handle);
+  return handle;
+};
+
+global.cancelAnimationFrame = (handle) => {
+  outstandingAnimationFrames.delete(handle);
+  return clearAnimationFrame(handle);
+};
+
+afterEach(() => {
+  for (const handle of outstandingAnimationFrames) {
+    clearAnimationFrame(handle);
+  }
+  outstandingAnimationFrames.clear();
+});
