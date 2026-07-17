@@ -51,6 +51,10 @@ jobs:
       OUT_DIR: graphify-out
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        # No step git-pushes (publish rides `gh` + GH_TOKEN, not `git push`), so
+        # the write-scoped token never needs to live in .git/config for the job.
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
