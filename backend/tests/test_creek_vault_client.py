@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import cast
@@ -26,8 +27,11 @@ from domain.creek_vault import (
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
+    _HttpJsonTransport,
     build_creek_vault_client,
 )
+
+_VAULT_URL = "https://vault.example.test"
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
@@ -583,3 +587,65 @@ async def test_unavailable_error_never_leaks_body_or_api_key(
     # original exception (whose text carries both sentinels) as a cause/context.
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
+
+
+def _handshake_then(capability_response: httpx.Response) -> httpx.MockTransport:
+    """Build a MockTransport that handshakes cleanly, then scripts the capability call.
+
+    The handshake POST is answered with a well-formed payload advertising INGEST
+    so the client marks that capability supported; every other method returns the
+    supplied ``capability_response``, letting a test drive the real transport's
+    failure branches (a non-JSON body or a non-2xx status) without a network.
+    """
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        method = json.loads(request.content)["method"]
+        if method == CreekCapability.HANDSHAKE.value:
+            return httpx.Response(200, json=_handshake_payload([CreekCapability.INGEST.value]))
+        return capability_response
+
+    return httpx.MockTransport(_handler)
+
+
+@pytest.mark.asyncio
+async def test_http_transport_decodes_valid_json_handshake() -> None:
+    """The real HTTP transport decodes a valid JSON handshake and marks INGEST supported."""
+    # This test only exercises the handshake, so the capability response is never invoked.
+    transport = _HttpJsonTransport(
+        _VAULT_URL, "api-key", transport=_handshake_then(httpx.Response(200))
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    assert client.is_available() is True
+    assert client.supports(CreekCapability.INGEST) is True
+
+
+@pytest.mark.asyncio
+async def test_http_transport_non_json_capability_body_degrades() -> None:
+    """A non-JSON 200 body on the capability path degrades to CreekVaultUnavailableError.
+
+    ``response.json()`` raises ``json.JSONDecodeError`` (a ``ValueError`` subclass,
+    not an ``httpx.HTTPError``); the client must normalize it rather than crash,
+    upholding the module's degrade-never-crash invariant on the capability path.
+    """
+    transport = _HttpJsonTransport(
+        _VAULT_URL,
+        "api-key",
+        transport=_handshake_then(httpx.Response(200, content=b"<html>proxy error</html>")),
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+async def test_http_transport_non_2xx_capability_status_degrades() -> None:
+    """A non-2xx status on the capability path degrades to CreekVaultUnavailableError."""
+    transport = _HttpJsonTransport(
+        _VAULT_URL, "api-key", transport=_handshake_then(httpx.Response(503))
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())

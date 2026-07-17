@@ -37,6 +37,7 @@ the graceful-degradation guarantees.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from typing import Protocol
@@ -71,9 +72,19 @@ _VAULT_TIMEOUT_SECONDS = 10.0
 _CONTRACT_MAJOR = CONTRACT_VERSION.split(".")[0]
 
 # Transport-layer failures we normalize to a degraded state. ``OSError`` covers
-# connection/timeout errors and ``httpx.HTTPError`` covers every httpx transport
-# and status failure -- mirroring botmason's ``_PROVIDER_ERROR_TYPES``.
-_TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (OSError, httpx.HTTPError)
+# connection/timeout errors, ``httpx.HTTPError`` covers every httpx transport and
+# status failure, and ``json.JSONDecodeError`` covers a non-JSON body (a proxy
+# error page, an empty 200, or any vault bug) that ``response.json()`` cannot
+# decode -- the transport contract is to return a *decoded* mapping, so a decode
+# failure is a transport failure. All three normalize the per-capability path to
+# unavailable exactly as the handshake path already does, keeping one coherent
+# degrade-set (``json.JSONDecodeError`` is a ``ValueError`` subclass, so it is
+# already covered by the handshake's parse-error set).
+_TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
+    OSError,
+    httpx.HTTPError,
+    json.JSONDecodeError,
+)
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -311,8 +322,11 @@ class McpCreekVaultClient:
         :class:`CreekVaultUnavailableError` with a *static, capability-named*
         message and ``from None`` -- the original exception (whose text may
         contain the entry body or the API key) is deliberately not chained, so
-        neither the message nor the traceback context can leak it. A response
-        that is not a mapping (a malformed or hostile payload) is normalized to
+        neither the message nor the traceback context can leak it. Transport
+        failure here includes a non-JSON body (:class:`json.JSONDecodeError`,
+        raised inside the transport's ``response.json()``), so a proxy error
+        page or empty 200 degrades rather than crashing. A response that decodes
+        but is not a mapping (a malformed or hostile payload) is normalized to
         the same error, so a per-capability call degrades rather than crashing
         on garbage -- the same fail-safe the handshake path already applies.
         """
@@ -418,32 +432,50 @@ class LocalFallbackCreekVaultClient:
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 
 
-class _HttpJsonTransport:  # pragma: no cover
+class _HttpJsonTransport:
     """A thin JSON-over-HTTP :class:`VaultTransport` for a configured vault.
 
     POSTs each MCP call as JSON with a bearer ``Authorization`` header sourced
     from ``CREEK_VAULT_API_KEY``. The key is used only to build that header and
     is never logged or placed into any exception message (privacy invariant).
     Construction refuses a plaintext ``http://`` URL to a non-loopback host so
-    the key is never bound to a transport that would send it in cleartext. The
-    network ``call`` is pure I/O with no branching logic; it is exercised in
-    deployment rather than by unit tests, hence the coverage exclusion.
+    the key is never bound to a transport that would send it in cleartext.
+
+    ``call`` has two failure branches the rest of the client depends on:
+    ``response.raise_for_status()`` (a non-2xx status) raises an
+    ``httpx.HTTPError`` and ``response.json()`` (a non-JSON body) raises a
+    ``json.JSONDecodeError``. Both are in :data:`_TRANSPORT_ERROR_TYPES`, so the
+    caller normalizes them to the degraded path rather than crashing. An
+    injectable ``transport`` lets tests exercise those branches with an
+    ``httpx.MockTransport`` instead of a live network.
     """
 
-    def __init__(self, url: str, api_key: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        api_key: str,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         """Store the vault base URL and bearer key, refusing an insecure URL.
 
         Delegates to :func:`_require_secure_vault_url`, which raises for a
         plaintext ``http://`` URL to a non-loopback host before the key is bound.
+        The optional ``transport`` is passed to :class:`httpx.AsyncClient`; it
+        defaults to ``None`` (httpx's own network transport) in production and is
+        supplied as an :class:`httpx.MockTransport` under test.
         """
         _require_secure_vault_url(url)
         self._url = url
         self._api_key = api_key
+        self._transport = transport
 
     async def call(self, method: str, params: Mapping[str, object], /) -> Mapping[str, object]:
         """POST one MCP call and return the decoded JSON response mapping."""
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        async with httpx.AsyncClient(timeout=_VAULT_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(
+            timeout=_VAULT_TIMEOUT_SECONDS, transport=self._transport
+        ) as client:
             response = await client.post(
                 self._url, json={"method": method, "params": dict(params)}, headers=headers
             )
