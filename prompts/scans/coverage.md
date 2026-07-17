@@ -16,6 +16,11 @@ and branches and a concrete test plan to close them — measured against the
 ≥90% line / ≥80% branch backend gate and the ≥90% Jest frontend gate.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from the highest-degree code nodes (god nodes) whose
+  blast radius is widest, then check which of them are under-covered. If the
+  graph is absent or stale, skip this step and run the analysis as written.
 - Title-slug prefix: `[scan:coverage]`. Priority `P2` (passed by the workflow).
 - Tools (read-only):
   - Backend: `scripts/backend/coverage.sh` (or `pytest --cov=src

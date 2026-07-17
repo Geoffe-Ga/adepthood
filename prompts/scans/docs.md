@@ -19,6 +19,12 @@ docstring that describes the wrong parameters, return type, or behavior is. A
 run that finds none is a valid, successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from code nodes central in the graph but thinly linked
+  to doc/prose communities (via `graphify query`/`explain`), where prose is
+  likeliest to have drifted. If the graph is absent or stale, skip this step and
+  run the analysis as written.
 - Title-slug prefix: `[scan:docs]`
 - Priority label for this scan (workflow input): `P3`
 - Record the SHA with `git rev-parse HEAD` before scanning; every issue cites it.

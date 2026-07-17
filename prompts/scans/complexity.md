@@ -17,6 +17,12 @@ attach a concrete, named refactor strategy to each. A run that finds none is a
 valid, successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from the highest-degree code nodes — the graph's hubs,
+  surfaced via `graphify query` and `graphify affected` — since they
+  concentrate branching and coupling. If the graph is absent or stale, skip
+  this step and run the analysis as written.
 - Title-slug prefix: `[scan:complexity]`
 - Record the SHA with `git rev-parse HEAD` first.
 - Backend (Python), sorted worst-first:

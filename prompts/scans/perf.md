@@ -17,6 +17,11 @@ tracked, agent-ready issue. Prefer a few well-evidenced findings over a long
 speculative list. A run that finds none is a valid, successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from high fan-in hot nodes (`graphify affected`, god
+  nodes) that sit on the busiest call paths. If the graph is absent or stale,
+  skip this step and run the analysis as written.
 - Title-slug prefix: `[scan:perf]`
 - Priority label for this scan (workflow input): `P2`
 - First-party source only — backend `backend/src/`, frontend `frontend/src/`.

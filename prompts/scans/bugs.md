@@ -16,6 +16,12 @@ recently-reverted changes, and swallowed-error gaps — and file one RCA-ready
 issue each, with a reproducing-test idea.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from the high-degree hub nodes that recent commits also
+  touched — where many callers meet fresh change — via `graphify query` and
+  `graphify affected`. If the graph is absent or stale, skip this step and run
+  the analysis as written.
 - Title-slug prefix: `[scan:bugs]`. Priority `P1` (passed by the workflow).
 - Signals (read-only):
   - **Flaky/failing tests**: scan recent CI history and re-run signals; grep

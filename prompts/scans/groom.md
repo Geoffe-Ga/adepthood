@@ -20,6 +20,12 @@ reproduces at HEAD, collapse duplicates, and promote fully-specified
 toward healthy rather than bloating.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: before closing or promoting a candidate, use `graphify query`
+  or `graphify explain` to check whether its cited symbol still exists at HEAD.
+  If the graph is absent or stale, skip this step and run the analysis as
+  written.
 - Invoke the `backlog-grooming` skill and follow it; this file is the scope.
 - Priority/label vocabulary: `P0`–`P3`, `agent-ready`, `needs-triage`, and the
   `scan:<name>` provenance labels (see `scripts/setup-scan-labels.sh`).

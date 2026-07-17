@@ -19,6 +19,11 @@ them. A run that finds none — every mutant killed — is a valid, successful,
 zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from the highest-degree logic nodes (god nodes), where
+  surviving mutants have the widest blast radius. If the graph
+  is absent or stale, skip this step and run the analysis as written.
 - Title-slug prefix: `[scan:mutation]`
 - IMPORTANT: this scan is EXPENSIVE. Run it on a schedule, not from the hopper.
   Record the SHA with `git rev-parse HEAD` first.

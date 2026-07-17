@@ -19,6 +19,11 @@ missing return/parameter annotations, and every existing `type: ignore` /
 successful, zero-issue run.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: start from the highest-degree code nodes (god nodes), where an
+  `Any` leak propagates to the most callers (`graphify affected`). If the graph
+  is absent or stale, skip this step and run the analysis as written.
 - Title-slug prefix: `[scan:types]`
 - Record the SHA with `git rev-parse HEAD` first.
 - Backend (Python), strict-mode delta on first-party source:

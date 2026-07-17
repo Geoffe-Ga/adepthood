@@ -19,6 +19,12 @@ issue per MAJOR bump (with breaking-change notes and the affected call sites in
 this repo). Hand each to scan-issue-writer as a finding.
 
 ## Context
+- **Graph-first orientation (fail-soft):** if `graphify-out/graph.json` exists,
+  orient from the graph before the file sweep (see `scripts/graph/README.md`).
+  For this scan: trace which declared packages are actually reached via import
+  edges with `graphify query` and `graphify affected`, so a bump's real blast
+  radius in this repo is known. If the graph is absent or stale, skip this step
+  and run the analysis as written.
 - Title-slug prefix: `[scan:deps]`.
 - Do NOT duplicate `dependabot-to-ralph-issue.yml`, which already files a Ralph
   issue per individual Dependabot PR. Your value is cross-PR: batching several
