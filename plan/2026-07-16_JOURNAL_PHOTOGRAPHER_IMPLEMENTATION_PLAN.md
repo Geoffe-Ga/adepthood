@@ -1,5 +1,17 @@
 # Journal Photographer — Implementation Plan
 
+> **Filed on GitHub (2026-07-17):** epic
+> [#1799](https://github.com/Geoffe-Ga/adepthood/issues/1799) with 13
+> sub-issues. Plan-issue mapping: 01→#1786, 02→#1787, 03→#1789, 04→#1790,
+> 05→#1791, 06→#1788, 07→#1792, 08→#1793, 09→#1794, 10→#1795, 11→#1796,
+> 12→#1798, plus #1797 (classification + intimate transcription gate, added
+> when the open questions were decided). Decisions adopted on the open
+> questions: wallet charges 1 unit per transcribed page (resonance pattern);
+> `intimate` blocks transcription with a typed-entry offramp (per the
+> ratified INTIMATE-never-cloud model, #893/#927); provider-side retention
+> is an accepted, documented boundary. The GitHub issues are the source of
+> truth from here.
+
 **Date:** 2026-07-16 · **Style:** tracer-code (demoable skeleton first,
 then flesh) · **Inputs:** research findings
 (`2026-07-16_journal_photographer_research_findings.md`) and ADRs 1–4
