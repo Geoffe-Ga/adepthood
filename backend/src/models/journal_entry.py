@@ -2,7 +2,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, String, and_
+from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Index, String, and_
 from sqlmodel import Field, Relationship, SQLModel
 
 from domain.constants import TOTAL_STAGES
@@ -220,6 +220,15 @@ class JournalEntry(SQLModel, table=True):
     reflection_scope_key: str | None = Field(default=None, max_length=30)
     practice_session_id: int | None = Field(default=None, foreign_key="practicesession.id")
     user_practice_id: int | None = Field(default=None, foreign_key="userpractice.id")
+    # Creek Vault write-path linkage. ``vault_ref`` is the opaque handle a
+    # successful vault ingest returns; ``vault_tags`` holds the Frequency /
+    # Wavelength-phase tags the vault classified. Both stay NULL for entries never
+    # sent to a vault -- intimate entries (withheld until the encrypted transit
+    # path lands) and every entry written while no vault is configured. Declared
+    # with no length / as JSON to match the migration exactly (drift-free), and
+    # both nullable so the write path is purely additive over existing rows.
+    vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
     deleted_at: datetime | None = Field(
         default=None,
