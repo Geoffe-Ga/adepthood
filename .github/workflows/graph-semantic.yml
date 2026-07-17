@@ -119,7 +119,7 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
         run: |
-          graphify extract . --backend claude --token-budget 60000 --max-concurrency 2
+          graphify extract . --backend claude --out . --token-budget 60000 --max-concurrency 2
 
       - name: Write cost.json and job summary
         # extract records token usage in .graphify_analysis.json but does not
