@@ -1,6 +1,7 @@
 import { StyleSheet } from 'react-native';
 
 import {
+  INTERACTIVE_TEXT_MIN,
   accent,
   editorialType,
   ink,
@@ -19,6 +20,7 @@ import {
 const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
 const STAGE_COVER_ARC = 4;
+const CHAPTER_NAV_DISABLED_OPACITY = 0.5;
 
 // Shared uppercase small-caps label face (muted); consumers add per-use margins.
 const upperLabel = {
@@ -302,6 +304,39 @@ const styles = StyleSheet.create({
     backgroundColor: accent.strong,
     alignItems: 'center',
     marginTop: SPACING.sm,
+  },
+
+  // Chapter reader footer — Back/Next paired navigation buttons.
+  chapterNavRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: SPACING.sm,
+  },
+  chapterNavButton: {
+    flex: 1,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  chapterNavBack: {
+    backgroundColor: surface.sunken,
+  },
+  chapterNavBackDisabled: {
+    opacity: CHAPTER_NAV_DISABLED_OPACITY,
+  },
+  chapterNavNext: {
+    backgroundColor: accent.primary,
+  },
+  chapterNavBackLabel: {
+    fontSize: INTERACTIVE_TEXT_MIN,
+    fontWeight: '600',
+    color: ink.soft,
+  },
+  chapterNavNextLabel: {
+    fontSize: INTERACTIVE_TEXT_MIN,
+    fontWeight: '600',
+    color: accent.onPrimary,
   },
 
   // Loading and empty/error states

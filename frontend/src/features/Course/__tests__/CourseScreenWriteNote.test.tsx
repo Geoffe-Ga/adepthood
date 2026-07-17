@@ -212,6 +212,49 @@ describe('CourseScreen -- write a note on a passage', () => {
     expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
+  it('does not leak the warm-return scroll offset onto the next chapter navigated forward', async () => {
+    // Two adjacent unlocked chapters so Next performs a real in-place swap
+    // rather than ending the run (a locked neighbour would make Next a "Done").
+    const twoUnlocked: ContentItem[] = [
+      {
+        id: 5,
+        title: 'Welcome Essay',
+        content_type: 'chapter',
+        release_day: 0,
+        url: 'content://beige-5',
+        is_locked: false,
+        is_read: false,
+      },
+      {
+        id: 7,
+        title: 'Second Essay',
+        content_type: 'chapter',
+        release_day: 1,
+        url: 'content://beige-7',
+        is_locked: false,
+        is_read: false,
+      },
+    ];
+    mockStageContent.mockResolvedValue(twoUnlocked);
+    // Warm return restores chapter 5 to a scroll offset (the passage-note flow).
+    mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 300 };
+    const { getByTestId, findByTestId } = render(<CourseScreen />);
+
+    const restored = await findByTestId('reader-markdown');
+    expect(restored.props.contentOffset).toEqual({ x: 0, y: 300 });
+    expect(mockContentBody).toHaveBeenCalledTimes(1);
+
+    // Next swaps in chapter 7 via handleContentPress, which clears the restore
+    // offset so the incoming chapter opens at the top instead of inheriting the
+    // previous chapter's restored y:300.
+    await act(async () => {
+      fireEvent.press(getByTestId('chapter-nav-next'));
+    });
+
+    await waitFor(() => expect(mockContentBody).toHaveBeenCalledTimes(2));
+    expect(getByTestId('reader-markdown').props.contentOffset).not.toEqual({ x: 0, y: 300 });
+  });
+
   it('does not re-open or re-apply the scroll offset when a warm return matches the already-open item', async () => {
     mockRouteParams = { stageNumber: 1 };
     const { getByTestId, findByTestId, rerender } = render(<CourseScreen />);
