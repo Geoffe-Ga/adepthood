@@ -54,12 +54,6 @@ const styles = StyleSheet.create({
     borderColor: accent.primary,
     ...shadows.medium,
   },
-  stagePillLocked: {
-    opacity: 0.4,
-  },
-  stagePillCompleted: {
-    opacity: 0.8,
-  },
   stagePillText: {
     fontSize: 14,
     fontWeight: '700',

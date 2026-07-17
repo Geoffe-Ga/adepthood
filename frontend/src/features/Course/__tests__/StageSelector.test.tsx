@@ -6,8 +6,11 @@ import { StyleSheet } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import type { Stage } from '../../../api';
-import { colors, STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
+import { colors, STAGE_COLORS, STAGE_ORDER, surface } from '../../../design/tokens';
+import { stagePillFill } from '../stageDisplay';
 import StageSelector from '../StageSelector';
+
+type PillInstance = ReturnType<ReturnType<typeof render>['getByTestId']>;
 
 function backgroundColorOf(style: StyleProp<ViewStyle>): string {
   const flat = StyleSheet.flatten(style) ?? {};
@@ -203,7 +206,13 @@ describe('StageSelector', () => {
 
     const pill1 = getByTestId('stage-pill-1');
     const style = pill1.props.style as StyleProp<ViewStyle>;
-    expect(backgroundColorOf(style)).toBe(STAGE_COLORS[STAGE_ORDER[0]!]);
+    expect(backgroundColorOf(style)).toBe(
+      stagePillFill(STAGE_COLORS[STAGE_ORDER[0]!]!, {
+        unlocked: false,
+        completed: false,
+        isActive: true,
+      }),
+    );
     expect(pill1.props.accessibilityState).toMatchObject({ selected: true, disabled: true });
   });
 
@@ -217,7 +226,9 @@ describe('StageSelector', () => {
 
     const pill11 = getByTestId('stage-pill-11');
     const style = pill11.props.style as StyleProp<ViewStyle>;
-    expect(backgroundColorOf(style)).toBe(colors.neutral);
+    expect(backgroundColorOf(style)).toBe(
+      stagePillFill(colors.neutral, { unlocked: false, completed: false, isActive: false }),
+    );
   });
 
   it('renders the lock glyph for a locked, non-completed stage', () => {
@@ -342,6 +353,145 @@ describe('StageSelector', () => {
       const glyph = within(pill).getByText('🔒');
       const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
       expect(contrast(glyphColor, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+  });
+
+  describe('effective (composited) glyph contrast', () => {
+    // Opacity 1 is the default when a pill has neither the locked nor the
+    // completed style applied; named so the fallback isn't a bare literal.
+    const FULL_OPACITY = 1;
+    const NO_ACTIVE_STAGE = 99;
+
+    /** Alpha-composite two #rrggbb colors, mirroring what whole-pill opacity does to rendered pixels. */
+    const composite = (fgHex: string, bgHex: string, weight: number): string => {
+      const fgMatch = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(fgHex);
+      const bgMatch = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(bgHex);
+      if (!fgMatch || !bgMatch) throw new Error(`not a 6-digit hex: ${fgHex} / ${bgHex}`);
+      const mixedChannel = (index: number): number => {
+        const fgChannel = Number.parseInt(fgMatch[index]!, 16);
+        const bgChannel = Number.parseInt(bgMatch[index]!, 16);
+        return Math.round(fgChannel * weight + bgChannel * (1 - weight));
+      };
+      const channels = [1, 2, 3].map(mixedChannel);
+      return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+    };
+
+    const effectiveContrastOf = (pill: PillInstance, glyphText: string): number => {
+      const flat = StyleSheet.flatten(pill.props.style as StyleProp<ViewStyle>) ?? {};
+      const fill = (flat.backgroundColor as string | undefined) ?? '';
+      const opacity = (flat.opacity as number | undefined) ?? FULL_OPACITY;
+      const glyph = within(pill).getByText(glyphText);
+      const glyphColor = glyphColorOf(glyph.props.style as StyleProp<TextStyle>);
+      const effFill = composite(fill, surface.canvas, opacity);
+      const effGlyph = composite(glyphColor, surface.canvas, opacity);
+      return contrast(effGlyph, effFill);
+    };
+
+    it.each(STAGE_ORDER)('locked %s pill clears effective AA contrast on the canvas', (name) => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: name,
+          is_unlocked: false,
+          progress: 0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector
+          stages={stages}
+          selectedStage={NO_ACTIVE_STAGE}
+          onSelectStage={onSelectStage}
+        />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      expect(effectiveContrastOf(pill, '🔒')).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it.each(STAGE_ORDER)(
+      'completed non-active %s pill clears effective AA contrast on the canvas',
+      (name) => {
+        const stages = [
+          makeStage({
+            stage_number: 1,
+            spiral_dynamics_color: name,
+            is_unlocked: true,
+            progress: 1.0,
+          }),
+        ];
+        const { getByTestId } = render(
+          <StageSelector
+            stages={stages}
+            selectedStage={NO_ACTIVE_STAGE}
+            onSelectStage={onSelectStage}
+          />,
+        );
+
+        const pill = getByTestId('stage-pill-1');
+        expect(effectiveContrastOf(pill, '✓')).toBeGreaterThanOrEqual(AA_NORMAL);
+      },
+    );
+
+    it('dims the locked Ultraviolet fill so the rendered color is no longer the raw stage color', () => {
+      const stages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: 'Ultraviolet',
+          is_unlocked: false,
+          progress: 0,
+        }),
+      ];
+      const { getByTestId } = render(
+        <StageSelector
+          stages={stages}
+          selectedStage={NO_ACTIVE_STAGE}
+          onSelectStage={onSelectStage}
+        />,
+      );
+
+      const pill = getByTestId('stage-pill-1');
+      const fill = backgroundColorOf(pill.props.style as StyleProp<ViewStyle>);
+      expect(fill).not.toBe(STAGE_COLORS['Ultraviolet']);
+    });
+
+    it('dims a locked+completed pill at a different weight when non-active versus active', () => {
+      const stageColor = 'Ultraviolet';
+
+      const nonActiveStages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: stageColor,
+          is_unlocked: false,
+          progress: 1.0,
+        }),
+      ];
+      const nonActiveResult = render(
+        <StageSelector
+          stages={nonActiveStages}
+          selectedStage={NO_ACTIVE_STAGE}
+          onSelectStage={onSelectStage}
+        />,
+      );
+      const nonActiveFill = backgroundColorOf(
+        nonActiveResult.getByTestId('stage-pill-1').props.style as StyleProp<ViewStyle>,
+      );
+
+      const activeStages = [
+        makeStage({
+          stage_number: 1,
+          spiral_dynamics_color: stageColor,
+          is_unlocked: false,
+          progress: 1.0,
+        }),
+      ];
+      const activeResult = render(
+        <StageSelector stages={activeStages} selectedStage={1} onSelectStage={onSelectStage} />,
+      );
+      const activeFill = backgroundColorOf(
+        activeResult.getByTestId('stage-pill-1').props.style as StyleProp<ViewStyle>,
+      );
+
+      expect(nonActiveFill).not.toBe(activeFill);
     });
   });
 });

@@ -5,7 +5,13 @@ import type { Stage } from '../../api';
 import { readableGlyphOn } from '../../design/tokens';
 
 import styles from './Course.styles';
-import { getStageColor, isCompleted, isUnlocked, totalStageCount } from './stageDisplay';
+import {
+  getStageColor,
+  isCompleted,
+  isUnlocked,
+  stagePillFill,
+  totalStageCount,
+} from './stageDisplay';
 
 interface StageSelectorProps {
   stages: Stage[];
@@ -31,9 +37,11 @@ const StagePill = ({
   color,
   onSelectStage,
 }: StagePillProps): React.JSX.Element => {
-  // The glyph rides directly on the stage fill, so pick a foreground that
-  // clears WCAG AA against this pill's color rather than a fixed canvas tint.
-  const glyphColor = readableGlyphOn(color);
+  // Locked/completed dimming is baked into the fill, so the glyph rides on the
+  // dimmed color; pick a foreground that clears WCAG AA against that effective
+  // fill rather than the raw stage color or a fixed canvas tint.
+  const effectiveFill = stagePillFill(color, { unlocked, completed, isActive });
+  const glyphColor = readableGlyphOn(effectiveFill);
   return (
     <TouchableOpacity
       testID={`stage-pill-${stageNumber}`}
@@ -45,10 +53,8 @@ const StagePill = ({
       onPress={() => onSelectStage(stageNumber)}
       style={[
         styles.stagePill,
-        { backgroundColor: color },
+        { backgroundColor: effectiveFill },
         isActive && styles.stagePillActive,
-        !unlocked && styles.stagePillLocked,
-        completed && !isActive && styles.stagePillCompleted,
       ]}
     >
       {completed ? (
