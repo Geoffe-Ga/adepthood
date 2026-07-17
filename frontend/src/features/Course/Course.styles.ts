@@ -377,6 +377,14 @@ const styles = StyleSheet.create({
     color: ink.primary,
     marginBottom: SPACING.sm,
   },
+  // Calm, declinable "write a note" invitation shown near the sheet header.
+  readerWriteNoteLink: {
+    ...editorialType.action,
+    color: accent.primary,
+    marginBottom: SPACING.sm,
+    minHeight: touchTarget.minimum,
+    paddingVertical: SPACING.xs,
+  },
   readerError: {
     flex: 1,
     alignItems: 'center',

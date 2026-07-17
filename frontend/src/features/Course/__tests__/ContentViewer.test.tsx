@@ -206,6 +206,43 @@ describe('ContentViewer', () => {
     expect(queryByTestId('reader-markdown')).not.toBeNull();
   });
 
+  it('forwards onWriteNote to the reader so the write-note affordance appears', async () => {
+    const item = makeItem();
+    const onWriteNote = jest.fn();
+    const { findByTestId } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        onWriteNote={onWriteNote}
+      />,
+    );
+    await findByTestId('reader-write-note-affordance');
+  });
+
+  it('omits the write-note affordance when onWriteNote is not forwarded', async () => {
+    const item = makeItem();
+    const { findByTestId, queryByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} />,
+    );
+    await findByTestId('reader-markdown');
+    expect(queryByTestId('reader-write-note-affordance')).toBeNull();
+  });
+
+  it('forwards initialScrollOffset to the reader as the ScrollView contentOffset', async () => {
+    const item = makeItem();
+    const { findByTestId } = render(
+      <ContentViewer
+        item={item}
+        onBack={onBack}
+        onMarkRead={onMarkRead}
+        initialScrollOffset={90}
+      />,
+    );
+    const scrollView = await findByTestId('reader-markdown');
+    expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 90 });
+  });
+
   it('surfaces a retry UI when the content body fails to load', async () => {
     courseApi.contentBody.mockRejectedValueOnce({ detail: 'content_unavailable' });
     const item = makeItem();

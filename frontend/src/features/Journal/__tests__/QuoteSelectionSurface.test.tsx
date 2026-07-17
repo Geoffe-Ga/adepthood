@@ -3,7 +3,7 @@
 // preview, a guarded "Promote selection" Button, or an empty-tap hint -- every
 // testID below is missing until the implementation-specialist adds them.
 import { jest, describe, it, expect } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -138,5 +138,17 @@ describe('QuoteSelectionSurface -- custom testID prefix', () => {
     expect(getByTestId('src-1-confirm-guard')).toBeTruthy();
     expect(getByTestId('src-1-cancel')).toBeTruthy();
     expect(getByTestId('src-1-input')).toBeTruthy();
+  });
+});
+
+describe('QuoteSelectionSurface -- confirmLabel', () => {
+  it('defaults the confirm button label to "Promote selection"', () => {
+    const { getByTestId } = renderSurface();
+    within(getByTestId('quote-select-confirm')).getByText('Promote selection');
+  });
+
+  it('renders the given confirmLabel when provided', () => {
+    const { getByTestId } = renderSurface({ confirmLabel: 'Write a note' });
+    within(getByTestId('quote-select-confirm')).getByText('Write a note');
   });
 });
