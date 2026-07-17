@@ -17,7 +17,6 @@ import {
   RETURN_RECOMMIT_BODY,
   RETURN_RECOMMIT_ACTION,
   buildReturnRecommitA11y,
-  RETURN_RECOMMIT_RESTING,
 } from '../returnCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
@@ -54,7 +53,6 @@ describe('returnCopy — let-go and re-commit additions', () => {
     RETURN_RECOMMIT_HEADING,
     RETURN_RECOMMIT_BODY,
     RETURN_RECOMMIT_ACTION,
-    RETURN_RECOMMIT_RESTING,
   ];
 
   it('every new let-go and re-commit string is appended to RETURN_COPY_ENTRIES', () => {

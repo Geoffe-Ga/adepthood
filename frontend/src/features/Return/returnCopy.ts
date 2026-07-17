@@ -89,9 +89,6 @@ export const RETURN_RECOMMIT_BODY =
 /** The per-habit re-commit affordance label. */
 export const RETURN_RECOMMIT_ACTION = 'Take it up again';
 
-/** The resting-state label for a habit left at rest. */
-export const RETURN_RECOMMIT_RESTING = 'Still resting';
-
 /** Build the per-habit re-commit label, naming the habit and offering to take it up again. */
 export function buildReturnRecommitA11y(name: string): string {
   return `Take it up again: ${name}`;
@@ -123,5 +120,4 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_RECOMMIT_HEADING,
   RETURN_RECOMMIT_BODY,
   RETURN_RECOMMIT_ACTION,
-  RETURN_RECOMMIT_RESTING,
 ];

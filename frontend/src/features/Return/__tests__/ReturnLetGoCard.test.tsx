@@ -87,7 +87,7 @@ describe('ReturnLetGoCard', () => {
     expect(onRelease).toHaveBeenCalledWith([1]);
   });
 
-  it('toggling a selected habit again removes it before Release is pressed', async () => {
+  it('toggling a selected habit back to empty disables Release so it cannot fire empty', async () => {
     mockListAll.mockResolvedValue([habit({ id: 1, name: 'Morning pages', revealed: true })]);
     const onRelease = jest.fn();
     const { getByTestId } = render(<ReturnLetGoCard onRelease={onRelease} onSkip={jest.fn()} />);
@@ -97,7 +97,29 @@ describe('ReturnLetGoCard', () => {
     fireEvent.press(getByTestId('return-letgo-habit-1'));
     fireEvent.press(getByTestId('return-letgo-release'));
 
-    expect(onRelease).toHaveBeenCalledWith([]);
+    expect(getByTestId('return-letgo-release').props.accessibilityState.disabled).toBe(true);
+    expect(onRelease).not.toHaveBeenCalled();
+  });
+
+  it('disables Release while nothing is selected, so an empty release can never be sent', async () => {
+    mockListAll.mockResolvedValue([habit({ id: 1, name: 'Morning pages', revealed: true })]);
+    const onRelease = jest.fn();
+    const { getByTestId } = render(<ReturnLetGoCard onRelease={onRelease} onSkip={jest.fn()} />);
+    await waitFor(() => expect(getByTestId('return-letgo-habit-1')).toBeTruthy());
+
+    expect(getByTestId('return-letgo-release').props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(getByTestId('return-letgo-release'));
+    expect(onRelease).not.toHaveBeenCalled();
+  });
+
+  it('enables Release once at least one habit is selected', async () => {
+    mockListAll.mockResolvedValue([habit({ id: 1, name: 'Morning pages', revealed: true })]);
+    const { getByTestId } = render(<ReturnLetGoCard onRelease={jest.fn()} onSkip={jest.fn()} />);
+    await waitFor(() => expect(getByTestId('return-letgo-habit-1')).toBeTruthy());
+
+    fireEvent.press(getByTestId('return-letgo-habit-1'));
+
+    expect(getByTestId('return-letgo-release').props.accessibilityState.disabled).toBe(false);
   });
 
   it('"Keep them all" calls onSkip and never onRelease', async () => {

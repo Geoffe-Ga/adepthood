@@ -131,6 +131,9 @@ function ReturnLetGoCard({ onRelease, onSkip }: ReturnLetGoCardProps): React.JSX
   const toggle = useCallback((habitId: number): void => {
     setSelected((prev) => toggleSelection(prev, habitId));
   }, []);
+  // Releasing nothing is a no-op the backend rejects, so the affordance is only
+  // live once something is chosen — "Keep them all" remains the empty path.
+  const nothingChosen = selected.length === 0;
 
   return (
     <Animated.View style={{ transform: [{ scale: press.scale }] }}>
@@ -146,11 +149,13 @@ function ReturnLetGoCard({ onRelease, onSkip }: ReturnLetGoCardProps): React.JSX
             <HabitPicker revealed={revealed} selected={selected} onToggle={toggle} />
             <View style={styles.actions}>
               <TouchableOpacity
-                style={styles.release}
+                style={[styles.release, nothingChosen ? styles.releaseDisabled : undefined]}
                 onPress={() => onRelease(selected)}
                 onPressIn={press.onPressIn}
                 onPressOut={press.onPressOut}
+                disabled={nothingChosen}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: nothingChosen }}
                 accessibilityLabel={RETURN_LETGO_RELEASE_A11Y}
                 testID="return-letgo-release"
               >
@@ -229,6 +234,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.tier.clear,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  releaseDisabled: {
+    opacity: 0.5,
   },
   releaseText: {
     ...editorialType.action,

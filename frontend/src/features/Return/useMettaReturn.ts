@@ -128,10 +128,15 @@ function useLetGoActions(
   const skipLetGo = useCallback((): void => setLetGoVisible(false), []);
   const release = useCallback(
     async (habitIds: number[]): Promise<void> => {
-      const rested = await mettaReturn.release(habitIds);
-      if (mountedRef.current) {
-        setReleasedHabits(rested);
-        setLetGoVisible(false);
+      try {
+        const rested = await mettaReturn.release(habitIds);
+        if (mountedRef.current) setReleasedHabits(rested);
+      } catch {
+        // A failed release stays silent — letting go is a declinable invitation,
+        // so even a rejected call (e.g. an empty selection the backend refuses)
+        // closes the moment gently rather than stranding the person on the card.
+      } finally {
+        if (mountedRef.current) setLetGoVisible(false);
       }
     },
     [mountedRef, setReleasedHabits],

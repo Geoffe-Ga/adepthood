@@ -443,6 +443,47 @@ describe('useMettaReturn — let-go and re-commit', () => {
     expect(result.current.letGoVisible).toBe(false);
   });
 
+  it('release stays silent and still closes the card when the api rejects', async () => {
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockRelease.mockRejectedValue(new Error('network error'));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.eligible).toBe(true));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.letGoVisible).toBe(true);
+
+    await act(async () => {
+      await expect(result.current.release([7])).resolves.toBeUndefined();
+    });
+
+    expect(mockRelease).toHaveBeenCalledWith([7]);
+    expect(result.current.letGoVisible).toBe(false);
+    expect(result.current.releasedHabits).toEqual([]);
+  });
+
+  it('an empty selection at the API boundary never strands the card (backend 422)', async () => {
+    // The backend rejects habit_ids=[] with a 422; the hook must decline the
+    // moment gracefully rather than throwing an unhandled rejection or sticking.
+    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null }));
+    mockRelease.mockRejectedValue(new Error('422 Unprocessable Entity'));
+    const { result } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(result.current.eligible).toBe(true));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.letGoVisible).toBe(true);
+
+    await act(async () => {
+      await expect(result.current.release([])).resolves.toBeUndefined();
+    });
+
+    expect(result.current.letGoVisible).toBe(false);
+    expect(result.current.releasedHabits).toEqual([]);
+  });
+
   it('recommit calls the api and updates releasedHabits from the response', async () => {
     mockState.mockResolvedValue(
       stateResult({
