@@ -23,6 +23,7 @@ import { TranscriptionError, journal } from '@/api';
 import type { MediaType, TranscriptionErrorKind } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
+import DatePicker, { toISODate } from '@/components/DatePicker';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -44,6 +45,7 @@ const SAVE_LABEL = 'Save this page';
 const RETRY_SAVE_LABEL = 'Try saving again';
 const PREVIEW_HEADING = 'Your page';
 const PREVIEW_INPUT_A11Y = 'Edit the transcribed text of your page';
+const ENTRY_DATE_LABEL = 'Entry date';
 
 /** Friendly terminal copy when the configured model cannot read images at all. */
 const MODEL_LACKS_VISION_COPY =
@@ -132,15 +134,22 @@ type PhotographNavigation = NativeStackScreenProps<
 interface CaptureModel {
   phase: Phase;
   previewText: string;
+  entryDate: string;
   saving: boolean;
   saveFailed: boolean;
   onChangeText: (_text: string) => void;
+  onChangeEntryDate: (_date: string) => void;
   runPick: () => void;
   retryTranscribe: () => void;
   save: () => void;
   openSettings: () => void;
   cancel: () => void;
   goTypedEntry: () => void;
+}
+
+/** The chosen backdate, or undefined when it is today (the backend then stamps now). */
+function entryDateForCreate(entryDate: string): string | undefined {
+  return entryDate === toISODate(new Date()) ? undefined : entryDate;
 }
 
 /** Pick a page image and transcribe it into an editable preview, stashing the
@@ -191,6 +200,7 @@ function usePickAndTranscribe(
 function useSaveEntry(
   navigation: PhotographNavigation,
   previewText: string,
+  entryDate: string,
   imageRef: React.MutableRefObject<PickedImage | null>,
   createdIdRef: React.MutableRefObject<number | null>,
 ): { save: () => Promise<void>; saving: boolean; saveFailed: boolean } {
@@ -201,9 +211,14 @@ function useSaveEntry(
     setSaving(true);
     setSaveFailed(false);
     try {
-      const id = await saveFinishedEntry(previewText, createdIdRef.current, (created) => {
-        createdIdRef.current = created;
-      });
+      const id = await saveFinishedEntry(
+        previewText,
+        createdIdRef.current,
+        (created) => {
+          createdIdRef.current = created;
+        },
+        entryDateForCreate(entryDate),
+      );
       imageRef.current = null; // Release the page image the moment it is saved.
       navigation.replace('JournalEntry', { entryId: id, justSaved: true });
     } catch {
@@ -211,7 +226,7 @@ function useSaveEntry(
     } finally {
       setSaving(false);
     }
-  }, [previewText, navigation, imageRef, createdIdRef]);
+  }, [previewText, entryDate, navigation, imageRef, createdIdRef]);
 
   return { save, saving, saveFailed };
 }
@@ -225,6 +240,7 @@ function useSaveEntry(
 function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
   const [previewText, setPreviewText] = useState('');
+  const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
   const imageRef = useRef<PickedImage | null>(null);
   const createdIdRef = useRef<number | null>(null);
 
@@ -237,6 +253,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const { save, saving, saveFailed } = useSaveEntry(
     navigation,
     previewText,
+    entryDate,
     imageRef,
     createdIdRef,
   );
@@ -260,9 +277,11 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   return {
     phase,
     previewText,
+    entryDate,
     saving,
     saveFailed,
     onChangeText: setPreviewText,
+    onChangeEntryDate: setEntryDate,
     runPick: () => void runPick(),
     retryTranscribe: () => void transcribe(),
     save: () => void save(),
@@ -375,16 +394,69 @@ function TranscribeErrorView({
   );
 }
 
+/** The date affordance: a quiet label over the shared picker, defaulting to today. */
+function EntryDateRow({
+  entryDate,
+  onChangeEntryDate,
+}: {
+  entryDate: string;
+  onChangeEntryDate: (_date: string) => void;
+}): React.JSX.Element {
+  return (
+    <View testID="capture-entry-date" style={styles.entryDateRow}>
+      <Text style={styles.entryDateLabel}>{ENTRY_DATE_LABEL}</Text>
+      <DatePicker value={entryDate} maxDate={toISODate(new Date())} onChange={onChangeEntryDate} />
+    </View>
+  );
+}
+
+/** Save, plus a Retry-save button surfaced only after a save has failed. */
+function PreviewActions({
+  onSave,
+  saving,
+  saveFailed,
+}: {
+  onSave: () => void;
+  saving: boolean;
+  saveFailed: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={styles.actions}>
+      <Button
+        testID="photograph-save"
+        label={SAVE_LABEL}
+        accessibilityLabel={SAVE_LABEL}
+        busy={saving}
+        onPress={onSave}
+      />
+      {saveFailed ? (
+        <Button
+          testID="photograph-retry-save"
+          variant="secondary"
+          label={RETRY_SAVE_LABEL}
+          accessibilityLabel={RETRY_SAVE_LABEL}
+          busy={saving}
+          onPress={onSave}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 /** The editable transcription preview + Save (and a retry when a save fails). */
 function PreviewView({
   value,
   onChangeText,
+  entryDate,
+  onChangeEntryDate,
   onSave,
   saving,
   saveFailed,
 }: {
   value: string;
   onChangeText: (_text: string) => void;
+  entryDate: string;
+  onChangeEntryDate: (_date: string) => void;
   onSave: () => void;
   saving: boolean;
   saveFailed: boolean;
@@ -400,25 +472,8 @@ function PreviewView({
         multiline
         accessibilityLabel={PREVIEW_INPUT_A11Y}
       />
-      <View style={styles.actions}>
-        <Button
-          testID="photograph-save"
-          label={SAVE_LABEL}
-          accessibilityLabel={SAVE_LABEL}
-          busy={saving}
-          onPress={onSave}
-        />
-        {saveFailed ? (
-          <Button
-            testID="photograph-retry-save"
-            variant="secondary"
-            label={RETRY_SAVE_LABEL}
-            accessibilityLabel={RETRY_SAVE_LABEL}
-            busy={saving}
-            onPress={onSave}
-          />
-        ) : null}
-      </View>
+      <EntryDateRow entryDate={entryDate} onChangeEntryDate={onChangeEntryDate} />
+      <PreviewActions onSave={onSave} saving={saving} saveFailed={saveFailed} />
     </View>
   );
 }
@@ -438,6 +493,8 @@ function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
         <PreviewView
           value={model.previewText}
           onChangeText={model.onChangeText}
+          entryDate={model.entryDate}
+          onChangeEntryDate={model.onChangeEntryDate}
           onSave={model.save}
           saving={model.saving}
           saveFailed={model.saveFailed}

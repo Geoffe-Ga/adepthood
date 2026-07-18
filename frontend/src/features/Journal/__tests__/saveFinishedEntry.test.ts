@@ -108,6 +108,24 @@ describe('saveFinishedEntry — retry with an existing id (create already succee
   });
 });
 
+describe('saveFinishedEntry — entry date', () => {
+  it('sends the chosen entry_date on create', async () => {
+    mockCreate.mockResolvedValueOnce(entry({ id: 7 }));
+    mockUpdate.mockResolvedValueOnce(entry({ id: 7, status: 'finished' }));
+    await saveFinishedEntry('A page.', undefined, undefined, '2026-07-05');
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'A page.', entry_date: '2026-07-05' }),
+    );
+  });
+
+  it('never sends entry_date on a retry PATCH, even when one is passed', async () => {
+    mockUpdate.mockResolvedValueOnce(entry({ id: 55, status: 'finished' }));
+    await saveFinishedEntry('Retried text.', 55, undefined, '2026-07-05');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledWith(55, { message: 'Retried text.', status: 'finished' });
+  });
+});
+
 describe('saveFinishedEntry — failure propagation', () => {
   it('rejects rather than swallowing when the finishing update fails on a fresh create', async () => {
     mockCreate.mockResolvedValueOnce(entry({ id: 9 }));

@@ -48,6 +48,15 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     textAlignVertical: 'top',
   },
+  /** A quiet date row above the actions: a low-pressure, declinable backdate. */
+  entryDateRow: {
+    gap: SPACING.xs,
+  },
+  /** The soft label sitting above the picker, in the editorial paper idiom. */
+  entryDateLabel: {
+    ...editorialType.body,
+    color: colors.paper.inkSoft,
+  },
   /** Stacked action buttons under a phase's copy. */
   actions: {
     gap: SPACING.sm,
