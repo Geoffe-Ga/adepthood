@@ -598,16 +598,26 @@ export const returnArcSchema = z.object({
   complete: z.boolean(),
 });
 
-/** Eligibility, the week sequence, the active arc, and the persisted offer-dismissal flag. */
+/** A habit set to rest during a Return arc, with whether it has been taken up again. */
+export const releasedHabitSchema = z.object({
+  habit_id: z.number(),
+  name: z.string(),
+  icon: z.string(),
+  recommitted: z.boolean(),
+});
+
+/** Eligibility, the week sequence, the active arc, the offer-dismissal flag, and any rested habits. */
 export const mettaReturnStateSchema = z.object({
   eligible: z.boolean(),
   weeks: z.array(returnWeekSchema),
   arc: returnArcSchema.nullable(),
   offer_dismissed: z.boolean(),
+  released_habits: z.array(releasedHabitSchema),
 });
 
 export type ReturnWeekT = z.infer<typeof returnWeekSchema>;
 export type ReturnArcT = z.infer<typeof returnArcSchema>;
+export type ReleasedHabitT = z.infer<typeof releasedHabitSchema>;
 export type MettaReturnStateT = z.infer<typeof mettaReturnStateSchema>;
 
 // ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import type { MutableRefObject } from 'react';
 import { useContractionSignalActive } from './contractionSignal';
 
 import { mettaReturn } from '@/api';
-import type { ReturnArc, ReturnWeek } from '@/api';
+import type { ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
 import { loadReturnOfferDismissed, saveReturnOfferDismissed } from '@/storage/returnOfferStorage';
 
 export interface UseMettaReturnResult {
@@ -25,11 +25,16 @@ export interface UseMettaReturnResult {
   weeks: ReturnWeek[];
   arc: ReturnArc | null;
   offerVisible: boolean;
+  letGoVisible: boolean;
+  releasedHabits: ReleasedHabit[];
   dismissOffer: () => Promise<void>;
   start: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   leave: () => Promise<void>;
+  release: (_habitIds: number[]) => Promise<void>;
+  recommit: (_habitIds: number[]) => Promise<void>;
+  skipLetGo: () => void;
 }
 
 interface LoadedReturn {
@@ -37,8 +42,10 @@ interface LoadedReturn {
   weeks: ReturnWeek[];
   arc: ReturnArc | null;
   dismissed: boolean;
+  releasedHabits: ReleasedHabit[];
   setArc: (_arc: ReturnArc | null) => void;
   setDismissed: (_dismissed: boolean) => void;
+  setReleasedHabits: (_habits: ReleasedHabit[]) => void;
   mountedRef: MutableRefObject<boolean>;
 }
 
@@ -55,6 +62,7 @@ function useLoadedReturn(): LoadedReturn {
   const [weeks, setWeeks] = useState<ReturnWeek[]>([]);
   const [arc, setArc] = useState<ReturnArc | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [releasedHabits, setReleasedHabits] = useState<ReleasedHabit[]>([]);
   const mountedRef = useRef(true);
   const serverAppliedRef = useRef(false);
 
@@ -78,6 +86,7 @@ function useLoadedReturn(): LoadedReturn {
         setWeeks(state.weeks);
         setArc(state.arc);
         setDismissed(state.offer_dismissed);
+        setReleasedHabits(state.released_habits);
         cacheDismissed(state.offer_dismissed);
       })
       .catch(() => {
@@ -88,14 +97,105 @@ function useLoadedReturn(): LoadedReturn {
     };
   }, []);
 
-  return { eligible, weeks, arc, dismissed, setArc, setDismissed, mountedRef };
+  return {
+    eligible,
+    weeks,
+    arc,
+    dismissed,
+    releasedHabits,
+    setArc,
+    setDismissed,
+    setReleasedHabits,
+    mountedRef,
+  };
 }
 
-export function useMettaReturn(): UseMettaReturnResult {
-  const { eligible, weeks, arc, dismissed, setArc, setDismissed, mountedRef } = useLoadedReturn();
-  const contractionActive = useContractionSignalActive();
+interface LetGoActions {
+  letGoVisible: boolean;
+  markStarted: () => void;
+  skipLetGo: () => void;
+  release: (_habitIds: number[]) => Promise<void>;
+  recommit: (_habitIds: number[]) => Promise<void>;
+}
 
-  const dismissOffer = useCallback(async (): Promise<void> => {
+/** Own the let-go / re-commit moment: its visibility and the release/recommit calls. */
+function useLetGoActions(
+  mountedRef: MutableRefObject<boolean>,
+  setReleasedHabits: (_habits: ReleasedHabit[]) => void,
+): LetGoActions {
+  const [letGoVisible, setLetGoVisible] = useState(false);
+  const markStarted = useCallback((): void => setLetGoVisible(true), []);
+  const skipLetGo = useCallback((): void => setLetGoVisible(false), []);
+  const release = useCallback(
+    async (habitIds: number[]): Promise<void> => {
+      try {
+        const rested = await mettaReturn.release(habitIds);
+        if (mountedRef.current) setReleasedHabits(rested);
+      } catch {
+        // A failed release stays silent — letting go is a declinable invitation,
+        // so even a rejected call (e.g. an empty selection the backend refuses)
+        // closes the moment gently rather than stranding the person on the card.
+      } finally {
+        if (mountedRef.current) setLetGoVisible(false);
+      }
+    },
+    [mountedRef, setReleasedHabits],
+  );
+  const recommit = useCallback(
+    async (habitIds: number[]): Promise<void> => {
+      try {
+        const updated = await mettaReturn.recommit(habitIds);
+        if (mountedRef.current) setReleasedHabits(updated);
+      } catch {
+        // Mirrors `release`'s hardening: recommit is dispatched fire-and-forget
+        // (`void recommit(...)`), so a rejected call resolves silently and leaves
+        // the resting list untouched rather than raising an unhandled rejection.
+      }
+    },
+    [mountedRef, setReleasedHabits],
+  );
+  return { letGoVisible, markStarted, skipLetGo, release, recommit };
+}
+
+interface ArcLifecycle {
+  start: () => Promise<void>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  leave: () => Promise<void>;
+}
+
+/** Drive the arc lifecycle, committing the local arc only after the API confirms. */
+function useArcLifecycle(
+  mountedRef: MutableRefObject<boolean>,
+  setArc: (_arc: ReturnArc | null) => void,
+  onStarted: () => void,
+): ArcLifecycle {
+  const start = useCallback(async (): Promise<void> => {
+    const started = await mettaReturn.start();
+    if (mountedRef.current) {
+      setArc(started);
+      onStarted();
+    }
+  }, [mountedRef, setArc, onStarted]);
+  const runLifecycle = useCallback(
+    async (call: () => Promise<ReturnArc>): Promise<void> => {
+      const updated = await call();
+      if (mountedRef.current) setArc(updated);
+    },
+    [mountedRef, setArc],
+  );
+  const pause = useCallback(() => runLifecycle(() => mettaReturn.pause()), [runLifecycle]);
+  const resume = useCallback(() => runLifecycle(() => mettaReturn.resume()), [runLifecycle]);
+  const leave = useCallback(async (): Promise<void> => {
+    await mettaReturn.leave();
+    if (mountedRef.current) setArc(null);
+  }, [mountedRef, setArc]);
+  return { start, pause, resume, leave };
+}
+
+/** The dismiss-offer action: hide the offer and persist the decline, best-effort. */
+function useDismissOffer(setDismissed: (_dismissed: boolean) => void): () => Promise<void> {
+  return useCallback(async (): Promise<void> => {
     setDismissed(true);
     cacheDismissed(true);
     try {
@@ -104,29 +204,38 @@ export function useMettaReturn(): UseMettaReturnResult {
       // A failed dismiss stays silent — the offer must never re-show once declined.
     }
   }, [setDismissed]);
+}
 
-  const start = useCallback(async (): Promise<void> => {
-    const started = await mettaReturn.start();
-    if (mountedRef.current) setArc(started);
-  }, [mountedRef, setArc]);
-
-  const runLifecycle = useCallback(
-    async (call: () => Promise<ReturnArc>): Promise<void> => {
-      const updated = await call();
-      if (mountedRef.current) setArc(updated);
-    },
-    [mountedRef, setArc],
+export function useMettaReturn(): UseMettaReturnResult {
+  const loaded = useLoadedReturn();
+  const contractionActive = useContractionSignalActive();
+  const { letGoVisible, markStarted, skipLetGo, release, recommit } = useLetGoActions(
+    loaded.mountedRef,
+    loaded.setReleasedHabits,
   );
+  const { start, pause, resume, leave } = useArcLifecycle(
+    loaded.mountedRef,
+    loaded.setArc,
+    markStarted,
+  );
+  const dismissOffer = useDismissOffer(loaded.setDismissed);
+  const offerVisible =
+    loaded.eligible && contractionActive && !loaded.dismissed && loaded.arc === null;
 
-  const pause = useCallback(() => runLifecycle(() => mettaReturn.pause()), [runLifecycle]);
-  const resume = useCallback(() => runLifecycle(() => mettaReturn.resume()), [runLifecycle]);
-
-  const leave = useCallback(async (): Promise<void> => {
-    await mettaReturn.leave();
-    if (mountedRef.current) setArc(null);
-  }, [mountedRef, setArc]);
-
-  const offerVisible = eligible && contractionActive && !dismissed && arc === null;
-
-  return { eligible, weeks, arc, offerVisible, dismissOffer, start, pause, resume, leave };
+  return {
+    eligible: loaded.eligible,
+    weeks: loaded.weeks,
+    arc: loaded.arc,
+    offerVisible,
+    letGoVisible,
+    releasedHabits: loaded.releasedHabits,
+    dismissOffer,
+    start,
+    pause,
+    resume,
+    leave,
+    release,
+    recommit,
+    skipLetGo,
+  };
 }

@@ -12,8 +12,13 @@ import {
   RETURN_ARC_LEAVE_A11Y,
   RETURN_COMPLETE_BODY,
   RETURN_COMPLETE_HEADING,
+  RETURN_RECOMMIT_ACTION,
+  RETURN_RECOMMIT_BODY,
+  RETURN_RECOMMIT_HEADING,
+  buildReturnRecommitA11y,
 } from './returnCopy';
 
+import type { ReleasedHabit } from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -28,10 +33,62 @@ import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface ReturnCompletionCardProps {
   onLeave: () => void;
+  releasedHabits?: ReleasedHabit[];
+  onRecommit?: (_habitId: number) => void;
 }
 
-function ReturnCompletionCard({ onLeave }: ReturnCompletionCardProps): React.JSX.Element {
+/** A single resting habit with its take-it-up-again affordance. */
+function RecommitRow({
+  habit,
+  onRecommit,
+}: {
+  habit: ReleasedHabit;
+  onRecommit: (_habitId: number) => void;
+}): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.recommitRow}
+      onPress={() => onRecommit(habit.habit_id)}
+      accessibilityRole="button"
+      accessibilityLabel={buildReturnRecommitA11y(habit.name)}
+      testID={`return-recommit-${habit.habit_id}`}
+    >
+      <Text style={styles.recommitName}>
+        {habit.icon} {habit.name}
+      </Text>
+      <Text style={styles.recommitAction}>{RETURN_RECOMMIT_ACTION}</Text>
+    </TouchableOpacity>
+  );
+}
+
+/** The re-commit section: habits rested this arc, each individually re-adoptable. */
+function RecommitSection({
+  releasedHabits,
+  onRecommit,
+}: {
+  releasedHabits: ReleasedHabit[];
+  onRecommit: (_habitId: number) => void;
+}): React.JSX.Element | null {
+  const resting = releasedHabits.filter((habit) => !habit.recommitted);
+  if (resting.length === 0) return null;
+  return (
+    <View style={styles.recommitSection} testID="return-recommit-section">
+      <Text style={styles.recommitHeading}>{RETURN_RECOMMIT_HEADING}</Text>
+      <Text style={styles.recommitBody}>{RETURN_RECOMMIT_BODY}</Text>
+      {resting.map((habit) => (
+        <RecommitRow key={habit.habit_id} habit={habit} onRecommit={onRecommit} />
+      ))}
+    </View>
+  );
+}
+
+function ReturnCompletionCard({
+  onLeave,
+  releasedHabits = [],
+  onRecommit,
+}: ReturnCompletionCardProps): React.JSX.Element {
   const press = usePressScale(useReducedMotion());
+  const handleRecommit = onRecommit ?? (() => undefined);
   return (
     <Animated.View style={{ transform: [{ scale: press.scale }] }}>
       <View style={styles.card} testID="return-completion-card">
@@ -39,6 +96,7 @@ function ReturnCompletionCard({ onLeave }: ReturnCompletionCardProps): React.JSX
           {RETURN_COMPLETE_HEADING}
         </Text>
         <Text style={styles.body}>{RETURN_COMPLETE_BODY}</Text>
+        <RecommitSection releasedHabits={releasedHabits} onRecommit={handleRecommit} />
         <View style={styles.actions}>
           <TouchableOpacity
             style={styles.leave}
@@ -92,6 +150,35 @@ const styles = StyleSheet.create({
   leaveText: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
+  },
+  recommitSection: {
+    marginTop: spacing(1.5),
+  },
+  recommitHeading: {
+    ...editorialType.action,
+    color: colors.paper.ink,
+  },
+  recommitBody: {
+    ...editorialType.marginNote,
+    color: colors.paper.inkSoft,
+    marginTop: spacing(0.5),
+  },
+  recommitRow: {
+    minHeight: touchTarget.minimum,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: SPACING.sm,
+  },
+  recommitName: {
+    ...editorialType.marginNote,
+    color: colors.paper.ink,
+    flexShrink: 1,
+  },
+  recommitAction: {
+    ...editorialType.action,
+    color: colors.tier.clear,
+    marginLeft: SPACING.md,
   },
 });
 
