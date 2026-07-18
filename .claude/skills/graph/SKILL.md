@@ -5,16 +5,17 @@ description: >-
   connects two modules, the impact of changing a symbol, a plain-language
   explanation of a node, or the graph's freshness/status. Use when the user
   says "query the graph", "what connects X and Y", "impact of changing X",
-  "what depends on X", "is the graph fresh", "/graph", or wants a graph-first
-  answer instead of a blind file sweep. Wraps the graphify query, path,
-  explain, and affected subcommands plus a graph-meta.json freshness check, and
+  "what depends on X", "is the graph fresh", "/graph", "record the graph
+  outcome", or wants a graph-first answer instead of a blind file sweep. Wraps
+  the graphify query, path, explain, affected, save-result, and reflect
+  subcommands plus a graph-meta.json freshness check, and
   defaults to the federated pan-graph.json when it is present. Do NOT use to file bugs or
   features (use flare), to run code-quality or slop audits (use de-slopify),
   or to build or refresh the graph itself (run scripts/graph/build.sh or
   scripts/graph/update.sh).
 metadata:
   author: Geoff
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Graph
@@ -98,8 +99,34 @@ editing or reporting it as certain.
 ### Step 5 — After code changes, refresh the graph
 
 If you have just modified code and want a current graph, refresh it with
-`./scripts/graph/update.sh` (incremental, AST-only, no cost). This skill only
-queries; building and refreshing are the `scripts/graph/` scripts' job.
+`./scripts/graph/update.sh` (incremental, AST-only, no cost). This skill
+queries the graph and records query outcomes; building and refreshing the
+graph itself are the `scripts/graph/` scripts' job.
+
+### Step 6 — Record the outcome (memory loop)
+
+When a graph-backed answer proves out (tests pass / review LGTM) or misleads,
+leave a durable trace so the weekly digest can learn from it. Entries are
+small Markdown files with YAML frontmatter (`type`, `date`, `contributor`,
+`outcome`, `source_nodes`), written to the committed `graph/memory/` — never
+the git-ignored `graphify-out/memory/`:
+
+```bash
+graphify save-result --question "…" --answer "…" --type query \
+  --nodes NodeA NodeB --outcome useful --memory-dir graph/memory/
+# wrong turn: --outcome dead_end
+# graph was wrong: --outcome corrected --correction "the right answer was …"
+```
+
+Then regenerate the deterministic digest ($0, no LLM) and commit both files:
+
+```bash
+graphify reflect --memory-dir graph/memory --out graph/reflections/LESSONS.md
+```
+
+Record repo Q&A only — never user data or secrets; the `detect-secrets`
+pre-commit gate covers `graph/`. The weekly playbook workflow reads the
+regenerated `LESSONS.md` as one of its inputs.
 
 ## Examples
 
@@ -147,8 +174,9 @@ fall back to Grep/Glob and say the graph was unavailable.
 
 ### The user wants to file an issue or fix quality, not query
 Stop and hand off: filing a bug/feature is the `flare` skill; a code-quality
-or slop audit is the `de-slopify` skill. This skill only reads the graph — it
-does not create issues or edit code.
+or slop audit is the `de-slopify` skill. Recording a query outcome to
+`graph/memory/` is in scope (Step 6); filing issues and editing source code
+are not.
 
 ### Looking for a `status` subcommand on the CLI
 graphify has none for the graph — the only `status` it exposes is `hook

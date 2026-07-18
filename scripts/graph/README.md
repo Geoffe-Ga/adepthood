@@ -173,6 +173,41 @@ whatever each satellite last published — if a satellite hasn't rebuilt its
 own graph recently, federation faithfully merges in a stale snapshot rather
 than freshening it.
 
+## Memory loop (weekly)
+
+Graph queries that helped — or misled — leave a durable trace so the fleet
+learns from its own orientation. Two `graphify` subcommands drive it:
+
+```bash
+# After a graph-backed answer proves out (or turns out wrong), record it:
+graphify save-result --question "…" --answer "…" --type query \
+  --nodes NodeA NodeB --outcome useful --memory-dir graph/memory/
+#   wrong turn:      --outcome dead_end
+#   graph was wrong: --outcome corrected --correction "the right answer was …"
+
+# Weekly, distil the traces into a deterministic lessons digest ($0, no LLM):
+graphify reflect --memory-dir graph/memory \
+  --out graph/reflections/LESSONS.md --graph graphify-out/graph.json \
+  --half-life-days 30 --min-corroboration 2
+```
+
+Each `save-result` writes a small **Markdown file with YAML frontmatter**
+(`type`, `date`, `contributor`, `outcome`, `source_nodes`) — not JSON. Unlike
+the git-ignored `graphify-out/` build artifacts, `graph/memory/` and
+`graph/reflections/` are **committed**: the traces are tiny, reviewable, and
+travel with the repo, and the `detect-secrets` pre-commit gate covers them.
+Record repo Q&A only — never user data or secrets.
+
+`reflect` reweights each node by recency (`--half-life-days`) and prefers nodes
+corroborated by at least `--min-corroboration` useful results; with a graph it
+also drops nodes that no longer exist and groups by community. Its
+auto-generated header always reads "in graphify-out/memory/" regardless of the
+`--memory-dir` value — a cosmetic upstream quirk, not a path the digest
+actually read. The weekly `weekly-playbook.yml` workflow regenerates
+`graph/reflections/LESSONS.md` from the committed memory and feeds it to the
+playbook curator as a third failure/confirmation signal alongside flare-filed
+bugs and blocked review verdicts.
+
 ## Commands
 
 ```bash
