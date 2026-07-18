@@ -8,6 +8,14 @@ import type { PickResult } from '../pickJournalPhoto';
 
 import { TranscriptionError } from '@/api';
 import type { JournalMessage, MediaType, TranscribePageT, TranscriptionErrorKind } from '@/api';
+import { toISODate } from '@/components/DatePicker';
+
+// Real-clock-relative dates stay deterministic without fake timers (which leak into RNTL waitFor).
+const isoOffsetFromToday = (days: number): string => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return toISODate(date);
+};
 
 const mockPick = jest.fn() as jest.MockedFunction<() => Promise<PickResult>>;
 const mockTranscribe = jest.fn() as jest.MockedFunction<
@@ -371,5 +379,62 @@ describe('JournalPhotographScreen — save flow', () => {
       message: 'Edited after the failure.',
       status: 'finished',
     });
+  });
+});
+
+describe('JournalPhotographScreen — entry date', () => {
+  it('renders the entry-date row in the preview', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    const { findByTestId } = renderScreen();
+    await findByTestId('photograph-preview-input');
+    expect(await findByTestId('capture-entry-date')).toBeTruthy();
+  });
+
+  it('threads a chosen past entry date to journal.create on Save', async () => {
+    const yesterday = isoOffsetFromToday(-1);
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 21 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 21, status: 'finished' }));
+
+    const { findByTestId, getByLabelText } = renderScreen();
+    await findByTestId('capture-entry-date');
+    fireEvent.changeText(getByLabelText('Date'), yesterday);
+    fireEvent.press(await findByTestId('photograph-save'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ entry_date: yesterday }),
+    );
+  });
+
+  it('omits entry_date on Save when today is re-selected explicitly', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 22 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 22, status: 'finished' }));
+
+    const { findByTestId, getByLabelText } = renderScreen();
+    await findByTestId('capture-entry-date');
+    fireEvent.changeText(getByLabelText('Date'), isoOffsetFromToday(-1));
+    fireEvent.changeText(getByLabelText('Date'), isoOffsetFromToday(0));
+    fireEvent.press(await findByTestId('photograph-save'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0]?.[0]).not.toHaveProperty('entry_date');
+  });
+
+  it('clamps the entry-date picker to maxDate today', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+
+    const { findByTestId, getByLabelText, getByText } = renderScreen();
+    await findByTestId('capture-entry-date');
+    const todayButton = getByLabelText('Select today');
+    expect(todayButton.props.accessibilityState.disabled).toBe(false);
+
+    fireEvent.changeText(getByLabelText('Date'), isoOffsetFromToday(1));
+    expect(getByText(/Pick a date between/)).toBeTruthy();
   });
 });

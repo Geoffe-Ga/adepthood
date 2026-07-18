@@ -8,10 +8,12 @@
  * PATCHes the existing entry instead of creating again. Because a
  * PATCH failure rejects before the id can be returned, `onCreated` lets a caller
  * latch the fresh id the instant the create succeeds, so a subsequent retry can
- * supply it. Nothing beyond the message body is sent; the backend defaults
- * classification and entry date, so we never override them here.
+ * supply it. On create, the message body is sent along with an optional
+ * `entry_date` (a backdate); when it is omitted the backend stamps today. The
+ * finishing PATCH and any retry send only the body and status, never a date.
  */
 import { journal } from '@/api';
+import type { JournalMessageCreate } from '@/api';
 
 /** The status a fully-captured page is flipped to once its body is saved. */
 const FINISHED_STATUS = 'finished' as const;
@@ -25,15 +27,21 @@ const FINISHED_STATUS = 'finished' as const;
  * retry after a failed PATCH never re-creates the page yet still persists any
  * edits made after the failure. `onCreated`, when given, fires with the new id
  * the moment the create resolves (before the PATCH), so a caller can hold it for
- * a retry even if the PATCH then rejects. Rejections propagate to the caller.
+ * a retry even if the PATCH then rejects. `entryDate`, when given, backdates the
+ * created entry; it is sent only on create, never on a retry PATCH. Rejections
+ * propagate to the caller.
  */
 export async function saveFinishedEntry(
   body: string,
   existingId?: number | null,
   onCreated?: (_id: number) => void,
+  entryDate?: string,
 ): Promise<number> {
   if (existingId == null) {
-    const created = await journal.create({ message: body });
+    const payload: JournalMessageCreate = entryDate
+      ? { message: body, entry_date: entryDate }
+      : { message: body };
+    const created = await journal.create(payload);
     onCreated?.(created.id);
     await journal.update(created.id, { status: FINISHED_STATUS });
     return created.id;

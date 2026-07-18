@@ -1193,6 +1193,8 @@ export interface JournalMessageCreate {
   reflection_level?: ReflectionLevel;
   /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflection_level``. */
   reflection_scope_key?: string;
+  /** Backdate the entry to this calendar day (YYYY-MM-DD); omitted for today, letting the server stamp now. */
+  entry_date?: string;
 }
 
 export type EntryStatus = 'draft' | 'finished';
