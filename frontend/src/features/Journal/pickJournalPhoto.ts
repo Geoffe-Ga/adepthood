@@ -1,10 +1,11 @@
 /**
  * Wraps `expo-image-picker` for the Journal photograph-capture flow: request
- * permission, open the library, and hand back the picked page as base64 with a
- * server-accepted media type — or a discriminated reason it did not.
+ * permission, open the library for an ordered multi-selection, and hand back the
+ * picked pages as base64 with server-accepted media types — or a discriminated
+ * reason none were usable.
  *
- * PRIVACY: the returned base64 image payload is never logged here; callers hold
- * it in memory only and release it once the page is saved.
+ * PRIVACY: the returned base64 image payloads are never logged here; callers hold
+ * them in memory only and release them once the pages are saved.
  */
 import * as ImagePicker from 'expo-image-picker';
 
@@ -21,19 +22,26 @@ const PASSTHROUGH_MEDIA_TYPES: readonly MediaType[] = ['image/png', 'image/webp'
 /** Default encoding assumed when the picker reports an unknown/absent mime type. */
 const DEFAULT_MEDIA_TYPE: MediaType = 'image/jpeg';
 
+/** A single usable page returned from the picker: its uri, base64, and media type. */
+export interface PickedAsset {
+  uri: string;
+  imageBase64: string;
+  mediaType: MediaType;
+}
+
 /**
- * The outcome of a single pick attempt, discriminated on `kind`:
+ * The outcome of a multi-pick attempt, discriminated on `kind`:
  *
  *  - `denied`    — media-library permission was refused; the picker never opened.
  *  - `cancelled` — the user backed out of the picker.
  *  - `failed`    — the pick completed but yielded no usable base64 image.
- *  - `picked`    — a usable page image with its resolved media type.
+ *  - `picked`    — one or more usable pages, in selection order.
  */
-export type PickResult =
+export type MultiPickResult =
   | { kind: 'denied' }
   | { kind: 'cancelled' }
   | { kind: 'failed' }
-  | { kind: 'picked'; imageBase64: string; mediaType: MediaType };
+  | { kind: 'picked'; assets: PickedAsset[] };
 
 /**
  * Map an image picker mime type to a transcription-accepted {@link MediaType}.
@@ -45,15 +53,33 @@ export function toMediaType(mime?: string): MediaType {
   return match ?? DEFAULT_MEDIA_TYPE;
 }
 
+/** Keep only assets that carry base64, mapping each to a {@link PickedAsset} in order. */
+function toPickedAssets(assets: readonly ImagePicker.ImagePickerAsset[]): PickedAsset[] {
+  const usable: PickedAsset[] = [];
+  for (const asset of assets) {
+    if (asset.base64) {
+      usable.push({
+        uri: asset.uri,
+        imageBase64: asset.base64,
+        mediaType: toMediaType(asset.mimeType),
+      });
+    }
+  }
+  return usable;
+}
+
 /**
- * Open the device media library and return the chosen page as base64.
+ * Open the device media library for an ordered multi-selection and return the
+ * chosen pages as base64.
  *
  * Requests media-library permission first; a refusal short-circuits to `denied`
- * without ever launching the picker. A cancelled pick is `cancelled`; a pick
- * that yields no asset or no base64 is `failed`. Otherwise the first asset's
- * base64 payload and resolved media type are returned as `picked`.
+ * without ever launching the picker. A cancelled pick is `cancelled`. Every
+ * picked asset carrying base64 is mapped, in selection order, to its uri, base64,
+ * and resolved media type; assets without base64 are skipped. A pick that yields
+ * no usable asset is `failed`. `selectionLimit` caps how many pages the picker
+ * offers — the session's remaining capacity.
  */
-export async function pickJournalPhoto(): Promise<PickResult> {
+export async function pickJournalPhotos(selectionLimit: number): Promise<MultiPickResult> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
     return { kind: 'denied' };
@@ -62,13 +88,16 @@ export async function pickJournalPhoto(): Promise<PickResult> {
     mediaTypes: ['images'],
     quality: IMAGE_QUALITY,
     base64: true,
+    allowsMultipleSelection: true,
+    selectionLimit,
+    orderedSelection: true,
   });
   if (result.canceled) {
     return { kind: 'cancelled' };
   }
-  const asset = result.assets[0];
-  if (!asset || !asset.base64) {
+  const assets = toPickedAssets(result.assets);
+  if (assets.length === 0) {
     return { kind: 'failed' };
   }
-  return { kind: 'picked', imageBase64: asset.base64, mediaType: toMediaType(asset.mimeType) };
+  return { kind: 'picked', assets };
 }

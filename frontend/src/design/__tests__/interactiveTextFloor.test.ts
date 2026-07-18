@@ -100,6 +100,7 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalEntry.styles.ts::privacyTierExplainer',
   'features/Journal/JournalEntry.styles.ts::savedHint',
   'features/Journal/JournalHero.styles.ts::eyebrow',
+  'features/Journal/JournalPhotograph.styles.ts::pageBadgeText',
   'features/Journal/JournalShelf.styles.ts::cardCaption',
   'features/Journal/JournalShelf.styles.ts::cardDate',
   'features/Journal/JournalShelf.styles.ts::promptLabel',
