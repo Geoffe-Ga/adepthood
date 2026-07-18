@@ -321,6 +321,7 @@ function ShelfTopMatter({
 interface ShelfNav {
   openEntry: (_id: number) => void;
   newEntry: () => void;
+  openPhotograph: () => void;
   openPrompt: () => void;
   openWithPrompt: () => void;
 }
@@ -336,6 +337,7 @@ function useShelfNavigation(
     [navigation],
   );
   const newEntry = useCallback(() => navigation.navigate('JournalEntry'), [navigation]);
+  const openPhotograph = useCallback(() => navigation.navigate('JournalPhotograph'), [navigation]);
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
@@ -348,7 +350,7 @@ function useShelfNavigation(
       prefillTitle: promptTitleForWeek(week),
     });
   }, [navigation, prompt, week]);
-  return { openEntry, newEntry, openPrompt, openWithPrompt };
+  return { openEntry, newEntry, openPhotograph, openPrompt, openWithPrompt };
 }
 
 function renderSectionHeader({
@@ -363,6 +365,7 @@ interface ShelfDrawer {
   drawer: ReturnType<typeof useScreenDrawer>;
   onSelectEntry: (_id: number) => void;
   onNewEntry: () => void;
+  onPhotograph: () => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -380,7 +383,11 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.newEntry();
     drawer.close();
   }, [nav, drawer]);
-  return { drawer, onSelectEntry, onNewEntry };
+  const onPhotograph = useCallback(() => {
+    nav.openPhotograph();
+    drawer.close();
+  }, [nav, drawer]);
+  return { drawer, onSelectEntry, onNewEntry, onPhotograph };
 }
 
 interface ShelfBodyProps {
@@ -456,6 +463,7 @@ function JournalShelfScreen(): React.JSX.Element {
         drawer={shelfDrawer.drawer}
         onSelectEntry={shelfDrawer.onSelectEntry}
         onNewEntry={shelfDrawer.onNewEntry}
+        onPhotograph={shelfDrawer.onPhotograph}
       />
     </ScreenScaffold>
   );

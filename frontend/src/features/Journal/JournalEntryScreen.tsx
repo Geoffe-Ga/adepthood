@@ -96,11 +96,17 @@ export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList,
   autosaveDelayMs?: number;
 };
 
+/** The "Saved" confirmation, shared by the edit-mode autosave hint and the
+ *  read-mode photograph-capture handoff so both read identically. */
+const SAVED_HINT = 'Saved';
+/** A blank hint line that reserves the row's height without showing any text. */
+const BLANK_HINT = ' ';
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
-  if (state === 'saved') return 'Saved';
+  if (state === 'saved') return SAVED_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
-  return ' ';
+  return BLANK_HINT;
 }
 
 /**
@@ -1318,12 +1324,42 @@ function QuotePromotionFeedback({ quote }: { quote: QuotePromotion }): React.JSX
   return null;
 }
 
+/** The read-mode passage tree: highlighted body plus the promote-lifecycle notice. */
+function ReadBodyContent({
+  body,
+  notes,
+  quote,
+  onOpen,
+}: {
+  body: string;
+  notes: Marginalia[];
+  quote: QuotePromotion;
+  onOpen: (_note: Marginalia) => void;
+}): React.JSX.Element {
+  return (
+    <>
+      <HighlightedBody
+        body={body}
+        notes={notes}
+        onOpen={onOpen}
+        quotes={quote.quotes}
+        onQuotePress={quote.onQuotePress}
+        removeTargetId={quote.removeTargetId}
+        onConfirmRemove={quote.confirmRemove}
+        onDismissRemove={quote.dismissRemove}
+      />
+      <QuotePromotionFeedback quote={quote} />
+    </>
+  );
+}
+
 /** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
 function ReadColumn({
   title,
   body,
   notes,
   quote,
+  justSaved,
   onOpen,
   onEdit,
 }: {
@@ -1331,6 +1367,8 @@ function ReadColumn({
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
+  /** True when this entry was just saved from photograph capture; shows "Saved". */
+  justSaved: boolean;
   onOpen: (_note: Marginalia) => void;
   onEdit: () => void;
 }) {
@@ -1350,20 +1388,11 @@ function ReadColumn({
           onCancel={quote.cancelSelecting}
         />
       ) : (
-        <>
-          <HighlightedBody
-            body={body}
-            notes={notes}
-            onOpen={onOpen}
-            quotes={quote.quotes}
-            onQuotePress={quote.onQuotePress}
-            removeTargetId={quote.removeTargetId}
-            onConfirmRemove={quote.confirmRemove}
-            onDismissRemove={quote.dismissRemove}
-          />
-          <QuotePromotionFeedback quote={quote} />
-        </>
+        <ReadBodyContent body={body} notes={notes} quote={quote} onOpen={onOpen} />
       )}
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {justSaved ? SAVED_HINT : BLANK_HINT}
+      </Text>
       {quote.selecting ? null : <ReadModeControls quote={quote} onEdit={onEdit} />}
     </ScrollView>
   );
@@ -1644,6 +1673,7 @@ function useJournalEntryController(
   navigation: ScreenNavigation,
   ctx: SaveContext,
   initialText: InitialText,
+  justSaved: boolean,
 ) {
   const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
@@ -1664,7 +1694,9 @@ function useJournalEntryController(
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const gate = deriveResonanceGate({
-    isIdle,
+    // A photograph-capture handoff (justSaved) offers resonance immediately,
+    // without waiting for the usual post-typing idle pause.
+    isIdle: isIdle || justSaved,
     isLoading: resonance.loading,
     body: autosave.body,
     classification: autosave.classification,
@@ -1682,6 +1714,7 @@ function useJournalEntryController(
     handleBody,
     modal,
     editGate,
+    justSaved,
     // Weekly-prompt compose withholds Finish (no local id); title stays editable.
     isPromptCompose: ctx.weekNumber != null,
   };
@@ -1726,6 +1759,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       body={body}
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
+      justSaved={ctl.justSaved}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
     />
@@ -1980,6 +2014,48 @@ function EntryOverlays({
   );
 }
 
+/** The privacy-tier reason line paired with the floating resonance affordance. */
+function ResonanceControls({
+  visible,
+  disabled,
+  loading,
+  reason,
+  onPress,
+}: {
+  visible: boolean;
+  disabled: boolean;
+  loading: boolean;
+  reason: string;
+  onPress: () => Promise<void>;
+}): React.JSX.Element {
+  return (
+    <>
+      <PrivacyResonanceReason visible={visible && disabled} reason={reason} />
+      <GetResonanceButton
+        visible={visible}
+        loading={loading}
+        disabled={disabled}
+        onPress={onPress}
+      />
+    </>
+  );
+}
+
+/**
+ * The two screen-level care siblings rendered ABOVE the page (NORTH-STAR §10):
+ * the acute-distress support surface first, then the warmer foundation reflection,
+ * so a distress signal always reads before the gentler nudge. Both are siblings of
+ * the page — never nested in the margin column — and hide on a healthy pass.
+ */
+function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
+  return (
+    <>
+      <CareSupportNote care={ctl.resonance.care} />
+      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+    </>
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -1987,6 +2063,7 @@ function JournalEntryScreen({
 }: JournalEntryScreenProps): React.JSX.Element {
   const { ctx, initialText, bodyPlaceholder } = readEntrypoint(route.params);
   const currentEntryId = route.params?.entryId ?? null;
+  const justSaved = route.params?.justSaved ?? false;
   const entryDrawer = useEntryScreenDrawer(navigation);
   const ctl = useJournalEntryController(
     currentEntryId,
@@ -1994,17 +2071,11 @@ function JournalEntryScreen({
     navigation,
     ctx,
     initialText,
+    justSaved,
   );
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
-      {/* Screen-level care surface (NORTH-STAR §10): a sibling ABOVE the page,
-          never nested in the margin column — so on an acute-distress signal the
-          human + professional support reads as the page's own, not a margin note. */}
-      <CareSupportNote care={ctl.resonance.care} />
-      {/* Foundation reflection: a warm, declinable "tend your foundation"
-          sibling rendered AFTER the care surface so an acute-distress signal
-          always reads first. Hidden (renders nothing) on healthy passes. */}
-      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      <EntryCareSurfaces ctl={ctl} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
       <ReturnToReadingLink
         returnTo={route.params?.returnTo}
@@ -2013,14 +2084,11 @@ function JournalEntryScreen({
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
-      <PrivacyResonanceReason
-        visible={ctl.visible && ctl.resonanceDisabled}
-        reason={ctl.resonanceReason}
-      />
-      <GetResonanceButton
+      <ResonanceControls
         visible={ctl.visible}
-        loading={ctl.resonance.loading}
         disabled={ctl.resonanceDisabled}
+        loading={ctl.resonance.loading}
+        reason={ctl.resonanceReason}
         onPress={ctl.resonance.requestResonance}
       />
       <EntryOverlays

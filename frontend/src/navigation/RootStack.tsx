@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
+import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
@@ -38,9 +39,13 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
+  JournalPhotograph: undefined;
   JournalEntry:
     | {
         entryId?: number;
+        /** Set when arriving fresh from photograph capture: reads as "Saved" and
+         *  offers resonance immediately, skipping the usual idle-after-typing wait. */
+        justSaved?: boolean;
         weekNumber?: number;
         promptQuestion?: string;
         practiceSessionId?: number;
@@ -82,6 +87,23 @@ const NAV_SCREEN_OPTIONS = {
  * import -- can pass ``{ screen, params }`` through ``navigation.navigate``
  * with full type safety.
  */
+/** The Journal routes pushed as siblings of the tab shell: the entry editor and
+ *  the photograph-capture flow. Grouped in a fragment to keep ``RootStack`` lean. */
+const JournalScreens = (): React.JSX.Element => (
+  <>
+    <Stack.Screen
+      name="JournalEntry"
+      component={JournalEntryScreen}
+      options={{ title: 'Journal' }}
+    />
+    <Stack.Screen
+      name="JournalPhotograph"
+      component={JournalPhotographScreen}
+      options={{ title: 'Photograph journal' }}
+    />
+  </>
+);
+
 const RootStack = (): React.JSX.Element => (
   <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
@@ -121,11 +143,7 @@ const RootStack = (): React.JSX.Element => (
       component={PracticeCatalogScreen}
       options={{ title: 'Practices' }}
     />
-    <Stack.Screen
-      name="JournalEntry"
-      component={JournalEntryScreen}
-      options={{ title: 'Journal' }}
-    />
+    {JournalScreens()}
   </Stack.Navigator>
 );
 
