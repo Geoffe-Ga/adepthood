@@ -27,6 +27,11 @@ jest.mock('../src/features/Habits/components/MissedDaysModal', () => () => null)
 jest.mock('../src/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('../src/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('../src/features/Habits/components/StatsModal', () => () => null);
+jest.mock('../src/features/Journal/CapturePagesStrip', () => ({
+  __esModule: true,
+  CapturePagesStrip: () => null,
+  default: () => null,
+}));
 
 describe('App bootstrap', () => {
   it('includes SafeAreaProvider at the root', () => {

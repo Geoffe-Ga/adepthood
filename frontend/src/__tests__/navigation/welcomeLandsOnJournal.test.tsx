@@ -39,6 +39,12 @@ jest.mock('@/features/Journal/JournalShelfScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
+jest.mock('@/features/Journal/CapturePagesStrip', () => ({
+  __esModule: true,
+  CapturePagesStrip: () => null,
+  default: () => null,
+}));
+
 jest.mock('@/features/Habits/HabitsScreen', () => {
   const React = require('react');
   const { Text } = require('react-native');

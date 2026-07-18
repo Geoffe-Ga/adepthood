@@ -1,26 +1,34 @@
 /**
- * Photograph a handwritten journal page, transcribe it, and save it as a finished
- * entry. The flow auto-launches the photo picker on mount, sends the picked image
- * to the transcription endpoint, then offers the writer an editable preview of the
- * text before it becomes a real entry.
+ * Photograph handwritten journal pages, transcribe them, and save them as a
+ * finished entry. The flow auto-launches the photo picker on mount into an
+ * ordered, multi-page capture session: the writer collects pages (multi-select),
+ * reorders the thumbnail strip, and trims it before proceeding. Transcription is
+ * single-page in this iteration — the proceed affordance enables only for exactly
+ * one page — after which the writer gets an editable preview before it becomes a
+ * real entry.
  *
  * Every step is warm and declinable (NORTH-STAR): a refused permission, a cancelled
  * pick, an unreadable photo, or a spent transcription wallet each lead to a plain,
  * shame-free offramp — most often "type this entry instead" — never a dead end.
  *
- * PRIVACY: the base64 page image lives in component state only. It is never placed
- * in navigation params or logged, and is released on save and on unmount.
+ * PRIVACY: the base64 page images live in the capture session's reducer state
+ * only. They are never placed in navigation params or logged, and are released
+ * when the session is cleared (on save, on the typed-entry offramp) and on unmount.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Text, TextInput, View } from 'react-native';
 
+import { CapturePagesStrip } from './CapturePagesStrip';
+import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
+import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
-import { pickJournalPhoto } from './pickJournalPhoto';
+import { pickJournalPhotos } from './pickJournalPhoto';
+import type { MultiPickResult, PickedAsset } from './pickJournalPhoto';
 import { saveFinishedEntry } from './saveFinishedEntry';
 
 import { TranscriptionError, journal } from '@/api';
-import type { MediaType, TranscriptionErrorKind } from '@/api';
+import type { TranscriptionErrorKind } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import DatePicker, { toISODate } from '@/components/DatePicker';
@@ -85,17 +93,12 @@ const TYPED_ENTRY_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<Transcrip
   'model_lacks_vision',
 ]);
 
-/** The picked page held in memory for transcription (never in nav params). */
-interface PickedImage {
-  imageBase64: string;
-  mediaType: MediaType;
-}
-
 /** The screen's mutually-exclusive phases. */
 type Phase =
   | { step: 'preparing' }
   | { step: 'denied' }
   | { step: 'pickFailed' }
+  | { step: 'collect' }
   | { step: 'transcribing' }
   | { step: 'preview' }
   | { step: 'error'; error: TranscriptionError };
@@ -133,6 +136,8 @@ type PhotographNavigation = NativeStackScreenProps<
 
 interface CaptureModel {
   phase: Phase;
+  pages: CapturePage[];
+  canAdd: boolean;
   previewText: string;
   entryDate: string;
   saving: boolean;
@@ -140,6 +145,9 @@ interface CaptureModel {
   onChangeText: (_text: string) => void;
   onChangeEntryDate: (_date: string) => void;
   runPick: () => void;
+  removePage: (_id: string) => void;
+  reorderPages: (_pages: CapturePage[]) => void;
+  transcribe: () => void;
   retryTranscribe: () => void;
   save: () => void;
   openSettings: () => void;
@@ -152,47 +160,97 @@ function entryDateForCreate(entryDate: string): string | undefined {
   return entryDate === toISODate(new Date()) ? undefined : entryDate;
 }
 
-/** Pick a page image and transcribe it into an editable preview, stashing the
- *  picked image in ``imageRef`` so it never rides in nav params. */
-function usePickAndTranscribe(
+/** Give freshly-picked assets stable session ids (a monotonic counter), building
+ *  the {@link CapturePage} list appended to the session. */
+function toCapturePages(
+  assets: readonly PickedAsset[],
+  counterRef: React.MutableRefObject<number>,
+): CapturePage[] {
+  return assets.map((asset) => {
+    counterRef.current += 1;
+    return {
+      id: `page-${counterRef.current}`,
+      uri: asset.uri,
+      imageBase64: asset.imageBase64,
+      mediaType: asset.mediaType,
+      status: 'ready',
+    };
+  });
+}
+
+interface PickDeps {
+  navigation: PhotographNavigation;
+  dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>;
+  pagesRef: React.MutableRefObject<CapturePage[]>;
+  counterRef: React.MutableRefObject<number>;
+  setPhase: (_phase: Phase) => void;
+}
+
+/** Route an initial (empty-session) pick that yielded no pages to its offramp:
+ *  a refused permission, a shame-free back-out, or an unreadable pick. */
+function applyInitialPickFailure(
+  result: Exclude<MultiPickResult, { kind: 'picked' }>,
   navigation: PhotographNavigation,
   setPhase: (_phase: Phase) => void,
+): void {
+  if (result.kind === 'denied') {
+    setPhase({ step: 'denied' });
+    return;
+  }
+  if (result.kind === 'cancelled') {
+    navigation.goBack();
+    return;
+  }
+  setPhase({ step: 'pickFailed' });
+}
+
+/** Launch the picker for the session's remaining capacity and fold the result in.
+ *  The first pick opens the session; later picks are additive — a cancel or a
+ *  failed pick with pages already collected simply keeps the session intact. */
+function usePickPages({
+  navigation,
+  dispatch,
+  pagesRef,
+  counterRef,
+  setPhase,
+}: PickDeps): () => Promise<void> {
+  return useCallback(async () => {
+    const hadPages = pagesRef.current.length > 0;
+    if (!hadPages) setPhase({ step: 'preparing' });
+    const result = await pickJournalPhotos(MAX_PAGES_PER_SESSION - pagesRef.current.length);
+    if (result.kind === 'picked') {
+      dispatch({ type: 'append', pages: toCapturePages(result.assets, counterRef) });
+    } else if (!hadPages) {
+      applyInitialPickFailure(result, navigation, setPhase);
+      return;
+    }
+    setPhase({ step: 'collect' });
+  }, [navigation, dispatch, pagesRef, counterRef, setPhase]);
+}
+
+/** Transcribe the session's single page into an editable preview. This is the
+ *  seam a later epic widens to multi-page reading; here it handles exactly one
+ *  page and no-ops otherwise (the proceed button is disabled for any other count). */
+function useBeginTranscription(
+  pagesRef: React.MutableRefObject<CapturePage[]>,
+  setPhase: (_phase: Phase) => void,
   setPreviewText: (_text: string) => void,
-  imageRef: React.MutableRefObject<PickedImage | null>,
-): { runPick: () => Promise<void>; transcribe: () => Promise<void> } {
-  const transcribe = useCallback(async () => {
-    const image = imageRef.current;
-    if (image == null) return;
+): () => Promise<void> {
+  return useCallback(async () => {
+    const [page] = pagesRef.current;
+    if (pagesRef.current.length !== 1 || !page) return;
     setPhase({ step: 'transcribing' });
     try {
-      const { text } = await journal.transcribePage(image);
+      const { text } = await journal.transcribePage({
+        imageBase64: page.imageBase64,
+        mediaType: page.mediaType,
+      });
       setPreviewText(text);
       setPhase({ step: 'preview' });
     } catch (err: unknown) {
       setPhase({ step: 'error', error: asTranscriptionError(err) });
     }
-  }, [imageRef, setPhase, setPreviewText]);
-
-  const runPick = useCallback(async () => {
-    setPhase({ step: 'preparing' });
-    const result = await pickJournalPhoto();
-    if (result.kind === 'denied') {
-      setPhase({ step: 'denied' });
-      return;
-    }
-    if (result.kind === 'cancelled') {
-      navigation.goBack();
-      return;
-    }
-    if (result.kind === 'failed') {
-      setPhase({ step: 'pickFailed' });
-      return;
-    }
-    imageRef.current = { imageBase64: result.imageBase64, mediaType: result.mediaType };
-    await transcribe();
-  }, [navigation, transcribe, imageRef, setPhase]);
-
-  return { runPick, transcribe };
+  }, [pagesRef, setPhase, setPreviewText]);
 }
 
 /** Persist the edited transcript. Reuses ``createdIdRef`` across save retries so a
@@ -201,7 +259,7 @@ function useSaveEntry(
   navigation: PhotographNavigation,
   previewText: string,
   entryDate: string,
-  imageRef: React.MutableRefObject<PickedImage | null>,
+  releaseSession: () => void,
   createdIdRef: React.MutableRefObject<number | null>,
 ): { save: () => Promise<void>; saving: boolean; saveFailed: boolean } {
   const [saving, setSaving] = useState(false);
@@ -219,63 +277,72 @@ function useSaveEntry(
         },
         entryDateForCreate(entryDate),
       );
-      imageRef.current = null; // Release the page image the moment it is saved.
+      releaseSession(); // Release every page image the moment the entry is saved.
       navigation.replace('JournalEntry', { entryId: id, justSaved: true });
     } catch {
       setSaveFailed(true);
     } finally {
       setSaving(false);
     }
-  }, [previewText, entryDate, navigation, imageRef, createdIdRef]);
+  }, [previewText, entryDate, navigation, releaseSession, createdIdRef]);
 
   return { save, saving, saveFailed };
 }
 
+/** The navigation offramps that also release the in-memory session: opening
+ *  device settings, backing out, and stepping off to a plain typed entry. */
+function useNavigationOfframps(
+  navigation: PhotographNavigation,
+  releaseSession: () => void,
+): { openSettings: () => void; cancel: () => void; goTypedEntry: () => void } {
+  const openSettings = useCallback(() => void Linking.openSettings(), []);
+  const cancel = useCallback(() => navigation.goBack(), [navigation]);
+  const goTypedEntry = useCallback(() => {
+    releaseSession(); // Release the session when stepping off to a typed entry.
+    navigation.navigate('JournalEntry');
+  }, [navigation, releaseSession]);
+  return { openSettings, cancel, goTypedEntry };
+}
+
 /**
- * The capture state machine: pick → transcribe → editable preview → save. Holds
- * the picked image and the created-entry id in refs so neither survives in nav
- * params, and so a save retry after a failed finish PATCH reuses the created id
- * rather than creating a duplicate page.
+ * The capture state machine: collect pages → transcribe → editable preview → save.
+ * Pages live in a reducer (never in nav params) with a ref mirror so async picks
+ * read the current session; the created-entry id lives in a ref so a save retry
+ * after a failed finish PATCH reuses it rather than creating a duplicate page.
  */
 function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
+  const [pages, dispatch] = useReducer(captureSessionReducer, []);
   const [previewText, setPreviewText] = useState('');
   const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
-  const imageRef = useRef<PickedImage | null>(null);
   const createdIdRef = useRef<number | null>(null);
+  const counterRef = useRef(0);
+  const pagesRef = useRef<CapturePage[]>(pages);
+  pagesRef.current = pages;
 
-  const { runPick, transcribe } = usePickAndTranscribe(
-    navigation,
-    setPhase,
-    setPreviewText,
-    imageRef,
-  );
+  const releaseSession = useCallback(() => dispatch({ type: 'clear' }), []);
+  const runPick = usePickPages({ navigation, dispatch, pagesRef, counterRef, setPhase });
+  const beginTranscription = useBeginTranscription(pagesRef, setPhase, setPreviewText);
   const { save, saving, saveFailed } = useSaveEntry(
     navigation,
     previewText,
     entryDate,
-    imageRef,
+    releaseSession,
     createdIdRef,
   );
 
-  const openSettings = useCallback(() => void Linking.openSettings(), []);
-  const cancel = useCallback(() => navigation.goBack(), [navigation]);
-  const goTypedEntry = useCallback(() => {
-    imageRef.current = null; // Release the page image when stepping off to a typed entry.
-    navigation.navigate('JournalEntry');
-  }, [navigation, imageRef]);
+  const { openSettings, cancel, goTypedEntry } = useNavigationOfframps(navigation, releaseSession);
 
   useEffect(() => {
     void runPick();
-    // The device-local cache file the picker copies is cleaned up by a later epic
-    // issue; here we only release our in-memory hold on unmount.
-    return () => {
-      imageRef.current = null;
-    };
+    // The device-local cache files the picker copies are cleaned up by a later
+    // epic; the in-memory session is released by React when this screen unmounts.
   }, [runPick]);
 
   return {
     phase,
+    pages,
+    canAdd: canAddPages(pages),
     previewText,
     entryDate,
     saving,
@@ -283,7 +350,10 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     onChangeText: setPreviewText,
     onChangeEntryDate: setEntryDate,
     runPick: () => void runPick(),
-    retryTranscribe: () => void transcribe(),
+    removePage: (id) => dispatch({ type: 'remove', id }),
+    reorderPages: (next) => dispatch({ type: 'reorder', pages: next }),
+    transcribe: () => void beginTranscription(),
+    retryTranscribe: () => void beginTranscription(),
     save: () => void save(),
     openSettings,
     cancel,
@@ -478,6 +548,23 @@ function PreviewView({
   );
 }
 
+/** The collect stage: the ordered page strip over a quiet, declinable date row. */
+function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
+  return (
+    <View style={styles.container}>
+      <CapturePagesStrip
+        pages={model.pages}
+        canAdd={model.canAdd}
+        onAdd={model.runPick}
+        onRemove={model.removePage}
+        onReorder={model.reorderPages}
+        onTranscribe={model.transcribe}
+      />
+      <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
+    </View>
+  );
+}
+
 /** Route the current phase to its view. */
 function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
   const { phase } = model;
@@ -486,6 +573,8 @@ function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
       return <PermissionDeniedView onOpenSettings={model.openSettings} onCancel={model.cancel} />;
     case 'pickFailed':
       return <PickFailedView onPickAnother={model.runPick} />;
+    case 'collect':
+      return <CollectView model={model} />;
     case 'transcribing':
       return <WorkingBlock testID="photograph-transcribing" caption={TRANSCRIBING_COPY} />;
     case 'preview':
