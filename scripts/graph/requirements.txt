@@ -1,1 +1,1 @@
-graphifyy==0.9.17
+graphifyy==0.9.19
