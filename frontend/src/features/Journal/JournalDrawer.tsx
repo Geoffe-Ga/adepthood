@@ -34,6 +34,8 @@ import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/desi
 
 /** Row that starts a fresh, blank entry. */
 const NEW_ENTRY_LABEL = 'New entry';
+/** Row that opens the photograph-a-page capture flow. */
+const PHOTOGRAPH_LABEL = 'Photograph a page';
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
 /** Fallback label for an entry saved without a title. */
@@ -396,6 +398,8 @@ export interface JournalDrawerProps {
   onRowPress: (_id: number) => void;
   /** Start a fresh, blank entry. */
   onNewEntry: () => void;
+  /** Open the photograph-a-page capture flow. Omitted where the flow is unavailable. */
+  onPhotograph?: () => void;
   /** Fetch and append the next older page. */
   onLoadMore: () => void;
   /** Refetch the first page after a failure. */
@@ -445,6 +449,29 @@ function useDrawerSearch(
   return { bodySearchActive, isSearching, matches, handleQueryChange, handleConfirmDeepSearch };
 }
 
+/** The drawer's top action rows: start a blank entry, and (from the shelf) begin
+ *  a photograph capture. The photograph row appears only when a handler is wired. */
+function DrawerActions({
+  onNewEntry,
+  onPhotograph,
+}: {
+  onNewEntry: () => void;
+  onPhotograph?: () => void;
+}): React.JSX.Element {
+  return (
+    <>
+      <DrawerItem testID="journal-drawer-new-entry" label={NEW_ENTRY_LABEL} onPress={onNewEntry} />
+      {onPhotograph ? (
+        <DrawerItem
+          testID="journal-photograph-entry"
+          label={PHOTOGRAPH_LABEL}
+          onPress={onPhotograph}
+        />
+      ) : null}
+    </>
+  );
+}
+
 /** The Journal header drawer's contents: New entry, a search field, then the list. */
 export default function JournalDrawer({
   items,
@@ -455,6 +482,7 @@ export default function JournalDrawer({
   currentEntryId,
   onRowPress,
   onNewEntry,
+  onPhotograph,
   onLoadMore,
   onRetry,
   onConfirmBodySearch,
@@ -464,7 +492,7 @@ export default function JournalDrawer({
 
   return (
     <View testID="journal-drawer">
-      <DrawerItem testID="journal-drawer-new-entry" label={NEW_ENTRY_LABEL} onPress={onNewEntry} />
+      <DrawerActions onNewEntry={onNewEntry} onPhotograph={onPhotograph} />
       <DrawerSearchField
         resultCount={isSearching ? matches.length : undefined}
         bodySearchActive={bodySearchActive}
@@ -506,6 +534,8 @@ export interface JournalScreenDrawerProps {
   onSelectEntry: (_id: number) => void;
   /** Start a fresh entry, then close the drawer. */
   onNewEntry: () => void;
+  /** Open the photograph-a-page capture flow. Omitted where it is unavailable. */
+  onPhotograph?: () => void;
 }
 
 /** The Journal header drawer wired to its lazy, cache-above-the-panel entry fetch. */
@@ -514,6 +544,7 @@ export function JournalScreenDrawer({
   currentEntryId,
   onSelectEntry,
   onNewEntry,
+  onPhotograph,
 }: JournalScreenDrawerProps): React.JSX.Element {
   const { items, loading, error, hasMore, loadMore, retry, confirmBodySearch } =
     useJournalDrawerEntries(drawer.isOpen);
@@ -534,6 +565,7 @@ export function JournalScreenDrawer({
         currentEntryId={currentEntryId}
         onRowPress={onSelectEntry}
         onNewEntry={onNewEntry}
+        onPhotograph={onPhotograph}
         onLoadMore={loadMore}
         onRetry={retry}
         onConfirmBodySearch={confirmBodySearch}

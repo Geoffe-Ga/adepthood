@@ -210,4 +210,18 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry');
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
+
+  it('navigates to JournalPhotograph when Photograph is tapped in the drawer', async () => {
+    const { getByTestId, getByLabelText } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-photograph-entry')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-photograph-entry'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('JournalPhotograph');
+  });
 });

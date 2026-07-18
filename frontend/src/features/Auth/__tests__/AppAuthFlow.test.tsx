@@ -114,6 +114,14 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
   const Stub = () => <Text>JournalEntryScreen</Text>;
   return { __esModule: true, default: Stub };
 });
+// RootStack now mounts JournalPhotographScreen as a pushed sibling route; it
+// runs a photo-pick on mount and reads ``navigation`` -- stub it for the same
+// reason as the routes above so this suite stays focused on auth gating.
+jest.mock('@/features/Journal/JournalPhotographScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>JournalPhotographScreen</Text>;
+  return { __esModule: true, default: Stub };
+});
 
 import App, { linking } from '@/App';
 import { useWelcomeStore } from '@/store/useWelcomeStore';

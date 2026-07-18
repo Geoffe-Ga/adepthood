@@ -62,6 +62,7 @@ interface DrawerHarness {
   currentEntryId?: number | null;
   onRowPress?: (_id: number) => void;
   onNewEntry?: () => void;
+  onPhotograph?: () => void;
 }
 
 function renderDrawer(props: Partial<DrawerHarness> = {}) {
@@ -80,6 +81,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       currentEntryId={props.currentEntryId}
       onRowPress={onRowPress}
       onNewEntry={onNewEntry}
+      onPhotograph={props.onPhotograph}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
       onConfirmBodySearch={onConfirmBodySearch}
@@ -216,6 +218,24 @@ describe('JournalDrawer (presentational)', () => {
     const { getByTestId, onRetry } = renderDrawer({ items: [], error: true });
     fireEvent.press(getByTestId('journal-drawer-retry'));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render the Photograph row when onPhotograph is absent', () => {
+    const { queryByTestId } = renderDrawer({ items: [] });
+    expect(queryByTestId('journal-photograph-entry')).toBeNull();
+  });
+
+  it('renders a Photograph row beside New entry when onPhotograph is provided', () => {
+    const onPhotograph = jest.fn();
+    const { getByTestId } = renderDrawer({ items: [], onPhotograph });
+    expect(getByTestId('journal-photograph-entry')).toBeTruthy();
+  });
+
+  it('fires onPhotograph when the Photograph row is pressed', () => {
+    const onPhotograph = jest.fn();
+    const { getByTestId } = renderDrawer({ items: [], onPhotograph });
+    fireEvent.press(getByTestId('journal-photograph-entry'));
+    expect(onPhotograph).toHaveBeenCalledTimes(1);
   });
 });
 
