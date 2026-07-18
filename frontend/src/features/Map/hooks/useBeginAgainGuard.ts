@@ -1,6 +1,6 @@
 /** Ref-guarded single-flight begin-again: blocks same-tick double-press, state drives disabled UI. */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { stageService } from '../services/stageService';
 
@@ -10,15 +10,27 @@ export function useBeginAgainGuard(): { beginning: boolean; handleBeginAgain: ()
   // send exactly one request until loadStages hides the button.
   const [beginning, setBeginning] = useState(false);
   const beginningRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const handleBeginAgain = useCallback(() => {
     // Ref guard blocks a same-tick double-press; state drives the disabled UI.
     if (beginningRef.current) return;
+    if (!mountedRef.current) return;
     beginningRef.current = true;
     setBeginning(true);
     void stageService.beginAgain().finally(() => {
-      beginningRef.current = false;
-      setBeginning(false);
+      if (mountedRef.current) {
+        beginningRef.current = false;
+        setBeginning(false);
+      } else {
+        beginningRef.current = false;
+      }
     });
   }, []);
 
