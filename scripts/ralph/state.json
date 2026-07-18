@@ -9,5 +9,5 @@
   "last_completed_issue": 1792,
   "started_at": null,
   "parallel_enabled": true,
-  "max_workers": 0
+  "max_workers": 2
 }
