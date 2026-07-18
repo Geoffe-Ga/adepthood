@@ -47,6 +47,13 @@ graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
 `./scripts/graph/build.sh` (~2 min, $0), or proceed without it exactly as
 today — **never stall on graph absence.**
 
+**Step 0.6 — Record what the graph taught you.** When a graph query
+materially shaped (or misled) the tick, save the trace: `graphify save-result
+--question "…" --answer "…" --nodes <returned labels> --outcome
+useful|dead_end|corrected [--correction "…"] --memory-dir graph/memory/`, then
+regenerate `graph/reflections/LESSONS.md` via `graphify reflect --memory-dir
+graph/memory …` and commit both (small Markdown notes; repo Q&A only).
+
 1. **Read your assignment.** `gh issue view "$RALPH_ISSUE" --comments`.
 2. **Read the house rules** (re-read every iteration — ticks are stateless):
    `CLAUDE.md` (repo root, project config + guardrails) and `AGENTS.md`

@@ -53,7 +53,11 @@ you read, reason, and dispatch.
    knowledge-graph --pattern graph.json --dir graphify-out`, see
    `scripts/graph/README.md`), build with `./scripts/graph/build.sh` (~2 min,
    $0), or fall back to Read/Grep/Glob exactly as today. Never stall the plan
-   on it.
+   on it. **Leave a memory trace:** when a graph query proves load-bearing to
+   the plan — or turns out wrong — name it so the conductor records it with
+   `graphify save-result … --outcome useful|dead_end|corrected --memory-dir
+   graph/memory/`. Those committed Markdown notes feed the weekly `graphify
+   reflect` digest; repo Q&A only, never secrets.
 3. **Decide the design.** The smallest coherent change that satisfies the issue
    at threshold quality. Name the interfaces/signatures/models that change.
 4. **Flag the risks** — which of these the issue genuinely touches:

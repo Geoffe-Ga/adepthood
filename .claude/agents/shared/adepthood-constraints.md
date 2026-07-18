@@ -37,6 +37,13 @@ graph.json --dir graphify-out`, see `scripts/graph/README.md`), build with
 `./scripts/graph/build.sh` (~2 min, $0), or proceed with Read/Grep/Glob
 exactly as today. **Never stall on graph absence.**
 
+Graph queries that prove useful (or wrong) leave a trace: `graphify
+save-result --outcome useful|dead_end|corrected --memory-dir graph/memory/`
+writes a small Markdown note (committed, unlike git-ignored `graphify-out/`),
+and the weekly `graphify reflect` distills them into
+`graph/reflections/LESSONS.md`, which the weekly playbook reads. Record repo
+Q&A only — never user data or secrets.
+
 ## The four gates (the whole game)
 
 | Gate | Check | On pass | On fail |
