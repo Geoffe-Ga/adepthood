@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import ClassVar
 
@@ -231,13 +232,31 @@ def test_no_python_multipart_dependency() -> None:
 # ── D: request-log safety ──────────────────────────────────────────────────
 
 
+def _iter_api_routes(routes: Iterable[object]) -> Iterator[APIRoute]:
+    """Yield every APIRoute reachable from ``routes``, descending into included routers.
+
+    FastAPI >= 0.137 stopped flattening an ``include_router`` call's routes into
+    the parent ``app.routes``; it appends one mount-like ``_IncludedRouter`` whose
+    real APIRoutes hang off ``original_router``. Older versions flattened them
+    directly. Walking both shapes keeps the route lookup version-robust, so a
+    shallow ``app.routes`` scan can no longer make the guarantee silently vacuous.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from _iter_api_routes(included.routes)
+            continue
+        sub_routes = getattr(route, "routes", None)
+        if sub_routes is not None:
+            yield from _iter_api_routes(sub_routes)
+
+
 def test_transcribe_route_has_no_path_parameters() -> None:
     """The registered route path is body-only -- no image data ever rides the URL."""
-    matching = [
-        route
-        for route in main_app.routes
-        if isinstance(route, APIRoute) and route.path == _ENDPOINT
-    ]
+    matching = [route for route in _iter_api_routes(main_app.routes) if route.path == _ENDPOINT]
     assert matching, f"no registered route found for {_ENDPOINT}"
     assert "{" not in matching[0].path
 
