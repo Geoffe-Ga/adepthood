@@ -58,7 +58,12 @@ Route only the dimensions the diff actually touches — no redundant reviews.
    `knowledge-graph` release (`gh release download knowledge-graph --pattern
    graph.json --dir graphify-out`, see `scripts/graph/README.md`), build
    with `./scripts/graph/build.sh` (~2 min, $0), or review without it
-   exactly as today. Never stall the review on graph absence.
+   exactly as today. Never stall the review on graph absence. **Leave a memory
+   trace:** when `graphify affected` surfaced — or missed — a dependent that
+   changed a finding, have the conductor record it via `graphify save-result …
+   --memory-dir graph/memory/` (`--outcome corrected --correction "…"` when the
+   graph was wrong). Those committed Markdown notes feed the weekly `graphify
+   reflect` digest; repo Q&A only, never secrets.
 2. **Primary path — review the applicable dimensions yourself** against each
    specialist's checklist (above) and the shared constraints. You run on Opus
    precisely so a single agent can carry every dimension. **Enhancement:** where
