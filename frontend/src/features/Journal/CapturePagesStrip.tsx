@@ -4,9 +4,8 @@
  * affordances to add more pages or proceed to transcription.
  *
  * Reordering is drag-to-commit (long-press a card, drop it), mirroring the Habits
- * reorder idiom. Transcription is single-page in this iteration: the proceed button
- * enables only for exactly one page; more than one surfaces a warm, declinable
- * notice rather than a hard block.
+ * reorder idiom. The proceed affordance reads every collected page: it enables for
+ * any non-empty session and hands the whole ordered set to the transcription run.
  */
 import React from 'react';
 import { Image, Pressable, Text, TouchableOpacity, View } from 'react-native';
@@ -21,11 +20,6 @@ import { Button } from '@/components/Button';
 
 const ADD_PAGES_LABEL = 'Add pages';
 const REMOVE_GLYPH = '×';
-
-/** Warm, declinable copy shown when a session holds more than one page: reading
- *  several pages at once is coming; for now, trim to one to transcribe it. */
-const MULTI_PAGE_NOTICE =
-  'Reading several pages together is on its way. For now, keep a single page here to transcribe it — remove the others, or save them in their own entries.';
 
 /** The proceed button's label: one page reads as itself, several are counted. */
 function transcribeLabel(count: number): string {
@@ -102,8 +96,7 @@ function AddPagesControl({
   );
 }
 
-/** Proceed affordance: enabled only for a single page; a warm notice explains the
- *  multi-page case rather than blocking it outright. */
+/** Proceed affordance: enabled for any non-empty session, reading every page. */
 function TranscribeControl({
   count,
   onTranscribe,
@@ -113,20 +106,13 @@ function TranscribeControl({
 }): React.JSX.Element {
   const label = transcribeLabel(count);
   return (
-    <>
-      <Button
-        testID="capture-transcribe"
-        label={label}
-        accessibilityLabel={label}
-        disabled={count !== 1}
-        onPress={onTranscribe}
-      />
-      {count > 1 ? (
-        <Text testID="capture-multi-page-notice" style={styles.notice}>
-          {MULTI_PAGE_NOTICE}
-        </Text>
-      ) : null}
-    </>
+    <Button
+      testID="capture-transcribe"
+      label={label}
+      accessibilityLabel={label}
+      disabled={count < 1}
+      onPress={onTranscribe}
+    />
   );
 }
 
