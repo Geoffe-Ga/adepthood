@@ -13,9 +13,9 @@ import {
   touchTarget,
 } from '@/design/tokens';
 
-/** Minimum height for the editable preview so a short transcription still reads
- *  as a full page rather than a cramped single-line field. */
-const PREVIEW_MIN_HEIGHT = spacing(30);
+/** Minimum height for one page's block (skeleton or editable field) so each page
+ *  keeps a steady footprint as it moves from reading to editable text. */
+const BLOCK_MIN_HEIGHT = spacing(20);
 
 /** Thumbnail footprint for a collected page: a portrait card wide enough to read
  *  the page number badge and remove affordance without crowding the image. */
@@ -28,15 +28,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: SPACING.md,
   },
-  heading: {
-    ...editorialType.title,
-    color: colors.paper.ink,
-  },
   message: {
     ...editorialType.body,
     color: colors.paper.inkSoft,
   },
-  /** The quiet "reading your page" block shown while transcription is in flight. */
+  /** The quiet, centred "we're working" block shown while the picker is opening. */
   fillingBlock: {
     flex: 1,
     alignItems: 'center',
@@ -46,19 +42,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
     backgroundColor: colors.paper.background,
-  },
-  /** The editable transcription preview: a growing, top-aligned paper field. */
-  previewInput: {
-    flexGrow: 1,
-    minHeight: PREVIEW_MIN_HEIGHT,
-    ...editorialType.body,
-    color: colors.paper.ink,
-    backgroundColor: colors.paper.background,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.paper.hairline,
-    padding: SPACING.md,
-    textAlignVertical: 'top',
   },
   /** A quiet date row above the actions: a low-pressure, declinable backdate. */
   entryDateRow: {
@@ -141,10 +124,68 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: colors.paper.background,
   },
-  /** Warm, low-pressure notice copy under the strip (cap reached, multi-page gate). */
+  /** Warm, low-pressure notice copy under the strip (shown when the session is full). */
   notice: {
     ...editorialType.note,
     color: colors.paper.inkSoft,
+  },
+  /** The running progress line above Save while a multi-page run is still settling. */
+  progress: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+  },
+  /** The vertical stack of per-page blocks in the review phase. */
+  blocks: {
+    gap: SPACING.md,
+  },
+  /** One page's block: a paper card grouping its skeleton / input / error body. */
+  block: {
+    gap: SPACING.sm,
+  },
+  /** A done block's editable body: its text field over its redo affordances. */
+  blockBody: {
+    gap: SPACING.sm,
+  },
+  /** The quiet "reading this page" placeholder while a block is pending or in flight. */
+  blockSkeleton: {
+    minHeight: BLOCK_MIN_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+    backgroundColor: colors.paper.backgroundAlt,
+  },
+  /** One page's editable transcription: a growing, top-aligned paper field. */
+  blockInput: {
+    minHeight: BLOCK_MIN_HEIGHT,
+    ...editorialType.body,
+    color: colors.paper.ink,
+    backgroundColor: colors.paper.background,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+    padding: SPACING.md,
+    textAlignVertical: 'top',
+  },
+  /** Row of block-level affordances (redo, retry/retake, remove) under a block. */
+  blockActions: {
+    gap: SPACING.sm,
+  },
+  /** A failed page's recovery card: soft destructive ground with a clear border. */
+  blockError: {
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.destructive.border,
+    backgroundColor: colors.destructive.background,
+  },
+  /** The failure copy inside a recovery card, in the destructive ink. */
+  blockErrorText: {
+    ...editorialType.body,
+    color: colors.destructive.text,
   },
 });
 

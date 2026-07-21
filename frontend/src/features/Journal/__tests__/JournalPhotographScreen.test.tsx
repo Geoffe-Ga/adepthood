@@ -179,6 +179,29 @@ function renderScreen() {
   return { ...render(<Screen navigation={navigation} route={route} />), navigation };
 }
 
+/** One deferred transcription call: resolve/reject it whenever the test wants. */
+interface DeferredTranscription {
+  resolve: (_text: string) => void;
+  reject: (_err: unknown) => void;
+}
+
+/** Queue `count` deferred transcribePage calls in invocation order, so callers
+ *  can settle a specific in-flight page (out of order) without fake timers. */
+function queueDeferredTranscriptions(count: number): DeferredTranscription[] {
+  const handles: DeferredTranscription[] = [];
+  for (let i = 0; i < count; i += 1) {
+    mockTranscribe.mockReturnValueOnce(
+      new Promise<TranscribePageT>((resolvePromise, rejectPromise) => {
+        handles.push({
+          resolve: (text: string) => resolvePromise({ text }),
+          reject: rejectPromise,
+        });
+      }),
+    );
+  }
+  return handles;
+}
+
 beforeEach(() => {
   mockPick.mockReset();
   mockCapture.mockReset();
@@ -262,13 +285,13 @@ describe('JournalPhotographScreen — collect stage', () => {
     expect(await findByTestId('capture-page-remove-3')).toBeTruthy();
   });
 
-  it('renders the entry-date row during collect, and again during preview', async () => {
+  it('renders the entry-date row during collect, and again once the run starts', async () => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
     const { findByTestId } = renderScreen();
     expect(await findByTestId('capture-entry-date')).toBeTruthy();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-preview-input');
+    await findByTestId('photograph-block-1-input');
     expect(await findByTestId('capture-entry-date')).toBeTruthy();
   });
 
@@ -361,19 +384,12 @@ describe('JournalPhotographScreen — collect stage', () => {
 });
 
 describe('JournalPhotographScreen — multi-page transcription gate', () => {
-  it('disables Transcribe and shows the multi-page notice for more than one page, never calling transcribePage', async () => {
+  it('enables Transcribe for more than one page, with no multi-page notice', async () => {
     mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
-    const { findByTestId } = renderScreen();
+    const { findByTestId, queryByTestId } = renderScreen();
     const transcribeButton = await findByTestId('capture-transcribe');
-    expect(transcribeButton.props.accessibilityState.disabled).toBe(true);
-    expect(await findByTestId('capture-multi-page-notice')).toBeTruthy();
-
-    fireEvent.press(transcribeButton);
-    expect(mockTranscribe).not.toHaveBeenCalled();
-
-    const list = await findByTestId('capture-pages-list');
-    const data = list.props.data as Array<{ uri: string }>;
-    expect(data).toHaveLength(2);
+    expect(transcribeButton.props.accessibilityState.disabled).toBe(false);
+    expect(queryByTestId('capture-multi-page-notice')).toBeNull();
   });
 });
 
@@ -409,8 +425,8 @@ describe('JournalPhotographScreen — cancelled additive pick', () => {
   });
 });
 
-describe('JournalPhotographScreen — transcribing', () => {
-  it('shows the transcribing state while the request is in flight', async () => {
+describe('JournalPhotographScreen — transcribing (single page)', () => {
+  it('shows a skeleton for the sole page while in flight, then its editable text once it resolves', async () => {
     mockPick.mockResolvedValueOnce(picked());
     let resolveTranscribe!: (_v: TranscribePageT) => void;
     mockTranscribe.mockReturnValueOnce(
@@ -418,12 +434,14 @@ describe('JournalPhotographScreen — transcribing', () => {
         resolveTranscribe = res;
       }),
     );
-    const { findByTestId } = renderScreen();
+    const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    expect(await findByTestId('photograph-transcribing')).toBeTruthy();
+    expect(await findByTestId('photograph-block-1-skeleton')).toBeTruthy();
     await act(async () => {
       resolveTranscribe({ text: 'done' });
     });
+    expect(await findByTestId('photograph-block-1-input')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-skeleton')).toBeNull();
   });
 
   it('sends the prepared image payload to transcribePage, never the raw picker file', async () => {
@@ -440,13 +458,13 @@ describe('JournalPhotographScreen — transcribing', () => {
   });
 });
 
-describe('JournalPhotographScreen — editable preview', () => {
-  it('seeds the preview input with the transcribed text', async () => {
+describe('JournalPhotographScreen — editable transcript (single page)', () => {
+  it('seeds the block input with the transcribed text', async () => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockResolvedValueOnce({ text: 'A page about the willow.' });
     const { findByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     expect(input.props.value).toBe('A page about the willow.');
     expect(await findByTestId('photograph-save')).toBeTruthy();
   });
@@ -456,9 +474,9 @@ describe('JournalPhotographScreen — editable preview', () => {
     mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
     const { findByTestId, getByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'Original, corrected.');
-    expect(getByTestId('photograph-preview-input').props.value).toBe('Original, corrected.');
+    expect(getByTestId('photograph-block-1-input').props.value).toBe('Original, corrected.');
   });
 });
 
@@ -468,65 +486,38 @@ const RETRY_KINDS: TranscriptionErrorKind[] = [
   'timeout',
   'rate_limited',
 ];
-const PICK_ANOTHER_KINDS: TranscriptionErrorKind[] = ['invalid_image', 'image_too_large'];
+const RETAKE_KINDS: TranscriptionErrorKind[] = ['invalid_image', 'image_too_large'];
 
-describe('JournalPhotographScreen — transcription error recovery', () => {
-  it.each(RETRY_KINDS)('offers retry (not pick-another) for a %s failure', async (kind) => {
+describe('JournalPhotographScreen — single-page error recovery', () => {
+  it.each(RETRY_KINDS)('offers Retry (not Retake) on the block for a %s failure', async (kind) => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError(kind, null));
     const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    expect(await findByTestId('photograph-retry')).toBeTruthy();
-    expect(queryByTestId('photograph-pick-another')).toBeNull();
+    expect(await findByTestId('photograph-block-1-retry')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-retake')).toBeNull();
+    expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
   });
 
-  it.each(PICK_ANOTHER_KINDS)('offers Pick another (not retry) for a %s failure', async (kind) => {
+  it.each(RETAKE_KINDS)('offers Retake (not Retry) on the block for a %s failure', async (kind) => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError(kind, 422));
     const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    expect(await findByTestId('photograph-pick-another')).toBeTruthy();
-    expect(queryByTestId('photograph-retry')).toBeNull();
+    expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-retry')).toBeNull();
+    expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
   });
 
-  it('offers both retry and a typed-entry offramp for an unknown failure', async () => {
+  it('shows the wallet-exhausted copy on the block, with Retry offered', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('unknown', null));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('wallet_exhausted', 402));
     const { findByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    expect(await findByTestId('photograph-retry')).toBeTruthy();
-    expect(await findByTestId('photograph-typed-entry')).toBeTruthy();
-  });
-
-  it('shows the wallet-exhausted copy with a typed-entry offramp and no retry', async () => {
-    mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('wallet_exhausted', 402));
-    const { findByTestId, queryByTestId, getByTestId } = renderScreen();
-    fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-error');
-    expect(getByTestId('photograph-error')).toHaveTextContent(/this month's free allotment/);
-    expect(await findByTestId('photograph-typed-entry')).toBeTruthy();
-    expect(queryByTestId('photograph-retry')).toBeNull();
-  });
-
-  it('shows a terminal, friendly message for model_lacks_vision with a typed-entry offramp, no retry', async () => {
-    mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
-    const { findByTestId, queryByTestId, getByTestId } = renderScreen();
-    fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-error');
-    expect(getByTestId('photograph-error')).toHaveTextContent(/isn't available/);
-    expect(await findByTestId('photograph-typed-entry')).toBeTruthy();
-    expect(queryByTestId('photograph-retry')).toBeNull();
-  });
-
-  it('navigates to a plain JournalEntry from the typed-entry offramp, with no second argument', async () => {
-    mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('wallet_exhausted', 402));
-    const { findByTestId, navigation } = renderScreen();
-    fireEvent.press(await findByTestId('capture-transcribe'));
-    fireEvent.press(await findByTestId('photograph-typed-entry'));
-    expect(navigation.navigate).toHaveBeenCalledWith('JournalEntry');
+    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(
+      /this month's free allotment/,
+    );
+    expect(await findByTestId('photograph-block-1-retry')).toBeTruthy();
   });
 
   it('calls transcribePage exactly once more per retry tap, never auto-retrying', async () => {
@@ -534,40 +525,448 @@ describe('JournalPhotographScreen — transcription error recovery', () => {
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError('network', null));
     const { findByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-retry');
+    await findByTestId('photograph-block-1-retry');
     expect(mockTranscribe).toHaveBeenCalledTimes(1);
 
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError('network', null));
-    fireEvent.press(await findByTestId('photograph-retry'));
+    fireEvent.press(await findByTestId('photograph-block-1-retry'));
     await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
 
     mockTranscribe.mockResolvedValueOnce({ text: 'ok' });
-    fireEvent.press(await findByTestId('photograph-retry'));
+    fireEvent.press(await findByTestId('photograph-block-1-retry'));
     await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(3));
   });
 
-  it('re-launches the picker from Pick another, landing back in collect with the new page', async () => {
+  it('retakes the sole page by re-picking exactly one image and substituting it', async () => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError('invalid_image', 422));
     const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-pick-another');
+    await findByTestId('photograph-block-1-retake');
     expect(mockPick).toHaveBeenCalledTimes(1);
 
-    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///new.jpg' })]));
-    fireEvent.press(await findByTestId('photograph-pick-another'));
-    await waitFor(() => expect(mockPick).toHaveBeenCalledTimes(2));
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///retaken.jpg' })]));
+    mockTranscribe.mockResolvedValueOnce({ text: 'retaken text' });
+    fireEvent.press(await findByTestId('photograph-block-1-retake'));
 
-    const list = await findByTestId('capture-pages-list');
-    const data = list.props.data as Array<{ uri: string }>;
-    expect(data.map((p) => p.uri)).toContain(preparedUri('file:///new.jpg'));
-    expect(queryByTestId('photograph-error')).toBeNull();
+    await waitFor(() => expect(mockPick).toHaveBeenNthCalledWith(2, 1));
+    // The retaken page is prepared (one async encode) then read; once its text
+    // lands the failed-block error is gone.
+    const input = await findByTestId('photograph-block-1-input');
+    expect(input.props.value).toBe('retaken text');
+    expect(queryByTestId('photograph-block-1-error')).toBeNull();
+  });
+
+  it('releases the superseded page files when the sole page is retaken', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('invalid_image', 422));
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-retake');
+
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///retaken.jpg' })]));
+    mockTranscribe.mockResolvedValueOnce({ text: 'retaken text' });
+    fireEvent.press(await findByTestId('photograph-block-1-retake'));
+
+    // The outgoing page's transient device files are reclaimed on the swap, so a
+    // retake never strands the old photo's cache copy or downscaled output.
+    await waitFor(() =>
+      expect(mockReleasePageFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceUri: 'file:///p1.jpg',
+          uri: preparedUri('file:///p1.jpg'),
+        }),
+      ),
+    );
+  });
+
+  it('keeps the existing page, releasing nothing, when a retake photo cannot be prepared', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('invalid_image', 422));
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-retake');
+
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///bad.jpg' })]));
+    mockPrepare.mockRejectedValueOnce(new Error('unreadable'));
+    fireEvent.press(await findByTestId('photograph-block-1-retake'));
+
+    await waitFor(() => expect(mockPick).toHaveBeenCalledTimes(2));
+    // The unpreparable retake is declined: the original failed block stays put and
+    // its still-owned files are never released.
+    expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-input')).toBeNull();
+    expect(mockReleasePageFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe('JournalPhotographScreen — terminal model-lacks-vision failure', () => {
+  it('shows only Remove on the block, never a wallet-charging Retry or Retake', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(/isn't available/);
+    expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-retry')).toBeNull();
+    expect(queryByTestId('photograph-block-1-retake')).toBeNull();
+  });
+
+  it('offers a hand-typed-entry offramp that leaves for a plain entry without charging', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    const { findByTestId, navigation } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    fireEvent.press(await findByTestId('photograph-typed-entry'));
+    expect(navigation.navigate).toHaveBeenCalledWith('JournalEntry');
     expect(mockTranscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the typed-entry offramp when no page hit a terminal failure', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('network', null));
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-error');
+    expect(queryByTestId('photograph-typed-entry')).toBeNull();
+  });
+});
+
+describe('JournalPhotographScreen — multi-page run', () => {
+  it('renders one block per page in session order and fills each block as its result arrives, out of order', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(3))));
+    const handles = queueDeferredTranscriptions(3);
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    expect(await findByTestId('photograph-block-1-skeleton')).toBeTruthy();
+    expect(await findByTestId('photograph-block-2-skeleton')).toBeTruthy();
+    expect(await findByTestId('photograph-block-3-skeleton')).toBeTruthy();
+
+    await act(async () => {
+      handles[1]?.resolve('B (page two)');
+    });
+    expect((await findByTestId('photograph-block-2-input')).props.value).toBe('B (page two)');
+    expect(queryByTestId('photograph-block-2-skeleton')).toBeNull();
+    expect(await findByTestId('photograph-block-1-skeleton')).toBeTruthy();
+
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      handles[0]?.resolve('A (page one)');
+    });
+    await act(async () => {
+      handles[2]?.resolve('C (page three)');
+    });
+
+    expect((await findByTestId('photograph-block-1-input')).props.value).toBe('A (page one)');
+    expect((await findByTestId('photograph-block-3-input')).props.value).toBe('C (page three)');
+  });
+});
+
+describe('JournalPhotographScreen — per-block error taxonomy across a run', () => {
+  it.each(RETRY_KINDS)(
+    'offers Retry on a %s block without disturbing the other, still-running page',
+    async (kind) => {
+      mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+      const handles = queueDeferredTranscriptions(2);
+      const { findByTestId, queryByTestId } = renderScreen();
+      fireEvent.press(await findByTestId('capture-transcribe'));
+      await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+      await act(async () => {
+        handles[0]?.reject(new TranscriptionError(kind, null));
+      });
+      expect(await findByTestId('photograph-block-1-retry')).toBeTruthy();
+      expect(queryByTestId('photograph-block-1-retake')).toBeNull();
+      expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
+      expect(await findByTestId('photograph-block-2-skeleton')).toBeTruthy();
+    },
+  );
+
+  it.each(RETAKE_KINDS)(
+    'offers Retake on a %s block without disturbing the other, still-running page',
+    async (kind) => {
+      mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+      const handles = queueDeferredTranscriptions(2);
+      const { findByTestId, queryByTestId } = renderScreen();
+      fireEvent.press(await findByTestId('capture-transcribe'));
+      await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+      await act(async () => {
+        handles[0]?.reject(new TranscriptionError(kind, 422));
+      });
+      expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+      expect(queryByTestId('photograph-block-1-retry')).toBeNull();
+      expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
+    },
+  );
+
+  it('retakes just the failed page, calling the picker with a limit of one, substituting only that block', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('invalid_image', 422));
+    });
+    await act(async () => {
+      handles[1]?.resolve('page two text');
+    });
+    await findByTestId('photograph-block-1-retake');
+
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///retaken.jpg' })]));
+    mockTranscribe.mockResolvedValueOnce({ text: 'page one retaken' });
+    fireEvent.press(await findByTestId('photograph-block-1-retake'));
+
+    await waitFor(() => expect(mockPick).toHaveBeenNthCalledWith(2, 1));
+    const block1Input = await findByTestId('photograph-block-1-input');
+    expect(block1Input.props.value).toBe('page one retaken');
+    expect((await findByTestId('photograph-block-2-input')).props.value).toBe('page two text');
+  });
+});
+
+describe('JournalPhotographScreen — retry replaces only its own block', () => {
+  it('never re-charges a page that already succeeded when a different page retries', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      handles[0]?.resolve('page one text');
+    });
+    await act(async () => {
+      handles[1]?.reject(new TranscriptionError('network', null));
+    });
+    expect(await findByTestId('photograph-block-2-retry')).toBeTruthy();
+
+    mockTranscribe.mockResolvedValueOnce({ text: 'page two retried' });
+    fireEvent.press(await findByTestId('photograph-block-2-retry'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(3));
+
+    const imagesSent = mockTranscribe.mock.calls.map(
+      (call) => (call[0] as { imageBase64: string }).imageBase64,
+    );
+    expect(imagesSent.filter((image) => image === preparedBase64('file:///p1.jpg'))).toHaveLength(
+      1,
+    );
+    expect(imagesSent[2]).toBe(preparedBase64('file:///p2.jpg'));
+  });
+});
+
+describe('JournalPhotographScreen — edited blocks are never clobbered', () => {
+  it('keeps a hand-edited block intact while another page in the run is retried', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId, getByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      handles[0]?.resolve('page one original');
+    });
+    fireEvent.changeText(await findByTestId('photograph-block-1-input'), 'page one hand-edited');
+
+    await act(async () => {
+      handles[1]?.reject(new TranscriptionError('network', null));
+    });
+    mockTranscribe.mockResolvedValueOnce({ text: 'page two retried' });
+    fireEvent.press(await findByTestId('photograph-block-2-retry'));
+    await waitFor(() =>
+      expect(getByTestId('photograph-block-2-input').props.value).toBe('page two retried'),
+    );
+
+    expect(getByTestId('photograph-block-1-input').props.value).toBe('page one hand-edited');
+  });
+});
+
+describe('JournalPhotographScreen — redo a resolved block', () => {
+  it('redoes an unedited block immediately, with no confirm step', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'first pass' });
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-input');
+
+    mockTranscribe.mockResolvedValueOnce({ text: 'second pass' });
+    fireEvent.press(await findByTestId('photograph-block-1-redo'));
+    expect(queryByTestId('photograph-block-1-redo-confirm')).toBeNull();
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(getByTestId('photograph-block-1-input').props.value).toBe('second pass'),
+    );
+  });
+
+  it('requires an inline confirm before redoing an edited block, and leaves it untouched until confirmed', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'first pass' });
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    const input = await findByTestId('photograph-block-1-input');
+    fireEvent.changeText(input, 'hand-edited');
+
+    fireEvent.press(await findByTestId('photograph-block-1-redo'));
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(getByTestId('photograph-block-1-input').props.value).toBe('hand-edited');
+    expect(await findByTestId('photograph-block-1-redo-confirm')).toBeTruthy();
+
+    mockTranscribe.mockResolvedValueOnce({ text: 'redone text' });
+    fireEvent.press(await findByTestId('photograph-block-1-redo-confirm'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(getByTestId('photograph-block-1-input').props.value).toBe('redone text'),
+    );
+    expect(queryByTestId('photograph-block-1-redo-confirm')).toBeNull();
+  });
+});
+
+describe('JournalPhotographScreen — save gate across the run', () => {
+  it('disables Save while any page is unresolved, labels progress, and enables once every page settles', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId, getByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    expect((await findByTestId('photograph-save')).props.accessibilityState.disabled).toBe(true);
+    expect(await findByTestId('photograph-run-progress')).toHaveTextContent('Transcribing 0 of 2…');
+
+    await act(async () => {
+      handles[0]?.resolve('page one');
+    });
+    expect(await findByTestId('photograph-run-progress')).toHaveTextContent('Transcribing 1 of 2…');
+    expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(true);
+
+    await act(async () => {
+      handles[1]?.resolve('page two');
+    });
+    await waitFor(() =>
+      expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
+    );
+  });
+
+  it('unblocks Save when a failed page is removed rather than retried', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId, getByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      handles[0]?.resolve('page one');
+    });
+    await act(async () => {
+      handles[1]?.reject(new TranscriptionError('network', null));
+    });
+    expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(true);
+
+    fireEvent.press(await findByTestId('photograph-block-2-remove'));
+    await waitFor(() =>
+      expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
+    );
+  });
+});
+
+describe('JournalPhotographScreen — remove every page mid-review (never a dead end)', () => {
+  it('returns to the collect stage when the writer removes every page during review, instead of a permanently-disabled Save', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    // Both pages fail transiently, so each block offers Remove rather than a landed edit.
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('network', null));
+    });
+    await act(async () => {
+      handles[1]?.reject(new TranscriptionError('network', null));
+    });
+
+    fireEvent.press(await findByTestId('photograph-block-2-remove'));
+    fireEvent.press(await findByTestId('photograph-block-1-remove'));
+
+    // No dead end: the disabled Save and the "Transcribing 0 of 0…" line are gone,
+    // and we are back in collect where the writer can add pages again (from the
+    // library or the camera) or leave cleanly.
+    await findByTestId('capture-add-pages');
+    expect(await findByTestId('capture-transcribe')).toBeTruthy();
+    expect(await findByTestId('capture-take-photo')).toBeTruthy();
+    expect(queryByTestId('photograph-save')).toBeNull();
+    expect(queryByTestId('photograph-run-progress')).toBeNull();
+  });
+
+  it('disarms the run on return to collect: a re-added page only transcribes on an explicit Transcribe, reading the fresh page and never the removed one', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const handles = queueDeferredTranscriptions(1);
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('network', null));
+    });
+    fireEvent.press(await findByTestId('photograph-block-1-remove'));
+    await findByTestId('capture-add-pages');
+
+    // Re-add a fresh page. Because the run is disarmed, adding does not re-charge.
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///fresh.jpg' })]));
+    fireEvent.press(await findByTestId('capture-add-pages'));
+    await waitFor(() => expect(mockPick).toHaveBeenCalledTimes(2));
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+
+    // Only an explicit Transcribe re-arms the run — and it reads the fresh page's
+    // downscaled bytes (prepared once when the page was picked).
+    mockTranscribe.mockResolvedValueOnce({ text: 'fresh page text' });
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    expect((await findByTestId('photograph-block-1-input')).props.value).toBe('fresh page text');
+    expect(mockTranscribe.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ imageBase64: preparedBase64('file:///fresh.jpg') }),
+    );
+  });
+});
+
+describe('JournalPhotographScreen — merged save across pages', () => {
+  it('saves the ordered, blank-line-merged text with edits winning', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(3))));
+    const handles = queueDeferredTranscriptions(3);
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 40, message: 'A\n\nB-edited\n\nC' }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 40, status: 'finished' }));
+    const { findByTestId, getByTestId, navigation } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      handles[1]?.resolve('B');
+    });
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      handles[0]?.resolve('A');
+    });
+    await act(async () => {
+      handles[2]?.resolve('C');
+    });
+    fireEvent.changeText(await findByTestId('photograph-block-2-input'), 'B-edited');
+
+    await waitFor(() =>
+      expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
+    );
+    fireEvent.press(getByTestId('photograph-save'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ message: 'A\n\nB-edited\n\nC' }));
+    expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
+      entryId: 40,
+      justSaved: true,
+    });
   });
 });
 
 describe('JournalPhotographScreen — save flow', () => {
-  it('saves the edited preview text (not the original transcription) and replaces to the finished entry', async () => {
+  it('saves the edited transcript (not the original transcription) and replaces to the finished entry', async () => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockResolvedValueOnce({ text: 'Original transcribed text.' });
     mockCreate.mockResolvedValueOnce(makeEntry({ id: 99, message: 'Edited by hand.' }));
@@ -577,7 +976,7 @@ describe('JournalPhotographScreen — save flow', () => {
 
     const { findByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'Edited by hand.');
     fireEvent.press(await findByTestId('photograph-save'));
 
@@ -597,7 +996,7 @@ describe('JournalPhotographScreen — save flow', () => {
 
     const { findByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'No entry_date please.');
     fireEvent.press(await findByTestId('photograph-save'));
 
@@ -613,12 +1012,12 @@ describe('JournalPhotographScreen — save flow', () => {
 
     const { findByTestId, getByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'My hand-edited page.');
     fireEvent.press(await findByTestId('photograph-save'));
 
     expect(await findByTestId('photograph-retry-save')).toBeTruthy();
-    expect(getByTestId('photograph-preview-input').props.value).toBe('My hand-edited page.');
+    expect(getByTestId('photograph-block-1-input').props.value).toBe('My hand-edited page.');
   });
 
   it('re-invokes save when Retry-save is tapped', async () => {
@@ -630,7 +1029,7 @@ describe('JournalPhotographScreen — save flow', () => {
 
     const { findByTestId, getByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'Try again please.');
     fireEvent.press(await findByTestId('photograph-save'));
     await findByTestId('photograph-retry-save');
@@ -656,11 +1055,11 @@ describe('JournalPhotographScreen — save flow', () => {
 
     const { findByTestId, getByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    const input = await findByTestId('photograph-preview-input');
+    const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'Before the failure.');
     fireEvent.press(await findByTestId('photograph-save'));
     await findByTestId('photograph-retry-save');
-    fireEvent.changeText(getByTestId('photograph-preview-input'), 'Edited after the failure.');
+    fireEvent.changeText(getByTestId('photograph-block-1-input'), 'Edited after the failure.');
     fireEvent.press(getByTestId('photograph-retry-save'));
 
     await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
@@ -883,6 +1282,39 @@ describe('JournalPhotographScreen — take-another loop', () => {
   });
 });
 
+describe('JournalPhotographScreen — camera pages feed the transcription run', () => {
+  it('transcribes a camera-captured page alongside a library page once the set proceeds', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce(capturedPage('file:///cam2.jpg'));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    // Add a second page through the camera take-another loop, then settle into collect.
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    fireEvent.press(await findByTestId('capture-done'));
+
+    // Proceeding runs the progressive transcription over both the library page and
+    // the camera page: two blocks, in session order, each reading its own bytes.
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      handles[0]?.resolve('library page');
+    });
+    await act(async () => {
+      handles[1]?.resolve('camera page');
+    });
+
+    expect((await findByTestId('photograph-block-1-input')).props.value).toBe('library page');
+    expect((await findByTestId('photograph-block-2-input')).props.value).toBe('camera page');
+    const images = mockTranscribe.mock.calls.map(
+      (call) => (call[0] as { imageBase64: string }).imageBase64,
+    );
+    expect(images).toContain(preparedBase64('file:///cam2.jpg'));
+  });
+});
+
 describe('JournalPhotographScreen — web guard', () => {
   it('never offers Take photo when running on web', async () => {
     const osDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
@@ -937,7 +1369,7 @@ describe('JournalPhotographScreen — page preparation', () => {
 });
 
 describe('JournalPhotographScreen — oversize page guard', () => {
-  it('routes a page at the byte cap to the image_too_large recovery without transcribing', async () => {
+  it('routes a page at the byte cap to the block image_too_large recovery without transcribing', async () => {
     mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///huge.jpg' })]));
     mockPrepare.mockResolvedValueOnce({
       base64: preparedBase64('file:///huge.jpg'),
@@ -945,13 +1377,14 @@ describe('JournalPhotographScreen — oversize page guard', () => {
       byteLength: MAX_TRANSCRIBE_IMAGE_BYTES,
       uri: preparedUri('file:///huge.jpg'),
     });
-    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
 
-    await findByTestId('photograph-error');
-    expect(getByTestId('photograph-error')).toHaveTextContent(/a little large/);
-    expect(await findByTestId('photograph-pick-another')).toBeTruthy();
-    expect(queryByTestId('photograph-retry')).toBeNull();
+    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(/a little large/);
+    // The photo itself is the problem, so the page offers Retake — never a
+    // wallet-charging Retry — and no network call was ever spent.
+    expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-retry')).toBeNull();
     expect(mockTranscribe).not.toHaveBeenCalled();
   });
 
@@ -977,7 +1410,7 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
     mockTranscribe.mockResolvedValueOnce({ text: 'x' });
     const { findByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-preview-input');
+    await findByTestId('photograph-block-1-input');
 
     await waitFor(() =>
       expect(mockReleasePageFiles).toHaveBeenCalledWith(
@@ -1017,7 +1450,7 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
 
     const { findByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-preview-input');
+    await findByTestId('photograph-block-1-input');
     fireEvent.press(await findByTestId('photograph-save'));
 
     await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
@@ -1034,7 +1467,7 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
 
     const { findByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    await findByTestId('photograph-preview-input');
+    await findByTestId('photograph-block-1-input');
     fireEvent.press(await findByTestId('photograph-save'));
 
     await waitFor(() =>
@@ -1047,7 +1480,9 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
 
   it('releases every session file when stepping off to a typed entry', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('wallet_exhausted', 402));
+    // The typed-entry offramp surfaces only on a terminal, config-level failure
+    // the writer cannot retry past — model_lacks_vision — so drive the run there.
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
     const { findByTestId, navigation } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
     fireEvent.press(await findByTestId('photograph-typed-entry'));
@@ -1069,5 +1504,51 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
       expect.objectContaining({ sourceUri: 'file:///p1.jpg' }),
       expect.objectContaining({ sourceUri: 'file:///p2.jpg' }),
     ]);
+  });
+
+  it('releases the removed page files when a page is removed mid-run', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('network', null));
+    });
+
+    // Drop the failed page while the other is still reading; its transient files
+    // are reclaimed and the surviving page's are left untouched.
+    fireEvent.press(await findByTestId('photograph-block-1-remove'));
+
+    await waitFor(() =>
+      expect(mockReleasePageFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceUri: 'file:///p1.jpg',
+          uri: preparedUri('file:///p1.jpg'),
+        }),
+      ),
+    );
+    expect(mockReleasePageFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sourceUri: 'file:///p2.jpg' }),
+    );
+  });
+});
+
+describe('JournalPhotographScreen — one downscale per page', () => {
+  it('never re-prepares a page across a transcription retry', async () => {
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///p1.jpg' })]));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('network', null));
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-retry');
+    expect(mockPrepare).toHaveBeenCalledTimes(1);
+
+    // Retrying re-reads the already-downscaled bytes — the page is encoded once
+    // when picked, never again on a re-read.
+    mockTranscribe.mockResolvedValueOnce({ text: 'read on retry' });
+    fireEvent.press(await findByTestId('photograph-block-1-retry'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    expect((await findByTestId('photograph-block-1-input')).props.value).toBe('read on retry');
+    expect(mockPrepare).toHaveBeenCalledTimes(1);
   });
 });

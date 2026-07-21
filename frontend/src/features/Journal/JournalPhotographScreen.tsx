@@ -1,30 +1,37 @@
 /**
- * Photograph handwritten journal pages, transcribe them, and save them as a
- * finished entry. The flow auto-launches the photo picker on mount into an
- * ordered, multi-page capture session: the writer collects pages from the
- * library (multi-select) or photographs them one at a time with the camera,
- * reorders the thumbnail strip, and trims it before proceeding. Transcription is
- * single-page in this iteration — the proceed affordance enables only for exactly
- * one page — after which the writer gets an editable preview before it becomes a
- * real entry.
+ * Photograph handwritten journal pages, transcribe them, and save them as one
+ * finished entry. The flow auto-launches the photo picker on mount into an ordered,
+ * multi-page capture session: the writer collects pages from the library
+ * (multi-select) or photographs them one at a time with the camera — a take-another
+ * loop keeps the session growing — then reorders the thumbnail strip and trims it
+ * before proceeding. Proceeding runs a real multi-page transcription — several pages
+ * read at once under a small concurrency bound, each landing in its own editable
+ * block — which merge, in session order, into one entry the writer can edit before
+ * it is saved.
  *
  * Every step is warm and declinable (NORTH-STAR): a refused permission, a cancelled
- * pick, an unreadable photo, or a spent transcription wallet each lead to a plain,
- * shame-free offramp — most often "type this entry instead" — never a dead end.
+ * pick, or an unreadable page each lead to a plain, shame-free offramp — a fresh
+ * photo, a hand-typed entry, or simply removing the page — never a dead end.
  *
- * PRIVACY: the base64 page images live in the capture session's reducer state
- * only. They are never placed in navigation params or logged, and are released
- * when the session is cleared (on save, on the typed-entry offramp) and on unmount.
- * The transient device files behind them — the picker/camera cache copies and the
+ * WALLET INTEGRITY: transcription is a real-money charge. The run makes a double
+ * charge of a completed page structurally impossible (see {@link useTranscriptionRun});
+ * an oversize page is caught on device before any call is spent; and the save write
+ * reuses a created id across retries so a failed finish never duplicates the entry.
+ *
+ * PRIVACY: the base64 page images live in the capture session's reducer state only.
+ * They are never placed in navigation params or logged, and are released when the
+ * session is cleared (on save, on the typed-entry offramp) and on unmount. The
+ * transient device files behind them — the picker/camera cache copies and the
  * downscaled prepare outputs — are deleted in lockstep: when a page is removed,
- * once it is transcribed, when the session is released, and on unmount.
+ * when a page is retaken (the superseded photo), once it is transcribed, when the
+ * session is released, and on unmount.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Linking, Text, View } from 'react-native';
 
 import { releaseAllPageFiles, releasePageFiles, releaseUris } from './capture/cleanupPageFiles';
-import { MAX_TRANSCRIBE_IMAGE_BYTES, preparePageForTranscription } from './capture/prepareImage';
+import { preparePageForTranscription } from './capture/prepareImage';
 import type { PreparedPage } from './capture/prepareImage';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
@@ -33,10 +40,10 @@ import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
 import { saveFinishedEntry } from './saveFinishedEntry';
+import { TranscriptionPreview } from './TranscriptionPreview';
+import { useTranscriptionRun } from './useTranscriptionRun';
+import type { TranscriptionRunModel } from './useTranscriptionRun';
 
-import { TranscriptionError, journal } from '@/api';
-import type { TranscriptionErrorKind } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import DatePicker, { toISODate } from '@/components/DatePicker';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -50,7 +57,6 @@ const PERMISSION_DENIED_COPY =
 const OPEN_SETTINGS_LABEL = 'Open Settings';
 const CANCEL_LABEL = 'Not now';
 const PREPARING_COPY = 'Opening your photos…';
-const TRANSCRIBING_COPY = 'Reading your page…';
 const PICK_FAILED_COPY =
   "We couldn't read that photo. Pick another one and we'll try again — no rush.";
 const PICK_ANOTHER_LABEL = 'Pick another photo';
@@ -60,53 +66,18 @@ const ADD_FROM_LIBRARY_LABEL = 'Add from your library';
 const TAKE_ANOTHER_COPY = "That page is in. Take another whenever you're ready.";
 const TAKE_ANOTHER_LABEL = 'Take another';
 const DONE_CAPTURING_LABEL = 'Done';
-const RETRY_LABEL = 'Try again';
-const TYPED_ENTRY_LABEL = 'Type this entry instead';
-const SAVE_LABEL = 'Save this page';
+const SAVE_LABEL = 'Save this entry';
 const RETRY_SAVE_LABEL = 'Try saving again';
-const PREVIEW_HEADING = 'Your page';
-const PREVIEW_INPUT_A11Y = 'Edit the transcribed text of your page';
 const ENTRY_DATE_LABEL = 'Entry date';
+const TYPED_ENTRY_LABEL = 'Type this entry instead';
 
-/** Friendly terminal copy when the configured model cannot read images at all. */
-const MODEL_LACKS_VISION_COPY =
-  "Reading photos isn't available with the configured AI model. You can still write this page by hand.";
+type PhotographNavigation = NativeStackScreenProps<
+  RootStackParamList,
+  'JournalPhotograph'
+>['navigation'];
 
-/** Per-kind copy for a recoverable transcription failure (wallet copy is sourced
- *  from the shared 402 message instead, so it stays a single source of truth). */
-const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = {
-  provider_error: 'The transcription helper had trouble just now. Give it a moment and try again.',
-  network: "We couldn't reach the transcription helper. Check your connection and try again.",
-  timeout: "That took longer than expected. Try again whenever you're ready.",
-  rate_limited: 'The transcription helper is catching its breath. Try again in a moment.',
-  invalid_image: "We couldn't quite read that page. Try another photo with clearer handwriting.",
-  image_too_large: 'That photo is a little large to read. Try another, or a lower-resolution shot.',
-  wallet_exhausted: '',
-  model_lacks_vision: MODEL_LACKS_VISION_COPY,
-  unknown: "Something didn't work while reading your page. Try again, or type this entry instead.",
-};
-
-/** Kinds a fresh transcription attempt might clear — offer a single retry tap. */
-const RETRY_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<TranscriptionErrorKind>([
-  'provider_error',
-  'network',
-  'timeout',
-  'rate_limited',
-  'unknown',
-]);
-/** Kinds where the photo itself is the problem — offer a different photo. */
-const PICK_ANOTHER_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<TranscriptionErrorKind>([
-  'invalid_image',
-  'image_too_large',
-]);
-/** Kinds with no photo path forward — offer the typed-entry offramp. */
-const TYPED_ENTRY_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<TranscriptionErrorKind>([
-  'unknown',
-  'wallet_exhausted',
-  'model_lacks_vision',
-]);
-
-/** The screen's mutually-exclusive phases. */
+/** The screen's mutually-exclusive phases: collect pages (from the library or the
+ *  camera's take-another loop), then review the multi-page run. */
 type Phase =
   | { step: 'preparing' }
   | { step: 'denied' }
@@ -114,54 +85,19 @@ type Phase =
   | { step: 'pickFailed' }
   | { step: 'collect' }
   | { step: 'takeAnother' }
-  | { step: 'transcribing' }
-  | { step: 'preview' }
-  | { step: 'error'; error: TranscriptionError };
+  | { step: 'review' };
 
 /** The shared unreadable-photo offramp phase: only a different photo helps, so
  *  a failed pick, an unusable capture, and an unpreparable image all land here. */
 const PICK_FAILED_PHASE: Phase = { step: 'pickFailed' };
 
-/** The recovery affordances a given transcription error offers. */
-interface Recovery {
-  message: string;
-  showRetry: boolean;
-  showPickAnother: boolean;
-  showTypedEntry: boolean;
-}
-
-/** Derive a failure's message + which offramps to show, from its stable kind. */
-function recoveryFor(error: TranscriptionError): Recovery {
-  const { kind } = error;
-  const message = kind === 'wallet_exhausted' ? formatApiError(error) : TRANSCRIBE_ERROR_COPY[kind];
-  return {
-    message,
-    showRetry: RETRY_KINDS.has(kind),
-    showPickAnother: PICK_ANOTHER_KINDS.has(kind),
-    showTypedEntry: TYPED_ENTRY_KINDS.has(kind),
-  };
-}
-
-/** Coerce any thrown value into a {@link TranscriptionError} (the API already
- *  throws these; this guards the unforeseen so `.kind` is always readable). */
-function asTranscriptionError(err: unknown): TranscriptionError {
-  return err instanceof TranscriptionError ? err : new TranscriptionError('unknown', null, err);
-}
-
-type PhotographNavigation = NativeStackScreenProps<
-  RootStackParamList,
-  'JournalPhotograph'
->['navigation'];
-
 interface CaptureModel {
   phase: Phase;
   pages: CapturePage[];
   canAdd: boolean;
-  previewText: string;
   entryDate: string;
   saving: boolean;
   saveFailed: boolean;
-  onChangeText: (_text: string) => void;
   onChangeEntryDate: (_date: string) => void;
   runPick: () => void;
   takePhoto: () => void;
@@ -169,11 +105,11 @@ interface CaptureModel {
   removePage: (_id: string) => void;
   reorderPages: (_pages: CapturePage[]) => void;
   transcribe: () => void;
-  retryTranscribe: () => void;
   save: () => void;
   openSettings: () => void;
   cancel: () => void;
   goTypedEntry: () => void;
+  run: TranscriptionRunModel;
 }
 
 /** The chosen backdate, or undefined when it is today (the backend then stamps now). */
@@ -346,44 +282,58 @@ function useCameraCapture(deps: CaptureDeps): () => Promise<void> {
   }, [dispatch, counterRef, setPhase]);
 }
 
-/** Transcribe the session's single page into an editable preview. This is the
- *  seam a later epic widens to multi-page reading; here it handles exactly one
- *  page and no-ops otherwise (the proceed button is disabled for any other count). */
-function useBeginTranscription(
-  pagesRef: React.MutableRefObject<CapturePage[]>,
-  setPhase: (_phase: Phase) => void,
-  setPreviewText: (_text: string) => void,
-): () => Promise<void> {
-  return useCallback(async () => {
-    const [page] = pagesRef.current;
-    if (pagesRef.current.length !== 1 || !page) return;
-    if (page.byteLength >= MAX_TRANSCRIBE_IMAGE_BYTES) {
-      // Too large even after downscaling: surface the same recovery the server
-      // would, without spending the round-trip (or the wallet) to hear it.
-      setPhase({ step: 'error', error: new TranscriptionError('image_too_large', null) });
-      return;
-    }
-    setPhase({ step: 'transcribing' });
-    try {
-      const { text } = await journal.transcribePage({
-        imageBase64: page.imageBase64,
-        mediaType: page.mediaType,
-      });
-      // The page is read; its transient device files have served their purpose.
-      fireAndForgetCleanup(releasePageFiles(page));
-      setPreviewText(text);
-      setPhase({ step: 'preview' });
-    } catch (err: unknown) {
-      setPhase({ step: 'error', error: asTranscriptionError(err) });
-    }
-  }, [pagesRef, setPhase, setPreviewText]);
+interface RetakeDeps {
+  dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>;
+  pagesRef: React.MutableRefObject<CapturePage[]>;
+  counterRef: React.MutableRefObject<number>;
+  /** Release the superseded page's transient files once the swap is committed. */
+  releasePageById: (_id: string) => void;
 }
 
-/** Persist the edited transcript. Reuses ``createdIdRef`` across save retries so a
- *  retry after a failed finish PATCH updates the created page rather than duplicating it. */
+/** Re-pick one page and substitute it in place of the failed page with matching id,
+ *  keeping its position. A declined retake — or a fresh photo the prepare step
+ *  cannot read — leaves the page as-is (its transient files reclaimed by the batch
+ *  guard), never a dead end. On a successful swap the superseded page's own
+ *  transient device files are released, so a retake never leaves the old photo's
+ *  cache copy stranded. */
+async function retakePageInPlace(
+  id: string,
+  { dispatch, pagesRef, counterRef, releasePageById }: RetakeDeps,
+): Promise<void> {
+  const result = await pickJournalPhotos(1);
+  if (result.kind !== 'picked') return;
+  let page: CapturePage | undefined;
+  try {
+    [page] = await toCapturePages(result.assets, counterRef);
+  } catch {
+    return; // The retake photo could not be prepared; keep the existing page.
+  }
+  if (!page) return;
+  releasePageById(id); // Reclaim the outgoing page's files before it leaves the session.
+  const next = pagesRef.current.map((existing) => (existing.id === id ? page : existing));
+  dispatch({ type: 'reorder', pages: next });
+}
+
+/** Re-pick a single page and substitute it in place of a failed one, keeping its
+ *  position. The fresh page carries a new id and new bytes; the run reconciles the
+ *  swap and reads the new page (never the old one) via the session's page list. */
+function useRetakePage({
+  dispatch,
+  pagesRef,
+  counterRef,
+  releasePageById,
+}: RetakeDeps): (_id: string) => void {
+  return useCallback(
+    (id: string) => void retakePageInPlace(id, { dispatch, pagesRef, counterRef, releasePageById }),
+    [dispatch, pagesRef, counterRef, releasePageById],
+  );
+}
+
+/** Persist the merged transcript. Reuses ``createdIdRef`` across save retries so a
+ *  retry after a failed finish PATCH updates the created entry rather than duplicating it. */
 function useSaveEntry(
   navigation: PhotographNavigation,
-  previewText: string,
+  mergedText: string,
   entryDate: string,
   releaseSession: () => void,
   createdIdRef: React.MutableRefObject<number | null>,
@@ -396,7 +346,7 @@ function useSaveEntry(
     setSaveFailed(false);
     try {
       const id = await saveFinishedEntry(
-        previewText,
+        mergedText,
         createdIdRef.current,
         (created) => {
           createdIdRef.current = created;
@@ -410,21 +360,46 @@ function useSaveEntry(
     } finally {
       setSaving(false);
     }
-  }, [previewText, entryDate, navigation, releaseSession, createdIdRef]);
+  }, [mergedText, entryDate, navigation, releaseSession, createdIdRef]);
 
   return { save, saving, saveFailed };
 }
 
-/** The navigation offramps that also release the in-memory session: opening
- *  device settings, backing out, and stepping off to a plain typed entry. */
+/** The proceed gesture: arm the run and enter review, but only with a page to read.
+ *  `started` stays true through a mid-run trim back to one page so a partial removal
+ *  never re-arms — but `disarm` returns it to the pre-transcribe state when the whole
+ *  session is emptied, so a return to collect re-syncs cleanly and re-entry starts fresh. */
+function useTranscribeGate(
+  pagesRef: React.MutableRefObject<CapturePage[]>,
+  setPhase: (_phase: Phase) => void,
+): { started: boolean; transcribe: () => void; disarm: () => void } {
+  const [started, setStarted] = useState(false);
+  const transcribe = useCallback(() => {
+    if (pagesRef.current.length < 1) return;
+    setStarted(true);
+    setPhase({ step: 'review' });
+  }, [pagesRef, setPhase]);
+  const disarm = useCallback(() => setStarted(false), []);
+  return { started, transcribe, disarm };
+}
+
+/** The navigation offramps: open device settings, back out entirely, or step off to
+ *  a plain hand-typed entry (which releases the in-memory session on the way out). */
 function useNavigationOfframps(
   navigation: PhotographNavigation,
   releaseSession: () => void,
-): { openSettings: () => void; cancel: () => void; goTypedEntry: () => void } {
+): {
+  openSettings: () => void;
+  cancel: () => void;
+  goTypedEntry: () => void;
+} {
   const openSettings = useCallback(() => void Linking.openSettings(), []);
-  const cancel = useCallback(() => navigation.goBack(), [navigation]);
+  const cancel = useCallback(() => {
+    releaseSession(); // Release every page image when backing out of the flow.
+    navigation.goBack();
+  }, [navigation, releaseSession]);
   const goTypedEntry = useCallback(() => {
-    releaseSession(); // Release the session when stepping off to a typed entry.
+    releaseSession(); // Release every page image when stepping off to a typed entry.
     navigation.navigate('JournalEntry');
   }, [navigation, releaseSession]);
   return { openSettings, cancel, goTypedEntry };
@@ -432,11 +407,17 @@ function useNavigationOfframps(
 
 /** Keeps the transient device files in lockstep with the in-memory session:
  *  release-everything-and-clear (save, typed-entry offramp), an unmount sweep
- *  for whatever the writer walked away from, and per-page removal. */
+ *  for whatever the writer walked away from, per-page removal, and the per-page
+ *  release once a page is transcribed (its files have served their purpose, while
+ *  its in-memory base64 stays for edits and redos). */
 function useSessionCleanup(
   pagesRef: React.MutableRefObject<CapturePage[]>,
   dispatch: React.Dispatch<CaptureSessionAction>,
-): { releaseSession: () => void; removePage: (_id: string) => void } {
+): {
+  releaseSession: () => void;
+  removePage: (_id: string) => void;
+  releasePageById: (_id: string) => void;
+} {
   const releaseSessionFiles = useCallback(() => {
     fireAndForgetCleanup(releaseAllPageFiles(pagesRef.current));
   }, [pagesRef]);
@@ -462,32 +443,99 @@ function useSessionCleanup(
     [pagesRef, dispatch],
   );
 
-  return { releaseSession, removePage };
+  // Release just this page's transient files once the run has read it. The page
+  // stays in the session (its base64 still backs edits and redos), so only the
+  // on-device cache copies are reclaimed; a later remove/release is idempotent.
+  const releasePageById = useCallback(
+    (id: string) => {
+      const page = pagesRef.current.find((candidate) => candidate.id === id);
+      if (page) {
+        fireAndForgetCleanup(releasePageFiles(page));
+      }
+    },
+    [pagesRef],
+  );
+
+  return { releaseSession, removePage, releasePageById };
 }
 
 /**
- * The capture state machine: collect pages → transcribe → editable preview → save.
- * Pages live in a reducer (never in nav params) with a ref mirror so async picks
- * read the current session; the created-entry id lives in a ref so a save retry
- * after a failed finish PATCH reuses it rather than creating a duplicate page.
+ * Never a dead end (NORTH-STAR): if the writer removes every page mid-review, fall
+ * back to the disarmed collect stage rather than leaving them at a permanently
+ * disabled Save — they can add pages again or leave cleanly from there.
+ */
+function useEmptyReviewGuard(
+  phaseStep: Phase['step'],
+  pageCount: number,
+  disarm: () => void,
+  setPhase: (_phase: Phase) => void,
+): void {
+  useEffect(() => {
+    if (phaseStep === 'review' && pageCount === 0) {
+      disarm();
+      setPhase({ step: 'collect' });
+    }
+  }, [phaseStep, pageCount, disarm, setPhase]);
+}
+
+/** The drag-reorder edit both the collect strip and the run trigger. Per-page
+ *  removal lives in {@link useSessionCleanup}, which pairs the drop with its file
+ *  cleanup; reordering never touches files, so it stays a plain reducer commit. */
+function useReorderPages(
+  dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>,
+): (_pages: CapturePage[]) => void {
+  return useCallback(
+    (next: CapturePage[]) => dispatch({ type: 'reorder', pages: next }),
+    [dispatch],
+  );
+}
+
+/** Wire the progressive run to the session, its two page-swapping offramps, and the
+ *  per-page transient-file release fired once a page has been read. */
+function useCaptureRun(
+  pages: CapturePage[],
+  started: boolean,
+  retakePage: (_id: string) => void,
+  removePage: (_id: string) => void,
+  releasePageById: (_id: string) => void,
+): TranscriptionRunModel {
+  return useTranscriptionRun({
+    pages,
+    started,
+    onRetake: retakePage,
+    onRemove: removePage,
+    onPageTranscribed: releasePageById,
+  });
+}
+
+/**
+ * The capture state machine: collect pages → run the multi-page transcription →
+ * review + save. Pages live in a reducer (never in nav params) with a ref mirror so
+ * async picks and the run read the current session; the created-entry id lives in a
+ * ref so a save retry after a failed finish PATCH reuses it rather than duplicating.
  */
 function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
   const [pages, dispatch] = useReducer(captureSessionReducer, []);
-  const [previewText, setPreviewText] = useState('');
   const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
   const createdIdRef = useRef<number | null>(null);
   const counterRef = useRef(0);
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
 
-  const { releaseSession, removePage } = useSessionCleanup(pagesRef, dispatch);
+  const { releaseSession, removePage, releasePageById } = useSessionCleanup(pagesRef, dispatch);
   const runPick = usePickPages({ navigation, dispatch, pagesRef, counterRef, setPhase });
   const runCapture = useCameraCapture({ dispatch, counterRef, setPhase });
-  const beginTranscription = useBeginTranscription(pagesRef, setPhase, setPreviewText);
+  const reorderPages = useReorderPages(dispatch);
+  const retakePage = useRetakePage({ dispatch, pagesRef, counterRef, releasePageById });
+  const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase);
+  useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
+
+  const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
+
   const { save, saving, saveFailed } = useSaveEntry(
     navigation,
-    previewText,
+    run.mergedText,
     entryDate,
     releaseSession,
     createdIdRef,
@@ -503,23 +551,21 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     phase,
     pages,
     canAdd: canAddPages(pages),
-    previewText,
     entryDate,
     saving,
     saveFailed,
-    onChangeText: setPreviewText,
     onChangeEntryDate: setEntryDate,
     runPick: () => void runPick(),
     takePhoto: () => void runCapture(),
     finishCapturing: () => setPhase({ step: 'collect' }),
     removePage,
-    reorderPages: (next) => dispatch({ type: 'reorder', pages: next }),
-    transcribe: () => void beginTranscription(),
-    retryTranscribe: () => void beginTranscription(),
+    reorderPages,
+    transcribe,
     save: () => void save(),
     openSettings,
     cancel,
     goTypedEntry,
+    run,
   };
 }
 
@@ -620,52 +666,6 @@ function PickFailedView({ onPickAnother }: { onPickAnother: () => void }): React
   );
 }
 
-/** A transcription failure with its per-kind recovery offramps. */
-function TranscribeErrorView({
-  recovery,
-  onRetry,
-  onPickAnother,
-  onTypedEntry,
-}: {
-  recovery: Recovery;
-  onRetry: () => void;
-  onPickAnother: () => void;
-  onTypedEntry: () => void;
-}): React.JSX.Element {
-  return (
-    <View testID="photograph-error" style={styles.container}>
-      <Text style={styles.message}>{recovery.message}</Text>
-      <View style={styles.actions}>
-        {recovery.showRetry ? (
-          <Button
-            testID="photograph-retry"
-            label={RETRY_LABEL}
-            accessibilityLabel={RETRY_LABEL}
-            onPress={onRetry}
-          />
-        ) : null}
-        {recovery.showPickAnother ? (
-          <Button
-            testID="photograph-pick-another"
-            label={PICK_ANOTHER_LABEL}
-            accessibilityLabel={PICK_ANOTHER_LABEL}
-            onPress={onPickAnother}
-          />
-        ) : null}
-        {recovery.showTypedEntry ? (
-          <Button
-            testID="photograph-typed-entry"
-            variant="tertiary"
-            label={TYPED_ENTRY_LABEL}
-            accessibilityLabel={TYPED_ENTRY_LABEL}
-            onPress={onTypedEntry}
-          />
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 /** The date affordance: a quiet label over the shared picker, defaulting to today. */
 function EntryDateRow({
   entryDate,
@@ -682,15 +682,17 @@ function EntryDateRow({
   );
 }
 
-/** Save, plus a Retry-save button surfaced only after a save has failed. */
-function PreviewActions({
+/** Save, gated on the whole run settling, plus a Retry-save surfaced after a failure. */
+function ReviewActions({
   onSave,
   saving,
   saveFailed,
+  canSave,
 }: {
   onSave: () => void;
   saving: boolean;
   saveFailed: boolean;
+  canSave: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.actions}>
@@ -698,6 +700,7 @@ function PreviewActions({
         testID="photograph-save"
         label={SAVE_LABEL}
         accessibilityLabel={SAVE_LABEL}
+        disabled={!canSave}
         busy={saving}
         onPress={onSave}
       />
@@ -711,41 +714,6 @@ function PreviewActions({
           onPress={onSave}
         />
       ) : null}
-    </View>
-  );
-}
-
-/** The editable transcription preview + Save (and a retry when a save fails). */
-function PreviewView({
-  value,
-  onChangeText,
-  entryDate,
-  onChangeEntryDate,
-  onSave,
-  saving,
-  saveFailed,
-}: {
-  value: string;
-  onChangeText: (_text: string) => void;
-  entryDate: string;
-  onChangeEntryDate: (_date: string) => void;
-  onSave: () => void;
-  saving: boolean;
-  saveFailed: boolean;
-}): React.JSX.Element {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>{PREVIEW_HEADING}</Text>
-      <TextInput
-        testID="photograph-preview-input"
-        style={styles.previewInput}
-        value={value}
-        onChangeText={onChangeText}
-        multiline
-        accessibilityLabel={PREVIEW_INPUT_A11Y}
-      />
-      <EntryDateRow entryDate={entryDate} onChangeEntryDate={onChangeEntryDate} />
-      <PreviewActions onSave={onSave} saving={saving} saveFailed={saveFailed} />
     </View>
   );
 }
@@ -764,6 +732,47 @@ function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
         onTranscribe={model.transcribe}
       />
       <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
+    </View>
+  );
+}
+
+/** The review stage: one editable block per page, the run's progress, the date row,
+ *  and Save (which waits for every page to settle). A terminal, config-level failure
+ *  (the model cannot read images at all) surfaces a hand-typed offramp, since no
+ *  amount of retrying can move it forward. */
+function ReviewView({ model }: { model: CaptureModel }): React.JSX.Element {
+  const { run } = model;
+  return (
+    <View style={styles.container}>
+      <TranscriptionPreview
+        pages={model.pages}
+        blocks={run.blocks}
+        onEdit={run.editBlock}
+        onRetry={run.retryBlock}
+        onConfirmRedo={run.confirmRedo}
+        onRetake={run.retakeBlock}
+        onRemove={run.removeBlock}
+        isConfirmingRedo={run.isConfirmingRedo}
+      />
+      <Text testID="photograph-run-progress" style={styles.progress}>
+        {run.progress}
+      </Text>
+      <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
+      <ReviewActions
+        onSave={model.save}
+        saving={model.saving}
+        saveFailed={model.saveFailed}
+        canSave={run.isComplete}
+      />
+      {run.hasTerminalError ? (
+        <Button
+          testID="photograph-typed-entry"
+          variant="tertiary"
+          label={TYPED_ENTRY_LABEL}
+          accessibilityLabel={TYPED_ENTRY_LABEL}
+          onPress={model.goTypedEntry}
+        />
+      ) : null}
     </View>
   );
 }
@@ -828,8 +837,7 @@ function TakeAnotherView({ model }: { model: CaptureModel }): React.JSX.Element 
 
 /** Route the current phase to its view. */
 function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
-  const { phase } = model;
-  switch (phase.step) {
+  switch (model.phase.step) {
     case 'denied':
       return <PermissionDeniedView onOpenSettings={model.openSettings} onCancel={model.cancel} />;
     case 'cameraDenied':
@@ -846,35 +854,14 @@ function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
       return <CollectView model={model} />;
     case 'takeAnother':
       return <TakeAnotherView model={model} />;
-    case 'transcribing':
-      return <WorkingBlock testID="photograph-transcribing" caption={TRANSCRIBING_COPY} />;
-    case 'preview':
-      return (
-        <PreviewView
-          value={model.previewText}
-          onChangeText={model.onChangeText}
-          entryDate={model.entryDate}
-          onChangeEntryDate={model.onChangeEntryDate}
-          onSave={model.save}
-          saving={model.saving}
-          saveFailed={model.saveFailed}
-        />
-      );
-    case 'error':
-      return (
-        <TranscribeErrorView
-          recovery={recoveryFor(phase.error)}
-          onRetry={model.retryTranscribe}
-          onPickAnother={model.runPick}
-          onTypedEntry={model.goTypedEntry}
-        />
-      );
+    case 'review':
+      return <ReviewView model={model} />;
     default:
       return <WorkingBlock testID="photograph-preparing" caption={PREPARING_COPY} />;
   }
 }
 
-/** The photograph-capture route: pick a page, transcribe it, then save it. */
+/** The photograph-capture route: pick pages, transcribe them, then save the merge. */
 export default function JournalPhotographScreen({
   navigation,
 }: NativeStackScreenProps<RootStackParamList, 'JournalPhotograph'>): React.JSX.Element {
