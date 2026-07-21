@@ -30,8 +30,9 @@ function blockAt(state: TranscriptionRunState, id: string): TranscriptionBlock {
   return block;
 }
 
+// Seeding a fresh run is `pagesSynced` from the empty state: every page enters pending.
 function initState(ids: readonly string[]): TranscriptionRunState {
-  return transcriptionRunReducer(emptyState, { type: 'init', pageIds: ids });
+  return transcriptionRunReducer(emptyState, { type: 'pagesSynced', orderedIds: ids });
 }
 
 describe('TRANSCRIBE_CONCURRENCY', () => {
@@ -40,7 +41,7 @@ describe('TRANSCRIBE_CONCURRENCY', () => {
   });
 });
 
-describe('transcriptionRunReducer — init', () => {
+describe('transcriptionRunReducer — pagesSynced seeds a fresh run', () => {
   it('seeds every page as pending, with empty text, no edit, and no error', () => {
     const state = initState(['p1', 'p2']);
     expect(state.order).toEqual(['p1', 'p2']);
@@ -117,11 +118,11 @@ describe('transcriptionRunReducer — out-of-order completion', () => {
   });
 });
 
-describe('transcriptionRunReducer — pageRemoved', () => {
-  it('drops a removed page entirely, so a stray resolve for it is absorbed as a no-op', () => {
+describe('transcriptionRunReducer — pagesSynced drops a removed page', () => {
+  it('drops a page no longer in the session, so a stray resolve for it is absorbed as a no-op', () => {
     let state = initState(['p1', 'p2']);
     state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
-    state = transcriptionRunReducer(state, { type: 'pageRemoved', id: 'p1' });
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2'] });
     expect(state.blocks.p1).toBeUndefined();
     expect(state.order).toEqual(['p2']);
 
@@ -138,7 +139,7 @@ describe('transcriptionRunReducer — pageRemoved', () => {
   it('lets the run complete without the removed page', () => {
     let state = initState(['p1', 'p2']);
     state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
-    state = transcriptionRunReducer(state, { type: 'pageRemoved', id: 'p1' });
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2'] });
     state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
     state = transcriptionRunReducer(state, { type: 'resolve', id: 'p2', attempt: 1, text: 'B' });
     expect(isRunComplete(state, idsToPages(['p2']))).toBe(true);
@@ -399,7 +400,7 @@ describe('isRunComplete', () => {
       attempt: 1,
       error: 'network',
     });
-    state = transcriptionRunReducer(state, { type: 'pageRemoved', id: 'p2' });
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1'] });
     expect(isRunComplete(state, idsToPages(['p1']))).toBe(true);
   });
 });
@@ -442,7 +443,7 @@ describe('progressLabel', () => {
       attempt: 1,
       error: 'timeout',
     });
-    state = transcriptionRunReducer(state, { type: 'pageRemoved', id: 'p2' });
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1'] });
     expect(progressLabel(state, idsToPages(['p1']))).toBe('Transcribing 1 of 1…');
   });
 });

@@ -644,8 +644,8 @@ describe('JournalPhotographScreen — redo a resolved block', () => {
     await findByTestId('photograph-block-1-input');
 
     mockTranscribe.mockResolvedValueOnce({ text: 'second pass' });
-    fireEvent.press(await findByTestId('photograph-block-1-retry'));
-    expect(queryByTestId('photograph-block-1-retry-confirm')).toBeNull();
+    fireEvent.press(await findByTestId('photograph-block-1-redo'));
+    expect(queryByTestId('photograph-block-1-redo-confirm')).toBeNull();
     await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(getByTestId('photograph-block-1-input').props.value).toBe('second pass'),
@@ -660,18 +660,18 @@ describe('JournalPhotographScreen — redo a resolved block', () => {
     const input = await findByTestId('photograph-block-1-input');
     fireEvent.changeText(input, 'hand-edited');
 
-    fireEvent.press(await findByTestId('photograph-block-1-retry'));
+    fireEvent.press(await findByTestId('photograph-block-1-redo'));
     expect(mockTranscribe).toHaveBeenCalledTimes(1);
     expect(getByTestId('photograph-block-1-input').props.value).toBe('hand-edited');
-    expect(await findByTestId('photograph-block-1-retry-confirm')).toBeTruthy();
+    expect(await findByTestId('photograph-block-1-redo-confirm')).toBeTruthy();
 
     mockTranscribe.mockResolvedValueOnce({ text: 'redone text' });
-    fireEvent.press(await findByTestId('photograph-block-1-retry-confirm'));
+    fireEvent.press(await findByTestId('photograph-block-1-redo-confirm'));
     await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(getByTestId('photograph-block-1-input').props.value).toBe('redone text'),
     );
-    expect(queryByTestId('photograph-block-1-retry-confirm')).toBeNull();
+    expect(queryByTestId('photograph-block-1-redo-confirm')).toBeNull();
   });
 });
 
@@ -718,6 +718,65 @@ describe('JournalPhotographScreen — save gate across the run', () => {
     fireEvent.press(await findByTestId('photograph-block-2-remove'));
     await waitFor(() =>
       expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
+    );
+  });
+});
+
+describe('JournalPhotographScreen — remove every page mid-review (never a dead end)', () => {
+  it('returns to the collect stage when the writer removes every page during review, instead of a permanently-disabled Save', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const handles = queueDeferredTranscriptions(2);
+    const { findByTestId, queryByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+    // Both pages fail transiently, so each block offers Remove rather than a landed edit.
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('network', null));
+    });
+    await act(async () => {
+      handles[1]?.reject(new TranscriptionError('network', null));
+    });
+
+    fireEvent.press(await findByTestId('photograph-block-2-remove'));
+    fireEvent.press(await findByTestId('photograph-block-1-remove'));
+
+    // No dead end: the disabled Save and the "Transcribing 0 of 0…" line are gone,
+    // and we are back in collect where the writer can add pages again or leave cleanly.
+    await findByTestId('capture-add-pages');
+    expect(await findByTestId('capture-transcribe')).toBeTruthy();
+    expect(queryByTestId('photograph-save')).toBeNull();
+    expect(queryByTestId('photograph-run-progress')).toBeNull();
+  });
+
+  it('disarms the run on return to collect: a re-added page only transcribes on an explicit Transcribe, reading the fresh page and never the removed one', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const handles = queueDeferredTranscriptions(1);
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      handles[0]?.reject(new TranscriptionError('network', null));
+    });
+    fireEvent.press(await findByTestId('photograph-block-1-remove'));
+    await findByTestId('capture-add-pages');
+
+    // Re-add a fresh page. Because the run is disarmed, adding does not re-charge.
+    mockPick.mockResolvedValueOnce(
+      picked([pickedAsset({ uri: 'file:///fresh.jpg', imageBase64: 'b64-fresh' })]),
+    );
+    fireEvent.press(await findByTestId('capture-add-pages'));
+    await waitFor(() => expect(mockPick).toHaveBeenCalledTimes(2));
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+
+    // Only an explicit Transcribe re-arms the run — and it reads the fresh page's bytes.
+    mockTranscribe.mockResolvedValueOnce({ text: 'fresh page text' });
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    expect((await findByTestId('photograph-block-1-input')).props.value).toBe('fresh page text');
+    expect(mockTranscribe.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ imageBase64: 'b64-fresh' }),
     );
   });
 });

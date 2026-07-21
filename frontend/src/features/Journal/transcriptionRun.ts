@@ -67,35 +67,26 @@ export interface PageRef {
 /**
  * The transitions a run accepts:
  *
- *  - `init`        — seed every page as `pending` (a fresh run).
  *  - `start`       — mark a `pending` page in flight, stamping its attempt token.
  *  - `resolve`     — land a page's transcribed text (→ `done`).
  *  - `reject`      — record a page's failure kind (→ `failed`).
  *  - `edit`        — replace a `done` page's text by hand (edits then win).
  *  - `retry`       — an explicit re-read of a settled page (→ `pending`, attempt++).
- *  - `pageRemoved` — drop a page entirely (its late reply becomes an inert no-op).
- *  - `pagesSynced` — reconcile order + removals/additions from the session's pages.
+ *  - `pagesSynced` — reconcile order + additions/removals from the session's pages;
+ *                    this alone seeds a fresh run (from the empty state) and drops a
+ *                    page that leaves the session (its late reply becomes inert).
  */
 export type TranscriptionRunAction =
-  | { type: 'init'; pageIds: readonly string[] }
   | { type: 'start'; id: string; attempt: number }
   | { type: 'resolve'; id: string; attempt: number; text: string }
   | { type: 'reject'; id: string; attempt: number; error: TranscriptionErrorKind }
   | { type: 'edit'; id: string; text: string }
   | { type: 'retry'; id: string }
-  | { type: 'pageRemoved'; id: string }
   | { type: 'pagesSynced'; orderedIds: readonly string[] };
 
 /** A brand-new page, waiting its turn. */
 function pendingBlock(id: string): TranscriptionBlock {
   return { id, status: 'pending', text: '', edited: false, attempt: FIRST_ATTEMPT, error: null };
-}
-
-/** Seed a run with every page `pending`, preserving selection order. */
-function seed(pageIds: readonly string[]): TranscriptionRunState {
-  const blocks: Record<string, TranscriptionBlock> = {};
-  for (const id of pageIds) blocks[id] = pendingBlock(id);
-  return { order: [...pageIds], blocks };
 }
 
 /** Return a new state with one block replaced (order untouched). */
@@ -168,19 +159,12 @@ function applyRetry(state: TranscriptionRunState, id: string): TranscriptionRunS
   });
 }
 
-/** `pageRemoved`: drop the block and its order entry; a stray late reply is inert. */
-function applyPageRemoved(state: TranscriptionRunState, id: string): TranscriptionRunState {
-  if (!state.blocks[id]) return state;
-  const blocks = { ...state.blocks };
-  delete blocks[id];
-  return { order: state.order.filter((entry) => entry !== id), blocks };
-}
-
 /**
  * `pagesSynced`: make the session's page list authoritative for order and
  * membership. Existing blocks are preserved as-is (a `done` page stays done), ids
  * new to the run enter `pending`, and ids no longer present are dropped — which is
- * exactly what a retake (an id swapped in place) or an in-run removal needs.
+ * exactly what a fresh run (from the empty state), a retake (an id swapped in place),
+ * or an in-run removal each need. A dropped page's late reply is inert (no block).
  */
 function applyPagesSynced(
   state: TranscriptionRunState,
@@ -199,8 +183,6 @@ export function transcriptionRunReducer(
   action: TranscriptionRunAction,
 ): TranscriptionRunState {
   switch (action.type) {
-    case 'init':
-      return seed(action.pageIds);
     case 'start':
       return applyStart(state, action.id, action.attempt);
     case 'resolve':
@@ -211,8 +193,6 @@ export function transcriptionRunReducer(
       return applyEdit(state, action.id, action.text);
     case 'retry':
       return applyRetry(state, action.id);
-    case 'pageRemoved':
-      return applyPageRemoved(state, action.id);
     case 'pagesSynced':
       return applyPagesSynced(state, action.orderedIds);
     default:

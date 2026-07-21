@@ -113,7 +113,7 @@ function DoneBlock({
       />
       <View style={styles.blockActions}>
         <Button
-          testID={`photograph-block-${position}-retry`}
+          testID={`photograph-block-${position}-redo`}
           variant="tertiary"
           label={REDO_LABEL}
           accessibilityLabel={REDO_LABEL}
@@ -121,7 +121,7 @@ function DoneBlock({
         />
         {confirming ? (
           <Button
-            testID={`photograph-block-${position}-retry-confirm`}
+            testID={`photograph-block-${position}-redo-confirm`}
             variant="secondary"
             label={REDO_CONFIRM_LABEL}
             accessibilityLabel={REDO_CONFIRM_LABEL}

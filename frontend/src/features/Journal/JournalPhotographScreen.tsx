@@ -228,18 +228,21 @@ function useSaveEntry(
 }
 
 /** The proceed gesture: arm the run and enter review, but only with a page to read.
- *  `started` stays true thereafter so a mid-run trim back to one page never re-arms. */
+ *  `started` stays true through a mid-run trim back to one page so a partial removal
+ *  never re-arms — but `disarm` returns it to the pre-transcribe state when the whole
+ *  session is emptied, so a return to collect re-syncs cleanly and re-entry starts fresh. */
 function useTranscribeGate(
   pagesRef: React.MutableRefObject<CapturePage[]>,
   setPhase: (_phase: Phase) => void,
-): { started: boolean; transcribe: () => void } {
+): { started: boolean; transcribe: () => void; disarm: () => void } {
   const [started, setStarted] = useState(false);
   const transcribe = useCallback(() => {
     if (pagesRef.current.length < 1) return;
     setStarted(true);
     setPhase({ step: 'review' });
   }, [pagesRef, setPhase]);
-  return { started, transcribe };
+  const disarm = useCallback(() => setStarted(false), []);
+  return { started, transcribe, disarm };
 }
 
 /** The navigation offramps: open device settings, back out entirely, or step off to
@@ -253,12 +256,34 @@ function useNavigationOfframps(
   goTypedEntry: () => void;
 } {
   const openSettings = useCallback(() => void Linking.openSettings(), []);
-  const cancel = useCallback(() => navigation.goBack(), [navigation]);
+  const cancel = useCallback(() => {
+    releaseSession(); // Release every page image when backing out of the flow.
+    navigation.goBack();
+  }, [navigation, releaseSession]);
   const goTypedEntry = useCallback(() => {
     releaseSession(); // Release every page image when stepping off to a typed entry.
     navigation.navigate('JournalEntry');
   }, [navigation, releaseSession]);
   return { openSettings, cancel, goTypedEntry };
+}
+
+/**
+ * Never a dead end (NORTH-STAR): if the writer removes every page mid-review, fall
+ * back to the disarmed collect stage rather than leaving them at a permanently
+ * disabled Save — they can add pages again or leave cleanly from there.
+ */
+function useEmptyReviewGuard(
+  phaseStep: Phase['step'],
+  pageCount: number,
+  disarm: () => void,
+  setPhase: (_phase: Phase) => void,
+): void {
+  useEffect(() => {
+    if (phaseStep === 'review' && pageCount === 0) {
+      disarm();
+      setPhase({ step: 'collect' });
+    }
+  }, [phaseStep, pageCount, disarm, setPhase]);
 }
 
 /**
@@ -284,7 +309,8 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     [],
   );
   const retakePage = useRetakePage({ dispatch, pagesRef, counterRef });
-  const { started, transcribe } = useTranscribeGate(pagesRef, setPhase);
+  const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase);
+  useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
 
   const run = useTranscriptionRun({ pages, started, onRetake: retakePage, onRemove: removePage });
 
