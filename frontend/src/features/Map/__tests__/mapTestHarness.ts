@@ -65,9 +65,11 @@ export function mockMakeStage(stageNumber: number, overrides: Partial<StageData>
     aspect: 'Aspect',
     spiralDynamicsColor: 'Beige',
     growingUpStage: 'Growing',
-    divineGenderPolarity: 'Polarity',
+    // Stage-specific so a lens-caption assertion can prove which stage is under
+    // the glass (the pill now shows only polarity + free-will description).
+    divineGenderPolarity: stageNumber % 2 === 0 ? 'Divine Feminine' : 'Divine Masculine',
     relationshipToFreeWill: 'Free Will',
-    freeWillDescription: 'Description of free will.',
+    freeWillDescription: `Free will at stage ${stageNumber}.`,
     overviewUrl: '',
     manifestations: defaultManifestations(),
     ...overrides,

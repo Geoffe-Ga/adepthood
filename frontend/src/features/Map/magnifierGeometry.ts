@@ -15,6 +15,7 @@ import { STAGE_ORDER } from '../../design/tokens';
 
 import { STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import { STAGE_COUNT } from './stageData';
+import type { StageData } from './stageData';
 import { centerColumnBounds, stageWavePoint } from './waveGeometry';
 import type { StageAnchors } from './waveGeometry';
 
@@ -183,34 +184,42 @@ export const magnifierTransform = (
 export const glideDurationMs = (distancePx: number): number =>
   clamp(distancePx * GLIDE_MS_PER_PX, GLIDE_MIN_MS, GLIDE_MAX_MS);
 
-/** The enriched caption the lens shows for the stage under the glass. */
+/**
+ * The two stage-ontology facts the lens surfaces under the glass — the only
+ * pieces of a stage's ontology that appear nowhere else on the Map screen, so
+ * the pill adds information rather than repeating the columns beneath it.
+ */
 export interface LensCaption {
-  /** Stage number + Spiral color name, e.g. "4 · BLUE". */
-  eyebrow: string;
-  /** The Aspect word for the stage (or its UNITY / EMPTINESS title). */
-  headline: string;
-  /** The stage's persona and mode of knowing, dot-separated. */
-  detail: string;
-  /** The practice cultivated at this stage. */
-  practice: string;
+  /** The stage's Divine Gender Polarity, eyebrow-style (e.g. "Divine Feminine"). */
+  polarity: string;
+  /** The stage's one-sentence free-will read, clamped within the pill. */
+  freeWill: string;
 }
 
 /**
- * Resolve the caption for a stage under the glass: an eyebrow pairing the stage
- * number with its Spiral color, the Aspect arrow word (or the UNITY / EMPTINESS
- * title carried by stages 9–10) over its persona and descriptor, and the
- * stage's cultivated practice. Unknown stages resolve to empty strings rather
- * than throwing so a transient out-of-range hover can never take the Map down.
+ * Resolve the lens caption from a stage's backend data: its Divine Gender
+ * Polarity over its free-will description. Both are sourced from ``StageData``
+ * (never hardcoded) so ontology corrections flow through automatically. Missing
+ * data — a cold start, a fetch error, or an out-of-range hover — resolves to
+ * empty strings rather than throwing, so a transient gap can never take the Map
+ * down.
  */
-export const lensCaption = (stageNumber: number): LensCaption => {
+export const lensCaption = (stage: StageData | undefined): LensCaption =>
+  stage
+    ? { polarity: stage.divineGenderPolarity, freeWill: stage.freeWillDescription }
+    : { polarity: '', freeWill: '' };
+
+/**
+ * Screen-reader identity for a stage: its Aspect word (or the UNITY / EMPTINESS
+ * title carried by stages 9–10), stage number + Spiral color, and persona. The
+ * visible pill sheds this detail because it duplicates the Map's columns, but a
+ * screen-reader user can't cross-reference those columns, so the spoken label
+ * keeps it. Unknown stages resolve to an empty string rather than throwing.
+ */
+export const lensStageIdentity = (stageNumber: number): string => {
   const display = STAGE_DISPLAY[stageNumber];
-  if (!display) return { eyebrow: '', headline: '', detail: '', practice: '' };
+  if (!display) return '';
   const headline = display.arrowLabel || TITLE_BY_STAGE[display.stageNumber] || '';
   const colorName = (STAGE_ORDER[display.stageNumber - 1] ?? '').toUpperCase();
-  return {
-    eyebrow: `${display.stageNumber} · ${colorName}`,
-    headline,
-    detail: `${display.persona} · ${display.descriptor}`,
-    practice: display.practice,
-  };
+  return `${headline}, stage ${display.stageNumber} · ${colorName}, ${display.persona}`;
 };
