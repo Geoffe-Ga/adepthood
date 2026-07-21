@@ -2,13 +2,15 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import * as ImagePicker from 'expo-image-picker';
 
-import { captureJournalPhoto, pickJournalPhotos, toMediaType } from '../pickJournalPhoto';
+import { captureJournalPhoto, pickJournalPhotos } from '../pickJournalPhoto';
 
 const requestPermission = jest.mocked(ImagePicker.requestMediaLibraryPermissionsAsync);
 const launchLibrary = jest.mocked(ImagePicker.launchImageLibraryAsync);
 const requestCameraPermission = jest.mocked(ImagePicker.requestCameraPermissionsAsync);
 const launchCamera = jest.mocked(ImagePicker.launchCameraAsync);
 
+// The factory keeps legacy base64/mimeType metadata on purpose: a picker may
+// still report them, and the mapper must ignore them rather than pass them on.
 function asset(
   overrides: Partial<ImagePicker.ImagePickerAsset> = {},
 ): ImagePicker.ImagePickerAsset {
@@ -39,64 +41,64 @@ describe('pickJournalPhotos', () => {
     expect(await pickJournalPhotos(10)).toEqual({ kind: 'cancelled' });
   });
 
-  it('returns failed when zero picked assets carry usable base64 data', async () => {
+  it('returns failed when zero picked assets carry a file uri', async () => {
     launchLibrary.mockResolvedValueOnce({
       canceled: false,
-      assets: [asset({ base64: undefined })],
+      assets: [asset({ uri: '' })],
     });
     expect(await pickJournalPhotos(10)).toEqual({ kind: 'failed' });
   });
 
-  it('maps every picked asset, in selection order, to uri + imageBase64 + mediaType', async () => {
+  it('maps every picked asset, in selection order, to its uri alone', async () => {
     launchLibrary.mockResolvedValueOnce({
       canceled: false,
       assets: [
-        asset({ uri: 'file:///p1.jpg', base64: 'b64-1', mimeType: 'image/jpeg' }),
-        asset({ uri: 'file:///p2.jpg', base64: 'b64-2', mimeType: 'image/png' }),
-        asset({ uri: 'file:///p3.jpg', base64: 'b64-3', mimeType: 'image/webp' }),
+        asset({ uri: 'file:///p1.jpg', mimeType: 'image/jpeg' }),
+        asset({ uri: 'file:///p2.jpg', mimeType: 'image/png' }),
+        asset({ uri: 'file:///p3.jpg', mimeType: 'image/webp' }),
       ],
     });
 
     expect(await pickJournalPhotos(10)).toEqual({
       kind: 'picked',
-      assets: [
-        { uri: 'file:///p1.jpg', imageBase64: 'b64-1', mediaType: 'image/jpeg' },
-        { uri: 'file:///p2.jpg', imageBase64: 'b64-2', mediaType: 'image/png' },
-        { uri: 'file:///p3.jpg', imageBase64: 'b64-3', mediaType: 'image/webp' },
-      ],
+      assets: [{ uri: 'file:///p1.jpg' }, { uri: 'file:///p2.jpg' }, { uri: 'file:///p3.jpg' }],
     });
   });
 
-  it('skips a base64-less asset among otherwise usable picks, returning only the usable ones', async () => {
+  it('skips a uri-less asset among otherwise usable picks, returning only the usable ones', async () => {
     launchLibrary.mockResolvedValueOnce({
       canceled: false,
       assets: [
-        asset({ uri: 'file:///p1.jpg', base64: 'b64-1' }),
-        asset({ uri: 'file:///p2.jpg', base64: undefined }),
-        asset({ uri: 'file:///p3.jpg', base64: 'b64-3' }),
+        asset({ uri: 'file:///p1.jpg' }),
+        asset({ uri: '' }),
+        asset({ uri: 'file:///p3.jpg' }),
       ],
     });
 
     expect(await pickJournalPhotos(10)).toEqual({
       kind: 'picked',
-      assets: [
-        { uri: 'file:///p1.jpg', imageBase64: 'b64-1', mediaType: 'image/jpeg' },
-        { uri: 'file:///p3.jpg', imageBase64: 'b64-3', mediaType: 'image/jpeg' },
-      ],
+      assets: [{ uri: 'file:///p1.jpg' }, { uri: 'file:///p3.jpg' }],
     });
   });
 
-  it('calls the launcher with multi-select options for the given selection limit', async () => {
+  it('calls the launcher with exactly the multi-select options for the given selection limit', async () => {
     launchLibrary.mockResolvedValueOnce({ canceled: false, assets: [asset()] });
     await pickJournalPhotos(7);
     expect(launchLibrary).toHaveBeenCalledWith({
       mediaTypes: ['images'],
-      quality: 0.8,
-      base64: true,
       allowsMultipleSelection: true,
       selectionLimit: 7,
       orderedSelection: true,
     });
+  });
+
+  it('never requests base64 or a quality re-encode from the library picker', async () => {
+    launchLibrary.mockResolvedValueOnce({ canceled: false, assets: [asset()] });
+    await pickJournalPhotos(10);
+    expect(launchLibrary).toHaveBeenCalledTimes(1);
+    const [options] = launchLibrary.mock.calls[0] ?? [];
+    expect(options ?? {}).not.toHaveProperty('base64');
+    expect(options ?? {}).not.toHaveProperty('quality');
   });
 
   it('never calls the launcher after permission is denied', async () => {
@@ -127,72 +129,31 @@ describe('captureJournalPhoto', () => {
     expect(await captureJournalPhoto()).toEqual({ kind: 'cancelled' });
   });
 
-  it('returns failed when the captured asset carries no usable base64 data', async () => {
+  it('returns failed when the captured asset carries no file uri', async () => {
     launchCamera.mockResolvedValueOnce({
       canceled: false,
-      assets: [asset({ base64: undefined })],
+      assets: [asset({ uri: '' })],
     });
     expect(await captureJournalPhoto()).toEqual({ kind: 'failed' });
   });
 
-  it('maps a granted capture to uri + imageBase64 + mediaType, passing image/png through', async () => {
+  it('maps a granted capture to its uri alone, ignoring any picker-reported metadata', async () => {
     launchCamera.mockResolvedValueOnce({
       canceled: false,
-      assets: [asset({ uri: 'file:///cam.png', base64: 'cam-b64', mimeType: 'image/png' })],
+      assets: [asset({ uri: 'file:///cam.jpg', base64: 'cam-b64', mimeType: 'image/png' })],
     });
     expect(await captureJournalPhoto()).toEqual({
       kind: 'captured',
-      asset: { uri: 'file:///cam.png', imageBase64: 'cam-b64', mediaType: 'image/png' },
+      asset: { uri: 'file:///cam.jpg' },
     });
   });
 
-  it('defaults an absent mime type to image/jpeg on a captured asset', async () => {
-    launchCamera.mockResolvedValueOnce({
-      canceled: false,
-      assets: [asset({ uri: 'file:///cam.jpg', base64: 'cam-b64', mimeType: undefined })],
-    });
-    expect(await captureJournalPhoto()).toEqual({
-      kind: 'captured',
-      asset: { uri: 'file:///cam.jpg', imageBase64: 'cam-b64', mediaType: 'image/jpeg' },
-    });
-  });
-
-  it('defaults an unrecognized mime type to image/jpeg on a captured asset', async () => {
-    launchCamera.mockResolvedValueOnce({
-      canceled: false,
-      assets: [asset({ uri: 'file:///cam.heic', base64: 'cam-b64', mimeType: 'image/heic' })],
-    });
-    expect(await captureJournalPhoto()).toEqual({
-      kind: 'captured',
-      asset: { uri: 'file:///cam.heic', imageBase64: 'cam-b64', mediaType: 'image/jpeg' },
-    });
-  });
-
-  it('calls the camera launcher with exactly quality and base64 options', async () => {
+  it('never requests base64 or a quality re-encode from the camera', async () => {
     launchCamera.mockResolvedValueOnce({ canceled: false, assets: [asset()] });
     await captureJournalPhoto();
-    expect(launchCamera).toHaveBeenCalledWith({ quality: 0.8, base64: true });
-  });
-});
-
-describe('toMediaType', () => {
-  it('maps image/png through unchanged', () => {
-    expect(toMediaType('image/png')).toBe('image/png');
-  });
-
-  it('maps image/webp through unchanged', () => {
-    expect(toMediaType('image/webp')).toBe('image/webp');
-  });
-
-  it('maps image/jpeg through unchanged', () => {
-    expect(toMediaType('image/jpeg')).toBe('image/jpeg');
-  });
-
-  it('defaults an unrecognized mime type to image/jpeg', () => {
-    expect(toMediaType('image/heic')).toBe('image/jpeg');
-  });
-
-  it('defaults an absent mime type to image/jpeg', () => {
-    expect(toMediaType(undefined)).toBe('image/jpeg');
+    expect(launchCamera).toHaveBeenCalledTimes(1);
+    const [options] = launchCamera.mock.calls[0] ?? [];
+    expect(options ?? {}).not.toHaveProperty('base64');
+    expect(options ?? {}).not.toHaveProperty('quality');
   });
 });

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject } from 'react';
 
+import { MAX_TRANSCRIBE_IMAGE_BYTES } from './capture/prepareImage';
 import type { CapturePage } from './captureSession';
 import {
   hasTerminalError,
@@ -89,6 +90,9 @@ export interface UseTranscriptionRunArgs {
   onRetake: (_id: string) => void;
   /** Drop this page from the session entirely, releasing its image. */
   onRemove: (_id: string) => void;
+  /** Release this page's transient device files once it has been read (its
+   *  in-memory base64 stays for edits and redos). Best-effort and idempotent. */
+  onPageTranscribed?: (_id: string) => void;
 }
 
 /** Keep the run's membership reconciled to the session's live page list. */
@@ -140,6 +144,33 @@ function useRedoConfirm(dispatch: Dispatch<Parameters<typeof transcriptionRunRed
   return { retryBlock, confirmRedo, isConfirmingRedo };
 }
 
+/**
+ * Read one page into the run: reject an oversize page on device without spending a
+ * call (or the wallet), otherwise transcribe it, record the result, and release its
+ * transient files on success (its in-memory base64 stays for edits and redos).
+ */
+async function transcribePageInto(
+  page: CapturePage,
+  attempt: number,
+  dispatch: Dispatch<Parameters<typeof transcriptionRunReducer>[1]>,
+  onTranscribed: ((_id: string) => void) | undefined,
+): Promise<void> {
+  if (page.byteLength >= MAX_TRANSCRIBE_IMAGE_BYTES) {
+    dispatch({ type: 'reject', id: page.id, attempt, error: 'image_too_large' });
+    return;
+  }
+  try {
+    const { text } = await journal.transcribePage({
+      imageBase64: page.imageBase64,
+      mediaType: page.mediaType,
+    });
+    dispatch({ type: 'resolve', id: page.id, attempt, text });
+    onTranscribed?.(page.id);
+  } catch (err: unknown) {
+    dispatch({ type: 'reject', id: page.id, attempt, error: asTranscriptionError(err).kind });
+  }
+}
+
 /** Launch the startable pages, staying within the run's concurrency bound. */
 function useRunLoop(
   started: boolean,
@@ -171,24 +202,21 @@ export function useTranscriptionRun({
   started,
   onRetake,
   onRemove,
+  onPageTranscribed,
 }: UseTranscriptionRunArgs): TranscriptionRunModel {
   const [runState, dispatch] = useReducer(transcriptionRunReducer, EMPTY_RUN);
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
   const launchedRef = useRef<Set<string>>(new Set());
+  // Read the latest cleanup callback from a ref so `transcribeOne` stays stable
+  // (its identity gates the run loop) regardless of the caller's memoization.
+  const onTranscribedRef = useRef(onPageTranscribed);
+  onTranscribedRef.current = onPageTranscribed;
 
   const transcribeOne = useCallback(async (id: string, attempt: number): Promise<void> => {
     const page = pagesRef.current.find((candidate) => candidate.id === id);
     if (!page) return; // The page left the session mid-flight; its reply is inert.
-    try {
-      const { text } = await journal.transcribePage({
-        imageBase64: page.imageBase64,
-        mediaType: page.mediaType,
-      });
-      dispatch({ type: 'resolve', id, attempt, text });
-    } catch (err: unknown) {
-      dispatch({ type: 'reject', id, attempt, error: asTranscriptionError(err).kind });
-    }
+    await transcribePageInto(page, attempt, dispatch, onTranscribedRef.current);
   }, []);
 
   const pageIdsKey = pages.map((page) => page.id).join('|');

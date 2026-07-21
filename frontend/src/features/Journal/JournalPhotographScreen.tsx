@@ -15,20 +15,27 @@
  *
  * WALLET INTEGRITY: transcription is a real-money charge. The run makes a double
  * charge of a completed page structurally impossible (see {@link useTranscriptionRun});
- * the save write reuses a created id across retries so a failed finish never
- * duplicates the entry.
+ * an oversize page is caught on device before any call is spent; and the save write
+ * reuses a created id across retries so a failed finish never duplicates the entry.
  *
  * PRIVACY: the base64 page images live in the capture session's reducer state only.
  * They are never placed in navigation params or logged, and are released when the
- * session is cleared (on save, on the typed-entry offramp) and on unmount.
+ * session is cleared (on save, on the typed-entry offramp) and on unmount. The
+ * transient device files behind them — the picker/camera cache copies and the
+ * downscaled prepare outputs — are deleted in lockstep: when a page is removed,
+ * when a page is retaken (the superseded photo), once it is transcribed, when the
+ * session is released, and on unmount.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Text, View } from 'react-native';
 
+import { releaseAllPageFiles, releasePageFiles, releaseUris } from './capture/cleanupPageFiles';
+import { preparePageForTranscription } from './capture/prepareImage';
+import type { PreparedPage } from './capture/prepareImage';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
-import type { CapturePage } from './captureSession';
+import type { CapturePage, CaptureSessionAction } from './captureSession';
 import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
@@ -80,6 +87,10 @@ type Phase =
   | { step: 'takeAnother' }
   | { step: 'review' };
 
+/** The shared unreadable-photo offramp phase: only a different photo helps, so
+ *  a failed pick, an unusable capture, and an unpreparable image all land here. */
+const PICK_FAILED_PHASE: Phase = { step: 'pickFailed' };
+
 interface CaptureModel {
   phase: Phase;
   pages: CapturePage[];
@@ -106,19 +117,60 @@ function entryDateForCreate(entryDate: string): string | undefined {
   return entryDate === toISODate(new Date()) ? undefined : entryDate;
 }
 
-/** Give freshly-picked assets stable session ids (a monotonic counter), building
- *  the {@link CapturePage} list appended to the session. */
-function toCapturePages(
+/** Fire-and-forget a best-effort file cleanup: transient-file deletion must
+ *  never block or fail the writing flow, so rejections are deliberately dropped
+ *  (the cleanup module already warns with metadata only). */
+function fireAndForgetCleanup(cleanup: Promise<void>): void {
+  cleanup.catch(() => undefined);
+}
+
+/** A picked asset paired with its downscaled transcription payload. */
+interface PreparedAsset {
+  sourceUri: string;
+  prepared: PreparedPage;
+}
+
+/** Prepare a whole batch, requiring every asset to succeed. If any asset fails
+ *  to prepare, none of the batch is stored — so reclaim every transient file it
+ *  created (the source copies plus any downscaled outputs that did land) before
+ *  rethrowing, leaving nothing stranded and untracked by the cleanup paths. */
+async function prepareBatch(assets: readonly PickedAsset[]): Promise<PreparedAsset[]> {
+  const settled = await Promise.allSettled(
+    assets.map(async (asset) => ({
+      sourceUri: asset.uri,
+      prepared: await preparePageForTranscription(asset.uri),
+    })),
+  );
+  const fulfilled = settled.filter(
+    (result): result is PromiseFulfilledResult<PreparedAsset> => result.status === 'fulfilled',
+  );
+  if (fulfilled.length !== settled.length) {
+    const outputs = fulfilled.map((result) => result.value.prepared.uri);
+    await releaseUris([...assets.map((asset) => asset.uri), ...outputs]);
+    throw new Error('Journal capture: a picked page could not be prepared');
+  }
+  return fulfilled.map((result) => result.value);
+}
+
+/** Prepare every freshly-picked asset for transcription and give each a stable
+ *  session id (a monotonic counter), building the {@link CapturePage} list
+ *  appended to the session. Preparation runs before storage so the session never
+ *  holds a full-resolution payload; one unpreparable asset rejects the batch (see
+ *  {@link prepareBatch}), which the callers route to the unreadable-photo offramp. */
+async function toCapturePages(
   assets: readonly PickedAsset[],
   counterRef: React.MutableRefObject<number>,
-): CapturePage[] {
-  return assets.map((asset) => {
+): Promise<CapturePage[]> {
+  const preparedAssets = await prepareBatch(assets);
+  return preparedAssets.map(({ sourceUri, prepared }) => {
     counterRef.current += 1;
     return {
       id: `page-${counterRef.current}`,
-      uri: asset.uri,
-      imageBase64: asset.imageBase64,
-      mediaType: asset.mediaType,
+      sourceUri,
+      uri: prepared.uri,
+      imageBase64: prepared.base64,
+      byteLength: prepared.byteLength,
+      mediaType: prepared.mediaType,
       status: 'ready',
     };
   });
@@ -147,7 +199,7 @@ function applyInitialPickFailure(
     navigation.goBack();
     return;
   }
-  setPhase({ step: 'pickFailed' });
+  setPhase(PICK_FAILED_PHASE);
 }
 
 /** Launch the picker for the session's remaining capacity and fold the result in.
@@ -164,13 +216,26 @@ function usePickPages({
     const hadPages = pagesRef.current.length > 0;
     if (!hadPages) setPhase({ step: 'preparing' });
     const result = await pickJournalPhotos(MAX_PAGES_PER_SESSION - pagesRef.current.length);
-    if (result.kind === 'picked') {
-      dispatch({ type: 'append', pages: toCapturePages(result.assets, counterRef) });
-    } else if (!hadPages) {
-      applyInitialPickFailure(result, navigation, setPhase);
+    if (result.kind !== 'picked') {
+      if (hadPages) {
+        setPhase({ step: 'collect' });
+      } else {
+        applyInitialPickFailure(result, navigation, setPhase);
+      }
       return;
     }
-    setPhase({ step: 'collect' });
+    // Trim to the session's remaining room BEFORE preparing, so the manipulator
+    // never writes a cache file for a page the reducer would clamp away and leave
+    // untracked by cleanup.
+    const room = MAX_PAGES_PER_SESSION - pagesRef.current.length;
+    const inRoom = result.assets.slice(0, room);
+    try {
+      dispatch({ type: 'append', pages: await toCapturePages(inRoom, counterRef) });
+      setPhase({ step: 'collect' });
+    } catch {
+      // A photo the prepare step could not read reuses the pick-failed offramp.
+      setPhase(PICK_FAILED_PHASE);
+    }
   }, [navigation, dispatch, pagesRef, counterRef, setPhase]);
 }
 
@@ -184,11 +249,16 @@ interface CaptureDeps {
 /** Fold one camera outcome into the session: a captured page appends and invites
  *  another; a refusal gets its recovery view; a back-out returns to collect with
  *  the session untouched; an unusable capture reuses the pick-failed offramp. */
-function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
+async function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): Promise<void> {
   const { dispatch, counterRef, setPhase } = deps;
   if (result.kind === 'captured') {
-    dispatch({ type: 'append', pages: toCapturePages([result.asset], counterRef) });
-    setPhase({ step: 'takeAnother' });
+    try {
+      dispatch({ type: 'append', pages: await toCapturePages([result.asset], counterRef) });
+      setPhase({ step: 'takeAnother' });
+    } catch {
+      // A capture the prepare step could not read reuses the pick-failed offramp.
+      setPhase(PICK_FAILED_PHASE);
+    }
     return;
   }
   if (result.kind === 'denied') {
@@ -201,14 +271,14 @@ function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
   }
   // An unusable capture reuses the pick-failed offramp; its "Pick another photo"
   // retry deliberately switches modality to the library picker, not the camera.
-  setPhase({ step: 'pickFailed' });
+  setPhase(PICK_FAILED_PHASE);
 }
 
 /** Launch the camera for one page and fold the outcome into the session. */
 function useCameraCapture(deps: CaptureDeps): () => Promise<void> {
   const { dispatch, counterRef, setPhase } = deps;
   return useCallback(async () => {
-    applyCaptureResult(await captureJournalPhoto(), { dispatch, counterRef, setPhase });
+    await applyCaptureResult(await captureJournalPhoto(), { dispatch, counterRef, setPhase });
   }, [dispatch, counterRef, setPhase]);
 }
 
@@ -216,18 +286,30 @@ interface RetakeDeps {
   dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>;
   pagesRef: React.MutableRefObject<CapturePage[]>;
   counterRef: React.MutableRefObject<number>;
+  /** Release the superseded page's transient files once the swap is committed. */
+  releasePageById: (_id: string) => void;
 }
 
 /** Re-pick one page and substitute it in place of the failed page with matching id,
- *  keeping its position. A declined retake leaves the page as-is. */
+ *  keeping its position. A declined retake — or a fresh photo the prepare step
+ *  cannot read — leaves the page as-is (its transient files reclaimed by the batch
+ *  guard), never a dead end. On a successful swap the superseded page's own
+ *  transient device files are released, so a retake never leaves the old photo's
+ *  cache copy stranded. */
 async function retakePageInPlace(
   id: string,
-  { dispatch, pagesRef, counterRef }: RetakeDeps,
+  { dispatch, pagesRef, counterRef, releasePageById }: RetakeDeps,
 ): Promise<void> {
   const result = await pickJournalPhotos(1);
   if (result.kind !== 'picked') return;
-  const [page] = toCapturePages(result.assets, counterRef);
+  let page: CapturePage | undefined;
+  try {
+    [page] = await toCapturePages(result.assets, counterRef);
+  } catch {
+    return; // The retake photo could not be prepared; keep the existing page.
+  }
   if (!page) return;
+  releasePageById(id); // Reclaim the outgoing page's files before it leaves the session.
   const next = pagesRef.current.map((existing) => (existing.id === id ? page : existing));
   dispatch({ type: 'reorder', pages: next });
 }
@@ -235,10 +317,15 @@ async function retakePageInPlace(
 /** Re-pick a single page and substitute it in place of a failed one, keeping its
  *  position. The fresh page carries a new id and new bytes; the run reconciles the
  *  swap and reads the new page (never the old one) via the session's page list. */
-function useRetakePage({ dispatch, pagesRef, counterRef }: RetakeDeps): (_id: string) => void {
+function useRetakePage({
+  dispatch,
+  pagesRef,
+  counterRef,
+  releasePageById,
+}: RetakeDeps): (_id: string) => void {
   return useCallback(
-    (id: string) => void retakePageInPlace(id, { dispatch, pagesRef, counterRef }),
-    [dispatch, pagesRef, counterRef],
+    (id: string) => void retakePageInPlace(id, { dispatch, pagesRef, counterRef, releasePageById }),
+    [dispatch, pagesRef, counterRef, releasePageById],
   );
 }
 
@@ -318,6 +405,60 @@ function useNavigationOfframps(
   return { openSettings, cancel, goTypedEntry };
 }
 
+/** Keeps the transient device files in lockstep with the in-memory session:
+ *  release-everything-and-clear (save, typed-entry offramp), an unmount sweep
+ *  for whatever the writer walked away from, per-page removal, and the per-page
+ *  release once a page is transcribed (its files have served their purpose, while
+ *  its in-memory base64 stays for edits and redos). */
+function useSessionCleanup(
+  pagesRef: React.MutableRefObject<CapturePage[]>,
+  dispatch: React.Dispatch<CaptureSessionAction>,
+): {
+  releaseSession: () => void;
+  removePage: (_id: string) => void;
+  releasePageById: (_id: string) => void;
+} {
+  const releaseSessionFiles = useCallback(() => {
+    fireAndForgetCleanup(releaseAllPageFiles(pagesRef.current));
+  }, [pagesRef]);
+
+  // The unmount sweep: a session cleared on save leaves an empty list here, so
+  // the sweep only ever deletes files still owned by lingering pages. React
+  // releases the in-memory base64 with the reducer state itself.
+  useEffect(() => releaseSessionFiles, [releaseSessionFiles]);
+
+  const releaseSession = useCallback(() => {
+    releaseSessionFiles(); // Device files first, then the in-memory clear.
+    dispatch({ type: 'clear' });
+  }, [releaseSessionFiles, dispatch]);
+
+  const removePage = useCallback(
+    (id: string) => {
+      const removed = pagesRef.current.find((page) => page.id === id);
+      if (removed) {
+        fireAndForgetCleanup(releasePageFiles(removed)); // Files first, then the drop.
+      }
+      dispatch({ type: 'remove', id });
+    },
+    [pagesRef, dispatch],
+  );
+
+  // Release just this page's transient files once the run has read it. The page
+  // stays in the session (its base64 still backs edits and redos), so only the
+  // on-device cache copies are reclaimed; a later remove/release is idempotent.
+  const releasePageById = useCallback(
+    (id: string) => {
+      const page = pagesRef.current.find((candidate) => candidate.id === id);
+      if (page) {
+        fireAndForgetCleanup(releasePageFiles(page));
+      }
+    },
+    [pagesRef],
+  );
+
+  return { releaseSession, removePage, releasePageById };
+}
+
 /**
  * Never a dead end (NORTH-STAR): if the writer removes every page mid-review, fall
  * back to the disarmed collect stage rather than leaving them at a permanently
@@ -337,18 +478,34 @@ function useEmptyReviewGuard(
   }, [phaseStep, pageCount, disarm, setPhase]);
 }
 
-/** The two in-place session edits that both the collect strip and the run trigger:
- *  removing a page by id and committing a drag reorder. */
-function useSessionEdits(dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>): {
-  removePage: (_id: string) => void;
-  reorderPages: (_pages: CapturePage[]) => void;
-} {
-  const removePage = useCallback((id: string) => dispatch({ type: 'remove', id }), [dispatch]);
-  const reorderPages = useCallback(
+/** The drag-reorder edit both the collect strip and the run trigger. Per-page
+ *  removal lives in {@link useSessionCleanup}, which pairs the drop with its file
+ *  cleanup; reordering never touches files, so it stays a plain reducer commit. */
+function useReorderPages(
+  dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>,
+): (_pages: CapturePage[]) => void {
+  return useCallback(
     (next: CapturePage[]) => dispatch({ type: 'reorder', pages: next }),
     [dispatch],
   );
-  return { removePage, reorderPages };
+}
+
+/** Wire the progressive run to the session, its two page-swapping offramps, and the
+ *  per-page transient-file release fired once a page has been read. */
+function useCaptureRun(
+  pages: CapturePage[],
+  started: boolean,
+  retakePage: (_id: string) => void,
+  removePage: (_id: string) => void,
+  releasePageById: (_id: string) => void,
+): TranscriptionRunModel {
+  return useTranscriptionRun({
+    pages,
+    started,
+    onRetake: retakePage,
+    onRemove: removePage,
+    onPageTranscribed: releasePageById,
+  });
 }
 
 /**
@@ -366,15 +523,15 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
 
-  const releaseSession = useCallback(() => dispatch({ type: 'clear' }), []);
+  const { releaseSession, removePage, releasePageById } = useSessionCleanup(pagesRef, dispatch);
   const runPick = usePickPages({ navigation, dispatch, pagesRef, counterRef, setPhase });
   const runCapture = useCameraCapture({ dispatch, counterRef, setPhase });
-  const { removePage, reorderPages } = useSessionEdits(dispatch);
-  const retakePage = useRetakePage({ dispatch, pagesRef, counterRef });
+  const reorderPages = useReorderPages(dispatch);
+  const retakePage = useRetakePage({ dispatch, pagesRef, counterRef, releasePageById });
   const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
 
-  const run = useTranscriptionRun({ pages, started, onRetake: retakePage, onRemove: removePage });
+  const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
 
   const { save, saving, saveFailed } = useSaveEntry(
     navigation,
@@ -388,10 +545,6 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
 
   useEffect(() => {
     void runPick();
-    // The device-local cache files the picker copies are cleaned up by a later
-    // epic; the in-memory session is released by React when this screen unmounts.
-    // Camera captures follow the same transient-memory rules, and their device
-    // cache cleanup is likewise a later epic's scope.
   }, [runPick]);
 
   return {
