@@ -29,7 +29,13 @@ class TranscribePageRequest(BaseModel):
     the bytes live only for the duration of the single vision call.
     """
 
-    image_base64: str = Field(min_length=1, description="Base64-encoded image bytes.")
+    image_base64: str = Field(
+        min_length=1,
+        description="Base64-encoded image bytes.",
+        # Kept out of ``repr()``/``str()`` so the raw image payload can never
+        # leak into logs or tracebacks that stringify the model.
+        repr=False,
+    )
     media_type: TranscribeMediaType = Field(description="Declared image MIME type.")
 
 
@@ -41,4 +47,9 @@ class TranscribePageResponse(BaseModel):
     writes no journal row, keeping the transcription contract stateless.
     """
 
-    text: str = Field(description="Faithful transcribed body text for the page.")
+    text: str = Field(
+        description="Faithful transcribed body text for the page.",
+        # Kept out of ``repr()``/``str()`` so the transcribed page text can never
+        # leak into logs or tracebacks that stringify the model.
+        repr=False,
+    )

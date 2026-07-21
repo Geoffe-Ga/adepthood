@@ -9,7 +9,6 @@ transcribed text.
 
 from __future__ import annotations
 
-import base64
 import logging
 from http import HTTPStatus
 
@@ -21,41 +20,25 @@ from sqlmodel import col
 
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
-from services.botmason import LLMProviderError, LLMResponse, LLMVisionUnsupportedError
+from services.botmason import LLMProviderError, LLMVisionUnsupportedError
+from tests.transcription_helpers import JPEG_BYTES as _JPEG_BYTES
+from tests.transcription_helpers import PNG_BYTES as _PNG_BYTES
+from tests.transcription_helpers import SENTINEL_TEXT as _SENTINEL_TEXT
+from tests.transcription_helpers import WEBP_BYTES as _WEBP_BYTES
+from tests.transcription_helpers import b64 as _b64
+from tests.transcription_helpers import patch_generate_response as _patch_generate_response
+from tests.transcription_helpers import (
+    patch_generate_response_raises as _patch_generate_response_raises,
+)
+from tests.transcription_helpers import payload as _payload
+from tests.transcription_helpers import priced_response as _priced_response
+from tests.transcription_helpers import signup as _signup
 
 _ENDPOINT = "/journal/transcribe-page"
 _RATE_LIMIT = 20
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
-_JPEG_BYTES = b"\xff\xd8\xff" + b"\x00" * 64
-_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-_WEBP_BYTES = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 64
 _OVERSIZED_JPEG_BYTES = b"\xff\xd8\xff" + b"\x00" * (_MAX_IMAGE_BYTES + 10)
-
-_SENTINEL_TEXT = "SENTINEL_TRANSCRIPTION_TEXT_9f3c2a"
-
-
-async def _signup(client: AsyncClient, username: str = "transcriber") -> dict[str, str]:
-    """Create a user and return bearer auth headers."""
-    resp = await client.post(
-        "/auth/signup",
-        json={
-            "email": f"{username}@example.com",
-            "password": "secret12345",  # pragma: allowlist secret
-        },
-    )
-    assert resp.status_code == HTTPStatus.OK
-    return {"Authorization": f"Bearer {resp.json()['token']}"}
-
-
-def _b64(raw: bytes) -> str:
-    """Base64-encode raw image bytes for the request payload."""
-    return base64.b64encode(raw).decode()
-
-
-def _payload(raw: bytes, media_type: str = "image/jpeg") -> dict[str, str]:
-    """Build a transcribe-page request body from raw image bytes."""
-    return {"image_base64": _b64(raw), "media_type": media_type}
 
 
 async def _wallet_snapshot(session: AsyncSession, email: str) -> tuple[int, int]:
@@ -83,33 +66,6 @@ async def _usage_rows_with_null_entry(session: AsyncSession) -> list[LLMUsageLog
         select(LLMUsageLog).where(col(LLMUsageLog.journal_entry_id).is_(None))
     )
     return list(result.scalars().all())
-
-
-def _priced_response(text: str) -> LLMResponse:
-    """Return a non-stub LLMResponse (provider=openai) for usage-log tests."""
-    return LLMResponse(
-        text=text, provider="openai", model="gpt-4o-mini", prompt_tokens=11, completion_tokens=7
-    )
-
-
-def _patch_generate_response(monkeypatch: pytest.MonkeyPatch, response: LLMResponse) -> None:
-    """Patch the router's LLM seam to return a canned response."""
-
-    async def _fake(*args: object, **kwargs: object) -> LLMResponse:
-        del args, kwargs
-        return response
-
-    monkeypatch.setattr("routers.transcription.generate_response", _fake)
-
-
-def _patch_generate_response_raises(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
-    """Patch the router's LLM seam to raise ``exc`` on every call."""
-
-    async def _boom(*args: object, **kwargs: object) -> LLMResponse:
-        del args, kwargs
-        raise exc
-
-    monkeypatch.setattr("routers.transcription.generate_response", _boom)
 
 
 @pytest.mark.asyncio

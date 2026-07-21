@@ -1,25 +1,29 @@
 # Only used by pip-audit hook in CI; adjust based on your actual deps.
-cachetools
+# All entries carry exact (==) pins matching CI's resolved set (see
+# requirements-lock.txt) so local dev, the compat matrix, and pip-audit all
+# install one identical set. Dependabot's pip ecosystem entry proposes upgrades.
+cachetools==7.1.4
 # Validates backend/content/manifest.json against the frozen contract at
-# startup (issues #389/#390); >=4.0 for JSON Schema draft 2020-12.
-jsonschema>=4.0
-fastapi
-uvicorn
-pydantic
-email-validator
-sqlalchemy
-sqlmodel
-alembic
-asyncpg
-aiosqlite
-bcrypt
-cryptography
-PyJWT
-slowapi
-tzdata
-pytest
-pytest-asyncio
-httpx
+# startup (issues #389/#390); the >=4.0 floor (JSON Schema draft 2020-12) is
+# preserved by this pin, which is >= 4.0.
+jsonschema==4.26.0
+fastapi==0.139.2
+uvicorn==0.51.0
+pydantic==2.13.4
+email-validator==2.3.0
+sqlalchemy==2.0.51
+sqlmodel==0.0.39
+alembic==1.18.5
+asyncpg==0.31.0
+aiosqlite==0.22.1
+bcrypt==5.0.0
+cryptography==49.0.0
+PyJWT==2.13.0
+slowapi==0.1.10
+tzdata==2026.3
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
 openai==2.46.0
