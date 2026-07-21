@@ -22,7 +22,7 @@ interface SearchBarProps {
 }
 
 const CollapsedSearchBar = ({ onToggle }: { onToggle: () => void }): React.JSX.Element => (
-  <View style={styles.searchBarCollapsed}>
+  <View testID="search-bar-collapsed" style={styles.searchBarCollapsed}>
     <TouchableOpacity
       testID="search-toggle"
       onPress={onToggle}
@@ -98,7 +98,7 @@ const ExpandedSearchBarContent = ({
   searchQuery,
   resultCount,
 }: ExpandedSearchBarProps): React.JSX.Element => (
-  <View style={styles.searchBarExpanded}>
+  <View testID="search-bar-expanded" style={styles.searchBarExpanded}>
     <View style={styles.searchInputRow}>
       <TouchableOpacity
         testID="search-toggle"
@@ -184,11 +184,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.xs,
   },
   searchBarExpanded: {
     paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.xs,
   },
   searchInputRow: {
     flexDirection: 'row',
