@@ -644,6 +644,20 @@ describe('JournalPhotographScreen — camera capture', () => {
     expect(data.map((p) => p.uri)).toEqual(['file:///p1.jpg', 'file:///cam1.jpg']);
   });
 
+  it('routes an unusable capture to the pick-failed offramp with Pick another, no retry', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce({ kind: 'failed' });
+    const { findByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await waitFor(() => expect(mockCapture).toHaveBeenCalledTimes(1));
+
+    expect(await findByTestId('photograph-error')).toBeTruthy();
+    expect(await findByTestId('photograph-pick-another')).toBeTruthy();
+    expect(queryByTestId('photograph-retry')).toBeNull();
+  });
+
   it('leaves the session unchanged and stays in collect when the camera is cancelled', async () => {
     mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
     mockCapture.mockResolvedValueOnce({ kind: 'cancelled' });

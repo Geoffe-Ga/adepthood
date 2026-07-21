@@ -264,6 +264,8 @@ function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
     setPhase({ step: 'collect' });
     return;
   }
+  // An unusable capture reuses the pick-failed offramp; its "Pick another photo"
+  // retry deliberately switches modality to the library picker, not the camera.
   setPhase({ step: 'pickFailed' });
 }
 
