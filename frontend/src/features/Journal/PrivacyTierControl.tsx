@@ -48,6 +48,12 @@ export interface PrivacyTierControlProps {
   onChange: (_tier: PrivacyTier) => void;
   /** When true, taps are inert — used while an entry's load has failed. */
   disabled?: boolean;
+  /**
+   * Whether to render the built-in intimate explainer. Defaults to ``true`` for
+   * the writing editor; a host that shows its own intimate copy (e.g. the
+   * capture flow's transcription gate) passes ``false`` to avoid a duplicate.
+   */
+  showExplainer?: boolean;
 }
 
 /**
@@ -58,6 +64,7 @@ function PrivacyTierControl({
   value = DEFAULT_TIER,
   onChange,
   disabled = false,
+  showExplainer = true,
 }: PrivacyTierControlProps): React.JSX.Element {
   return (
     <View style={styles.privacyTierControl}>
@@ -80,7 +87,7 @@ function PrivacyTierControl({
           />
         ))}
       </RadioGroup>
-      {value === 'intimate' ? (
+      {value === 'intimate' && showExplainer ? (
         <Text style={styles.privacyTierExplainer} testID="privacy-tier-explainer">
           {INTIMATE_EXPLAINER}
         </Text>

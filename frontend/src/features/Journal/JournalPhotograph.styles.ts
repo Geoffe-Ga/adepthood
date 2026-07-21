@@ -187,6 +187,26 @@ const styles = StyleSheet.create({
     ...editorialType.body,
     color: colors.destructive.text,
   },
+  /** The privacy classification chooser above the strip: the tier control over
+   *  its intimate transcription gate, with editorial breathing room. */
+  classification: {
+    gap: SPACING.sm,
+  },
+  /** The intimate gate: a soft paper card carrying the one-promise copy and its
+   *  two declinable actions (type instead / keep as personal). */
+  intimateGate: {
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.paper.hairline,
+    backgroundColor: colors.paper.backgroundAlt,
+  },
+  /** The gate's warm, non-shaming explanation copy, in the soft editorial ink. */
+  intimateGateText: {
+    ...editorialType.body,
+    color: colors.paper.inkSoft,
+  },
 });
 
 export default styles;

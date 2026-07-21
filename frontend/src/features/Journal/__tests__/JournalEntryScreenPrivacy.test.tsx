@@ -101,6 +101,7 @@ function renderScreen(
     promptQuestion?: string;
     prefillTitle?: string;
     practiceSessionId?: number;
+    classification?: 'public' | 'personal' | 'intimate';
   },
   extraProps: Record<string, unknown> = {},
 ) {
@@ -625,6 +626,58 @@ describe('JournalEntryScreen — privacy control a11y (#896)', () => {
       expect(
         within(getByTestId('journal-screen')).getByTestId('privacy-resonance-reason'),
       ).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Classification seeded from the route param (photograph-flow offramp)
+// ---------------------------------------------------------------------------
+
+describe('JournalEntryScreen — classification seeded from the route param', () => {
+  it('pre-selects intimate in the control when the param carries classification="intimate"', () => {
+    const { getByTestId } = renderScreen({ classification: 'intimate' });
+    const page = within(getByTestId('journal-page'));
+    expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(true);
+    expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(false);
+  });
+
+  it('sends classification="intimate" on the first create without any tier press', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        { classification: 'intimate' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Typed instead of photographed.');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ classification: 'intimate' }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('still creates with the personal default when the params carry no classification', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen({}, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'A plain typed page.');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ classification: 'personal' }),
+      );
     } finally {
       jest.useRealTimers();
     }

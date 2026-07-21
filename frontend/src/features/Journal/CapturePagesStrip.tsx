@@ -121,12 +121,15 @@ function TakePhotoControl({
   );
 }
 
-/** Proceed affordance: enabled for any non-empty session, reading every page. */
+/** Proceed affordance: enabled for any non-empty session, reading every page.
+ *  A ``disabled`` host gate (e.g. an intimate classification) also holds it off. */
 function TranscribeControl({
   count,
+  disabled,
   onTranscribe,
 }: {
   count: number;
+  disabled: boolean;
   onTranscribe: () => void;
 }): React.JSX.Element {
   const label = transcribeLabel(count);
@@ -135,7 +138,7 @@ function TranscribeControl({
       testID="capture-transcribe"
       label={label}
       accessibilityLabel={label}
-      disabled={count < 1}
+      disabled={count < 1 || disabled}
       onPress={onTranscribe}
     />
   );
@@ -149,6 +152,9 @@ export interface CapturePagesStripProps {
   onRemove: (_id: string) => void;
   onReorder: (_pages: CapturePage[]) => void;
   onTranscribe: () => void;
+  /** Holds the proceed affordance off regardless of page count — the host's
+   *  classification gate sets this while an intimate tier is chosen. */
+  transcribeDisabled?: boolean;
   /** Hide the add/capture/proceed controls, leaving only the thumbnail strip —
    *  used by phases that offer their own forward affordances. */
   actionsHidden?: boolean;
@@ -164,6 +170,7 @@ export function CapturePagesStrip({
   onRemove,
   onReorder,
   onTranscribe,
+  transcribeDisabled = false,
   actionsHidden = false,
 }: CapturePagesStripProps): React.JSX.Element {
   return (
@@ -189,7 +196,11 @@ export function CapturePagesStrip({
         <>
           <AddPagesControl canAdd={canAdd} onAdd={onAdd} />
           <TakePhotoControl canAdd={canAdd} onCapture={onCapture} />
-          <TranscribeControl count={pages.length} onTranscribe={onTranscribe} />
+          <TranscribeControl
+            count={pages.length}
+            disabled={transcribeDisabled}
+            onTranscribe={onTranscribe}
+          />
         </>
       )}
     </View>

@@ -144,6 +144,34 @@ describe('PrivacyTierControl — intimate explainer', () => {
 });
 
 // ---------------------------------------------------------------------------
+// showExplainer prop
+// ---------------------------------------------------------------------------
+
+describe('PrivacyTierControl — showExplainer prop', () => {
+  it('defaults showExplainer to true: intimate shows the explainer when the prop is omitted', () => {
+    const { getByTestId } = render(<PrivacyTierControl value="intimate" onChange={jest.fn()} />);
+    expect(getByTestId('privacy-tier-explainer')).toBeTruthy();
+  });
+
+  it('suppresses the explainer for intimate when showExplainer is false', () => {
+    const { queryByTestId } = render(
+      <PrivacyTierControl value="intimate" onChange={jest.fn()} showExplainer={false} />,
+    );
+    expect(queryByTestId('privacy-tier-explainer')).toBeNull();
+  });
+
+  it('keeps selection and onChange behavior intact with showExplainer false', () => {
+    const onChange = jest.fn();
+    const { getByTestId } = render(
+      <PrivacyTierControl value="intimate" onChange={onChange} showExplainer={false} />,
+    );
+    expect(getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(true);
+    fireEvent.press(getByTestId('privacy-tier-personal'));
+    expect(onChange).toHaveBeenCalledWith('personal');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Accessibility — labels + selected state
 // ---------------------------------------------------------------------------
 
