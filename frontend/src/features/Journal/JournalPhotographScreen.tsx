@@ -1,11 +1,13 @@
 /**
  * Photograph handwritten journal pages, transcribe them, and save them as one
  * finished entry. The flow auto-launches the photo picker on mount into an ordered,
- * multi-page capture session: the writer collects pages (multi-select), reorders the
- * thumbnail strip, and trims it before proceeding. Proceeding runs a real multi-page
- * transcription — several pages read at once under a small concurrency bound, each
- * landing in its own editable block — which merge, in session order, into one entry
- * the writer can edit before it is saved.
+ * multi-page capture session: the writer collects pages from the library
+ * (multi-select) or photographs them one at a time with the camera — a take-another
+ * loop keeps the session growing — then reorders the thumbnail strip and trims it
+ * before proceeding. Proceeding runs a real multi-page transcription — several pages
+ * read at once under a small concurrency bound, each landing in its own editable
+ * block — which merge, in session order, into one entry the writer can edit before
+ * it is saved.
  *
  * Every step is warm and declinable (NORTH-STAR): a refused permission, a cancelled
  * pick, or an unreadable page each lead to a plain, shame-free offramp — a fresh
@@ -28,8 +30,8 @@ import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
 import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
-import { pickJournalPhotos } from './pickJournalPhoto';
-import type { MultiPickResult, PickedAsset } from './pickJournalPhoto';
+import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
+import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
@@ -51,6 +53,12 @@ const PREPARING_COPY = 'Opening your photos…';
 const PICK_FAILED_COPY =
   "We couldn't read that photo. Pick another one and we'll try again — no rush.";
 const PICK_ANOTHER_LABEL = 'Pick another photo';
+const CAMERA_DENIED_COPY =
+  'Adepthood needs the camera to photograph a page. You can turn that on in Settings, add a photo from your library instead, or come back anytime.';
+const ADD_FROM_LIBRARY_LABEL = 'Add from your library';
+const TAKE_ANOTHER_COPY = "That page is in. Take another whenever you're ready.";
+const TAKE_ANOTHER_LABEL = 'Take another';
+const DONE_CAPTURING_LABEL = 'Done';
 const SAVE_LABEL = 'Save this entry';
 const RETRY_SAVE_LABEL = 'Try saving again';
 const ENTRY_DATE_LABEL = 'Entry date';
@@ -61,12 +69,15 @@ type PhotographNavigation = NativeStackScreenProps<
   'JournalPhotograph'
 >['navigation'];
 
-/** The screen's mutually-exclusive phases: collect pages, then review the run. */
+/** The screen's mutually-exclusive phases: collect pages (from the library or the
+ *  camera's take-another loop), then review the multi-page run. */
 type Phase =
   | { step: 'preparing' }
   | { step: 'denied' }
+  | { step: 'cameraDenied' }
   | { step: 'pickFailed' }
   | { step: 'collect' }
+  | { step: 'takeAnother' }
   | { step: 'review' };
 
 interface CaptureModel {
@@ -78,6 +89,8 @@ interface CaptureModel {
   saveFailed: boolean;
   onChangeEntryDate: (_date: string) => void;
   runPick: () => void;
+  takePhoto: () => void;
+  finishCapturing: () => void;
   removePage: (_id: string) => void;
   reorderPages: (_pages: CapturePage[]) => void;
   transcribe: () => void;
@@ -159,6 +172,44 @@ function usePickPages({
     }
     setPhase({ step: 'collect' });
   }, [navigation, dispatch, pagesRef, counterRef, setPhase]);
+}
+
+/** What a camera capture needs: the session reducer, the id counter, and the phase. */
+interface CaptureDeps {
+  dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>;
+  counterRef: React.MutableRefObject<number>;
+  setPhase: (_phase: Phase) => void;
+}
+
+/** Fold one camera outcome into the session: a captured page appends and invites
+ *  another; a refusal gets its recovery view; a back-out returns to collect with
+ *  the session untouched; an unusable capture reuses the pick-failed offramp. */
+function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
+  const { dispatch, counterRef, setPhase } = deps;
+  if (result.kind === 'captured') {
+    dispatch({ type: 'append', pages: toCapturePages([result.asset], counterRef) });
+    setPhase({ step: 'takeAnother' });
+    return;
+  }
+  if (result.kind === 'denied') {
+    setPhase({ step: 'cameraDenied' });
+    return;
+  }
+  if (result.kind === 'cancelled') {
+    setPhase({ step: 'collect' });
+    return;
+  }
+  // An unusable capture reuses the pick-failed offramp; its "Pick another photo"
+  // retry deliberately switches modality to the library picker, not the camera.
+  setPhase({ step: 'pickFailed' });
+}
+
+/** Launch the camera for one page and fold the outcome into the session. */
+function useCameraCapture(deps: CaptureDeps): () => Promise<void> {
+  const { dispatch, counterRef, setPhase } = deps;
+  return useCallback(async () => {
+    applyCaptureResult(await captureJournalPhoto(), { dispatch, counterRef, setPhase });
+  }, [dispatch, counterRef, setPhase]);
 }
 
 interface RetakeDeps {
@@ -286,6 +337,20 @@ function useEmptyReviewGuard(
   }, [phaseStep, pageCount, disarm, setPhase]);
 }
 
+/** The two in-place session edits that both the collect strip and the run trigger:
+ *  removing a page by id and committing a drag reorder. */
+function useSessionEdits(dispatch: React.Dispatch<Parameters<typeof captureSessionReducer>[1]>): {
+  removePage: (_id: string) => void;
+  reorderPages: (_pages: CapturePage[]) => void;
+} {
+  const removePage = useCallback((id: string) => dispatch({ type: 'remove', id }), [dispatch]);
+  const reorderPages = useCallback(
+    (next: CapturePage[]) => dispatch({ type: 'reorder', pages: next }),
+    [dispatch],
+  );
+  return { removePage, reorderPages };
+}
+
 /**
  * The capture state machine: collect pages → run the multi-page transcription →
  * review + save. Pages live in a reducer (never in nav params) with a ref mirror so
@@ -303,11 +368,8 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
 
   const releaseSession = useCallback(() => dispatch({ type: 'clear' }), []);
   const runPick = usePickPages({ navigation, dispatch, pagesRef, counterRef, setPhase });
-  const removePage = useCallback((id: string) => dispatch({ type: 'remove', id }), []);
-  const reorderPages = useCallback(
-    (next: CapturePage[]) => dispatch({ type: 'reorder', pages: next }),
-    [],
-  );
+  const runCapture = useCameraCapture({ dispatch, counterRef, setPhase });
+  const { removePage, reorderPages } = useSessionEdits(dispatch);
   const retakePage = useRetakePage({ dispatch, pagesRef, counterRef });
   const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
@@ -328,6 +390,8 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     void runPick();
     // The device-local cache files the picker copies are cleaned up by a later
     // epic; the in-memory session is released by React when this screen unmounts.
+    // Camera captures follow the same transient-memory rules, and their device
+    // cache cleanup is likewise a later epic's scope.
   }, [runPick]);
 
   return {
@@ -339,6 +403,8 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     saveFailed,
     onChangeEntryDate: setEntryDate,
     runPick: () => void runPick(),
+    takePhoto: () => void runCapture(),
+    finishCapturing: () => setPhase({ step: 'collect' }),
     removePage,
     reorderPages,
     transcribe,
@@ -386,6 +452,46 @@ function PermissionDeniedView({
           label={CANCEL_LABEL}
           accessibilityLabel={CANCEL_LABEL}
           onPress={onCancel}
+        />
+      </View>
+    </View>
+  );
+}
+
+/** Camera permission refused: open Settings, fall back to the library, or simply
+ *  return to the session already in hand — never a dead end. */
+function CameraDeniedView({
+  onOpenSettings,
+  onAddFromLibrary,
+  onNotNow,
+}: {
+  onOpenSettings: () => void;
+  onAddFromLibrary: () => void;
+  onNotNow: () => void;
+}): React.JSX.Element {
+  return (
+    <View testID="camera-denied" style={styles.container}>
+      <Text style={styles.message}>{CAMERA_DENIED_COPY}</Text>
+      <View style={styles.actions}>
+        <Button
+          testID="camera-open-settings"
+          label={OPEN_SETTINGS_LABEL}
+          accessibilityLabel={OPEN_SETTINGS_LABEL}
+          onPress={onOpenSettings}
+        />
+        <Button
+          testID="camera-add-from-library"
+          variant="secondary"
+          label={ADD_FROM_LIBRARY_LABEL}
+          accessibilityLabel={ADD_FROM_LIBRARY_LABEL}
+          onPress={onAddFromLibrary}
+        />
+        <Button
+          testID="camera-not-now"
+          variant="tertiary"
+          label={CANCEL_LABEL}
+          accessibilityLabel={CANCEL_LABEL}
+          onPress={onNotNow}
         />
       </View>
     </View>
@@ -467,6 +573,7 @@ function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
         pages={model.pages}
         canAdd={model.canAdd}
         onAdd={model.runPick}
+        onCapture={model.takePhoto}
         onRemove={model.removePage}
         onReorder={model.reorderPages}
         onTranscribe={model.transcribe}
@@ -517,15 +624,83 @@ function ReviewView({ model }: { model: CaptureModel }): React.JSX.Element {
   );
 }
 
+/** After a capture lands: a quiet invitation to keep going (while the session has
+ *  room) or settle back into arranging the collected pages. */
+function TakeAnotherPrompt({
+  canAdd,
+  onTakeAnother,
+  onDone,
+}: {
+  canAdd: boolean;
+  onTakeAnother: () => void;
+  onDone: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.actions}>
+      <Text style={styles.notice}>{TAKE_ANOTHER_COPY}</Text>
+      {canAdd ? (
+        <Button
+          testID="capture-take-another"
+          variant="secondary"
+          label={TAKE_ANOTHER_LABEL}
+          accessibilityLabel={TAKE_ANOTHER_LABEL}
+          onPress={onTakeAnother}
+        />
+      ) : null}
+      <Button
+        testID="capture-done"
+        label={DONE_CAPTURING_LABEL}
+        accessibilityLabel={DONE_CAPTURING_LABEL}
+        onPress={onDone}
+      />
+    </View>
+  );
+}
+
+/** The pause right after a capture: the collected thumbnails (collect actions
+ *  hidden, so the only forward affordances are take-another and Done), with the
+ *  take-another loop beneath them. Done settles back into the full collect stage. */
+function TakeAnotherView({ model }: { model: CaptureModel }): React.JSX.Element {
+  return (
+    <View style={styles.container}>
+      <CapturePagesStrip
+        pages={model.pages}
+        canAdd={model.canAdd}
+        onAdd={model.runPick}
+        onCapture={model.takePhoto}
+        onRemove={model.removePage}
+        onReorder={model.reorderPages}
+        onTranscribe={model.transcribe}
+        actionsHidden
+      />
+      <TakeAnotherPrompt
+        canAdd={model.canAdd}
+        onTakeAnother={model.takePhoto}
+        onDone={model.finishCapturing}
+      />
+    </View>
+  );
+}
+
 /** Route the current phase to its view. */
 function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
   switch (model.phase.step) {
     case 'denied':
       return <PermissionDeniedView onOpenSettings={model.openSettings} onCancel={model.cancel} />;
+    case 'cameraDenied':
+      return (
+        <CameraDeniedView
+          onOpenSettings={model.openSettings}
+          onAddFromLibrary={model.runPick}
+          onNotNow={model.finishCapturing}
+        />
+      );
     case 'pickFailed':
       return <PickFailedView onPickAnother={model.runPick} />;
     case 'collect':
       return <CollectView model={model} />;
+    case 'takeAnother':
+      return <TakeAnotherView model={model} />;
     case 'review':
       return <ReviewView model={model} />;
     default:

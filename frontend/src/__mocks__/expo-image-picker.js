@@ -6,4 +6,6 @@
 module.exports = {
   requestMediaLibraryPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
   launchImageLibraryAsync: jest.fn().mockResolvedValue({ canceled: true, assets: null }),
+  requestCameraPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
+  launchCameraAsync: jest.fn().mockResolvedValue({ canceled: true, assets: null }),
 };
