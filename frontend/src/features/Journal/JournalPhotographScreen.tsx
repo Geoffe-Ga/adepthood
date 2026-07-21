@@ -15,14 +15,20 @@
  * PRIVACY: the base64 page images live in the capture session's reducer state
  * only. They are never placed in navigation params or logged, and are released
  * when the session is cleared (on save, on the typed-entry offramp) and on unmount.
+ * The transient device files behind them — the picker/camera cache copies and the
+ * downscaled prepare outputs — are deleted in lockstep: when a page is removed,
+ * once it is transcribed, when the session is released, and on unmount.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Text, TextInput, View } from 'react-native';
 
+import { releaseAllPageFiles, releasePageFiles, releaseUris } from './capture/cleanupPageFiles';
+import { MAX_TRANSCRIBE_IMAGE_BYTES, preparePageForTranscription } from './capture/prepareImage';
+import type { PreparedPage } from './capture/prepareImage';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
-import type { CapturePage } from './captureSession';
+import type { CapturePage, CaptureSessionAction } from './captureSession';
 import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
@@ -112,6 +118,10 @@ type Phase =
   | { step: 'preview' }
   | { step: 'error'; error: TranscriptionError };
 
+/** The shared unreadable-photo offramp phase: only a different photo helps, so
+ *  a failed pick, an unusable capture, and an unpreparable image all land here. */
+const PICK_FAILED_PHASE: Phase = { step: 'pickFailed' };
+
 /** The recovery affordances a given transcription error offers. */
 interface Recovery {
   message: string;
@@ -171,19 +181,60 @@ function entryDateForCreate(entryDate: string): string | undefined {
   return entryDate === toISODate(new Date()) ? undefined : entryDate;
 }
 
-/** Give freshly-picked assets stable session ids (a monotonic counter), building
- *  the {@link CapturePage} list appended to the session. */
-function toCapturePages(
+/** Fire-and-forget a best-effort file cleanup: transient-file deletion must
+ *  never block or fail the writing flow, so rejections are deliberately dropped
+ *  (the cleanup module already warns with metadata only). */
+function fireAndForgetCleanup(cleanup: Promise<void>): void {
+  cleanup.catch(() => undefined);
+}
+
+/** A picked asset paired with its downscaled transcription payload. */
+interface PreparedAsset {
+  sourceUri: string;
+  prepared: PreparedPage;
+}
+
+/** Prepare a whole batch, requiring every asset to succeed. If any asset fails
+ *  to prepare, none of the batch is stored — so reclaim every transient file it
+ *  created (the source copies plus any downscaled outputs that did land) before
+ *  rethrowing, leaving nothing stranded and untracked by the cleanup paths. */
+async function prepareBatch(assets: readonly PickedAsset[]): Promise<PreparedAsset[]> {
+  const settled = await Promise.allSettled(
+    assets.map(async (asset) => ({
+      sourceUri: asset.uri,
+      prepared: await preparePageForTranscription(asset.uri),
+    })),
+  );
+  const fulfilled = settled.filter(
+    (result): result is PromiseFulfilledResult<PreparedAsset> => result.status === 'fulfilled',
+  );
+  if (fulfilled.length !== settled.length) {
+    const outputs = fulfilled.map((result) => result.value.prepared.uri);
+    await releaseUris([...assets.map((asset) => asset.uri), ...outputs]);
+    throw new Error('Journal capture: a picked page could not be prepared');
+  }
+  return fulfilled.map((result) => result.value);
+}
+
+/** Prepare every freshly-picked asset for transcription and give each a stable
+ *  session id (a monotonic counter), building the {@link CapturePage} list
+ *  appended to the session. Preparation runs before storage so the session never
+ *  holds a full-resolution payload; one unpreparable asset rejects the batch (see
+ *  {@link prepareBatch}), which the callers route to the unreadable-photo offramp. */
+async function toCapturePages(
   assets: readonly PickedAsset[],
   counterRef: React.MutableRefObject<number>,
-): CapturePage[] {
-  return assets.map((asset) => {
+): Promise<CapturePage[]> {
+  const preparedAssets = await prepareBatch(assets);
+  return preparedAssets.map(({ sourceUri, prepared }) => {
     counterRef.current += 1;
     return {
       id: `page-${counterRef.current}`,
-      uri: asset.uri,
-      imageBase64: asset.imageBase64,
-      mediaType: asset.mediaType,
+      sourceUri,
+      uri: prepared.uri,
+      imageBase64: prepared.base64,
+      byteLength: prepared.byteLength,
+      mediaType: prepared.mediaType,
       status: 'ready',
     };
   });
@@ -212,7 +263,7 @@ function applyInitialPickFailure(
     navigation.goBack();
     return;
   }
-  setPhase({ step: 'pickFailed' });
+  setPhase(PICK_FAILED_PHASE);
 }
 
 /** Launch the picker for the session's remaining capacity and fold the result in.
@@ -229,13 +280,26 @@ function usePickPages({
     const hadPages = pagesRef.current.length > 0;
     if (!hadPages) setPhase({ step: 'preparing' });
     const result = await pickJournalPhotos(MAX_PAGES_PER_SESSION - pagesRef.current.length);
-    if (result.kind === 'picked') {
-      dispatch({ type: 'append', pages: toCapturePages(result.assets, counterRef) });
-    } else if (!hadPages) {
-      applyInitialPickFailure(result, navigation, setPhase);
+    if (result.kind !== 'picked') {
+      if (hadPages) {
+        setPhase({ step: 'collect' });
+      } else {
+        applyInitialPickFailure(result, navigation, setPhase);
+      }
       return;
     }
-    setPhase({ step: 'collect' });
+    // Trim to the session's remaining room BEFORE preparing, so the manipulator
+    // never writes a cache file for a page the reducer would clamp away and leave
+    // untracked by cleanup.
+    const room = MAX_PAGES_PER_SESSION - pagesRef.current.length;
+    const inRoom = result.assets.slice(0, room);
+    try {
+      dispatch({ type: 'append', pages: await toCapturePages(inRoom, counterRef) });
+      setPhase({ step: 'collect' });
+    } catch {
+      // A photo the prepare step could not read reuses the pick-failed offramp.
+      setPhase(PICK_FAILED_PHASE);
+    }
   }, [navigation, dispatch, pagesRef, counterRef, setPhase]);
 }
 
@@ -249,11 +313,16 @@ interface CaptureDeps {
 /** Fold one camera outcome into the session: a captured page appends and invites
  *  another; a refusal gets its recovery view; a back-out returns to collect with
  *  the session untouched; an unusable capture reuses the pick-failed offramp. */
-function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
+async function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): Promise<void> {
   const { dispatch, counterRef, setPhase } = deps;
   if (result.kind === 'captured') {
-    dispatch({ type: 'append', pages: toCapturePages([result.asset], counterRef) });
-    setPhase({ step: 'takeAnother' });
+    try {
+      dispatch({ type: 'append', pages: await toCapturePages([result.asset], counterRef) });
+      setPhase({ step: 'takeAnother' });
+    } catch {
+      // A capture the prepare step could not read reuses the pick-failed offramp.
+      setPhase(PICK_FAILED_PHASE);
+    }
     return;
   }
   if (result.kind === 'denied') {
@@ -266,14 +335,14 @@ function applyCaptureResult(result: CaptureResult, deps: CaptureDeps): void {
   }
   // An unusable capture reuses the pick-failed offramp; its "Pick another photo"
   // retry deliberately switches modality to the library picker, not the camera.
-  setPhase({ step: 'pickFailed' });
+  setPhase(PICK_FAILED_PHASE);
 }
 
 /** Launch the camera for one page and fold the outcome into the session. */
 function useCameraCapture(deps: CaptureDeps): () => Promise<void> {
   const { dispatch, counterRef, setPhase } = deps;
   return useCallback(async () => {
-    applyCaptureResult(await captureJournalPhoto(), { dispatch, counterRef, setPhase });
+    await applyCaptureResult(await captureJournalPhoto(), { dispatch, counterRef, setPhase });
   }, [dispatch, counterRef, setPhase]);
 }
 
@@ -288,12 +357,20 @@ function useBeginTranscription(
   return useCallback(async () => {
     const [page] = pagesRef.current;
     if (pagesRef.current.length !== 1 || !page) return;
+    if (page.byteLength >= MAX_TRANSCRIBE_IMAGE_BYTES) {
+      // Too large even after downscaling: surface the same recovery the server
+      // would, without spending the round-trip (or the wallet) to hear it.
+      setPhase({ step: 'error', error: new TranscriptionError('image_too_large', null) });
+      return;
+    }
     setPhase({ step: 'transcribing' });
     try {
       const { text } = await journal.transcribePage({
         imageBase64: page.imageBase64,
         mediaType: page.mediaType,
       });
+      // The page is read; its transient device files have served their purpose.
+      fireAndForgetCleanup(releasePageFiles(page));
       setPreviewText(text);
       setPhase({ step: 'preview' });
     } catch (err: unknown) {
@@ -353,6 +430,41 @@ function useNavigationOfframps(
   return { openSettings, cancel, goTypedEntry };
 }
 
+/** Keeps the transient device files in lockstep with the in-memory session:
+ *  release-everything-and-clear (save, typed-entry offramp), an unmount sweep
+ *  for whatever the writer walked away from, and per-page removal. */
+function useSessionCleanup(
+  pagesRef: React.MutableRefObject<CapturePage[]>,
+  dispatch: React.Dispatch<CaptureSessionAction>,
+): { releaseSession: () => void; removePage: (_id: string) => void } {
+  const releaseSessionFiles = useCallback(() => {
+    fireAndForgetCleanup(releaseAllPageFiles(pagesRef.current));
+  }, [pagesRef]);
+
+  // The unmount sweep: a session cleared on save leaves an empty list here, so
+  // the sweep only ever deletes files still owned by lingering pages. React
+  // releases the in-memory base64 with the reducer state itself.
+  useEffect(() => releaseSessionFiles, [releaseSessionFiles]);
+
+  const releaseSession = useCallback(() => {
+    releaseSessionFiles(); // Device files first, then the in-memory clear.
+    dispatch({ type: 'clear' });
+  }, [releaseSessionFiles, dispatch]);
+
+  const removePage = useCallback(
+    (id: string) => {
+      const removed = pagesRef.current.find((page) => page.id === id);
+      if (removed) {
+        fireAndForgetCleanup(releasePageFiles(removed)); // Files first, then the drop.
+      }
+      dispatch({ type: 'remove', id });
+    },
+    [pagesRef, dispatch],
+  );
+
+  return { releaseSession, removePage };
+}
+
 /**
  * The capture state machine: collect pages → transcribe → editable preview → save.
  * Pages live in a reducer (never in nav params) with a ref mirror so async picks
@@ -369,7 +481,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
 
-  const releaseSession = useCallback(() => dispatch({ type: 'clear' }), []);
+  const { releaseSession, removePage } = useSessionCleanup(pagesRef, dispatch);
   const runPick = usePickPages({ navigation, dispatch, pagesRef, counterRef, setPhase });
   const runCapture = useCameraCapture({ dispatch, counterRef, setPhase });
   const beginTranscription = useBeginTranscription(pagesRef, setPhase, setPreviewText);
@@ -385,10 +497,6 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
 
   useEffect(() => {
     void runPick();
-    // The device-local cache files the picker copies are cleaned up by a later
-    // epic; the in-memory session is released by React when this screen unmounts.
-    // Camera captures follow the same transient-memory rules, and their device
-    // cache cleanup is likewise a later epic's scope.
   }, [runPick]);
 
   return {
@@ -404,7 +512,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     runPick: () => void runPick(),
     takePhoto: () => void runCapture(),
     finishCapturing: () => setPhase({ step: 'collect' }),
-    removePage: (id) => dispatch({ type: 'remove', id }),
+    removePage,
     reorderPages: (next) => dispatch({ type: 'reorder', pages: next }),
     transcribe: () => void beginTranscription(),
     retryTranscribe: () => void beginTranscription(),

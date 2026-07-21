@@ -1,32 +1,18 @@
 /**
  * Wraps `expo-image-picker` for the Journal photograph-capture flow: request
- * permission, open the library for an ordered multi-selection or the camera for
- * a single page, and hand back the pages as base64 with server-accepted media
- * types — or a discriminated reason none were usable.
+ * permission, open the library for an ordered multi-selection or the camera
+ * for a single page, and hand back each usable page's file uri — or a
+ * discriminated reason none were usable.
  *
- * PRIVACY: the returned base64 image payloads are never logged here; callers hold
- * them in memory only and release them once the pages are saved.
+ * The picker itself never re-encodes: no quality option, no base64 request.
+ * Downscaling and encoding happen once, in the capture pipeline's prepare
+ * step, working from the uris returned here.
  */
 import * as ImagePicker from 'expo-image-picker';
 
-import type { MediaType } from '@/api';
-
-// Slight compression: a full-resolution page photo can be several MB, and the
-// transcription request carries the base64 inline. 0.8 is visually lossless for
-// legible handwriting while keeping the upload small.
-const IMAGE_QUALITY = 0.8;
-
-/** The media types the transcription endpoint accepts, unchanged when mapped. */
-const PASSTHROUGH_MEDIA_TYPES: readonly MediaType[] = ['image/png', 'image/webp', 'image/jpeg'];
-
-/** Default encoding assumed when the picker reports an unknown/absent mime type. */
-const DEFAULT_MEDIA_TYPE: MediaType = 'image/jpeg';
-
-/** A single usable page returned from the picker: its uri, base64, and media type. */
+/** A single usable page returned from the picker: its on-device file uri. */
 export interface PickedAsset {
   uri: string;
-  imageBase64: string;
-  mediaType: MediaType;
 }
 
 /**
@@ -34,7 +20,7 @@ export interface PickedAsset {
  *
  *  - `denied`    — media-library permission was refused; the picker never opened.
  *  - `cancelled` — the user backed out of the picker.
- *  - `failed`    — the pick completed but yielded no usable base64 image.
+ *  - `failed`    — the pick completed but yielded no asset with a file uri.
  *  - `picked`    — one or more usable pages, in selection order.
  */
 export type MultiPickResult =
@@ -43,26 +29,13 @@ export type MultiPickResult =
   | { kind: 'failed' }
   | { kind: 'picked'; assets: PickedAsset[] };
 
-/**
- * Map an image picker mime type to a transcription-accepted {@link MediaType}.
- * Known encodings pass through unchanged; anything else (or a missing mime)
- * defaults to `image/jpeg`, the safest broadly-supported fallback.
- */
-export function toMediaType(mime?: string): MediaType {
-  const match = PASSTHROUGH_MEDIA_TYPES.find((accepted) => accepted === mime);
-  return match ?? DEFAULT_MEDIA_TYPE;
-}
-
-/** Keep only assets that carry base64, mapping each to a {@link PickedAsset} in order. */
+/** Keep only assets that carry a file uri, mapping each to a {@link PickedAsset}
+ *  in order; any legacy picker-reported metadata (base64, mime) is ignored. */
 function toPickedAssets(assets: readonly ImagePicker.ImagePickerAsset[]): PickedAsset[] {
   const usable: PickedAsset[] = [];
   for (const asset of assets) {
-    if (asset.base64) {
-      usable.push({
-        uri: asset.uri,
-        imageBase64: asset.base64,
-        mediaType: toMediaType(asset.mimeType),
-      });
+    if (asset.uri) {
+      usable.push({ uri: asset.uri });
     }
   }
   return usable;
@@ -70,14 +43,14 @@ function toPickedAssets(assets: readonly ImagePicker.ImagePickerAsset[]): Picked
 
 /**
  * Open the device media library for an ordered multi-selection and return the
- * chosen pages as base64.
+ * chosen pages' file uris.
  *
  * Requests media-library permission first; a refusal short-circuits to `denied`
  * without ever launching the picker. A cancelled pick is `cancelled`. Every
- * picked asset carrying base64 is mapped, in selection order, to its uri, base64,
- * and resolved media type; assets without base64 are skipped. A pick that yields
- * no usable asset is `failed`. `selectionLimit` caps how many pages the picker
- * offers — the session's remaining capacity.
+ * picked asset carrying a file uri is mapped, in selection order; assets
+ * without one are skipped. A pick that yields no usable asset is `failed`.
+ * `selectionLimit` caps how many pages the picker offers — the session's
+ * remaining capacity.
  */
 export async function pickJournalPhotos(selectionLimit: number): Promise<MultiPickResult> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -86,8 +59,6 @@ export async function pickJournalPhotos(selectionLimit: number): Promise<MultiPi
   }
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
-    quality: IMAGE_QUALITY,
-    base64: true,
     allowsMultipleSelection: true,
     selectionLimit,
     orderedSelection: true,
@@ -107,7 +78,7 @@ export async function pickJournalPhotos(selectionLimit: number): Promise<MultiPi
  *
  *  - `denied`    — camera permission was refused; the camera never opened.
  *  - `cancelled` — the user backed out of the camera.
- *  - `failed`    — the capture completed but yielded no usable base64 image.
+ *  - `failed`    — the capture completed but yielded no asset with a file uri.
  *  - `captured`  — one usable page, ready to append to the session.
  */
 export type CaptureResult =
@@ -117,25 +88,19 @@ export type CaptureResult =
   | { kind: 'captured'; asset: PickedAsset };
 
 /**
- * Open the device camera to photograph a single page and return it as base64.
+ * Open the device camera to photograph a single page and return its file uri.
  *
- * Requests camera permission first; a refusal short-circuits to `denied` without
- * ever launching the camera. A dismissed camera is `cancelled`. A captured asset
- * carrying base64 is mapped to its uri, base64, and resolved media type; a
- * capture that yields no usable asset is `failed`.
- *
- * PRIVACY: the returned base64 image payload is never logged here; the caller
- * holds it in memory only and releases it once the page is saved.
+ * Requests camera permission first; a refusal short-circuits to `denied`
+ * without ever launching the camera. A dismissed camera is `cancelled`. A
+ * captured asset carrying a file uri is mapped to it; a capture that yields
+ * no usable asset is `failed`.
  */
 export async function captureJournalPhoto(): Promise<CaptureResult> {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) {
     return { kind: 'denied' };
   }
-  const result = await ImagePicker.launchCameraAsync({
-    quality: IMAGE_QUALITY,
-    base64: true,
-  });
+  const result = await ImagePicker.launchCameraAsync();
   if (result.canceled) {
     return { kind: 'cancelled' };
   }

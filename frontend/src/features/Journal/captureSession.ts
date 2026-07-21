@@ -15,11 +15,18 @@ export const MAX_PAGES_PER_SESSION = 10;
 /** A page's lifecycle marker. Only `ready` exists today; later epics widen it. */
 export type CapturePageStatus = 'ready';
 
-/** One collected page: a stable id, its on-device uri, and the base64 to transcribe. */
+/** One collected page: a stable id, its transient device files, and the
+ *  prepared (downscaled) base64 to transcribe. */
 export interface CapturePage {
   id: string;
+  /** The original picker/camera cache copy the page was prepared from. */
+  sourceUri: string;
+  /** The downscaled manipulator-output file — also the thumbnail source. */
   uri: string;
   imageBase64: string;
+  /** Decoded size of {@link imageBase64}, gating oversize uploads on device. */
+  byteLength: number;
+  /** Always `image/jpeg` in practice — the prepare step's one save format. */
   mediaType: MediaType;
   status: CapturePageStatus;
 }

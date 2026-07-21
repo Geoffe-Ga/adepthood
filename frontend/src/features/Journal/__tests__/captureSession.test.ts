@@ -12,8 +12,10 @@ import type { CapturePage } from '../captureSession';
 function page(id: string, overrides: Partial<CapturePage> = {}): CapturePage {
   return {
     id,
+    sourceUri: `file:///${id}-source.jpg`,
     uri: `file:///${id}.jpg`,
     imageBase64: `b64-${id}`,
+    byteLength: 1024,
     mediaType: 'image/jpeg',
     status: 'ready',
     ...overrides,
