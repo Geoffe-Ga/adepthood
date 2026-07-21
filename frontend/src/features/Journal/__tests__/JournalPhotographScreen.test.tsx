@@ -2,9 +2,9 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
-import type { MultiPickResult, PickedAsset } from '../pickJournalPhoto';
+import type { CaptureResult, MultiPickResult, PickedAsset } from '../pickJournalPhoto';
 
 import { TranscriptionError } from '@/api';
 import type { JournalMessage, MediaType, TranscribePageT, TranscriptionErrorKind } from '@/api';
@@ -18,6 +18,7 @@ const isoOffsetFromToday = (days: number): string => {
 };
 
 const mockPick = jest.fn() as jest.MockedFunction<(_limit: number) => Promise<MultiPickResult>>;
+const mockCapture = jest.fn() as jest.MockedFunction<() => Promise<CaptureResult>>;
 const mockTranscribe = jest.fn() as jest.MockedFunction<
   (_p: { imageBase64: string; mediaType: MediaType }) => Promise<TranscribePageT>
 >;
@@ -31,6 +32,8 @@ jest.mock(
   () => ({
     pickJournalPhotos: (...a: unknown[]) =>
       (mockPick as unknown as (...x: unknown[]) => unknown)(...a),
+    captureJournalPhoto: (...a: unknown[]) =>
+      (mockCapture as unknown as (...x: unknown[]) => unknown)(...a),
   }),
   { virtual: true },
 );
@@ -85,6 +88,10 @@ function picked(assets: PickedAsset[] = [pickedAsset()]): MultiPickResult {
   return { kind: 'picked', assets };
 }
 
+function capturedPage(uri: string, imageBase64: string): CaptureResult {
+  return { kind: 'captured', asset: pickedAsset({ uri, imageBase64 }) };
+}
+
 function makeEntry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   return {
     id: 1,
@@ -113,6 +120,7 @@ function renderScreen() {
 
 beforeEach(() => {
   mockPick.mockReset();
+  mockCapture.mockReset();
   mockTranscribe.mockReset();
   mockCreate.mockReset();
   mockUpdate.mockReset();
@@ -617,5 +625,174 @@ describe('JournalPhotographScreen — entry date', () => {
 
     fireEvent.changeText(getByLabelText('Date'), isoOffsetFromToday(1));
     expect(getByText(/Pick a date between/)).toBeTruthy();
+  });
+});
+
+describe('JournalPhotographScreen — camera capture', () => {
+  it('appends a captured photo after the existing pages, preserving order', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce(capturedPage('file:///cam1.jpg', 'cam-b64'));
+    const { findByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await waitFor(() => expect(mockCapture).toHaveBeenCalledTimes(1));
+
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data).toHaveLength(2);
+    expect(data.map((p) => p.uri)).toEqual(['file:///p1.jpg', 'file:///cam1.jpg']);
+  });
+
+  it('routes an unusable capture to the pick-failed offramp with Pick another, no retry', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce({ kind: 'failed' });
+    const { findByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await waitFor(() => expect(mockCapture).toHaveBeenCalledTimes(1));
+
+    expect(await findByTestId('photograph-error')).toBeTruthy();
+    expect(await findByTestId('photograph-pick-another')).toBeTruthy();
+    expect(queryByTestId('photograph-retry')).toBeNull();
+  });
+
+  it('leaves the session unchanged and stays in collect when the camera is cancelled', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce({ kind: 'cancelled' });
+    const { findByTestId, navigation } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await waitFor(() => expect(mockCapture).toHaveBeenCalledTimes(1));
+
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data).toHaveLength(1);
+    expect(navigation.goBack).not.toHaveBeenCalled();
+  });
+});
+
+describe('JournalPhotographScreen — camera permission denied', () => {
+  it('shows the camera-denied recovery view and opens device settings once', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce({ kind: 'denied' });
+    const openSettings = jest.spyOn(Linking, 'openSettings').mockResolvedValue();
+    const { findByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    expect(await findByTestId('camera-denied')).toBeTruthy();
+
+    fireEvent.press(await findByTestId('camera-open-settings'));
+    expect(openSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns to collect from Not now, keeping the pages and never going back or opening settings', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    mockCapture.mockResolvedValueOnce({ kind: 'denied' });
+    const openSettings = jest.spyOn(Linking, 'openSettings').mockResolvedValue();
+    const { findByTestId, navigation, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await findByTestId('camera-denied');
+
+    fireEvent.press(await findByTestId('camera-not-now'));
+
+    expect(queryByTestId('camera-denied')).toBeNull();
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data).toHaveLength(2);
+    expect(data.map((p) => p.uri)).toEqual(uriList(2));
+    expect(navigation.goBack).not.toHaveBeenCalled();
+    expect(openSettings).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the library pick from Add from library, landing back in collect', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce({ kind: 'denied' });
+    const { findByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    await findByTestId('camera-denied');
+    expect(mockPick).toHaveBeenCalledTimes(1);
+
+    mockPick.mockResolvedValueOnce(
+      picked([pickedAsset({ uri: 'file:///lib2.jpg', imageBase64: 'b64-lib' })]),
+    );
+    fireEvent.press(await findByTestId('camera-add-from-library'));
+    await waitFor(() => expect(mockPick).toHaveBeenCalledTimes(2));
+
+    expect(queryByTestId('camera-denied')).toBeNull();
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data.map((p) => p.uri)).toEqual(['file:///p1.jpg', 'file:///lib2.jpg']);
+  });
+});
+
+describe('JournalPhotographScreen — take-another loop', () => {
+  it('offers Take another and Done after a capture, looping until Done returns to collect', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    mockCapture.mockResolvedValueOnce(capturedPage('file:///cam2.jpg', 'cam-b64-2'));
+    const { findByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    expect(await findByTestId('capture-take-another')).toBeTruthy();
+    expect(await findByTestId('capture-done')).toBeTruthy();
+    expect(queryByTestId('capture-take-photo')).toBeNull();
+    expect(queryByTestId('capture-add-pages')).toBeNull();
+    expect(queryByTestId('capture-transcribe')).toBeNull();
+
+    mockCapture.mockResolvedValueOnce(capturedPage('file:///cam3.jpg', 'cam-b64-3'));
+    fireEvent.press(await findByTestId('capture-take-another'));
+    await waitFor(() => expect(mockCapture).toHaveBeenCalledTimes(2));
+
+    fireEvent.press(await findByTestId('capture-done'));
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data.map((p) => p.uri)).toEqual([
+      'file:///p1.jpg',
+      'file:///cam2.jpg',
+      'file:///cam3.jpg',
+    ]);
+    expect(queryByTestId('capture-take-another')).toBeNull();
+  });
+
+  it('hides Take another when the capture fills the session, keeping only Done', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(9))));
+    mockCapture.mockResolvedValueOnce(capturedPage('file:///cam10.jpg', 'cam-b64-10'));
+    const { findByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(await findByTestId('capture-take-photo'));
+    expect(await findByTestId('capture-done')).toBeTruthy();
+    expect(queryByTestId('capture-take-another')).toBeNull();
+
+    fireEvent.press(await findByTestId('capture-done'));
+    expect(await findByTestId('capture-cap-notice')).toBeTruthy();
+    const list = await findByTestId('capture-pages-list');
+    const data = list.props.data as Array<{ uri: string }>;
+    expect(data).toHaveLength(10);
+  });
+});
+
+describe('JournalPhotographScreen — web guard', () => {
+  it('never offers Take photo when running on web', async () => {
+    const osDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'web' });
+    try {
+      mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+      const { findByTestId, queryByTestId } = renderScreen();
+      await findByTestId('capture-pages-list');
+      expect(queryByTestId('capture-take-photo')).toBeNull();
+    } finally {
+      if (osDescriptor) {
+        Object.defineProperty(Platform, 'OS', osDescriptor);
+      }
+    }
   });
 });
