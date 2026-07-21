@@ -106,6 +106,13 @@ describe('saveFinishedEntry — retry with an existing id (create already succee
     mockUpdate.mockResolvedValueOnce(entry({ id: 55, status: 'finished' }));
     await expect(saveFinishedEntry('Retried text.', 55)).resolves.toBe(55);
   });
+
+  it('never sends classification on a retry PATCH, even when one is passed', async () => {
+    mockUpdate.mockResolvedValueOnce(entry({ id: 55, status: 'finished' }));
+    await saveFinishedEntry('Retried text.', 55, undefined, undefined, 'intimate');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledWith(55, { message: 'Retried text.', status: 'finished' });
+  });
 });
 
 describe('saveFinishedEntry — entry date', () => {
