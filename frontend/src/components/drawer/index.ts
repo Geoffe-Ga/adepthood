@@ -11,6 +11,7 @@ export { default as DrawerItem } from './DrawerItem';
 export type { DrawerItemProps } from './DrawerItem';
 export { default as DrawerNavSection } from './DrawerNavSection';
 export type { DrawerNavSectionProps } from './DrawerNavSection';
+export { NAV_ICON_SIZE, NAV_ICON_STROKE } from './navIcon';
 export { useScreenDrawer } from './useScreenDrawer';
 export type { ScreenDrawerState } from './useScreenDrawer';
 export { default as DrawerSearch } from './DrawerSearch';

@@ -11,6 +11,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import DrawerItem from './DrawerItem';
+import { NAV_ICON_SIZE, NAV_ICON_STROKE } from './navIcon';
 
 import { accent, ink, SPACING, surface } from '@/design/tokens';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
@@ -22,11 +23,6 @@ import {
   selectEnablePractices,
   useDepthPreferencesStore,
 } from '@/store/useDepthPreferencesStore';
-
-/** Size (px) of the leading lucide icon on each nav row. */
-const NAV_ICON_SIZE = 24;
-/** Stroke width of the leading lucide icon on each nav row. */
-const NAV_ICON_STROKE = 2;
 
 type RootStackNavigation = NativeStackNavigationProp<RootStackParamList>;
 
