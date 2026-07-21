@@ -661,6 +661,9 @@ const TileProgressSection = ({
     tz,
     progressPercent: progressPercentage,
     onLogUnit: onLogUnit ?? NOOP_LOG_UNIT,
+    // A committed long-press fill dismisses its own tooltip, so the label never
+    // lingers when the touch-end event fails to arrive (the reported symptom).
+    onSettle: () => setTooltip(null),
   });
 
   return (
