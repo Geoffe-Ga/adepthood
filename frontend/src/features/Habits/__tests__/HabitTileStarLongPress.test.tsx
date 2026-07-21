@@ -175,6 +175,23 @@ describe('HabitTile star long-press fill', () => {
     expect(props.onLogUnit).not.toHaveBeenCalled();
   });
 
+  it('dismisses the tooltip when the long-press fill commits, without a pressOut event', () => {
+    const { getByTestId, queryByTestId, props } = renderTile(makeHabit());
+    const marker = getByTestId(MARKER_STRETCH);
+
+    // A long-press starts with a press-in that reveals the tier tooltip.
+    fireEvent(marker, 'pressIn');
+    expect(getByTestId(TOOLTIP_STRETCH)).toBeTruthy();
+
+    // The fill arms and sweeps to a committed log. The press-end event is never
+    // delivered (the browser bug this guards): the commit alone must clear it.
+    fireEvent(marker, 'longPress');
+    advance(FULL_SWEEP_MS + 100);
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(HABIT_ID, 3);
+    expect(queryByTestId(TOOLTIP_STRETCH)).toBeNull();
+  });
+
   it('does not open the tile settings menu or the goal modal from a star long-press', () => {
     const { getByTestId, props } = renderTile(makeHabit());
 

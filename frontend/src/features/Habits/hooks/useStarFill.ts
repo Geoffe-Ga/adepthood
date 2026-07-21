@@ -29,6 +29,12 @@ interface UseStarFillArgs {
   /** The bar's static (prop-derived) percent, owned by the caller. */
   progressPercent: number;
   onLogUnit: GoalModalProps['onLogUnit'];
+  /**
+   * Called once a fill commits its log, so the gesture layer can tear down UI
+   * (e.g. dismiss the tier tooltip) without waiting on a press-end event that a
+   * browser may never deliver. Optional; a no-op when omitted.
+   */
+  onSettle?: () => void;
 }
 
 /** One linear constant-speed leg of the sweep; `onEnd` gets Animated's `finished`. */
@@ -59,6 +65,7 @@ export const useStarFill = ({
   tz,
   progressPercent,
   onLogUnit,
+  onSettle,
 }: UseStarFillArgs): StarFill => {
   const anim = useRef(new Animated.Value(0)).current;
   const [displayPercent, setDisplayPercent] = useState<number | null>(null);
@@ -88,6 +95,7 @@ export const useStarFill = ({
       if (!finished || activeRef.current !== plan) return;
       activeRef.current = null;
       onLogUnit(plan.habitId, plan.deltaUnits);
+      onSettle?.();
     });
   };
 
