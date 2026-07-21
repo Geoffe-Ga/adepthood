@@ -10,12 +10,14 @@ import {
   lensCaption,
   lensCenterForStage,
   lensFrame,
+  lensStageIdentity,
   MAGNIFICATION,
   magnifierTransform,
   nearestStage,
 } from '../magnifierGeometry';
 import { STAGE_DISPLAY, TITLE_BY_STAGE } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
+import type { StageData } from '../stageData';
 import { centerColumnBounds, stageWavePoint } from '../waveGeometry';
 
 const GRID_WIDTH = 300;
@@ -184,42 +186,74 @@ describe('glideDurationMs', () => {
   });
 });
 
+const makeStage = (overrides: Partial<StageData> = {}): StageData => ({
+  id: 4,
+  title: 'Stage 4',
+  subtitle: 'Subtitle',
+  stageNumber: 4,
+  progress: 0,
+  color: '#aaa',
+  isUnlocked: true,
+  category: 'Love',
+  aspect: 'Community',
+  spiralDynamicsColor: 'Blue',
+  growingUpStage: 'Conformity',
+  divineGenderPolarity: 'Divine Feminine',
+  relationshipToFreeWill: 'Victim',
+  freeWillDescription: 'Behaviour is determined by the relationships one is embedded in.',
+  overviewUrl: '',
+  manifestations: [],
+  ...overrides,
+});
+
 describe('lensCaption', () => {
-  it('uses the Aspect arrow word for labelled stages', () => {
-    const caption = lensCaption(3);
-    expect(caption.headline).toBe('Self-Love');
-    expect(caption.detail).toBe('Dominator · Power');
+  it('surfaces the stage polarity and free-will description from backend data', () => {
+    const caption = lensCaption(makeStage());
+    expect(caption.polarity).toBe('Divine Feminine');
+    expect(caption.freeWill).toBe(
+      'Behaviour is determined by the relationships one is embedded in.',
+    );
   });
 
-  it('prefixes the stage number and spiral color as the eyebrow', () => {
-    const caption = lensCaption(4);
-    expect(caption.eyebrow).toBe('4 · BLUE');
-    expect(caption.practice).toBe('Metta');
+  it('carries a Divine Masculine polarity through unchanged', () => {
+    const caption = lensCaption(makeStage({ divineGenderPolarity: 'Divine Masculine' }));
+    expect(caption.polarity).toBe('Divine Masculine');
   });
 
-  it('uppercases a two-word spiral color name in the eyebrow', () => {
-    expect(lensCaption(10).eyebrow).toBe('10 · CLEAR LIGHT');
-    expect(lensCaption(10).headline).toBe(TITLE_BY_STAGE[10]);
+  it('resolves missing stage data to empty strings instead of throwing', () => {
+    expect(lensCaption(undefined)).toEqual({ polarity: '', freeWill: '' });
+  });
+
+  it('surfaces an empty free-will description without falling over', () => {
+    const caption = lensCaption(makeStage({ freeWillDescription: '' }));
+    expect(caption.freeWill).toBe('');
+    expect(caption.polarity).toBe('Divine Feminine');
+  });
+});
+
+describe('lensStageIdentity', () => {
+  it('identifies a stage by its Aspect word, number, colour, and persona', () => {
+    const identity = lensStageIdentity(3);
+    expect(identity).toContain('Self-Love');
+    expect(identity).toContain('3 · RED');
+    expect(identity).toContain(STAGE_DISPLAY[3]?.persona ?? '');
   });
 
   it('falls back to the UNITY / EMPTINESS titles for the top stages', () => {
-    expect(lensCaption(9).headline).toBe(TITLE_BY_STAGE[9]);
-    expect(lensCaption(10).headline).toBe(TITLE_BY_STAGE[10]);
+    expect(lensStageIdentity(9)).toContain(TITLE_BY_STAGE[9]);
+    expect(lensStageIdentity(10)).toContain(TITLE_BY_STAGE[10]);
   });
 
-  it('covers every stage with a non-empty headline, detail, eyebrow, and practice', () => {
+  it('names every stage with its number and uppercased spiral colour', () => {
     for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
-      const caption = lensCaption(stage);
-      expect(caption.headline.length).toBeGreaterThan(0);
-      expect(caption.detail).toContain(STAGE_DISPLAY[stage]?.persona ?? '');
-      expect(caption.eyebrow).toBe(`${stage} · ${(STAGE_ORDER[stage - 1] ?? '').toUpperCase()}`);
-      expect(caption.practice).toBe(STAGE_DISPLAY[stage]?.practice);
-      expect(caption.practice.length).toBeGreaterThan(0);
+      const identity = lensStageIdentity(stage);
+      expect(identity).toContain(`${stage} · ${(STAGE_ORDER[stage - 1] ?? '').toUpperCase()}`);
+      expect(identity).toContain(STAGE_DISPLAY[stage]?.persona ?? '');
     }
   });
 
-  it('resolves unknown stages to empty strings instead of throwing', () => {
-    expect(lensCaption(99)).toEqual({ eyebrow: '', headline: '', detail: '', practice: '' });
+  it('resolves an unknown stage to an empty identity instead of throwing', () => {
+    expect(lensStageIdentity(99)).toBe('');
   });
 });
 

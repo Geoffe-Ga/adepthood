@@ -24,14 +24,14 @@ import {
   DRAG_TAP_SLOP,
   glideDurationMs,
   inertialStageTarget,
-  lensCaption,
+  lensStageIdentity,
   lensCenterForStage,
   lensFrame,
   magnifierTransform,
   MAGNIFICATION,
   nearestStage,
 } from './magnifierGeometry';
-import type { LensCenter, LensFrame } from './magnifierGeometry';
+import type { LensCaption, LensCenter, LensFrame } from './magnifierGeometry';
 import styles from './Map.styles';
 import type { StageAnchors } from './waveGeometry';
 import { WaveOverlay } from './WaveOverlay';
@@ -75,6 +75,12 @@ export interface MagnifierLensProps {
   focusedStage: number;
   /** The user's live stage — earns the YOU ARE HERE chip when under glass. */
   currentStage: number | null;
+  /**
+   * Resolve the caption (polarity + free-will read) for any stage under the
+   * glass. Threaded from ``MapScreen`` so the two facts come from backend
+   * ``StageData``; missing data resolves to empty strings.
+   */
+  captionForStage: (_stageNumber: number) => LensCaption;
   /** A drag released over a new stage settles focus there. */
   onSettleStage: (_stageNumber: number) => void;
   /** A tap on the lens opens the focused stage's detail modal. */
@@ -415,44 +421,51 @@ const LensGlass = ({
   );
 };
 
-/** Chip + caption block for the stage currently under the glass. */
+/**
+ * Chip + caption block for the stage currently under the glass. The pill shows
+ * only the two facts absent everywhere else on the Map: the stage's Divine
+ * Gender Polarity (eyebrow-style) over its free-will description (clamped to two
+ * lines). Everything the surrounding columns already say is left off.
+ */
 const LensCaptionBlock = ({
-  stageNumber,
+  caption,
   isCurrent,
 }: {
-  stageNumber: number;
+  caption: LensCaption;
   isCurrent: boolean;
-}): React.JSX.Element => {
-  const caption = lensCaption(stageNumber);
-  return (
-    <View style={styles.magnifierCaption} pointerEvents="none">
-      {isCurrent ? (
-        <View style={styles.youAreHere} testID="you-are-here">
-          <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
-        </View>
-      ) : null}
-      <Text style={styles.magnifierEyebrow} testID="magnifier-eyebrow" numberOfLines={1}>
-        {caption.eyebrow}
-      </Text>
-      <Text style={styles.magnifierHeadline} testID="magnifier-headline" numberOfLines={1}>
-        {caption.headline}
-      </Text>
-      <Text style={styles.magnifierDetail} testID="magnifier-detail" numberOfLines={1}>
-        {caption.detail}
-      </Text>
-      <Text style={styles.magnifierPractice} testID="magnifier-practice" numberOfLines={1}>
-        {caption.practice}
-      </Text>
-    </View>
-  );
-};
+}): React.JSX.Element => (
+  <View style={styles.magnifierCaption} pointerEvents="none">
+    {isCurrent ? (
+      <View style={styles.youAreHere} testID="you-are-here">
+        <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
+      </View>
+    ) : null}
+    <Text style={styles.magnifierEyebrow} testID="magnifier-polarity" numberOfLines={1}>
+      {caption.polarity}
+    </Text>
+    <Text style={styles.magnifierDetail} testID="magnifier-freewill" numberOfLines={2}>
+      {caption.freeWill}
+    </Text>
+  </View>
+);
 
-/** Accessibility read for the lens: where it is and what it can do. */
-const lensAccessibilityLabel = (stageNumber: number, isCurrent: boolean): string => {
-  const caption = lensCaption(stageNumber);
+/**
+ * Accessibility read for the lens: it identifies the stage (detail the visible
+ * pill now sheds but a screen-reader user can't cross-reference) and speaks the
+ * two new facts, then names what the lens can do.
+ */
+const lensAccessibilityLabel = (
+  stageNumber: number,
+  caption: LensCaption,
+  isCurrent: boolean,
+): string => {
   const prefix = isCurrent ? 'You are here. ' : '';
+  // Skip empty facts (the pre-load / missing-data window) so the spoken label
+  // never degrades to stray doubled punctuation.
+  const facts = [caption.polarity, caption.freeWill].filter(Boolean).join('. ');
+  const factsPhrase = facts ? `${facts}. ` : '';
   return (
-    `${prefix}Magnifier over ${caption.headline}, stage ${caption.eyebrow} — ${caption.detail}. Practice: ${caption.practice}. ` +
+    `${prefix}Magnifier over ${lensStageIdentity(stageNumber)}. ${factsPhrase}` +
     'Tap to read about this stage; drag to explore others.'
   );
 };
@@ -529,12 +542,13 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
   });
 
   const isCurrent = hoverStage === currentStage;
+  const caption = props.captionForStage(hoverStage);
   return (
     <LensShell
       frame={frame}
       motion={motion}
       handlers={dragHandlers}
-      label={lensAccessibilityLabel(hoverStage, isCurrent)}
+      label={lensAccessibilityLabel(hoverStage, caption, isCurrent)}
     >
       <LensGlass
         motion={motion}
@@ -543,7 +557,7 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
         gridHeight={gridHeight}
         anchors={anchors}
       />
-      <LensCaptionBlock stageNumber={hoverStage} isCurrent={isCurrent} />
+      <LensCaptionBlock caption={caption} isCurrent={isCurrent} />
     </LensShell>
   );
 };

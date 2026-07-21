@@ -43,6 +43,8 @@ import {
   rankedStats,
   unlockTimeline,
 } from './journeyNarrative';
+import { lensCaption } from './magnifierGeometry';
+import type { LensCaption } from './magnifierGeometry';
 import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
 import MapDrawer from './MapDrawer';
@@ -924,6 +926,12 @@ const MapGrid = ({
   const [size, onLayout] = useGridSize();
   const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
   const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
+  // Resolve the lens caption from loaded StageData so the pill's polarity +
+  // free-will read reflect the stage under the glass, live as it drags.
+  const captionForStage = useCallback(
+    (stageNumber: number): LensCaption => lensCaption(lookup[stageNumber]),
+    [lookup],
+  );
   return (
     <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
       <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
@@ -947,6 +955,7 @@ const MapGrid = ({
           anchors={anchors}
           focusedStage={focusedStage}
           currentStage={currentStage}
+          captionForStage={captionForStage}
           onSettleStage={onSettleStage}
           onOpenStage={onOpenStage}
         />

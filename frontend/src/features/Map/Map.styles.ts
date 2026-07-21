@@ -174,12 +174,6 @@ const styles = StyleSheet.create({
     alignItems: CENTER,
     paddingHorizontal: spacing(1),
   },
-  magnifierHeadline: {
-    fontFamily: editorialType.serif,
-    fontSize: 16,
-    fontWeight: '700',
-    color: ink.primary,
-  },
   magnifierDetail: {
     fontSize: 10,
     color: ink.soft,
@@ -191,7 +185,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     color: ink.soft,
   },
-  magnifierPractice: { fontSize: 9, lineHeight: 11, color: ink.soft },
   // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
     marginBottom: spacing(0.25),
