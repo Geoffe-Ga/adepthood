@@ -9,7 +9,7 @@
  * notice rather than a hard block.
  */
 import React from 'react';
-import { Image, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import type { RenderItemParams } from 'react-native-draggable-flatlist';
 
@@ -20,6 +20,7 @@ import styles from './JournalPhotograph.styles';
 import { Button } from '@/components/Button';
 
 const ADD_PAGES_LABEL = 'Add pages';
+const TAKE_PHOTO_LABEL = 'Take photo';
 const REMOVE_GLYPH = '×';
 
 /** Warm, declinable copy shown when a session holds more than one page: reading
@@ -102,6 +103,30 @@ function AddPagesControl({
   );
 }
 
+/** Camera affordance beside Add pages — native only: the web build has no
+ *  in-app camera, so the control never renders there. */
+function TakePhotoControl({
+  canAdd,
+  onCapture,
+}: {
+  canAdd: boolean;
+  onCapture: () => void;
+}): React.JSX.Element | null {
+  if (Platform.OS === 'web') {
+    return null;
+  }
+  return (
+    <Button
+      testID="capture-take-photo"
+      variant="secondary"
+      label={TAKE_PHOTO_LABEL}
+      accessibilityLabel={TAKE_PHOTO_LABEL}
+      disabled={!canAdd}
+      onPress={onCapture}
+    />
+  );
+}
+
 /** Proceed affordance: enabled only for a single page; a warm notice explains the
  *  multi-page case rather than blocking it outright. */
 function TranscribeControl({
@@ -134,19 +159,26 @@ export interface CapturePagesStripProps {
   pages: CapturePage[];
   canAdd: boolean;
   onAdd: () => void;
+  onCapture: () => void;
   onRemove: (_id: string) => void;
   onReorder: (_pages: CapturePage[]) => void;
   onTranscribe: () => void;
+  /** Hide the add/capture/proceed controls, leaving only the thumbnail strip —
+   *  used by phases that offer their own forward affordances. */
+  actionsHidden?: boolean;
 }
 
-/** Render the ordered page strip plus its add-pages and proceed affordances. */
+/** Render the ordered page strip plus its add, capture, and proceed affordances
+ *  (or the strip alone when `actionsHidden` is set). */
 export function CapturePagesStrip({
   pages,
   canAdd,
   onAdd,
+  onCapture,
   onRemove,
   onReorder,
   onTranscribe,
+  actionsHidden = false,
 }: CapturePagesStripProps): React.JSX.Element {
   return (
     <View style={styles.collect}>
@@ -167,8 +199,13 @@ export function CapturePagesStrip({
         onDragEnd={({ data }) => onReorder(data)}
         contentContainerStyle={styles.stripContent}
       />
-      <AddPagesControl canAdd={canAdd} onAdd={onAdd} />
-      <TranscribeControl count={pages.length} onTranscribe={onTranscribe} />
+      {actionsHidden ? null : (
+        <>
+          <AddPagesControl canAdd={canAdd} onAdd={onAdd} />
+          <TakePhotoControl canAdd={canAdd} onCapture={onCapture} />
+          <TranscribeControl count={pages.length} onTranscribe={onTranscribe} />
+        </>
+      )}
     </View>
   );
 }

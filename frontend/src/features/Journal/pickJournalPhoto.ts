@@ -1,8 +1,8 @@
 /**
  * Wraps `expo-image-picker` for the Journal photograph-capture flow: request
- * permission, open the library for an ordered multi-selection, and hand back the
- * picked pages as base64 with server-accepted media types — or a discriminated
- * reason none were usable.
+ * permission, open the library for an ordered multi-selection or the camera for
+ * a single page, and hand back the pages as base64 with server-accepted media
+ * types — or a discriminated reason none were usable.
  *
  * PRIVACY: the returned base64 image payloads are never logged here; callers hold
  * them in memory only and release them once the pages are saved.
@@ -100,4 +100,48 @@ export async function pickJournalPhotos(selectionLimit: number): Promise<MultiPi
     return { kind: 'failed' };
   }
   return { kind: 'picked', assets };
+}
+
+/**
+ * The outcome of a single camera capture, discriminated on `kind`:
+ *
+ *  - `denied`    — camera permission was refused; the camera never opened.
+ *  - `cancelled` — the user backed out of the camera.
+ *  - `failed`    — the capture completed but yielded no usable base64 image.
+ *  - `captured`  — one usable page, ready to append to the session.
+ */
+export type CaptureResult =
+  | { kind: 'denied' }
+  | { kind: 'cancelled' }
+  | { kind: 'failed' }
+  | { kind: 'captured'; asset: PickedAsset };
+
+/**
+ * Open the device camera to photograph a single page and return it as base64.
+ *
+ * Requests camera permission first; a refusal short-circuits to `denied` without
+ * ever launching the camera. A dismissed camera is `cancelled`. A captured asset
+ * carrying base64 is mapped to its uri, base64, and resolved media type; a
+ * capture that yields no usable asset is `failed`.
+ *
+ * PRIVACY: the returned base64 image payload is never logged here; the caller
+ * holds it in memory only and releases it once the page is saved.
+ */
+export async function captureJournalPhoto(): Promise<CaptureResult> {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) {
+    return { kind: 'denied' };
+  }
+  const result = await ImagePicker.launchCameraAsync({
+    quality: IMAGE_QUALITY,
+    base64: true,
+  });
+  if (result.canceled) {
+    return { kind: 'cancelled' };
+  }
+  const [asset] = toPickedAssets(result.assets);
+  if (!asset) {
+    return { kind: 'failed' };
+  }
+  return { kind: 'captured', asset };
 }
