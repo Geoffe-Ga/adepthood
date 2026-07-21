@@ -22,14 +22,14 @@ graph under a conductor is identical:
 ```
 ralph-tick (fleet ORCHESTRATOR — worker pool: reconcile · serialized-merge · lazy-sync · refill)
   └─ ralph-worker × up to 4 . L1  opus    per-issue CONDUCTOR in an isolated worktree
-       ├─ chief-architect ..... L0  fable   plan + ordered dispatch list (no code)
-       ├─ test-specialist ..... L2  sonnet  Gate 1 RED: failing tests          ─┐
-       ├─ implementation-spec.  L2  opus    Gate 1 GREEN + Refactor             │ run per
+       ├─ chief-architect ..... L0  opus    plan + ordered dispatch list (no code)
+       ├─ test-specialist ..... L2  fable   Gate 1 RED: failing tests          ─┐
+       ├─ implementation-spec.  L2  fable   Gate 1 GREEN + Refactor             │ run per
        ├─ security-specialist . L2  opus    harden auth/JWT/CORS/input/DB       │ the
        ├─ performance-spec. ... L2  sonnet  profile/optimize hot paths          │ architect's
        ├─ documentation-spec. . L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
        ├─ dependency-review ... L2  haiku   deps/pins/licenses (read-only)      │ list
-       └─ code-review-orch. ... L1  opus    Gate 2.5 pre-push self-review      ─┘
+       └─ code-review-orch. ... L1  sonnet  Gate 2.5 pre-push self-review      ─┘
 ```
 
 **The tree above is the spawn graph: each conductor (`ralph-worker`, or
@@ -62,25 +62,32 @@ specialists are leaf workers that do their own work and do not sub-delegate.
 
 ## Model tiers (strategic mix)
 
-**Fable** for the single hardest-reasoning, long-horizon role: `chief-architect`.
-Planning is the highest-leverage decision in a tick — one wrong design compounds
-across every specialist that executes it — so the architect runs on Anthropic's
-most capable model. Fable is ~2× Opus-tier cost and can run minutes-long turns,
-which is acceptable for a once-per-issue planning pass but **not** for scoped
-worker roles. Two Fable caveats shape the fleet: its safety classifiers target
+The mix follows one owner-decided policy — **model by role type**:
+planning/orchestration on **Opus**, implementation on **Fable**, review on
+**Sonnet**, quick read-only checks on **Haiku**.
+
+**Opus** for planning and orchestration, where judgment drives every downstream
+decision: `chief-architect` (one wrong design compounds across every specialist
+that executes it) and `ralph-worker` (the per-issue conductor). Kept here too is
+`security-specialist` — its work is judgment-heavy threat modeling *and* it is
+deliberately barred from Fable (see the caveat below), so it stays on Opus rather
+than the implementation tier.
+
+**Fable** for implementation — the code-writing roles: `implementation-specialist`
+(production code is the core quality lever) and `test-specialist` (test authoring
+is code-writing). Two Fable caveats shape the fleet: its safety classifiers target
 **cyber/bio** content (so the code-writing `security-specialist` stays on **Opus**,
 never Fable — legitimate hardening work can trip a false-positive refusal), and it
-prefers **less-prescriptive prompts** (state the goal and constraints; the
-architect's Output Contract is a format spec, not step-by-step scaffolding).
+prefers **less-prescriptive prompts** (state the goal and constraints; a
+specialist's contract is a format spec, not step-by-step scaffolding).
 
-**Opus** where judgment drives quality:
-`implementation-specialist` (production code is the core quality lever),
-`security-specialist` (threat modeling — and deliberately kept off Fable per the
-caveat above), `code-review-orchestrator` (synthesis).
-**Sonnet** for well-scoped roles guided by an explicit plan: `test-specialist`,
-`performance-specialist`, `documentation-specialist`. **Haiku** for the
-purely mechanical, read-only checklist walk: `dependency-review-specialist`
-(pins/lockfile/license checks need no deep reasoning — spend the cheaper tier).
+**Sonnet** for review — well-scoped roles guided by an explicit plan or diff:
+`code-review-orchestrator` (Gate 2.5 synthesis) and the review-dimension
+specialists `performance-specialist` and `documentation-specialist` (each acts
+primarily as a reviewer; their occasional edits are narrow and plan-guided).
+**Haiku** for the purely mechanical, read-only checklist walk:
+`dependency-review-specialist` (pins/lockfile/license checks need no deep
+reasoning — spend the cheaper tier).
 
 ## Gate → agent invocation matrix
 
