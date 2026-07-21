@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native';
 
 import SearchBar from '../SearchBar';
 
-import { accent } from '@/design/tokens';
+import { SPACING, accent } from '@/design/tokens';
 
 describe('SearchBar', () => {
   let onSearch: jest.Mock;
@@ -133,6 +133,22 @@ describe('SearchBar', () => {
 
     rerender(<SearchBar onSearch={onSearch} searchQuery="" />);
     expect(getByTestId('search-input').props.value).toBe('');
+  });
+
+  it('sits the collapsed toggle on the 8px base grid with a top nudge', () => {
+    const { getByTestId } = render(<SearchBar onSearch={onSearch} />);
+    const bar = StyleSheet.flatten(getByTestId('search-bar-collapsed').props.style);
+    expect(bar.paddingTop).toBe(SPACING.sm);
+    expect(bar.paddingBottom).toBe(SPACING.xs);
+    expect(bar.paddingVertical).toBeUndefined();
+  });
+
+  it('keeps the expanded bar on the same rhythm as the collapsed one', () => {
+    const { getByTestId } = render(<SearchBar onSearch={onSearch} searchQuery="willow" />);
+    const bar = StyleSheet.flatten(getByTestId('search-bar-expanded').props.style);
+    expect(bar.paddingTop).toBe(SPACING.sm);
+    expect(bar.paddingBottom).toBe(SPACING.xs);
+    expect(bar.paddingVertical).toBeUndefined();
   });
 
   it('clears a pending debounce timer on unmount without ever calling onSearch', () => {
