@@ -13,7 +13,7 @@
  * finishing PATCH and any retry send only the body and status, never a date.
  */
 import { journal } from '@/api';
-import type { JournalMessageCreate } from '@/api';
+import type { JournalClassification, JournalMessageCreate } from '@/api';
 
 /** The status a fully-captured page is flipped to once its body is saved. */
 const FINISHED_STATUS = 'finished' as const;
@@ -28,7 +28,9 @@ const FINISHED_STATUS = 'finished' as const;
  * edits made after the failure. `onCreated`, when given, fires with the new id
  * the moment the create resolves (before the PATCH), so a caller can hold it for
  * a retry even if the PATCH then rejects. `entryDate`, when given, backdates the
- * created entry; it is sent only on create, never on a retry PATCH. Rejections
+ * created entry; it is sent only on create, never on a retry PATCH. `classification`
+ * is the privacy tier chosen during capture; like `entryDate` it rides only the
+ * create (the tier is set at birth), never the finishing or retry PATCH. Rejections
  * propagate to the caller.
  */
 export async function saveFinishedEntry(
@@ -36,11 +38,14 @@ export async function saveFinishedEntry(
   existingId?: number | null,
   onCreated?: (_id: number) => void,
   entryDate?: string,
+  classification?: JournalClassification,
 ): Promise<number> {
   if (existingId == null) {
-    const payload: JournalMessageCreate = entryDate
-      ? { message: body, entry_date: entryDate }
-      : { message: body };
+    const payload: JournalMessageCreate = {
+      message: body,
+      ...(classification != null && { classification }),
+      ...(entryDate != null && { entry_date: entryDate }),
+    };
     const created = await journal.create(payload);
     onCreated?.(created.id);
     await journal.update(created.id, { status: FINISHED_STATUS });

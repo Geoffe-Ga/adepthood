@@ -33,12 +33,15 @@ import { ActivityIndicator, Linking, Text, View } from 'react-native';
 import { releaseAllPageFiles, releasePageFiles, releaseUris } from './capture/cleanupPageFiles';
 import { preparePageForTranscription } from './capture/prepareImage';
 import type { PreparedPage } from './capture/prepareImage';
+import { CaptureClassificationControl } from './CaptureClassificationControl';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
 import type { CapturePage, CaptureSessionAction } from './captureSession';
 import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
+import { DEFAULT_TIER } from './PrivacyTierControl';
+import type { PrivacyTier } from './PrivacyTierControl';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
@@ -96,9 +99,12 @@ interface CaptureModel {
   pages: CapturePage[];
   canAdd: boolean;
   entryDate: string;
+  /** The chosen privacy tier; ``intimate`` gates transcription off entirely. */
+  classification: PrivacyTier;
   saving: boolean;
   saveFailed: boolean;
   onChangeEntryDate: (_date: string) => void;
+  onChangeClassification: (_tier: PrivacyTier) => void;
   runPick: () => void;
   takePhoto: () => void;
   finishCapturing: () => void;
@@ -109,6 +115,10 @@ interface CaptureModel {
   openSettings: () => void;
   cancel: () => void;
   goTypedEntry: () => void;
+  /** The intimate offramp: release the session, then open a fresh intimate typed entry. */
+  typeInstead: () => void;
+  /** Revert an intimate selection to ``personal``, re-enabling transcription. */
+  keepPersonal: () => void;
   run: TranscriptionRunModel;
 }
 
@@ -335,6 +345,7 @@ function useSaveEntry(
   navigation: PhotographNavigation,
   mergedText: string,
   entryDate: string,
+  classification: PrivacyTier,
   releaseSession: () => void,
   createdIdRef: React.MutableRefObject<number | null>,
 ): { save: () => Promise<void>; saving: boolean; saveFailed: boolean } {
@@ -352,6 +363,7 @@ function useSaveEntry(
           createdIdRef.current = created;
         },
         entryDateForCreate(entryDate),
+        classification,
       );
       releaseSession(); // Release every page image the moment the entry is saved.
       navigation.replace('JournalEntry', { entryId: id, justSaved: true });
@@ -360,7 +372,7 @@ function useSaveEntry(
     } finally {
       setSaving(false);
     }
-  }, [mergedText, entryDate, navigation, releaseSession, createdIdRef]);
+  }, [mergedText, entryDate, classification, navigation, releaseSession, createdIdRef]);
 
   return { save, saving, saveFailed };
 }
@@ -368,17 +380,24 @@ function useSaveEntry(
 /** The proceed gesture: arm the run and enter review, but only with a page to read.
  *  `started` stays true through a mid-run trim back to one page so a partial removal
  *  never re-arms — but `disarm` returns it to the pre-transcribe state when the whole
- *  session is emptied, so a return to collect re-syncs cleanly and re-entry starts fresh. */
+ *  session is emptied, so a return to collect re-syncs cleanly and re-entry starts fresh.
+ *
+ *  PRIVACY: an ``intimate`` classification refuses here — the single choke point that
+ *  flips `started` — so ``useTranscriptionRun`` (inert until `started`) never issues a
+ *  transcribe call. Paired with the disabled Transcribe button, the cloud read of an
+ *  intimate page is structurally unreachable: no network, no wallet charge, no egress. */
 function useTranscribeGate(
   pagesRef: React.MutableRefObject<CapturePage[]>,
   setPhase: (_phase: Phase) => void,
+  classificationRef: React.MutableRefObject<PrivacyTier>,
 ): { started: boolean; transcribe: () => void; disarm: () => void } {
   const [started, setStarted] = useState(false);
   const transcribe = useCallback(() => {
     if (pagesRef.current.length < 1) return;
+    if (classificationRef.current === 'intimate') return;
     setStarted(true);
     setPhase({ step: 'review' });
-  }, [pagesRef, setPhase]);
+  }, [pagesRef, setPhase, classificationRef]);
   const disarm = useCallback(() => setStarted(false), []);
   return { started, transcribe, disarm };
 }
@@ -392,6 +411,7 @@ function useNavigationOfframps(
   openSettings: () => void;
   cancel: () => void;
   goTypedEntry: () => void;
+  typeInstead: () => void;
 } {
   const openSettings = useCallback(() => void Linking.openSettings(), []);
   const cancel = useCallback(() => {
@@ -402,7 +422,13 @@ function useNavigationOfframps(
     releaseSession(); // Release every page image when stepping off to a typed entry.
     navigation.navigate('JournalEntry');
   }, [navigation, releaseSession]);
-  return { openSettings, cancel, goTypedEntry };
+  // The intimate offramp: release the session, then open a fresh entry pre-set to
+  // intimate. Only the tier scalar rides the nav params — never any page image.
+  const typeInstead = useCallback(() => {
+    releaseSession();
+    navigation.navigate('JournalEntry', { classification: 'intimate' });
+  }, [navigation, releaseSession]);
+  return { openSettings, cancel, goTypedEntry, typeInstead };
 }
 
 /** Keeps the transient device files in lockstep with the in-memory session:
@@ -508,16 +534,69 @@ function useCaptureRun(
   });
 }
 
+/** The privacy tier the writer chooses before transcription, plus a live ref for
+ *  the transcribe gate and the "Keep as Personal" revert. ``intimate`` gates the
+ *  cloud transcription off entirely (see {@link useTranscribeGate}). */
+function useCaptureClassification(): {
+  classification: PrivacyTier;
+  classificationRef: React.MutableRefObject<PrivacyTier>;
+  setClassification: (_tier: PrivacyTier) => void;
+  keepPersonal: () => void;
+} {
+  const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_TIER);
+  const classificationRef = useRef<PrivacyTier>(classification);
+  classificationRef.current = classification;
+  const keepPersonal = useCallback(() => setClassification('personal'), []);
+  return { classification, classificationRef, setClassification, keepPersonal };
+}
+
+/** Auto-launch the photo picker once on mount, opening the flow straight into a pick. */
+function useAutoLaunchPick(runPick: () => Promise<void>): void {
+  useEffect(() => {
+    void runPick();
+  }, [runPick]);
+}
+
+/** The session-and-run inputs the engine drives against: the current phase/pages
+ *  (from the host's state) plus the chosen tier and its live ref for the gate. */
+interface CaptureEngineArgs {
+  navigation: PhotographNavigation;
+  phase: Phase;
+  setPhase: (_phase: Phase) => void;
+  pages: CapturePage[];
+  dispatch: React.Dispatch<CaptureSessionAction>;
+  entryDate: string;
+  classification: PrivacyTier;
+  classificationRef: React.MutableRefObject<PrivacyTier>;
+}
+
+/** The engine surface the model exposes: the session edits, the transcription run,
+ *  the save, and the navigation offramps. */
+interface CaptureEngine {
+  removePage: (_id: string) => void;
+  runPick: () => Promise<void>;
+  runCapture: () => Promise<void>;
+  reorderPages: (_pages: CapturePage[]) => void;
+  transcribe: () => void;
+  run: TranscriptionRunModel;
+  save: () => Promise<void>;
+  saving: boolean;
+  saveFailed: boolean;
+  openSettings: () => void;
+  cancel: () => void;
+  goTypedEntry: () => void;
+  typeInstead: () => void;
+}
+
 /**
- * The capture state machine: collect pages → run the multi-page transcription →
- * review + save. Pages live in a reducer (never in nav params) with a ref mirror so
- * async picks and the run read the current session; the created-entry id lives in a
- * ref so a save retry after a failed finish PATCH reuses it rather than duplicating.
+ * Wire the capture engine: session cleanup, pick/capture, reorder/retake, the
+ * transcribe gate, the progressive run, the save, and the offramps — over
+ * engine-internal refs (page mirror, id counter, created-entry id) so the host
+ * hook holds only the render state.
  */
-function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
-  const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
-  const [pages, dispatch] = useReducer(captureSessionReducer, []);
-  const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
+function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
+  const { navigation, phase, setPhase, pages, dispatch } = args;
+  const { entryDate, classification, classificationRef } = args;
   const createdIdRef = useRef<number | null>(null);
   const counterRef = useRef(0);
   const pagesRef = useRef<CapturePage[]>(pages);
@@ -528,44 +607,85 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
   const runCapture = useCameraCapture({ dispatch, counterRef, setPhase });
   const reorderPages = useReorderPages(dispatch);
   const retakePage = useRetakePage({ dispatch, pagesRef, counterRef, releasePageById });
-  const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase);
+  const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase, classificationRef);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
-
   const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
-
   const { save, saving, saveFailed } = useSaveEntry(
     navigation,
     run.mergedText,
     entryDate,
+    classification,
     releaseSession,
     createdIdRef,
   );
+  const { openSettings, cancel, goTypedEntry, typeInstead } = useNavigationOfframps(
+    navigation,
+    releaseSession,
+  );
 
-  const { openSettings, cancel, goTypedEntry } = useNavigationOfframps(navigation, releaseSession);
+  return {
+    removePage,
+    runPick,
+    runCapture,
+    reorderPages,
+    transcribe,
+    run,
+    save,
+    saving,
+    saveFailed,
+    openSettings,
+    cancel,
+    goTypedEntry,
+    typeInstead,
+  };
+}
 
-  useEffect(() => {
-    void runPick();
-  }, [runPick]);
+/**
+ * The capture state machine: collect pages → run the multi-page transcription →
+ * review + save. Render state (phase, pages, entry date, tier) lives here; the
+ * session/run wiring lives in {@link useCaptureEngine}. Pages never enter nav params.
+ */
+function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
+  const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
+  const [pages, dispatch] = useReducer(captureSessionReducer, []);
+  const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
+  const { classification, classificationRef, setClassification, keepPersonal } =
+    useCaptureClassification();
+  const engine = useCaptureEngine({
+    navigation,
+    phase,
+    setPhase,
+    pages,
+    dispatch,
+    entryDate,
+    classification,
+    classificationRef,
+  });
+  useAutoLaunchPick(engine.runPick);
 
   return {
     phase,
     pages,
     canAdd: canAddPages(pages),
     entryDate,
-    saving,
-    saveFailed,
+    classification,
+    saving: engine.saving,
+    saveFailed: engine.saveFailed,
     onChangeEntryDate: setEntryDate,
-    runPick: () => void runPick(),
-    takePhoto: () => void runCapture(),
+    onChangeClassification: setClassification,
+    runPick: () => void engine.runPick(),
+    takePhoto: () => void engine.runCapture(),
     finishCapturing: () => setPhase({ step: 'collect' }),
-    removePage,
-    reorderPages,
-    transcribe,
-    save: () => void save(),
-    openSettings,
-    cancel,
-    goTypedEntry,
-    run,
+    removePage: engine.removePage,
+    reorderPages: engine.reorderPages,
+    transcribe: engine.transcribe,
+    save: () => void engine.save(),
+    openSettings: engine.openSettings,
+    cancel: engine.cancel,
+    goTypedEntry: engine.goTypedEntry,
+    typeInstead: engine.typeInstead,
+    keepPersonal,
+    run: engine.run,
   };
 }
 
@@ -718,10 +838,17 @@ function ReviewActions({
   );
 }
 
-/** The collect stage: the ordered page strip over a quiet, declinable date row. */
+/** The collect stage: the classification chooser and page strip over a quiet,
+ *  declinable date row. Choosing ``intimate`` gates transcription off in place. */
 function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
   return (
     <View style={styles.container}>
+      <CaptureClassificationControl
+        value={model.classification}
+        onChange={model.onChangeClassification}
+        onTypeInstead={model.typeInstead}
+        onKeepPersonal={model.keepPersonal}
+      />
       <CapturePagesStrip
         pages={model.pages}
         canAdd={model.canAdd}
@@ -730,6 +857,7 @@ function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
         onRemove={model.removePage}
         onReorder={model.reorderPages}
         onTranscribe={model.transcribe}
+        transcribeDisabled={model.classification === 'intimate'}
       />
       <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
     </View>

@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { Linking, Platform } from 'react-native';
 
@@ -957,7 +957,12 @@ describe('JournalPhotographScreen — merged save across pages', () => {
     );
     fireEvent.press(getByTestId('photograph-save'));
 
-    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ message: 'A\n\nB-edited\n\nC' }));
+    await waitFor(() =>
+      expect(mockCreate).toHaveBeenCalledWith({
+        message: 'A\n\nB-edited\n\nC',
+        classification: 'personal',
+      }),
+    );
     expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
       entryId: 40,
       justSaved: true,
@@ -981,7 +986,10 @@ describe('JournalPhotographScreen — save flow', () => {
     fireEvent.press(await findByTestId('photograph-save'));
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(99, { status: 'finished' }));
-    expect(mockCreate).toHaveBeenCalledWith({ message: 'Edited by hand.' });
+    expect(mockCreate).toHaveBeenCalledWith({
+      message: 'Edited by hand.',
+      classification: 'personal',
+    });
     expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
       entryId: 99,
       justSaved: true,
@@ -1550,5 +1558,174 @@ describe('JournalPhotographScreen — one downscale per page', () => {
     await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
     expect((await findByTestId('photograph-block-1-input')).props.value).toBe('read on retry');
     expect(mockPrepare).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('JournalPhotographScreen — privacy classification in collect', () => {
+  it('renders the classification control in collect with personal selected by default', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const { findByTestId, getByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    const control = getByTestId('capture-classification');
+    expect(within(control).getByTestId('privacy-tier-public')).toBeTruthy();
+    expect(within(control).getByTestId('privacy-tier-personal')).toBeTruthy();
+    expect(within(control).getByTestId('privacy-tier-intimate')).toBeTruthy();
+    expect(
+      within(control).getByTestId('privacy-tier-personal').props.accessibilityState.selected,
+    ).toBe(true);
+  });
+
+  it('disables Transcribe once intimate is selected', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const { findByTestId, getByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+    expect((await findByTestId('capture-transcribe')).props.accessibilityState.disabled).toBe(
+      false,
+    );
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+
+    expect(getByTestId('capture-transcribe').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('renders the intimate gate: a transcription explainer plus type-instead and keep-personal', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const { findByTestId, getByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+
+    expect(await findByTestId('capture-intimate-explainer')).toHaveTextContent(/transcri/i);
+    expect(await findByTestId('capture-type-instead')).toBeTruthy();
+    expect(await findByTestId('capture-keep-personal')).toBeTruthy();
+  });
+
+  it('shows no gate block for the personal default or after choosing public', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    expect(queryByTestId('capture-intimate-explainer')).toBeNull();
+    expect(queryByTestId('capture-type-instead')).toBeNull();
+    expect(queryByTestId('capture-keep-personal')).toBeNull();
+
+    fireEvent.press(getByTestId('privacy-tier-public'));
+
+    expect(queryByTestId('capture-intimate-explainer')).toBeNull();
+    expect(queryByTestId('capture-type-instead')).toBeNull();
+    expect(getByTestId('capture-transcribe').props.accessibilityState.disabled).toBe(false);
+  });
+});
+
+describe('JournalPhotographScreen — intimate makes transcription structurally unreachable', () => {
+  it('never calls transcribePage when Transcribe is pressed with intimate selected', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+    // Hostile press: even if the disabled state were bypassed, the run must not start.
+    fireEvent.press(getByTestId('capture-transcribe'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(queryByTestId('photograph-block-1-skeleton')).toBeNull();
+    expect(queryByTestId('photograph-block-1-input')).toBeNull();
+    expect(queryByTestId('photograph-save')).toBeNull();
+    expect(getByTestId('capture-pages-list')).toBeTruthy();
+  });
+});
+
+describe('JournalPhotographScreen — type-it-instead offramp for intimate', () => {
+  it('releases the session images and leaves for a typed intimate entry without transcribing', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const { findByTestId, getByTestId, navigation } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+    fireEvent.press(await findByTestId('capture-type-instead'));
+
+    await waitFor(() =>
+      expect(navigation.navigate).toHaveBeenCalledWith('JournalEntry', {
+        classification: 'intimate',
+      }),
+    );
+    expect(mockReleaseAllPageFiles).toHaveBeenCalled();
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('sends only the scalar classification in the nav params, never any image payload', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    const { findByTestId, getByTestId, navigation } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+    fireEvent.press(await findByTestId('capture-type-instead'));
+    await waitFor(() => expect(navigation.navigate).toHaveBeenCalled());
+
+    const navCall = navigation.navigate.mock.calls.find((call) => call[0] === 'JournalEntry');
+    const navParams = (navCall?.[1] ?? {}) as Record<string, unknown>;
+    expect(Object.keys(navParams)).toEqual(['classification']);
+    expect(navParams.classification).toBe('intimate');
+    expect(JSON.stringify(navParams)).not.toMatch(/base64|image|page|uri|file:|prepared/i);
+  });
+});
+
+describe('JournalPhotographScreen — keep as personal reverts the gate', () => {
+  it('reverts to personal, re-enabling Transcribe and dropping the gate block', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(1))));
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+    fireEvent.press(await findByTestId('capture-keep-personal'));
+
+    expect(getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(true);
+    expect(getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(false);
+    expect(getByTestId('capture-transcribe').props.accessibilityState.disabled).toBe(false);
+    expect(queryByTestId('capture-intimate-explainer')).toBeNull();
+    expect(queryByTestId('capture-type-instead')).toBeNull();
+    expect(queryByTestId('capture-keep-personal')).toBeNull();
+  });
+});
+
+describe('JournalPhotographScreen — classification threaded into save', () => {
+  it('creates with classification personal by default after transcribe and save', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 61 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 61, status: 'finished' }));
+
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-input');
+    fireEvent.press(await findByTestId('photograph-save'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ classification: 'personal' }),
+    );
+  });
+
+  it('creates with classification public when public was chosen in collect', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 62 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 62, status: 'finished' }));
+
+    const { findByTestId, getByTestId } = renderScreen();
+    await findByTestId('capture-pages-list');
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    await findByTestId('photograph-block-1-input');
+    fireEvent.press(await findByTestId('photograph-save'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ classification: 'public' }),
+    );
   });
 });

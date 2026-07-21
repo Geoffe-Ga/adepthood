@@ -811,12 +811,19 @@ interface EntryState {
   loaded: boolean;
 }
 
-/** The entry's editable state (title/body/status/tier) + one-time load-on-open. */
-function useEntryState(routeEntryId: number | null, initialText: InitialText): EntryState {
+/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
+ *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
+ *  capture flow's intimate offramp); an existing entry's load overrides it. */
+function useEntryState(
+  routeEntryId: number | null,
+  initialText: InitialText,
+  initialClassification: JournalClassification,
+): EntryState {
   const [title, setTitle] = useState(initialText.title);
   const [body, setBody] = useState(initialText.body);
   const [status, setStatus] = useState<EntryStatus>('draft');
-  const [classification, setClassification] = useState<JournalClassification>(DEFAULT_TIER);
+  const [classification, setClassification] =
+    useState<JournalClassification>(initialClassification);
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -917,16 +924,36 @@ function useSeedPersistOnLoad(
   }, [entry.loaded, entry.classification, entry.chord, seedPersist]);
 }
 
+/**
+ * Seed the persist ref for a NEW entry (no id to load) with the pre-set tier once
+ * on mount, so the first ``journal.create`` carries it — the capture flow's
+ * intimate offramp lands a genuinely intimate entry, not the personal default.
+ * Runs only for a fresh entry; an existing entry is seeded by its load instead.
+ */
+function useSeedPersistOnNew(
+  routeEntryId: number | null,
+  initialClassification: JournalClassification,
+  seedPersist: (_tier: JournalClassification, _chord: AspectChordValue) => void,
+): void {
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || routeEntryId != null) return;
+    seededRef.current = true;
+    seedPersist(initialClassification, EMPTY_CHORD);
+  }, [routeEntryId, initialClassification, seedPersist]);
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
   delayMs: number,
   ctx: SaveContext,
   initialText: InitialText,
+  initialClassification: JournalClassification,
   onSaved?: () => void,
   onConflict?: () => void,
 ): AutosaveApi {
-  const entry = useEntryState(routeEntryId, initialText);
+  const entry = useEntryState(routeEntryId, initialText, initialClassification);
   const { titleRef, bodyRef } = entry;
   // An existing entry is "unsettled" until its load settles: entry.loaded flips
   // true only in the success apply, so it stays false through both the in-flight
@@ -936,6 +963,7 @@ function useJournalAutosave(
   const { saveState, save, flush, finish, changeClassification, changeChord, seedPersist } =
     useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
   useSeedPersistOnLoad(entry, seedPersist);
+  useSeedPersistOnNew(routeEntryId, initialClassification, seedPersist);
 
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
     titleRef,
@@ -1674,6 +1702,7 @@ function useJournalEntryController(
   ctx: SaveContext,
   initialText: InitialText,
   justSaved: boolean,
+  initialClassification: JournalClassification,
 ) {
   const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
@@ -1682,6 +1711,7 @@ function useJournalEntryController(
     autosaveDelayMs,
     ctx,
     initialText,
+    initialClassification,
     handleSaved,
     onCreateConflict,
   );
@@ -1811,6 +1841,9 @@ interface EntryEntrypoint {
   ctx: SaveContext;
   initialText: InitialText;
   bodyPlaceholder: string;
+  /** The tier a fresh entry opens at (from the capture flow's intimate offramp);
+   *  ``personal`` when the route carries no classification. */
+  initialClassification: JournalClassification;
 }
 
 /** Translate the route params into the save context + pre-filled title/body/placeholder. */
@@ -1832,6 +1865,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
     },
     initialText: { title, body },
     bodyPlaceholder: p.promptQuestion ?? DEFAULT_BODY_PLACEHOLDER,
+    initialClassification: p.classification ?? DEFAULT_TIER,
   };
 }
 
@@ -2061,7 +2095,7 @@ function JournalEntryScreen({
   navigation,
   autosaveDelayMs = AUTOSAVE_DELAY_MS,
 }: JournalEntryScreenProps): React.JSX.Element {
-  const { ctx, initialText, bodyPlaceholder } = readEntrypoint(route.params);
+  const { ctx, initialText, bodyPlaceholder, initialClassification } = readEntrypoint(route.params);
   const currentEntryId = route.params?.entryId ?? null;
   const justSaved = route.params?.justSaved ?? false;
   const entryDrawer = useEntryScreenDrawer(navigation);
@@ -2072,6 +2106,7 @@ function JournalEntryScreen({
     ctx,
     initialText,
     justSaved,
+    initialClassification,
   );
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">

@@ -16,7 +16,7 @@ import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen'
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
 
-import type { ReflectionLevel } from '@/api';
+import type { JournalClassification, ReflectionLevel } from '@/api';
 import { accent, fonts, ink } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
@@ -43,6 +43,10 @@ export type RootStackParamList = {
   JournalEntry:
     | {
         entryId?: number;
+        /** Pre-set the privacy tier of a fresh entry (the capture flow's intimate
+         *  "Type it instead" offramp passes ``intimate``). Only the scalar tier is
+         *  carried — never any page image. */
+        classification?: JournalClassification;
         /** Set when arriving fresh from photograph capture: reads as "Saved" and
          *  offers resonance immediately, skipping the usual idle-after-typing wait. */
         justSaved?: boolean;
