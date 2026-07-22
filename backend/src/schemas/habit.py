@@ -42,6 +42,7 @@ class Habit(OwnedResourcePublic):
     stage: str = ""
     streak: int = 0
     revealed: bool = False
+    is_carryover: bool = False
 
 
 class HabitWithGoals(Habit):
@@ -69,3 +70,4 @@ class HabitCreate(BaseModel):
     sort_order: int | None = None
     stage: str = Field(default="", max_length=HABIT_STAGE_MAX_LENGTH)
     revealed: bool = False
+    is_carryover: bool = False

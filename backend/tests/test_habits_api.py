@@ -1085,3 +1085,102 @@ async def test_clear_completions_scoped_to_single_habit(
     survivor = await db_session.get(GoalCompletion, b_completion_id)
     assert survivor is not None
     assert survivor.goal_id == goal_b_id
+
+
+# ── Carryover flag (pre-program habits) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_habit_without_is_carryover_defaults_false(
+    async_client: AsyncClient,
+) -> None:
+    """POST /habits/ omitting ``is_carryover`` marks the habit as a program habit."""
+    headers = await _signup(async_client, "carryover_default")
+    resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["is_carryover"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_habit_with_is_carryover_true_persists(
+    async_client: AsyncClient,
+) -> None:
+    """POST /habits/ with ``is_carryover: true`` stores a pre-program habit."""
+    headers = await _signup(async_client, "carryover_true")
+    resp = await async_client.post(
+        "/habits/", json=sample_payload(is_carryover=True), headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["is_carryover"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_habit_toggles_is_carryover(async_client: AsyncClient) -> None:
+    """PUT can move a habit into and back out of the carryover partition."""
+    headers = await _signup(async_client, "carryover_toggle")
+    create_resp = await async_client.post(
+        "/habits/", json=sample_payload(is_carryover=True), headers=headers
+    )
+    habit_id = create_resp.json()["id"]
+
+    put_resp = await async_client.put(
+        f"/habits/{habit_id}", json=sample_payload(is_carryover=False), headers=headers
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+    assert put_resp.json()["is_carryover"] is False
+
+    get_resp = await async_client.get(f"/habits/{habit_id}", headers=headers)
+    assert get_resp.status_code == HTTPStatus.OK
+    assert get_resp.json()["is_carryover"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_habits_includes_is_carryover(async_client: AsyncClient) -> None:
+    """GET /habits/ list items expose the ``is_carryover`` flag."""
+    headers = await _signup(async_client, "carryover_list")
+    await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    [habit] = resp.json()
+    assert habit["is_carryover"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_orders_within_each_carryover_partition(async_client: AsyncClient) -> None:
+    """Each partition (carryover vs program) stays ordered by ``sort_order`` ascending.
+
+    The frontend slices program habits into stage pages by list index, so the
+    program partition must keep its own ``sort_order`` sequence unchanged while
+    carryover habits carry a parallel sequence. Filtering the single response by
+    ``is_carryover`` must yield each partition in ascending ``sort_order``.
+    """
+    headers = await _signup(async_client, "carryover_order")
+    await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Program B", sort_order=2, is_carryover=False),
+        headers=headers,
+    )
+    await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Carryover Y", sort_order=2, is_carryover=True),
+        headers=headers,
+    )
+    await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Program A", sort_order=1, is_carryover=False),
+        headers=headers,
+    )
+    await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Carryover X", sort_order=1, is_carryover=True),
+        headers=headers,
+    )
+
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    habits = resp.json()
+
+    program = [h["name"] for h in habits if h["is_carryover"] is False]
+    carryover = [h["name"] for h in habits if h["is_carryover"] is True]
+    assert program == ["Program A", "Program B"]
+    assert carryover == ["Carryover X", "Carryover Y"]

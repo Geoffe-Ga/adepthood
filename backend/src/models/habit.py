@@ -20,6 +20,10 @@ class Habit(SQLModel, table=True):
     ``revealed`` back to ``False``) preserves logged completions — those live
     on the habit's goals, never on this flag — so a re-locked habit keeps its
     history for when the user unlocks it again.
+
+    ``is_carryover`` marks a habit the user brought into APTITUDE from before
+    the program: ``True`` keeps it on its own partition (tracked without
+    consuming a program stage), ``False`` a regular program habit.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -41,6 +45,7 @@ class Habit(SQLModel, table=True):
     stage: str = Field(default="", max_length=100)
     streak: int = 0
     revealed: bool = Field(default=False)
+    is_carryover: bool = Field(default=False)
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(
         back_populates="habit",
