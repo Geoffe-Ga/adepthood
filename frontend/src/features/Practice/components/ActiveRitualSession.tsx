@@ -36,7 +36,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type {
   PracticeSessionCreate,
@@ -46,7 +46,7 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { SPACING, colors, onShowcase } from '@/design/tokens';
+import { SPACING, colors } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -106,6 +106,8 @@ export interface ActiveRitualSessionProps {
   onUserPracticeUpdated: (_next: UserPractice) => void;
   /** Open the journal-reflection composer (parent owns the navigator). */
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  /** Observe engine status transitions (e.g. to collapse the identity header mid-session). */
+  onStatusChange?: (_status: RitualState['status']) => void;
   /** Injectable audio adapter for tests; defaults to the bundled bell audio. */
   audio?: AudioAdapter;
 }
@@ -138,12 +140,11 @@ export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveR
   function ActiveRitualSession(props, ref): React.JSX.Element {
     const [showConfigurator, setShowConfigurator] = useState(false);
     const session = useActiveSession(props);
+    useStatusNotifier(session.state.status, props.onStatusChange);
     useImperativeHandle(ref, () => ({ openConfigurator: () => setShowConfigurator(true) }), []);
     return (
       <View testID="active-ritual-session">
         <SessionCard
-          effectiveName={props.effectiveName}
-          onConfigure={() => setShowConfigurator(true)}
           config={props.effectiveConfig}
           state={session.state}
           controls={session.controls}
@@ -169,6 +170,19 @@ export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveR
     );
   },
 );
+
+/**
+ * Report engine status transitions upward (the parent collapses the identity
+ * header while a session runs). Pure observation — no engine-logic change.
+ */
+function useStatusNotifier(
+  status: RitualState['status'],
+  onStatusChange?: (_status: RitualState['status']) => void,
+): void {
+  useEffect(() => {
+    onStatusChange?.(status);
+  }, [status, onStatusChange]);
+}
 
 interface SessionInsightModalProps {
   session: ActiveSession;
@@ -425,8 +439,6 @@ function useSubmitSession({
 }
 
 interface SessionCardProps {
-  effectiveName: string;
-  onConfigure: () => void;
   config: ModeConfig;
   state: RitualState;
   controls: RitualControls;
@@ -438,30 +450,12 @@ interface SessionCardProps {
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
-  // The session rests flat on the full-bleed umber player ground (#1905): the
-  // header is just the practice name + a quiet Adjust control in on-showcase
-  // ink — no lifted band, no shadow — and the mode view renders below on the
-  // same dark ground. The shared RitualControlsBar plays the completion
-  // Celebration.
+  // The session rests flat on the full-bleed umber player ground: identity
+  // chrome (name, stage chip, customize pencil) lives in the parent's
+  // PracticeIdentityHeader, so the card is just the mode view plus any save
+  // error. The shared RitualControlsBar plays the completion Celebration.
   return (
     <View style={styles.card} testID="active-practice-card">
-      <View style={styles.headerBand} testID="active-practice-header-band">
-        <View style={styles.cardHeader}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Adjust this practice's settings"
-            onPress={props.onConfigure}
-            style={styles.gearButton}
-            testID="active-practice-configure"
-          >
-            <Text style={styles.gearText}>⚙︎</Text>
-            <Text style={styles.gearLabel}>Adjust</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.name} testID="active-practice-name">
-          {props.effectiveName}
-        </Text>
-      </View>
       <SessionSurfaceProvider value={UMBER_SURFACE}>
         <ModeView
           config={props.config}
@@ -652,36 +646,6 @@ const styles = StyleSheet.create({
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
-  },
-  // Flat header: the practice name + Adjust in on-showcase ink — no lifted
-  // band or shadow, so the session blends into the dark ground (#1905).
-  headerBand: {
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: SPACING.md,
-    paddingTop: SPACING.xs,
-    marginBottom: SPACING.lg,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginBottom: SPACING.xs,
-  },
-  gearButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.xs,
-    minWidth: 44,
-    minHeight: 44,
-    paddingHorizontal: SPACING.sm,
-  },
-  gearText: { fontSize: 18, color: onShowcase.soft },
-  gearLabel: { fontSize: 14, fontWeight: '600', color: onShowcase.soft },
-  name: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: onShowcase.primary,
-    marginBottom: SPACING.md,
   },
   error: {
     // The light destructive border swatch doubles as an AA-clearing (~6.3:1)

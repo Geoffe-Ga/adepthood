@@ -358,18 +358,27 @@ describe('PracticeScreen', () => {
     expect(getByTestId('practice-error')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
   });
 
-  it('renders the active practice card with an "Adjust" control when a practice is selected', async () => {
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId, getByText } = render(<PracticeScreen />);
+  it('renders the identity header with title, ritual name, and pencil when a practice is selected', async () => {
+    mockUserPracticesList.mockResolvedValue([
+      sampleUserPractice({ custom_name: 'Morning Sit', effective_name: 'Morning Sit' }),
+    ]);
+    const { getByTestId, queryByTestId, queryByText } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByTestId('active-practice-card')).toBeTruthy();
-      expect(getByTestId('active-practice-configure')).toBeTruthy();
+      expect(getByTestId('practice-identity-header')).toBeTruthy();
       expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
-    expect(getByText('Adjust')).toBeTruthy();
-    expect(getByTestId('active-practice-configure').props.accessibilityLabel).toBe(
-      "Adjust this practice's settings",
-    );
+    // Title is the underlying practice's name; the ritual name shows the
+    // user's effective (customized) name for it.
+    expect(getByTestId('practice-identity-title')).toHaveTextContent('Breath Awareness');
+    expect(getByTestId('practice-identity-ritual-name')).toHaveTextContent('Morning Sit');
+    const pencil = getByTestId('practice-customize-pencil');
+    expect(pencil.props.accessibilityRole).toBe('button');
+    expect(pencil.props.accessibilityLabel).toBe('Customize this ritual');
+    // The old SessionCard header band (name + gear) is retired.
+    expect(queryByTestId('active-practice-header-band')).toBeNull();
+    expect(queryByTestId('active-practice-name')).toBeNull();
+    expect(queryByTestId('active-practice-configure')).toBeNull();
+    expect(queryByText('Adjust')).toBeNull();
   });
 
   it('renders the session flat on the dark ground with no bottom fade', async () => {
@@ -491,28 +500,78 @@ describe('PracticeScreen', () => {
     expect(within(getByTestId('practice-screen')).getByTestId('weekly-progress')).toBeTruthy();
   });
 
-  it('opens the configurator sheet when the gear is pressed', async () => {
+  it('opens the configurator sheet when the pencil is pressed', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByTestId('active-practice-configure')).toBeTruthy();
+      expect(getByTestId('practice-customize-pencil')).toBeTruthy();
     });
     await act(async () => {
-      fireEvent.press(getByTestId('active-practice-configure'));
+      fireEvent.press(getByTestId('practice-customize-pencil'));
     });
     expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
-  it('retires the frequency banner: no chip renders and the endpoint is never fetched', async () => {
-    // The dark player keeps only the ritual itself on screen (#1905); the
-    // stage identity returns as the tappable stage chip in #1906.
+  it('fetches the frequency and renders the tappable stage chip on the idle player', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByText, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => {
+      expect(getByTestId('practice-stage-chip')).toBeTruthy();
+    });
+    expect(getByText('BEIGE · Body')).toBeTruthy();
+    expect(mockFrequency).toHaveBeenCalled();
+    expect(mockFrequency.mock.calls[0][0]).toBe(1);
+    const chip = getByTestId('practice-stage-chip');
+    expect(chip.props.accessibilityRole).toBe('button');
+    expect(chip.props.accessibilityLabel).toBe('Change stage. Current: Beige, Body');
+    // The old banner surface stays retired; the chip is the stage identity now.
+    expect(queryByTestId('frequency-banner-content')).toBeNull();
+  });
+
+  it('stage chip opens the picker and picking a stage re-drives the load for it', async () => {
+    const stageThreePractice = samplePractice({ id: 3, stage_number: 3, name: 'Candle Gazing' });
+    mockPracticesList.mockImplementation((options: unknown) => {
+      const stage =
+        typeof options === 'object' && options !== null
+          ? (options as { stageNumber?: number }).stageNumber
+          : undefined;
+      return Promise.resolve(stage === 3 ? [stageThreePractice] : [samplePractice()]);
+    });
+    mockUserPracticesList.mockResolvedValue([
+      sampleUserPractice(),
+      sampleUserPractice({ id: 30, practice_id: 3, stage_number: 3 }),
+    ]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-stage-chip')).toBeTruthy());
+
+    fireEvent.press(getByTestId('practice-stage-chip'));
+    expect(getByTestId('practice-stage-pick-3')).toBeTruthy();
+    expect(getByTestId('practice-stage-pick-cancel')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-stage-pick-3'));
+    });
+
+    await waitFor(() => {
+      expect(mockPracticesList).toHaveBeenCalledWith(expect.objectContaining({ stageNumber: 3 }));
+      const frequencyStages = mockFrequency.mock.calls.map((call: unknown[]) => call[0]);
+      expect(frequencyStages).toContain(3);
+    });
+  });
+
+  it('collapses the identity header to the title only while a session runs', async () => {
+    jest.useFakeTimers();
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
-    await waitFor(() => {
-      expect(getByTestId('active-practice-card')).toBeTruthy();
+    await waitFor(() => expect(getByTestId('practice-stage-chip')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
     });
-    expect(queryByTestId('frequency-banner-content')).toBeNull();
-    expect(mockFrequency).not.toHaveBeenCalled();
+    expect(queryByTestId('practice-stage-chip')).toBeNull();
+    expect(queryByTestId('practice-customize-pencil')).toBeNull();
+    expect(queryByTestId('practice-identity-ritual-name')).toBeNull();
+    expect(getByTestId('practice-identity-title')).toBeTruthy();
+    jest.useRealTimers();
   });
 
   describe.each(modeFixtures)('mode dispatch — $label', ({ practice, mountTestId }) => {
@@ -870,7 +929,7 @@ describe('PracticeScreen header drawer', () => {
     expect(getByTestId('browse-catalog-button')).toBeTruthy();
   });
 
-  it('pressing the drawer "Customize this practice" row opens the same configurator sheet as the gear', async () => {
+  it('pressing the drawer "Customize this practice" row opens the configurator sheet', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
