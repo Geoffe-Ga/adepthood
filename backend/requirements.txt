@@ -29,5 +29,5 @@ httpx==0.28.1
 mcp==1.28.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
-openai==2.46.0
-anthropic==0.117.0
+openai==2.47.0
+anthropic==0.118.0
