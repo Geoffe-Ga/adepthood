@@ -97,6 +97,7 @@ jest.mock('../../../context/AuthContext', () => ({
 
 const mockNavigate = jest.fn();
 const mockRootNavigate = jest.fn();
+const mockGoBack = jest.fn();
 const mockRouteParams: Record<string, unknown> = {};
 // PracticeScreen installs its header-left drawer toggle through
 // useAppNavigation (useScreenDrawer), which calls navigation.setOptions in a
@@ -130,7 +131,8 @@ jest.mock('@react-navigation/native', () => {
   };
   return {
     ...(jest.requireActual('@react-navigation/native') as object),
-    useNavigation: () => ({ navigate: mockRootNavigate }),
+    useNavigation: () => ({ navigate: mockRootNavigate, goBack: mockGoBack }),
+    useRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
     useFocusEffect: (cb: () => void | (() => void)) => {
       reactMod.useEffect(() => {
         mockFocusCallbacks.push(cb);
@@ -322,8 +324,12 @@ describe('PracticeScreen', () => {
     mockFrequency.mockReturnValue(new Promise(() => {}));
     const { getByTestId } = render(<PracticeScreen />);
     expect(getByTestId('practice-loading')).toBeTruthy();
-    // Loading state respects device insets too.
-    expect(getByTestId('practice-loading')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
+    // The screen-level shell owns the top inset; the loading leaf keeps only the bottom.
+    const { StyleSheet } = require('react-native');
+    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
+    const loadingFlat = StyleSheet.flatten(getByTestId('practice-loading').props.style);
+    expect(loadingFlat.paddingBottom).toBe(34);
+    expect(loadingFlat.paddingTop).not.toBe(47);
     await act(async () => {
       await Promise.resolve();
     });
@@ -336,16 +342,25 @@ describe('PracticeScreen', () => {
       expect(getByText('No practice set for this stage yet.')).toBeTruthy();
       expect(getByTestId('browse-catalog-button')).toBeTruthy();
     });
-    // The empty surface applies top/bottom safe-area insets.
-    expect(getByTestId('practice-empty-state')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
+    // The shell owns the top inset once; the empty leaf keeps only the bottom.
+    const { StyleSheet } = require('react-native');
+    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
+    const emptyFlat = StyleSheet.flatten(getByTestId('practice-empty-state').props.style);
+    expect(emptyFlat.paddingBottom).toBe(34);
+    expect(emptyFlat.paddingTop).not.toBe(47);
   });
 
-  it('empty-state "Browse practices" opens the Catalog with the current stage', async () => {
-    const { getByTestId } = render(<PracticeScreen />);
+  it('empty-state "Browse practices" flips to the Catalog tab in place, without a push', async () => {
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
 
-    fireEvent.press(getByTestId('browse-catalog-button'));
-    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
+    await act(async () => {
+      fireEvent.press(getByTestId('browse-catalog-button'));
+    });
+
+    await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
+    expect(queryByTestId('practice-empty-state')).toBeNull();
+    expect(mockRootNavigate).not.toHaveBeenCalled();
   });
 
   it('shows error state when the load fails', async () => {
@@ -355,7 +370,12 @@ describe('PracticeScreen', () => {
       expect(getByTestId('practice-error')).toBeTruthy();
       expect(getByText(/couldn't load your practices/i)).toBeTruthy();
     });
-    expect(getByTestId('practice-error')).toHaveStyle({ paddingTop: 47, paddingBottom: 34 });
+    // The shell owns the top inset once; the error leaf keeps only the bottom.
+    const { StyleSheet } = require('react-native');
+    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
+    const errorFlat = StyleSheet.flatten(getByTestId('practice-error').props.style);
+    expect(errorFlat.paddingBottom).toBe(34);
+    expect(errorFlat.paddingTop).not.toBe(47);
   });
 
   it('renders the identity header with title, ritual name, and pencil when a practice is selected', async () => {
@@ -483,13 +503,19 @@ describe('PracticeScreen', () => {
       expect(getByTestId('active-practice-card')).toBeTruthy();
     });
     const { showcase } = require('../../../design/tokens');
-    // The whole screen is the dark card: insets pad the fixed surface, and the
-    // body is a plain flex view (no ScrollView, so no contentContainerStyle).
+    const { StyleSheet } = require('react-native');
+    // The dark shell pads the top exactly once; the session leaf owns the
+    // bottom inset. The body is a plain flex view (no ScrollView, so no
+    // contentContainerStyle).
     expect(getByTestId('practice-screen-safe-area')).toHaveStyle({
       paddingTop: 47,
-      paddingBottom: 34,
       backgroundColor: showcase.canvas,
     });
+    const shellFlat = StyleSheet.flatten(getByTestId('practice-screen-safe-area').props.style);
+    expect(shellFlat.paddingBottom).not.toBe(34);
+    const bodyFlat = StyleSheet.flatten(getByTestId('practice-screen').props.style);
+    expect(bodyFlat.paddingBottom).toBe(34);
+    expect(bodyFlat.paddingTop).not.toBe(47);
     expect(getByTestId('practice-screen').props.contentContainerStyle).toBeUndefined();
   });
 
@@ -865,6 +891,98 @@ describe('PracticeScreen', () => {
     const container = getByTestId('content-container');
     expect(within(container).getByTestId('practice-screen')).toBeTruthy();
   });
+
+  it('renders the Practice | Catalog switcher with Practice active by default', async () => {
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    const switcher = getByTestId('practice-tab-switcher');
+    expect(switcher.props.accessibilityRole).toBe('tablist');
+    const practiceTab = getByTestId('practice-tab-practice');
+    const catalogTab = getByTestId('practice-tab-catalog');
+    expect(practiceTab.props.accessibilityRole).toBe('tab');
+    expect(catalogTab.props.accessibilityRole).toBe('tab');
+    expect(practiceTab.props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(catalogTab.props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: false }),
+    );
+  });
+
+  it('tapping the Catalog tab renders the catalog in place on the dark ground, not as a push', async () => {
+    const { StyleSheet } = require('react-native');
+    const { onShowcase } = require('../../../design/tokens');
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-tab-catalog'));
+    });
+
+    await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
+    expect(getByTestId('practice-catalog-row-1')).toBeTruthy();
+    expect(getByTestId('practice-tab-catalog').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    // Embedded dark variant: no pushed screen, no light safe-area wrapper, no
+    // light ScreenHeader Create CTA, and section titles read in onShowcase ink.
+    expect(mockRootNavigate).not.toHaveBeenCalled();
+    expect(queryByTestId('practice-catalog-safe-area')).toBeNull();
+    expect(queryByTestId('practice-catalog-create')).toBeNull();
+    const presetsTitle = within(getByTestId('practice-catalog-section-presets')).getByText(
+      'Presets',
+    );
+    expect(StyleSheet.flatten(presetsTitle.props.style).color).toBe(onShowcase.soft);
+  });
+
+  it('activating a practice from the embedded catalog flips back with a single refresh', async () => {
+    mockUserPracticesList.mockResolvedValueOnce([]).mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-tab-catalog'));
+    });
+    await waitFor(() => expect(getByTestId('practice-catalog-row-1-use')).toBeTruthy());
+
+    const listCallsBeforeUse = mockUserPracticesList.mock.calls.length;
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-catalog-row-1-use'));
+    });
+
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(queryByTestId('practice-catalog-screen')).toBeNull();
+    expect(getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 });
+    // Exactly one refresh-triggered re-read of the user's practices, and no
+    // goBack / push navigation for the embedded flow.
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCallsBeforeUse + 1);
+    expect(mockGoBack).not.toHaveBeenCalled();
+    expect(mockRootNavigate).not.toHaveBeenCalled();
+  });
+
+  it('hides the switcher while a session runs and restores it once idle again', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(getByTestId('practice-tab-switcher')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    expect(queryByTestId('practice-tab-switcher')).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-cancel'));
+    });
+    expect(getByTestId('practice-tab-switcher')).toBeTruthy();
+    jest.useRealTimers();
+  });
 });
 
 describe('PracticeScreen header drawer', () => {
@@ -902,15 +1020,56 @@ describe('PracticeScreen header drawer', () => {
     expect(queryByTestId('change-practice-button')).toBeNull();
   });
 
-  it('pressing the drawer "Change practice" row opens the Catalog seeded to the current stage', async () => {
+  it('pressing the drawer "Change practice" row flips to the Catalog tab in place', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
 
     fireEvent.press(getByLabelText('Open Practice menu'));
-    fireEvent.press(getByTestId('practice-drawer-change'));
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-drawer-change'));
+    });
 
-    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
+    await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
+    expect(mockRootNavigate).not.toHaveBeenCalled();
+  });
+
+  it('pressing the drawer "Browse all practices" row flips to the Catalog tab in place', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-drawer-browse'));
+    });
+
+    await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
+    expect(mockRootNavigate).not.toHaveBeenCalled();
+  });
+
+  it('withholds the in-place catalog rows while a session runs so the drawer cannot destroy the ritual', async () => {
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText, queryByTestId } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+
+    expect(getByTestId('screen-drawer-panel')).toBeTruthy();
+    // Flipping the embedded Catalog tab unmounts the running engine, so the two
+    // in-place catalog rows are withheld while the ritual holds the screen.
+    expect(queryByTestId('practice-drawer-change')).toBeNull();
+    expect(queryByTestId('practice-drawer-browse')).toBeNull();
+    // Safe rows remain: customize opens a modal sheet, create/details push.
+    expect(getByTestId('practice-drawer-customize')).toBeTruthy();
+    expect(getByTestId('practice-drawer-create')).toBeTruthy();
+    // The running session is untouched by opening the drawer.
+    expect(getByTestId('ritual-cancel')).toBeTruthy();
+    jest.useRealTimers();
   });
 
   it('opens the drawer and shows only the browse/create rows when there is no active practice, alongside the unchanged in-body CTA', async () => {

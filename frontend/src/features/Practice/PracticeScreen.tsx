@@ -1,13 +1,14 @@
 /**
- * `PracticeScreen` — the full-bleed dark "player" (#1905, epic #1904).
+ * `PracticeScreen` — the full-bleed dark "player".
  *
  * The whole screen is a single deep-umber card (`showcase.canvas`) with a
- * fixed, non-scrolling layout: the session centered in the middle and the
- * weekly-progress footer pinned at the foot. Everything that is not the
- * ritual itself — the old showcase hero, the frequency banner, the inline
- * "Change practice" button — is gone; the header drawer keeps the
- * catalog/customize/details/create paths until the epic's Practice/Catalog
- * tab switcher lands.
+ * fixed, non-scrolling layout: a centered `Practice | Catalog` tab switcher
+ * at the top, the session centered in the middle, and the weekly-progress
+ * footer pinned at the foot. The Catalog tab embeds the shared catalog list
+ * in place on the dark ground — choosing a practice there flips straight
+ * back to the player with the new practice live, no push navigation. The
+ * switcher hides while a session is running or paused so nothing competes
+ * with the ritual.
  *
  * Composition stays layered:
  *   - `useActivePractice` resolves the user's active practice + effective
@@ -16,13 +17,13 @@
  *     fallback to the legacy `week-count` route) for the footer.
  *   - `ActiveRitualSession` owns the engine, mode dispatch, configurator
  *     sheet, and the ritual-12 insight capture modal when a practice is
- *     active.
+ *     active; its status is mirrored up here to gate the switcher.
  *   - `PracticeIdentityHeader` pins the player identity (title, tappable
  *     stage chip, effective ritual name, customize pencil) to the top region
  *     and collapses to the title alone while a session runs.
  *
  * When no practice is set for the stage the screen shows a minimal dark
- * empty state whose only action opens the catalog.
+ * empty state whose only action flips to the embedded Catalog tab.
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -55,11 +56,15 @@ import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession, {
   type ActiveRitualSessionHandle,
 } from '@/features/Practice/components/ActiveRitualSession';
+import PracticeCatalogSwitcher, {
+  type PracticeTab,
+} from '@/features/Practice/components/PracticeCatalogSwitcher';
 import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
 import PracticeIdentityHeader from '@/features/Practice/components/PracticeIdentityHeader';
 import type { RitualState } from '@/features/Practice/engine/types';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
+import PracticeCatalogList from '@/features/Practice/screens/PracticeCatalogList';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
@@ -67,6 +72,7 @@ import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
 
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
+type RitualStatus = RitualState['status'];
 
 /** The glyph fronting the dark empty state. */
 const EMPTY_GLYPH = '🧘';
@@ -92,7 +98,50 @@ function useFocusRefresh(refresh: (_opts?: { silent?: boolean }) => Promise<void
   );
 }
 
-const PracticeScreen = (): React.JSX.Element => {
+interface PracticeTabsState {
+  tab: PracticeTab;
+  setTab: (_next: PracticeTab) => void;
+  openCatalogTab: () => void;
+  onCatalogActivated: () => void;
+}
+
+/**
+ * Owns the in-place Practice | Catalog tab. Activating a practice from the
+ * embedded catalog flips back to the player and silently re-reads the active
+ * selection exactly once — no focus event fires for an in-place flip, so the
+ * focus-refresh path never doubles the fetch.
+ */
+function usePracticeTabs(refresh: ActivePracticeHook['refresh']): PracticeTabsState {
+  const [tab, setTab] = useState<PracticeTab>('practice');
+  const openCatalogTab = useCallback(() => {
+    setTab('catalog');
+  }, []);
+  const onCatalogActivated = useCallback(() => {
+    setTab('practice');
+    void refresh({ silent: true });
+  }, [refresh]);
+  return { tab, setTab, openCatalogTab, onCatalogActivated };
+}
+
+interface PracticeScreenModel extends PracticeTabsState {
+  active: ActivePracticeHook;
+  userTimezone: string;
+  weekly: WeeklyProgressHook;
+  onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  stageNumber: number;
+  sessionRef: React.Ref<ActiveRitualSessionHandle>;
+  onStageChange: (_stage: number) => void;
+  openConfigurator: () => void;
+  drawer: ScreenDrawerState;
+  hasActivePractice: boolean;
+  topInset: number;
+  status: RitualStatus;
+  setStatus: (_next: RitualStatus) => void;
+  showSwitcher: boolean;
+}
+
+/** Wires every hook the player composes; the component below only renders. */
+function usePracticeScreenModel(): PracticeScreenModel {
   const resolvedStage = useResolvedStageNumber();
   // A stage picked from the identity header's chip overrides the derived
   // stage locally; route params and the stage store stay untouched so other
@@ -102,36 +151,77 @@ const PracticeScreen = (): React.JSX.Element => {
   const { userTimezone } = useAuth();
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
-  const handleWriteReflection = useWriteReflection(active.effectiveName, active.practice);
+  const onWriteReflection = useWriteReflection(active.effectiveName, active.practice);
   useFocusRefresh(active.refresh);
   const drawer = useScreenDrawer('Practice');
   const sessionRef = useRef<ActiveRitualSessionHandle>(null);
+  const insets = useSafeAreaInsets();
+  const tabs = usePracticeTabs(active.refresh);
+  // Mirror of the engine status, lifted to screen level so the tab switcher
+  // can hide while a session holds the screen (running or paused).
+  const [status, setStatus] = useState<RitualStatus>('idle');
   const openConfigurator = useCallback(() => {
     sessionRef.current?.openConfigurator();
   }, []);
-
   const hasActivePractice = Boolean(
     active.activeUserPractice && active.practice && active.effectiveConfig,
   );
+  return {
+    ...tabs,
+    active,
+    userTimezone,
+    weekly,
+    onWriteReflection,
+    stageNumber,
+    sessionRef,
+    onStageChange: setStageOverride,
+    openConfigurator,
+    drawer,
+    hasActivePractice,
+    topInset: insets.top,
+    status,
+    setStatus,
+    showSwitcher: status !== 'running' && status !== 'paused',
+  };
+}
 
+const PracticeScreen = (): React.JSX.Element => {
+  const s = usePracticeScreenModel();
   return (
     <>
-      <PracticeBody
-        active={active}
-        userTimezone={userTimezone}
-        weekly={weekly}
-        onWriteReflection={handleWriteReflection}
-        stageNumber={stageNumber}
-        sessionRef={sessionRef}
-        onStageChange={setStageOverride}
-        onCustomize={openConfigurator}
-      />
+      <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
+        {s.showSwitcher && <PracticeCatalogSwitcher active={s.tab} onChange={s.setTab} />}
+        {s.tab === 'catalog' ? (
+          <View style={styles.catalogRegion}>
+            <PracticeCatalogList
+              variant="dark"
+              initialStage={s.stageNumber}
+              onActivated={s.onCatalogActivated}
+            />
+          </View>
+        ) : (
+          <PracticeBody
+            active={s.active}
+            userTimezone={s.userTimezone}
+            weekly={s.weekly}
+            onWriteReflection={s.onWriteReflection}
+            stageNumber={s.stageNumber}
+            sessionRef={s.sessionRef}
+            onStageChange={s.onStageChange}
+            onCustomize={s.openConfigurator}
+            status={s.status}
+            onStatusChange={s.setStatus}
+            onBrowseCatalog={s.openCatalogTab}
+          />
+        )}
+      </View>
       <PracticeScreenDrawer
-        drawer={drawer}
-        hasActivePractice={hasActivePractice}
-        stageNumber={stageNumber}
-        practiceId={active.practice?.id}
-        onCustomize={openConfigurator}
+        drawer={s.drawer}
+        hasActivePractice={s.hasActivePractice}
+        practiceId={s.active.practice?.id}
+        onCustomize={s.openConfigurator}
+        onBrowseCatalog={s.openCatalogTab}
+        sessionActive={!s.showSwitcher}
       />
     </>
   );
@@ -146,21 +236,17 @@ interface PracticeBodyProps {
   sessionRef: React.Ref<ActiveRitualSessionHandle>;
   onStageChange: (_stage: number) => void;
   onCustomize: () => void;
+  status: RitualStatus;
+  onStatusChange: (_next: RitualStatus) => void;
+  onBrowseCatalog: () => void;
 }
 
 // Selects the screen body for the current load state: a loading/error
 // placeholder, the active player, or the empty state when no practice is set.
-// Every state shares the same full-bleed umber ground.
-const PracticeBody = ({
-  active,
-  userTimezone,
-  weekly,
-  onWriteReflection,
-  stageNumber,
-  sessionRef,
-  onStageChange,
-  onCustomize,
-}: PracticeBodyProps): React.JSX.Element => {
+// The screen shell owns the umber ground and the top inset; each leaf keeps
+// only the bottom inset.
+const PracticeBody = (props: PracticeBodyProps): React.JSX.Element => {
+  const { active } = props;
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
     return <ErrorView error={active.error} onRetry={active.refresh} />;
@@ -172,26 +258,29 @@ const PracticeBody = ({
         practiceName={active.practice.name}
         effectiveName={active.effectiveName}
         effectiveConfig={active.effectiveConfig}
-        userTimezone={userTimezone}
-        weekly={weekly}
+        userTimezone={props.userTimezone}
+        weekly={props.weekly}
         onUserPracticeUpdated={active.updateActivePractice}
-        onWriteReflection={onWriteReflection}
-        stageNumber={stageNumber}
-        sessionRef={sessionRef}
-        onStageChange={onStageChange}
-        onCustomize={onCustomize}
+        onWriteReflection={props.onWriteReflection}
+        stageNumber={props.stageNumber}
+        sessionRef={props.sessionRef}
+        onStageChange={props.onStageChange}
+        onCustomize={props.onCustomize}
+        status={props.status}
+        onStatusChange={props.onStatusChange}
       />
     );
   }
-  return <EmptyStateView stageNumber={stageNumber} />;
+  return <EmptyStateView onBrowseCatalog={props.onBrowseCatalog} />;
 };
 
 interface PracticeScreenDrawerProps {
   drawer: ScreenDrawerState;
   hasActivePractice: boolean;
-  stageNumber: number;
   practiceId?: number;
   onCustomize: () => void;
+  onBrowseCatalog: () => void;
+  sessionActive: boolean;
 }
 
 // The header drawer: catalog/customize/details/create actions in the active
@@ -200,9 +289,10 @@ interface PracticeScreenDrawerProps {
 const PracticeScreenDrawer = ({
   drawer,
   hasActivePractice,
-  stageNumber,
   practiceId,
   onCustomize,
+  onBrowseCatalog,
+  sessionActive,
 }: PracticeScreenDrawerProps): React.JSX.Element => (
   <ScreenDrawer
     visible={drawer.isOpen}
@@ -213,43 +303,38 @@ const PracticeScreenDrawer = ({
     <DrawerNavSection currentScreen="Practice" onNavigate={drawer.close} />
     <PracticeDrawer
       hasActivePractice={hasActivePractice}
-      stageNumber={stageNumber}
       practiceId={practiceId}
       onCustomize={onCustomize}
+      onBrowseCatalog={onBrowseCatalog}
+      sessionActive={sessionActive}
       onClose={drawer.close}
     />
   </ScreenDrawer>
 );
 
 /**
- * Button-shaped entry point to the (pushed) practice catalog, seeded with the
- * user's resolved stage — the empty state's single CTA, styled for the dark
- * player ground.
+ * Button-shaped entry point to the embedded Catalog tab — the empty state's
+ * single CTA, styled for the dark player ground.
  */
 const CatalogButton = ({
-  stageNumber,
+  onPress,
   label,
   testID,
 }: {
-  stageNumber: number;
+  onPress: () => void;
   label: string;
   testID: string;
-}): React.JSX.Element => {
-  // Catalog is a pushed RootStack screen (not a tab), so navigate with the
-  // stack-typed navigation rather than the tab-scoped useAppNavigation.
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  return (
-    <TouchableOpacity
-      style={styles.browseCatalog}
-      onPress={() => navigation.navigate('Catalog', { stageNumber })}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      testID={testID}
-    >
-      <Text style={styles.browseCatalogText}>{label}</Text>
-    </TouchableOpacity>
-  );
-};
+}): React.JSX.Element => (
+  <TouchableOpacity
+    style={styles.browseCatalog}
+    onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    testID={testID}
+  >
+    <Text style={styles.browseCatalogText}>{label}</Text>
+  </TouchableOpacity>
+);
 
 interface ActiveSessionViewProps {
   userPractice: NonNullable<ActivePracticeHook['activeUserPractice']>;
@@ -264,29 +349,30 @@ interface ActiveSessionViewProps {
   sessionRef?: React.Ref<ActiveRitualSessionHandle>;
   onStageChange: (_stage: number) => void;
   onCustomize: () => void;
+  status: RitualStatus;
+  onStatusChange: (_next: RitualStatus) => void;
 }
 
 // The fixed player layout: no outer scroll. The identity header sits in the
 // top region, the session floats centered in the flexible middle, and the
-// weekly footer is pinned at the foot inside the safe area.
+// weekly footer is pinned at the foot inside the safe area. The engine status
+// routes up through onStatusChange so the screen shell can gate its switcher;
+// the identity header collapses off the same status while a session holds
+// the screen (running or paused).
 const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
-  // Mirror the engine's status so the identity header can collapse while a
-  // session holds the screen (running or paused); idle and complete both
-  // show the full identity block.
-  const [status, setStatus] = useState<RitualState['status']>('idle');
   return (
-    <View
-      style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-      testID="practice-screen-safe-area"
-    >
+    <View style={styles.leaf}>
       <ContentContainer fill>
-        <View style={styles.playerBody} testID="practice-screen">
+        <View
+          style={[styles.playerBody, { paddingBottom: insets.bottom }]}
+          testID="practice-screen"
+        >
           <PracticeIdentityHeader
             stageNumber={props.stageNumber}
             practiceName={props.practiceName}
             ritualName={props.effectiveName ?? props.practiceName}
-            collapsed={status === 'running' || status === 'paused'}
+            collapsed={props.status === 'running' || props.status === 'paused'}
             onCustomize={props.onCustomize}
             onStageChange={props.onStageChange}
           />
@@ -303,7 +389,7 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
               onSessionCommitted={() => void props.weekly.refresh()}
               onUserPracticeUpdated={props.onUserPracticeUpdated}
               onWriteReflection={props.onWriteReflection}
-              onStatusChange={setStatus}
+              onStatusChange={props.onStatusChange}
             />
           </View>
           <WeeklyProgress count={props.weekly.count} />
@@ -314,20 +400,21 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
 };
 
 interface EmptyStateViewProps {
-  stageNumber: number;
+  onBrowseCatalog: () => void;
 }
 
 // Calm dark empty state when no practice is set for the stage: the catalog is
-// the single place to choose one, so this is just a prompt + one CTA into it.
-// Rendered by hand (not the shared EmptyState) because that component paints
-// its own opaque light surface, which would break the full-bleed dark player.
-const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element => {
+// the single place to choose one, so this is just a prompt + one CTA that
+// flips to the embedded Catalog tab. Rendered by hand (not the shared
+// EmptyState) because that component paints its own opaque light surface,
+// which would break the full-bleed dark player.
+const EmptyStateView = ({ onBrowseCatalog }: EmptyStateViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <View style={styles.screen}>
+    <View style={styles.leaf}>
       <ContentContainer fill>
         <View
-          style={[styles.emptyState, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+          style={[styles.emptyState, { paddingBottom: insets.bottom }]}
           testID="practice-empty-state"
         >
           <Text
@@ -342,7 +429,7 @@ const EmptyStateView = ({ stageNumber }: EmptyStateViewProps): React.JSX.Element
           </Text>
           <Text style={styles.emptyBody}>No practice set for this stage yet.</Text>
           <CatalogButton
-            stageNumber={stageNumber}
+            onPress={onBrowseCatalog}
             label="Browse practices"
             testID="browse-catalog-button"
           />
@@ -356,10 +443,10 @@ function useResolvedStageNumber(): number {
   const route = useAppRoute<'Practice'>();
   const storeCurrentStage = useStageStore(selectCurrentStage);
   const storeStages = useStageStore((s) => s.stages);
-  // Master-date wiring (#323): when the user has set a program start date,
-  // derive the active stage from ``today - programStartDate`` so the
-  // screen tracks real elapsed time rather than the server's count-based
-  // current stage. Falls back to the store value when no anchor is set.
+  // Master-date wiring: when the user has set a program start date, derive
+  // the active stage from ``today - programStartDate`` so the screen tracks
+  // real elapsed time rather than the server's count-based current stage.
+  // Falls back to the store value when no anchor is set.
   const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
   useEffect(() => {
     if (storeStages.length === 0) void stageService.loadStages();
@@ -391,10 +478,7 @@ function useWriteReflection(
 const LoadingView = (): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <View
-      style={[styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-      testID="practice-loading"
-    >
+    <View style={[styles.centered, { paddingBottom: insets.bottom }]} testID="practice-loading">
       <ActivityIndicator size="large" color={accentDark.primary} />
     </View>
   );
@@ -409,14 +493,13 @@ const ErrorView = ({
 }): React.JSX.Element => {
   const insets = useSafeAreaInsets();
   return (
-    <View
-      style={[styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-      testID="practice-error"
-    >
+    <View style={[styles.centered, { paddingBottom: insets.bottom }]} testID="practice-error">
       <Text style={styles.errorText}>{error}</Text>
       <TouchableOpacity
         style={styles.retryButton}
         onPress={() => void onRetry()}
+        accessibilityRole="button"
+        accessibilityLabel="Retry"
         testID="retry-button"
       >
         <Text style={styles.retryButtonText}>Retry</Text>
@@ -426,7 +509,13 @@ const ErrorView = ({
 };
 
 const styles = StyleSheet.create({
+  // The screen shell: single owner of the umber ground and the top inset.
   screen: { flex: 1, backgroundColor: showcase.canvas },
+  // The embedded catalog fills the region under the switcher; the ground stays
+  // transparent so the shell's umber shows through the dark variant.
+  catalogRegion: { flex: 1 },
+  // Leaf wrappers fill the shell without repainting its ground.
+  leaf: { flex: 1 },
   playerBody: { flex: 1, padding: SPACING.md },
   // The flexible middle: the session settles centered between the identity
   // header's top region and the weekly footer.
@@ -436,7 +525,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.xxl,
-    backgroundColor: showcase.canvas,
   },
   errorText: {
     color: onShowcase.primary,

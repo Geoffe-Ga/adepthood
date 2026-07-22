@@ -19,16 +19,18 @@ const noop = (..._args: unknown[]): void => {};
 
 const activeProps = {
   hasActivePractice: true,
-  stageNumber: 3,
   practiceId: 7,
   onCustomize: noop,
+  onBrowseCatalog: noop,
+  sessionActive: false,
   onClose: noop,
 };
 
 const emptyProps = {
   hasActivePractice: false,
-  stageNumber: 3,
   onCustomize: noop,
+  onBrowseCatalog: noop,
+  sessionActive: false,
   onClose: noop,
 };
 
@@ -52,20 +54,28 @@ describe('PracticeDrawer active state', () => {
     ]);
   });
 
-  it('pressing "Change practice" navigates to Catalog with the stage and closes the drawer', () => {
+  it('pressing "Change practice" flips to the embedded catalog and closes the drawer', () => {
+    const onBrowseCatalog = jest.fn();
     const onClose = jest.fn();
-    const { getByTestId } = render(<PracticeDrawer {...activeProps} onClose={onClose} />);
+    const { getByTestId } = render(
+      <PracticeDrawer {...activeProps} onBrowseCatalog={onBrowseCatalog} onClose={onClose} />,
+    );
     fireEvent.press(getByTestId('practice-drawer-change'));
-    expect(mockNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 3 });
+    expect(onBrowseCatalog).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('pressing "Browse all practices" navigates to Catalog with the stage and closes the drawer', () => {
+  it('pressing "Browse all practices" flips to the embedded catalog and closes the drawer', () => {
+    const onBrowseCatalog = jest.fn();
     const onClose = jest.fn();
-    const { getByTestId } = render(<PracticeDrawer {...activeProps} onClose={onClose} />);
+    const { getByTestId } = render(
+      <PracticeDrawer {...activeProps} onBrowseCatalog={onBrowseCatalog} onClose={onClose} />,
+    );
     fireEvent.press(getByTestId('practice-drawer-browse'));
-    expect(mockNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 3 });
+    expect(onBrowseCatalog).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('pressing "Customize this practice" calls onCustomize and closes the drawer', () => {
@@ -108,6 +118,19 @@ describe('PracticeDrawer active state', () => {
     expect(getByLabelText('Customize this practice')).toBeTruthy();
     expect(getByText('Customize this practice')).toBeTruthy();
   });
+
+  it('withholds the in-place catalog rows while a session is active', () => {
+    const { getAllByRole, queryByTestId } = render(
+      <PracticeDrawer {...activeProps} sessionActive />,
+    );
+    const labels = getAllByRole('button').map(
+      (r: { props: { accessibilityLabel: string } }) => r.props.accessibilityLabel,
+    );
+    // The two tab-flip rows are gone; the modal/push rows survive.
+    expect(labels).toEqual(['Customize this practice', 'Practice details', 'Create a practice']);
+    expect(queryByTestId('practice-drawer-change')).toBeNull();
+    expect(queryByTestId('practice-drawer-browse')).toBeNull();
+  });
 });
 
 describe('PracticeDrawer empty state (no active practice)', () => {
@@ -123,12 +146,16 @@ describe('PracticeDrawer empty state (no active practice)', () => {
     expect(queryByTestId('practice-drawer-details')).toBeNull();
   });
 
-  it('pressing "Browse all practices" navigates to Catalog with the stage and closes the drawer', () => {
+  it('pressing "Browse all practices" flips to the embedded catalog and closes the drawer', () => {
+    const onBrowseCatalog = jest.fn();
     const onClose = jest.fn();
-    const { getByTestId } = render(<PracticeDrawer {...emptyProps} onClose={onClose} />);
+    const { getByTestId } = render(
+      <PracticeDrawer {...emptyProps} onBrowseCatalog={onBrowseCatalog} onClose={onClose} />,
+    );
     fireEvent.press(getByTestId('practice-drawer-browse'));
-    expect(mockNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 3 });
+    expect(onBrowseCatalog).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('pressing "Create a practice" navigates to CreatePractice and closes the drawer', () => {
