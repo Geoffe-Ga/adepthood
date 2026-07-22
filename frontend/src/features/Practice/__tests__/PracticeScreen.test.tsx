@@ -401,6 +401,12 @@ describe('PracticeScreen', () => {
     expect(queryByText('Adjust')).toBeNull();
   });
 
+  it('renders the threshold ground-fade overlay on the shell without blocking touches', async () => {
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+    expect(getByTestId('practice-ground-fade').props.pointerEvents).toBe('none');
+  });
+
   it('renders the session flat on the dark ground with no bottom fade', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);

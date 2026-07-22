@@ -28,7 +28,14 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import WeeklyProgress from './WeeklyProgress';
@@ -50,6 +57,7 @@ import {
   editorialType,
   onShowcase,
   showcase,
+  surface,
   touchTarget,
 } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
@@ -65,6 +73,7 @@ import type { RitualState } from '@/features/Practice/engine/types';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import PracticeCatalogList from '@/features/Practice/screens/PracticeCatalogList';
+import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
@@ -187,6 +196,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
 
 const PracticeScreen = (): React.JSX.Element => {
   const s = usePracticeScreenModel();
+  const { overlayOpacity } = useThresholdFade();
   return (
     <>
       <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
@@ -214,6 +224,13 @@ const PracticeScreen = (): React.JSX.Element => {
             onBrowseCatalog={s.openCatalogTab}
           />
         )}
+        {/* top: -s.topInset extends the fade up over the safe-area strip the
+            shell pads for, so the whole ground dims together on focus. */}
+        <Animated.View
+          style={[styles.groundFade, { opacity: overlayOpacity, top: -s.topInset }]}
+          pointerEvents="none"
+          testID="practice-ground-fade"
+        />
       </View>
       <PracticeScreenDrawer
         drawer={s.drawer}
@@ -511,6 +528,14 @@ const ErrorView = ({
 const styles = StyleSheet.create({
   // The screen shell: single owner of the umber ground and the top inset.
   screen: { flex: 1, backgroundColor: showcase.canvas },
+  // The light overlay the threshold fade dissolves on focus (top comes inline).
+  groundFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: surface.canvas,
+  },
   // The embedded catalog fills the region under the switcher; the ground stays
   // transparent so the shell's umber shows through the dark variant.
   catalogRegion: { flex: 1 },
