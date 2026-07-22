@@ -569,6 +569,7 @@ export const editorialType = {
   serif: serifStack,
   display: { fontFamily: serifStack, fontSize: 34, lineHeight: 42, fontWeight: '700' as const },
   title: { fontFamily: serifStack, fontSize: 26, lineHeight: 34, fontWeight: '600' as const },
+  heading: { fontFamily: serifStack, fontSize: 20, lineHeight: 30, fontWeight: '600' as const },
   body: { fontFamily: serifStack, fontSize: 18, lineHeight: 29, fontWeight: '400' as const },
   note: { fontFamily: serifStack, fontSize: 15, lineHeight: 24, fontWeight: '400' as const },
   caption: { fontFamily: serifStack, fontSize: 13, lineHeight: 20, fontWeight: '400' as const },

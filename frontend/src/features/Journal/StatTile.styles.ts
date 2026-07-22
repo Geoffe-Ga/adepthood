@@ -38,7 +38,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   stat: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: ink.primary,
     marginTop: SPACING.xs,
   },

@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   title: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: ink.primary,
     paddingTop: spacing(0.5),
   },
