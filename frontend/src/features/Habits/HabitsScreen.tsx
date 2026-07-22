@@ -690,12 +690,15 @@ const useHabitsScreenState = () => {
   /**
    * Wrap addHabit so the modal can await it, the screen jumps to the page
    * containing the newly added row, and any in-flight failure surfaces via
-   * the existing rollback toast before the modal closes.
+   * the existing rollback toast before the modal closes. Adding from a
+   * negative lap creates a carryover habit and stays on the carryover side.
    */
   const handleAddHabit = useCallback(
     async (input: AddHabitInput) => {
-      await habitsReturn.actions.addHabit(input);
-      pagination.goLast();
+      const isCarryover = pagination.page < 0;
+      await habitsReturn.actions.addHabit(input, isCarryover);
+      if (isCarryover) pagination.goFirstCarryover();
+      else pagination.goLast();
     },
     [habitsReturn.actions, pagination],
   );

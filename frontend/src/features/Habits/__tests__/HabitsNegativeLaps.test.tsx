@@ -115,7 +115,11 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
-jest.mock('../components/AddHabitModal', () => () => null);
+// Capturing mock: the add-flow tests drive the screen's onAdd prop directly.
+jest.mock('../components/AddHabitModal', () => ({
+  __esModule: true,
+  default: jest.fn(() => null),
+}));
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/MissedDaysModal', () => () => null);
@@ -184,6 +188,21 @@ const pressPrev = async (tree: any) => {
   });
 };
 
+// Latest props handed to the mocked AddHabitModal; onAdd is the screen's
+// full add pipeline (create POST + reload + post-add navigation).
+const latestAddModalProps = (): any => {
+  const AddHabitModal = require('../components/AddHabitModal').default;
+  const calls = AddHabitModal.mock.calls;
+  return calls[calls.length - 1][0];
+};
+
+const submitAdd = async (input: { name: string; icon: string }) => {
+  const props = latestAddModalProps();
+  await renderer.act(async () => {
+    await props.onAdd(input);
+  });
+};
+
 describe('Habits screen negative carryover laps', () => {
   afterEach(() => {
     jest.clearAllMocks();
@@ -211,14 +230,17 @@ describe('Habits screen negative carryover laps', () => {
     expect(uniqueTiles(tree)).toHaveLength(2);
   });
 
-  it('keeps Prev disabled on page 0 when there are no carryover habits', async () => {
+  it('Prev from page 0 reaches the empty -10 to -1 invite even with no carryover habits', async () => {
     const testRenderer = await renderScreen(buildProgramHabits(10));
     const tree = testRenderer.root;
 
     expect(hasTestId(tree, 'habits-pagination')).toBe(true);
-    const prev = paginationButton(tree, 'pagination-prev');
-    expect(prev.props.accessibilityState.disabled).toBe(true);
     expect(visibleTextMatches(tree, /-10 to -1/)).toBe(false);
+
+    await pressPrev(tree);
+
+    expect(visibleTextMatches(tree, /-10 to -1/)).toBe(true);
+    expect(hasTestId(tree, 'habits-empty-state')).toBe(true);
   });
 
   it('opens a -20 to -11 leading-invite lap when exactly ten carryover habits fill the first negative lap', async () => {
@@ -260,5 +282,88 @@ describe('Habits screen negative carryover laps', () => {
 
     const borders = uniqueTiles(tree).map((_: any, i: number) => tileBorderAt(tree, i));
     expect(new Set(borders).size).toBeGreaterThan(1);
+  });
+
+  it('adding from the negative invite lap creates a carryover habit and stays on the negative lap', async () => {
+    const program = buildProgramHabits(3);
+    const testRenderer = await renderScreen(program);
+    const tree = testRenderer.root;
+
+    await pressPrev(tree);
+    expect(visibleTextMatches(tree, /-10 to -1/)).toBe(true);
+    expect(hasTestId(tree, 'habits-empty-state')).toBe(true);
+    expect(visibleTextMatches(tree, /already practice/i)).toBe(true);
+
+    habitsApi.listAll.mockResolvedValue([
+      ...program,
+      makeApiHabit(200, { sort_order: 3, is_carryover: true, name: 'Morning Walk' }),
+    ]);
+    await submitAdd({ name: 'Morning Walk', icon: '\u{1F6B6}' });
+
+    expect(habitsApi.create).toHaveBeenCalledWith(expect.objectContaining({ is_carryover: true }));
+    expect(visibleTextMatches(tree, /-10 to -1/)).toBe(true);
+    expect(hasTestId(tree, 'habits-empty-state')).toBe(false);
+    expect(uniqueTiles(tree)).toHaveLength(1);
+    expect(visibleTextMatches(tree, /Morning Walk/)).toBe(true);
+  });
+
+  it('adding from the program lap posts is_carryover false and lands on the program content page', async () => {
+    const program = buildProgramHabits(3);
+    const testRenderer = await renderScreen(program);
+    const tree = testRenderer.root;
+
+    habitsApi.listAll.mockResolvedValue([
+      ...program,
+      makeApiHabit(4, { sort_order: 3, name: 'Habit 4' }),
+    ]);
+    await submitAdd({ name: 'Habit 4', icon: '\u{2728}' });
+
+    expect(habitsApi.create).toHaveBeenCalledWith(expect.objectContaining({ is_carryover: false }));
+    expect(visibleTextMatches(tree, /Stages\s*1[\s\S]*10/)).toBe(true);
+    expect(visibleTextMatches(tree, /-10 to -1/)).toBe(false);
+    expect(uniqueTiles(tree)).toHaveLength(4);
+  });
+
+  it('icon edits from the negative lap write through the flat index, not the display slot', async () => {
+    habitsApi.update.mockResolvedValue({});
+    const apiHabits = [
+      makeApiHabit(1, { sort_order: 0, revealed: true }),
+      makeApiHabit(2, { sort_order: 1, revealed: true }),
+      makeApiHabit(3, { sort_order: 2, revealed: true }),
+      makeApiHabit(101, { sort_order: 3, is_carryover: true, revealed: true }),
+      makeApiHabit(102, { sort_order: 4, is_carryover: true, revealed: true }),
+    ];
+    const testRenderer = await renderScreen(apiHabits);
+    const tree = testRenderer.root;
+
+    await pressPrev(tree);
+    expect(uniqueTiles(tree)).toHaveLength(2);
+
+    // Display slot 0 on the negative lap is carryover id 101 at flat index 3.
+    const { TouchableOpacity, Pressable } = require('react-native');
+    const iconButtons = tree
+      .findAllByType(TouchableOpacity)
+      .filter((node: any) => node.props.testID === 'habit-icon');
+    expect(iconButtons.length).toBe(2);
+    await renderer.act(async () => {
+      iconButtons[0].props.onPress();
+    });
+
+    const select = tree
+      .findAllByType(Pressable)
+      .find((node: any) => node.props.testID === 'emoji-picker-select');
+    expect(select).toBeDefined();
+    await renderer.act(async () => {
+      select.props.onPress();
+    });
+
+    expect(habitsApi.update).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({ icon: '\u{1F389}' }),
+    );
+    expect(habitsApi.update).not.toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ icon: '\u{1F389}' }),
+    );
   });
 });

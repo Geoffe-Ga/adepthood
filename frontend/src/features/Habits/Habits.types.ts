@@ -175,7 +175,8 @@ export interface HabitsActions {
   logUnit: (_habitId: number, _amount: number, _date?: Date) => void;
   updateHabit: (_updatedHabit: Habit) => void;
   deleteHabit: (_habitId: number) => void;
-  addHabit: (_input: AddHabitInput) => Promise<void>;
+  /** ``isCarryover`` slots the new habit onto the negative laps; defaults to a program add. */
+  addHabit: (_input: AddHabitInput, _isCarryover?: boolean) => Promise<void>;
   saveHabitOrder: (_orderedHabits: Habit[]) => void;
   backfillMissedDays: (_habitId: number, _days: Date[]) => void;
   setNewStartDate: (_habitId: number, _newDate: Date) => void;

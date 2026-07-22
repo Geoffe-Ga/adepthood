@@ -42,6 +42,8 @@ import {
   getGoalTier,
   getGoalTarget,
   calculateTodaysProgress,
+  carryoverSlot,
+  countCarryover,
   logHabitUnits,
   stageAtIndex,
 } from '../HabitUtils';
@@ -109,6 +111,9 @@ const toApiPayload = (h: Habit): HabitCreatePayload => ({
   // ``revealed`` is the persisted unlock flag; default locked when absent so a
   // client that never set it does not accidentally unlock the row server-side.
   revealed: h.revealed ?? false,
+  // ``is_carryover`` rides every create AND update payload so edit/delete/
+  // reorder PUTs preserve the negative-lap flag without special-casing.
+  is_carryover: h.is_carryover ?? false,
 });
 
 // Delegate field mapping + tier/notification-frequency sanitizing to the
@@ -261,9 +266,17 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
  * STAGE_ORDER so habits added after the original ten still pick up an
  * aptitude color; ids are negative placeholders that get replaced when the
  * server round-trip succeeds and `loadHabits` rehydrates from the API.
+ *
+ * The new row's slot comes from its own partition of ``prev``: a program add
+ * takes the next non-carryover index, while a carryover add takes the next
+ * carryover index and colors from its negative display slot — so mixed lists
+ * never inflate either side's slot with the other's count.
  */
-const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => {
-  const stage = stageAtIndex(existingCount);
+const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit => {
+  const slotIndex = isCarryover
+    ? countCarryover(prev)
+    : prev.filter((h) => h.is_carryover !== true).length;
+  const stage = stageAtIndex(isCarryover ? carryoverSlot(slotIndex) : slotIndex);
   const tempId = -Date.now();
   const name = input.name.trim();
   return {
@@ -278,7 +291,10 @@ const buildAddedHabit = (input: AddHabitInput, existingCount: number): Habit => 
     goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
-    sort_order: existingCount,
+    // Partition-scoped ordinal, not a global one: carryover and program slots
+    // each restart at 0, so read sort_order only after splitting by is_carryover.
+    sort_order: slotIndex,
+    ...(isCarryover ? { is_carryover: true } : {}),
   };
 };
 
@@ -911,11 +927,13 @@ export const habitManager = {
    * appends a placeholder row to the store so the user sees instant feedback,
    * then POSTs to ``/habits/`` and re-runs ``loadHabits`` so the temporary
    * negative ids are replaced with the server-assigned ones (otherwise the
-   * goal-completion POSTs would 404 on the next log).
+   * goal-completion POSTs would 404 on the next log). ``isCarryover`` flags an
+   * add made from a negative lap: the row keeps today's start date but slots
+   * into the carryover partition instead of the program's.
    */
-  addHabit: async (input: AddHabitInput): Promise<void> => {
+  addHabit: async (input: AddHabitInput, isCarryover = false): Promise<void> => {
     const prev = getHabits();
-    const newHabit = buildAddedHabit(input, prev.length);
+    const newHabit = buildAddedHabit(input, prev, isCarryover);
     const next = [...prev, newHabit];
     setHabits(next);
     void persistHabits(next);
