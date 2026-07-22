@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { ScrollView, StyleSheet } from 'react-native';
 
 import type { MindfulAnchorConfig } from '../../engine/types';
 import MindfulAnchorView from '../MindfulAnchorView';
+import { SessionSurfaceProvider, UMBER_SURFACE } from '../sessionSurface';
+import { SESSION_LIST_MAX_HEIGHT } from '../shared/sessionStyles';
 
 import { fakeControls, fakeState } from './fixtures';
 
@@ -399,6 +402,58 @@ describe('MindfulAnchorView', () => {
       chosen_option_key: null,
       duration_seconds: 0,
       met_min_duration: true,
+    });
+  });
+
+  describe('umber player fit', () => {
+    const OPTION_COUNT = 8;
+    const manyOptionsConfig: MindfulAnchorConfig = {
+      mode: 'mindful_anchor',
+      instruction: 'Choose one anchor and settle into it.',
+      min_duration_seconds: 60,
+      options: Array.from({ length: OPTION_COUNT }, (_item, index) => ({
+        key: `anchor-${index}`,
+        label: `Anchor ${index}`,
+      })),
+      require_option_choice: true,
+    };
+
+    const renderManyOptions = (controls = fakeControls()) =>
+      render(
+        <SessionSurfaceProvider value={UMBER_SURFACE}>
+          <MindfulAnchorView
+            config={manyOptionsConfig}
+            state={fakeState({ status: 'idle' })}
+            controls={controls}
+            onComplete={jest.fn()}
+          />
+        </SessionSurfaceProvider>,
+      );
+
+    it('caps a long option list inside the shared session list ScrollView', () => {
+      const view = renderManyOptions();
+      expect(typeof SESSION_LIST_MAX_HEIGHT).toBe('number');
+      const scrolls = view.UNSAFE_getAllByType(ScrollView);
+      const bounded = scrolls.find(
+        (scroll) => within(scroll).queryByTestId('mindful-anchor-options') !== null,
+      );
+      if (bounded === undefined) throw new Error('option group is not inside a ScrollView');
+      const flattened = StyleSheet.flatten(bounded.props.style) as { maxHeight?: number };
+      expect(flattened.maxHeight).toBe(SESSION_LIST_MAX_HEIGHT);
+    });
+
+    it('keeps the radiogroup and every option rendered and selectable', () => {
+      const controls = fakeControls();
+      const { getByTestId } = renderManyOptions(controls);
+      expect(getByTestId('mindful-anchor-options').props.accessibilityRole).toBe('radiogroup');
+      expect(getByTestId('mindful-anchor-option-anchor-0')).toBeTruthy();
+      expect(getByTestId(`mindful-anchor-option-anchor-${OPTION_COUNT - 1}`)).toBeTruthy();
+      fireEvent.press(getByTestId('mindful-anchor-option-anchor-3'));
+      expect(getByTestId('mindful-anchor-option-anchor-3').props.accessibilityState).toEqual({
+        selected: true,
+      });
+      fireEvent.press(getByTestId('mindful-anchor-begin'));
+      expect(controls.start).toHaveBeenCalledTimes(1);
     });
   });
 });

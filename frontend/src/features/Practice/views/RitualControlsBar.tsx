@@ -70,17 +70,24 @@ interface ButtonProps {
   testID: string;
 }
 
-const Button = ({ variant, label, onPress, testID }: ButtonProps): React.JSX.Element => (
-  <TouchableOpacity
-    style={[styles.button, styles[variant]]}
-    onPress={onPress}
-    testID={testID}
-    accessibilityRole="button"
-    accessibilityLabel={label}
-  >
-    <Text style={variant === 'danger' ? styles.dangerText : styles.lightText}>{label}</Text>
-  </TouchableOpacity>
-);
+const Button = ({ variant, label, onPress, testID }: ButtonProps): React.JSX.Element => {
+  // The danger tint follows the active surface so cancel stays AA on dark grounds.
+  const surface = useSessionSurface();
+  const danger = variant === 'danger';
+  return (
+    <TouchableOpacity
+      style={[styles.button, styles[variant], danger && { borderColor: surface.danger }]}
+      onPress={onPress}
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Text style={danger ? [styles.dangerText, { color: surface.danger }] : styles.lightText}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+};
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: SPACING.md, alignItems: 'center', justifyContent: 'center' },

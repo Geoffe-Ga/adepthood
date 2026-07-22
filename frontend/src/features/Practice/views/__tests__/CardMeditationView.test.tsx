@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { ScrollView, StyleSheet } from 'react-native';
 
 import type { PickedCard } from '../../data/resolveCard';
 import type { CardMeditationCard, CardMeditationConfig } from '../../engine/types';
-import CardMeditationView from '../CardMeditationView';
+import CardMeditationView, { SYMBOLISM_MAX_HEIGHT } from '../CardMeditationView';
+import { SessionSurfaceProvider, UMBER_SURFACE } from '../sessionSurface';
 
 import { fakeControls, fakeState } from './fixtures';
 
@@ -231,5 +233,53 @@ describe('CardMeditationView', () => {
     );
     expect(getByTestId('ritual-controls-bar')).toBeTruthy();
     expect(getByTestId('ritual-complete-label')).toBeTruthy();
+  });
+
+  describe('umber player fit', () => {
+    const LONG_SYMBOLISM =
+      'An unbroken litany of imagery: the river, the gate, the lantern, the long road, ' +
+      'the harvest, the tide, the mirror, the mountain, the ember, the returning dawn, ' +
+      'the threshold, the well, the orchard, the storm, the hearth, and the quiet hour, ' +
+      'each held in the breath until the copy overflows a small phone viewport.';
+
+    const LONG_PICKED: PickedCard = {
+      card: {
+        name: 'The Long Litany',
+        image_asset_key: null,
+        image_uri: null,
+        symbolism: LONG_SYMBOLISM,
+      },
+      index: 0,
+    };
+
+    const renderLongCard = () =>
+      render(
+        <SessionSurfaceProvider value={UMBER_SURFACE}>
+          <CardMeditationView
+            config={config()}
+            state={fakeState()}
+            controls={fakeControls()}
+            picked={LONG_PICKED}
+          />
+        </SessionSurfaceProvider>,
+      );
+
+    it('bounds long symbolism inside a height-capped ScrollView', () => {
+      const view = renderLongCard();
+      const scrolls = view.UNSAFE_getAllByType(ScrollView);
+      const bounded = scrolls.find(
+        (scroll) => within(scroll).queryByTestId('card-meditation-card-symbolism') !== null,
+      );
+      if (bounded === undefined) throw new Error('symbolism is not inside a ScrollView');
+      const flattened = StyleSheet.flatten(bounded.props.style) as { maxHeight?: number };
+      expect(flattened.maxHeight).toBe(SYMBOLISM_MAX_HEIGHT);
+    });
+
+    it('keeps the card name on a single fitted line', () => {
+      const { getByTestId } = renderLongCard();
+      const name = getByTestId('card-meditation-card-name');
+      expect(name.props.numberOfLines).toBe(1);
+      expect(name.props.adjustsFontSizeToFit).toBe(true);
+    });
   });
 });

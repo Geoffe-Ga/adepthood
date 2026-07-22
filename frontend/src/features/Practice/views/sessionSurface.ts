@@ -30,6 +30,8 @@ export interface SessionSurface {
   textMuted: string;
   /** Accent / progress-ring stroke / cue highlight. */
   accent: string;
+  /** The danger/cancel affordance tint for this surface. */
+  danger: string;
 }
 
 /**
@@ -49,6 +51,7 @@ export const LIGHT_SURFACE: SessionSurface = {
   textSoft: colors.text.secondaryAccessible,
   textMuted: colors.text.tertiaryAccessible,
   accent: colors.success,
+  danger: colors.danger,
 };
 
 /**
@@ -65,6 +68,7 @@ export const CALM_SURFACE: SessionSurface = {
   textSoft: ink.soft,
   textMuted: ink.muted,
   accent: accent.primary,
+  danger: colors.danger,
 };
 
 /**
@@ -82,6 +86,8 @@ export const UMBER_SURFACE: SessionSurface = {
   textSoft: onShowcase.soft,
   textMuted: onShowcase.muted,
   accent: accentDark.primary,
+  // colors.danger sits at ~1.9:1 on umber; the destructive border ink clears AA.
+  danger: colors.destructive.border,
 };
 
 const SessionSurfaceContext = createContext<SessionSurface>(LIGHT_SURFACE);

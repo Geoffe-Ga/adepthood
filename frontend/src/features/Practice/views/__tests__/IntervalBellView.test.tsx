@@ -1,9 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { IntervalBellConfig } from '../../engine/types';
 import IntervalBellView from '../IntervalBellView';
+import { SessionSurfaceProvider, UMBER_SURFACE } from '../sessionSurface';
+import { SESSION_LIST_MAX_HEIGHT } from '../shared/sessionStyles';
 
 import { fakeControls, fakeState } from './fixtures';
 
@@ -66,5 +69,22 @@ describe('IntervalBellView', () => {
       />,
     );
     expect(getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  it('caps the offsets list at the shared session list height', () => {
+    const { getByTestId } = render(
+      <SessionSurfaceProvider value={UMBER_SURFACE}>
+        <IntervalBellView
+          config={config}
+          state={fakeState({ status: 'running', nextCueAtMs: 5 * 60_000 })}
+          controls={fakeControls()}
+        />
+      </SessionSurfaceProvider>,
+    );
+    expect(typeof SESSION_LIST_MAX_HEIGHT).toBe('number');
+    const flattened = StyleSheet.flatten(getByTestId('interval-bell-offsets').props.style) as {
+      maxHeight?: number;
+    };
+    expect(flattened.maxHeight).toBe(SESSION_LIST_MAX_HEIGHT);
   });
 });

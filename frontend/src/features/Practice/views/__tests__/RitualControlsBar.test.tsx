@@ -1,11 +1,18 @@
 import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { EngineStatus } from '../../engine/types';
 import RitualControlsBar from '../RitualControlsBar';
+import { SessionSurfaceProvider, UMBER_SURFACE } from '../sessionSurface';
 
 import { fakeControls } from './fixtures';
+
+import { colors } from '@/design/tokens';
+
+const flattenStyle = (style: unknown): { borderColor?: string; color?: string } =>
+  StyleSheet.flatten(style as never) as { borderColor?: string; color?: string };
 
 const STATUS_CONTROL_MATRIX: readonly {
   status: EngineStatus;
@@ -103,4 +110,29 @@ describe('RitualControlsBar', () => {
       for (const id of absent) expect(queryByTestId(id)).toBeNull();
     },
   );
+
+  describe('surface-aware danger ink', () => {
+    it('tints the cancel border and label with the umber danger ink under the dark player', () => {
+      const { getByTestId } = render(
+        <SessionSurfaceProvider value={UMBER_SURFACE}>
+          <RitualControlsBar status="running" controls={fakeControls()} />
+        </SessionSurfaceProvider>,
+      );
+      const cancel = getByTestId('ritual-cancel');
+      const label = within(cancel).getByText('Cancel');
+      expect(flattenStyle(cancel.props.style).borderColor).toBe(UMBER_SURFACE.danger);
+      expect(flattenStyle(label.props.style).color).toBe(UMBER_SURFACE.danger);
+      expect(flattenStyle(cancel.props.style).borderColor).not.toBe(colors.danger);
+    });
+
+    it('keeps the light danger token on the cancel control without a provider', () => {
+      const { getByTestId } = render(
+        <RitualControlsBar status="running" controls={fakeControls()} />,
+      );
+      const cancel = getByTestId('ritual-cancel');
+      const label = within(cancel).getByText('Cancel');
+      expect(flattenStyle(cancel.props.style).borderColor).toBe(colors.danger);
+      expect(flattenStyle(label.props.style).color).toBe(colors.danger);
+    });
+  });
 });
