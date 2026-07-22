@@ -14,7 +14,7 @@ export const journalHeroStyles = StyleSheet.create({
     marginBottom: SPACING.xs,
   },
   greeting: {
-    ...editorialType.display,
+    ...editorialType.title,
     color: onShowcase.primary,
   },
   position: {

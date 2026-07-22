@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     ...paperShadow.card,
   },
   title: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: colors.paper.ink,
   },
   framing: {

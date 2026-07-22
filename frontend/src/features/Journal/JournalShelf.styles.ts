@@ -51,7 +51,7 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
   },
   cardTitle: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: ink.primary,
     flexShrink: 1,
   },
@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   promptQuestion: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: ink.primary,
     paddingTop: spacing(0.5),
   },

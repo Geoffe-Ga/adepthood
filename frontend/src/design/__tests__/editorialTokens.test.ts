@@ -129,6 +129,7 @@ describe('editorial tokens', () => {
       for (const key of [
         'display',
         'title',
+        'heading',
         'body',
         'note',
         'caption',
@@ -140,6 +141,14 @@ describe('editorial tokens', () => {
         expect(style.fontSize).toBeGreaterThan(0);
         expect(style.lineHeight).toBeGreaterThan(style.fontSize);
       }
+    });
+
+    it('slots heading strictly between body and title in size and line height', () => {
+      const { heading } = editorialType;
+      expect(heading.fontSize).toBeGreaterThan(editorialType.body.fontSize);
+      expect(heading.fontSize).toBeLessThan(editorialType.title.fontSize);
+      expect(heading.lineHeight).toBeGreaterThan(editorialType.body.lineHeight);
+      expect(heading.lineHeight).toBeLessThan(editorialType.title.lineHeight);
     });
 
     it('uses a body size in the editorial 17-18px range', () => {
