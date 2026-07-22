@@ -1013,8 +1013,8 @@ const MapGrid = ({
   const [size, onLayout] = useGridSize();
   const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
   const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
-  // Resolve the lens caption from loaded StageData so the pill's polarity +
-  // free-will read reflect the stage under the glass, live as it drags.
+  // Resolve the lens caption from loaded StageData so the pill's title +
+  // subtitle reflect the stage under the glass, live as it drags.
   const captionForStage = useCallback(
     (stageNumber: number): LensCaption => lensCaption(lookup[stageNumber]),
     [lookup],

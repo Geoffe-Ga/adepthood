@@ -128,9 +128,9 @@ describe('MapScreen header drawer', () => {
 
     // Closing unmounts the drawer body (the Modal renders null when hidden).
     expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
-    // The lens caption reflects the newly focused stage (stage 3's free-will read).
-    const freeWill = tree.root.findByProps({ testID: 'magnifier-freewill' });
-    expect(freeWill.props.children).toBe('Free will at stage 3.');
+    // The lens caption reflects the newly focused stage (stage 3's subtitle).
+    const subtitle = tree.root.findByProps({ testID: 'magnifier-subtitle' });
+    expect(subtitle.props.children).toBe('Subtitle 3');
   });
 
   it('tapping a locked drawer row still closes the drawer and refocuses the lens', () => {
@@ -144,9 +144,9 @@ describe('MapScreen header drawer', () => {
 
     // Closing unmounts the drawer body (the Modal renders null when hidden).
     expect(() => tree.root.findByProps({ testID: 'map-drawer' })).toThrow();
-    // The lens caption reflects the newly focused stage (stage 8's free-will read).
-    const freeWill = tree.root.findByProps({ testID: 'magnifier-freewill' });
-    expect(freeWill.props.children).toBe('Free will at stage 8.');
+    // The lens caption reflects the newly focused stage (stage 8's subtitle).
+    const subtitle = tree.root.findByProps({ testID: 'magnifier-subtitle' });
+    expect(subtitle.props.children).toBe('Subtitle 8');
   });
 
   it('opens the stage-detail modal for the tapped stage, and closes the drawer', () => {

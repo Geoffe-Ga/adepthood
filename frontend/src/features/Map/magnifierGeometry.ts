@@ -185,29 +185,27 @@ export const glideDurationMs = (distancePx: number): number =>
   clamp(distancePx * GLIDE_MS_PER_PX, GLIDE_MIN_MS, GLIDE_MAX_MS);
 
 /**
- * The two stage-ontology facts the lens surfaces under the glass — the only
- * pieces of a stage's ontology that appear nowhere else on the Map screen, so
- * the pill adds information rather than repeating the columns beneath it.
+ * The lens caption mirrors the stage-detail modal header's two lines — title
+ * over subtitle — sourced from backend ``StageData`` (never hardcoded) so
+ * ontology corrections flow through automatically; missing data resolves to
+ * empty strings rather than throwing.
  */
 export interface LensCaption {
-  /** The stage's Divine Gender Polarity, eyebrow-style (e.g. "Divine Feminine"). */
-  polarity: string;
-  /** The stage's one-sentence free-will read, clamped within the pill. */
-  freeWill: string;
+  /** The stage's name (e.g. "Survival"). */
+  title: string;
+  /** The stage's subtitle beneath it (e.g. "Active Yes-And-Ness"). */
+  subtitle: string;
 }
 
 /**
- * Resolve the lens caption from a stage's backend data: its Divine Gender
- * Polarity over its free-will description. Both are sourced from ``StageData``
- * (never hardcoded) so ontology corrections flow through automatically. Missing
- * data — a cold start, a fetch error, or an out-of-range hover — resolves to
- * empty strings rather than throwing, so a transient gap can never take the Map
- * down.
+ * Resolve the lens caption from a stage's backend data: its title over its
+ * subtitle. Both are sourced from ``StageData`` (never hardcoded) so ontology
+ * corrections flow through automatically. Missing data — a cold start, a fetch
+ * error, or an out-of-range hover — resolves to empty strings rather than
+ * throwing, so a transient gap can never take the Map down.
  */
 export const lensCaption = (stage: StageData | undefined): LensCaption =>
-  stage
-    ? { polarity: stage.divineGenderPolarity, freeWill: stage.freeWillDescription }
-    : { polarity: '', freeWill: '' };
+  stage ? { title: stage.title, subtitle: stage.subtitle } : { title: '', subtitle: '' };
 
 /**
  * Screen-reader identity for a stage: its Aspect word (or the UNITY / EMPTINESS

@@ -76,8 +76,8 @@ export interface MagnifierLensProps {
   /** The user's live stage — earns the YOU ARE HERE chip when under glass. */
   currentStage: number | null;
   /**
-   * Resolve the caption (polarity + free-will read) for any stage under the
-   * glass. Threaded from ``MapScreen`` so the two facts come from backend
+   * Resolve the caption (the stage's title + subtitle) for any stage under
+   * the glass. Threaded from ``MapScreen`` so the two lines come from backend
    * ``StageData``; missing data resolves to empty strings.
    */
   captionForStage: (_stageNumber: number) => LensCaption;
@@ -422,10 +422,9 @@ const LensGlass = ({
 };
 
 /**
- * Chip + caption block for the stage currently under the glass. The pill shows
- * only the two facts absent everywhere else on the Map: the stage's Divine
- * Gender Polarity (eyebrow-style) over its free-will description (clamped to two
- * lines). Everything the surrounding columns already say is left off.
+ * Chip + caption block for the stage currently under the glass. The pill
+ * mirrors the stage-detail modal header — the stage's title (headline-weight)
+ * over its subtitle — so the glass reads like a preview of the modal.
  */
 const LensCaptionBlock = ({
   caption,
@@ -440,19 +439,19 @@ const LensCaptionBlock = ({
         <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
       </View>
     ) : null}
-    <Text style={styles.magnifierEyebrow} testID="magnifier-polarity" numberOfLines={1}>
-      {caption.polarity}
+    <Text style={styles.magnifierHeadline} testID="magnifier-title" numberOfLines={1}>
+      {caption.title}
     </Text>
-    <Text style={styles.magnifierDetail} testID="magnifier-freewill" numberOfLines={2}>
-      {caption.freeWill}
+    <Text style={styles.magnifierDetail} testID="magnifier-subtitle" numberOfLines={1}>
+      {caption.subtitle}
     </Text>
   </View>
 );
 
 /**
  * Accessibility read for the lens: it identifies the stage (detail the visible
- * pill now sheds but a screen-reader user can't cross-reference) and speaks the
- * two new facts, then names what the lens can do.
+ * pill sheds but a screen-reader user can't cross-reference) and speaks the
+ * title + subtitle, then names what the lens can do.
  */
 const lensAccessibilityLabel = (
   stageNumber: number,
@@ -462,7 +461,7 @@ const lensAccessibilityLabel = (
   const prefix = isCurrent ? 'You are here. ' : '';
   // Skip empty facts (the pre-load / missing-data window) so the spoken label
   // never degrades to stray doubled punctuation.
-  const facts = [caption.polarity, caption.freeWill].filter(Boolean).join('. ');
+  const facts = [caption.title, caption.subtitle].filter(Boolean).join('. ');
   const factsPhrase = facts ? `${facts}. ` : '';
   return (
     `${prefix}Magnifier over ${lensStageIdentity(stageNumber)}. ${factsPhrase}` +

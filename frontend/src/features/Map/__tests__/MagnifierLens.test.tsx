@@ -9,13 +9,12 @@ import type { LensCaption } from '../magnifierGeometry';
 import MagnifierLens from '../MagnifierLens';
 import { stageWavePoint } from '../waveGeometry';
 
-// A deterministic per-stage caption stand-in for the store-fed lookup: even
-// stages read Divine Feminine, odd stages Divine Masculine, and every stage
-// carries a distinct free-will sentence so a test can prove the lens re-captions
-// to the stage under the glass.
+// A deterministic per-stage caption stand-in for the store-fed lookup: each
+// stage carries a distinct title+subtitle so a test can prove the lens
+// re-captions to the stage under the glass.
 const captionForStage = (stageNumber: number): LensCaption => ({
-  polarity: stageNumber % 2 === 0 ? 'Divine Feminine' : 'Divine Masculine',
-  freeWill: `Free-will read for stage ${stageNumber}.`,
+  title: `Title ${stageNumber}`,
+  subtitle: `Subtitle for stage ${stageNumber}.`,
 });
 
 // Mutable reduced-motion knob: default true so lens repositioning is instant
@@ -60,8 +59,8 @@ const renderLens = (options: RenderOptions = {}) => {
 const lensNode = (tree: ReturnType<typeof create>) =>
   tree.root.findByProps({ testID: 'map-magnifier' });
 
-const freeWillText = (tree: ReturnType<typeof create>): string =>
-  tree.root.findByProps({ testID: 'magnifier-freewill' }).props.children as string;
+const subtitleText = (tree: ReturnType<typeof create>): string =>
+  tree.root.findByProps({ testID: 'magnifier-subtitle' }).props.children as string;
 
 const textByTestId = (tree: ReturnType<typeof create>, testID: string) =>
   tree.root.findByProps({ testID });
@@ -138,14 +137,14 @@ describe('MagnifierLens', () => {
     ).toHaveLength(0);
   });
 
-  it('captions the focused stage with only its polarity and free-will read', () => {
+  it('captions the focused stage with its title and subtitle', () => {
     const { tree } = renderLens({ focusedStage: 4 });
-    const polarity = textByTestId(tree, 'magnifier-polarity');
-    expect(polarity.props.children).toBe('Divine Feminine');
-    expect(polarity.props.numberOfLines).toBe(1);
-    const freeWill = textByTestId(tree, 'magnifier-freewill');
-    expect(freeWill.props.children).toBe('Free-will read for stage 4.');
-    expect(freeWill.props.numberOfLines).toBe(2);
+    const title = textByTestId(tree, 'magnifier-title');
+    expect(title.props.children).toBe('Title 4');
+    expect(title.props.numberOfLines).toBe(1);
+    const subtitle = textByTestId(tree, 'magnifier-subtitle');
+    expect(subtitle.props.children).toBe('Subtitle for stage 4.');
+    expect(subtitle.props.numberOfLines).toBe(1);
   });
 
   it('drops the eyebrow, headline, detail, and practice lines from the pill', () => {
@@ -155,6 +154,8 @@ describe('MagnifierLens', () => {
       'magnifier-headline',
       'magnifier-detail',
       'magnifier-practice',
+      'magnifier-polarity',
+      'magnifier-freewill',
     ]) {
       expect(
         tree.root.findAll((n: { props: Record<string, unknown> }) => n.props.testID === testID),
@@ -178,8 +179,8 @@ describe('MagnifierLens', () => {
         />,
       );
     });
-    expect(freeWillText(tree)).toBe('Free-will read for stage 5.');
-    expect(textByTestId(tree, 'magnifier-polarity').props.children).toBe('Divine Masculine');
+    expect(subtitleText(tree)).toBe('Subtitle for stage 5.');
+    expect(textByTestId(tree, 'magnifier-title').props.children).toBe('Title 5');
   });
 
   it('renders a magnified copy of the wave under the glass', () => {
@@ -220,7 +221,7 @@ describe('MagnifierLens', () => {
     expect(style.transform[0].translateX.__getValue()).toBeCloseTo(
       start.x - lensFrame(GRID_WIDTH, GRID_HEIGHT).width / 2,
     );
-    expect(freeWillText(tree)).toBe('Free-will read for stage 2.');
+    expect(subtitleText(tree)).toBe('Subtitle for stage 2.');
   });
 
   it('uses release velocity to coast a fast swipe farther than the finger position', () => {
@@ -256,7 +257,7 @@ describe('MagnifierLens', () => {
       lens.props.onResponderGrant(touch(150, start.y));
       lens.props.onResponderMove(touch(150, start.y - (start.y - stage2Y)));
     });
-    expect(freeWillText(tree)).toBe('Free-will read for stage 2.');
+    expect(subtitleText(tree)).toBe('Subtitle for stage 2.');
   });
 
   it('a drag released back on the focused stage settles without reporting', () => {
@@ -289,8 +290,8 @@ describe('MagnifierLens', () => {
     expect(lens.props.accessibilityLabel).toContain('Agency');
     expect(lens.props.accessibilityLabel).toContain('1 · BEIGE');
     // Both new facts are read aloud.
-    expect(lens.props.accessibilityLabel).toContain('Divine Masculine');
-    expect(lens.props.accessibilityLabel).toContain('Free-will read for stage 1.');
+    expect(lens.props.accessibilityLabel).toContain('Title 1');
+    expect(lens.props.accessibilityLabel).toContain('Subtitle for stage 1.');
     expect(lens.props.accessibilityLabel).toContain('drag to explore');
   });
 
@@ -319,7 +320,7 @@ describe('MagnifierLens', () => {
         );
       });
       // Caption follows immediately; the glide raises the frost wash as it starts.
-      expect(freeWillText(tree)).toBe('Free-will read for stage 8.');
+      expect(subtitleText(tree)).toBe('Subtitle for stage 8.');
       expect(frostRaiseCount(timing)).toBe(1);
     } finally {
       timing.mockRestore();
