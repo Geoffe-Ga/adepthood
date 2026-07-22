@@ -207,27 +207,25 @@ const makeStage = (overrides: Partial<StageData> = {}): StageData => ({
 });
 
 describe('lensCaption', () => {
-  it('surfaces the stage polarity and free-will description from backend data', () => {
+  it('surfaces the stage title and subtitle from backend data', () => {
     const caption = lensCaption(makeStage());
-    expect(caption.polarity).toBe('Divine Feminine');
-    expect(caption.freeWill).toBe(
-      'Behaviour is determined by the relationships one is embedded in.',
-    );
+    expect(caption.title).toBe('Stage 4');
+    expect(caption.subtitle).toBe('Subtitle');
   });
 
-  it('carries a Divine Masculine polarity through unchanged', () => {
-    const caption = lensCaption(makeStage({ divineGenderPolarity: 'Divine Masculine' }));
-    expect(caption.polarity).toBe('Divine Masculine');
+  it('carries a distinct subtitle through unchanged', () => {
+    const caption = lensCaption(makeStage({ subtitle: 'Active Yes-And-Ness' }));
+    expect(caption.subtitle).toBe('Active Yes-And-Ness');
   });
 
   it('resolves missing stage data to empty strings instead of throwing', () => {
-    expect(lensCaption(undefined)).toEqual({ polarity: '', freeWill: '' });
+    expect(lensCaption(undefined)).toEqual({ title: '', subtitle: '' });
   });
 
-  it('surfaces an empty free-will description without falling over', () => {
-    const caption = lensCaption(makeStage({ freeWillDescription: '' }));
-    expect(caption.freeWill).toBe('');
-    expect(caption.polarity).toBe('Divine Feminine');
+  it('surfaces an empty subtitle without falling over', () => {
+    const caption = lensCaption(makeStage({ subtitle: '' }));
+    expect(caption.subtitle).toBe('');
+    expect(caption.title).toBe('Stage 4');
   });
 });
 
