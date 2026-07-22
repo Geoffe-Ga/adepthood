@@ -1,4 +1,4 @@
-import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import * as Notifications from 'expo-notifications';
 
 import * as notifStorage from '../../../storage/notificationStorage';
@@ -152,6 +152,34 @@ describe('registerForPushNotificationsAsync retry behavior', () => {
     expect(token).toBeUndefined();
     expect(mockNotifications.getPermissionsAsync).toHaveBeenCalledTimes(3);
     jest.useRealTimers();
+  });
+});
+
+describe('registerForPushNotificationsAsync abort behavior', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('cancels the retry wait when aborted, making no second attempt', async () => {
+    mockStorage.loadPushToken.mockResolvedValue(null);
+    mockNotifications.getPermissionsAsync.mockRejectedValue(new Error('always fails'));
+
+    const controller = new AbortController();
+    const promise = registerForPushNotificationsAsync(controller.signal);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockNotifications.getPermissionsAsync).toHaveBeenCalledTimes(1);
+
+    controller.abort();
+    await jest.runAllTimersAsync();
+    const token = await promise;
+
+    expect(token).toBeUndefined();
+    expect(mockNotifications.getPermissionsAsync).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -399,6 +427,47 @@ describe('reconcileNotifications', () => {
     mockStorage.loadAllNotificationMappings.mockRejectedValue(new Error('storage error'));
 
     await expect(reconcileNotifications()).resolves.toBeUndefined();
+  });
+});
+
+describe('reconcileNotifications abort short-circuit', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockNotifications.cancelScheduledNotificationAsync.mockResolvedValue(undefined);
+  });
+
+  it('skips orphan cleanup and record rewrites when aborted mid-flight', async () => {
+    mockStorage.loadAllNotificationMappings.mockResolvedValue({ 1: ['a'] });
+    let resolveScheduled: (scheduled: Array<{ identifier: string }>) => void = () => {};
+    mockNotifications.getAllScheduledNotificationsAsync.mockReturnValue(
+      new Promise<Array<{ identifier: string }>>((resolve) => {
+        resolveScheduled = resolve;
+      }),
+    );
+
+    const controller = new AbortController();
+    const promise = reconcileNotifications(controller.signal);
+    controller.abort();
+    resolveScheduled([{ identifier: 'a' }, { identifier: 'orphan-1' }]);
+    await promise;
+
+    expect(mockNotifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
+    expect(mockStorage.saveNotificationIds).not.toHaveBeenCalled();
+    expect(mockStorage.clearNotificationIds).not.toHaveBeenCalled();
+  });
+
+  it('still cancels orphans when the provided signal never aborts', async () => {
+    mockStorage.loadAllNotificationMappings.mockResolvedValue({ 1: ['a'] });
+    mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([
+      { identifier: 'a' },
+      { identifier: 'orphan-1' },
+    ]);
+
+    const controller = new AbortController();
+    await reconcileNotifications(controller.signal);
+
+    expect(mockNotifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('orphan-1');
+    expect(mockNotifications.cancelScheduledNotificationAsync).not.toHaveBeenCalledWith('a');
   });
 });
 
