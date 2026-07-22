@@ -1,0 +1,37 @@
+name: Graph Tests
+
+# Offline tests for the graph tooling under scripts/graph/. These scripts live
+# outside backend/, so the backend-scoped lint/coverage gates don't cover them —
+# this workflow keeps the benchmark-trend ledger and the semantic staleness
+# probe honest.
+
+on:
+  push:
+    paths:
+      - "scripts/graph/**"
+      - ".github/workflows/graph-tests.yml"
+  pull_request:
+    paths:
+      - "scripts/graph/**"
+      - ".github/workflows/graph-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  graph-tests:
+    name: Graph tool shell tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Run graph tool tests
+        run: |
+          bash scripts/graph/test_append_benchmark_trend.sh
+          bash scripts/graph/test_semantic_staleness.sh

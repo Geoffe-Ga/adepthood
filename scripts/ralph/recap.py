@@ -35,6 +35,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import pathlib
 import sys
 import time
 import urllib.error
@@ -81,6 +82,13 @@ RECENT_WINDOW_DAYS = 7
 # (its verdicts), so bound a burst day rather than fan out unbounded.
 DEFAULT_MAX_PRS = 200
 HEADLINE_MODEL = "claude-opus-4-8"
+# Committed JSONL ledger the nightly graph-build workflow appends benchmarks to.
+BENCHMARK_TREND_PATH = "graph/metrics/benchmark-trend.jsonl"
+# Rolling release that carries the knowledge graph and its provenance assets.
+GRAPH_RELEASE_TAG = "knowledge-graph"
+# Provenance asset written only by the weekly semantic pass (never the nightly
+# code build), so its built_at dates the last real semantic extraction.
+SEMANTIC_META_ASSET = "semantic-meta.json"
 
 # Issues carrying any of these labels are not part of Ralph's real backlog, so
 # they are excluded from the open-issue count behind the ETA. Kept in sync with
@@ -270,6 +278,44 @@ def fetch_repo_net_lines(
         if attempt < attempts - 1:  # cold 202 — give the async cache time to warm
             sleep(2.0 * (2**attempt))
     return None
+
+
+def load_benchmark_trend(path: str | pathlib.Path) -> list[dict[str, object]]:
+    """Read the committed benchmark JSONL ledger; a missing file yields [].
+
+    Never raises: an unreadable ledger just means no graph line in the recap.
+    """
+    trend_path = pathlib.Path(path)
+    if not trend_path.exists():
+        return []
+    try:
+        text = trend_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return stats.parse_benchmark_trend(text.splitlines())
+
+
+def fetch_semantic_meta(repo: str, *, token: str) -> dict[str, Any] | None:
+    """Fetch the semantic layer's provenance asset from the rolling graph release.
+
+    Resolves the release by tag, finds the asset by name, and downloads it with
+    the octet-stream Accept header (the asset URL serves bytes, not the asset's
+    API record). Any transport or shape failure degrades to None so the recap
+    simply omits the semantic-freshness clause.
+    """
+    try:
+        release_url = f"{GITHUB_API}/repos/{repo}/releases/tags/{GRAPH_RELEASE_TAG}"
+        release = cast("dict[str, Any]", _request_json(release_url, headers=_gh_headers(token)))
+        asset_url = next(
+            (str(asset["url"]) for asset in release["assets"] if asset.get("name") == SEMANTIC_META_ASSET),
+            None,
+        )
+        if asset_url is None:
+            return None
+        headers = {**_gh_headers(token), "Accept": "application/octet-stream"}
+        return cast("dict[str, Any]", _request_json(asset_url, headers=headers))
+    except (urllib.error.HTTPError, urllib.error.URLError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _excluded_labels() -> set[str]:
@@ -462,6 +508,8 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
     latest_ttm_hours = _open_to_merge_hours(latest)
     latest_tick_hours = (merged_at[0] - merged_at[1]).total_seconds() / 3600.0 if len(merged_at) >= 2 else None
 
+    graph_line = _graph_line(repo, token=token, now=now)
+
     return _render_embed(
         repo=repo,
         latest=latest,
@@ -480,6 +528,7 @@ def build_recap(repo: str, *, token: str, max_prs: int, now: dt.datetime) -> dic
         latest_iterations=latest_iterations,
         latest_ttm_hours=latest_ttm_hours,
         latest_tick_hours=latest_tick_hours,
+        graph_line=graph_line,
         now=now,
     )
 
@@ -526,6 +575,51 @@ def _loc_line(loc_24h: dict[str, int], loc_7d: dict[str, int], repo_net: int | N
     return f"{churn(loc_24h)} (24h) · {churn(loc_7d)} (7d) · {full_repo} (full repo)"
 
 
+def _semantic_freshness_clause(meta: dict[str, Any] | None, *, now: dt.datetime) -> str:
+    """Trailing clause dating the last real semantic pass, or "" without one.
+
+    Only a code+semantic meta with a build timestamp earns the clause; the
+    nightly code-only build must never masquerade as semantic freshness.
+    """
+    if not meta or meta.get("kind") != "code+semantic" or not meta.get("built_at"):
+        return ""
+    return f" · semantic layer {stats.days_since(str(meta['built_at']), now=now)} days fresh"
+
+
+def _graph_recap_line(summary: dict[str, Any], meta: dict[str, Any] | None, *, now: dt.datetime) -> str:
+    """One-line knowledge-graph health summary for the loop section.
+
+    Size and query-reduction come from the benchmark trend ledger; the optional
+    trailing clause dates the last real semantic pass from its provenance meta.
+    """
+    line = (
+        f"Knowledge graph: {summary['nodes']:,} nodes / {summary['edges']:,} edges · "
+        f"avg query reduction {summary['reduction_avg']}×"
+    )
+    delta = summary["reduction_delta"]
+    if delta is not None:
+        arrow = "↑" if delta >= 0 else "↓"
+        line += f" ({arrow}{abs(delta)} vs last week)"
+    return line + _semantic_freshness_clause(meta, now=now)
+
+
+def _graph_line(repo: str, *, token: str, now: dt.datetime) -> str | None:
+    """Assemble the knowledge-graph field value, or None when data is absent.
+
+    Graph observability is strictly best-effort garnish: any failure — missing
+    ledger, release, or asset — must never take down the recap itself.
+    """
+    try:
+        trend = load_benchmark_trend(BENCHMARK_TREND_PATH)
+        summary = stats.benchmark_trend_summary(trend)
+        if not summary:
+            return None
+        meta = fetch_semantic_meta(repo, token=token)
+        return _graph_recap_line(summary, meta, now=now)
+    except Exception:  # any graph-data failure degrades to no field, never a crash
+        return None
+
+
 def _render_embed(
     *,
     repo: str,
@@ -545,6 +639,7 @@ def _render_embed(
     latest_iterations: int | None,
     latest_ttm_hours: float,
     latest_tick_hours: float | None,
+    graph_line: str | None,
     now: dt.datetime,
 ) -> dict[str, Any]:
     """Turn computed stats into a Discord embed payload (one message).
@@ -604,6 +699,9 @@ def _render_embed(
             "inline": True,
         },
     ]
+    # Graph observability is optional: no ledger/meta yet means no field at all.
+    if graph_line is not None:
+        fields.append({"name": "🕸️ Knowledge graph", "value": graph_line, "inline": False})
 
     embed = {
         "title": f"🤖 Ralph Recap — {repo}",

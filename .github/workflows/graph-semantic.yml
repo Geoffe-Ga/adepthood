@@ -203,6 +203,10 @@ jobs:
               handle.write("\n")
           print(f"graph-meta: {meta['nodes']:,} nodes / {meta['edges']:,} edges @ {meta['sha']}")
           PY
+          # Dedicated semantic-provenance asset: the nightly code-only build
+          # rewrites graph-meta.json, so this copy alone dates the last real
+          # semantic pass for the staleness probe and the recap.
+          cp "$OUT_DIR/graph-meta.json" "$OUT_DIR/semantic-meta.json"
 
       - name: Cluster graph (structure only)
         # Recompute communities from graph structure only. `--no-viz` skips the
@@ -275,6 +279,7 @@ jobs:
           assets=(
             "$OUT_DIR/graph.json"
             "$OUT_DIR/graph-meta.json"
+            "$OUT_DIR/semantic-meta.json"
             "$OUT_DIR/semantic-cache.tar.gz"
             "$OUT_DIR/GRAPH_REPORT.md"
             "$OUT_DIR/wiki.tar.gz"

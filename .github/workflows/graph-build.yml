@@ -29,9 +29,11 @@ on:
     - cron: "40 4 * * *"
   workflow_dispatch:
 
-# Only the rolling-release upsert needs write; everything else is read.
+# contents: write for the rolling-release upsert and the benchmark-trend
+# commit; issues: write so the nightly tail can open a staleness issue.
 permissions:
   contents: write
+  issues: write
 
 # Serialize runs so overlapping pushes never race the release asset upload.
 # Never cancel in-progress: a cancelled publish would leave the release stale.
@@ -189,3 +191,136 @@ jobs:
             fi
           fi
           echo "published ${#assets[@]} asset(s) to release $GRAPH_TAG"
+
+      # ---- nightly observability tail (schedule / dispatch only) ------------
+      # One benchmark line per day, a staleness probe of the semantic layer,
+      # and a token-cost summary. Gated off push so incremental main pushes
+      # stay fast and the trend ledger gets exactly one record per day.
+
+      - name: Benchmark and append trend
+        if: github.event_name != 'push'
+        run: |
+          set -uo pipefail
+          # Best-effort: the graph is already published, so a clustering/
+          # benchmark/parse failure (e.g. a future output-format drift) must
+          # warn and move on rather than redden a run whose core job succeeded.
+          # The benchmark needs a clustered node_link graph, so cluster the
+          # LOCAL copy AFTER publish — the workspace is discarded at job end,
+          # and the published raw asset is untouched.
+          if ! graphify cluster-only . --no-viz --no-label; then
+            echo "::warning::cluster-only failed — skipping benchmark trend"
+            exit 0
+          fi
+          if ! graphify benchmark "$OUT_DIR/graph.json" | tee benchmark.txt; then
+            echo "::warning::benchmark failed — skipping benchmark trend"
+            exit 0
+          fi
+          if ! python3 scripts/graph/append_benchmark_trend.py \
+            --benchmark benchmark.txt \
+            --out graph/metrics/benchmark-trend.jsonl; then
+            echo "::warning::could not parse benchmark output — skipping benchmark trend"
+            exit 0
+          fi
+          {
+            echo "### Graph benchmark"
+            echo
+            echo '```'
+            cat benchmark.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit benchmark trend
+        if: github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Stage first: the very first nightly creates the ledger as an
+          # untracked file, which a plain `git diff --quiet` would not see.
+          git add graph/metrics/benchmark-trend.jsonl
+          if git diff --cached --quiet -- graph/metrics/benchmark-trend.jsonl; then
+            echo "benchmark trend unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(graph): record benchmark trend"
+          # The token rides a per-command remote URL; checkout keeps
+          # persist-credentials: false, so no credential outlives this step.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! (git pull --rebase "$remote" main && git push "$remote" HEAD:main); then
+            echo "::warning::could not push benchmark trend"
+            exit 0
+          fi
+
+      - name: Check semantic layer staleness
+        if: github.event_name != 'push'
+        id: staleness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Cron-safe surface of graphify's own needs_update flag (log only).
+          graphify check-update . || true
+          if gh release download "$GRAPH_TAG" --pattern semantic-meta.json --dir "$OUT_DIR" --clobber; then
+            python3 scripts/graph/semantic_staleness.py --meta "$OUT_DIR/semantic-meta.json"
+          else
+            echo "no semantic-meta.json yet"
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summarize graph token cost
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          python3 - "$OUT_DIR/semantic-meta.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          # Honest label: these are the LAST semantic pass's token totals, not
+          # this run's spend (the nightly code build makes no LLM calls).
+          lines = ["### Graph LLM cost", ""]
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  meta = json.load(handle)
+              tokens_input = int(meta["tokens_input"])
+              tokens_output = int(meta["tokens_output"])
+          except (OSError, ValueError, KeyError):
+              lines.append("no semantic pass yet — no token totals to report.")
+          else:
+              lines.append(
+                  f"last semantic pass: {tokens_input:,} input / {tokens_output:,} output tokens."
+              )
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Open semantic staleness issue
+        if: github.event_name != 'push' && steps.staleness.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGE_DAYS: ${{ steps.staleness.outputs.age_days }}
+        run: |
+          set -euo pipefail
+          # Idempotent label bootstrap; create fails harmlessly if it exists.
+          gh label create graph-staleness \
+            --color BFDADC \
+            --description "Knowledge graph semantic layer is overdue for a rebuild" \
+            2>/dev/null || true
+          # Dedup by open-issue search so nightly re-runs never double-file.
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label graph-staleness --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            echo "staleness issue #$existing already open — skipping"
+            exit 0
+          fi
+          # AGE_DAYS arrives via env, never inlined ${{ }} into the run block.
+          body="$(printf 'The knowledge graph semantic layer is %s days old — past the 14-day staleness threshold.\n\nRun the "Graph semantic" workflow (workflow_dispatch on .github/workflows/graph-semantic.yml) to rebuild the semantic layer, then close this issue.\n' "$AGE_DAYS")"
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Knowledge graph semantic layer is stale" \
+            --label graph-staleness \
+            --body "$body"
