@@ -4,8 +4,10 @@ Whenever a PR merges, this posts a clean Discord embed in two blocks —
 `————THIS PR————` (the just-merged PR: its unlock headline, link, footprint,
 review iterations, review time, and tick length) and `————THE LOOP————` (the
 rolling/all-time figures: busiest day, PRs merged, lines of code, merge rate,
-review iterations, review time, tick length, and backlog remaining). Within each
-block, multi-window stats run smallest window first (24h → 7d → all-time).
+review iterations, review time, tick length, and backlog remaining), plus an
+optional trailing knowledge-graph health line appended to `THE LOOP` block
+whenever graph data is available. Within each block, multi-window stats run
+smallest window first (24h → 7d → all-time).
 
 A "Ralph tick loop" is the autonomous loop driven by `/loop /ralph-tick` (see
 `.claude/commands/ralph-tick.md`): each tick opens a PR, iterates against the
@@ -117,6 +119,19 @@ fetched via the search API (`is:pr is:merged merged:>=<date>`), capped at
   When the rate is zero the ETA reads "unknown (stalled)"; an empty backlog
   reads "backlog clear".
 - **Busiest day** (7d) — the UTC calendar day in the window with the most merges.
+- **Knowledge graph** (optional) — a health line for the `scripts/graph/`
+  code knowledge graph, appended after the loop fields only when graph data
+  exists. Node/edge counts and the average query-reduction factor (with a
+  `↑`/`↓` delta versus the most recent ledger record dated at least 7 days
+  earlier) come from the committed `graph/metrics/benchmark-trend.jsonl`
+  ledger that `graph-build.yml`'s nightly tail appends to (see
+  [`scripts/graph/README.md`](../graph/README.md)). A trailing
+  "semantic layer *N* days fresh" clause is fetched from the
+  `semantic-meta.json` release asset and omitted whenever that asset is
+  missing or still `code-only` — it is never dated from `graph-meta.json`,
+  which the nightly code-only rebuild can clobber back to `code-only`.
+  The whole field is best-effort: any failure (no ledger yet, no release,
+  a bad fetch) silently omits it rather than breaking the recap.
 
 The embed groups fields into two labelled blocks so a single merge's numbers are
 never confused with the dataset-wide ones. The `————THIS PR————` block holds:

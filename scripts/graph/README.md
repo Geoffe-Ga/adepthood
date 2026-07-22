@@ -94,10 +94,21 @@ agent-crawlable wiki from the result:
    bridges. Packed as `wiki.tar.gz`.
 
 Assets republished: `graph.json`, `graph-meta.json` (now `kind:
-code+semantic`, with `tokens_input`/`tokens_output`), `semantic-cache.tar.gz`,
+code+semantic`, with `tokens_input`/`tokens_output`), `semantic-meta.json` (a
+copy of `graph-meta.json` taken the instant it is written), `semantic-cache.tar.gz`,
 `GRAPH_REPORT.md` (now always regenerated with the final community names by the
 label step and verified placeholder-free by the guard, no longer conditional on
 presence), and `wiki.tar.gz` (new — the community wiki).
+
+`graph-meta.json` is one of the three last-writer-wins assets (see "Three
+writers, one release" below) — `graph-build`'s nightly forced rebuild
+republishes it too and resets `kind` back to `code-only`, so on most nights it
+no longer dates the last real semantic pass. `semantic-meta.json` exists to
+dodge that: only this workflow ever writes it, `graph-build` never touches it,
+so its `built_at` reliably dates the last real semantic extraction. It exists
+purely to give the nightly staleness probe and the Discord recap knowledge-graph
+line (both described below) a provenance timestamp that survives the code-only
+rebuild's clobber.
 
 ```bash
 gh release download knowledge-graph --pattern wiki.tar.gz --dir graphify-out
@@ -111,6 +122,61 @@ having two writers on one release, not something this workflow resolves. That
 nightly rebuild does not re-cluster, re-label, or touch the wiki — clustering,
 labelling, and `wiki.tar.gz` are weekly-only, produced solely by this
 workflow.
+
+## Benchmark trend, staleness watch, and token cost (nightly)
+
+`graph-build.yml`'s nightly / `workflow_dispatch` runs (never plain pushes to
+`main`) end with an observability tail, appended right after the
+`graph.json` / `graph-meta.json` publish step:
+
+1. **Benchmark** — the just-published `graph.json` is clustered in a
+   throwaway *local* copy (`graphify cluster-only . --no-viz --no-label`,
+   needed because `graphify benchmark` requires a clustered node_link graph);
+   that workspace is discarded at job end, so the published raw asset is
+   never touched. `graphify benchmark graphify-out/graph.json` then prints
+   its report as plain text — node/edge counts and the average
+   tokens-per-query reduction factor — there is no JSON output mode.
+2. **Trend** — `scripts/graph/append_benchmark_trend.py` parses that text
+   (the `Graph: N nodes, N edges` and `Reduction: N.Nx` lines) and appends
+   one `{date, reduction_avg, nodes, edges}` JSON line to
+   `graph/metrics/benchmark-trend.jsonl`. Unlike `graphify-out/`, this
+   ledger is **committed** — a few dozen bytes a day, append-only (earlier
+   lines are never rewritten), and idempotent per calendar day (re-running
+   on the same UTC date is a no-op, judged by the last line's `date`). The
+   workflow commits it and pushes straight to `main` over a token-scoped
+   remote URL; the push is best-effort — failure only logs a `::warning`
+   and the nightly run stays green, since a missed trend day isn't worth
+   failing the graph publish over.
+3. **Staleness** — `scripts/graph/semantic_staleness.py` downloads
+   `semantic-meta.json` (see above) and reports whether the semantic
+   layer's `built_at` is older than `STALE_AFTER_DAYS` (14) — exactly 14
+   days old is not yet stale, only strictly older is. The script is
+   cron-safe (always exits 0) and reports through `$GITHUB_OUTPUT`, not its
+   exit code. `graphify check-update .` also runs alongside it — its own,
+   separately cron-safe, always-exit-0 check — purely to log graphify's own
+   opinion; it doesn't feed the staleness gate. When the layer is stale,
+   the workflow idempotently bootstraps a `graph-staleness` label, searches
+   for an already-open issue carrying it, and — only if none exists — opens
+   one (title "Knowledge graph semantic layer is stale", body naming the
+   age and pointing at `workflow_dispatch` on `graph-semantic.yml`), so
+   repeated nightly runs never file duplicates.
+4. **Token cost** — the same tail prints the *last* semantic pass's
+   `tokens_input`/`tokens_output` (read from `semantic-meta.json` — not this
+   run's own spend, since the nightly code build makes no LLM calls) to the
+   job summary, alongside the raw benchmark text.
+
+None of this runs on a plain `push` to `main`: gating it to
+`schedule`/`workflow_dispatch` keeps ordinary code pushes fast and guarantees
+the trend ledger gets at most one record per UTC day.
+
+`scripts/graph/test_append_benchmark_trend.sh` and
+`scripts/graph/test_semantic_staleness.sh` are offline shell tests for the
+two scripts above, run by `.github/workflows/graph-tests.yml` on any change
+under `scripts/graph/**` (this tooling lives outside `backend/`, so the
+backend-scoped lint/coverage gates don't otherwise cover it).
+
+The ledger also feeds the Discord Ralph recap's knowledge-graph line — see
+[`scripts/ralph/RECAP.md`](../ralph/RECAP.md).
 
 ## Federation (nightly)
 
@@ -163,10 +229,12 @@ upgrades them to `code+semantic`) **and** `GRAPH_REPORT.md` (build emits a
 code-only report on its nightly full build; semantic's label step rewrites it
 as a clustered, LLM-labelled one, guarded placeholder-free before publish) —
 those three assets are last-writer-wins between the two, the same
-eventual-consistency property noted above. `wiki.tar.gz`
-is exclusive to `graph-semantic`, and `pan-graph.json` / `pan-meta.json`
-are exclusive to `graph-federate`, so neither of those can be clobbered by
-another writer.
+eventual-consistency property noted above. `wiki.tar.gz` and
+`semantic-meta.json` are exclusive to `graph-semantic`, and `pan-graph.json` /
+`pan-meta.json` are exclusive to `graph-federate`, so none of those three can
+be clobbered by another writer — `semantic-meta.json` is precisely what lets
+the nightly staleness probe and the recap see past the `graph-meta.json`
+clobbering described above.
 
 **Known interaction**: like the semantic layer, the pan-graph reflects
 whatever each satellite last published — if a satellite hasn't rebuilt its
