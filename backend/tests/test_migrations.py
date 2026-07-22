@@ -2854,3 +2854,118 @@ def test_creek_vault_write_migration_adds_and_drops_columns(
     command.upgrade(cfg, _CREEK_VAULT_WRITE_REVISION)
     cols_again = _columns_of(db_url, "journalentry")
     assert {"vault_ref", "vault_tags"}.issubset(cols_again)
+
+
+# -- negative-laps 01 habit.is_carryover column round-trip ------------------
+
+# Revision anchors for the ``habit.is_carryover`` migration round-trip. The
+# base is the current single head; the implementer sets the second anchor to
+# the real revision ID of the migration they author.
+_HABIT_CARRYOVER_BASE_REVISION = "d9e0f1a2b3c4"  # pragma: allowlist secret
+_HABIT_CARRYOVER_REVISION = "c2d3e4f5a6b7"  # pragma: allowlist secret
+
+
+def _bootstrap_habit_table(sync_url: str) -> None:
+    """Pre-create a minimal ``habit`` table for the round-trip fixture.
+
+    Mirrors the schema in place just before the ``is_carryover`` migration,
+    without pulling in every preceding migration. One legacy row is seeded so
+    the additive column's backfill-to-default can be observed.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE habit ("
+                " id INTEGER PRIMARY KEY,"
+                " name VARCHAR(255) NOT NULL,"
+                " icon VARCHAR(100) NOT NULL,"
+                " start_date DATE NOT NULL,"
+                " energy_cost INTEGER NOT NULL,"
+                " energy_return INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " milestone_notifications BOOLEAN NOT NULL DEFAULT 0,"
+                " sort_order INTEGER,"
+                " stage VARCHAR(100) NOT NULL DEFAULT '',"
+                " streak INTEGER NOT NULL DEFAULT 0,"
+                " revealed BOOLEAN NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO habit"
+                " (id, name, icon, start_date, energy_cost, energy_return, user_id)"
+                " VALUES (1, 'Legacy', '*', '2024-01-01', 1, 2, 1)"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_habit_carryover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the ``is_carryover`` migration."""
+    db_path = tmp_path / "habit_carryover_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_habit_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HABIT_CARRYOVER_BASE_REVISION)
+    return cfg
+
+
+def _habit_row(db_url: str, habit_id: int) -> dict[str, Any]:
+    """Fetch a single ``habit`` row including the ``is_carryover`` column."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT id, is_carryover FROM habit WHERE id = :id"),
+                    {"id": habit_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_habit_carryover_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_habit_carryover: Config,
+) -> None:
+    """Round-trip ``is_carryover``: upgrade adds the column defaulting False; downgrade drops it.
+
+    Phase 1: upgrade adds ``is_carryover`` NOT NULL and the pre-existing legacy
+    row reads back ``False`` (the program-habit default).
+    Phase 2: downgrade removes the column.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_habit_carryover
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the column; the legacy row defaults to a program habit.
+    command.upgrade(cfg, _HABIT_CARRYOVER_REVISION)
+    assert "is_carryover" in _columns_of(db_url, "habit")
+    assert bool(_habit_row(db_url, habit_id=1)["is_carryover"]) is False
+
+    # Phase 2: downgrade removes the column.
+    command.downgrade(cfg, _HABIT_CARRYOVER_BASE_REVISION)
+    assert "is_carryover" not in _columns_of(db_url, "habit")
+
+    # Phase 3: re-upgrade reproduces the additive column (idempotent cycle).
+    command.upgrade(cfg, _HABIT_CARRYOVER_REVISION)
+    assert "is_carryover" in _columns_of(db_url, "habit")
+    assert bool(_habit_row(db_url, habit_id=1)["is_carryover"]) is False
