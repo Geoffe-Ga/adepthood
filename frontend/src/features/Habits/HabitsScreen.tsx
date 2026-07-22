@@ -26,7 +26,10 @@ import HabitTile, { useTileLayout } from './HabitTile';
 import {
   generateStatsForHabit,
   toLocalHabitStats,
+  buildPagedHabits,
   calculateMissedDays,
+  countCarryover,
+  formatStageRange,
   isHabitUnlocked,
   stageAtIndex,
   stageRangeForPage,
@@ -293,6 +296,11 @@ interface PaginationBarProps {
   scale: number;
   stageStart?: number;
   stageEnd?: number;
+  /** Signed-page bounds flags; legacy callers omit them and fall back to 0-based math. */
+  canPrev?: boolean;
+  canNext?: boolean;
+  /** 1-based position within the signed page span (page - minPage + 1). */
+  pagePosition?: number;
 }
 
 export const PaginationBar = ({
@@ -303,9 +311,10 @@ export const PaginationBar = ({
   scale,
   stageStart,
   stageEnd,
+  canPrev = page > 0,
+  canNext = page < pageCount - 1,
+  pagePosition = page + 1,
 }: PaginationBarProps) => {
-  const canPrev = page > 0;
-  const canNext = page < pageCount - 1;
   const textSize = { fontSize: spacing(1.75, scale) };
   // The visible label names the stage range this page covers; the page position
   // (redundant for sighted users who read the range) is folded into this same
@@ -313,7 +322,8 @@ export const PaginationBar = ({
   // label lives on the Text — an accessibility element — rather than the
   // container, whose own accessibleLabel would be swallowed by its focusable
   // children.
-  const positionLabel = `Stages ${stageStart} to ${stageEnd}, page ${page + 1} of ${pageCount}`;
+  const rangeText = formatStageRange(stageStart!, stageEnd!);
+  const positionLabel = `Stages ${rangeText}, page ${pagePosition} of ${pageCount}`;
   return (
     <View style={styles.paginationBar} testID="habits-pagination">
       <TouchableOpacity
@@ -332,7 +342,7 @@ export const PaginationBar = ({
         testID="pagination-label"
         accessibilityLabel={positionLabel}
       >
-        Stages {stageStart}–{stageEnd}
+        Stages {rangeText}
       </Text>
       <TouchableOpacity
         testID="pagination-next"
@@ -423,7 +433,8 @@ const useHabitTileRenderer = (
   actions: ReturnType<typeof useHabits>['actions'],
   setSelectedHabit: (_h: Habit) => void,
   tz: string,
-  pageOffset = 0,
+  flatIndices: number[],
+  colorIndices: number[],
 ) => {
   const { handleOpenGoals, handleLongPress, handleIconPress } = useTileHandlers(
     mode,
@@ -437,12 +448,14 @@ const useHabitTileRenderer = (
       // Unlock is governed solely by the persisted ``revealed`` flag — locked by
       // default, opened only when the user chooses. Stage/calendar never gate it.
       const isLocked = !isHabitUnlocked(item);
-      const globalIndex = pageOffset + index;
-      // Anchor the tile color to its global position, not the page-relative one:
-      // the mod-wrap inside stageAtIndex (over STAGE_ORDER's length) is what
-      // restarts the Beige → Clear Light gradient on each lap, so a full first
-      // lap and the second lap paint identically without page math here.
-      const stageColor = STAGE_COLORS[stageAtIndex(globalIndex)]!;
+      // globalIndex is the habit's true flat-list position — it drives icon
+      // editing into that array. colorIndex is the signed display slot
+      // (negative on carryover laps): stageAtIndex's Euclidean mod-wrap restarts
+      // the Beige → Clear Light gradient on each lap and mirrors it backwards
+      // on negative laps, so every lap paints consistently.
+      const globalIndex = flatIndices[index] ?? index;
+      const colorIndex = colorIndices[index] ?? index;
+      const stageColor = STAGE_COLORS[stageAtIndex(colorIndex)]!;
       return (
         <HabitTile
           habit={item}
@@ -458,7 +471,16 @@ const useHabitTileRenderer = (
         />
       );
     },
-    [pageOffset, tz, handleOpenGoals, handleLongPress, handleIconPress, unlockHabit, logUnit],
+    [
+      flatIndices,
+      colorIndices,
+      tz,
+      handleOpenGoals,
+      handleLongPress,
+      handleIconPress,
+      unlockHabit,
+      logUnit,
+    ],
   );
   return renderHabitTile;
 };
@@ -585,6 +607,9 @@ const HabitsBody = ({
         scale={pagination.scale}
         stageStart={pagination.stageStart}
         stageEnd={pagination.stageEnd}
+        canPrev={pagination.canPrev}
+        canNext={pagination.canNext}
+        pagePosition={pagination.pagePosition}
       />
     )}
   </>
@@ -626,24 +651,31 @@ export const HabitsContent = ({
   );
 };
 
+/**
+ * Range-aware empty-state bounds for the current page. Page 0 keeps the plain
+ * first-run guidance (undefined bounds); trailing (positive) and leading
+ * (negative) invite pages name the stage span they cover.
+ */
+const lapInviteRange = (page: number): { start?: number; end?: number } => {
+  if (page === 0) return { start: undefined, end: undefined };
+  return stageRangeForPage(page, HABITS_PER_PAGE);
+};
+
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
   const modals = useModalCoordinator();
   const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
   const { userTimezone } = useAuth();
-  const pagination = usePagination(habitsReturn.habits.length, HABITS_PER_PAGE);
-  // Lap-aware empty-state copy applies only beyond the first page: page 0 keeps
-  // the plain first-run guidance, while a trailing invite page names its stages.
-  const isLapInvitePage = pagination.page > 0;
-  const lapRange = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
-  const emptyStageStart = isLapInvitePage ? lapRange.start : undefined;
-  const emptyStageEnd = isLapInvitePage ? lapRange.end : undefined;
-  const pageOffset = pagination.page * HABITS_PER_PAGE;
-  const pagedHabits = useMemo(
-    () => habitsReturn.habits.slice(pageOffset, pageOffset + HABITS_PER_PAGE),
-    [habitsReturn.habits, pageOffset],
+  const carryoverCount = countCarryover(habitsReturn.habits);
+  const programCount = habitsReturn.habits.length - carryoverCount;
+  const pagination = usePagination(programCount, HABITS_PER_PAGE, carryoverCount);
+  const { start: emptyStageStart, end: emptyStageEnd } = lapInviteRange(pagination.page);
+  const paged = useMemo(
+    () => buildPagedHabits(habitsReturn.habits, pagination.page, HABITS_PER_PAGE),
+    [habitsReturn.habits, pagination.page],
   );
+  const pagedHabits = paged.habits;
   const handleSelectMode = useSelectMode(habitsReturn.setMode, modals.closeAll);
   const renderHabitTile = useHabitTileRenderer(
     habitsReturn.mode,
@@ -651,7 +683,8 @@ const useHabitsScreenState = () => {
     habitsReturn.actions,
     habitsReturn.setSelectedHabit,
     userTimezone,
-    pageOffset,
+    paged.flatIndices,
+    paged.colorIndices,
   );
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
   /**
@@ -682,6 +715,10 @@ const useHabitsScreenState = () => {
   };
 };
 
+/** 1-based position of the current page within the signed span, for screen readers. */
+const pagePositionOf = (pagination: ReturnType<typeof usePagination>): number =>
+  pagination.page - pagination.minPage + 1;
+
 const buildPaginationProps = (
   pagination: ReturnType<typeof usePagination>,
   scale: number,
@@ -696,6 +733,9 @@ const buildPaginationProps = (
     scale,
     stageStart: start,
     stageEnd: end,
+    canPrev: pagination.canPrev,
+    canNext: pagination.canNext,
+    pagePosition: pagePositionOf(pagination),
   };
 };
 
@@ -758,6 +798,9 @@ const HabitsScreenDrawer = ({
         pageCount={pagination.pageCount}
         onPrev={pagination.goPrev}
         onNext={pagination.goNext}
+        canPrev={pagination.canPrev}
+        canNext={pagination.canNext}
+        pagePosition={pagePositionOf(pagination)}
         stageStart={drawerRange.start}
         stageEnd={drawerRange.end}
         barVisible={barVisible}

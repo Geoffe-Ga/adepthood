@@ -24,6 +24,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { formatStageRange } from '../HabitUtils';
+
 import ConfirmDialog from './ConfirmDialog';
 
 import { DrawerItem } from '@/components/drawer';
@@ -44,6 +46,11 @@ export interface HabitsDrawerProps {
   pageCount: number;
   onPrev: () => void;
   onNext: () => void;
+  /** Signed-page bounds flags; legacy callers omit them and fall back to 0-based math. */
+  canPrev?: boolean;
+  canNext?: boolean;
+  /** 1-based position within the signed page span (page - minPage + 1). */
+  pagePosition?: number;
   stageStart: number;
   stageEnd: number;
   barVisible: boolean;
@@ -169,6 +176,9 @@ interface PaginationSectionProps {
   pageCount: number;
   onPrev: () => void;
   onNext: () => void;
+  canPrev?: boolean;
+  canNext?: boolean;
+  pagePosition?: number;
   stageStart: number;
   stageEnd: number;
 }
@@ -176,19 +186,22 @@ interface PaginationSectionProps {
 /**
  * The "Show Habits" pager row: static label on the left, then a right-aligned
  * Prev/range/Next cluster whose range label also announces the page position.
+ * Signed callers pass explicit bounds flags and a 1-based page position;
+ * legacy callers omit them and fall back to the 0-based math.
  */
 function PaginationSection({
   page,
   pageCount,
   onPrev,
   onNext,
+  canPrev = page > 0,
+  canNext = page < pageCount - 1,
+  pagePosition = page + 1,
   stageStart,
   stageEnd,
 }: PaginationSectionProps): React.JSX.Element {
   const { width } = useWindowDimensions();
-  const canPrev = page > 0;
-  const canNext = page < pageCount - 1;
-  const positionLabel = `Show habits ${stageStart} to ${stageEnd}, page ${page + 1} of ${pageCount}`;
+  const positionLabel = `Show habits ${stageStart} to ${stageEnd}, page ${pagePosition} of ${pageCount}`;
   return (
     <View style={styles.settingRow} testID="drawer-pagination">
       <Text style={[type(width).body, styles.rowLabel]}>Show Habits</Text>
@@ -209,7 +222,7 @@ function PaginationSection({
           accessibilityLabel={positionLabel}
           testID="drawer-pagination-label"
         >
-          {stageStart}–{stageEnd}
+          {formatStageRange(stageStart, stageEnd)}
         </Text>
         <TouchableOpacity
           onPress={onNext}
@@ -248,6 +261,9 @@ export default function HabitsDrawer(props: HabitsDrawerProps): React.JSX.Elemen
         pageCount={props.pageCount}
         onPrev={props.onPrev}
         onNext={props.onNext}
+        canPrev={props.canPrev}
+        canNext={props.canNext}
+        pagePosition={props.pagePosition}
         stageStart={props.stageStart}
         stageEnd={props.stageEnd}
       />

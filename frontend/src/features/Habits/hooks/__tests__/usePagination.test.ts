@@ -150,3 +150,62 @@ describe('usePagination trailing invite page', () => {
     expect(result.current.page).toBe(1);
   });
 });
+
+// Signed pagination: carryover habits live on negative laps before the program
+// lap. A deeper negative lap opens only when the shallower lap is exactly full
+// (leading-invite mirror of the trailing invite page).
+describe('usePagination signed carryover laps', () => {
+  it('keeps minPage at 0 and the bounds flags when carryoverCount is 0', () => {
+    const { result } = renderHook(() => usePagination(23, PAGE_SIZE, 0));
+    expect(result.current.pageCount).toBe(3);
+    expect(result.current.minPage).toBe(0);
+    expect(result.current.maxPage).toBe(2);
+    expect(result.current.canPrev).toBe(false);
+    expect(result.current.canNext).toBe(true);
+  });
+
+  it('exposes a leading carryover lap alongside the trailing invite page', () => {
+    const { result } = renderHook(() => usePagination(10, PAGE_SIZE, 3));
+    expect(result.current.page).toBe(0);
+    expect(result.current.maxPage).toBe(1);
+    expect(result.current.minPage).toBe(-1);
+    expect(result.current.pageCount).toBe(3);
+    expect(result.current.canPrev).toBe(true);
+    expect(result.current.canNext).toBe(true);
+  });
+
+  it('opens a deeper leading-invite lap only when the shallower lap holds exactly a full page', () => {
+    expect(renderHook(() => usePagination(0, PAGE_SIZE, 10)).result.current.minPage).toBe(-2);
+    expect(renderHook(() => usePagination(0, PAGE_SIZE, 11)).result.current.minPage).toBe(-2);
+    expect(renderHook(() => usePagination(0, PAGE_SIZE, 3)).result.current.minPage).toBe(-1);
+    expect(renderHook(() => usePagination(0, PAGE_SIZE, 0)).result.current.minPage).toBe(0);
+  });
+
+  it('goPrev steps progressively down to minPage and clamps there', () => {
+    const { result } = renderHook(() => usePagination(10, PAGE_SIZE, 10));
+    expect(result.current.minPage).toBe(-2);
+    expect(result.current.page).toBe(0);
+    act(() => result.current.goPrev());
+    expect(result.current.page).toBe(-1);
+    expect(result.current.canPrev).toBe(true);
+    act(() => result.current.goPrev());
+    expect(result.current.page).toBe(-2);
+    expect(result.current.canPrev).toBe(false);
+    act(() => result.current.goPrev());
+    expect(result.current.page).toBe(-2);
+  });
+
+  it('goNext clamps at maxPage with canNext false', () => {
+    const { result } = renderHook(() => usePagination(10, PAGE_SIZE, 3));
+    act(() => result.current.goNext());
+    expect(result.current.page).toBe(1);
+    expect(result.current.canNext).toBe(false);
+    act(() => result.current.goNext());
+    expect(result.current.page).toBe(1);
+  });
+
+  it('starts on the program lap (page 0) even when negative laps exist', () => {
+    expect(renderHook(() => usePagination(5, PAGE_SIZE, 5)).result.current.page).toBe(0);
+    expect(renderHook(() => usePagination(10, PAGE_SIZE, 10)).result.current.page).toBe(0);
+  });
+});

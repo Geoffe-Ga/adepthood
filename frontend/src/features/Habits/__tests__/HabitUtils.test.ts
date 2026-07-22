@@ -22,6 +22,10 @@ import {
   calculateHabitStartDate,
   stageAtIndex,
   stageRangeForPage,
+  carryoverSlot,
+  formatStageRange,
+  countCarryover,
+  buildPagedHabits,
   STAGE_ORDER,
   STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
@@ -1365,5 +1369,123 @@ describe('stageAtIndex global anchoring contract for the second habit set', () =
 
   test('index 11 anchors to the second stage, matching the second tile of the second lap', () => {
     expect(stageAtIndex(11)).toBe(STAGE_ORDER[1]);
+  });
+});
+
+describe('stageAtIndex signed (Euclidean) wrap for negative carryover slots', () => {
+  test('slot -1 anchors to the final stage and slot -10 to the first', () => {
+    expect(stageAtIndex(-1)).toBe(STAGE_ORDER[9]);
+    expect(stageAtIndex(-10)).toBe(STAGE_ORDER[0]);
+  });
+
+  test('slot -9 resolves via Euclidean modulo, not the undefined fallback', () => {
+    // The final-stage fallback coincides with the right answer at -1/-11; -9
+    // is the discriminating slot (fallback says Clear Light, Euclidean Purple).
+    expect(stageAtIndex(-9)).toBe(STAGE_ORDER[1]);
+  });
+
+  test('slot -11 wraps into the deeper negative lap', () => {
+    expect(stageAtIndex(-11)).toBe(STAGE_ORDER[9]);
+  });
+});
+
+describe('stageRangeForPage signed pages', () => {
+  test('page -1 covers slots -10 through -1', () => {
+    expect(stageRangeForPage(-1, 10)).toEqual({ start: -10, end: -1 });
+  });
+
+  test('page -2 covers slots -20 through -11', () => {
+    expect(stageRangeForPage(-2, 10)).toEqual({ start: -20, end: -11 });
+  });
+});
+
+describe('carryoverSlot', () => {
+  test('mirrors the nth carryover habit to the matching negative slot', () => {
+    expect(carryoverSlot(0)).toBe(-1);
+    expect(carryoverSlot(1)).toBe(-2);
+    expect(carryoverSlot(9)).toBe(-10);
+    expect(carryoverSlot(10)).toBe(-11);
+  });
+});
+
+describe('formatStageRange', () => {
+  test('positive ranges use an en-dash', () => {
+    expect(formatStageRange(1, 10)).toBe('1–10');
+    expect(formatStageRange(11, 20)).toBe('11–20');
+  });
+
+  test('negative ranges use the word "to"', () => {
+    expect(formatStageRange(-10, -1)).toBe('-10 to -1');
+    expect(formatStageRange(-20, -11)).toBe('-20 to -11');
+  });
+});
+
+type CarryoverHabit = Habit & { is_carryover?: boolean };
+
+const makePagedHabit = (id: number, isCarryover: boolean): CarryoverHabit => ({
+  id,
+  name: `H${id}`,
+  icon: 'x',
+  stage: 'Beige',
+  streak: 0,
+  energy_cost: 0,
+  energy_return: 0,
+  start_date: new Date(2020, 0, 1),
+  goals: [],
+  completions: [],
+  ...(isCarryover ? { is_carryover: true } : {}),
+});
+
+describe('countCarryover', () => {
+  test('counts only habits flagged is_carryover', () => {
+    const habits = [
+      makePagedHabit(1, false),
+      makePagedHabit(2, true),
+      makePagedHabit(3, false),
+      makePagedHabit(4, true),
+      makePagedHabit(5, false),
+    ];
+    expect(countCarryover(habits)).toBe(2);
+  });
+
+  test('returns 0 when no habit carries the flag or the list is empty', () => {
+    expect(countCarryover([makePagedHabit(1, false)])).toBe(0);
+    expect(countCarryover([])).toBe(0);
+  });
+});
+
+describe('buildPagedHabits', () => {
+  // Interspersed order: carryover habits sit between program habits, so
+  // program-relative positions and original flat indices differ.
+  const mixed = [
+    makePagedHabit(1, false),
+    makePagedHabit(2, true),
+    makePagedHabit(3, false),
+    makePagedHabit(4, true),
+    makePagedHabit(5, false),
+  ];
+
+  test('page 0 returns program habits with program-position colors and true flat indices', () => {
+    const result = buildPagedHabits(mixed, 0, 10);
+    expect(result.habits.map((h: Habit) => h.id)).toEqual([1, 3, 5]);
+    // flatIndices are original positions in the full list (icon editing seam),
+    // not program-relative positions.
+    expect(result.flatIndices).toEqual([0, 2, 4]);
+    expect(result.colorIndices).toEqual([0, 1, 2]);
+  });
+
+  test('page -1 returns carryover habits with negative slots and true flat indices', () => {
+    const result = buildPagedHabits(mixed, -1, 10);
+    expect(result.habits.map((h: Habit) => h.id)).toEqual([2, 4]);
+    expect(result.flatIndices).toEqual([1, 3]);
+    expect(result.colorIndices).toEqual([-1, -2]);
+  });
+
+  test('page -2 slices the second carryover lap with deeper negative slots', () => {
+    const many = Array.from({ length: 24 }, (_, i) => makePagedHabit(i + 1, i % 2 === 0));
+    const result = buildPagedHabits(many, -2, 10);
+    expect(result.habits.map((h: Habit) => h.id)).toEqual([21, 23]);
+    expect(result.flatIndices).toEqual([20, 22]);
+    expect(result.colorIndices).toEqual([-11, -12]);
   });
 });
