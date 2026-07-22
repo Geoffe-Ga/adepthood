@@ -1,6 +1,6 @@
 /* eslint-env jest */
-import { describe, expect, it, jest, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type * as Api from '../../../api';
@@ -34,6 +34,9 @@ const HAPPY_COMPLETION = {
   content_id: 1,
   completed_at: '2026-01-15T10:00:00Z',
 };
+
+// Comfortably past the toast's named auto-dismiss pause plus its fade-out.
+const TOAST_SETTLE_MS = 5000;
 
 function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
   return {
@@ -122,17 +125,21 @@ describe('ContentViewer', () => {
     await waitFor(() => {
       expect(courseApi.markRead).toHaveBeenCalledWith(1);
       expect(onMarkRead).toHaveBeenCalledTimes(1);
-      expect(getByText('✓ Read')).toBeTruthy();
+      // Scoped: the transient toast also says "✓ Read", so query within the
+      // center done state rather than the whole tree.
+      expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
     });
   });
 
-  it('shows already-read state when item is pre-read', async () => {
+  it('shows the quiet done state without a toast when item is pre-read', async () => {
     const item = makeItem({ is_read: true });
-    const { getByText, findByTestId } = render(
+    const { getByTestId, queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
-    expect(getByText('✓ Read')).toBeTruthy();
+    expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
+    // The toast celebrates the mark-read moment; a pre-read chapter shows none.
+    expect(queryByTestId('read-toast')).toBeNull();
   });
 
   it('disables mark-read when already read', async () => {
@@ -145,10 +152,10 @@ describe('ContentViewer', () => {
     expect(courseApi.markRead).not.toHaveBeenCalled();
   });
 
-  it('shows the reflect button when the item is read', async () => {
+  it('replaces the center slot with the reflect button when the item is read', async () => {
     const item = makeItem({ is_read: true });
     const onReflect = jest.fn();
-    const { getByTestId, getByText, findByTestId } = render(
+    const { getByTestId, getByText, queryByText, findByTestId } = render(
       <ContentViewer
         item={item}
         onBack={onBack}
@@ -160,6 +167,8 @@ describe('ContentViewer', () => {
     await findByTestId('reader-markdown');
     expect(getByTestId('reflect-button')).toBeTruthy();
     expect(getByText('Reflect in Journal')).toBeTruthy();
+    // Reflect occupies the center slot; the quiet done label yields to it.
+    expect(queryByText('✓ Read')).toBeNull();
   });
 
   it('shows the reflect button after marking content as read', async () => {
@@ -292,13 +301,14 @@ describe('ContentViewer', () => {
     await findByText(/retry worked/);
   });
 
-  it('renders the chapter nav buttons below the mark-read button', async () => {
+  it('renders prev, center, and next controls in the single footer row', async () => {
     const item = makeItem();
     const { findByTestId, getByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
     expect(getByTestId('chapter-nav-back')).toBeTruthy();
+    expect(getByTestId('mark-read-button')).toBeTruthy();
     expect(getByTestId('chapter-nav-next')).toBeTruthy();
   });
 
@@ -334,6 +344,19 @@ describe('ContentViewer', () => {
     expect(onPrev).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the prev control as an icon labelled Previous chapter', async () => {
+    const item = makeItem();
+    const { findByTestId, getByTestId } = render(
+      <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await findByTestId('reader-markdown');
+    const backButton = getByTestId('chapter-nav-back');
+    expect(backButton.props.accessibilityLabel).toBe('Previous chapter');
+    // The footer control now shows a glyph, so its old text label is gone.
+    // The reader header keeps its own separate back affordance.
+    expect(within(backButton).queryByText('← Back')).toBeNull();
+  });
+
   it('disables the chapter nav back button when canPrev is false', async () => {
     const onPrev = jest.fn();
     const item = makeItem();
@@ -347,24 +370,30 @@ describe('ContentViewer', () => {
     );
     await findByTestId('reader-markdown');
     const backButton = getByTestId('chapter-nav-back');
+    expect(backButton.props.accessibilityLabel).toBe('Previous chapter');
     expect(backButton.props.accessibilityState.disabled).toBe(true);
     fireEvent.press(backButton);
     expect(onPrev).not.toHaveBeenCalled();
   });
 
-  it('shows Done on the next button when nextIsDone is true', async () => {
+  it('swaps the next slot to an exit icon labelled Done when nextIsDone is true', async () => {
+    const onNext = jest.fn();
     const item = makeItem();
-    const { findByTestId, getByTestId, getByText } = render(
+    const { findByTestId, getByTestId, queryByText } = render(
       <ContentViewer
         item={item}
         onBack={onBack}
         onMarkRead={onMarkRead}
-        nav={makeNav({ nextIsDone: true })}
+        nav={makeNav({ nextIsDone: true, onNext })}
       />,
     );
     await findByTestId('reader-markdown');
-    expect(getByText('Done')).toBeTruthy();
-    expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Done');
+    const nextButton = getByTestId('chapter-nav-next');
+    expect(nextButton.props.accessibilityLabel).toBe('Done');
+    // Exit is a glyph, not a caption.
+    expect(queryByText('Done')).toBeNull();
+    fireEvent.press(nextButton);
+    expect(onNext).toHaveBeenCalledTimes(1);
   });
 
   it('resets read state when navigating to a different, unread chapter', async () => {
@@ -379,7 +408,7 @@ describe('ContentViewer', () => {
       fireEvent.press(getByTestId('mark-read-button'));
     });
     await waitFor(() => {
-      expect(getByText('✓ Read')).toBeTruthy();
+      expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
     });
 
     // Next → keeps ContentViewer mounted and swaps in an unread chapter two.
@@ -401,7 +430,7 @@ describe('ContentViewer', () => {
     // ContentViewer stays mounted while navigating from an unread chapter to a
     // previously-read one; the read state must follow the incoming item.
     const unread = makeItem({ id: 3, is_read: false });
-    const { getByText, findByTestId, rerender, queryByText } = render(
+    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
       <ContentViewer item={unread} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
@@ -413,7 +442,7 @@ describe('ContentViewer', () => {
     );
 
     await waitFor(() => {
-      expect(getByText('✓ Read')).toBeTruthy();
+      expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
     });
     expect(queryByText('Mark as Read')).toBeNull();
   });
@@ -431,7 +460,7 @@ describe('ContentViewer', () => {
     );
 
     const chapterOne = makeItem({ id: 1, is_read: false });
-    const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
+    const { getByTestId, getByText, findByTestId, rerender, queryByText, queryByTestId } = render(
       <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findByTestId('reader-markdown');
@@ -456,13 +485,15 @@ describe('ContentViewer', () => {
       expect(getByText('Mark as Read')).toBeTruthy();
     });
     expect(queryByText('✓ Read')).toBeNull();
+    // Nor may the late resolution pop a toast over the wrong chapter.
+    expect(queryByTestId('read-toast')).toBeNull();
     const markReadButton = getByTestId('mark-read-button');
     expect(markReadButton.props.accessibilityState?.disabled ?? false).toBe(false);
   });
 
-  it('shows Next chapter on the next button when nextIsDone is false', async () => {
+  it('renders the next control as an icon labelled Next chapter when nextIsDone is false', async () => {
     const item = makeItem();
-    const { findByTestId, getByTestId, getByText } = render(
+    const { findByTestId, getByTestId, queryByText } = render(
       <ContentViewer
         item={item}
         onBack={onBack}
@@ -471,7 +502,100 @@ describe('ContentViewer', () => {
       />,
     );
     await findByTestId('reader-markdown');
-    expect(getByText('Next →')).toBeTruthy();
     expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Next chapter');
+    // The chevron replaces the old text label entirely.
+    expect(queryByText('Next →')).toBeNull();
+  });
+
+  describe('read toast', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('shows a transient toast after a successful mark-read, then auto-dismisses', async () => {
+      const item = makeItem();
+      const { getByTestId, queryByTestId } = render(
+        <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+      );
+      // Flush the body fetch (a microtask; fake timers do not block it).
+      await act(async () => {});
+      getByTestId('reader-markdown');
+
+      await act(async () => {
+        fireEvent.press(getByTestId('mark-read-button'));
+      });
+
+      const toast = getByTestId('read-toast');
+      expect(within(toast).getByText('✓ Read')).toBeTruthy();
+
+      await act(async () => {
+        jest.advanceTimersByTime(TOAST_SETTLE_MS);
+      });
+      expect(queryByTestId('read-toast')).toBeNull();
+    });
+
+    it('clears the toast and its timer when navigating to another chapter mid-toast', async () => {
+      const chapterOne = makeItem({ id: 1, is_read: false });
+      const { getByTestId, queryByTestId, getByText, rerender } = render(
+        <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+      );
+      await act(async () => {});
+      getByTestId('reader-markdown');
+
+      await act(async () => {
+        fireEvent.press(getByTestId('mark-read-button'));
+      });
+      expect(getByTestId('read-toast')).toBeTruthy();
+
+      // Navigate mid-toast: the item.id-keyed reset must clear the toast state.
+      const chapterTwo = makeItem({ id: 2, is_read: false });
+      await act(async () => {
+        rerender(
+          <ContentViewer
+            item={chapterTwo}
+            onBack={onBack}
+            onMarkRead={onMarkRead}
+            nav={makeNav()}
+          />,
+        );
+      });
+      expect(queryByTestId('read-toast')).toBeNull();
+      expect(getByText('Mark as Read')).toBeTruthy();
+
+      // The orphaned dismiss timer was cleaned up: advancing time neither
+      // throws nor resurrects a toast for the chapter now on screen.
+      await act(async () => {
+        jest.advanceTimersByTime(TOAST_SETTLE_MS);
+      });
+      expect(queryByTestId('read-toast')).toBeNull();
+    });
+
+    it('clears the pending dismiss timer when unmounted mid-toast', async () => {
+      const item = makeItem();
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const { getByTestId, unmount } = render(
+        <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+      );
+      await act(async () => {});
+      getByTestId('reader-markdown');
+
+      await act(async () => {
+        fireEvent.press(getByTestId('mark-read-button'));
+      });
+      expect(getByTestId('read-toast')).toBeTruthy();
+
+      // Tear the reader down while the dismiss timer is still pending; the
+      // unmount cleanup must drop it so advancing time updates no dead tree.
+      unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(TOAST_SETTLE_MS);
+      });
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
   });
 });

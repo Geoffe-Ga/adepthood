@@ -1,7 +1,6 @@
 import { StyleSheet } from 'react-native';
 
 import {
-  INTERACTIVE_TEXT_MIN,
   accent,
   editorialType,
   ink,
@@ -273,17 +272,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: ink.primary,
   },
+  // Reader footer — a column so the transient read toast can float above the
+  // single [prev icon] [center action] [next icon] navigation row.
   viewerFooter: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
     backgroundColor: surface.canvas,
   },
+  viewerFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  footerIconButton: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   markReadButton: {
+    flex: 1,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
     backgroundColor: accent.primary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   markReadButtonDone: {
     backgroundColor: surface.sunken,
@@ -298,45 +313,32 @@ const styles = StyleSheet.create({
     color: ink.soft,
   },
   reflectButton: {
+    flex: 1,
+    minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
     backgroundColor: accent.strong,
     alignItems: 'center',
-    marginTop: SPACING.sm,
-  },
-
-  // Chapter reader footer — Back/Next paired navigation buttons.
-  chapterNavRow: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
-    marginTop: SPACING.sm,
-  },
-  chapterNavButton: {
-    flex: 1,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.lg,
-    borderRadius: radius.md,
-    alignItems: 'center',
-  },
-  chapterNavBack: {
-    backgroundColor: surface.sunken,
+    justifyContent: 'center',
   },
   chapterNavBackDisabled: {
     opacity: CHAPTER_NAV_DISABLED_OPACITY,
   },
-  chapterNavNext: {
-    backgroundColor: accent.primary,
+  // Transient mark-read confirmation card floated above the footer nav row.
+  readToast: {
+    alignItems: 'center',
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    marginBottom: SPACING.sm,
+    borderRadius: radius.md,
+    backgroundColor: surface.raised,
+    ...surfaceShadow.card,
   },
-  chapterNavBackLabel: {
-    fontSize: INTERACTIVE_TEXT_MIN,
+  readToastText: {
+    ...editorialType.note,
     fontWeight: '600',
-    color: ink.soft,
-  },
-  chapterNavNextLabel: {
-    fontSize: INTERACTIVE_TEXT_MIN,
-    fontWeight: '600',
-    color: accent.onPrimary,
+    color: ink.primary,
   },
 
   // Loading and empty/error states
