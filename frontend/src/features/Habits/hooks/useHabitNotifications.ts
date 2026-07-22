@@ -14,16 +14,39 @@ import type { Habit } from '../Habits.types';
 const MAX_REGISTRATION_RETRIES = 3;
 const REGISTRATION_RETRY_DELAY_MS = 30_000;
 
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const isAborted = (signal?: AbortSignal): boolean => signal?.aborted ?? false;
 
-export const registerForPushNotificationsAsync = async (): Promise<string | undefined> => {
+// Cancelable delay: aborting resolves immediately and clears the pending timer.
+const wait = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (isAborted(signal)) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+
+export const registerForPushNotificationsAsync = async (
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
   const cached = await loadPushToken();
   if (cached) return cached;
 
-  return attemptPushRegistration(0);
+  return attemptPushRegistration(0, signal);
 };
 
-const attemptPushRegistration = async (attempt: number): Promise<string | undefined> => {
+const attemptPushRegistration = async (
+  attempt: number,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
   try {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
@@ -40,11 +63,20 @@ const attemptPushRegistration = async (attempt: number): Promise<string | undefi
   } catch (error) {
     console.error(`Push registration attempt ${attempt + 1} failed:`, error);
     if (attempt < MAX_REGISTRATION_RETRIES - 1) {
-      await wait(REGISTRATION_RETRY_DELAY_MS);
-      return attemptPushRegistration(attempt + 1);
+      return retryAfterDelay(attempt, signal);
     }
     return undefined;
   }
+};
+
+const retryAfterDelay = async (
+  attempt: number,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
+  if (isAborted(signal)) return undefined;
+  await wait(REGISTRATION_RETRY_DELAY_MS, signal);
+  if (isAborted(signal)) return undefined;
+  return attemptPushRegistration(attempt + 1, signal);
 };
 
 const buildDailyTrigger = (hours: number, minutes: number): Notifications.DailyTriggerInput => ({
@@ -170,11 +202,14 @@ const scheduleAllTimes = async (habit: Habit): Promise<string[]> => {
   return notificationIds;
 };
 
-export const reconcileNotifications = async (): Promise<void> => {
+export const reconcileNotifications = async (signal?: AbortSignal): Promise<void> => {
   try {
+    if (isAborted(signal)) return;
     const persisted = await loadAllNotificationMappings();
     const allPersistedIds = new Set(Object.values(persisted).flat());
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    // Abort mid-flight (e.g. unmount) must not cancel or rewrite anything.
+    if (isAborted(signal)) return;
     const scheduledIds = new Set(scheduled.map((n) => n.identifier));
 
     // Cancel orphaned notifications (scheduled on device but not in our records)

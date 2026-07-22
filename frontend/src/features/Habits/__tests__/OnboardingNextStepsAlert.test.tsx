@@ -65,19 +65,24 @@ jest.mock('expo-notifications', () => ({
 }));
 
 describe('Onboarding completion', () => {
+  let root: ReturnType<typeof renderer.create> | undefined;
+
   beforeEach(() => {
     jest.useFakeTimers();
   });
 
   afterEach(() => {
+    // Unmount so HabitsScreen's bootstrap effect cleanup aborts the in-flight
+    // push-registration retry; otherwise its delay timer escapes the worker.
     renderer.act(() => {
+      root?.unmount();
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
+    root = undefined;
   });
 
   it('shows next steps toast after saving habits', async () => {
-    let root: ReturnType<typeof renderer.create>;
     await renderer.act(async () => {
       root = renderer.create(
         <ToastProvider>
