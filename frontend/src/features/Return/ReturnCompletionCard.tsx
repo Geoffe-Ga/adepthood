@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     ...paperShadow.card,
   },
   heading: {
-    ...editorialType.title,
+    ...editorialType.heading,
     color: colors.paper.ink,
   },
   body: {
