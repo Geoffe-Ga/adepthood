@@ -26,6 +26,8 @@ export interface Habit {
    * "unordered" — the backend buckets nulls last in ascending sort.
    */
   sort_order?: number | null;
+  /** Carryover habits predate the program and render on negative laps. */
+  is_carryover?: boolean;
 
   // --- Client-only fields (not from API) ---
   completions?: Completion[];

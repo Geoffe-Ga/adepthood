@@ -21,28 +21,90 @@ export { STAGE_ORDER };
 // Re-export so existing call sites stay valid; canonical definition lives in src/constants/program.ts.
 export { STAGE_DURATIONS_DAYS };
 
+/** Number of Spiral-Dynamics stages — one full lap of the gradient. */
+const STAGE_COUNT = STAGE_ORDER.length;
+
 /**
- * Map a habit's zero-based list index to its Spiral-Dynamics stage. Wraps with
- * `% STAGE_ORDER.length` so positions past the tenth cycle back to Beige, and
- * falls back to the final stage when the index cannot resolve — the single
- * source of truth for the index-based stage coloring shared by the Habits
- * screen, the reorder modals, and the onboarding flow.
+ * Map a habit's list slot to its Spiral-Dynamics stage. Wraps with a Euclidean
+ * modulo so positions past the tenth cycle back to Beige and negative
+ * carryover slots wrap backwards from the final stage (slot -1 → Clear Light).
+ * The Euclidean result is always a valid `[0, STAGE_COUNT)` index, so the `??`
+ * is a defensive no-op kept only to narrow the indexed type. The single source
+ * of truth for the slot-based stage coloring shared by the Habits screen, the
+ * reorder modals, and the onboarding flow.
  */
-export const stageAtIndex = (index: number): string =>
-  STAGE_ORDER[index % STAGE_ORDER.length] ?? STAGE_ORDER[STAGE_ORDER.length - 1]!;
+export const stageAtIndex = (index: number): string => {
+  const wrapped = ((index % STAGE_COUNT) + STAGE_COUNT) % STAGE_COUNT;
+  return STAGE_ORDER[wrapped] ?? STAGE_ORDER[STAGE_COUNT - 1]!;
+};
 
 /**
  * 1-based inclusive stage bounds for a habits page/lap: page 0 → stages 1..10,
- * page 1 → 11..20, and so on. Drives the pagination bar's stage-range label and
- * the second-lap invite copy so both name the stretch of stages a page covers.
+ * page 1 → 11..20, and so on. Negative pages produce sign-mirrored carryover
+ * ranges (page -1 → -10..-1, page -2 → -20..-11). Drives the pagination bar's
+ * stage-range label and the lap-invite copy so both name the span a page covers.
  */
 export const stageRangeForPage = (
   page: number,
   pageSize: number,
-): { start: number; end: number } => ({
-  start: page * pageSize + 1,
-  end: (page + 1) * pageSize,
-});
+): { start: number; end: number } => {
+  if (page < 0) {
+    const lap = -page;
+    return { start: -pageSize * lap, end: -(pageSize * lap - (pageSize - 1)) };
+  }
+  return { start: page * pageSize + 1, end: (page + 1) * pageSize };
+};
+
+/** Signed display slot for the nth carryover habit: index 0 → slot -1, the sign-mirror of positive slot 1. */
+export const carryoverSlot = (carryoverIndex: number): number => -(carryoverIndex + 1);
+
+/** Range label text: negative carryover ranges read "-10 to -1"; positive program ranges keep the en-dash. */
+export const formatStageRange = (start: number, end: number): string =>
+  start < 0 || end < 0 ? `${start} to ${end}` : `${start}–${end}`;
+
+/** Number of habits flagged as carryover — sizes the negative lap span. */
+export const countCarryover = (habits: Habit[]): number =>
+  habits.filter((h) => h.is_carryover === true).length;
+
+/** A habit paired with its original position in the flat habits list. */
+interface IndexedHabit {
+  habit: Habit;
+  flatIndex: number;
+}
+
+const partitionByCarryover = (
+  allHabits: Habit[],
+): { program: IndexedHabit[]; carryover: IndexedHabit[] } => {
+  const program: IndexedHabit[] = [];
+  const carryover: IndexedHabit[] = [];
+  allHabits.forEach((habit, flatIndex) => {
+    (habit.is_carryover === true ? carryover : program).push({ habit, flatIndex });
+  });
+  return { program, carryover };
+};
+
+/**
+ * Page view-model for the signed Habits grid. Negative pages slice the
+ * carryover partition onto mirrored negative color slots; non-negative pages
+ * slice the program partition onto its 0-based slots. `flatIndices` are each
+ * habit's true position in `allHabits` (the seam icon editing writes through),
+ * while `colorIndices` are the signed display slots the gradient reads.
+ */
+export const buildPagedHabits = (
+  allHabits: Habit[],
+  page: number,
+  pageSize: number,
+): { habits: Habit[]; flatIndices: number[]; colorIndices: number[] } => {
+  const { program, carryover } = partitionByCarryover(allHabits);
+  const negative = page < 0;
+  const offset = (negative ? -page - 1 : page) * pageSize;
+  const sliced = (negative ? carryover : program).slice(offset, offset + pageSize);
+  return {
+    habits: sliced.map((entry) => entry.habit),
+    flatIndices: sliced.map((entry) => entry.flatIndex),
+    colorIndices: sliced.map((_, j) => (negative ? carryoverSlot(offset + j) : offset + j)),
+  };
+};
 
 /**
  * Calculate the start date for a habit based on its order in the onboarding

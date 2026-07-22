@@ -887,6 +887,8 @@ export interface ApiHabit {
   // Persisted unlock flag (revealed === unlocked). Optional so fixtures/payloads
   // predating the column still typecheck; the live backend always sends it.
   revealed?: boolean;
+  // Carryover flag (negative-lap habits). Optional for legacy fixtures/payloads.
+  is_carryover?: boolean;
 }
 
 export interface ApiHabitWithGoals extends ApiHabit {
@@ -972,6 +974,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
     })),
     completions: flattenGoalCompletions(apiHabit.goals),
     revealed: apiHabit.revealed,
+    is_carryover: apiHabit.is_carryover,
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)
       ? apiHabit.notification_frequency

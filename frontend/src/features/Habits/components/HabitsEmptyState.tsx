@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { colors, radius, spacing, touchTarget } from '../../../design/tokens';
+import { formatStageRange } from '../HabitUtils';
 
 interface HabitsEmptyStateProps {
   /** When provided, renders an "Add a habit" CTA wired to the add-habit modal. */
@@ -23,14 +24,15 @@ const FIRST_RUN_COPY: EmptyStateCopy = {
 };
 
 /**
- * Copy for the empty state. With a stage range supplied (any lap past the
- * first), it names the newly-open stages as a gentle, declinable invitation to
- * start another set — never a nudge. Otherwise it keeps the first-run guidance.
+ * Copy for the empty state. With a stage range supplied (any lap besides the
+ * program's first, negative carryover laps included), it names the newly-open
+ * stages as a gentle, declinable invitation to start another set — never a
+ * nudge. Otherwise it keeps the first-run guidance.
  */
 const selectCopy = (stageStart?: number, stageEnd?: number): EmptyStateCopy =>
   stageStart !== undefined && stageEnd !== undefined
     ? {
-        title: `Stages ${stageStart}–${stageEnd} are open`,
+        title: `Stages ${formatStageRange(stageStart, stageEnd)} are open`,
         subtitle:
           'Begin a new set whenever it feels right — no pressure either way, or simply keep tending the habits you already have.',
       }

@@ -197,6 +197,10 @@ export const habitSchema = z.object({
   // payloads captured before the column shipped still validate; the live
   // backend always sends it.
   revealed: z.boolean().optional(),
+  // Carryover flag (habit predates the program, shown on negative laps).
+  // Optional on the wire so payloads captured before the column shipped
+  // still validate.
+  is_carryover: z.boolean().optional(),
 });
 
 export const habitWithGoalsSchema = habitSchema.extend({
