@@ -17,13 +17,16 @@
  *   - `ActiveRitualSession` owns the engine, mode dispatch, configurator
  *     sheet, and the ritual-12 insight capture modal when a practice is
  *     active.
+ *   - `PracticeIdentityHeader` pins the player identity (title, tappable
+ *     stage chip, effective ritual name, customize pencil) to the top region
+ *     and collapses to the title alone while a session runs.
  *
  * When no practice is set for the stage the screen shows a minimal dark
  * empty state whose only action opens the catalog.
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,6 +56,8 @@ import ActiveRitualSession, {
   type ActiveRitualSessionHandle,
 } from '@/features/Practice/components/ActiveRitualSession';
 import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
+import PracticeIdentityHeader from '@/features/Practice/components/PracticeIdentityHeader';
+import type { RitualState } from '@/features/Practice/engine/types';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import { useAppRoute } from '@/navigation/hooks';
@@ -88,7 +93,12 @@ function useFocusRefresh(refresh: (_opts?: { silent?: boolean }) => Promise<void
 }
 
 const PracticeScreen = (): React.JSX.Element => {
-  const stageNumber = useResolvedStageNumber();
+  const resolvedStage = useResolvedStageNumber();
+  // A stage picked from the identity header's chip overrides the derived
+  // stage locally; route params and the stage store stay untouched so other
+  // screens keep their own resolution.
+  const [stageOverride, setStageOverride] = useState<number | null>(null);
+  const stageNumber = stageOverride ?? resolvedStage;
   const { userTimezone } = useAuth();
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
@@ -96,6 +106,9 @@ const PracticeScreen = (): React.JSX.Element => {
   useFocusRefresh(active.refresh);
   const drawer = useScreenDrawer('Practice');
   const sessionRef = useRef<ActiveRitualSessionHandle>(null);
+  const openConfigurator = useCallback(() => {
+    sessionRef.current?.openConfigurator();
+  }, []);
 
   const hasActivePractice = Boolean(
     active.activeUserPractice && active.practice && active.effectiveConfig,
@@ -110,13 +123,15 @@ const PracticeScreen = (): React.JSX.Element => {
         onWriteReflection={handleWriteReflection}
         stageNumber={stageNumber}
         sessionRef={sessionRef}
+        onStageChange={setStageOverride}
+        onCustomize={openConfigurator}
       />
       <PracticeScreenDrawer
         drawer={drawer}
         hasActivePractice={hasActivePractice}
         stageNumber={stageNumber}
         practiceId={active.practice?.id}
-        onCustomize={() => sessionRef.current?.openConfigurator()}
+        onCustomize={openConfigurator}
       />
     </>
   );
@@ -129,6 +144,8 @@ interface PracticeBodyProps {
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   stageNumber: number;
   sessionRef: React.Ref<ActiveRitualSessionHandle>;
+  onStageChange: (_stage: number) => void;
+  onCustomize: () => void;
 }
 
 // Selects the screen body for the current load state: a loading/error
@@ -141,6 +158,8 @@ const PracticeBody = ({
   onWriteReflection,
   stageNumber,
   sessionRef,
+  onStageChange,
+  onCustomize,
 }: PracticeBodyProps): React.JSX.Element => {
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
@@ -157,7 +176,10 @@ const PracticeBody = ({
         weekly={weekly}
         onUserPracticeUpdated={active.updateActivePractice}
         onWriteReflection={onWriteReflection}
+        stageNumber={stageNumber}
         sessionRef={sessionRef}
+        onStageChange={onStageChange}
+        onCustomize={onCustomize}
       />
     );
   }
@@ -238,14 +260,21 @@ interface ActiveSessionViewProps {
   weekly: WeeklyProgressHook;
   onUserPracticeUpdated: ActivePracticeHook['updateActivePractice'];
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
+  stageNumber: number;
   sessionRef?: React.Ref<ActiveRitualSessionHandle>;
+  onStageChange: (_stage: number) => void;
+  onCustomize: () => void;
 }
 
-// The fixed player layout: no outer scroll. The session floats centered in
-// the flexible middle region; the weekly footer is pinned at the foot inside
-// the safe area.
+// The fixed player layout: no outer scroll. The identity header sits in the
+// top region, the session floats centered in the flexible middle, and the
+// weekly footer is pinned at the foot inside the safe area.
 const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => {
   const insets = useSafeAreaInsets();
+  // Mirror the engine's status so the identity header can collapse while a
+  // session holds the screen (running or paused); idle and complete both
+  // show the full identity block.
+  const [status, setStatus] = useState<RitualState['status']>('idle');
   return (
     <View
       style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
@@ -253,6 +282,14 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
     >
       <ContentContainer fill>
         <View style={styles.playerBody} testID="practice-screen">
+          <PracticeIdentityHeader
+            stageNumber={props.stageNumber}
+            practiceName={props.practiceName}
+            ritualName={props.effectiveName ?? props.practiceName}
+            collapsed={status === 'running' || status === 'paused'}
+            onCustomize={props.onCustomize}
+            onStageChange={props.onStageChange}
+          />
           <View style={styles.sessionRegion}>
             <ActiveRitualSession
               key={`practice-${props.userPractice.id}`}
@@ -266,6 +303,7 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
               onSessionCommitted={() => void props.weekly.refresh()}
               onUserPracticeUpdated={props.onUserPracticeUpdated}
               onWriteReflection={props.onWriteReflection}
+              onStatusChange={setStatus}
             />
           </View>
           <WeeklyProgress count={props.weekly.count} />
@@ -390,8 +428,8 @@ const ErrorView = ({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: showcase.canvas },
   playerBody: { flex: 1, padding: SPACING.md },
-  // The flexible middle: the session settles centered between the (future
-  // #1906 identity header) top region and the weekly footer.
+  // The flexible middle: the session settles centered between the identity
+  // header's top region and the weekly footer.
   sessionRegion: { flex: 1, justifyContent: 'center' },
   centered: {
     flex: 1,
