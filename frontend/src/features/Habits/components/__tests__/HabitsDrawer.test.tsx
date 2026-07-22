@@ -1,8 +1,5 @@
-// RED: HabitsDrawer does not exist yet -- this import fails until the
-// implementation-specialist adds the component. Specifies the header-drawer
-// replacement for the removed in-body overflow menu and pagination bar:
-// action rows, unlock-all confirm gating, pagination controls, and the
-// pagination-visibility toggle.
+// Specifies the Habits header drawer: action rows, unlock-all confirm gating,
+// row ordering, the page-controls switch, and the "Show Habits" pager row.
 import { describe, expect, it, jest, afterEach } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
@@ -26,6 +23,55 @@ const baseProps = {
   barVisible: true,
   onToggleBarVisible: noop,
   onClose: noop,
+};
+
+const ROW_ORDER_LABELS: readonly string[] = [
+  'Quick Log',
+  'Edit',
+  'Add Habit',
+  'Energy Scaffolding',
+  'Stats',
+  'Unlock All Habits',
+  'Show Habits',
+];
+
+interface JsonNode {
+  type?: unknown;
+  props?: { accessibilityRole?: unknown };
+  children?: unknown;
+}
+
+// True when a rendered node represents the RN Switch control.
+const isSwitchNode = (json: JsonNode): boolean => {
+  const role = json.props ? json.props.accessibilityRole : undefined;
+  if (role === 'switch') {
+    return true;
+  }
+  return typeof json.type === 'string' && json.type.includes('Switch');
+};
+
+// Flattens the rendered tree into row markers: known labels plus the switch.
+const collectRowMarkers = (node: unknown, out: string[]): void => {
+  if (typeof node === 'string') {
+    if (ROW_ORDER_LABELS.includes(node)) {
+      out.push(node);
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node as unknown[]) {
+      collectRowMarkers(child, out);
+    }
+    return;
+  }
+  if (node === null || typeof node !== 'object') {
+    return;
+  }
+  const json = node as JsonNode;
+  if (isSwitchNode(json)) {
+    out.push('switch');
+  }
+  collectRowMarkers(json.children, out);
 };
 
 afterEach(() => {
@@ -161,20 +207,25 @@ describe('HabitsDrawer unlock-all confirm gating', () => {
 });
 
 describe('HabitsDrawer pagination section', () => {
-  it('shows the stage range as the visible label with the page position folded into its accessibility label', () => {
+  it('renders the static "Show Habits" label on the pager row', () => {
+    const { getByText } = render(<HabitsDrawer {...baseProps} />);
+    expect(getByText('Show Habits')).toBeTruthy();
+  });
+
+  it('shows the bare stage range with the page position folded into its accessibility label', () => {
     const { getByText } = render(
       <HabitsDrawer {...baseProps} page={0} pageCount={2} stageStart={1} stageEnd={10} />,
     );
-    const label = getByText('Stages 1–10');
-    expect(label.props.accessibilityLabel).toBe('Stages 1 to 10, page 1 of 2');
+    const label = getByText('1–10');
+    expect(label.props.accessibilityLabel).toBe('Show habits 1 to 10, page 1 of 2');
   });
 
   it('shows the second-lap stage range and position', () => {
     const { getByText } = render(
       <HabitsDrawer {...baseProps} page={1} pageCount={2} stageStart={11} stageEnd={20} />,
     );
-    const label = getByText('Stages 11–20');
-    expect(label.props.accessibilityLabel).toBe('Stages 11 to 20, page 2 of 2');
+    const label = getByText('11–20');
+    expect(label.props.accessibilityLabel).toBe('Show habits 11 to 20, page 2 of 2');
   });
 
   it('disables Prev on the first page and enables Next', () => {
@@ -219,17 +270,23 @@ describe('HabitsDrawer pagination section', () => {
 });
 
 describe('HabitsDrawer pagination-bar visibility toggle', () => {
-  it('labels the toggle "Hide page controls" when the bar is visible', () => {
+  it('renders a switch that is on and announces "Hide page controls" when the bar is visible', () => {
     const { getByRole } = render(<HabitsDrawer {...baseProps} barVisible />);
-    expect(getByRole('button', { name: 'Hide page controls' })).toBeTruthy();
+    const toggle = getByRole('switch');
+    expect(toggle.props.value).toBe(true);
+    expect(toggle.props.accessibilityLabel).toBe('Hide page controls');
+    expect(toggle.props.accessibilityState.checked).toBe(true);
   });
 
-  it('labels the toggle "Show page controls" when the bar is hidden', () => {
+  it('renders the switch off and announces "Show page controls" when the bar is hidden', () => {
     const { getByRole } = render(<HabitsDrawer {...baseProps} barVisible={false} />);
-    expect(getByRole('button', { name: 'Show page controls' })).toBeTruthy();
+    const toggle = getByRole('switch');
+    expect(toggle.props.value).toBe(false);
+    expect(toggle.props.accessibilityLabel).toBe('Show page controls');
+    expect(toggle.props.accessibilityState.checked).toBe(false);
   });
 
-  it('fires onToggleBarVisible without closing the drawer', () => {
+  it('toggling the switch fires onToggleBarVisible without closing the drawer', () => {
     const onToggleBarVisible = jest.fn();
     const onClose = jest.fn();
     const { getByRole } = render(
@@ -240,8 +297,26 @@ describe('HabitsDrawer pagination-bar visibility toggle', () => {
         onClose={onClose}
       />,
     );
-    fireEvent.press(getByRole('button', { name: 'Hide page controls' }));
+    fireEvent(getByRole('switch'), 'valueChange', false);
     expect(onToggleBarVisible).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('HabitsDrawer row order', () => {
+  it('renders actions, reveal, the visibility switch, then the pager top-to-bottom', () => {
+    const tree = render(<HabitsDrawer {...baseProps} />).toJSON();
+    const markers: string[] = [];
+    collectRowMarkers(tree, markers);
+    expect(markers).toEqual([
+      'Quick Log',
+      'Edit',
+      'Add Habit',
+      'Energy Scaffolding',
+      'Stats',
+      'Unlock All Habits',
+      'switch',
+      'Show Habits',
+    ]);
   });
 });
