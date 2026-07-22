@@ -78,6 +78,15 @@ jest.mock('@/features/Invitations/InvitationStack', () => {
   return { __esModule: true, default: Stub };
 });
 
+// The morning-pages tip owns its own AsyncStorage-backed dismissal state and a
+// dedicated suite; stub it so its post-mount load never fires setState after
+// these shelf tests resolve, keeping them focused on ordering and list wiring.
+jest.mock('../MorningPagesTip', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="morning-pages-tip-stub" />;
+  return { __esModule: true, default: Stub };
+});
+
 const JournalShelfScreen = require('../JournalShelfScreen').default;
 
 type RenderedNode = {
@@ -554,9 +563,12 @@ describe('JournalShelfScreen', () => {
     const returnIndex = order.indexOf('#return-stack-stub');
     const invitationIndex = order.indexOf('#invitation-stack-stub');
     const headerIndex = order.indexOf('Journal');
+    const tipIndex = order.indexOf('#morning-pages-tip-stub');
     expect(statIndex).toBeGreaterThan(-1);
     expect(returnIndex).toBeGreaterThan(statIndex);
     expect(invitationIndex).toBeGreaterThan(returnIndex);
     expect(headerIndex).toBeGreaterThan(invitationIndex);
+    // The morning-pages tip sits in the shelf's top matter, below the header.
+    expect(tipIndex).toBeGreaterThan(headerIndex);
   });
 });
