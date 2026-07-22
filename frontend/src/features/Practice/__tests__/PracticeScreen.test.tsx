@@ -372,11 +372,11 @@ describe('PracticeScreen', () => {
     );
   });
 
-  it('fades the bottom edge of the active session into the canvas ground', async () => {
+  it('renders the session flat on the dark ground with no bottom fade', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId } = render(<PracticeScreen />);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
-    expect(getByTestId('bottom-fade')).toBeTruthy();
+    expect(queryByTestId('bottom-fade')).toBeNull();
   });
 
   it('renders an active custom (draft) practice by including own drafts in the catalogue fetch', async () => {
@@ -404,17 +404,16 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('practice-empty-state')).toBeNull();
   });
 
-  it('wraps the running session mode view in the calm SessionSurface', async () => {
-    // The active session now provides the calm lifted-paper surface to the mode
-    // view, so the interior renders on the light raised ground; the deep umber
-    // is reserved for the single Begin hero accent.
+  it('wraps the running session mode view in the umber SessionSurface', async () => {
+    // The active session provides the full-bleed umber surface to the mode
+    // view, so the interior blends into the dark player ground (#1905).
     const { StyleSheet } = require('react-native');
-    const { surface } = require('../../../design/tokens');
+    const { showcase } = require('../../../design/tokens');
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('meditation-timer-view')).toBeTruthy());
     const ground = StyleSheet.flatten(getByTestId('meditation-timer-view').props.style);
-    expect(ground.backgroundColor).toBe(surface.raised);
+    expect(ground.backgroundColor).toBe(showcase.canvas);
   });
 
   it('reflects a practice selected elsewhere once the screen regains focus', async () => {
@@ -436,14 +435,14 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('practice-empty-state')).toBeNull();
   });
 
-  it('frames the active practice with a focal "Begin a session" showcase hero', async () => {
+  it('retires the "Begin a session" showcase hero from the player', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId, getByText } = render(<PracticeScreen />);
+    const { getByTestId, queryByTestId, queryByText } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
-    // The warm showcase hero presents the arrival moment; the engine's own
-    // Begin control (ritual-start) still drives idle → running unchanged.
-    expect(getByTestId('practice-begin-hero')).toBeTruthy();
-    expect(getByText('Begin a session')).toBeTruthy();
+    // The whole screen is now the dark player; the engine's own Begin control
+    // (ritual-start) still drives idle → running unchanged.
+    expect(queryByTestId('practice-begin-hero')).toBeNull();
+    expect(queryByText('Begin a session')).toBeNull();
     expect(getByTestId('ritual-start')).toBeTruthy();
   });
 
@@ -451,7 +450,7 @@ describe('PracticeScreen', () => {
     jest.useFakeTimers();
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
-    await waitFor(() => expect(getByTestId('practice-begin-hero')).toBeTruthy());
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
     // Pressing Begin (ritual-start) transitions the engine into a running
     // session — the meditation timer view exposes its running cancel control.
     await act(async () => {
@@ -461,31 +460,35 @@ describe('PracticeScreen', () => {
     jest.useRealTimers();
   });
 
-  it('change-practice opens the Catalog seeded to the current stage', async () => {
+  it('retires the inline change-practice button (the drawer keeps the catalog path)', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId } = render(<PracticeScreen />);
+    const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
-
-    fireEvent.press(getByTestId('change-practice-button'));
-    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
+    expect(queryByTestId('change-practice-button')).toBeNull();
   });
 
-  it('applies safe-area insets to the active-session surface', async () => {
+  it('applies safe-area insets and the full-bleed umber ground with no outer scroll', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
       expect(getByTestId('active-practice-card')).toBeTruthy();
     });
-    // Top inset constrains the wrapper viewport (so content can't scroll behind
-    // the notch); the scroll content pads its bottom by the fade-veil height so
-    // the last line settles above the fade (whose opaque base covers the
-    // home-indicator zone).
-    const { rhythm } = require('../../../design/tokens');
-    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({ paddingTop: 47 });
-    const scroll = getByTestId('practice-screen');
-    expect(scroll.props.contentContainerStyle).toEqual(
-      expect.arrayContaining([expect.objectContaining({ paddingBottom: rhythm.bottomFadeHeight })]),
-    );
+    const { showcase } = require('../../../design/tokens');
+    // The whole screen is the dark card: insets pad the fixed surface, and the
+    // body is a plain flex view (no ScrollView, so no contentContainerStyle).
+    expect(getByTestId('practice-screen-safe-area')).toHaveStyle({
+      paddingTop: 47,
+      paddingBottom: 34,
+      backgroundColor: showcase.canvas,
+    });
+    expect(getByTestId('practice-screen').props.contentContainerStyle).toBeUndefined();
+  });
+
+  it('pins the weekly progress footer inside the fixed player body', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    expect(within(getByTestId('practice-screen')).getByTestId('weekly-progress')).toBeTruthy();
   });
 
   it('opens the configurator sheet when the gear is pressed', async () => {
@@ -500,36 +503,16 @@ describe('PracticeScreen', () => {
     expect(getByTestId('ritual-configurator-sheet')).toBeTruthy();
   });
 
-  it('pins the frequency banner to the resolved stage', async () => {
-    // The card and the banner must read the same stage. When the
-    // client's resolved stage advances ahead of the server-stored
-    // ``StageProgress.current_stage`` (e.g. the user moves their
-    // program start date), passing the resolved stage to the
-    // frequency endpoint keeps the banner colour in lockstep with the
-    // practice card.
-    mockRouteParams.stageNumber = 2;
-    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
-    try {
-      const { getByTestId } = render(<PracticeScreen />);
-      await waitFor(() => {
-        expect(getByTestId('active-practice-card')).toBeTruthy();
-      });
-      expect(mockFrequency).toHaveBeenCalledWith(2);
-    } finally {
-      delete mockRouteParams.stageNumber;
-    }
-  });
-
-  it('shows the frequency chip (display-only) on the active screen', async () => {
-    // The chip replaced the tappable banner; it no longer opens the switcher
-    // (switching is a separate, explicit control).
+  it('retires the frequency banner: no chip renders and the endpoint is never fetched', async () => {
+    // The dark player keeps only the ritual itself on screen (#1905); the
+    // stage identity returns as the tappable stage chip in #1906.
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
-      expect(getByTestId('frequency-banner-content')).toBeTruthy();
+      expect(getByTestId('active-practice-card')).toBeTruthy();
     });
-    expect(getByTestId('frequency-banner-content').props.accessibilityRole).toBe('text');
-    expect(queryByTestId('practice-switcher-sheet')).toBeNull();
+    expect(queryByTestId('frequency-banner-content')).toBeNull();
+    expect(mockFrequency).not.toHaveBeenCalled();
   });
 
   describe.each(modeFixtures)('mode dispatch — $label', ({ practice, mountTestId }) => {
@@ -842,9 +825,9 @@ describe('PracticeScreen header drawer', () => {
     mockRootNavigate.mockClear();
   });
 
-  it('opens the drawer and shows the full active-state row set, alongside the unchanged in-body controls', async () => {
+  it('opens the drawer and shows the full active-state row set, with the inline controls retired', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
-    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    const { getByTestId, getByLabelText, queryByTestId } = render(<PracticeScreenWithHeader />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
 
     fireEvent.press(getByLabelText('Open Practice menu'));
@@ -855,8 +838,20 @@ describe('PracticeScreen header drawer', () => {
     expect(getByTestId('practice-drawer-customize')).toBeTruthy();
     expect(getByTestId('practice-drawer-details')).toBeTruthy();
     expect(getByTestId('practice-drawer-create')).toBeTruthy();
-    // The in-body CatalogButton is not replaced by the drawer's rows.
-    expect(getByTestId('change-practice-button')).toBeTruthy();
+    // The inline CatalogButton is retired (#1905): the drawer rows are the
+    // interim catalog path until the epic's tab switcher lands.
+    expect(queryByTestId('change-practice-button')).toBeNull();
+  });
+
+  it('pressing the drawer "Change practice" row opens the Catalog seeded to the current stage', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId, getByLabelText } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+    fireEvent.press(getByTestId('practice-drawer-change'));
+
+    expect(mockRootNavigate).toHaveBeenCalledWith('Catalog', { stageNumber: 1 });
   });
 
   it('opens the drawer and shows only the browse/create rows when there is no active practice, alongside the unchanged in-body CTA', async () => {

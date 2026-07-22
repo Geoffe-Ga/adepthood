@@ -46,7 +46,7 @@ import type {
 } from '@/api';
 import { practiceSessions } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
-import { BORDER_RADIUS, SPACING, colors, ink, surface, surfaceShadow } from '@/design/tokens';
+import { SPACING, colors, onShowcase } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
 import type { PickedCard } from '@/features/Practice/data/resolveCard';
@@ -82,7 +82,7 @@ import MindfulAnchorView from '@/features/Practice/views/MindfulAnchorView';
 import RandomIntervalBellView from '@/features/Practice/views/RandomIntervalBellView';
 import RepCounterView from '@/features/Practice/views/RepCounterView';
 import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
-import { CALM_SURFACE, SessionSurfaceProvider } from '@/features/Practice/views/sessionSurface';
+import { SessionSurfaceProvider, UMBER_SURFACE } from '@/features/Practice/views/sessionSurface';
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
@@ -438,10 +438,11 @@ interface SessionCardProps {
 }
 
 function SessionCard(props: SessionCardProps): React.JSX.Element {
-  // The session is fronted by a lifted-paper header band (practice name +
-  // Adjust on white raised paper) so a running practice reads as a focal moment
-  // rather than a settings form; the mode view renders below on the same calm
-  // ground. The shared RitualControlsBar plays the completion Celebration.
+  // The session rests flat on the full-bleed umber player ground (#1905): the
+  // header is just the practice name + a quiet Adjust control in on-showcase
+  // ink — no lifted band, no shadow — and the mode view renders below on the
+  // same dark ground. The shared RitualControlsBar plays the completion
+  // Celebration.
   return (
     <View style={styles.card} testID="active-practice-card">
       <View style={styles.headerBand} testID="active-practice-header-band">
@@ -461,7 +462,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           {props.effectiveName}
         </Text>
       </View>
-      <SessionSurfaceProvider value={CALM_SURFACE}>
+      <SessionSurfaceProvider value={UMBER_SURFACE}>
         <ModeView
           config={props.config}
           state={props.state}
@@ -647,22 +648,18 @@ function useSaveMutation({ apply, rollback, commit, setSaveError }: UseSaveMutat
 }
 
 const styles = StyleSheet.create({
-  // Flat session container; the lifted-paper header band sits at its top.
+  // Flat session container resting directly on the umber player ground.
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: surface.hairline,
   },
-  // The lifted-paper header band: the practice name + Adjust on white raised paper.
+  // Flat header: the practice name + Adjust in on-showcase ink — no lifted
+  // band or shadow, so the session blends into the dark ground (#1905).
   headerBand: {
-    backgroundColor: surface.raised,
-    borderRadius: BORDER_RADIUS.lg,
     paddingHorizontal: SPACING.lg,
     paddingBottom: SPACING.md,
     paddingTop: SPACING.xs,
     marginBottom: SPACING.lg,
-    ...surfaceShadow.card,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -678,16 +675,18 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: SPACING.sm,
   },
-  gearText: { fontSize: 18, color: ink.soft },
-  gearLabel: { fontSize: 14, fontWeight: '600', color: ink.soft },
+  gearText: { fontSize: 18, color: onShowcase.soft },
+  gearLabel: { fontSize: 14, fontWeight: '600', color: onShowcase.soft },
   name: {
     fontSize: 20,
     fontWeight: '700',
-    color: ink.primary,
+    color: onShowcase.primary,
     marginBottom: SPACING.md,
   },
   error: {
-    color: colors.danger,
+    // The light destructive border swatch doubles as an AA-clearing (~6.3:1)
+    // danger ink on the umber ground; the dark `colors.danger` fill does not.
+    color: colors.destructive.border,
     fontSize: 14,
     marginTop: SPACING.md,
     textAlign: 'center',

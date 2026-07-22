@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { WEEKLY_TARGET } from './constants';
 
 import { Celebration } from '@/components/feedback/Celebration';
-import { colors, SPACING, BORDER_RADIUS } from '@/design/tokens';
+import { accentDark, onShowcase, showcase, SPACING, BORDER_RADIUS } from '@/design/tokens';
 
 /** Fixed segment indices so each completed session fills one visible block. */
 const SEGMENTS = Array.from({ length: WEEKLY_TARGET }, (_, i) => i);
@@ -65,6 +65,9 @@ const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {
   );
 };
 
+// Styled for the dark umber player ground (#1905): on-showcase ink for the
+// copy, a raised-step track, and the AA-clearing dark-canvas accent for the
+// filled segments (`strong` marks the goal-reached state).
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: SPACING.lg,
@@ -78,16 +81,16 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    color: colors.text.secondary,
+    color: onShowcase.soft,
     fontWeight: '600',
   },
   count: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.text.primary,
+    color: onShowcase.primary,
   },
   countComplete: {
-    color: colors.success,
+    color: accentDark.strong,
   },
   segmentRow: {
     flexDirection: 'row',
@@ -96,22 +99,22 @@ const styles = StyleSheet.create({
   segment: {
     flex: 1,
     height: 10,
-    backgroundColor: colors.background.accent,
+    backgroundColor: showcase.raised,
     borderRadius: BORDER_RADIUS.circle,
   },
   segmentFilled: {
-    backgroundColor: colors.primary,
+    backgroundColor: accentDark.primary,
   },
   segmentComplete: {
-    backgroundColor: colors.success,
+    backgroundColor: accentDark.strong,
   },
   helper: {
     fontSize: 13,
-    color: colors.text.secondary,
+    color: onShowcase.soft,
     marginTop: SPACING.sm,
   },
   helperComplete: {
-    color: colors.success,
+    color: accentDark.strong,
     fontWeight: '500',
   },
 });
