@@ -24,6 +24,9 @@ tzdata==2026.3
 pytest==9.1.1
 pytest-asyncio==1.4.0
 httpx==0.28.1
+# MCP SDK powering the Creek Vault streamable-HTTP transport
+# (services/creek_vault_client.py); unconfigured deployments never open it.
+mcp==1.28.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
 openai==2.46.0

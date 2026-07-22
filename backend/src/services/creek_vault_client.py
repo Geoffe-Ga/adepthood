@@ -22,10 +22,12 @@ Two implementations of :class:`~domain.creek_vault.CreekVaultClient` live here:
 :func:`build_creek_vault_client` chooses between them from ``CREEK_VAULT_URL``,
 so an unconfigured deployment transparently gets the local fallback.
 
-Transport security: :class:`_HttpJsonTransport` refuses a plaintext ``http://``
-URL to any non-loopback host, because every call carries the
-``CREEK_VAULT_API_KEY`` bearer credential (and each call's tier metadata) that
-must never cross a network in cleartext. This seam does not itself encrypt the
+Transport security: :class:`_McpStreamableHttpTransport` speaks MCP
+streamable-HTTP framing (initialize, then ``tools/call``) and refuses a
+plaintext ``http://`` URL to any non-loopback host, because every session
+carries the ``CREEK_VAULT_API_KEY`` bearer credential (and each call's tier
+metadata) that must never cross a network in cleartext -- TLS misconfiguration
+fails closed at construction. This seam does not itself encrypt the
 entry *body*: the contract's end-to-end, ciphertext-only intimate-transit rule
 (a client-held key the operator cannot decrypt) is a property of the write path
 built on this seam -- enforced where the body is assembled -- not of the seam's
@@ -39,11 +41,16 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.exceptions import McpError
+from mcp.types import CallToolResult, ErrorData
 
 from domain.creek_vault import (
     CONSUMER_ID,
@@ -72,19 +79,31 @@ _VAULT_TIMEOUT_SECONDS = 10.0
 _CONTRACT_MAJOR = CONTRACT_VERSION.split(".")[0]
 
 # Transport-layer failures we normalize to a degraded state. ``OSError`` covers
-# connection/timeout errors, ``httpx.HTTPError`` covers every httpx transport and
-# status failure, and ``json.JSONDecodeError`` covers a non-JSON body (a proxy
-# error page, an empty 200, or any vault bug) that ``response.json()`` cannot
-# decode -- the transport contract is to return a *decoded* mapping, so a decode
-# failure is a transport failure. All three normalize the per-capability path to
-# unavailable exactly as the handshake path already does, keeping one coherent
-# degrade-set (``json.JSONDecodeError`` is a ``ValueError`` subclass, so it is
-# already covered by the handshake's parse-error set).
+# connection/timeout errors, ``httpx.HTTPError`` covers every httpx transport
+# and status failure underneath the MCP session, ``McpError`` covers an MCP
+# protocol failure or a tool call that returned ``isError`` (raised by
+# :func:`_extract_tool_payload` with a static, content-free message),
+# ``ExceptionGroup`` covers a streamable-HTTP connection failure (anyio task
+# groups wrap the underlying ``httpx.ConnectError`` in a builtins
+# ``ExceptionGroup``; catching the ``Exception``-only group -- never
+# ``BaseExceptionGroup`` -- stays safe under cancellation), and
+# ``json.JSONDecodeError`` covers a content-text block whose body is not JSON.
+# All of these normalize the per-capability path to unavailable exactly as the
+# handshake path already does, keeping one coherent degrade-set
+# (``json.JSONDecodeError`` is a ``ValueError`` subclass, so it is already
+# covered by the handshake's parse-error set).
 _TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
     OSError,
     httpx.HTTPError,
+    McpError,
+    ExceptionGroup,
     json.JSONDecodeError,
 )
+
+# JSON-RPC application-defined server-error code (the -32000..-32099 range) used
+# when a vault tool call reports ``isError``; the paired message is static so it
+# can never echo the entry body or the API key.
+_MCP_TOOL_ERROR_CODE = -32000
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -107,10 +126,11 @@ _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 def _require_secure_vault_url(url: str) -> None:
     """Reject a plaintext vault URL to a non-loopback host, failing closed.
 
-    A configured vault is reached over :class:`_HttpJsonTransport`, which sends
-    the ``CREEK_VAULT_API_KEY`` bearer credential (and each call's tier
-    metadata) over the wire. Allowing a plaintext ``http://`` URL to a remote
-    host would expose that credential in cleartext, so a misconfiguration raises
+    A configured vault is reached over :class:`_McpStreamableHttpTransport`,
+    whose MCP streamable-HTTP session sends the ``CREEK_VAULT_API_KEY`` bearer
+    credential (and each call's tier metadata) over the wire. Allowing a
+    plaintext ``http://`` URL to a remote host would expose that credential in
+    cleartext, so a misconfiguration raises
     here rather than silently leaking. Plaintext to a loopback host is permitted
     for local development. The message names only the scheme and host -- never
     the API key.
@@ -141,8 +161,13 @@ class VaultTransport(Protocol):
 
 
 def _handshake_params() -> Mapping[str, object]:
-    """Build the identity/version params adepthood presents at handshake."""
-    return {"consumer": CONSUMER_ID, "contract_version": CONTRACT_VERSION}
+    """Build the privacy-floor params adepthood presents at handshake.
+
+    The handshake carries only the privacy tier ceiling this deployment is
+    willing to expose -- never a consumer identity or contract version, which
+    the vault learns from the MCP session itself.
+    """
+    return {"privacy_tier_ceiling": VaultTierCeiling.OPEN.value}
 
 
 def _require_str(payload: Mapping[str, object], key: str) -> str:
@@ -203,11 +228,16 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
 
     Reads and version-checks the contract before anything else: a major-version
     mismatch returns unavailable directly (we will not call an incompatible
-    surface). Any missing key or wrong-typed field raises out of the helpers and
-    is caught by :meth:`McpCreekVaultClient.handshake`.
+    surface). Then honors the vault's own ``available`` field, fail-closed: a
+    reachable server is not necessarily an available vault, so anything other
+    than a literal ``True`` (including a missing field) degrades to
+    unavailable. Any missing key or wrong-typed field raises out of the helpers
+    and is caught by :meth:`McpCreekVaultClient.handshake`.
     """
     contract_version = _require_str(payload, "contract_version")
     if contract_version.split(".")[0] != _CONTRACT_MAJOR:
+        return HandshakeResult.unavailable()
+    if payload.get("available") is not True:
         return HandshakeResult.unavailable()
     return HandshakeResult(
         available=True,
@@ -432,22 +462,63 @@ class LocalFallbackCreekVaultClient:
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 
 
-class _HttpJsonTransport:
-    """A thin JSON-over-HTTP :class:`VaultTransport` for a configured vault.
+def _first_text_payload(content: Iterable[object]) -> Mapping[str, object]:
+    """Decode the first text content block of a tool result into a mapping.
 
-    POSTs each MCP call as JSON with a bearer ``Authorization`` header sourced
-    from ``CREEK_VAULT_API_KEY``. The key is used only to build that header and
-    is never logged or placed into any exception message (privacy invariant).
-    Construction refuses a plaintext ``http://`` URL to a non-loopback host so
-    the key is never bound to a transport that would send it in cleartext.
+    Iterates rather than indexing so an empty content list falls through to the
+    empty-mapping default instead of raising (``IndexError`` is not in the
+    degrade set). A block whose text is not JSON raises
+    ``json.JSONDecodeError``, which :data:`_TRANSPORT_ERROR_TYPES` degrades; a
+    decoded value that is not a mapping yields the empty mapping.
+    """
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            decoded = json.loads(text)
+            return decoded if isinstance(decoded, Mapping) else {}
+    return {}
 
-    ``call`` has two failure branches the rest of the client depends on:
-    ``response.raise_for_status()`` (a non-2xx status) raises an
-    ``httpx.HTTPError`` and ``response.json()`` (a non-JSON body) raises a
-    ``json.JSONDecodeError``. Both are in :data:`_TRANSPORT_ERROR_TYPES`, so the
-    caller normalizes them to the degraded path rather than crashing. An
-    injectable ``transport`` lets tests exercise those branches with an
-    ``httpx.MockTransport`` instead of a live network.
+
+def _extract_tool_payload(result: CallToolResult) -> Mapping[str, object]:
+    """Extract the response mapping from an MCP tool-call result.
+
+    A result flagged ``isError`` raises :class:`McpError` with a **static**
+    message -- the error content is deliberately never read, because a vault's
+    error text can echo the entry body. Otherwise structured content wins when
+    present; a plain-dict tool result rides the content-text channel and is
+    JSON-decoded via :func:`_first_text_payload`; anything else yields the
+    empty mapping.
+    """
+    if result.isError:
+        error_data = ErrorData(
+            code=_MCP_TOOL_ERROR_CODE, message="creek vault tool call returned an error"
+        )
+        raise McpError(error_data)
+    structured = result.structuredContent
+    if isinstance(structured, Mapping):
+        return structured
+    return _first_text_payload(result.content)
+
+
+class _McpStreamableHttpTransport:
+    """An MCP streamable-HTTP :class:`VaultTransport` for a configured vault.
+
+    Each ``call`` opens an MCP session (streamable-HTTP framing with a bearer
+    ``Authorization`` header sourced from ``CREEK_VAULT_API_KEY``), initializes
+    it, invokes the method as an MCP tool, and extracts the response mapping
+    via :func:`_extract_tool_payload`. The key is used only to build that
+    header and is never logged or placed into any exception message (privacy
+    invariant). Construction refuses a plaintext ``http://`` URL to a
+    non-loopback host so the key is never bound to a transport that would send
+    it in cleartext.
+
+    Every failure branch lands in :data:`_TRANSPORT_ERROR_TYPES`: a connection
+    failure surfaces as an ``ExceptionGroup`` (anyio-wrapped
+    ``httpx.ConnectError``), a protocol failure or ``isError`` tool result as
+    :class:`McpError`, and a non-JSON content-text body as
+    ``json.JSONDecodeError`` -- so the caller normalizes them to the degraded
+    path rather than crashing. The injectable ``connect`` factory lets tests
+    drive the full MCP lifecycle against an in-memory server with no network.
     """
 
     def __init__(
@@ -455,33 +526,49 @@ class _HttpJsonTransport:
         url: str,
         api_key: str,
         *,
-        transport: httpx.AsyncBaseTransport | None = None,
+        connect: Callable[[], AbstractAsyncContextManager[ClientSession]] | None = None,
     ) -> None:
-        """Store the vault base URL and bearer key, refusing an insecure URL.
+        """Store the vault URL, bearer key, and connect factory, refusing an insecure URL.
 
         Delegates to :func:`_require_secure_vault_url`, which raises for a
-        plaintext ``http://`` URL to a non-loopback host before the key is bound.
-        The optional ``transport`` is passed to :class:`httpx.AsyncClient`; it
-        defaults to ``None`` (httpx's own network transport) in production and is
-        supplied as an :class:`httpx.MockTransport` under test.
+        plaintext ``http://`` URL to a non-loopback host before the key is
+        bound. The optional ``connect`` factory defaults to the production
+        streamable-HTTP connection and is supplied as an in-memory session
+        factory under test.
         """
         _require_secure_vault_url(url)
         self._url = url
         self._api_key = api_key
-        self._transport = transport
+        self._connect: Callable[[], AbstractAsyncContextManager[ClientSession]] = (
+            connect if connect is not None else self._connect_streamable_http
+        )
+
+    @asynccontextmanager
+    async def _connect_streamable_http(self) -> AsyncIterator[ClientSession]:
+        """Open the production streamable-HTTP MCP session to the vault.
+
+        The one untestable-without-a-network seam, kept as small as possible:
+        authenticate with the bearer header, open the streamable-HTTP channel
+        (which yields a read stream, a write stream, and a session-id getter),
+        and wrap the streams in a :class:`ClientSession`.
+        """
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        async with (
+            streamablehttp_client(self._url, headers=headers, timeout=_VAULT_TIMEOUT_SECONDS) as (
+                read,
+                write,
+                _get_session_id,
+            ),
+            ClientSession(read, write) as session,
+        ):
+            yield session
 
     async def call(self, method: str, params: Mapping[str, object], /) -> Mapping[str, object]:
-        """POST one MCP call and return the decoded JSON response mapping."""
-        headers = {"Authorization": f"Bearer {self._api_key}"}
-        async with httpx.AsyncClient(
-            timeout=_VAULT_TIMEOUT_SECONDS, transport=self._transport
-        ) as client:
-            response = await client.post(
-                self._url, json={"method": method, "params": dict(params)}, headers=headers
-            )
-            response.raise_for_status()
-            decoded: Mapping[str, object] = response.json()
-            return decoded
+        """Run one MCP tool call over a fresh session and return its payload mapping."""
+        async with self._connect() as session:
+            await session.initialize()
+            result = await session.call_tool(method, dict(params))
+        return _extract_tool_payload(result)
 
 
 def build_creek_vault_client(transport: VaultTransport | None = None) -> CreekVaultClient:
@@ -491,7 +578,7 @@ def build_creek_vault_client(transport: VaultTransport | None = None) -> CreekVa
     :class:`LocalFallbackCreekVaultClient` is returned so the app runs fully on
     its local pipeline. Otherwise an :class:`McpCreekVaultClient` is returned
     over the injected ``transport`` (tests supply a fake) or a freshly built
-    :class:`_HttpJsonTransport` bound to the configured URL and API key.
+    :class:`_McpStreamableHttpTransport` bound to the configured URL and API key.
     """
     # ``CREEK_VAULT_URL`` being unset or empty is the signal that no vault is
     # configured; the bearer credential is read only to build the transport's
@@ -500,4 +587,4 @@ def build_creek_vault_client(transport: VaultTransport | None = None) -> CreekVa
     if not url:
         return LocalFallbackCreekVaultClient()
     api_key = os.getenv("CREEK_VAULT_API_KEY", "")
-    return McpCreekVaultClient(transport=transport or _HttpJsonTransport(url, api_key))
+    return McpCreekVaultClient(transport=transport or _McpStreamableHttpTransport(url, api_key))

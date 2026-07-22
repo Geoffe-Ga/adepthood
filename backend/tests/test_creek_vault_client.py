@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import cast
 
 import httpx
 import pytest
-from pydantic import ValidationError
+from mcp import ClientSession
+from mcp.server.fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import CallToolResult, ImageContent, TextContent
+from pydantic import BaseModel, ValidationError
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
@@ -28,7 +33,9 @@ from domain.creek_vault import (
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
-    _HttpJsonTransport,
+    _extract_tool_payload,
+    _handshake_params,
+    _McpStreamableHttpTransport,
     build_creek_vault_client,
 )
 
@@ -42,9 +49,12 @@ def _handshake_payload(
     contract_version: str = CONTRACT_VERSION,
     ontology_version: str = "1.0.0",
     attestation: Mapping[str, object] | None = None,
+    *,
+    available: bool = True,
 ) -> dict[str, object]:
     """Build a well-formed creek.handshake response payload."""
     return {
+        "available": available,
         "capabilities": list(capabilities),
         "contract_version": contract_version,
         "ontology_version": ontology_version,
@@ -235,8 +245,9 @@ async def test_handshake_degrades_to_unavailable_on_wrong_typed_fields() -> None
 
 @pytest.mark.asyncio
 async def test_handshake_degrades_to_unavailable_on_non_list_capabilities() -> None:
-    """Valid versions but a non-list capabilities field degrades to unavailable."""
+    """Valid versions and availability but a non-list capabilities field degrades to unavailable."""
     payload = {
+        "available": True,
         "capabilities": "not-a-list",
         "contract_version": CONTRACT_VERSION,
         "ontology_version": "1.0.0",
@@ -257,9 +268,19 @@ async def test_handshake_degrades_to_unavailable_on_contract_major_mismatch() ->
 
 
 @pytest.mark.asyncio
+async def test_handshake_degrades_when_response_marks_unavailable() -> None:
+    """A reachable vault that reports available=False degrades to unavailable."""
+    payload = _handshake_payload([CreekCapability.INGEST.value], available=False)
+    client = McpCreekVaultClient(transport=GarbagePayloadTransport(payload))
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+
+
+@pytest.mark.asyncio
 async def test_handshake_ignores_non_string_capability_alongside_valid_ones() -> None:
     """A non-string capability entry is dropped while valid string entries still parse."""
     payload: dict[str, object] = {
+        "available": True,
         "capabilities": [CreekCapability.INGEST.value, 42, CreekCapability.WHEEL.value],
         "contract_version": CONTRACT_VERSION,
         "ontology_version": "1.0.0",
@@ -275,6 +296,7 @@ async def test_handshake_ignores_non_string_capability_alongside_valid_ones() ->
 async def test_handshake_degrades_to_unavailable_on_malformed_attestation() -> None:
     """An attestation field that is neither a mapping nor null degrades to unavailable."""
     payload: dict[str, object] = {
+        "available": True,
         "capabilities": [CreekCapability.INGEST.value],
         "contract_version": CONTRACT_VERSION,
         "ontology_version": "1.0.0",
@@ -283,6 +305,12 @@ async def test_handshake_degrades_to_unavailable_on_malformed_attestation() -> N
     client = McpCreekVaultClient(transport=GarbagePayloadTransport(payload))
     result = await client.handshake()
     assert result == HandshakeResult.unavailable()
+
+
+def test_handshake_params_sends_only_privacy_tier_ceiling() -> None:
+    """Handshake params carry only privacy_tier_ceiling, never consumer or contract_version."""
+    params = _handshake_params()
+    assert params == {"privacy_tier_ceiling": VaultTierCeiling.OPEN.value}
 
 
 @pytest.mark.asyncio
@@ -609,31 +637,61 @@ async def test_unavailable_error_never_leaks_body_or_api_key(
     assert exc_info.value.__suppress_context__ is True
 
 
-def _handshake_then(capability_response: httpx.Response) -> httpx.MockTransport:
-    """Build a MockTransport that handshakes cleanly, then scripts the capability call.
+# --- Real MCP streamable-HTTP transport driven against an in-memory vault ---
+# These tests exercise _McpStreamableHttpTransport end to end by injecting an
+# in-memory FastMCP server through its connect seam, so the real MCP lifecycle
+# (initialize -> tools/call -> result) runs with no network.
 
-    The handshake POST is answered with a well-formed payload advertising INGEST
-    so the client marks that capability supported; every other method returns the
-    supplied ``capability_response``, letting a test drive the real transport's
-    failure branches (a non-JSON body or a non-2xx status) without a network.
-    """
 
-    def _handler(request: httpx.Request) -> httpx.Response:
-        method = json.loads(request.content)["method"]
-        if method == CreekCapability.HANDSHAKE.value:
-            return httpx.Response(200, json=_handshake_payload([CreekCapability.INGEST.value]))
-        return capability_response
+class _IngestOut(BaseModel):
+    """Typed ingest result used to exercise the structuredContent branch."""
 
-    return httpx.MockTransport(_handler)
+    stored: bool
+    vault_ref: str
+
+
+def _mem_connect(server: FastMCP) -> Callable[[], AbstractAsyncContextManager[ClientSession]]:
+    """Return a connect factory yielding an in-memory session bound to ``server``."""
+
+    def _factory() -> AbstractAsyncContextManager[ClientSession]:
+        return create_connected_server_and_client_session(server)
+
+    return _factory
+
+
+class _RaisingConnect:
+    """A connect context manager whose entry raises, simulating an unreachable vault."""
+
+    def __init__(self, exc: BaseException) -> None:
+        """Store the exception raised on context entry."""
+        self._exc = exc
+
+    async def __aenter__(self) -> ClientSession:
+        """Raise the stored exception instead of yielding a session."""
+        raise self._exc
+
+    async def __aexit__(self, *_exc_info: object) -> bool:
+        """Return False; never invoked because entry raises."""
+        return False
+
+
+def _serve_handshake(server: FastMCP, capabilities: Sequence[str]) -> None:
+    """Register a creek.handshake tool advertising ``capabilities`` on ``server``."""
+    advertised = list(capabilities)
+
+    @server.tool(name=CreekCapability.HANDSHAKE.value)
+    def _handshake(privacy_tier_ceiling: str = VaultTierCeiling.OPEN.value) -> dict[str, object]:
+        """Answer a handshake with a well-formed advertised-capability payload."""
+        del privacy_tier_ceiling
+        return _handshake_payload(advertised)
 
 
 @pytest.mark.asyncio
-async def test_http_transport_decodes_valid_json_handshake() -> None:
-    """The real HTTP transport decodes a valid JSON handshake and marks INGEST supported."""
-    # This test only exercises the handshake, so the capability response is never invoked.
-    transport = _HttpJsonTransport(
-        _VAULT_URL, "api-key", transport=_handshake_then(httpx.Response(200))
-    )
+async def test_real_transport_handshake_populates_result() -> None:
+    """The real MCP transport completes a handshake against an in-memory server."""
+    server = FastMCP("fake-creek-vault")
+    _serve_handshake(server, [CreekCapability.INGEST.value])
+    transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
     client = McpCreekVaultClient(transport=transport)
     await client.handshake()
     assert client.is_available() is True
@@ -641,31 +699,120 @@ async def test_http_transport_decodes_valid_json_handshake() -> None:
 
 
 @pytest.mark.asyncio
-async def test_http_transport_non_json_capability_body_degrades() -> None:
-    """A non-JSON 200 body on the capability path degrades to CreekVaultUnavailableError.
+async def test_real_transport_handshake_sends_privacy_tier_ceiling() -> None:
+    """The real transport passes only privacy_tier_ceiling to the handshake tool."""
+    received: dict[str, object] = {}
+    server = FastMCP("fake-creek-vault")
 
-    ``response.json()`` raises ``json.JSONDecodeError`` (a ``ValueError`` subclass,
-    not an ``httpx.HTTPError``); the client must normalize it rather than crash,
-    upholding the module's degrade-never-crash invariant on the capability path.
-    """
-    transport = _HttpJsonTransport(
-        _VAULT_URL,
-        "api-key",
-        transport=_handshake_then(httpx.Response(200, content=b"<html>proxy error</html>")),
-    )
+    @server.tool(name=CreekCapability.HANDSHAKE.value)
+    def _handshake(privacy_tier_ceiling: str = "sentinel") -> dict[str, object]:
+        """Record the tier ceiling the client sent, then answer normally."""
+        received["privacy_tier_ceiling"] = privacy_tier_ceiling
+        return _handshake_payload([CreekCapability.INGEST.value])
+
+    transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
     client = McpCreekVaultClient(transport=transport)
     await client.handshake()
-    with pytest.raises(CreekVaultUnavailableError):
-        await client.ingest(_ingest_request())
+    assert received == {"privacy_tier_ceiling": VaultTierCeiling.OPEN.value}
+    assert client.is_available() is True
 
 
 @pytest.mark.asyncio
-async def test_http_transport_non_2xx_capability_status_degrades() -> None:
-    """A non-2xx status on the capability path degrades to CreekVaultUnavailableError."""
-    transport = _HttpJsonTransport(
-        _VAULT_URL, "api-key", transport=_handshake_then(httpx.Response(503))
+async def test_real_transport_degrades_on_connection_exception_group() -> None:
+    """A connection failure surfacing as an ExceptionGroup degrades to unavailable."""
+    failure = ExceptionGroup("connect failed", [httpx.ConnectError("unreachable")])
+    transport = _McpStreamableHttpTransport(
+        _VAULT_URL, "api-key", connect=lambda: _RaisingConnect(failure)
     )
     client = McpCreekVaultClient(transport=transport)
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+
+
+@pytest.mark.asyncio
+async def test_real_transport_reads_structured_content() -> None:
+    """A tool with a typed result is read from structuredContent."""
+    server = FastMCP("fake-creek-vault")
+    _serve_handshake(server, [CreekCapability.INGEST.value])
+
+    @server.tool(name=CreekCapability.INGEST.value)
+    def _ingest(
+        consumer: str, body: str, tier_ceiling: str, created_at: str, aspect_tags: list[str]
+    ) -> _IngestOut:
+        """Return a typed ingest result so structuredContent is populated."""
+        del consumer, body, tier_ceiling, created_at, aspect_tags
+        return _IngestOut(stored=True, vault_ref="vault-ref-structured")
+
+    transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
+    client = McpCreekVaultClient(transport=transport)
     await client.handshake()
-    with pytest.raises(CreekVaultUnavailableError):
-        await client.ingest(_ingest_request())
+    result = await client.ingest(_ingest_request())
+    assert result == VaultIngestResult(stored=True, vault_ref="vault-ref-structured")
+
+
+def test_extract_tool_payload_reads_content_text() -> None:
+    """A result with no structuredContent is JSON-decoded from its content text."""
+    result = CallToolResult(
+        content=[TextContent(type="text", text='{"stored": true, "vault_ref": "vault-ref-text"}')]
+    )
+    assert _extract_tool_payload(result) == {"stored": True, "vault_ref": "vault-ref-text"}
+
+
+def test_extract_tool_payload_empty_content_yields_empty_mapping() -> None:
+    """A result with no content blocks yields the empty mapping, never an IndexError."""
+    result = CallToolResult(content=[])
+    assert _extract_tool_payload(result) == {}
+
+
+def test_extract_tool_payload_non_mapping_text_yields_empty_mapping() -> None:
+    """Content text that decodes to a non-mapping JSON value yields the empty mapping."""
+    result = CallToolResult(content=[TextContent(type="text", text="[1, 2, 3]")])
+    assert _extract_tool_payload(result) == {}
+
+
+def test_extract_tool_payload_skips_non_text_block_before_text() -> None:
+    """A leading non-text content block is skipped so a later text block still parses."""
+    image = ImageContent(type="image", data="Zm9v", mimeType="image/png")
+    result = CallToolResult(content=[image, TextContent(type="text", text='{"stored": true}')])
+    assert _extract_tool_payload(result) == {"stored": True}
+
+
+def test_extract_tool_payload_error_result_raises_without_reading_content() -> None:
+    """An isError result raises rather than surfacing its (possibly sensitive) content text."""
+    leak = "SENTINEL_ERROR_CONTENT_DO_NOT_LEAK"
+    result = CallToolResult(content=[TextContent(type="text", text=leak)], isError=True)
+    with pytest.raises(McpError) as exc_info:
+        _extract_tool_payload(result)
+    assert leak not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_real_transport_tool_error_degrades_without_leaking_body() -> None:
+    """A tool that raises degrades to CreekVaultUnavailableError without leaking the body."""
+    body_sentinel = "SENTINEL_BODY_REAL_TRANSPORT_DO_NOT_LEAK"
+    server = FastMCP("fake-creek-vault")
+    _serve_handshake(server, [CreekCapability.INGEST.value])
+
+    @server.tool(name=CreekCapability.INGEST.value)
+    def _ingest(
+        consumer: str, body: str, tier_ceiling: str, created_at: str, aspect_tags: list[str]
+    ) -> dict[str, object]:
+        """Raise with the body in the message to prove the client never surfaces it."""
+        del consumer, tier_ceiling, created_at, aspect_tags
+        raise RuntimeError(f"vault exploded on {body}")
+
+    transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    request = VaultIngestRequest(
+        body=body_sentinel, tier_ceiling=VaultTierCeiling.OPEN, created_at=_CREATED_AT
+    )
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.ingest(request)
+    assert body_sentinel not in str(exc_info.value)
+
+
+def test_real_transport_rejects_plaintext_remote_url() -> None:
+    """The real transport refuses a plaintext remote URL before binding the key."""
+    with pytest.raises(ValueError, match="https"):
+        _McpStreamableHttpTransport("http://vault.example.test", "api-key")
