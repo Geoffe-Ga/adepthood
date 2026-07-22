@@ -116,7 +116,6 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/ResonanceEssayModal.tsx::kind',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
-  'features/Practice/PracticeScreen.tsx::heroEyebrow',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
   'features/Practice/configurator/RitualConfiguratorSheet.tsx::aspectText',

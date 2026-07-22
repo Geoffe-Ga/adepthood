@@ -10,7 +10,7 @@ import { useHabitActions } from './useHabitActions';
 import { registerForPushNotificationsAsync, reconcileNotifications } from './useHabitNotifications';
 import { useHabitUI } from './useHabitUI';
 
-const useBootstrapHabits = (userTimezone: string): void => {
+export const useBootstrapHabits = (userTimezone: string): void => {
   // Runs twice on cold start (UTC default, then the auth-hydrated zone).
   // The second fetch is intentional, not a bug: day buckets and queued
   // check-in replay days both depend on the zone (#269).
@@ -18,8 +18,13 @@ const useBootstrapHabits = (userTimezone: string): void => {
     void habitManager.loadHabits(userTimezone);
   }, [userTimezone]);
   useEffect(() => {
-    void registerForPushNotificationsAsync();
-    void reconcileNotifications();
+    // Abort on unmount so in-flight notification work cannot mutate stale state.
+    const controller = new AbortController();
+    void registerForPushNotificationsAsync(controller.signal);
+    void reconcileNotifications(controller.signal);
+    return () => {
+      controller.abort();
+    };
   }, []);
 };
 
