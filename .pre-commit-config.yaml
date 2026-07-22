@@ -58,7 +58,7 @@ repos:
         files: ^backend/
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: ["types-jsonschema", "types-cachetools", "types-requests", "openai", "anthropic", "pydantic", "sqlmodel", "fastapi", "starlette", "pytest", "pytest-asyncio", "httpx", "aiosqlite", "PyJWT", "bcrypt", "cryptography", "slowapi", "limits", "alembic"]
+        additional_dependencies: ["types-jsonschema", "types-cachetools", "types-requests", "openai", "anthropic", "pydantic", "sqlmodel", "fastapi", "starlette", "pytest", "pytest-asyncio", "httpx", "aiosqlite", "PyJWT", "bcrypt", "cryptography", "slowapi", "limits", "alembic", "mcp==1.28.1"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
