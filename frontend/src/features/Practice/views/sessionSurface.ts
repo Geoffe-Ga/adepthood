@@ -15,7 +15,7 @@
  */
 import { createContext, useContext } from 'react';
 
-import { accent, colors, ink, surface } from '@/design/tokens';
+import { accent, accentDark, colors, ink, onShowcase, showcase, surface } from '@/design/tokens';
 
 export interface SessionSurface {
   /** The ground the session renders on. */
@@ -65,6 +65,23 @@ export const CALM_SURFACE: SessionSurface = {
   textSoft: ink.soft,
   textMuted: ink.muted,
   accent: accent.primary,
+};
+
+/**
+ * The full-bleed umber player surface (#1905) — the Practice screen's dark
+ * "focus mode" ground. The session rests directly on the deep warm
+ * `showcase.canvas` umber (the same ground the Begin hero used) with the
+ * AA-clearing `onShowcase.*` ink scale and the dark-canvas accent, so a
+ * running ritual reads as a single quiet dark card. Contrast is asserted in
+ * `views/__tests__/sessionSurface.contrast.test.ts`.
+ */
+export const UMBER_SURFACE: SessionSurface = {
+  ground: showcase.canvas,
+  raised: showcase.raised,
+  text: onShowcase.primary,
+  textSoft: onShowcase.soft,
+  textMuted: onShowcase.muted,
+  accent: accentDark.primary,
 };
 
 const SessionSurfaceContext = createContext<SessionSurface>(LIGHT_SURFACE);
