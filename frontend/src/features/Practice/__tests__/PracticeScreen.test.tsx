@@ -910,9 +910,9 @@ describe('PracticeScreen', () => {
     );
   });
 
-  it('tapping the Catalog tab renders the catalog in place on the dark ground, not as a push', async () => {
+  it('tapping the Catalog tab renders the catalog in place on the light ground, not as a push', async () => {
     const { StyleSheet } = require('react-native');
-    const { onShowcase } = require('../../../design/tokens');
+    const { ink, surface } = require('../../../design/tokens');
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
@@ -926,15 +926,16 @@ describe('PracticeScreen', () => {
     expect(getByTestId('practice-tab-catalog').props.accessibilityState).toEqual(
       expect.objectContaining({ selected: true }),
     );
-    // Embedded dark variant: no pushed screen, no light safe-area wrapper, no
-    // light ScreenHeader Create CTA, and section titles read in onShowcase ink.
+    // Embedded light ground: no push, no safe-area wrapper, no Create CTA.
     expect(mockRootNavigate).not.toHaveBeenCalled();
     expect(queryByTestId('practice-catalog-safe-area')).toBeNull();
     expect(queryByTestId('practice-catalog-create')).toBeNull();
+    const catalogRegion = getByTestId('practice-embedded-catalog');
+    expect(StyleSheet.flatten(catalogRegion.props.style).backgroundColor).toBe(surface.canvas);
     const presetsTitle = within(getByTestId('practice-catalog-section-presets')).getByText(
       'Presets',
     );
-    expect(StyleSheet.flatten(presetsTitle.props.style).color).toBe(onShowcase.soft);
+    expect(StyleSheet.flatten(presetsTitle.props.style).color).toBe(ink.soft);
   });
 
   it('activating a practice from the embedded catalog flips back with a single refresh', async () => {

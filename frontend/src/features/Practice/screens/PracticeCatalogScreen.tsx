@@ -2,8 +2,8 @@
  * ``PracticeCatalogScreen`` — the pushed RootStack catalog route: a light
  * safe-area shell around the shared ``PracticeCatalogList`` body. The list
  * itself (sections, filters, Use/copy flows) lives in ``PracticeCatalogList``
- * so the Practice player can embed the same catalog on its dark ground; this
- * wrapper keeps the pushed route's light canvas and pop-on-activate defaults.
+ * so the Practice player can embed the same catalog in place; this wrapper
+ * keeps the pushed route's light canvas and pop-on-activate defaults.
  */
 
 import React from 'react';

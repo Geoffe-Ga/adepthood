@@ -5,7 +5,7 @@
  * fixed, non-scrolling layout: a centered `Practice | Catalog` tab switcher
  * at the top, the session centered in the middle, and the weekly-progress
  * footer pinned at the foot. The Catalog tab embeds the shared catalog list
- * in place on the dark ground — choosing a practice there flips straight
+ * in place on its light paper ground — choosing a practice there flips straight
  * back to the player with the new practice live, no push navigation. The
  * switcher hides while a session is running or paused so nothing competes
  * with the ritual.
@@ -50,6 +50,7 @@ import {
   editorialType,
   onShowcase,
   showcase,
+  surface,
   touchTarget,
 } from '@/design/tokens';
 import { stageService } from '@/features/Map/services/stageService';
@@ -192,9 +193,9 @@ const PracticeScreen = (): React.JSX.Element => {
       <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
         {s.showSwitcher && <PracticeCatalogSwitcher active={s.tab} onChange={s.setTab} />}
         {s.tab === 'catalog' ? (
-          <View style={styles.catalogRegion}>
+          <View style={styles.catalogRegion} testID="practice-embedded-catalog">
             <PracticeCatalogList
-              variant="dark"
+              embedded
               initialStage={s.stageNumber}
               onActivated={s.onCatalogActivated}
             />
@@ -511,9 +512,9 @@ const ErrorView = ({
 const styles = StyleSheet.create({
   // The screen shell: single owner of the umber ground and the top inset.
   screen: { flex: 1, backgroundColor: showcase.canvas },
-  // The embedded catalog fills the region under the switcher; the ground stays
-  // transparent so the shell's umber shows through the dark variant.
-  catalogRegion: { flex: 1 },
+  // The embedded catalog fills the region under the switcher and paints the
+  // light paper ground the catalog list is designed for.
+  catalogRegion: { flex: 1, backgroundColor: surface.canvas },
   // Leaf wrappers fill the shell without repainting its ground.
   leaf: { flex: 1 },
   playerBody: { flex: 1, padding: SPACING.md },

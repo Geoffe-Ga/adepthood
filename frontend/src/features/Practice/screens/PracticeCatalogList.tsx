@@ -1,8 +1,8 @@
 /**
  * ``PracticeCatalogList`` — the catalog list body shared by the pushed
- * ``PracticeCatalogScreen`` (light) and the Practice player's embedded
- * Catalog tab (dark). Browsable surface for every visible practice
- * (presets + the user's drafts + imported drafts).
+ * ``PracticeCatalogScreen`` and the Practice player's embedded Catalog
+ * tab. Browsable surface for every visible practice (presets + the
+ * user's drafts + imported drafts).
  *
  * Apply ALL custom-practices-07 UX guard-rails:
  *
@@ -18,10 +18,11 @@
  * catalog pages one stage at a time and the stage chip is the primary
  * navigation rather than an optional filter.
  *
- * The ``dark`` variant renders transparently over the host's umber ground and
- * recolors section titles for it; the light editorial header (with the
- * ``+ Create`` CTA) is a light-variant-only affordance. Everything else —
- * search, chips, rows, the copy dialog — is identical in both variants.
+ * The list always renders on the light ``surface.canvas`` ground. When
+ * ``embedded`` in the Practice player, the tab switcher supplies the Catalog
+ * identity, so the editorial header (with the ``+ Create`` CTA) is
+ * suppressed. Everything else — search, chips, rows, the copy dialog — is
+ * identical in both hosts.
  */
 
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -48,7 +49,6 @@ import {
   accent,
   colors,
   ink,
-  onShowcase,
   surface,
   surfaceShadow,
   touchTarget,
@@ -70,9 +70,6 @@ import type { RecentPractice } from '@/storage/recentPracticesStorage';
 
 type Section = 'presets' | 'drafts' | 'imported';
 
-/** Ground the list renders on: ``light`` paper (pushed) or the ``dark`` player. */
-export type CatalogVariant = 'light' | 'dark';
-
 export interface CatalogProps {
   /** Stage to seed the chip filter with; defaults to ``1``. */
   initialStage?: number;
@@ -87,8 +84,9 @@ export interface CatalogProps {
 }
 
 export interface CatalogListProps extends CatalogProps {
-  /** Rendering ground; defaults to ``light`` (the pushed route). */
-  variant?: CatalogVariant;
+  /** When embedded in the Practice player, the switcher supplies the Catalog
+   * identity, so the editorial header is suppressed. */
+  embedded?: boolean;
   /** Runs after a practice is activated; defaults to popping the pushed route. */
   onActivated?: () => void;
 }
@@ -202,8 +200,6 @@ function CatalogCopyDialog({ use }: { use: CatalogUse }): React.JSX.Element | nu
 /** The catalog list body: the sectioned list plus its copy dialog. */
 export default function PracticeCatalogList(props: CatalogListProps): React.JSX.Element {
   const s = useCatalogScreen(props);
-  const variant = props.variant ?? 'light';
-  const renderSectionHeader = useMemo(() => makeSectionHeader(variant), [variant]);
 
   return (
     <>
@@ -216,7 +212,7 @@ export default function PracticeCatalogList(props: CatalogListProps): React.JSX.
         renderSectionFooter={makeSectionFooter(s.onCreate, s.sections)}
         ListHeaderComponent={
           <CatalogHeader
-            variant={variant}
+            embedded={props.embedded ?? false}
             query={s.query}
             onQueryChange={s.setQuery}
             stageNumber={s.stageNumber}
@@ -407,17 +403,13 @@ interface CatalogSection {
 
 const catalogKeyExtractor = (item: PracticeItem): string => `practice-${item.id}`;
 
-/** Section headers read in paper ink on the light ground, showcase ink on dark. */
-function makeSectionHeader(
-  variant: CatalogVariant,
-): (info: { section: CatalogSection }) => React.JSX.Element | null {
-  const titleStyle = [styles.sectionTitle, variant === 'dark' && styles.sectionTitleDark];
-  return ({ section }) =>
-    section.data.length === 0 ? null : (
-      <View style={styles.section} testID={`practice-catalog-section-${section.section}`}>
-        <Text style={titleStyle}>{section.title}</Text>
-      </View>
-    );
+/** Section header in paper ink on the light ground; hidden while empty. */
+function renderSectionHeader({ section }: { section: CatalogSection }): React.JSX.Element | null {
+  return section.data.length === 0 ? null : (
+    <View style={styles.section} testID={`practice-catalog-section-${section.section}`}>
+      <Text style={styles.sectionTitle}>{section.title}</Text>
+    </View>
+  );
 }
 
 interface SectionFooterProps {
@@ -487,7 +479,7 @@ function buildSections(
 }
 
 interface CatalogHeaderProps {
-  variant: CatalogVariant;
+  embedded: boolean;
   query: string;
   onQueryChange: (next: string) => void;
   stageNumber: number;
@@ -500,36 +492,30 @@ interface CatalogHeaderProps {
 }
 
 /** Non-scrolling-away header for the SectionList (kept as an element so the
- * search TextInput keeps focus across re-renders). The light editorial header
- * belongs to the pushed route; the dark player supplies its own identity. */
+ * search TextInput keeps focus across re-renders). The editorial header
+ * belongs to the pushed route; when embedded, the player's switcher already
+ * names the Catalog, so it is suppressed. */
 const CatalogHeader = (props: CatalogHeaderProps): React.JSX.Element => (
   <View>
-    {props.variant === 'light' && <Header onCreate={props.onCreate} />}
+    {!props.embedded && <Header onCreate={props.onCreate} />}
     <SearchBar value={props.query} onChange={props.onQueryChange} />
     <StageChips selected={props.stageNumber} onSelect={props.onStage} />
     <ModeChips selected={props.modeCategory} onSelect={props.onMode} />
-    <RecentlyUsed variant={props.variant} recents={props.recents} onDetail={props.onDetail} />
+    <RecentlyUsed recents={props.recents} onDetail={props.onDetail} />
   </View>
 );
 
 interface RecentlyUsedProps {
-  variant: CatalogVariant;
   recents: readonly RecentPractice[];
   onDetail: (id: number) => void;
 }
 
 /** A quick "Recently used" shortcut above the full catalog; hidden when empty. */
-const RecentlyUsed = ({
-  variant,
-  recents,
-  onDetail,
-}: RecentlyUsedProps): React.JSX.Element | null => {
+const RecentlyUsed = ({ recents, onDetail }: RecentlyUsedProps): React.JSX.Element | null => {
   if (recents.length === 0) return null;
   return (
     <View style={styles.section} testID="practice-catalog-recently-used">
-      <Text style={[styles.sectionTitle, variant === 'dark' && styles.sectionTitleDark]}>
-        Recently used
-      </Text>
+      <Text style={styles.sectionTitle}>Recently used</Text>
       {recents.map((recent) => (
         <RecentRow key={`recent-${recent.id}`} recent={recent} onDetail={onDetail} />
       ))}
@@ -907,7 +893,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: SPACING.sm,
   },
-  sectionTitleDark: { color: onShowcase.soft },
   sectionEmpty: { paddingVertical: SPACING.md, gap: SPACING.sm },
   rowContainer: {
     flexDirection: 'row',
