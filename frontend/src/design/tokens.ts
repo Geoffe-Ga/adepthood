@@ -378,6 +378,7 @@ export const rhythm = {
 export const motion = {
   fast: 90, // ms — press / quick feedback
   base: 220, // ms — entrance fade + settle, celebration pulse
+  threshold: 400, // ms — the light->dark ground fade as the Practice player gains focus
   settleY: 6, // px — the small upward translate an element settles from
 } as const;
 
