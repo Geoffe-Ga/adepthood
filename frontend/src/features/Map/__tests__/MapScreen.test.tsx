@@ -198,9 +198,9 @@ describe('MapScreen', () => {
     });
     // No modal yet — the tap moved the lens instead.
     expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
-    // The lens caption now reads the tapped stage's free-will description.
-    const freeWill = tree.root.findByProps({ testID: 'magnifier-freewill' });
-    expect(freeWill.props.children).toBe('Free will at stage 3.');
+    // The lens caption now reads the tapped stage's subtitle.
+    const subtitle = tree.root.findByProps({ testID: 'magnifier-subtitle' });
+    expect(subtitle.props.children).toBe('Subtitle 3');
     // And the chip hides, since the lens left the current stage.
     expect(tree.root.findAll((n: TestNode) => n.props.testID === 'you-are-here')).toHaveLength(0);
   });
@@ -239,8 +239,8 @@ describe('MapScreen', () => {
       lens.props.onResponderMove({ nativeEvent: { pageX: 150, pageY: 450 } });
       lens.props.onResponderRelease({ nativeEvent: { pageX: 150, pageY: 450 } });
     });
-    const freeWill = tree.root.findByProps({ testID: 'magnifier-freewill' });
-    expect(freeWill.props.children).toBe('Free will at stage 3.');
+    const subtitle = tree.root.findByProps({ testID: 'magnifier-subtitle' });
+    expect(subtitle.props.children).toBe('Subtitle 3');
     // The settled stage now opens on a single stage tap (it is focused).
     act(() => {
       tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress();
