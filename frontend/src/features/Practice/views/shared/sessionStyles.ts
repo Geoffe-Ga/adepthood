@@ -8,6 +8,12 @@ import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 /** Minimum width for a full-bleed session CTA. */
 const SESSION_BUTTON_MIN_WIDTH = 220;
 
+/** Height cap for a bounded internal-scroll list region inside a session widget. */
+export const SESSION_LIST_MAX_HEIGHT = 220;
+
+/** Height cap for the meditation card faces so controls stay on-screen on small phones. */
+export const SESSION_CARD_MAX_HEIGHT = 420;
+
 /** Shared geometry for the large filled session CTAs (Begin / Save / advance). */
 export const SESSION_BUTTON_BASE: ViewStyle = {
   paddingVertical: SPACING.buttonV,

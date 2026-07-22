@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ImageSourcePropType } from 'react-native';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { resolveCardImage } from '../data/assetResolver';
 import type { PickedCard } from '../data/resolveCard';
@@ -8,7 +8,7 @@ import { pickCard } from '../data/resolveCard';
 import type { CardMeditationCard, CardMeditationConfig } from '../engine/types';
 import type { RitualControls, RitualState } from '../engine/types';
 
-import { MeditationCardShell } from './shared';
+import { MeditationCardShell, SESSION_CARD_MAX_HEIGHT } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -102,13 +102,20 @@ const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => 
           }}
         />
       )}
-      <Text style={styles.cardName} testID="card-meditation-card-name">
+      <Text
+        style={styles.cardName}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        testID="card-meditation-card-name"
+      >
         {card.name}
       </Text>
       {card.symbolism !== null && card.symbolism.length > 0 && (
-        <Text style={styles.cardSymbolism} testID="card-meditation-card-symbolism">
-          {card.symbolism}
-        </Text>
+        <ScrollView style={styles.symbolismScroll}>
+          <Text style={styles.cardSymbolism} testID="card-meditation-card-symbolism">
+            {card.symbolism}
+          </Text>
+        </ScrollView>
       )}
     </View>
   );
@@ -119,11 +126,14 @@ const CARD_MIN_HEIGHT = 380;
 const CARD_IMAGE_HEIGHT = 280;
 /** Generous dark frame around the artwork — lowers visual noise during the sit. */
 const CARD_BORDER_WIDTH = 8;
+/** Symbolism scroll cap — the artwork leaves little card height below it. */
+export const SYMBOLISM_MAX_HEIGHT = 96;
 
 const styles = StyleSheet.create({
   card: {
     width: CARD_WIDTH,
     minHeight: CARD_MIN_HEIGHT,
+    maxHeight: SESSION_CARD_MAX_HEIGHT,
     backgroundColor: colors.primary,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: CARD_BORDER_WIDTH,
@@ -147,6 +157,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.sm,
   },
+  symbolismScroll: { maxHeight: SYMBOLISM_MAX_HEIGHT, flexShrink: 1 },
   cardSymbolism: {
     fontSize: 13,
     color: colors.text.light,

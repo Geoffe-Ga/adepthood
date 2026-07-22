@@ -1,12 +1,17 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { TarotCard } from '../data/tarot';
 import type { RitualControls, RitualState } from '../engine/types';
 
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { MeditationCardShell, SessionCtaButton } from './shared';
+import {
+  MeditationCardShell,
+  SESSION_CARD_MAX_HEIGHT,
+  SESSION_LIST_MAX_HEIGHT,
+  SessionCtaButton,
+} from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -70,15 +75,25 @@ const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element
     <Text style={[styles.cardIndex, { color: surface.textMuted }]}>
       {`${card.index} · MAJOR ARCANA`}
     </Text>
-    <Text style={[styles.cardName, { color: surface.text }]} testID="tarot-card-name">
+    <Text
+      style={[styles.cardName, { color: surface.text }]}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      testID="tarot-card-name"
+    >
       {card.name}
     </Text>
     <Text style={[styles.cardKeyword, { color: surface.textSoft }]} testID="tarot-card-keyword">
       {card.keyword}
     </Text>
-    <Text style={[styles.cardSymbolism, { color: surface.textSoft }]} testID="tarot-card-symbolism">
-      {card.symbolism}
-    </Text>
+    <ScrollView style={styles.symbolismScroll}>
+      <Text
+        style={[styles.cardSymbolism, { color: surface.textSoft }]}
+        testID="tarot-card-symbolism"
+      >
+        {card.symbolism}
+      </Text>
+    </ScrollView>
   </View>
 );
 
@@ -100,6 +115,7 @@ const styles = StyleSheet.create({
   card: {
     width: 260,
     minHeight: 360,
+    maxHeight: SESSION_CARD_MAX_HEIGHT,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 2,
     borderColor: colors.secondary,
@@ -126,6 +142,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: SPACING.lg,
   },
+  symbolismScroll: { maxHeight: SESSION_LIST_MAX_HEIGHT, flexShrink: 1 },
   cardSymbolism: {
     fontSize: 13,
     textAlign: 'center',

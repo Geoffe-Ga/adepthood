@@ -8,7 +8,12 @@ import { formatTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import { SESSION_BIG_TIME, SESSION_CAPTION_LABEL, SessionContainer } from './shared';
+import {
+  SESSION_BIG_TIME,
+  SESSION_CAPTION_LABEL,
+  SESSION_LIST_MAX_HEIGHT,
+  SessionContainer,
+} from './shared';
 
 import { SPACING } from '@/design/tokens';
 
@@ -111,7 +116,7 @@ const styles = StyleSheet.create({
     ...SESSION_BIG_TIME,
     marginVertical: SPACING.md,
   },
-  list: { width: '100%', maxHeight: 220, marginVertical: SPACING.md },
+  list: { width: '100%', maxHeight: SESSION_LIST_MAX_HEIGHT, marginVertical: SPACING.md },
   listContent: { paddingVertical: SPACING.sm },
   row: {
     flexDirection: 'row',

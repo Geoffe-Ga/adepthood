@@ -13,7 +13,7 @@
  * the session short can still record it.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type {
   MindfulAnchorConfig,
@@ -33,6 +33,7 @@ import {
   SESSION_BUTTON_BASE,
   SESSION_BUTTON_TEXT,
   SESSION_CAPTION_LABEL,
+  SESSION_LIST_MAX_HEIGHT,
   SessionContainer,
   SessionCtaButton,
 } from './shared';
@@ -137,12 +138,14 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
     <SessionContainer testID="mindful-anchor-view">
       <InstructionCard instruction={config.instruction} surface={surface} />
       {status === 'idle' && config.options.length > 0 && (
-        <OptionChooser
-          options={config.options}
-          selectedKey={anchor.selectedOptionKey}
-          onSelect={anchor.setSelectedOptionKey}
-          surface={surface}
-        />
+        <ScrollView style={styles.chooserScroll}>
+          <OptionChooser
+            options={config.options}
+            selectedKey={anchor.selectedOptionKey}
+            onSelect={anchor.setSelectedOptionKey}
+            surface={surface}
+          />
+        </ScrollView>
       )}
       {status === 'running' && <ElapsedDisplay seconds={anchor.elapsedSeconds} surface={surface} />}
       {status === 'idle' ? (
@@ -353,7 +356,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 28,
   },
-  chooser: { alignSelf: 'stretch', gap: SPACING.sm, marginBottom: SPACING.xl },
+  // The wrapper owns the outer margin so long option lists scroll inside the cap.
+  chooserScroll: {
+    alignSelf: 'stretch',
+    maxHeight: SESSION_LIST_MAX_HEIGHT,
+    marginBottom: SPACING.xl,
+  },
+  chooser: { alignSelf: 'stretch', gap: SPACING.sm },
   option: {
     borderWidth: 1,
     borderRadius: BORDER_RADIUS.lg,
