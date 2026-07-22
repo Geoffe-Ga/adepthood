@@ -12,6 +12,7 @@ monkeypatched), since everything else is a thin wrapper over `stats`.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 from typing import Any
 
 import pytest
@@ -473,3 +474,243 @@ def test_generate_headline_falls_back_on_sdk_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
 
     assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"
+
+
+# ---------- parse_benchmark_trend ----------
+
+
+def test_parse_benchmark_trend_parses_lines_in_input_order() -> None:
+    # Newest-first input stays newest-first: the parser never sorts.
+    lines = [
+        '{"date": "2026-07-09", "reduction_avg": 21, "nodes": 16144, "edges": 36585}\n',
+        '{"date": "2026-07-08", "reduction_avg": 16.4, "nodes": 15000, "edges": 35000}\n',
+    ]
+    out = rs.parse_benchmark_trend(lines)
+    assert out == [
+        {"date": "2026-07-09", "reduction_avg": 21.0, "nodes": 16144, "edges": 36585},
+        {"date": "2026-07-08", "reduction_avg": 16.4, "nodes": 15000, "edges": 35000},
+    ]
+    assert isinstance(out[0]["reduction_avg"], float)
+    assert isinstance(out[0]["nodes"], int)
+    assert isinstance(out[0]["edges"], int)
+    assert isinstance(out[0]["date"], str)
+
+
+def test_parse_benchmark_trend_skips_blank_and_malformed_lines() -> None:
+    lines = [
+        "",
+        "\n",
+        "not json",
+        '{"date": "2026-07-08"}',
+        '["not", "an", "object"]',
+        '{"date": "2026-07-09", "reduction_avg": 16.8, "nodes": 15080, "edges": 35598}',
+    ]
+    assert rs.parse_benchmark_trend(lines) == [
+        {"date": "2026-07-09", "reduction_avg": 16.8, "nodes": 15080, "edges": 35598},
+    ]
+
+
+def test_parse_benchmark_trend_empty_input() -> None:
+    assert rs.parse_benchmark_trend([]) == []
+
+
+# ---------- benchmark_trend_summary ----------
+
+
+def _trend_record(date: str, reduction: float, *, nodes: int = 16000, edges: int = 36000) -> dict[str, Any]:
+    return {"date": date, "reduction_avg": reduction, "nodes": nodes, "edges": edges}
+
+
+def test_benchmark_trend_summary_none_for_empty() -> None:
+    assert rs.benchmark_trend_summary([]) is None
+
+
+def test_benchmark_trend_summary_delta_up_from_week_old_prior() -> None:
+    records = [
+        _trend_record("2026-07-01", 16.4),
+        _trend_record("2026-07-10", 16.8, nodes=15080, edges=35598),
+    ]
+    assert rs.benchmark_trend_summary(records) == {
+        "date": "2026-07-10",
+        "reduction_avg": 16.8,
+        "nodes": 15080,
+        "edges": 35598,
+        "reduction_delta": 0.4,
+    }
+
+
+def test_benchmark_trend_summary_delta_down_is_negative() -> None:
+    records = [_trend_record("2026-07-01", 17.1), _trend_record("2026-07-10", 16.8)]
+    summary = rs.benchmark_trend_summary(records)
+    assert summary is not None
+    assert summary["reduction_delta"] == -0.3
+
+
+def test_benchmark_trend_summary_delta_none_without_week_old_prior() -> None:
+    # 2026-07-08 is only 2 days before the latest; no record is >= 7 days old.
+    records = [_trend_record("2026-07-08", 16.6), _trend_record("2026-07-10", 16.8)]
+    summary = rs.benchmark_trend_summary(records)
+    assert summary is not None
+    assert summary["reduction_delta"] is None
+
+
+def test_benchmark_trend_summary_prior_exactly_week_days_old_counts() -> None:
+    records = [_trend_record("2026-07-03", 16.0), _trend_record("2026-07-10", 16.5)]
+    summary = rs.benchmark_trend_summary(records)
+    assert summary is not None
+    assert summary["reduction_delta"] == 0.5
+
+
+def test_benchmark_trend_summary_picks_most_recent_qualifying_prior() -> None:
+    records = [
+        _trend_record("2026-06-25", 15.0),
+        _trend_record("2026-07-02", 16.0),
+        _trend_record("2026-07-10", 16.5),
+    ]
+    summary = rs.benchmark_trend_summary(records)
+    assert summary is not None
+    assert summary["reduction_delta"] == 0.5
+
+
+# ---------- days_since ----------
+
+
+def test_days_since_date_only_is_utc_midnight() -> None:
+    now = dt.datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    assert rs.days_since("2026-07-07", now=now) == 3
+
+
+def test_days_since_z_suffixed_full_iso() -> None:
+    now = dt.datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    assert rs.days_since("2026-07-07T12:00:00Z", now=now) == 3
+
+
+def test_days_since_partial_day_floors_to_zero() -> None:
+    now = dt.datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    assert rs.days_since("2026-07-09T18:00:00Z", now=now) == 0
+
+
+# ---------- _graph_recap_line ----------
+
+_GRAPH_NOW = dt.datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+
+
+def _graph_summary(delta: float | None) -> dict[str, Any]:
+    return {
+        "date": "2026-07-10",
+        "reduction_avg": 16.8,
+        "nodes": 15080,
+        "edges": 35598,
+        "reduction_delta": delta,
+    }
+
+
+def test_graph_recap_line_full_with_semantic_meta_and_positive_delta() -> None:
+    meta = {"kind": "code+semantic", "built_at": "2026-07-07T12:00:00Z"}
+    line = recap._graph_recap_line(_graph_summary(0.4), meta, now=_GRAPH_NOW)
+    assert line == (
+        "Knowledge graph: 15,080 nodes / 35,598 edges · "
+        "avg query reduction 16.8× (↑0.4 vs last week) · "
+        "semantic layer 3 days fresh"
+    )
+    # Pin the deliberate glyphs: MULTIPLICATION SIGN U+00D7 and UPWARDS ARROW U+2191, not ASCII.
+    assert "16.8×" in line
+    assert "16.8x" not in line
+    assert "↑" in line
+
+
+def test_graph_recap_line_negative_delta_uses_down_arrow() -> None:
+    line = recap._graph_recap_line(_graph_summary(-0.3), None, now=_GRAPH_NOW)
+    assert "(↓0.3 vs last week)" in line
+    assert "↑" not in line
+
+
+def test_graph_recap_line_omits_delta_clause_when_none() -> None:
+    line = recap._graph_recap_line(_graph_summary(None), None, now=_GRAPH_NOW)
+    assert "vs last week" not in line
+    assert "16.8×" in line
+
+
+def test_graph_recap_line_omits_semantic_clause_without_meta() -> None:
+    line = recap._graph_recap_line(_graph_summary(0.4), None, now=_GRAPH_NOW)
+    assert "semantic layer" not in line
+
+
+def test_graph_recap_line_omits_semantic_clause_for_code_only_meta() -> None:
+    meta = {"kind": "code-only", "built_at": "2026-07-07T12:00:00Z"}
+    line = recap._graph_recap_line(_graph_summary(0.4), meta, now=_GRAPH_NOW)
+    assert "semantic layer" not in line
+
+
+def test_graph_recap_line_omits_semantic_clause_without_built_at() -> None:
+    meta = {"kind": "code+semantic"}
+    line = recap._graph_recap_line(_graph_summary(0.4), meta, now=_GRAPH_NOW)
+    assert "semantic layer" not in line
+
+
+# ---------- load_benchmark_trend ----------
+
+
+def test_load_benchmark_trend_missing_file_returns_empty(tmp_path: pathlib.Path) -> None:
+    assert recap.load_benchmark_trend(tmp_path / "missing.jsonl") == []
+
+
+def test_load_benchmark_trend_reads_jsonl(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "trend.jsonl"
+    path.write_text(
+        '{"date": "2026-07-09", "reduction_avg": 20.9, "nodes": 16144, "edges": 36585}\n\ngarbage\n',
+        encoding="utf-8",
+    )
+    assert recap.load_benchmark_trend(path) == [
+        {"date": "2026-07-09", "reduction_avg": 20.9, "nodes": 16144, "edges": 36585},
+    ]
+
+
+# ---------- fetch_semantic_meta ----------
+
+
+def test_fetch_semantic_meta_returns_release_asset_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    # semantic-meta.json is the semantic layer's own provenance asset, published
+    # only by the weekly semantic pass so the nightly code build never clobbers it.
+    meta = {"kind": "code+semantic", "built_at": "2026-07-07T12:00:00Z"}
+    release = {
+        "tag_name": "knowledge-graph",
+        "assets": [
+            {
+                "name": "semantic-meta.json",
+                "id": 99,
+                "url": f"{recap.GITHUB_API}/repos/owner/repo/releases/assets/99",
+                "browser_download_url": "https://example.com/download/semantic-meta.json",
+            },
+        ],
+    }
+
+    def _fake(url: str, **_k: Any) -> object:
+        # Any asset-shaped URL yields the meta body; the release lookup itself
+        # yields the release listing.
+        if "semantic-meta.json" in url or "/assets/" in url:
+            return meta
+        return release
+
+    monkeypatch.setattr(recap, "_request_json", _fake)
+    assert recap.fetch_semantic_meta("owner/repo", token="t") == meta
+
+
+def test_fetch_semantic_meta_none_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+
+    def _boom(*_a: Any, **_k: Any) -> object:
+        raise urllib.error.HTTPError("u", 404, "missing", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(recap, "_request_json", _boom)
+    assert recap.fetch_semantic_meta("owner/repo", token="t") is None
+
+
+def test_fetch_semantic_meta_none_on_url_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+
+    def _boom(*_a: Any, **_k: Any) -> object:
+        raise urllib.error.URLError("network down")
+
+    monkeypatch.setattr(recap, "_request_json", _boom)
+    assert recap.fetch_semantic_meta("owner/repo", token="t") is None

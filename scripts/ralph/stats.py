@@ -16,7 +16,9 @@ merge history into the numbers a human wants to see in a recap.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections import Counter
+from collections.abc import Iterable
 
 # A Claude reviewer verdict, normalized. The reviewer posts a comment ending in
 # a `Verdict:` line; we collapse it to one of these three tokens.
@@ -213,3 +215,86 @@ def busiest_day(merged_at: list[dt.datetime]) -> tuple[str, int] | None:
     counter: Counter[str] = Counter(ts.date().isoformat() for ts in merged_at)
     day, count = counter.most_common(1)[0]
     return day, count
+
+
+def _coerce_trend_record(line: str) -> dict[str, object] | None:
+    """Coerce one benchmark-trend JSONL line into a typed record, or None.
+
+    A record must be a JSON object carrying all four keys (date, reduction_avg,
+    nodes, edges); anything else — non-JSON, wrong shape, uncoercible values —
+    is treated as malformed and skipped by the caller.
+    """
+    try:
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            return None
+        return {
+            "date": str(record["date"]),
+            "reduction_avg": float(record["reduction_avg"]),
+            "nodes": int(record["nodes"]),
+            "edges": int(record["edges"]),
+        }
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def parse_benchmark_trend(lines: Iterable[str]) -> list[dict[str, object]]:
+    """Parse benchmark-trend JSONL lines, preserving input order.
+
+    Blank and malformed lines are skipped, so a ledger with a stray garbage
+    line still yields every valid record. Never sorts — callers rely on the
+    file's own chronology.
+    """
+    records: list[dict[str, object]] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        record = _coerce_trend_record(stripped)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def benchmark_trend_summary(records: list[dict[str, object]], *, week_days: int = 7) -> dict[str, object] | None:
+    """Summarize the latest benchmark record with a week-over-week delta.
+
+    The prior is the most recent OTHER record dated at least `week_days` before
+    the latest; `reduction_delta` is latest minus prior (rounded to one place),
+    or None when no record is old enough to compare against. Returns None for
+    an empty ledger.
+    """
+    if not records:
+        return None
+    latest = records[-1]
+    latest_date = dt.date.fromisoformat(str(latest["date"]))
+    cutoff = latest_date - dt.timedelta(days=week_days)
+    priors = [r for r in records[:-1] if dt.date.fromisoformat(str(r["date"])) <= cutoff]
+    delta: float | None = None
+    if priors:
+        prior = max(priors, key=lambda r: dt.date.fromisoformat(str(r["date"])))
+        delta = round(float(str(latest["reduction_avg"])) - float(str(prior["reduction_avg"])), 1)
+    return {
+        "date": latest["date"],
+        "reduction_avg": latest["reduction_avg"],
+        "nodes": latest["nodes"],
+        "edges": latest["edges"],
+        "reduction_delta": delta,
+    }
+
+
+# Length of a bare YYYY-MM-DD date, used to tell date-only stamps from full ISO.
+_DATE_ONLY_LENGTH = 10
+
+
+def days_since(iso: str, *, now: dt.datetime) -> int:
+    """Whole days from an ISO date or timestamp to `now`.
+
+    A bare date is read as UTC midnight; a full timestamp may carry a trailing
+    `Z` (normalized for `fromisoformat`). Partial days floor toward zero.
+    """
+    if len(iso) == _DATE_ONLY_LENGTH and "T" not in iso:
+        parsed = dt.datetime.fromisoformat(iso).replace(tzinfo=dt.timezone.utc)
+    else:
+        parsed = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return (now - parsed).days
