@@ -8,6 +8,7 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
+import { SquarePen } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -26,6 +27,8 @@ import {
   DrawerItem,
   DrawerNavSection,
   DrawerSearch,
+  NAV_ICON_SIZE,
+  NAV_ICON_STROKE,
   rankMatches,
   ScreenDrawer,
   type ScreenDrawerState,
@@ -460,7 +463,12 @@ function DrawerActions({
 }): React.JSX.Element {
   return (
     <>
-      <DrawerItem testID="journal-drawer-new-entry" label={NEW_ENTRY_LABEL} onPress={onNewEntry} />
+      <DrawerItem
+        testID="journal-drawer-new-entry"
+        label={NEW_ENTRY_LABEL}
+        icon={<SquarePen color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
+        onPress={onNewEntry}
+      />
       {onPhotograph ? (
         <DrawerItem
           testID="journal-photograph-entry"

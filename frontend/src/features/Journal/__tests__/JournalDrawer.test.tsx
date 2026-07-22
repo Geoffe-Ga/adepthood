@@ -7,10 +7,12 @@
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { SquarePen } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
 import type { JournalListResponse, JournalMessage } from '@/api';
+import { ink } from '@/design/tokens';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -158,6 +160,13 @@ describe('JournalDrawer (presentational)', () => {
     const { getByTestId, onNewEntry } = renderDrawer({ items: [] });
     fireEvent.press(getByTestId('journal-drawer-new-entry'));
     expect(onNewEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a leading pencil icon in the muted ink color on the New entry row', () => {
+    const { getByTestId } = renderDrawer({ items: [] });
+    const icon = getByTestId('journal-drawer-new-entry').findByType(SquarePen);
+    expect(icon).toBeTruthy();
+    expect(icon.props.color).toBe(ink.muted);
   });
 
   it('fires onRowPress with the tapped entry id', () => {
