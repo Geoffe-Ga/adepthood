@@ -29,10 +29,14 @@ cancellations, and token-pack purchases.
 
 ## Non-goals
 
-- Replacing our email/password auth with Gumroad as an OAuth identity
-  provider (Gumroad does not offer OAuth for end users). We continue to
-  own the JWT and password flow; Gumroad gates who is *allowed* to sign
-  up, not how they authenticate.
+- Using Gumroad as an OAuth identity provider (Gumroad does not offer
+  OAuth for end users — its OAuth is creator-account API access only).
+  We continue to own the JWT flow; Gumroad gates who is *allowed* to
+  sign up, not how they authenticate. Social login (Google / Apple
+  sign-in) is real and wanted, but it is our own implementation and
+  lives in the separate **social-auth epic**
+  ([`social-auth-epic.md`](social-auth-epic.md)), which layers on top
+  of this epic's license gate.
 - Stripe or any direct payment integration. Gumroad is the payment rail.
 - Migrating existing users. The app is still in demo, so we assume a
   clean slate; if needed, a one-off backfill script can be written later.
@@ -80,6 +84,10 @@ Adepthood backend
 
 ## Sub-issues
 
+0. [`phase-6-00`](phase-6-00-gumroad-business-setup.md) —
+   **Human runbook (not Ralph-pickable):** create the Gumroad products,
+   API application, and secrets; hand product IDs + token to the backend
+   config
 1. [`phase-6-01`](phase-6-01-gumroad-api-and-webhooks.md) —
    Gumroad API client, webhook scaffolding, HMAC verification
 2. [`phase-6-02`](phase-6-02-course-entitlement-and-signup-gating.md) —
@@ -100,14 +108,47 @@ Adepthood backend
 - Interacts with issue #185 (BYOK) — BYOK requests must bypass the
   token balance check, not debit zero.
 
-## Open questions to resolve before starting `phase-6-02`
+## Resolved decisions (2026-07-22)
 
-- What is the set of APTITUDE product IDs on Gumroad (one-time, monthly,
-  any pay-what-you-want tiers that have separate IDs)? These become a
-  configured allowlist in the backend.
-- Does the monthly subscription SKU emit `subscription_ended` webhooks
-  we want to treat as access revocation, or do we keep access through
-  the end of the paid period?
-- What is a sensible starting token grant on first redemption, if any?
-  (e.g., "every new account gets N tokens to try BotMason before
-  needing to buy a pack or supply BYOK".)
+The open questions are settled; sub-issues should treat these as spec:
+
+- **Product shape**: one APTITUDE *membership* product with two tiers,
+  both pay-what-you-want with a **$0 floor** (gift economy / dana model
+  à la Charles Eisenstein — contribution is invited, never required):
+  - **Annual** — suggested **$150/year** (comparable to course apps
+    like Reframe, per the $100–200/yr target)
+  - **Monthly** — suggested **$15/month**
+  The tier/variant product IDs go on `GUMROAD_APTITUDE_PRODUCT_IDS`.
+  No one-time/lifetime SKU at launch. Product creation is manual
+  (Gumroad's API cannot create products) — see
+  [`phase-6-00`](phase-6-00-gumroad-business-setup.md).
+- **`subscription_ended` / `cancellation`**: treated as immediate
+  access revocation (the conservative default already specified in
+  `phase-6-05`). "Access through the end of the paid period" can be a
+  follow-up issue if it ever feels punitive — with a $0 re-subscribe
+  floor, a lapsed user can always regain access for free.
+- **Starter token grant**: already satisfied — since these sub-issue
+  docs were written, BotMason metering shipped: `User.offering_balance`
+  plus a free monthly allocation (`BOTMASON_MONTHLY_CAP`), with atomic
+  spend/grant mutations and a `WalletAudit` trail in
+  `backend/src/services/wallet.py`, and BYOK support in
+  `backend/src/services/botmason.py`. The monthly free allocation plays
+  the "try before you contribute" role, so no separate starter grant is
+  needed.
+
+## Codebase reality check (2026-07-22)
+
+`phase-6-04` and `phase-6-05` were specced before the BotMason wallet
+existed. The debit path, race-safe spend, BYOK bypass, audit log, and
+admin grant reason codes are **already implemented** in
+`services/wallet.py` / `models/wallet_audit.py`. Those two sub-issues
+are therefore re-scoped when filed as GitHub issues:
+
+- **04** → credit `offering_balance` from Gumroad token-pack sale
+  webhooks (idempotent by `gumroad_sale_id`, buy-before-signup claim at
+  signup), with a new `WalletAudit` reason code — no new ledger model.
+- **05** → refund / dispute / cancellation / `subscription_ended`
+  handling: course-access revocation and offering-balance claw-back.
+
+The filed GitHub issues are the source of truth for scope; these two
+docs are kept for background.

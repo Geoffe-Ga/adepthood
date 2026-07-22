@@ -157,6 +157,47 @@ All assume Phases 1–4 are complete.
       └── optional enhancement if phase-5-01 is done first (per-habit unlock on locked tiles)
 ```
 
+## Phase 6 — Gumroad-Gated Access & Monetization
+
+Gumroad becomes the system of record for who may sign up (gift-economy
+pricing: $0+ pay-what-you-want with suggested $150/yr / $15/mo tiers).
+See [phase-6-epic.md](phase-6-epic.md) for resolved decisions and the
+2026-07-22 codebase reality check (BotMason wallet already exists —
+04/05 are re-scoped in the filed GitHub issues).
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 00 | [Gumroad business setup (human runbook)](phase-6-00-gumroad-business-setup.md) | Ops | — |
+| 01 | [Gumroad API client + webhooks + HMAC](phase-6-01-gumroad-api-and-webhooks.md) | Backend | ~350 |
+| 02 | [Entitlement model + signup gating](phase-6-02-course-entitlement-and-signup-gating.md) | Backend | ~450 |
+| 03 | [Frontend onboarding: Gumroad + license redemption](phase-6-03-frontend-onboarding-flow.md) | Frontend | ~350 |
+| 04 | [Token-pack crediting into offering_balance](phase-6-04-botmason-token-wallet.md) | Backend | ~300 |
+| 05 | [Refund / cancellation revocation](phase-6-05-token-credits-and-revocation.md) | Backend | ~350 |
+| 06 | [Admin override endpoints](phase-6-06-admin-override-endpoints.md) | Backend | ~300 |
+
+```
+phase-6-00 (human) ─ soft-blocks production rollout only
+phase-6-01 ──▶ phase-6-02 ──▶ phase-6-03 (frontend)
+                   │      └──▶ phase-6-04 ──▶ phase-6-05 ──▶ phase-6-06
+```
+
+### Social auth (Google + Apple sign-in) — layered on Phase 6
+
+Gumroad offers no end-user OAuth, so social login is our own. Epic:
+[social-auth-epic.md](social-auth-epic.md).
+
+| # | Issue | Scope | Est. LoC |
+|---|-------|-------|----------|
+| 01 | [AuthIdentity + Google endpoint](social-auth-01-backend-google.md) | Backend | ~450 |
+| 02 | [Apple endpoint](social-auth-02-backend-apple.md) | Backend | ~300 |
+| 03 | [Continue with Google UI](social-auth-03-frontend-google.md) | Frontend | ~350 |
+| 04 | [Continue with Apple UI (iOS)](social-auth-04-frontend-apple.md) | Frontend | ~250 |
+
+```
+phase-6-02 ──▶ social-auth-01 ──▶ social-auth-02 ─┐
+                        └────────▶ social-auth-03 ─┴─▶ social-auth-04
+```
+
 ## Phase 7 — Architecture Cleanup & Code Quality
 Refactoring epic from the 2026-04-12 full-stack architecture review. Pure cleanup — no new features. See [executive summary](../claude-comms/architecture-review-2026-04-12.md).
 
