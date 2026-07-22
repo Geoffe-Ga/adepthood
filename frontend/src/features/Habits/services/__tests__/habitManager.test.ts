@@ -67,6 +67,7 @@ import { useHabitStore } from '../../../../store/useHabitStore';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
+import { carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
 import { applyGoalUpdate, habitManager } from '../habitManager';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
@@ -1320,6 +1321,89 @@ describe('habitManager', () => {
       expect(Alert.alert).toHaveBeenCalledWith(
         "Couldn't sync",
         expect.stringContaining("couldn't create that habit"),
+      );
+    });
+
+    it('computes the program slot from the non-carryover count, not the raw store length', async () => {
+      const prev = [
+        makeHabit({ id: 1, name: 'Program One' }),
+        makeHabit({ id: 2, name: 'Program Two' }),
+        makeHabit({ id: 3, name: 'Program Three' }),
+        makeHabit({ id: 4, name: 'Carry One', is_carryover: true }),
+        makeHabit({ id: 5, name: 'Carry Two', is_carryover: true }),
+      ];
+      useHabitStore.setState({ habits: prev });
+      let resolveCreate: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (resolveCreate = () => r({}))),
+      );
+
+      const inFlight = habitManager.addHabit({ name: 'Fourth Program', icon: '\u{1F331}' });
+
+      const optimistic = useHabitStore.getState().habits;
+      const added = optimistic[optimistic.length - 1]!;
+      expect(added.sort_order).toBe(3);
+      expect(added.sort_order).not.toBe(5);
+      expect(added.stage).toBe(stageAtIndex(3));
+      expect(added.stage).not.toBe(stageAtIndex(5));
+      expect(added.is_carryover ?? false).toBe(false);
+
+      resolveCreate?.();
+      await inFlight;
+    });
+
+    it('a carryover add flags the habit and takes the next negative slot', async () => {
+      const prev = [
+        makeHabit({ id: 1, name: 'Program One' }),
+        makeHabit({ id: 2, name: 'Program Two' }),
+        makeHabit({ id: 3, name: 'Program Three' }),
+        makeHabit({ id: 4, name: 'Carry One', is_carryover: true }),
+        makeHabit({ id: 5, name: 'Carry Two', is_carryover: true }),
+      ];
+      useHabitStore.setState({ habits: prev });
+      let resolveCreate: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (resolveCreate = () => r({}))),
+      );
+
+      const inFlight = habitManager.addHabit({ name: 'Morning Walk', icon: '\u{1F6B6}' }, true);
+
+      const optimistic = useHabitStore.getState().habits;
+      const added = optimistic[optimistic.length - 1]!;
+      expect(added.is_carryover).toBe(true);
+      expect(added.sort_order).toBe(countCarryover(prev));
+      expect(added.sort_order).toBe(2);
+      expect(added.stage).toBe(stageAtIndex(carryoverSlot(2)));
+
+      resolveCreate?.();
+      await inFlight;
+    });
+
+    it('posts a carryover payload with is_carryover true and an unshifted today start_date', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+
+      await habitManager.addHabit({ name: 'Evening Read', icon: '\u{1F4DA}' }, true);
+
+      const today = new Date().toISOString().slice(0, 10);
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ is_carryover: true, start_date: today }),
+      );
+    });
+
+    it('sends is_carryover false for a program add and preserves the flag on habit PUTs', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+
+      await habitManager.addHabit({ name: 'Plain Add', icon: '\u{2728}' });
+
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ is_carryover: false }),
+      );
+
+      habitManager.updateHabit(makeHabit({ id: 1, is_carryover: true }));
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ is_carryover: true }),
       );
     });
   });

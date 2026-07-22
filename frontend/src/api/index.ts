@@ -919,6 +919,8 @@ export interface HabitCreatePayload {
   sort_order?: number | null;
   stage?: string;
   revealed?: boolean;
+  // Carryover flag (negative-lap habits); sent on PUTs too so edits preserve it.
+  is_carryover?: boolean;
 }
 
 /**

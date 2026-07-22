@@ -65,6 +65,37 @@ describe('HabitsEmptyState second-lap invite (stages 11-20)', () => {
   });
 });
 
+describe('HabitsEmptyState negative-lap carryover invite (stages -10 to -1)', () => {
+  it('names the negative range and invites bringing an already-practiced habit', () => {
+    const { getByTestId, getByText } = render(<HabitsEmptyState stageStart={-10} stageEnd={-1} />);
+    expect(getByTestId('habits-empty-state')).toBeTruthy();
+    expect(getByText(/-10 to -1/)).toBeTruthy();
+    expect(getByText(/already practice/i)).toBeTruthy();
+    expect(getByText(/no pressure/i)).toBeTruthy();
+  });
+
+  it('keeps the positive-range invite copy free of the carryover invitation', () => {
+    const { getByText, queryByText } = render(<HabitsEmptyState stageStart={11} stageEnd={20} />);
+    expect(getByText(/11[\s\S]*20/)).toBeTruthy();
+    expect(queryByText(/already practice/i)).toBeNull();
+  });
+
+  it('keeps the first-run copy free of the carryover invitation', () => {
+    const { getByText, queryByText } = render(<HabitsEmptyState />);
+    expect(getByText('No habits yet')).toBeTruthy();
+    expect(queryByText(/already practice/i)).toBeNull();
+  });
+
+  it('still renders the Add CTA and fires onAdd on the carryover invite', () => {
+    const onAdd = jest.fn();
+    const { getByTestId } = render(
+      <HabitsEmptyState stageStart={-10} stageEnd={-1} onAdd={onAdd} />,
+    );
+    fireEvent.press(getByTestId('habits-empty-add'));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+});
+
 const sampleHabit = { id: 1, name: 'Meditate' } as unknown as Habit;
 const renderTile = () => (<></>) as unknown as React.ReactElement;
 const baseProps = {

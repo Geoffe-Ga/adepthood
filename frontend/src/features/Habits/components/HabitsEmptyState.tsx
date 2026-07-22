@@ -23,20 +23,28 @@ const FIRST_RUN_COPY: EmptyStateCopy = {
   subtitle: 'Add your first habit to start building momentum. Small, daily actions compound.',
 };
 
+/** Positive-lap invite: start another set of stages, gently. */
+const LAP_INVITE_SUBTITLE =
+  'Begin a new set whenever it feels right — no pressure either way, or simply keep tending the habits you already have.';
+
+/** Negative-lap invite: bring an existing practice into the carryover stages. */
+const CARRYOVER_INVITE_SUBTITLE =
+  'Bring a habit you already practice, if it feels right — no pressure either way.';
+
 /**
  * Copy for the empty state. With a stage range supplied (any lap besides the
- * program's first, negative carryover laps included), it names the newly-open
- * stages as a gentle, declinable invitation to start another set — never a
- * nudge. Otherwise it keeps the first-run guidance.
+ * program's first), it names the newly-open stages as a gentle, declinable
+ * invitation — never a nudge: a negative carryover range invites bringing a
+ * habit the user already practices, a positive range invites starting another
+ * set. Otherwise it keeps the first-run guidance.
  */
-const selectCopy = (stageStart?: number, stageEnd?: number): EmptyStateCopy =>
-  stageStart !== undefined && stageEnd !== undefined
-    ? {
-        title: `Stages ${formatStageRange(stageStart, stageEnd)} are open`,
-        subtitle:
-          'Begin a new set whenever it feels right — no pressure either way, or simply keep tending the habits you already have.',
-      }
-    : FIRST_RUN_COPY;
+const selectCopy = (stageStart?: number, stageEnd?: number): EmptyStateCopy => {
+  if (stageStart === undefined || stageEnd === undefined) return FIRST_RUN_COPY;
+  return {
+    title: `Stages ${formatStageRange(stageStart, stageEnd)} are open`,
+    subtitle: stageStart < 0 ? CARRYOVER_INVITE_SUBTITLE : LAP_INVITE_SUBTITLE,
+  };
+};
 
 /** First-run fallback guiding a zero-habit user to add their first (audit-ux-07). */
 export const HabitsEmptyState = ({

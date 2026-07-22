@@ -13,14 +13,19 @@ describe('usePagination', () => {
   });
 
   it('reports the correct page count for a partially filled last page', () => {
+    // 3 program pages plus the permanent gated leading carryover invite lap.
     const { result } = renderHook(() => usePagination(23, PAGE_SIZE));
-    expect(result.current.pageCount).toBe(3);
+    expect(result.current.pageCount).toBe(4);
   });
 
-  it('clamps prev at 0 and next at pageCount - 1', () => {
+  it('clamps prev at the leading invite lap and next at maxPage', () => {
     const { result } = renderHook(() => usePagination(25, PAGE_SIZE));
     expect(result.current.page).toBe(0);
     act(() => result.current.goPrev());
+    expect(result.current.page).toBe(-1);
+    act(() => result.current.goPrev());
+    expect(result.current.page).toBe(-1);
+    act(() => result.current.goNext());
     expect(result.current.page).toBe(0);
     act(() => result.current.goNext());
     expect(result.current.page).toBe(1);
@@ -45,9 +50,10 @@ describe('usePagination', () => {
     act(() => result.current.goNext());
     expect(result.current.page).toBe(2);
 
-    // List shrinks to a single page; the read value clamps without an extra render.
+    // List shrinks to one content page (plus the leading invite lap); the read
+    // value clamps without an extra render.
     rerender({ count: 5 });
-    expect(result.current.pageCount).toBe(1);
+    expect(result.current.pageCount).toBe(2);
     expect(result.current.page).toBe(0);
   });
 
@@ -63,7 +69,7 @@ describe('usePagination', () => {
 
   it('goPrev after goLast steps back to the immediately-previous page', () => {
     const { result } = renderHook(() => usePagination(12, PAGE_SIZE));
-    expect(result.current.pageCount).toBe(2);
+    expect(result.current.pageCount).toBe(3);
     act(() => result.current.goLast());
     expect(result.current.page).toBe(1);
     act(() => result.current.goPrev());
@@ -83,13 +89,13 @@ describe('usePagination', () => {
 // slot on the current lap is filled, inviting the user into the next lap.
 describe('usePagination trailing invite page', () => {
   it('adds a trailing invite page when count is an exact multiple of pageSize', () => {
-    expect(renderHook(() => usePagination(10, PAGE_SIZE)).result.current.pageCount).toBe(2);
-    expect(renderHook(() => usePagination(20, PAGE_SIZE)).result.current.pageCount).toBe(3);
-    expect(renderHook(() => usePagination(30, PAGE_SIZE)).result.current.pageCount).toBe(4);
+    expect(renderHook(() => usePagination(10, PAGE_SIZE)).result.current.pageCount).toBe(3);
+    expect(renderHook(() => usePagination(20, PAGE_SIZE)).result.current.pageCount).toBe(4);
+    expect(renderHook(() => usePagination(30, PAGE_SIZE)).result.current.pageCount).toBe(5);
   });
 
-  it('does not add a spurious invite page for a partial last lap or an empty list', () => {
-    expect(renderHook(() => usePagination(15, PAGE_SIZE)).result.current.pageCount).toBe(2);
+  it('adds no trailing invite for a partial last lap; an empty list stays one page', () => {
+    expect(renderHook(() => usePagination(15, PAGE_SIZE)).result.current.pageCount).toBe(3);
     expect(renderHook(() => usePagination(0, PAGE_SIZE)).result.current.pageCount).toBe(1);
   });
 
@@ -102,12 +108,12 @@ describe('usePagination trailing invite page', () => {
 
   it('goLast retargets to the last content page, not the invite page, when count exactly fills whole pages', () => {
     const ten = renderHook(() => usePagination(10, PAGE_SIZE));
-    expect(ten.result.current.pageCount).toBe(2);
+    expect(ten.result.current.pageCount).toBe(3);
     act(() => ten.result.current.goLast());
     expect(ten.result.current.page).toBe(0);
 
     const twenty = renderHook(() => usePagination(20, PAGE_SIZE));
-    expect(twenty.result.current.pageCount).toBe(3);
+    expect(twenty.result.current.pageCount).toBe(4);
     act(() => twenty.result.current.goLast());
     expect(twenty.result.current.page).toBe(1);
   });
@@ -127,9 +133,9 @@ describe('usePagination trailing invite page', () => {
       ({ count }: { count: number }) => usePagination(count, PAGE_SIZE),
       { initialProps: { count: 9 } },
     );
-    expect(result.current.pageCount).toBe(1);
-    rerender({ count: 10 });
     expect(result.current.pageCount).toBe(2);
+    rerender({ count: 10 });
+    expect(result.current.pageCount).toBe(3);
     act(() => result.current.goLast());
     expect(result.current.page).toBe(0);
   });
@@ -155,12 +161,12 @@ describe('usePagination trailing invite page', () => {
 // lap. A deeper negative lap opens only when the shallower lap is exactly full
 // (leading-invite mirror of the trailing invite page).
 describe('usePagination signed carryover laps', () => {
-  it('keeps minPage at 0 and the bounds flags when carryoverCount is 0', () => {
+  it('opens one leading invite lap when the program has habits but no carryover yet', () => {
     const { result } = renderHook(() => usePagination(23, PAGE_SIZE, 0));
-    expect(result.current.pageCount).toBe(3);
-    expect(result.current.minPage).toBe(0);
+    expect(result.current.pageCount).toBe(4);
+    expect(result.current.minPage).toBe(-1);
     expect(result.current.maxPage).toBe(2);
-    expect(result.current.canPrev).toBe(false);
+    expect(result.current.canPrev).toBe(true);
     expect(result.current.canNext).toBe(true);
   });
 
@@ -207,5 +213,34 @@ describe('usePagination signed carryover laps', () => {
   it('starts on the program lap (page 0) even when negative laps exist', () => {
     expect(renderHook(() => usePagination(5, PAGE_SIZE, 5)).result.current.page).toBe(0);
     expect(renderHook(() => usePagination(10, PAGE_SIZE, 10)).result.current.page).toBe(0);
+  });
+});
+
+// The negative mirror of goLast: after a carryover add, the screen jumps to
+// the negative lap that holds the newest carryover habit.
+describe('usePagination goFirstCarryover', () => {
+  it('lands on lap -1 once the first carryover exists', () => {
+    const { result } = renderHook(() => usePagination(5, PAGE_SIZE, 1));
+    act(() => result.current.goFirstCarryover());
+    expect(result.current.page).toBe(-1);
+  });
+
+  it('targets the deeper lap that holds the newest carryover', () => {
+    const { result } = renderHook(() => usePagination(5, PAGE_SIZE, 11));
+    act(() => result.current.goFirstCarryover());
+    expect(result.current.page).toBe(-2);
+  });
+
+  it('a goFirstCarryover captured before an append reads the live carryover count', () => {
+    // Mirror of the captured-goLast test: the add flow captures the callback
+    // before the append re-renders, so it must read the count via a ref.
+    const { result, rerender } = renderHook(
+      ({ carryover }: { carryover: number }) => usePagination(5, PAGE_SIZE, carryover),
+      { initialProps: { carryover: 0 } },
+    );
+    const capturedGoFirstCarryover = result.current.goFirstCarryover;
+    rerender({ carryover: 1 });
+    act(() => capturedGoFirstCarryover());
+    expect(result.current.page).toBe(-1);
   });
 });

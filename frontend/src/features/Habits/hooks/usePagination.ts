@@ -12,19 +12,25 @@ import { useCallback, useRef, useState } from 'react';
  * When the last program lap is completely full (`programCount` is a positive
  * exact multiple of `pageSize`) `maxPage` grows by one trailing **invite
  * page**: an extra navigable empty page that lets the user start the next lap.
- * The negative side mirrors this with a **leading invite**: a full carryover
- * lap opens one deeper empty negative lap. `goNext` can step onto the trailing
- * invite, but `goLast` deliberately does not — it retargets to the last
- * program *content* page (the page holding the final item), so appending a new
- * habit lands the user on the row they just created rather than the empty
- * invitation beyond it.
+ * The negative side mirrors this with a **leading invite** that is always
+ * available once any habit exists: with no carryover yet it is the single
+ * empty lap -1, and each exactly-full carryover lap opens one deeper empty
+ * negative lap. `goNext` can step onto the trailing invite, but `goLast`
+ * deliberately does not — it retargets to the last program *content* page
+ * (the page holding the final item), so appending a new habit lands the user
+ * on the row they just created rather than the empty invitation beyond it;
+ * `goFirstCarryover` is its negative mirror, targeting the lap that holds the
+ * newest carryover habit.
  */
 export interface PaginationState {
   /** Clamped current page (signed; 0 is the first program page). */
   page: number;
   /** Total navigable pages, negative laps included (always >= 1). */
   pageCount: number;
-  /** Deepest navigable negative lap (0 when there are no carryover habits). */
+  /**
+   * Deepest navigable negative lap, always-available leading invite included
+   * (0 only when there are no habits at all).
+   */
   minPage: number;
   /** Last navigable positive page, trailing invite included. */
   maxPage: number;
@@ -35,7 +41,13 @@ export interface PaginationState {
   goPrev: () => void;
   goNext: () => void;
   goLast: () => void;
+  /** Jump to the negative lap holding the newest carryover habit. */
+  goFirstCarryover: () => void;
 }
+
+/** Zero-based lap index of the page holding a list's newest (last) item. */
+const lastContentLap = (count: number, pageSize: number): number =>
+  Math.floor(Math.max(0, count - 1) / pageSize);
 
 export const usePagination = (
   programCount: number,
@@ -47,7 +59,11 @@ export const usePagination = (
   const maxPage = contentPages - 1 + (hasTrailingInvite ? 1 : 0);
 
   const negContentLaps = carryoverCount > 0 ? Math.ceil(carryoverCount / pageSize) : 0;
-  const hasLeadingInvite = carryoverCount > 0 && carryoverCount % pageSize === 0;
+  // The leading invite is permanent once any habit exists: with zero carryover
+  // it is the single empty lap -1, and each exactly-full carryover lap opens
+  // one deeper empty lap (the negative mirror of the trailing invite).
+  const hasLeadingInvite =
+    (programCount > 0 || carryoverCount > 0) && carryoverCount % pageSize === 0;
   const negLaps = negContentLaps + (hasLeadingInvite ? 1 : 0);
   // Guard against negating zero: `-0` fails `Object.is`/`toBe(0)` equality.
   const minPage = negLaps === 0 ? 0 : -negLaps;
@@ -55,18 +71,23 @@ export const usePagination = (
   const pageCount = maxPage - minPage + 1;
   const [page, setPage] = useState(0);
 
-  // Track the live program count in a ref so `goLast` reads it at call time
-  // rather than closing over a stale render. The add flow appends a habit and
-  // then calls `goLast` from a callback captured before the append re-rendered;
-  // without the ref that callback would target the pre-append last page and
-  // strand the user on the wrong lap instead of the row they just created.
+  // Track the live counts in refs so `goLast`/`goFirstCarryover` read them at
+  // call time rather than closing over a stale render. The add flow appends a
+  // habit and then calls the jump from a callback captured before the append
+  // re-rendered; without the refs that callback would target the pre-append
+  // lap and strand the user away from the row they just created.
   const countRef = useRef(programCount);
   countRef.current = programCount;
+  const carryoverCountRef = useRef(carryoverCount);
+  carryoverCountRef.current = carryoverCount;
 
   const goPrev = useCallback(() => setPage((p) => Math.max(minPage, p - 1)), [minPage]);
   const goNext = useCallback(() => setPage((p) => Math.min(maxPage, p + 1)), [maxPage]);
-  const goLast = useCallback(
-    () => setPage(Math.floor(Math.max(0, countRef.current - 1) / pageSize)),
+  const goLast = useCallback(() => setPage(lastContentLap(countRef.current, pageSize)), [pageSize]);
+  // Negative page for carryover lap N is -(N + 1); at zero carryover this
+  // yields -1, the always-available empty leading-invite lap.
+  const goFirstCarryover = useCallback(
+    () => setPage(-(lastContentLap(carryoverCountRef.current, pageSize) + 1)),
     [pageSize],
   );
 
@@ -81,6 +102,7 @@ export const usePagination = (
     goPrev,
     goNext,
     goLast,
+    goFirstCarryover,
   };
 };
 
