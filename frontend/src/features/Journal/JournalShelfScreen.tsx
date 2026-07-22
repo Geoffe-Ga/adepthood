@@ -2,8 +2,8 @@
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * serif ``ScreenHeader``, the weekly prompt, a ``ReflectionInvitationBand``, and
- * ``SearchBar`` on the warm palette. Below it, entries group by recency (This
+ * serif ``ScreenHeader``, the weekly prompt, a ``ReflectionInvitationBand``, a
+ * ``MorningPagesTip``, and ``SearchBar`` on the warm palette. Below it, entries group by recency (This
  * week / This month / Earlier) as lifted paper tiles with a reading-time +
  * "saved … ago" caption, over an inviting empty state with a call to action.
  * Tapping a page opens the entry screen by id.
@@ -18,6 +18,7 @@ import { excerpt } from './excerpt';
 import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
+import MorningPagesTip from './MorningPagesTip';
 import { usePressScale } from './motion';
 import { promptTitleForWeek } from './promptTitle';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
@@ -311,6 +312,7 @@ function ShelfTopMatter({
       />
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}
       <ReflectionInvitationBand />
+      <MorningPagesTip onBegin={onNew} />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
       </View>
