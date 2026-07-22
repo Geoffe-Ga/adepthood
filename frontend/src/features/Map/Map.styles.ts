@@ -210,6 +210,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     alignItems: 'flex-end',
   },
+  // Measured wrapper around the label block: stretches to the center cell's
+  // full width (like titleFit) so a label that already fits is never shrunk.
+  labelFit: {
+    alignSelf: 'stretch',
+  },
   arrowLabelText: {
     fontWeight: '700',
     fontSize: 12,

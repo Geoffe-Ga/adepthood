@@ -8,13 +8,18 @@ import { ink, surface } from '../../../design/tokens';
 import { unlockTimeline } from '../journeyNarrative';
 import styles from '../Map.styles';
 import {
+  ARROW_LABEL_MAX_FONT_SIZE,
   fitRightLabel,
+  fitStageText,
   fittedTitleFontSize,
   MAP_ROWS,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   RIGHT_LABEL_MAX_FONT_SIZE,
   RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
+  STAGE_LINE_MAX_FONT_SIZE,
+  STAGE_PERSONA_MAX_FONT_SIZE,
+  STAGE_TEXT_MIN_FONT_SIZE,
 } from '../mapLayout';
 import MapScreen, { MapBackdrop } from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
@@ -939,6 +944,123 @@ describe('MapScreen left-column stage text color', () => {
       const flat = StyleSheet.flatten(node.props.style) as { color?: string };
       expect(flat.color).toBe(ink.muted);
     }
+  });
+});
+
+describe('MapScreen stage-text fit-to-width', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  // Stage 8 carries the longest left-column and arrow-label copy on the Map.
+  const STAGE = 8;
+  const NARROW_WIDTH = 60;
+  const WIDE_WIDTH = 400;
+
+  const stage8 = (() => {
+    const display = STAGE_DISPLAY[STAGE];
+    if (!display) throw new Error(`no STAGE_DISPLAY entry for stage ${STAGE}`);
+    return display;
+  })();
+
+  const driveLayout = (tree: ReturnType<typeof create>, testID: string, width: number): void => {
+    const wrapper = tree.root.findByProps({ testID });
+    act(() => {
+      (wrapper.props.onLayout as (e: unknown) => void)({
+        nativeEvent: { layout: { width, height: 40 } },
+      });
+    });
+  };
+
+  const leftLineNode = (tree: ReturnType<typeof create>, line: string) => {
+    const hotspot = tree.root.findByProps({ testID: `stage-hotspot-${STAGE}-0` });
+    return hotspot.findAll((n: TestNode) => n.props.children === line)[0];
+  };
+
+  const leftLineFontSize = (tree: ReturnType<typeof create>, line: string): number | undefined => {
+    const flat = StyleSheet.flatten(leftLineNode(tree, line).props.style) as { fontSize?: number };
+    return flat.fontSize;
+  };
+
+  const arrowLabelNode = (tree: ReturnType<typeof create>) => {
+    const block = tree.root.findByProps({ testID: `aspect-label-${STAGE}` });
+    return block.findAll((n: TestNode) => n.props.children === stage8.arrowLabel)[0];
+  };
+
+  it('shrinks the long stage-8 persona and practice below their standard sizes in a narrow cell', () => {
+    const tree = create(<MapScreen />);
+    driveLayout(tree, `stage-text-fit-${STAGE}`, NARROW_WIDTH);
+    const cases: ReadonlyArray<readonly [string, number]> = [
+      [stage8.persona, STAGE_PERSONA_MAX_FONT_SIZE],
+      [stage8.practice, STAGE_LINE_MAX_FONT_SIZE],
+    ];
+    for (const [line, maxFontSize] of cases) {
+      const fontSize = leftLineFontSize(tree, line);
+      expect(fontSize).toBeLessThan(maxFontSize);
+      expect(fontSize).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+    }
+  });
+
+  it('keeps every stage-8 left line at its standard size in a wide cell', () => {
+    const tree = create(<MapScreen />);
+    driveLayout(tree, `stage-text-fit-${STAGE}`, WIDE_WIDTH);
+    const cases: ReadonlyArray<readonly [string, number]> = [
+      [stage8.persona, STAGE_PERSONA_MAX_FONT_SIZE],
+      [stage8.descriptor, STAGE_LINE_MAX_FONT_SIZE],
+      [stage8.practice, STAGE_LINE_MAX_FONT_SIZE],
+    ];
+    for (const [line, maxFontSize] of cases) {
+      expect(leftLineFontSize(tree, line)).toBe(fitStageText(line, WIDE_WIDTH, maxFontSize));
+      expect(leftLineFontSize(tree, line)).toBe(maxFontSize);
+    }
+  });
+
+  it('renders the stage-8 left lines at exactly their standard sizes before layout reports', () => {
+    const tree = create(<MapScreen />);
+    expect(leftLineFontSize(tree, stage8.persona)).toBe(STAGE_PERSONA_MAX_FONT_SIZE);
+    expect(leftLineFontSize(tree, stage8.descriptor)).toBe(STAGE_LINE_MAX_FONT_SIZE);
+    expect(leftLineFontSize(tree, stage8.practice)).toBe(STAGE_LINE_MAX_FONT_SIZE);
+  });
+
+  it('shrinks the True Self arrow label below its ceiling in a narrow center cell', () => {
+    const tree = create(<MapScreen />);
+    driveLayout(tree, `aspect-label-fit-${STAGE}`, NARROW_WIDTH);
+    const flat = StyleSheet.flatten(arrowLabelNode(tree).props.style) as { fontSize?: number };
+    expect(flat.fontSize).toBeLessThan(ARROW_LABEL_MAX_FONT_SIZE);
+    expect(flat.fontSize).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+  });
+
+  it('keeps the True Self arrow label at its ceiling in a wide center cell', () => {
+    const tree = create(<MapScreen />);
+    driveLayout(tree, `aspect-label-fit-${STAGE}`, WIDE_WIDTH);
+    const flat = StyleSheet.flatten(arrowLabelNode(tree).props.style) as { fontSize?: number };
+    expect(flat.fontSize).toBe(ARROW_LABEL_MAX_FONT_SIZE);
+  });
+
+  it('guards every fitted stage-8 text to a single line with the native shrink net', () => {
+    const tree = create(<MapScreen />);
+    for (const line of [stage8.persona, stage8.descriptor, stage8.practice]) {
+      const node = leftLineNode(tree, line);
+      expect(node.props.numberOfLines).toBe(1);
+      expect(node.props.adjustsFontSizeToFit).toBe(true);
+    }
+    const label = arrowLabelNode(tree);
+    expect(label.props.numberOfLines).toBe(1);
+    expect(label.props.adjustsFontSizeToFit).toBe(true);
+  });
+
+  it('keeps the stage-8 corner hug and nested countdown intact around the fit wrapper', () => {
+    mockMapState.daysUntilStage = 42;
+    const tree = create(<MapScreen />);
+    driveLayout(tree, `aspect-label-fit-${STAGE}`, NARROW_WIDTH);
+    const block = tree.root.findByProps({ testID: `aspect-label-${STAGE}` });
+    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
+    expect(flat.alignSelf).toBe('flex-end');
+    expect(block.findByProps({ testID: `stage-unlock-${STAGE}` })).toBeTruthy();
   });
 });
 
