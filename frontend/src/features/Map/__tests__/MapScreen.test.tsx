@@ -347,16 +347,27 @@ describe('MapScreen', () => {
     expect(btn).toBeTruthy();
   });
 
-  it('pressing begin-again-button calls stageService.beginAgain', () => {
+  it('pressing begin-again-button calls stageService.beginAgain', async () => {
     mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
       () => true,
     );
-    mockBeginAgain.mockResolvedValue(undefined);
+    // Deferred handshake: settle the request inside act so the guard's
+    // finally-time setState lands while mounted, leaking no post-test microtask.
+    let resolveBeginAgain: () => void = () => {};
+    mockBeginAgain.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveBeginAgain = resolve;
+      }),
+    );
     const tree = create(<MapScreen />);
     act(() => {
       tree.root.findByProps({ testID: 'begin-again-button' }).props.onPress();
     });
     expect(mockBeginAgain).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveBeginAgain();
+      await Promise.resolve();
+    });
   });
 
   it('double-pressing begin-again-button sends exactly one request', () => {
