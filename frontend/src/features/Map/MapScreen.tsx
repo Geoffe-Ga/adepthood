@@ -49,12 +49,16 @@ import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
 import MapDrawer from './MapDrawer';
 import {
+  ARROW_LABEL_MAX_FONT_SIZE,
   fitRightLabel,
+  fitStageText,
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   STAGE_DISPLAY,
+  STAGE_LINE_MAX_FONT_SIZE,
+  STAGE_PERSONA_MAX_FONT_SIZE,
   TITLE_BY_STAGE,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
@@ -152,6 +156,66 @@ interface StageTextBlockProps extends StageCellProps {
 // padlock sits inline on the far left, so the three text lines keep the full
 // height of the box and stay vertically centered.
 
+/**
+ * One left-column stage line, deterministically fitted to the block's measured
+ * width (``fitStageText``); the native ``adjustsFontSizeToFit`` is only a
+ * belt-and-braces net since react-native-web ignores it.
+ */
+const FittedStageLine = ({
+  text,
+  color,
+  width,
+  maxFontSize,
+  baseStyle,
+}: {
+  text: string;
+  color: string;
+  width: number;
+  maxFontSize: number;
+  baseStyle: StyleProp<TextStyle>;
+}): React.JSX.Element => (
+  <Text
+    style={[baseStyle, { color, fontSize: fitStageText(text, width, maxFontSize) }]}
+    numberOfLines={1}
+    adjustsFontSizeToFit
+  >
+    {text}
+  </Text>
+);
+
+/** The three fitted stage lines (persona / descriptor / practice), stacked. */
+const StageLines = ({
+  display,
+  width,
+}: {
+  display: StageDisplay;
+  width: number;
+}): React.JSX.Element => (
+  <>
+    <FittedStageLine
+      text={display.persona}
+      color={display.leftTextColor}
+      width={width}
+      maxFontSize={STAGE_PERSONA_MAX_FONT_SIZE}
+      baseStyle={styles.personaText}
+    />
+    <FittedStageLine
+      text={display.descriptor}
+      color={display.leftTextColor}
+      width={width}
+      maxFontSize={STAGE_LINE_MAX_FONT_SIZE}
+      baseStyle={styles.lineText}
+    />
+    <FittedStageLine
+      text={display.practice}
+      color={display.leftTextColor}
+      width={width}
+      maxFontSize={STAGE_LINE_MAX_FONT_SIZE}
+      baseStyle={styles.lineText}
+    />
+  </>
+);
+
 const StageTextBlock = ({
   stage,
   display,
@@ -159,32 +223,39 @@ const StageTextBlock = ({
   fullness,
   showTopDivider,
   onPress,
-}: StageTextBlockProps): React.JSX.Element => (
-  <TouchableOpacity
-    testID={`stage-hotspot-${display.stageNumber}-0`}
-    style={[
-      styles.stageBlock,
-      showTopDivider ? styles.horizontalDivider : null,
-      locked ? styles.locked : null,
-    ]}
-    onPress={() => onPress(stage)}
-    accessibilityRole="button"
-    accessibilityLabel={stageNodeLabel(display, fullness)}
-  >
-    {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
-    <View style={styles.stageLines}>
-      <Text style={[styles.personaText, { color: display.leftTextColor }]}>{display.persona}</Text>
-      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.descriptor}</Text>
-      <Text style={[styles.lineText, { color: display.leftTextColor }]}>{display.practice}</Text>
-    </View>
-  </TouchableOpacity>
-);
+}: StageTextBlockProps): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
+  return (
+    <TouchableOpacity
+      testID={`stage-hotspot-${display.stageNumber}-0`}
+      style={[
+        styles.stageBlock,
+        showTopDivider ? styles.horizontalDivider : null,
+        locked ? styles.locked : null,
+      ]}
+      onPress={() => onPress(stage)}
+      accessibilityRole="button"
+      accessibilityLabel={stageNodeLabel(display, fullness)}
+    >
+      {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
+      <View
+        style={styles.stageLines}
+        testID={`stage-text-fit-${display.stageNumber}`}
+        onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+      >
+        <StageLines display={display} width={width} />
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 // --- Center cell: label/title, lock, badge (the -1 tap); the wave overlay now
 // carries the directional/polarity read behind these cells ----------------
 
 // Corner-hugging Aspect-label block: the arrow word plus, when locked, its
 // unlock estimate, grouped against the corner opposite the wave's return pole.
+// A stretch wrapper measures the full center-cell width so the word's fitted
+// size (fitStageText) shrinks only when the cell is genuinely too narrow.
 const AspectLabelBlock = ({
   display,
   locked,
@@ -192,12 +263,28 @@ const AspectLabelBlock = ({
   display: StageDisplay;
   locked: boolean;
 }): React.JSX.Element => {
+  const [width, setWidth] = useState(0);
   const corner = labelCorner(display.stageNumber);
   const blockStyle = corner === 'left' ? styles.labelBlockLeft : styles.labelBlockRight;
   return (
-    <View style={blockStyle} testID={`aspect-label-${display.stageNumber}`}>
-      <Text style={styles.arrowLabelText}>{display.arrowLabel}</Text>
-      {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+    <View
+      style={styles.labelFit}
+      testID={`aspect-label-fit-${display.stageNumber}`}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      <View style={blockStyle} testID={`aspect-label-${display.stageNumber}`}>
+        <Text
+          style={[
+            styles.arrowLabelText,
+            { fontSize: fitStageText(display.arrowLabel, width, ARROW_LABEL_MAX_FONT_SIZE) },
+          ]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {display.arrowLabel}
+        </Text>
+        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+      </View>
     </View>
   );
 };

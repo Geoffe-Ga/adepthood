@@ -2,7 +2,9 @@
 /* global describe, it, expect */
 import { ink, surface } from '../../../design/tokens';
 import {
+  ARROW_LABEL_MAX_FONT_SIZE,
   fitRightLabel,
+  fitStageText,
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
@@ -11,6 +13,10 @@ import {
   RIGHT_LABEL_MAX_FONT_SIZE,
   RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
+  STAGE_LINE_MAX_FONT_SIZE,
+  STAGE_PERSONA_MAX_FONT_SIZE,
+  STAGE_TEXT_GLYPH_EM_WIDTH,
+  STAGE_TEXT_MIN_FONT_SIZE,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
 } from '../mapLayout';
@@ -317,6 +323,81 @@ describe('fitRightLabel', () => {
     // Exactly the label's own two hyphens survive — none inserted elsewhere.
     const hyphenCount = (result.lines.join('').match(/-/g) ?? []).length;
     expect(hyphenCount).toBe(2);
+  });
+});
+
+describe('fitStageText', () => {
+  const stage8 = requireDisplay(8);
+  const WIDE_CELL = 400;
+
+  // Same conservative advance-width idiom the title / right-label fits use,
+  // scoped to the left-column stage text and arrow label glyph budget.
+  const estimatedWidth = (text: string, fontSize: number): number =>
+    text.length * fontSize * STAGE_TEXT_GLYPH_EM_WIDTH;
+
+  it('pins the ceilings to the legacy fixed sizes and the shared floor / glyph budget', () => {
+    expect(STAGE_PERSONA_MAX_FONT_SIZE).toBe(14);
+    expect(STAGE_LINE_MAX_FONT_SIZE).toBe(12);
+    expect(ARROW_LABEL_MAX_FONT_SIZE).toBe(12);
+    expect(STAGE_TEXT_MIN_FONT_SIZE).toBe(9);
+    expect(STAGE_TEXT_GLYPH_EM_WIDTH).toBe(0.62);
+  });
+
+  it('renders at the given ceiling before layout reports a width', () => {
+    expect(fitStageText(stage8.persona, 0, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
+      STAGE_PERSONA_MAX_FONT_SIZE,
+    );
+  });
+
+  it('renders empty text at the given ceiling', () => {
+    expect(fitStageText('', WIDE_CELL, STAGE_LINE_MAX_FONT_SIZE)).toBe(STAGE_LINE_MAX_FONT_SIZE);
+  });
+
+  it('caps a short line in a wide cell at its own ceiling', () => {
+    expect(fitStageText('Nondual', WIDE_CELL, STAGE_LINE_MAX_FONT_SIZE)).toBe(
+      STAGE_LINE_MAX_FONT_SIZE,
+    );
+    expect(fitStageText(stage8.persona, WIDE_CELL, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
+      STAGE_PERSONA_MAX_FONT_SIZE,
+    );
+  });
+
+  it('shrinks the stage-8 persona below its ceiling so its estimated width fits a narrow cell', () => {
+    for (const width of [60, 90, 120, 150]) {
+      const size = fitStageText(stage8.persona, width, STAGE_PERSONA_MAX_FONT_SIZE);
+      expect(size).toBeLessThan(STAGE_PERSONA_MAX_FONT_SIZE);
+      expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+      if (size > STAGE_TEXT_MIN_FONT_SIZE) {
+        expect(estimatedWidth(stage8.persona, size)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it('shrinks the stage-8 practice below its ceiling so its estimated width fits a narrow cell', () => {
+    for (const width of [60, 90, 120, 150]) {
+      const size = fitStageText(stage8.practice, width, STAGE_LINE_MAX_FONT_SIZE);
+      expect(size).toBeLessThan(STAGE_LINE_MAX_FONT_SIZE);
+      expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+      if (size > STAGE_TEXT_MIN_FONT_SIZE) {
+        expect(estimatedWidth(stage8.practice, size)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it('never shrinks below the legibility floor', () => {
+    expect(fitStageText(stage8.persona, 10, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
+      STAGE_TEXT_MIN_FONT_SIZE,
+    );
+  });
+
+  it('clamps between the floor and each ceiling for every width, including non-positive ones', () => {
+    for (const maxFontSize of [STAGE_PERSONA_MAX_FONT_SIZE, STAGE_LINE_MAX_FONT_SIZE]) {
+      for (const width of [-10, 0, 20, 60, 90, 180, 500]) {
+        const size = fitStageText(stage8.practice, width, maxFontSize);
+        expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+        expect(size).toBeLessThanOrEqual(maxFontSize);
+      }
+    }
   });
 });
 

@@ -143,6 +143,39 @@ export const fitRightLabel = (
   return { lines: [...fallbackLines], fontSize: fallbackFontSize };
 };
 
+/** Ceiling for the bold persona line — the legacy fixed size (14px). */
+export const STAGE_PERSONA_MAX_FONT_SIZE = 14;
+
+/** Ceiling for the descriptor / practice lines — the legacy fixed size (12px). */
+export const STAGE_LINE_MAX_FONT_SIZE = 12;
+
+/** Ceiling for the center arrow label — the legacy fixed size (12px). */
+export const ARROW_LABEL_MAX_FONT_SIZE = 12;
+
+/** Floor below which the stage text would stop reading as legible copy. */
+export const STAGE_TEXT_MIN_FONT_SIZE = 9;
+
+/**
+ * Conservative average advance width of a mixed-case sans glyph, in ems.
+ * Deliberately generous (err toward smaller) so the fit only ever settles on a
+ * guaranteed-fitting size for the stage copy and arrow labels.
+ */
+export const STAGE_TEXT_GLYPH_EM_WIDTH = 0.62;
+
+/**
+ * Largest size (<= ``maxFontSize``, the line's standard size) at which ``text``
+ * fits ``width`` on one line, mirroring the ``fittedTitleFontSize`` idiom. The
+ * standard size is the ceiling — text that already fits (or an unmeasured
+ * width of 0) renders at exactly that size — and the floor guards legibility.
+ * The native ``adjustsFontSizeToFit`` is a no-op on react-native-web, so this
+ * deterministic size is the real single-line guarantee everywhere.
+ */
+export const fitStageText = (text: string, width: number, maxFontSize: number): number => {
+  if (width <= 0 || text.length === 0) return maxFontSize;
+  const fitted = Math.floor(width / (text.length * STAGE_TEXT_GLYPH_EM_WIDTH));
+  return Math.max(STAGE_TEXT_MIN_FONT_SIZE, Math.min(maxFontSize, fitted));
+};
+
 /**
  * The title line each top stage carries in its own grid row (no absolute
  * overlay): stage 10 reads EMPTINESS, stage 9 reads UNITY. Stages 1–8 have none.
