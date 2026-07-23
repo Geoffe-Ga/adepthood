@@ -1008,25 +1008,34 @@ async def test_concurrent_signups_for_same_email_create_one_user(
     concurrent signups could both pass the existence check and both
     insert.  The case-insensitive unique index on ``lower(email)`` plus
     the ``IntegrityError`` rollback keeps the row count at one and the
-    losing requests still receive the anti-enumeration dummy response.
+    losing requests receive the generic invalid-license rejection — the
+    same 400, no token, that the up-front duplicate pre-check returns, so
+    a timing/shape oracle cannot single out the winner.
     """
     payloads = [
-        {"email": "race@example.com", "password": "securepassword123"}  # pragma: allowlist secret
+        {
+            "email": "race@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+            "license_key": "RACE-LICENSE-KEY",  # pragma: allowlist secret
+        }
         for _ in range(_CONCURRENT_SIGNUP_FANOUT)
     ]
     responses = await asyncio.gather(
         *[concurrent_async_client.post(SIGNUP_URL, json=p) for p in payloads]
     )
 
-    # Every attempt returns the same status + shape (anti-enumeration).
-    assert all(r.status_code == HTTPStatus.OK for r in responses)
-    assert all(set(r.json().keys()) >= {"token", "user_id"} for r in responses)
-
-    # Exactly one of them owns a real ``user_id``; the rest get the
-    # dummy ``user_id == 0`` so a timing/shape oracle cannot distinguish
-    # the winner from the duplicates.
-    real_ids = [r.json()["user_id"] for r in responses if r.json()["user_id"] != 0]
-    assert len(real_ids) == 1, real_ids
+    # Exactly one attempt creates the account (200 + real user_id + JWT);
+    # every loser gets the generic invalid-license rejection — the same 400,
+    # no token — that the up-front duplicate pre-check returns, so nothing
+    # distinguishes the race fallback from the pre-check path.
+    winners = [r for r in responses if r.status_code == HTTPStatus.OK]
+    losers = [r for r in responses if r.status_code == HTTPStatus.BAD_REQUEST]
+    assert len(winners) == 1
+    assert len(winners) + len(losers) == _CONCURRENT_SIGNUP_FANOUT
+    assert winners[0].json()["user_id"] > 0
+    assert winners[0].json()["token"]
+    assert all("token" not in r.json() for r in losers)
+    assert all(r.json()["detail"] == "invalid_license" for r in losers)
 
     # The DB has exactly one row for the contested email.
     async with concurrent_session_factory() as session:

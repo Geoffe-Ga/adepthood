@@ -33,6 +33,7 @@ pytestmark = pytest.mark.real_license_gate
 SIGNUP_PATH = "/auth/signup"
 PRODUCT_IDS_ENV = "GUMROAD_APTITUDE_PRODUCT_IDS"
 VERIFY_SEAM = "domain.entitlements.verify_license"
+REJECT_DUPLICATE_SEAM = "routers.auth._reject_duplicate_signup_email"
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
 ALLOWLIST = f"{ALLOWED_PRODUCT_ALPHA},{ALLOWED_PRODUCT_BETA}"
@@ -385,6 +386,46 @@ async def test_duplicate_signup_is_invalid_license_without_leaking(
     assert await _count_users(db_session) == 1
     assert await _count_entitlements(db_session) == 1
     assert _log_carries_marker(caplog, DUPLICATE_SIGNUP_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_race_duplicate_matches_precheck_rejection_shape(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The IntegrityError race fallback returns the identical 400 shape as the pre-check.
+
+    A duplicate email caught by the concurrent-insert race must be
+    indistinguishable from one caught by the up-front existence check: same
+    status, same JSON body, no token. Silencing the pre-check forces the
+    insert to reach the unique index and raise ``IntegrityError``, so the
+    fallback branch runs — and its response must match the pre-check's byte
+    for byte, or an observer could tell which path fired.
+    """
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result()}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+
+    # Pre-check path: the second signup finds the existing row up front.
+    precheck = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert precheck.status_code == HTTPStatus.BAD_REQUEST
+    assert precheck.json()["detail"] == DETAIL_INVALID_LICENSE
+
+    # Race path: silence the pre-check so the insert reaches the unique
+    # index and raises IntegrityError, exercising the fallback branch.
+    monkeypatch.setattr(REJECT_DUPLICATE_SEAM, AsyncMock(return_value=None))
+    race = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert race.status_code == precheck.status_code
+    assert race.json() == precheck.json()
+    assert "token" not in race.json()
+    assert await _count_users(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
 
 
 @pytest.mark.asyncio

@@ -351,22 +351,6 @@ def _create_token(user_id: int) -> tuple[str, str]:
     return token, jti
 
 
-def _create_dummy_token() -> str:
-    """Generate a structurally-valid JWT that will never decode with the real secret.
-
-    Used to return an indistinguishable response when a signup is attempted
-    with an already-registered email, preventing account enumeration.
-    """
-    now = datetime.now(UTC)
-    nonce_key = secrets.token_hex(32)
-    payload = {
-        "sub": "0",
-        "exp": int((now + _TOKEN_TTL).timestamp()),
-        "iat": now.timestamp(),
-    }
-    return str(jwt.encode(payload, nonce_key, algorithm=_JWT_ALGORITHM))
-
-
 def _get_client_ip(request: Request) -> str:
     """Extract client IP from the request, respecting X-Forwarded-For."""
     forwarded = request.headers.get("x-forwarded-for")
@@ -526,17 +510,6 @@ async def _serialize_login(session: AsyncSession, email: str) -> AsyncIterator[N
         yield
 
 
-def _duplicate_signup_response() -> AuthResponse:
-    """Identical-shape response for an email already in use.
-
-    Returned both when the pre-empted insert would conflict and when a
-    concurrent request wins the race and our insert raises
-    ``IntegrityError``.  The dummy token is signed with a random key so
-    it cannot be exchanged for access to the existing account.
-    """
-    return AuthResponse(token=_create_dummy_token(), user_id=0)
-
-
 async def _reject_invalid_license(
     request: Request,
     email: str,
@@ -638,9 +611,10 @@ async def _create_signup_user(session: AsyncSession, payload: SignupRequest) -> 
         # The ``ix_user_lower_email_unique`` functional unique index (or
         # the case-sensitive ``ix_user_email`` for legacy schemas) raised
         # because a concurrent request won the race after our duplicate
-        # check.  The caller answers with the anti-enumeration dummy —
-        # same shape, same timing — so the client cannot tell whether the
-        # email was new or already registered.
+        # check.  The caller answers with the same generic invalid-license
+        # rejection the pre-check path returns — same status, same body — so
+        # the client cannot tell whether the email was new or already
+        # registered, nor which duplicate-detection path fired.
         await session.rollback()
         return None
     await session.refresh(user)
@@ -694,7 +668,12 @@ async def signup(
     await _reject_duplicate_signup_email(session, payload.email)
     user = await _create_signup_user(session, payload)
     if user is None:
-        return _duplicate_signup_response()
+        # A concurrent request won the unique-index race after our pre-check
+        # passed.  Answer with the exact rejection the pre-check path returns
+        # so a duplicate email is indistinguishable from an invalid license on
+        # every path.  ``_create_signup_user`` already spent one real bcrypt
+        # hash, matching the dummy verify the pre-check spends — timing holds.
+        raise bad_request(_DETAIL_INVALID_LICENSE)
 
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
