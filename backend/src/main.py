@@ -37,6 +37,7 @@ from routers.goal_completions import router as goal_completion_router
 from routers.goal_groups import router as goal_groups_router
 from routers.goal_groups import seed_goal_group_templates
 from routers.goals import router as goals_router
+from routers.gumroad import router as gumroad_router
 from routers.habits import router as habits_router
 from routers.invitations import router as invitations_router
 from routers.journal import router as journal_router
@@ -229,6 +230,28 @@ def _assert_credentials_safe(origins: list[str]) -> None:
         )
 
 
+# Both halves of the Gumroad integration: the outbound license-verification
+# client needs the API token, the inbound ping webhook needs the shared secret.
+_REQUIRED_GUMROAD_ENV_VARS = ("GUMROAD_API_TOKEN", "GUMROAD_WEBHOOK_SECRET")
+
+
+def validate_gumroad_config() -> None:
+    """Fail fast on missing Gumroad credentials in production.
+
+    In development/staging the integration may be unconfigured — the webhook
+    fails closed and license checks simply cannot succeed. A production deploy
+    without the token or webhook secret would silently drop real purchase
+    events, so boot refuses instead, mirroring the ``_get_secret_key`` startup
+    check (BUG-AUTH-011's "deploy never goes live" principle).
+    """
+    if os.getenv("ENV", "development") != "production":
+        return
+    missing = [name for name in _REQUIRED_GUMROAD_ENV_VARS if not os.getenv(name)]
+    if missing:
+        msg = f"Missing required Gumroad configuration: {', '.join(missing)}"
+        raise RuntimeError(msg)
+
+
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
@@ -366,6 +389,10 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # invoking it here turns "first user pays" into "deploy never goes live".
     _get_secret_key()
 
+    # Gumroad credentials are production-critical the same way SECRET_KEY is:
+    # fail the deploy at boot rather than dropping purchase webhooks later.
+    validate_gumroad_config()
+
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.
     # Opt-out via ``SKIP_STARTUP_SEED=1`` for tests and contexts where the
@@ -457,6 +484,7 @@ app.include_router(energy_router)
 app.include_router(goal_completion_router)
 app.include_router(goal_groups_router)
 app.include_router(goals_router)
+app.include_router(gumroad_router)
 app.include_router(stages_router)
 app.include_router(users_router)
 app.include_router(depth_preferences_router)
