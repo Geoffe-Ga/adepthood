@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
 from domain.entitlements import (
+    PRODUCT_IDS_ENV_VAR,
     grant_course_access,
     has_course_access,
+    is_aptitude_product_id,
     revoke_course_access,
 )
 from models.entitlement import Entitlement, EntitlementKind
@@ -90,6 +92,27 @@ def test_course_access_kind_is_the_stored_string() -> None:
     """EntitlementKind.COURSE_ACCESS is a StrEnum member equal to its column value."""
     assert EntitlementKind.COURSE_ACCESS == COURSE_ACCESS_KIND
     assert EntitlementKind.COURSE_ACCESS.value == COURSE_ACCESS_KIND
+
+
+def test_is_aptitude_product_id_matches_only_allowlisted_products(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared allowlist check accepts a listed id and rejects everything else."""
+    monkeypatch.setenv(PRODUCT_IDS_ENV_VAR, f" {PRODUCT_ID} , prod_beta ")
+    assert is_aptitude_product_id(PRODUCT_ID) is True
+    assert is_aptitude_product_id("prod_beta") is True
+    assert is_aptitude_product_id("prod_not_listed") is False
+
+
+def test_is_aptitude_product_id_rejects_blank_and_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank id, and any id under an unset allowlist, fail closed to False."""
+    monkeypatch.setenv(PRODUCT_IDS_ENV_VAR, PRODUCT_ID)
+    assert is_aptitude_product_id("") is False
+    assert is_aptitude_product_id(None) is False
+    monkeypatch.delenv(PRODUCT_IDS_ENV_VAR, raising=False)
+    assert is_aptitude_product_id(PRODUCT_ID) is False
 
 
 def test_new_entitlement_defaults_to_active_course_access() -> None:

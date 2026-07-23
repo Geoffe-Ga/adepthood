@@ -26,7 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
-from domain.entitlements import REASON_WEBHOOK_SALE, grant_course_access
+from domain.entitlements import (
+    REASON_WEBHOOK_SALE,
+    grant_course_access,
+    is_aptitude_product_id,
+)
 from errors import bad_request
 from models.gumroad_sale import GumroadSale
 from models.user import User
@@ -116,11 +120,17 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
 async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> None:
     """Grant course access for a sale ping when the buyer already signed up.
 
-    Matches the buyer email against stored users case-insensitively; with no
-    match the sale row alone is the outcome (the buyer's later license-gated
-    signup converges by linking to it). The grant is idempotent, so webhook
-    replays never duplicate an entitlement.
+    Grants only for a sale of an APTITUDE product (the ping's ``product_id``
+    must be on ``GUMROAD_APTITUDE_PRODUCT_IDS`` — the same allowlist the signup
+    path enforces), so a future non-APTITUDE product sold on the same Gumroad
+    account never silently grants course access. Matches the buyer email
+    against stored users case-insensitively; with no match the sale row alone
+    is the outcome (the buyer's later license-gated signup converges by linking
+    to it). The grant is idempotent, so webhook replays never duplicate an
+    entitlement.
     """
+    if not is_aptitude_product_id(payload.get("product_id")):
+        return
     email = payload.get("email", "").strip().lower()
     if not email:
         return

@@ -48,6 +48,7 @@ __all__ = [
     "LicenseOutcome",
     "grant_course_access",
     "has_course_access",
+    "is_aptitude_product_id",
     "revoke_course_access",
     "verify_aptitude_license",
 ]
@@ -196,6 +197,19 @@ def _allowlisted_product_ids() -> list[str]:
     return [
         product_id.strip() for product_id in raw.split(_PRODUCT_IDS_SEPARATOR) if product_id.strip()
     ]
+
+
+def is_aptitude_product_id(product_id: str | None) -> bool:
+    """Return True when ``product_id`` is on the APTITUDE course allowlist.
+
+    Shares the single allowlist source (``GUMROAD_APTITUDE_PRODUCT_IDS``) with
+    the signup verifier so the webhook sale-grant path and the signup path can
+    never diverge on what counts as "the course". A blank or unallowlisted id
+    (including an unset allowlist) returns False, so the grant fails closed for
+    any non-APTITUDE product sold on the same Gumroad account.
+    """
+    normalized = (product_id or "").strip()
+    return bool(normalized) and normalized in _allowlisted_product_ids()
 
 
 async def verify_aptitude_license(

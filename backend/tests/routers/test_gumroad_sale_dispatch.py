@@ -36,6 +36,7 @@ BUYER_EMAIL = "buyer@example.com"
 MIXED_CASE_BUYER_EMAIL = "Buyer@Example.COM"
 SALE_ID = "S-100"
 PRODUCT_ID = "prod_abc123"
+OFF_ALLOWLIST_PRODUCT_ID = "prod_token_packs"
 NON_SALE_RESOURCE = "refund"
 LICENSE_KEY = "WEBHOOK-CONVERGENCE-TEST-KEY"  # pragma: allowlist secret
 SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
@@ -49,6 +50,20 @@ def webhook_secret(monkeypatch: pytest.MonkeyPatch) -> str:
     """Set GUMROAD_WEBHOOK_SECRET for the duration of a test."""
     monkeypatch.setenv("GUMROAD_WEBHOOK_SECRET", WEBHOOK_SECRET)
     return WEBHOOK_SECRET
+
+
+@pytest.fixture(autouse=True)
+def aptitude_allowlist(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Put the sale's product on the APTITUDE allowlist for the whole suite.
+
+    The webhook grant path filters the ping's ``product_id`` against
+    ``GUMROAD_APTITUDE_PRODUCT_IDS`` — the same allowlist the signup path
+    enforces — so a grant only happens for an APTITUDE product. Every
+    grant-expecting test here therefore needs the sale product allowlisted;
+    off-allowlist behaviour is asserted with a product left off this list.
+    """
+    monkeypatch.setenv(PRODUCT_IDS_ENV, PRODUCT_ID)
+    return PRODUCT_ID
 
 
 def _sale_payload(**overrides: str) -> dict[str, str]:
@@ -195,6 +210,32 @@ async def test_sale_ping_without_user_persists_sale_only(
     """With no matching user the ping stores the sale row and grants nothing."""
     response = await async_client.post(
         WEBHOOK_PATH, params={"secret": webhook_secret}, data=_sale_payload()
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_sales(db_session) == 1
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_sale_ping_off_allowlist_product_persists_sale_without_granting(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A sale for a non-APTITUDE product stores the sale but grants no access.
+
+    A pre-registered user whose email matches must not receive course_access
+    from a product that is not on ``GUMROAD_APTITUDE_PRODUCT_IDS`` (e.g. a
+    future token-pack product on the same Gumroad account); the verbatim sale
+    row is still captured.
+    """
+    _user, _user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_sale_payload(product_id=OFF_ALLOWLIST_PRODUCT_ID),
     )
 
     assert response.status_code == HTTPStatus.OK
