@@ -239,6 +239,7 @@ def _stub_signup_license_gate(
             product_id=_STUB_LICENSE_PRODUCT_ID,
             sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{email}",
             refunded=False,
+            chargebacked=False,
         )
         return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)
 

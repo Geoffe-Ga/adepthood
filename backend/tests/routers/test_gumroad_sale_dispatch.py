@@ -106,6 +106,7 @@ def _make_success_stub() -> Callable[..., Awaitable[GumroadLicenseResult | None]
                 product_id=PRODUCT_ID,
                 sale_id=SALE_ID,
                 refunded=False,
+                chargebacked=False,
             ),
         )
 

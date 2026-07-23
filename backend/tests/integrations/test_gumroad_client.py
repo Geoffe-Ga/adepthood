@@ -39,6 +39,7 @@ def _success_payload() -> dict[str, object]:
             "product_id": PRODUCT_ID,
             "sale_id": "S-123",
             "refunded": False,
+            "chargebacked": False,
         },
     }
 

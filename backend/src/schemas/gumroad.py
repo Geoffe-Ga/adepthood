@@ -17,7 +17,11 @@ class GumroadPurchase(BaseModel):
     email: str
     product_id: str
     sale_id: str
+    # Gumroad reports refunds and chargebacks as two independent booleans on the
+    # purchase; a verify call still answers ``success: true`` for either state
+    # unless the seller enabled auto-disable, so both are parsed and checked.
     refunded: bool
+    chargebacked: bool
 
 
 class GumroadLicenseResult(BaseModel):

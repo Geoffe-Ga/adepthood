@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 # per code so grep-by-reason in log aggregation has a single spelling.
 REASON_SIGNUP_REDEMPTION = "signup_redemption"
 REASON_WEBHOOK_SALE = "webhook_sale"
+# Forward-reserved for the post-grant revocation paths (refund-driven and
+# manual admin override); exported now so those code paths share this spelling.
 REASON_REFUND = "refund"
 REASON_ADMIN_OVERRIDE = "admin_override"
 REASON_DUPLICATE_SIGNUP = "duplicate_signup"
@@ -222,10 +224,11 @@ async def verify_aptitude_license(
 
     A missing or blank ``license_key`` short-circuits to LICENSE_REQUIRED
     before any Gumroad call. Otherwise walks ``GUMROAD_APTITUDE_PRODUCT_IDS``
-    in order, stopping on the first ``success`` answer: a case-insensitive
-    email match yields VERIFIED (with the purchase attached), any other holder
-    yields EMAIL_MISMATCH. A ``None`` / ``success=False`` answer moves on to
-    the next product; no match across the whole allowlist is INVALID.
+    in order, stopping on the first ``success`` answer: a refunded or
+    charged-back purchase yields INVALID, a case-insensitive email match on a
+    live purchase yields VERIFIED (with the purchase attached), any other
+    holder yields EMAIL_MISMATCH. A ``None`` / ``success=False`` answer moves
+    on to the next product; no match across the whole allowlist is INVALID.
 
     Raises:
         GumroadUnavailableError: propagated untouched from ``verify_license``
@@ -242,7 +245,16 @@ def _classify_verified_purchase(
     purchase: GumroadPurchase,
     normalized_email: str,
 ) -> AptitudeLicenseCheck:
-    """Map a successful verify result onto VERIFIED or EMAIL_MISMATCH."""
+    """Map a successful verify result onto INVALID, VERIFIED, or EMAIL_MISMATCH.
+
+    A refunded or charged-back purchase folds to INVALID before the email is
+    even compared, so the rejection is byte-for-byte identical to an unknown
+    key and never leaks that the license was once valid. This is pre-grant
+    verification only; revoking an already-granted entitlement after a later
+    refund is separate, deferred work.
+    """
+    if purchase.refunded or purchase.chargebacked:
+        return AptitudeLicenseCheck(LicenseOutcome.INVALID)
     if purchase.email.strip().lower() == normalized_email:
         return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)
     return AptitudeLicenseCheck(LicenseOutcome.EMAIL_MISMATCH)

@@ -76,9 +76,10 @@ def _log_carries_marker(caplog: pytest.LogCaptureFixture, marker: str) -> bool:
 def _license_result(
     email: str = SIGNUP_EMAIL,
     product_id: str = ALLOWED_PRODUCT_ALPHA,
-    sale_id: str = SALE_ID,
     *,
     success: bool = True,
+    refunded: bool = False,
+    chargebacked: bool = False,
 ) -> GumroadLicenseResult:
     """Build a Gumroad verify result for the given purchase identity."""
     return GumroadLicenseResult(
@@ -87,8 +88,9 @@ def _license_result(
         purchase=GumroadPurchase(
             email=email,
             product_id=product_id,
-            sale_id=sale_id,
-            refunded=False,
+            sale_id=SALE_ID,
+            refunded=refunded,
+            chargebacked=chargebacked,
         ),
     )
 
@@ -184,6 +186,51 @@ async def test_success_false_result_is_invalid_license(
     """A verify answer with success=False counts as no match, not as a grant."""
     calls: list[tuple[str, str]] = []
     results = {ALLOWED_PRODUCT_ALPHA: _license_result(success=False)}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_refunded_license_is_invalid_license_and_writes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A refunded purchase is rejected exactly like an invalid key, no rows written."""
+    caplog.set_level(logging.DEBUG)
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(refunded=True)}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+    # The email matches the purchase, so a refund must not leak via the
+    # email-mismatch marker: the rejection is indistinguishable from a bad key.
+    assert not _log_carries_marker(caplog, EMAIL_MISMATCH_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_chargebacked_license_is_invalid_license_and_writes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A charged-back purchase is rejected like an invalid key, no rows written."""
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(chargebacked=True)}
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
 
     response = await async_client.post(SIGNUP_PATH, json=_signup_payload())

@@ -673,6 +673,9 @@ async def signup(
     outage fails closed with 503.  Only the JWT leaves the backend — never
     any Gumroad verify-response field.
     """
+    # Verify the license (a live Gumroad call) before the duplicate-email DB
+    # check is deliberate: running the same first check for every email keeps an
+    # attacker from inferring account existence from which check ran first.
     purchase = await _verify_signup_license(request, payload)
     await _reject_duplicate_signup_email(session, payload.email)
     user = await _create_signup_user(session, payload)
