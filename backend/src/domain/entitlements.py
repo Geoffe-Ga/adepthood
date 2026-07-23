@@ -224,9 +224,10 @@ async def verify_aptitude_license(
 
     A missing or blank ``license_key`` short-circuits to LICENSE_REQUIRED
     before any Gumroad call. Otherwise walks ``GUMROAD_APTITUDE_PRODUCT_IDS``
-    in order, stopping on the first ``success`` answer: a refunded or
-    charged-back purchase yields INVALID, a case-insensitive email match on a
-    live purchase yields VERIFIED (with the purchase attached), any other
+    in order, stopping on the first ``success`` answer: a reversed purchase
+    (refunded, charged back, or under an unresolved dispute) yields INVALID, a
+    case-insensitive email match on a live purchase yields VERIFIED (with the
+    purchase attached), any other
     holder yields EMAIL_MISMATCH. A ``None`` / ``success=False`` answer moves
     on to the next product; no match across the whole allowlist is INVALID.
 
@@ -241,19 +242,33 @@ async def verify_aptitude_license(
     return await _first_license_match(key, normalized_email, client)
 
 
+def _is_reversed_purchase(purchase: GumroadPurchase) -> bool:
+    """Return whether a verified purchase has been reversed by the buyer.
+
+    Gumroad's documented verify response (app.gumroad.com/api) exposes reversal
+    as four booleans; a purchase counts as reversed when it was refunded,
+    charged back, or is under an unresolved chargeback dispute — ``disputed``
+    that the seller has not yet won (``dispute_won``). A won dispute leaves the
+    sale legitimate, so it does not reject. This is best-effort pre-grant
+    screening only.
+    """
+    unresolved_dispute = purchase.disputed and not purchase.dispute_won
+    return purchase.refunded or purchase.chargebacked or unresolved_dispute
+
+
 def _classify_verified_purchase(
     purchase: GumroadPurchase,
     normalized_email: str,
 ) -> AptitudeLicenseCheck:
     """Map a successful verify result onto INVALID, VERIFIED, or EMAIL_MISMATCH.
 
-    A refunded or charged-back purchase folds to INVALID before the email is
-    even compared, so the rejection is byte-for-byte identical to an unknown
-    key and never leaks that the license was once valid. This is pre-grant
-    verification only; revoking an already-granted entitlement after a later
-    refund is separate, deferred work.
+    A reversed purchase folds to INVALID before the email is even compared, so
+    the rejection is byte-for-byte identical to an unknown key and never leaks
+    that the license was once valid. This is pre-grant verification only;
+    revoking an already-granted entitlement after a later refund is separate,
+    deferred work.
     """
-    if purchase.refunded or purchase.chargebacked:
+    if _is_reversed_purchase(purchase):
         return AptitudeLicenseCheck(LicenseOutcome.INVALID)
     if purchase.email.strip().lower() == normalized_email:
         return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)

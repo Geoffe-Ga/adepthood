@@ -44,6 +44,100 @@ def _success_payload() -> dict[str, object]:
     }
 
 
+# The canonical successful-verify example transcribed verbatim from Gumroad's
+# own API docs (POST /v2/licenses/verify), captured from
+# https://app.gumroad.com/api (Wayback snapshot 2024-12-28). The purchase
+# object's reversal state is spelled exactly ``refunded``, ``disputed``,
+# ``dispute_won``, and ``chargebacked`` there; the ``#`` inline comments in the
+# published example are dropped here because JSON carries no comments. This
+# fixture exists to break test circularity: it is sourced from the docs, not
+# from our own schema, so a field-name drift with the real API fails CI here.
+DOCUMENTED_VERIFY_EXAMPLE: dict[str, object] = {
+    "success": True,
+    "uses": 3,
+    "purchase": {
+        "seller_id": "kL0psVL2admJSYRNs-OCMg==",
+        "product_id": "32-nPAicqbLj8B_WswVlMw==",
+        "product_name": "licenses demo product",
+        "permalink": "QMGY",
+        "product_permalink": "https://sahil.gumroad.com/l/pencil",
+        "email": "customer@example.com",
+        "price": 0,
+        "gumroad_fee": 0,
+        "currency": "usd",
+        "quantity": 1,
+        "discover_fee_charged": False,
+        "can_contact": True,
+        "referrer": "direct",
+        "card": {"visual": None, "type": None},
+        "order_number": 524459935,
+        "sale_id": "FO8TXN-dbxYaBdahG97Y-Q==",
+        "sale_timestamp": "2021-01-05T19:38:56Z",
+        "purchaser_id": "5550321502811",
+        "subscription_id": "GDzW4_aBdQc-o7Gbjng7lw==",
+        "variants": "",
+        "license_key": "85DB562A-C11D4B06-A2335A6B-8C079166",  # pragma: allowlist secret
+        "is_multiseat_license": False,
+        "ip_country": "United States",
+        "recurrence": "monthly",
+        "is_gift_receiver_purchase": False,
+        "refunded": False,
+        "disputed": False,
+        "dispute_won": False,
+        "id": "FO8TXN-dvaYbBbahG97a-Q==",
+        "created_at": "2021-01-05T19:38:56Z",
+        "custom_fields": [],
+        "chargebacked": False,
+        "subscription_ended_at": None,
+        "subscription_cancelled_at": None,
+        "subscription_failed_at": None,
+    },
+}
+
+
+def test_documented_verify_example_parses_with_all_reversal_flags() -> None:
+    """The verbatim documented Gumroad example validates and is not reversed.
+
+    Guards against a field-name drift between ``GumroadPurchase`` and Gumroad's
+    real response: parsing the docs' own example must succeed and surface the
+    documented ``refunded``/``disputed``/``dispute_won``/``chargebacked`` flags.
+    """
+    result = GumroadLicenseResult.model_validate(DOCUMENTED_VERIFY_EXAMPLE)
+
+    assert result.success is True
+    assert result.uses == EXPECTED_USES
+    assert result.purchase.email == "customer@example.com"
+    assert result.purchase.refunded is False
+    assert result.purchase.disputed is False
+    assert result.purchase.dispute_won is False
+    assert result.purchase.chargebacked is False
+
+
+def test_verify_response_missing_reversal_flags_parses_with_safe_defaults() -> None:
+    """A purchase that omits every reversal flag parses; absence is not reversed.
+
+    If Gumroad drops one of the reversal booleans from a response, the schema
+    must degrade to "not known reversed" (all flags ``False``) rather than raise
+    a ``ValidationError`` that would 500 the signup happy path.
+    """
+    payload = {
+        "success": True,
+        "uses": EXPECTED_USES,
+        "purchase": {
+            "email": "buyer@example.com",
+            "product_id": PRODUCT_ID,
+            "sale_id": "S-123",
+        },
+    }
+
+    result = GumroadLicenseResult.model_validate(payload)
+
+    assert result.purchase.refunded is False
+    assert result.purchase.disputed is False
+    assert result.purchase.dispute_won is False
+    assert result.purchase.chargebacked is False
+
+
 @pytest.mark.asyncio
 async def test_verify_license_valid_returns_parsed_result(
     monkeypatch: pytest.MonkeyPatch,

@@ -17,11 +17,20 @@ class GumroadPurchase(BaseModel):
     email: str
     product_id: str
     sale_id: str
-    # Gumroad reports refunds and chargebacks as two independent booleans on the
-    # purchase; a verify call still answers ``success: true`` for either state
-    # unless the seller enabled auto-disable, so both are parsed and checked.
-    refunded: bool
-    chargebacked: bool
+    # Gumroad's documented "Verify" license example (app.gumroad.com/api) reports
+    # reversal state as four independent booleans on the purchase object, spelled
+    # exactly ``refunded``, ``disputed``, ``dispute_won``, and ``chargebacked``;
+    # a verify call still answers ``success: true`` for any of them unless the
+    # seller enabled auto-disable, so each is parsed and checked. Every flag
+    # defaults to ``False`` so a response that omits one degrades to "not known
+    # reversed" instead of raising a ValidationError that would 500 the signup
+    # happy path — absence must never block a legitimate signup. The reversal
+    # gate is best-effort pre-grant screening only; revoking an already-granted
+    # entitlement after a later refund is separate, deferred work.
+    refunded: bool = False
+    disputed: bool = False
+    dispute_won: bool = False
+    chargebacked: bool = False
 
 
 class GumroadLicenseResult(BaseModel):

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from http import HTTPStatus
 from unittest.mock import AsyncMock
 
@@ -77,13 +78,25 @@ def _log_carries_marker(caplog: pytest.LogCaptureFixture, marker: str) -> bool:
     return any(getattr(record, "reason_code", None) == marker for record in caplog.records)
 
 
+@dataclass(frozen=True)
+class _Reversal:
+    """The four documented Gumroad reversal-state flags for a purchase fixture."""
+
+    refunded: bool = False
+    chargebacked: bool = False
+    disputed: bool = False
+    dispute_won: bool = False
+
+
+_NO_REVERSAL = _Reversal()
+
+
 def _license_result(
     email: str = SIGNUP_EMAIL,
     product_id: str = ALLOWED_PRODUCT_ALPHA,
     *,
     success: bool = True,
-    refunded: bool = False,
-    chargebacked: bool = False,
+    reversal: _Reversal = _NO_REVERSAL,
 ) -> GumroadLicenseResult:
     """Build a Gumroad verify result for the given purchase identity."""
     return GumroadLicenseResult(
@@ -93,8 +106,10 @@ def _license_result(
             email=email,
             product_id=product_id,
             sale_id=SALE_ID,
-            refunded=refunded,
-            chargebacked=chargebacked,
+            refunded=reversal.refunded,
+            chargebacked=reversal.chargebacked,
+            disputed=reversal.disputed,
+            dispute_won=reversal.dispute_won,
         ),
     )
 
@@ -211,7 +226,7 @@ async def test_refunded_license_is_invalid_license_and_writes_nothing(
     """A refunded purchase is rejected exactly like an invalid key, no rows written."""
     caplog.set_level(logging.DEBUG)
     calls: list[tuple[str, str]] = []
-    results = {ALLOWED_PRODUCT_ALPHA: _license_result(refunded=True)}
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(reversal=_Reversal(refunded=True))}
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
 
     response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
@@ -234,7 +249,9 @@ async def test_chargebacked_license_is_invalid_license_and_writes_nothing(
 ) -> None:
     """A charged-back purchase is rejected like an invalid key, no rows written."""
     calls: list[tuple[str, str]] = []
-    results = {ALLOWED_PRODUCT_ALPHA: _license_result(chargebacked=True)}
+    results = {
+        ALLOWED_PRODUCT_ALPHA: _license_result(reversal=_Reversal(chargebacked=True)),
+    }
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
 
     response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
@@ -243,6 +260,49 @@ async def test_chargebacked_license_is_invalid_license_and_writes_nothing(
     assert response.json()["detail"] == DETAIL_INVALID_LICENSE
     assert await _count_users(db_session) == 0
     assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_disputed_unresolved_license_is_invalid_license_and_writes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A purchase under an unresolved chargeback dispute is rejected, no rows written."""
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(reversal=_Reversal(disputed=True))}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_dispute_won_license_is_accepted_and_creates_user(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dispute the seller won leaves the sale legitimate: signup still succeeds."""
+    calls: list[tuple[str, str]] = []
+    results = {
+        ALLOWED_PRODUCT_ALPHA: _license_result(
+            reversal=_Reversal(disputed=True, dispute_won=True),
+        ),
+    }
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_users(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
 
 
 @pytest.mark.asyncio
