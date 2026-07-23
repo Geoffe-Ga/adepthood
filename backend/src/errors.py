@@ -78,6 +78,16 @@ def bad_gateway(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=reason)
 
 
+def service_unavailable(reason: str) -> HTTPException:
+    """Return a 503 HTTPException for a temporarily unusable dependency.
+
+    Use this when a required upstream (e.g. Gumroad license verification)
+    cannot answer and the endpoint must fail closed rather than guess, so
+    the caller sees a stable snake_case token and knows to retry later.
+    """
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — log, report to Sentry, return a sanitised envelope.
 

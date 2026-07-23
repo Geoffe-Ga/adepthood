@@ -10,7 +10,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import bcrypt
 import jwt
@@ -24,13 +24,23 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.dates import ensure_aware
+from domain.entitlements import (
+    REASON_DUPLICATE_SIGNUP,
+    REASON_EMAIL_MISMATCH,
+    REASON_SIGNUP_REDEMPTION,
+    GumroadUnavailableError,
+    LicenseOutcome,
+    grant_course_access,
+    verify_aptitude_license,
+)
 from domain.timezone import normalize_timezone
-from errors import bad_request
+from errors import bad_request, service_unavailable
+from models.gumroad_sale import GumroadSale
 from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
 from models.revoked_token import RevokedToken
 from models.user import DEFAULT_USER_TIMEZONE, User
-from rate_limit import limiter
+from rate_limit import limiter, record_invalid_license_attempt
 from schemas.password_reset import (
     PasswordResetAccepted,
     PasswordResetCancel,
@@ -44,6 +54,9 @@ from services.email import (
     get_email_sender,
 )
 from services.users import get_user_timezone
+
+if TYPE_CHECKING:
+    from schemas.gumroad import GumroadPurchase
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +137,23 @@ _BCRYPT_MAX_PASSWORD_BYTES = 72
 # encourages long passphrases).
 _MAX_PASSWORD_LENGTH = 64
 
+# Cap on the signup license_key length.  A non-blank key drives a real
+# outbound POST to Gumroad per allowlisted product before the invalid-license
+# throttle applies, so an unbounded string is a free upstream-amplification /
+# DoS lever — mirror the password field's explicit bound.  Real Gumroad
+# license keys are ~35-char dashed uppercase-hex, so 128 is a generous ceiling
+# that still rejects abuse well before the string reaches the verifier.
+_MAX_LICENSE_KEY_LENGTH = 128
+
+# Client-visible detail strings for the license-gated signup flow. The two
+# rejection details are deliberately generic (no "wrong product" / "wrong
+# email" / "account exists" variants) so no path leaks account or license
+# state — the specific cause is logged server-side only.
+_DETAIL_LICENSE_REQUIRED = "license_required"
+_DETAIL_INVALID_LICENSE = "invalid_license"
+_DETAIL_LICENSE_UNAVAILABLE = "license_verification_unavailable"
+_DETAIL_TOO_MANY_LICENSE_ATTEMPTS = "too_many_license_attempts"
+
 # Account lockout: lock after this many consecutive failed attempts.
 MAX_FAILED_ATTEMPTS = 5
 
@@ -168,10 +198,21 @@ class AuthRequest(BaseModel):
     The bounds also keep the field aligned with the
     ``_BCRYPT_MAX_PASSWORD_BYTES`` ceiling so a request that would
     silently be truncated by bcrypt is rejected with 422 instead.
+
+    ``license_key`` is optional at the schema level so login's payload is
+    unchanged, but the signup handler requires it — signup is gated on a
+    verified APTITUDE Gumroad license.  It carries an explicit
+    ``_MAX_LICENSE_KEY_LENGTH`` bound for the same DoS reason ``password``
+    does: a non-blank key is forwarded into a per-product loop of outbound
+    Gumroad verify calls before the invalid-license throttle applies, so an
+    unbounded string would amplify each attempt upstream.  Over-length input
+    is rejected with a 422 (a schema-shape rejection, like an over-length
+    password) that says nothing about whether the key is valid.
     """
 
     email: EmailStr
     password: str = Field(min_length=_MIN_PASSWORD_LENGTH, max_length=_MAX_PASSWORD_LENGTH)
+    license_key: str | None = Field(default=None, max_length=_MAX_LICENSE_KEY_LENGTH)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -308,22 +349,6 @@ def _create_token(user_id: int) -> tuple[str, str]:
     }
     token = str(jwt.encode(payload, _get_secret_key(), algorithm=_JWT_ALGORITHM))
     return token, jti
-
-
-def _create_dummy_token() -> str:
-    """Generate a structurally-valid JWT that will never decode with the real secret.
-
-    Used to return an indistinguishable response when a signup is attempted
-    with an already-registered email, preventing account enumeration.
-    """
-    now = datetime.now(UTC)
-    nonce_key = secrets.token_hex(32)
-    payload = {
-        "sub": "0",
-        "exp": int((now + _TOKEN_TTL).timestamp()),
-        "iat": now.timestamp(),
-    }
-    return str(jwt.encode(payload, nonce_key, algorithm=_JWT_ALGORITHM))
 
 
 def _get_client_ip(request: Request) -> str:
@@ -485,31 +510,91 @@ async def _serialize_login(session: AsyncSession, email: str) -> AsyncIterator[N
         yield
 
 
-def _duplicate_signup_response() -> AuthResponse:
-    """Identical-shape response for an email already in use.
+async def _reject_invalid_license(
+    request: Request,
+    email: str,
+    outcome: LicenseOutcome,
+) -> NoReturn:
+    """Reject a signup whose license failed verification (anti-enumeration).
 
-    Returned both when the pre-empted insert would conflict and when a
-    concurrent request wins the race and our insert raises
-    ``IntegrityError``.  The dummy token is signed with a random key so
-    it cannot be exchanged for access to the existing account.
+    Counts the attempt toward the per-IP invalid-license cap, records an
+    email-mismatch marker server-side (fingerprint only — never the raw
+    email or key), spends the dummy bcrypt verify for timing parity, then
+    raises the generic 400 — or 429 once the hourly cap is exceeded.
     """
-    return AuthResponse(token=_create_dummy_token(), user_id=0)
+    allowed = record_invalid_license_attempt(_get_client_ip(request))
+    if outcome is LicenseOutcome.EMAIL_MISMATCH:
+        logger.info(
+            "signup_license_rejected",
+            extra={
+                "reason_code": REASON_EMAIL_MISMATCH,
+                "email_fingerprint": _email_log_fingerprint(email),
+            },
+        )
+    await _consume_dummy_password_verify()
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=_DETAIL_TOO_MANY_LICENSE_ATTEMPTS,
+        )
+    raise bad_request(_DETAIL_INVALID_LICENSE)
 
 
-@router.post("/signup", response_model=AuthResponse)
-@limiter.limit("3/minute")
-async def signup(
-    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    payload: SignupRequest,
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> AuthResponse:
-    # Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
-    # before we get here (BUG-AUTH-017), so the only failure mode left is a
-    # multi-byte UTF-8 password whose char-count fits the cap but whose
-    # byte-length blows the bcrypt 72-byte limit.  Translate that into a
-    # 422 instead of a 500 so the client gets a uniform validation
-    # response and we never store a row that bcrypt has silently
-    # truncated (BUG-AUTH-004).
+async def _verify_signup_license(request: Request, payload: SignupRequest) -> GumroadPurchase:
+    """Run the verify-then-create license gate; return the matched purchase.
+
+    Every rejection path spends the same dummy bcrypt verify the success
+    path spends on the real hash, so timing does not leak which check
+    failed. A Gumroad outage fails closed with 503 before any row is
+    written; ``from None`` severs the chain so the caught error's Request
+    body (which carries the license key) is unreachable via ``__cause__``.
+    """
+    try:
+        check = await verify_aptitude_license(payload.email, payload.license_key)
+    except GumroadUnavailableError:
+        raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
+    if check.outcome is LicenseOutcome.LICENSE_REQUIRED:
+        await _consume_dummy_password_verify()
+        raise bad_request(_DETAIL_LICENSE_REQUIRED)
+    if check.outcome is not LicenseOutcome.VERIFIED or check.purchase is None:
+        await _reject_invalid_license(request, payload.email, check.outcome)
+    return check.purchase
+
+
+async def _reject_duplicate_signup_email(session: AsyncSession, email: str) -> None:
+    """Reject a signup for an already-registered email with the generic 400.
+
+    Because the sale webhook never creates ``User`` rows, an existing email
+    here is always a genuine duplicate — and re-granting or issuing a JWT
+    for the existing account off a license alone would be an
+    account-takeover lever, so this path always rejects. Same generic
+    detail, same dummy verify, no token: the caller cannot tell the account
+    exists; only the server log carries ``duplicate_signup``.
+    """
+    result = await session.execute(select(User).where(User.email == email))
+    if result.scalars().first() is None:
+        return
+    logger.info(
+        "signup_license_rejected",
+        extra={
+            "reason_code": REASON_DUPLICATE_SIGNUP,
+            "email_fingerprint": _email_log_fingerprint(email),
+        },
+    )
+    await _consume_dummy_password_verify()
+    raise bad_request(_DETAIL_INVALID_LICENSE)
+
+
+async def _create_signup_user(session: AsyncSession, payload: SignupRequest) -> User | None:
+    """Hash the password and persist the new user; ``None`` when a racer won.
+
+    Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
+    before we get here (BUG-AUTH-017), so the only failure mode left is a
+    multi-byte UTF-8 password whose char-count fits the cap but whose
+    byte-length blows the bcrypt 72-byte limit.  Translate that into a 400
+    instead of a 500 so the client gets a uniform validation response and
+    we never store a row that bcrypt has silently truncated (BUG-AUTH-004).
+    """
     try:
         password_hash = await _hash_password(payload.password)
     except ValueError as exc:
@@ -525,17 +610,75 @@ async def signup(
     except IntegrityError:
         # The ``ix_user_lower_email_unique`` functional unique index (or
         # the case-sensitive ``ix_user_email`` for legacy schemas) raised
-        # because either an earlier signup or a concurrent request won
-        # the race.  Either way the response is the anti-enumeration
-        # dummy — same shape, same timing — so the client cannot tell
-        # whether the email was new or already registered.
+        # because a concurrent request won the race after our duplicate
+        # check.  The caller answers with the same generic invalid-license
+        # rejection the pre-check path returns — same status, same body — so
+        # the client cannot tell whether the email was new or already
+        # registered, nor which duplicate-detection path fired.
         await session.rollback()
-        return _duplicate_signup_response()
+        return None
     await session.refresh(user)
+    return user
+
+
+async def _grant_signup_entitlement(
+    session: AsyncSession,
+    user: User,
+    purchase: GumroadPurchase,
+) -> None:
+    """Link the fresh account to its verified purchase.
+
+    The matching ``GumroadSale`` row may not exist yet (the signup can beat
+    the webhook), so the grant falls back to the purchase's product id and
+    the sale link converges later when the webhook replays the grant.
+    """
+    result = await session.execute(
+        select(GumroadSale).where(GumroadSale.gumroad_sale_id == purchase.sale_id)
+    )
+    sale = result.scalars().first()
+    await grant_course_access(
+        session,
+        user,
+        sale=sale,
+        product_id=purchase.product_id,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+
+@router.post("/signup", response_model=AuthResponse)
+@limiter.limit("3/minute")
+async def signup(
+    request: Request,
+    payload: SignupRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuthResponse:
+    """Create an account gated on a verified APTITUDE Gumroad license.
+
+    Verify-then-create: no ``User`` or ``Entitlement`` row is written until
+    the license verifies against the product allowlist, its purchase email
+    matches, and the signup email is unclaimed.  Every rejection returns a
+    generic detail with matched timing (anti-enumeration), and a Gumroad
+    outage fails closed with 503.  Only the JWT leaves the backend — never
+    any Gumroad verify-response field.
+    """
+    # Verify the license (a live Gumroad call) before the duplicate-email DB
+    # check is deliberate: running the same first check for every email keeps an
+    # attacker from inferring account existence from which check ran first.
+    purchase = await _verify_signup_license(request, payload)
+    await _reject_duplicate_signup_email(session, payload.email)
+    user = await _create_signup_user(session, payload)
+    if user is None:
+        # A concurrent request won the unique-index race after our pre-check
+        # passed.  Answer with the exact rejection the pre-check path returns
+        # so a duplicate email is indistinguishable from an invalid license on
+        # every path.  ``_create_signup_user`` already spent one real bcrypt
+        # hash, matching the dummy verify the pre-check spends — timing holds.
+        raise bad_request(_DETAIL_INVALID_LICENSE)
 
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
+    await _grant_signup_entitlement(session, user, purchase)
     token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
