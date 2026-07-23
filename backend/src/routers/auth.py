@@ -137,6 +137,14 @@ _BCRYPT_MAX_PASSWORD_BYTES = 72
 # encourages long passphrases).
 _MAX_PASSWORD_LENGTH = 64
 
+# Cap on the signup license_key length.  A non-blank key drives a real
+# outbound POST to Gumroad per allowlisted product before the invalid-license
+# throttle applies, so an unbounded string is a free upstream-amplification /
+# DoS lever — mirror the password field's explicit bound.  Real Gumroad
+# license keys are ~35-char dashed uppercase-hex, so 128 is a generous ceiling
+# that still rejects abuse well before the string reaches the verifier.
+_MAX_LICENSE_KEY_LENGTH = 128
+
 # Client-visible detail strings for the license-gated signup flow. The two
 # rejection details are deliberately generic (no "wrong product" / "wrong
 # email" / "account exists" variants) so no path leaks account or license
@@ -193,12 +201,18 @@ class AuthRequest(BaseModel):
 
     ``license_key`` is optional at the schema level so login's payload is
     unchanged, but the signup handler requires it — signup is gated on a
-    verified APTITUDE Gumroad license.
+    verified APTITUDE Gumroad license.  It carries an explicit
+    ``_MAX_LICENSE_KEY_LENGTH`` bound for the same DoS reason ``password``
+    does: a non-blank key is forwarded into a per-product loop of outbound
+    Gumroad verify calls before the invalid-license throttle applies, so an
+    unbounded string would amplify each attempt upstream.  Over-length input
+    is rejected with a 422 (a schema-shape rejection, like an over-length
+    password) that says nothing about whether the key is valid.
     """
 
     email: EmailStr
     password: str = Field(min_length=_MIN_PASSWORD_LENGTH, max_length=_MAX_PASSWORD_LENGTH)
-    license_key: str | None = None
+    license_key: str | None = Field(default=None, max_length=_MAX_LICENSE_KEY_LENGTH)
 
     @field_validator("email", mode="before")
     @classmethod

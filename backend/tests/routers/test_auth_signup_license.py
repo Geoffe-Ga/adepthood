@@ -47,6 +47,9 @@ COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 JWT_SEGMENT_COUNT = 3
 INVALID_LICENSE_ATTEMPT_CAP = 10
+# One character past the schema's license_key ceiling; must be rejected by
+# Pydantic before any outbound Gumroad verify runs.
+OVER_LENGTH_LICENSE_KEY = "A" * 129
 
 DETAIL_LICENSE_REQUIRED = "license_required"
 DETAIL_INVALID_LICENSE = "invalid_license"
@@ -428,6 +431,34 @@ async def test_eleventh_invalid_license_attempt_is_throttled(
 
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_over_length_license_key_is_rejected_before_any_gumroad_call(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An over-length license_key is a 422 schema rejection, no verify runs.
+
+    The unbounded string never reaches the per-product outbound verify loop,
+    so the mocked verifier must never be invoked and no rows are written. The
+    rejection is a schema-shape one (same as an over-length password), so no
+    timing-parity obligation applies and nothing leaks about key validity.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+
+    response = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(license_key=OVER_LENGTH_LICENSE_KEY),
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert calls == []
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
 
 
 @pytest.mark.asyncio
