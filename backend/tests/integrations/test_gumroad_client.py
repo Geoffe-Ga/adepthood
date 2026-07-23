@@ -117,6 +117,73 @@ async def test_connect_error_is_retried_exactly_once(
 
 
 @pytest.mark.asyncio
+async def test_connect_timeout_is_retried_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connect timeout stays in the retried bucket, not the wrapped-timeout one.
+
+    ``ConnectTimeout`` is a sibling of ``ReadTimeout``/``WriteTimeout`` under
+    httpx's ``TimeoutException``; this guards the seam that keeps it retried
+    (never reached Gumroad) rather than failing fast like a post-send timeout.
+    """
+    monkeypatch.setenv("GUMROAD_API_TOKEN", API_TOKEN)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        raise httpx.ConnectTimeout("connect timed out", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GumroadUnavailableError):
+            await verify_license(PRODUCT_ID, LICENSE_KEY, client=client)
+
+    assert len(captured) == 2
+
+
+@pytest.mark.asyncio
+async def test_read_timeout_is_wrapped_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read timeout wraps to a normalized error immediately, without a retry.
+
+    A read/write timeout means Gumroad accepted the request then stalled, so the
+    call may already have had a server-side effect; retrying it is unsafe, so the
+    client fails fast with the normalized error instead of a second attempt.
+    """
+    monkeypatch.setenv("GUMROAD_API_TOKEN", API_TOKEN)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        raise httpx.ReadTimeout("read timed out", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GumroadUnavailableError):
+            await verify_license(PRODUCT_ID, LICENSE_KEY, client=client)
+
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_is_wrapped_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write timeout is normalized the same way a read timeout is."""
+    monkeypatch.setenv("GUMROAD_API_TOKEN", API_TOKEN)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        raise httpx.WriteTimeout("write timed out", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GumroadUnavailableError):
+            await verify_license(PRODUCT_ID, LICENSE_KEY, client=client)
+
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
 async def test_http_5xx_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 500 response surfaces a normalized error without any retry."""
     monkeypatch.setenv("GUMROAD_API_TOKEN", API_TOKEN)
@@ -198,6 +265,13 @@ async def test_token_and_license_key_never_logged(
         raise httpx.ConnectError("connection refused", request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(failing_handler)) as client:
+        with pytest.raises(GumroadUnavailableError):
+            await verify_license(PRODUCT_ID, LICENSE_KEY, client=client)
+
+    def timeout_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("read timed out", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout_handler)) as client:
         with pytest.raises(GumroadUnavailableError):
             await verify_license(PRODUCT_ID, LICENSE_KEY, client=client)
 

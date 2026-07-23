@@ -64,6 +64,8 @@ async def _read_ping_payload(request: Request) -> dict[str, str]:
     or deduplicated, so the payload is rejected as malformed.
     """
     form = await request.form()
+    # Last-value-wins for duplicated keys: Gumroad pings send each field once,
+    # so collapsing to a plain str -> str dict is intentional, not lossy.
     payload = {key: value for key, value in form.multi_items() if isinstance(value, str)}
     if not payload.get("sale_id"):
         logger.warning("gumroad_webhook_rejected reason_code=malformed_payload")

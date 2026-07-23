@@ -4,7 +4,10 @@
 maps the outcome onto three states: a parsed :class:`GumroadLicenseResult`
 (2xx), ``None`` (404 — unknown license, a normal answer, not a failure), or
 :class:`GumroadUnavailableError` (anything else). Connection failures get
-exactly one immediate retry; HTTP error responses get none.
+exactly one immediate retry; HTTP error responses and post-send read/write
+timeouts get none. A read/write timeout means Gumroad accepted the request
+then stalled, so it may already have had a server-side effect — retrying is
+unsafe, so it is wrapped as the normalized error on the first occurrence.
 
 Secrets discipline: the API token and license key travel only in the request
 body. Every log line here is static text plus status/latency metadata — the
@@ -44,13 +47,20 @@ _UNAVAILABLE_MESSAGE = "Gumroad license verification is unavailable"
 # hammer a struggling service.
 _CONNECT_FAILURES = (httpx.ConnectError, httpx.ConnectTimeout)
 
+# Timeouts *after* the request left the socket: Gumroad accepted the TCP
+# connection then stalled, so the call may already have had a server-side
+# effect. These are wrapped immediately (never retried) so a stalled verify is
+# not silently issued twice.
+_TIMEOUT_FAILURES = (httpx.ReadTimeout, httpx.WriteTimeout)
+
 
 class GumroadUnavailableError(Exception):
     """Normalized "Gumroad could not answer" failure.
 
-    Raised after the single connection-error retry is exhausted, and for any
-    non-404 4xx/5xx response. Callers get one exception type to handle; the
-    static message keeps credentials out of error text.
+    Raised after the single connection-error retry is exhausted, for any
+    non-404 4xx/5xx response, and for a post-send read/write timeout (wrapped
+    without retry). Callers get one exception type to handle; the static
+    message keeps credentials out of error text.
     """
 
 
@@ -77,7 +87,8 @@ async def verify_license(
 
     Raises:
         GumroadUnavailableError: After the single connection-error retry is
-            exhausted, or on any non-404 4xx/5xx response.
+            exhausted, on any non-404 4xx/5xx response, or on a post-send
+            read/write timeout (wrapped immediately, not retried).
     """
     if client is not None:
         return await _verify_with_client(client, product_id, license_key)
@@ -105,13 +116,40 @@ async def _verify_with_client(
     return _interpret_response(response, latency_ms)
 
 
+async def _post_once(
+    client: httpx.AsyncClient,
+    form: dict[str, str],
+) -> httpx.Response:
+    """POST the form once, wrapping a post-send timeout immediately.
+
+    A read/write timeout means Gumroad accepted the request then stalled, so a
+    retry could double any server-side effect. Such timeouts fail fast as the
+    normalized error; connection failures re-raise for the caller to retry.
+    """
+    try:
+        return await client.post(GUMROAD_VERIFY_URL, data=form)
+    except _TIMEOUT_FAILURES:
+        logger.warning(
+            "gumroad_verify_timeout",
+            extra={"reason_code": "gumroad_timeout"},
+        )
+        # ``from None`` severs the chain: the caught timeout carries a
+        # ``.request`` whose body is the verify form (``access_token`` and
+        # ``license_key``), which any ``exc_info`` logger would surface.
+        raise GumroadUnavailableError(_UNAVAILABLE_MESSAGE) from None
+
+
 async def _post_with_connect_retry(
     client: httpx.AsyncClient,
     form: dict[str, str],
 ) -> httpx.Response:
-    """POST the verification form, retrying a connection failure exactly once."""
+    """POST the verification form, retrying a connection failure exactly once.
+
+    Only connection failures (never reached Gumroad) are retried. Read/write
+    timeouts are wrapped without retry by :func:`_post_once`.
+    """
     try:
-        return await client.post(GUMROAD_VERIFY_URL, data=form)
+        return await _post_once(client, form)
     except _CONNECT_FAILURES:
         # The first attempt never reached Gumroad; one immediate retry
         # rescues transient DNS/TCP blips without hammering a down service.
@@ -120,7 +158,7 @@ async def _post_with_connect_retry(
             extra={"reason_code": "gumroad_connect_retry"},
         )
     try:
-        return await client.post(GUMROAD_VERIFY_URL, data=form)
+        return await _post_once(client, form)
     except _CONNECT_FAILURES:
         logger.warning(
             "gumroad_verify_unreachable",
