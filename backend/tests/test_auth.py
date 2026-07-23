@@ -216,10 +216,12 @@ async def test_signup_returns_token_and_user_id(async_client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
-async def test_signup_duplicate_email_returns_same_shape(async_client: AsyncClient) -> None:
-    """Signup with an existing email returns the same status and response shape as a fresh signup.
+async def test_signup_duplicate_email_is_rejected_generically(async_client: AsyncClient) -> None:
+    """Signup for an already-registered email returns the generic license rejection.
 
-    This prevents information leakage about registered emails.
+    Under the license gate a duplicate email is indistinguishable from any
+    other license failure: both answer 400 ``invalid_license`` with no token,
+    so an attacker cannot learn from the response that the account exists.
     """
     first_resp = await async_client.post(
         SIGNUP_URL,
@@ -235,18 +237,11 @@ async def test_signup_duplicate_email_returns_same_shape(async_client: AsyncClie
             "password": "anotherpassword456",  # pragma: allowlist secret
         },
     )
-    assert second_resp.status_code == first_resp.status_code
-    first_data = first_resp.json()
+    assert first_resp.status_code == HTTPStatus.OK
+    assert second_resp.status_code == HTTPStatus.BAD_REQUEST
     second_data = second_resp.json()
-    assert set(first_data.keys()) == set(second_data.keys())
-    assert "token" in second_data
-    assert "user_id" in second_data
-    assert isinstance(second_data["user_id"], int)
-    # The duplicate response uses ``user_id=0`` as a sentinel. The frontend
-    # ``authResponseSchema`` accepts non-negative integers so this sentinel
-    # does not trip Zod validation and surface the generic "server changed"
-    # error instead of completing the signup flow. Keep these in lock-step.
-    assert second_data["user_id"] == 0
+    assert second_data["detail"] == "invalid_license"
+    assert "token" not in second_data
 
 
 @pytest.mark.asyncio
@@ -269,8 +264,8 @@ async def test_signup_duplicate_email_does_not_create_second_user(
 
 
 @pytest.mark.asyncio
-async def test_signup_duplicate_email_token_is_not_valid(async_client: AsyncClient) -> None:
-    """The token returned for a duplicate signup must not grant access."""
+async def test_signup_duplicate_email_returns_no_token(async_client: AsyncClient) -> None:
+    """A duplicate signup returns no token at all — there is nothing to replay."""
     await _signup(async_client, email="invalid-tok@example.com")
     resp = await async_client.post(
         SIGNUP_URL,
@@ -279,10 +274,8 @@ async def test_signup_duplicate_email_token_is_not_valid(async_client: AsyncClie
             "password": "anotherpassword456",  # pragma: allowlist secret
         },
     )
-    fake_token = resp.json()["token"]
-    headers = {"Authorization": f"Bearer {fake_token}"}
-    protected_resp = await async_client.get("/habits/", headers=headers)
-    assert protected_resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "token" not in resp.json()
 
 
 @pytest.mark.asyncio

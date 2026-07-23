@@ -4,8 +4,9 @@ Gumroad POSTs a form-encoded "ping" for every sale-related event. The shared
 secret in the ``secret`` query parameter is checked (constant time) BEFORE the
 body is read, so an unauthenticated caller can never drive the parser. Valid
 pings are persisted verbatim into :class:`~models.gumroad_sale.GumroadSale`,
-idempotently keyed by ``sale_id`` — persistence only, no grant or credit side
-effects (those belong to later features reading the stored rows).
+idempotently keyed by ``sale_id``. A ``sale`` event additionally grants the
+buyer's ``course_access`` entitlement when a user with that email already
+exists — an idempotent side effect, so replays stay safe.
 
 Secrets discipline: the webhook secret, buyer email, and raw payload never
 appear in log text — only static markers and non-PII metadata do.
@@ -19,23 +20,29 @@ import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
+from domain.entitlements import REASON_WEBHOOK_SALE, grant_course_access
 from errors import bad_request
 from models.gumroad_sale import GumroadSale
+from models.user import User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks/gumroad", tags=["gumroad"])
 
+# The one resource_name that carries an entitlement side effect (below).
+_SALE_RESOURCE_NAME = "sale"
+
 # resource_name values Gumroad documents for ping webhooks. Anything else is
 # still persisted (verbatim capture) but flagged with
 # ``reason_code=unhandled_event`` so operators notice new event types.
 KNOWN_RESOURCE_NAMES = frozenset(
-    {"sale", "refund", "dispute", "cancellation", "subscription_ended"}
+    {_SALE_RESOURCE_NAME, "refund", "dispute", "cancellation", "subscription_ended"}
 )
 
 # Gumroad posts booleans as the form strings "true"/"false".
@@ -106,6 +113,28 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
         await session.rollback()
 
 
+async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> None:
+    """Grant course access for a sale ping when the buyer already signed up.
+
+    Matches the buyer email against stored users case-insensitively; with no
+    match the sale row alone is the outcome (the buyer's later license-gated
+    signup converges by linking to it). The grant is idempotent, so webhook
+    replays never duplicate an entitlement.
+    """
+    email = payload.get("email", "").strip().lower()
+    if not email:
+        return
+    user_result = await session.execute(select(User).where(func.lower(User.email) == email))
+    user = user_result.scalars().first()
+    if user is None:
+        return
+    sale_result = await session.execute(
+        select(GumroadSale).where(GumroadSale.gumroad_sale_id == payload["sale_id"])
+    )
+    sale = sale_result.scalars().first()
+    await grant_course_access(session, user, sale=sale, reason_code=REASON_WEBHOOK_SALE)
+
+
 @router.post("/ping")
 async def receive_ping(
     request: Request,
@@ -116,7 +145,8 @@ async def receive_ping(
 
     Always answers 200 on an authenticated, well-formed ping — including
     replays and unknown event types — so Gumroad never re-queues an event we
-    have already captured.
+    have already captured. A ``sale`` event additionally dispatches the
+    (idempotent) entitlement grant for an already-registered buyer.
     """
     _require_valid_secret(secret)
     payload = await _read_ping_payload(request)
@@ -126,6 +156,8 @@ async def receive_ping(
         logger.info("gumroad_webhook_event reason_code=unhandled_event")
     if not await _sale_already_recorded(session, payload["sale_id"]):
         await _persist_sale(session, payload)
+    if resource_name == _SALE_RESOURCE_NAME:
+        await _grant_for_sale(session, payload)
     logger.info(
         "gumroad_webhook_accepted",
         extra={"reason_code": "accepted", "resource_name": resource_name},
