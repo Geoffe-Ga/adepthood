@@ -75,6 +75,7 @@ from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.creek_vault_reflect import select_reflection_llm
 from services.creek_vault_write import (
+    VaultWriteOutcome,
     VaultWriteStatus,
     get_creek_vault_client,
     store_and_classify,
@@ -191,25 +192,13 @@ def _resolve_backdated_timestamp(entry_date: date | None) -> datetime | None:
 _VAULT_REINGEST_FIELDS = frozenset({"message", "classification"})
 
 
-def _entry_aspect_tags(entry: JournalEntry) -> tuple[int, ...]:
-    """Collect an entry's chord Aspects (primary then secondary) as ingest tags.
+def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> bool:
+    """Reconcile an entry's ``vault_ref`` / ``vault_tags`` columns to a write outcome.
 
-    Only the set notes of the chord are forwarded, so a scopeless (freeform)
-    entry sends an empty tuple rather than ``None`` placeholders.
-    """
-    return tuple(a for a in (entry.primary_aspect, entry.secondary_aspect) if a is not None)
+    Returns whether a column actually changed, so the caller commits only then:
 
-
-async def _record_vault_outcome(
-    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
-) -> None:
-    """Store + classify a committed entry via the Creek Vault, reconciling its ref columns.
-
-    Best-effort: :func:`store_and_classify` never raises a vault error, so a
-    missing, unreachable, or intimate-skipped write leaves the entry saved. The
-    persisted ``vault_ref`` / ``vault_tags`` are reconciled to the outcome:
-
-    - ``INGESTED`` writes the new ref + tags (a re-ingest overwrites any prior ref).
+    - ``INGESTED`` writes the new ref + tags (a re-ingest overwrites any prior
+      ref; tags are empty while per-entry vault classification is deferred).
     - ``SKIPPED_INTIMATE`` clears a prior non-intimate ref/tags, since an entry
       re-classified intimate must not retain a handle to plaintext it no longer
       consents to expose (the model documents these columns stay NULL for
@@ -217,26 +206,43 @@ async def _record_vault_outcome(
       capability exists -- see :mod:`services.creek_vault_write`.
     - ``DEGRADED`` / ``UNAVAILABLE`` are transient, so any existing ref is kept
       untouched rather than dropped on a passing network blip.
-
-    Only a real column change re-commits, so the common no-op paths stay free of
-    a redundant write.
     """
-    outcome = await store_and_classify(
-        vault_client,
-        body=entry.message,
-        classification=entry.classification,
-        created_at=entry.timestamp,
-        aspect_tags=_entry_aspect_tags(entry),
-    )
     if outcome.status is VaultWriteStatus.INGESTED:
         entry.vault_ref = outcome.vault_ref
         entry.vault_tags = list(outcome.tags)
-    elif outcome.status is VaultWriteStatus.SKIPPED_INTIMATE and (
+        return True
+    if outcome.status is VaultWriteStatus.SKIPPED_INTIMATE and (
         entry.vault_ref is not None or entry.vault_tags is not None
     ):
         entry.vault_ref = None
         entry.vault_tags = None
-    else:
+        return True
+    return False
+
+
+async def _record_vault_outcome(
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
+) -> None:
+    """Store a committed entry via the Creek Vault, reconciling its ref columns.
+
+    Best-effort: :func:`store_and_classify` never raises a vault error, so a
+    missing, unreachable, or intimate-skipped write leaves the entry saved. An
+    entry with no id yet returns immediately -- the vault keys its stored
+    fragment off the stable entry id, so an unsaved draft has nothing to
+    send. Column reconciliation lives in :func:`_apply_vault_outcome`; only a
+    real column change re-commits, so the common no-op paths stay free of a
+    redundant write.
+    """
+    if entry.id is None:
+        return
+    outcome = await store_and_classify(
+        vault_client,
+        entry_id=entry.id,
+        body=entry.message,
+        classification=entry.classification,
+        created_at=entry.timestamp,
+    )
+    if not _apply_vault_outcome(entry, outcome):
         return
     session.add(entry)
     await session.commit()

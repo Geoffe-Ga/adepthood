@@ -28,6 +28,7 @@ from domain.creek_vault import (
 )
 from main import app
 from models.journal_entry import JournalEntry
+from routers.journal import _record_vault_outcome
 from services.creek_vault_write import get_creek_vault_client
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -56,7 +57,7 @@ class SequencedVaultClient:
         self,
         *,
         capabilities: frozenset[CreekCapability] = frozenset(
-            {CreekCapability.INGEST, CreekCapability.CLASSIFY}
+            {CreekCapability.JOURNAL, CreekCapability.CLASSIFY}
         ),
         ingest_error: Exception | None = None,
     ) -> None:
@@ -104,10 +105,21 @@ class SequencedVaultClient:
 
 
 @pytest.mark.asyncio
+async def test_record_vault_outcome_skips_when_entry_id_is_none(
+    db_session: AsyncSession,
+) -> None:
+    """An entry that has no id yet returns before any vault call is made."""
+    fake = SequencedVaultClient()
+    entry = JournalEntry(sender="user", user_id=1, message="An unsaved draft.")
+    await _record_vault_outcome(db_session, entry, fake)
+    assert fake.ingest_calls == []
+
+
+@pytest.mark.asyncio
 async def test_create_non_intimate_entry_persists_vault_ref_and_tags(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A non-intimate create with an available, classifying vault persists ref + tags."""
+    """A non-intimate create with an available vault persists the ref and empty tags."""
     fake = SequencedVaultClient()
     app.dependency_overrides[get_creek_vault_client] = lambda: fake
     headers = await _signup(async_client, "vault_create")
@@ -121,7 +133,7 @@ async def test_create_non_intimate_entry_persists_vault_ref_and_tags(
 
     row = await _entry_row(db_session, int(resp.json()["id"]))
     assert row.vault_ref == "vault-ref-1"
-    assert row.vault_tags == ["courage"]
+    assert row.vault_tags == []
 
 
 @pytest.mark.asyncio
@@ -152,7 +164,7 @@ async def test_create_degrades_gracefully_when_ingest_raises(
 ) -> None:
     """A vault ingest failure never blocks the write -- the entry still saves, unrefed."""
     fake = SequencedVaultClient(
-        ingest_error=CreekVaultUnavailableError("creek vault call failed: creek.ingest")
+        ingest_error=CreekVaultUnavailableError("creek vault call failed: creek.journal")
     )
     app.dependency_overrides[get_creek_vault_client] = lambda: fake
     headers = await _signup(async_client, "vault_degrade")
@@ -259,7 +271,7 @@ async def test_patch_to_intimate_clears_prior_vault_ref_and_tags(
     entry_id = int(created.json()["id"])
     first_row = await _entry_row(db_session, entry_id)
     assert first_row.vault_ref == "vault-ref-1"
-    assert first_row.vault_tags == ["courage"]
+    assert first_row.vault_tags == []
 
     patched = await async_client.patch(
         f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers

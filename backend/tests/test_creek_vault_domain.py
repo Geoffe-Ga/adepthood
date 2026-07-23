@@ -84,9 +84,9 @@ class TestCreekCapability:
         """HANDSHAKE's value is the creek.handshake wire name."""
         assert CreekCapability.HANDSHAKE.value == "creek.handshake"
 
-    def test_ingest_value_is_wire_name(self) -> None:
-        """INGEST's value is the creek.ingest wire name."""
-        assert CreekCapability.INGEST.value == "creek.ingest"
+    def test_journal_value_is_wire_name(self) -> None:
+        """JOURNAL's value is the creek.journal wire name."""
+        assert CreekCapability.JOURNAL.value == "creek.journal"
 
     def test_save_value_is_wire_name(self) -> None:
         """SAVE's value is the creek.save wire name."""
@@ -138,13 +138,15 @@ class TestHandshakeResultPopulated:
             available=True,
             contract_version="0.1.0-draft",
             ontology_version="1.0.0",
-            capabilities=frozenset({CreekCapability.HANDSHAKE, CreekCapability.INGEST}),
+            capabilities=frozenset({CreekCapability.HANDSHAKE, CreekCapability.JOURNAL}),
             attestation={"quote": "sentinel-attestation"},
         )
         assert result.available is True
         assert result.contract_version == "0.1.0-draft"
         assert result.ontology_version == "1.0.0"
-        assert result.capabilities == frozenset({CreekCapability.HANDSHAKE, CreekCapability.INGEST})
+        assert result.capabilities == frozenset(
+            {CreekCapability.HANDSHAKE, CreekCapability.JOURNAL}
+        )
         assert result.attestation == {"quote": "sentinel-attestation"}
 
     def test_is_frozen(self) -> None:
@@ -170,14 +172,18 @@ class TestErrorHierarchy:
         assert issubclass(creek_vault.CreekCapabilityUnsupportedError, creek_vault.CreekVaultError)
 
 
-def test_vault_ingest_request_defaults_aspect_tags_to_empty_tuple() -> None:
-    """aspect_tags defaults to an empty tuple when not supplied."""
+def test_vault_ingest_request_round_trips_entry_id_and_tier() -> None:
+    """entry_id, tier, and tier_ceiling are readable back unchanged."""
     request = VaultIngestRequest(
+        entry_id=42,
         body="a private page",
+        tier=VaultTierCeiling.PERSONAL,
         tier_ceiling=VaultTierCeiling.PERSONAL,
         created_at=datetime(2026, 7, 10, tzinfo=UTC),
     )
-    assert request.aspect_tags == ()
+    assert request.entry_id == 42
+    assert request.tier == VaultTierCeiling.PERSONAL
+    assert request.tier_ceiling == VaultTierCeiling.PERSONAL
 
 
 def test_contract_version_constant() -> None:

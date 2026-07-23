@@ -69,30 +69,39 @@ handshake itself carries no tiered content, so it is safe to call at
 any privacy tier. If `creek.handshake` fails or times out, adepthood
 falls back fully to the local pipeline — see "Graceful degradation."
 
-### Ingest and store — creek.ingest + creek.save
+### Journal write — creek.journal
 
-Direction: adepthood -> vault. Hands a piece of writing, together with
-its source and metadata (tier, timestamp, Aspect/Frequency tags where
-already known), to the vault for durable storage. Tier semantics:
+Direction: adepthood -> vault. Hands a single journal entry's content
+to the vault, together with its metadata — the entry's own tier, its
+timestamp, and a stable `external_id` derived from the entry's id.
+The `external_id` makes the call idempotent: a re-send is a no-op,
+and an edit rewrites the same vault fragment in place. The response
+carries a `fragment_id`, which adepthood persists as the entry's
+vault ref. Creek's `creek.ingest` and `creek.save` are its bulk,
+file-path staging tools, not the per-entry journal write path;
+adepthood does not use them to write journal entries. Tier semantics:
 callable for any tier, but INTIMATE-tier calls are permitted only
 under the attestation-gated conditions in "Decision (b)" below; OPEN
-and PERSONAL calls carry no such precondition. If these capabilities
-are absent from the handshake, adepthood does not ingest into the
-vault at all and the operator's own Postgres remains the sole system
-of record for that content.
+and PERSONAL calls carry no such precondition. If `creek.journal` is
+absent from the handshake, adepthood does not write to the vault at
+all and the operator's own Postgres remains the sole system of
+record for that content.
 
 ### Classification — creek.classify
 
-Direction: adepthood -> vault, vault -> adepthood. Requests
-Frequency and Wavelength-phase tags for a piece of content, or for the
-user's corpus as a whole (per-content and per-corpus classification
-are both in scope). Tier semantics: classification of INTIMATE content
-follows the same attestation-gated write path as ingest. The existing
-`creek.link` and `creek.report` tools are adjacent to classification
-but are not required capabilities under this contract — they are
-mentioned here only because a vault that implements `creek.classify`
-is likely to expose them too. If `creek.classify` is absent, adepthood
-continues to rely on its own local Aspect/Frequency assignment.
+Direction: adepthood -> vault, vault -> adepthood. A corpus-wide
+re-classification operation: it re-scores the user's existing corpus
+against the Frequency/Wavelength ontology and returns counts, not
+per-entry tags. Adepthood does not call `creek.classify` per journal
+entry. Per-entry Frequency/Wavelength tags are instead expected to
+arrive inline on the `creek.journal` response once that vault-side
+capability ships (creek-vault#874); until then, adepthood's per-entry
+vault tags are empty and it continues to rely on its own local
+Aspect/Frequency assignment. The existing `creek.link` and
+`creek.report` tools are adjacent to classification but are not
+required capabilities under this contract — they are mentioned here
+only because a vault that implements `creek.classify` is likely to
+expose them too.
 
 ### Reflection — creek.reflect
 
@@ -177,8 +186,9 @@ enclave, so the encrypted entry must arrive there somehow.
 
 ### (b) Write-vs-read asymmetry: writes under attestation; read ceiling stands.
 
-`creek.ingest`, `creek.save`, and any reflection-compute call on
-intimate content are permitted only after the vault's enclave has
+`creek.journal` writes of intimate content, together with any bulk
+`creek.ingest`/`creek.save` staging and any reflection-compute call on
+intimate content, are permitted only after the vault's enclave has
 successfully completed remote attestation. This is a write-path rule
 and does not touch #927's read-path guarantee: `TierCeiling` still
 means no remote read of INTIMATE plaintext, and the vault never
@@ -237,12 +247,12 @@ unchanged, and the Wheel of Wholeness is served from local
 depends on a vault being present.
 
 Degradation is also per-capability, not all-or-nothing. A vault that
-implements `creek.handshake`, `creek.ingest`, `creek.save`, and
-`creek.classify` but not `creek.wheel` still gets used for everything
-it supports; adepthood simply keeps computing the wheel locally for
-that user. Capabilities are re-probed on the next handshake, so a
-vault that adds a capability later is picked up automatically without
-any client-side migration.
+implements `creek.handshake`, `creek.journal`, and `creek.reflect` but
+not `creek.wheel` still gets used for everything it supports;
+adepthood simply keeps computing the wheel locally for that user.
+Capabilities are re-probed on the next handshake, so a vault that adds
+a capability later is picked up automatically without any
+client-side migration.
 
 No data is lost in either direction: content written locally while a
 vault is unavailable is not silently dropped when the vault reappears,
