@@ -7,6 +7,7 @@ from .energy_plan import EnergyPlan
 from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
+from .gumroad_sale import GumroadSale
 from .habit import Habit
 from .invitation_signal import InvitationSignal
 from .journal_entry import JournalEntry
@@ -42,6 +43,7 @@ __all__ = [
     "Goal",
     "GoalCompletion",
     "GoalGroup",
+    "GumroadSale",
     "Habit",
     "InvitationSignal",
     "JournalEntry",
