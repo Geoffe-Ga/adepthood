@@ -52,7 +52,7 @@ _VAULT_NOTE = "The vault reads: this is written in your own corpus."
 _DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight."
 
 _DEFAULT_REFLECT_CAPABILITIES = frozenset(
-    {CreekCapability.INGEST, CreekCapability.CLASSIFY, CreekCapability.REFLECT}
+    {CreekCapability.JOURNAL, CreekCapability.CLASSIFY, CreekCapability.REFLECT}
 )
 
 
@@ -280,7 +280,7 @@ async def test_intimate_entry_never_reaches_the_vault(async_client: AsyncClient)
     ("available", "capabilities"),
     [
         (False, _DEFAULT_REFLECT_CAPABILITIES),
-        (True, frozenset({CreekCapability.INGEST, CreekCapability.CLASSIFY})),
+        (True, frozenset({CreekCapability.JOURNAL, CreekCapability.CLASSIFY})),
     ],
     ids=["handshake_unavailable", "reflect_unsupported"],
 )

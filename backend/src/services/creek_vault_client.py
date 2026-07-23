@@ -105,6 +105,10 @@ _TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
 # can never echo the entry body or the API key.
 _MCP_TOOL_ERROR_CODE = -32000
 
+# The status value a ``creek.journal`` response reports on a durable write. Any
+# other status -- or a missing one -- parses conservatively to "not stored".
+_JOURNAL_OK_STATUS = "ok"
+
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
 _PARSE_ERROR_TYPES: tuple[type[Exception], ...] = (KeyError, TypeError, AttributeError, ValueError)
@@ -249,12 +253,17 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
 
 
 def _parse_ingest_result(payload: Mapping[str, object]) -> VaultIngestResult:
-    """Parse an ingest response, defaulting missing/odd fields conservatively."""
-    vault_ref = payload.get("vault_ref")
-    return VaultIngestResult(
-        stored=bool(payload.get("stored")),
-        vault_ref=vault_ref if isinstance(vault_ref, str) else None,
-    )
+    """Parse a ``creek.journal`` response, defaulting missing/odd fields conservatively.
+
+    Only an ``"ok"`` status paired with a non-empty string ``fragment_id``
+    counts as durably stored; a missing, empty, or wrong-typed field parses to
+    a not-stored result rather than fabricating a vault ref.
+    """
+    fragment_id = payload.get("fragment_id")
+    status_ok = payload.get("status") == _JOURNAL_OK_STATUS
+    if status_ok and isinstance(fragment_id, str) and fragment_id:
+        return VaultIngestResult(stored=True, vault_ref=fragment_id)
+    return VaultIngestResult(stored=False, vault_ref=None)
 
 
 def _parse_classification(payload: Mapping[str, object]) -> VaultClassification:
@@ -271,13 +280,20 @@ def _content_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, o
 
 
 def _ingest_params(request: VaultIngestRequest) -> Mapping[str, object]:
-    """Map an ingest request onto wire params, applying its tier ceiling."""
+    """Map an ingest request onto the ``creek.journal`` wire fields.
+
+    ``external_id`` carries the entry's stable id so a re-send is idempotent
+    (Creek edits the stored fragment in place); ``tier`` is the entry's own
+    privacy tier and ``privacy_tier_ceiling`` the write ceiling the vault's
+    router enforces. No ``consumer`` key: the vault learns the caller from the
+    MCP session itself.
+    """
     return {
-        "consumer": CONSUMER_ID,
-        "body": request.body,
-        "tier_ceiling": request.tier_ceiling.value,
-        "created_at": request.created_at.isoformat(),
-        "aspect_tags": list(request.aspect_tags),
+        "content": request.body,
+        "external_id": str(request.entry_id),
+        "timestamp": request.created_at.isoformat(),
+        "tier": request.tier.value,
+        "privacy_tier_ceiling": request.tier_ceiling.value,
     }
 
 
@@ -375,8 +391,8 @@ class McpCreekVaultClient:
         return payload
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
-        """Store ``request`` in the vault, requiring the INGEST capability."""
-        payload = await self._invoke(CreekCapability.INGEST, _ingest_params(request))
+        """Store ``request`` in the vault, requiring the JOURNAL capability."""
+        payload = await self._invoke(CreekCapability.JOURNAL, _ingest_params(request))
         return _parse_ingest_result(payload)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:

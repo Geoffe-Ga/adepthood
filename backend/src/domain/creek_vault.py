@@ -55,7 +55,7 @@ class CreekCapability(enum.StrEnum):
     """
 
     HANDSHAKE = "creek.handshake"
-    INGEST = "creek.ingest"
+    JOURNAL = "creek.journal"
     SAVE = "creek.save"
     CLASSIFY = "creek.classify"
     REFLECT = "creek.reflect"
@@ -173,16 +173,21 @@ class HandshakeResult:
 class VaultIngestRequest:
     """A piece of writing plus the metadata Creek needs to store it durably.
 
-    ``tier_ceiling`` is applied by the client before the call so the vault's
-    router can enforce it; ``aspect_tags`` carries any Aspect/Frequency tags
-    already known locally (empty when none). Frozen so the request cannot mutate
-    between building it and sending it.
+    ``entry_id`` is the entry's stable external id: Creek keys the stored
+    fragment off it, so re-sending the same id is idempotent and edits the
+    fragment in place rather than duplicating it. ``tier`` is
+    the entry's own privacy tier and ``tier_ceiling`` is the write ceiling the
+    vault's router enforces; for a journal entry both equal the entry's tier,
+    so Creek stores at exactly that tier and refuses any widening (it never
+    downgrades). Frozen so the request cannot mutate between building it and
+    sending it.
     """
 
+    entry_id: int
     body: str
+    tier: VaultTierCeiling
     tier_ceiling: VaultTierCeiling
     created_at: datetime
-    aspect_tags: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

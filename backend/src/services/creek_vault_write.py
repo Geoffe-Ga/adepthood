@@ -1,17 +1,17 @@
-"""Creek Vault write path: store a journal entry, then classify it, degrading safely.
+"""Creek Vault write path: store a journal entry durably, degrading safely.
 
 This is the thin orchestration layer the journal router calls after an entry is
 committed. It sits atop the pure :mod:`domain.creek_vault` seam and the concrete
 adapters in :mod:`services.creek_vault_client`, and its whole job is to turn the
-seam's fine-grained handshake/ingest/classify surface into one best-effort call
-that *never raises a vault error* -- so the user's entry is saved regardless of
+seam's fine-grained handshake/ingest surface into one best-effort call that
+*never raises a vault error* -- so the user's entry is saved regardless of
 whether a vault is present, reachable, or capable.
 
 The governing rule is **graceful degradation**: a missing, unreachable, or
 capability-poor vault collapses to a well-defined :class:`VaultWriteStatus`
-rather than an exception the router must special-case. A classify failure never
-undoes a successful ingest -- classification is optional enrichment layered on
-top of durable storage, not a precondition for it.
+rather than an exception the router must special-case. Per-entry vault
+classification is deferred: the write path never calls a classify capability,
+so a successful write always carries an empty tag tuple.
 
 **Intimate content is deliberately not sent here.** An entry classified
 ``intimate`` short-circuits to :attr:`VaultWriteStatus.SKIPPED_INTIMATE` before
@@ -35,7 +35,6 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultError,
     VaultIngestRequest,
-    VaultTierCeiling,
     tier_ceiling_for,
 )
 from models.journal_entry import JournalClassification
@@ -61,9 +60,9 @@ class VaultWriteOutcome:
     """Immutable result of a vault write attempt: a status plus any earned metadata.
 
     ``vault_ref`` is populated only on :attr:`VaultWriteStatus.INGESTED`; ``tags``
-    carries the vault's classification (empty when the vault does not support, or
-    fails, classification). Frozen so a recorded outcome cannot mutate between the
-    write path and the caller that persists it.
+    is always empty for now, since per-entry vault classification is deferred.
+    Frozen so a recorded outcome cannot mutate between the write path and the
+    caller that persists it.
     """
 
     status: VaultWriteStatus
@@ -86,9 +85,9 @@ def _ingest_ready(client: CreekVaultClient) -> bool:
     """Return whether the last handshake found a vault that can ingest.
 
     Both conditions must hold: the vault is available at all, and it advertised
-    the INGEST capability. Either being false degrades the write to UNAVAILABLE.
+    the JOURNAL capability. Either being false degrades the write to UNAVAILABLE.
     """
-    return client.is_available() and client.supports(CreekCapability.INGEST)
+    return client.is_available() and client.supports(CreekCapability.JOURNAL)
 
 
 async def _try_ingest(client: CreekVaultClient, request: VaultIngestRequest) -> str | None:
@@ -105,34 +104,15 @@ async def _try_ingest(client: CreekVaultClient, request: VaultIngestRequest) -> 
     return result.vault_ref if result.stored else None
 
 
-async def _try_classify(
-    client: CreekVaultClient, body: str, tier_ceiling: VaultTierCeiling
-) -> tuple[str, ...]:
-    """Classify ``body`` when supported, swallowing failure to an empty tag tuple.
-
-    Classification is optional enrichment: a vault that does not advertise
-    CLASSIFY, or one whose classify call raises, yields no tags rather than
-    demoting the already-successful ingest. ``tier_ceiling`` is the resolved
-    :class:`~domain.creek_vault.VaultTierCeiling` passed straight through.
-    """
-    if not client.supports(CreekCapability.CLASSIFY):
-        return ()
-    try:
-        classification = await client.classify(body, tier_ceiling)
-    except CreekVaultError:
-        return ()
-    return classification.tags
-
-
 async def store_and_classify(
     client: CreekVaultClient,
     *,
+    entry_id: int,
     body: str,
     classification: str,
     created_at: datetime,
-    aspect_tags: tuple[int, ...] = (),
 ) -> VaultWriteOutcome:
-    """Store ``body`` in the vault and classify it, degrading rather than raising.
+    """Store ``body`` in the vault, degrading rather than raising.
 
     The order of checks is load-bearing:
 
@@ -146,11 +126,14 @@ async def store_and_classify(
        degrades to :attr:`VaultWriteStatus.UNAVAILABLE`.
     4. Ingest runs; a transport failure or a ``stored=False`` result degrades to
        :attr:`VaultWriteStatus.DEGRADED`.
-    5. On a durable ingest, classification runs as optional enrichment and the
-       call returns :attr:`VaultWriteStatus.INGESTED` with the ref and any tags.
+    5. On a durable ingest the call returns :attr:`VaultWriteStatus.INGESTED`
+       with the ref and an empty tag tuple -- per-entry vault classification is
+       deferred, so no classify capability is ever called here.
 
-    Never raises :class:`~domain.creek_vault.CreekVaultError`: the caller can
-    persist the entry unconditionally and only records vault metadata on INGESTED.
+    The entry's own tier and the write ceiling are both set to the resolved
+    tier, so the vault stores at exactly the tier the writer chose. Never
+    raises :class:`~domain.creek_vault.CreekVaultError`: the caller can persist
+    the entry unconditionally and only records vault metadata on INGESTED.
     """
     if classification == JournalClassification.INTIMATE:
         return _SKIPPED_INTIMATE_OUTCOME
@@ -159,16 +142,16 @@ async def store_and_classify(
     if not _ingest_ready(client):
         return _UNAVAILABLE_OUTCOME
     request = VaultIngestRequest(
+        entry_id=entry_id,
         body=body,
+        tier=tier_ceiling,
         tier_ceiling=tier_ceiling,
         created_at=created_at,
-        aspect_tags=aspect_tags,
     )
     vault_ref = await _try_ingest(client, request)
     if vault_ref is None:
         return _DEGRADED_OUTCOME
-    tags = await _try_classify(client, body, tier_ceiling)
-    return VaultWriteOutcome(status=VaultWriteStatus.INGESTED, vault_ref=vault_ref, tags=tags)
+    return VaultWriteOutcome(status=VaultWriteStatus.INGESTED, vault_ref=vault_ref, tags=())
 
 
 def get_creek_vault_client() -> CreekVaultClient:

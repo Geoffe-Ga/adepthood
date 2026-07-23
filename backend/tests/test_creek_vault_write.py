@@ -42,7 +42,7 @@ class RecordingVaultClient:
         self,
         *,
         available: bool = True,
-        capabilities: frozenset[CreekCapability] = frozenset({CreekCapability.INGEST}),
+        capabilities: frozenset[CreekCapability] = frozenset({CreekCapability.JOURNAL}),
         ingest: VaultIngestResult | Exception | None = None,
         classify: VaultClassification | Exception | None = None,
     ) -> None:
@@ -118,7 +118,7 @@ async def test_intimate_entry_skips_and_never_touches_client() -> None:
     """An intimate entry never calls the vault -- not even handshake()."""
     client = RecordingVaultClient()
     outcome = await store_and_classify(
-        client, body=_BODY, classification="intimate", created_at=_CREATED_AT
+        client, body=_BODY, classification="intimate", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.SKIPPED_INTIMATE, vault_ref=None, tags=()
@@ -131,7 +131,7 @@ async def test_unavailable_vault_returns_unavailable_status() -> None:
     """A handshake reporting unavailable degrades to UNAVAILABLE, never calling ingest."""
     client = RecordingVaultClient(available=False, capabilities=frozenset())
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
@@ -141,10 +141,10 @@ async def test_unavailable_vault_returns_unavailable_status() -> None:
 
 @pytest.mark.asyncio
 async def test_available_but_ingest_unsupported_returns_unavailable_status() -> None:
-    """An available vault that does not advertise INGEST also degrades to UNAVAILABLE."""
+    """An available vault that does not advertise JOURNAL also degrades to UNAVAILABLE."""
     client = RecordingVaultClient(available=True, capabilities=frozenset({CreekCapability.REFLECT}))
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome.status == VaultWriteStatus.UNAVAILABLE
     assert outcome.vault_ref is None
@@ -156,7 +156,9 @@ async def test_available_but_ingest_unsupported_returns_unavailable_status() -> 
 async def test_public_classification_maps_to_open_tier_ceiling() -> None:
     """A public entry's ingest request carries the OPEN tier ceiling."""
     client = RecordingVaultClient(ingest=VaultIngestResult(stored=True, vault_ref="ref-open"))
-    await store_and_classify(client, body=_BODY, classification="public", created_at=_CREATED_AT)
+    await store_and_classify(
+        client, body=_BODY, classification="public", created_at=_CREATED_AT, entry_id=101
+    )
     ingest_call = _ingest_request(client)
     assert ingest_call.tier_ceiling == VaultTierCeiling.OPEN
 
@@ -165,37 +167,40 @@ async def test_public_classification_maps_to_open_tier_ceiling() -> None:
 async def test_personal_classification_maps_to_personal_tier_ceiling() -> None:
     """A personal entry's ingest request carries the PERSONAL tier ceiling."""
     client = RecordingVaultClient(ingest=VaultIngestResult(stored=True, vault_ref="ref-personal"))
-    await store_and_classify(client, body=_BODY, classification="personal", created_at=_CREATED_AT)
+    await store_and_classify(
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
+    )
     ingest_call = _ingest_request(client)
     assert ingest_call.tier_ceiling == VaultTierCeiling.PERSONAL
 
 
 @pytest.mark.asyncio
-async def test_ingest_request_carries_body_created_at_and_aspect_tags() -> None:
-    """The mapped VaultIngestRequest carries the caller's body, timestamp, and aspect tags."""
+async def test_ingest_request_carries_body_created_at_and_entry_id() -> None:
+    """The mapped VaultIngestRequest carries the caller's body, timestamp, id, and tier."""
     client = RecordingVaultClient()
     await store_and_classify(
         client,
         body=_BODY,
         classification="personal",
         created_at=_CREATED_AT,
-        aspect_tags=(3, 7),
+        entry_id=101,
     )
     ingest_call = _ingest_request(client)
     assert ingest_call.body == _BODY
     assert ingest_call.created_at == _CREATED_AT
-    assert ingest_call.aspect_tags == (3, 7)
+    assert ingest_call.entry_id == 101
+    assert ingest_call.tier == VaultTierCeiling.PERSONAL
 
 
 @pytest.mark.asyncio
 async def test_ingest_success_without_classify_support_returns_ingested_empty_tags() -> None:
     """A vault supporting only INGEST returns INGESTED with the vault_ref and empty tags."""
     client = RecordingVaultClient(
-        capabilities=frozenset({CreekCapability.INGEST}),
+        capabilities=frozenset({CreekCapability.JOURNAL}),
         ingest=VaultIngestResult(stored=True, vault_ref="ref-x"),
     )
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.INGESTED, vault_ref="ref-x", tags=()
@@ -204,33 +209,31 @@ async def test_ingest_success_without_classify_support_returns_ingested_empty_ta
 
 
 @pytest.mark.asyncio
-async def test_ingest_and_classify_success_populates_tags() -> None:
-    """A vault supporting INGEST and CLASSIFY returns INGESTED with the classified tags."""
+async def test_journal_write_never_classifies_even_with_classify_advertised() -> None:
+    """The journal write path never calls classify, even when CLASSIFY is advertised."""
     client = RecordingVaultClient(
-        capabilities=frozenset({CreekCapability.INGEST, CreekCapability.CLASSIFY}),
+        capabilities=frozenset({CreekCapability.JOURNAL, CreekCapability.CLASSIFY}),
         ingest=VaultIngestResult(stored=True, vault_ref="ref-y"),
         classify=VaultClassification(tags=("courage", "shadow")),
     )
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
-        status=VaultWriteStatus.INGESTED, vault_ref="ref-y", tags=("courage", "shadow")
+        status=VaultWriteStatus.INGESTED, vault_ref="ref-y", tags=()
     )
-    assert _call_names(client) == ["handshake", "ingest", "classify"]
-    classify_call = next(args for name, args in client.calls if name == "classify")
-    assert classify_call == (_BODY, VaultTierCeiling.PERSONAL)
+    assert _call_names(client) == ["handshake", "ingest"]
 
 
 @pytest.mark.asyncio
 async def test_ingest_raising_creek_vault_error_returns_degraded_without_raising() -> None:
     """A CreekVaultError from ingest() degrades to DEGRADED rather than propagating."""
     client = RecordingVaultClient(
-        capabilities=frozenset({CreekCapability.INGEST}),
-        ingest=CreekVaultUnavailableError("creek vault call failed: creek.ingest"),
+        capabilities=frozenset({CreekCapability.JOURNAL}),
+        ingest=CreekVaultUnavailableError("creek vault call failed: creek.journal"),
     )
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
 
@@ -239,29 +242,30 @@ async def test_ingest_raising_creek_vault_error_returns_degraded_without_raising
 async def test_ingest_reporting_not_stored_from_available_vault_returns_degraded() -> None:
     """stored=False from an available, supporting vault is a degraded write, not an ingest."""
     client = RecordingVaultClient(
-        capabilities=frozenset({CreekCapability.INGEST}),
+        capabilities=frozenset({CreekCapability.JOURNAL}),
         ingest=VaultIngestResult(stored=False, vault_ref=None),
     )
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
 
 
 @pytest.mark.asyncio
 async def test_classify_error_after_successful_ingest_still_returns_ingested() -> None:
-    """Classification is optional enrichment: its failure never demotes a successful ingest."""
+    """A classify scripted to raise is never even called; the write stays INGESTED."""
     client = RecordingVaultClient(
-        capabilities=frozenset({CreekCapability.INGEST, CreekCapability.CLASSIFY}),
+        capabilities=frozenset({CreekCapability.JOURNAL, CreekCapability.CLASSIFY}),
         ingest=VaultIngestResult(stored=True, vault_ref="ref-z"),
         classify=CreekVaultUnavailableError("creek vault call failed: creek.classify"),
     )
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.INGESTED, vault_ref="ref-z", tags=()
     )
+    assert _call_names(client) == ["handshake", "ingest"]
 
 
 @pytest.mark.asyncio
@@ -269,7 +273,9 @@ async def test_unknown_classification_raises_value_error_without_touching_client
     """An unrecognized classification fails closed via tier_ceiling_for, before any vault call."""
     client = RecordingVaultClient()
     with pytest.raises(ValueError, match="bogus"):
-        await store_and_classify(client, body=_BODY, classification="bogus", created_at=_CREATED_AT)
+        await store_and_classify(
+            client, body=_BODY, classification="bogus", created_at=_CREATED_AT, entry_id=101
+        )
     assert client.calls == []
 
 
@@ -278,7 +284,7 @@ async def test_local_fallback_client_returns_unavailable_for_non_intimate_entry(
     """The real no-vault LocalFallbackCreekVaultClient degrades a non-intimate write."""
     client = LocalFallbackCreekVaultClient()
     outcome = await store_and_classify(
-        client, body=_BODY, classification="personal", created_at=_CREATED_AT
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
