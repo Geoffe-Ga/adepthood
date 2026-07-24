@@ -34,9 +34,20 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
 import models as _models  # noqa: E402, F401
+import routers.auth as _auth_router  # noqa: E402
 from database import get_session  # noqa: E402
+from domain.entitlements import AptitudeLicenseCheck, LicenseOutcome  # noqa: E402
 from main import app  # noqa: E402
-from rate_limit import limiter  # noqa: E402
+from rate_limit import limiter, reset_invalid_license_attempts  # noqa: E402
+from schemas.gumroad import GumroadPurchase  # noqa: E402
+
+# The default signup license gate stubbed into every test that does not opt into
+# the real gate (via the ``real_license_gate`` marker). Feature-specific tests in
+# ``tests/routers/test_auth_signup_license.py`` and
+# ``tests/routers/test_gumroad_sale_dispatch.py`` mark themselves to exercise the
+# genuine Gumroad-backed gate; every other test just needs signup to succeed.
+_STUB_LICENSE_PRODUCT_ID = "prod_stub_aptitude"
+_STUB_LICENSE_SALE_PREFIX = "stub-sale-"
 
 # ---------------------------------------------------------------------------
 # Test database: SQLite in-memory (no external services needed)
@@ -187,12 +198,52 @@ def _reset_rate_limiter() -> Generator[None, None, None]:
     runs in the same process.  Forcing ``enabled = True`` here makes the
     autouse contract a single source of truth: every test starts with the
     limiter on and storage empty, regardless of what its predecessors did.
+
+    The second-layer invalid-license counter (``rate_limit``'s moving-window
+    limiter for signup license failures) is cleared alongside for the same
+    reason: its hourly window would otherwise leak 429s across tests.
     """
     limiter.enabled = True
     limiter.reset()
+    reset_invalid_license_attempts()
     yield
     limiter.enabled = True
     limiter.reset()
+    reset_invalid_license_attempts()
+
+
+@pytest.fixture(autouse=True)
+def _stub_signup_license_gate(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stub the signup license gate open for tests that do not opt into it.
+
+    Account creation now requires a verified Gumroad license, so the dozens of
+    suites that create users via ``POST /auth/signup`` would otherwise all fail
+    the gate. This autouse fixture replaces ``verify_aptitude_license`` (as the
+    auth router looks it up) with a stub that verifies any request, echoing the
+    submitted email so the email-match check always passes. Tests carrying the
+    ``real_license_gate`` marker are skipped so they exercise the genuine gate.
+    """
+    if request.node.get_closest_marker("real_license_gate") is not None:
+        return
+
+    async def _verify_stub(
+        email: str,
+        license_key: str | None,  # noqa: ARG001 — stub verifies unconditionally
+        *,
+        client: object | None = None,  # noqa: ARG001 — matches the real signature
+    ) -> AptitudeLicenseCheck:
+        purchase = GumroadPurchase(
+            email=email,
+            product_id=_STUB_LICENSE_PRODUCT_ID,
+            sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{email}",
+            refunded=False,
+            chargebacked=False,
+        )
+        return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)
+
+    monkeypatch.setattr(_auth_router, "verify_aptitude_license", _verify_stub)
 
 
 @pytest.fixture

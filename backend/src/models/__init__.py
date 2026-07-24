@@ -4,6 +4,7 @@ from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
+from .entitlement import Entitlement
 from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_group import GoalGroup
@@ -40,6 +41,7 @@ __all__ = [
     "ContentCompletion",
     "CourseStage",
     "EnergyPlan",
+    "Entitlement",
     "Goal",
     "GoalCompletion",
     "GoalGroup",

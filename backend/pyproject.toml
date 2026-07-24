@@ -105,6 +105,9 @@ addopts = "-q --strict-markers --strict-config --cov=src --cov=scripts --cov-rep
 testpaths = ["tests"]
 pythonpath = ["."]
 xfail_strict = true
+markers = [
+  "real_license_gate: exercise the real Gumroad signup license gate instead of the default test stub-open fixture",
+]
 
 [tool.coverage.run]
 branch = true
