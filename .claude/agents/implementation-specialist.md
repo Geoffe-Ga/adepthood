@@ -3,7 +3,7 @@ name: implementation-specialist
 description: "Gate 1 GREEN + Refactor — writes the production code that makes the failing tests pass at threshold quality, then refactors. Select for implementing a planned change (backend FastAPI/SQLModel or frontend RN/Zustand) and as the correctness/maintainability reviewer. The core code-quality role."
 level: 2
 phase: Implementation,Cleanup
-tools: Read,Write,Edit,Grep,Glob
+tools: Read,Write,Edit,Grep,Glob,Bash
 model: opus
 delegates_to: []
 receives_from: [chief-architect, code-review-orchestrator]
@@ -51,6 +51,13 @@ Opus. You also serve as the **correctness/maintainability reviewer**.
    intent, not syntax. Run `./scripts/<side>/fix-all.sh` for format/lint autofix.
 5. Confirm the full local check (`./scripts/<side>/check-all.sh`) is on track
    before handing back the Handoff block below. Stay strictly within scope.
+   **You have `Bash` — actually run it.** `Status: GREEN` is a claim about an
+   observed pass, not an expectation; never report it from reading the code. If
+   you cannot run the suite, say so in the Handoff rather than asserting GREEN.
+   Two local hazards: `check-all.sh` does **not** cover `xenon`/`radon` (they are
+   pre-push hooks), so run those explicitly before claiming the complexity
+   thresholds are met; and **never run `jest --coverage` locally** — it fills the
+   disk and bricks every worktree lane.
 
 ## Handoff (return this — terse; the conductor consumes it, not a human)
 

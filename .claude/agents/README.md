@@ -47,6 +47,13 @@ the spawn mechanism, which is always the conductor. Only the two orchestrators
 (chief-architect, code-review-orchestrator) hold the `Task` tool; the six
 specialists are leaf workers that do their own work and do not sub-delegate.
 
+The two **Gate 1** specialists — `test-specialist` and `implementation-specialist`
+— also hold `Bash`, because their handoff contracts assert an *observed* result
+(`Status: RED` / `Status: GREEN`). Without it those lines were self-reported from
+reading the code and the conductor had to re-verify everything itself. The other
+four specialists stay read-only/edit-only: their contracts report findings, not
+run outcomes.
+
 > **Frontmatter caveat.** The Claude Code runtime only reads `name`,
 > `description`, `tools`, and `model`. The extra fields here — `level`, `phase`,
 > `delegates_to`, `receives_from` — are **descriptive documentation only**; they
