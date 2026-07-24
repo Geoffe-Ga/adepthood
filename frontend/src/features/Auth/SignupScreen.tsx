@@ -1,62 +1,61 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthBrandBand } from './AuthBrandBand';
 import { AuthScreenContainer } from './AuthScreenContainer';
-import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
+import { LicenseKeyField } from './components/LicenseKeyField';
 import { PasswordField } from './components/PasswordField';
-import { validatePasswordPair } from './passwordValidation';
-import { useAuthSubmit } from './useAuthSubmit';
+import { useSignupForm } from './useSignupForm';
+import type { SignupForm } from './useSignupForm';
 
 import { Button } from '@/components/Button';
-import { useAuth } from '@/context/AuthContext';
-
-const SIGNUP_FALLBACK =
-  "We couldn't create your account. Check your connection, then try again in a moment.";
+import { GUMROAD_HELP_URL } from '@/config';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
+  /**
+   * Optional so callers that only pass ``navigation`` still type-check. A
+   * supplied ``licenseKey`` seeds the field — the seam a post-purchase deep
+   * link or a later social-auth flow reuses.
+   */
+  route?: { params?: { licenseKey?: string } };
 }
 
 interface SignupFieldsProps {
-  email: string;
-  setEmail: (_v: string) => void;
-  password: string;
-  setPassword: (_v: string) => void;
-  confirmPassword: string;
-  setConfirmPassword: (_v: string) => void;
+  form: SignupForm;
+  onPressHelp: () => void;
 }
 
-function SignupFields({
-  email,
-  setEmail,
-  password,
-  setPassword,
-  confirmPassword,
-  setConfirmPassword,
-}: SignupFieldsProps) {
+function SignupFields({ form, onPressHelp }: SignupFieldsProps): React.JSX.Element {
   return (
     <>
       <EmailField
         accessibilityLabel="Email"
         style={styles.inputSpacing}
-        value={email}
-        onChangeText={setEmail}
+        value={form.email}
+        onChangeText={form.setEmail}
       />
       <PasswordField
         accessibilityLabel="Password"
         style={styles.inputSpacing}
-        value={password}
-        onChangeText={setPassword}
+        value={form.password}
+        onChangeText={form.setPassword}
       />
       <PasswordField
         accessibilityLabel="Confirm password"
         style={styles.inputSpacing}
         placeholder="Confirm Password"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
+        value={form.confirmPassword}
+        onChangeText={form.setConfirmPassword}
+      />
+      <LicenseKeyField
+        error={form.licenseError}
+        onPressHelp={onPressHelp}
+        value={form.licenseKey}
+        onChangeText={form.setLicenseKey}
       />
     </>
   );
@@ -93,25 +92,14 @@ function SignupActions({ onSignup, onNavigateLogin, submitting }: SignupActionsP
   );
 }
 
-export default function SignupScreen({ navigation }: Props) {
-  const { signup } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const { submitting, error, setError, run } = useAuthSubmit(
-    // BUG-AUTH-010: trim at submit so paste/autofill whitespace doesn't
-    // produce a confusing 422 from the backend.
-    () => signup(canonicalizeEmail(email), password),
-    { fallback: SIGNUP_FALLBACK },
-  );
+export default function SignupScreen({ navigation, route }: Props) {
+  const form = useSignupForm(route?.params?.licenseKey ?? '');
 
-  const handleSignup = () => {
-    const validationError = validatePasswordPair(password, confirmPassword);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    void run();
+  // The help page is static config: appending the typed key would leak a
+  // credential into the browser URL bar, history and referrer header.
+  // ``openExternalUrl`` reports its own failures, so the form surfaces nothing.
+  const handlePressHelp = (): void => {
+    void openExternalUrl(GUMROAD_HELP_URL).catch(() => undefined);
   };
 
   return (
@@ -119,19 +107,16 @@ export default function SignupScreen({ navigation }: Props) {
       <AuthBrandBand />
       <Text style={styles.title}>Begin</Text>
       <Text style={styles.lead}>Create your account and start the practice.</Text>
-      <SignupFields
-        email={email}
-        setEmail={setEmail}
-        password={password}
-        setPassword={setPassword}
-        confirmPassword={confirmPassword}
-        setConfirmPassword={setConfirmPassword}
-      />
-      {error && <Text style={styles.error}>{error}</Text>}
+      <SignupFields form={form} onPressHelp={handlePressHelp} />
+      {form.error && (
+        <Text style={styles.error} testID="signup-error">
+          {form.error}
+        </Text>
+      )}
       <SignupActions
-        onSignup={handleSignup}
+        onSignup={form.handleSignup}
         onNavigateLogin={() => navigation.navigate('Login')}
-        submitting={submitting}
+        submitting={form.submitting}
       />
     </AuthScreenContainer>
   );

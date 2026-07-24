@@ -44,6 +44,7 @@ jest.mock('@/utils/token', () => ({
 }));
 
 import {
+  ApiError,
   auth,
   resetLlmApiKey,
   setOnTokenRefreshed,
@@ -172,6 +173,8 @@ describe('AuthContext', () => {
   });
 
   describe('signup', () => {
+    const LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
+
     it('calls API signup and stores token on success', async () => {
       mockAuth.signup.mockResolvedValue({ token: 'signup-jwt', user_id: 2 });
       const { result } = renderHook(() => useAuth(), { wrapper });
@@ -179,7 +182,7 @@ describe('AuthContext', () => {
       await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
 
       await act(async () => {
-        await result.current.signup('new@test.com', 'password123');
+        await result.current.signup('new@test.com', 'password123', LICENSE_KEY);
       });
 
       // Signup attaches the device's IANA zone so the new account is
@@ -191,10 +194,27 @@ describe('AuthContext', () => {
       expect(mockAuth.signup).toHaveBeenCalledWith({
         email: 'new@test.com',
         password: 'password123', // pragma: allowlist secret
+        license_key: LICENSE_KEY,
         timezone: 'UTC',
       });
       expect(mockSaveToken).toHaveBeenCalledWith('signup-jwt');
       expect(result.current.token).toBe('signup-jwt');
+    });
+
+    // Normalising is the form's job: the context must not trim or case-fold,
+    // or a key the user actually holds could be mangled en route to Gumroad.
+    it('forwards the license key verbatim', async () => {
+      mockAuth.signup.mockResolvedValue({ token: 'signup-jwt', user_id: 2 });
+      const rawKey = '  MiXeD-Case-Key-9  '; // pragma: allowlist secret
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
+
+      await act(async () => {
+        await result.current.signup('new@test.com', 'password123', rawKey);
+      });
+
+      expect(mockAuth.signup.mock.calls[0]![0]!.license_key).toBe(rawKey);
     });
 
     // BUG-AUTH-002: must not persist the user_id=0 anti-enumeration token (see ``authResponseSchema`` in schemas.ts).
@@ -206,9 +226,28 @@ describe('AuthContext', () => {
 
       await expect(
         act(async () => {
-          await result.current.signup('taken@test.com', 'password123');
+          await result.current.signup('taken@test.com', 'password123', LICENSE_KEY);
         }),
       ).rejects.toMatchObject({ status: 409, detail: 'email_in_use' });
+
+      expect(mockSaveToken).not.toHaveBeenCalled();
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    // The signup screen routes ``invalid_license`` to an inline field error,
+    // so the context must not swallow, wrap, or re-code the rejection.
+    it('propagates a license rejection unchanged so the screen can route it', async () => {
+      mockAuth.signup.mockRejectedValue(new ApiError(400, 'invalid_license'));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
+
+      await expect(
+        act(async () => {
+          await result.current.signup('new@test.com', 'password123', LICENSE_KEY);
+        }),
+      ).rejects.toMatchObject({ name: 'ApiError', status: 400, detail: 'invalid_license' });
 
       expect(mockSaveToken).not.toHaveBeenCalled();
       expect(result.current.token).toBeNull();
