@@ -37,6 +37,12 @@ from services.content_repository import reset_content_repository_for_tests
 #: this test's expectation.
 _EXPECTED_PRACTICE_COUNT = len(PRESET_PRACTICES)
 
+_GUMROAD_API_TOKEN_ENV = "GUMROAD_API_TOKEN"
+_GUMROAD_WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
+_GUMROAD_ENV_VARS = (_GUMROAD_API_TOKEN_ENV, _GUMROAD_WEBHOOK_SECRET_ENV)
+_GUMROAD_UNCONFIGURED_MARKER = "gumroad_unconfigured"
+_GUMROAD_TOKEN_SENTINEL = "sentinel-gumroad-api-token"  # pragma: allowlist secret
+
 
 def _expected_content_count() -> int:
     """Rows the content seeder should produce in this environment.
@@ -338,6 +344,44 @@ async def test_seed_complete_logs_carry_seeder_name_and_count(
     messages = [r.getMessage() for r in caplog.records if "seed_complete" in r.getMessage()]
     assert any("seeder=stages" in m and "inserted=10" in m for m in messages), messages
     assert any("seeder=content" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_lifespan_completes_in_production_without_gumroad_config(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A production deploy with no Gumroad credentials must still come up.
+
+    Failing the boot here takes the whole deploy down (the health probe
+    never passes) over an integration that is merely inert until it is
+    configured. The degraded state is announced instead.
+    """
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    for name in _GUMROAD_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    caplog.set_level(logging.WARNING, logger="main")
+
+    async with _isolated_factory_patch(), lifespan(app):
+        pass
+
+    assert any(_GUMROAD_UNCONFIGURED_MARKER in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_still_fails_fast_on_partial_gumroad_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half-configured Gumroad credentials in production must still abort the boot."""
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    monkeypatch.setenv(_GUMROAD_API_TOKEN_ENV, _GUMROAD_TOKEN_SENTINEL)
+    monkeypatch.delenv(_GUMROAD_WEBHOOK_SECRET_ENV, raising=False)
+
+    with pytest.raises(RuntimeError, match=_GUMROAD_WEBHOOK_SECRET_ENV):
+        async with _isolated_factory_patch(), lifespan(app):
+            pass
 
 
 @pytest.mark.asyncio
