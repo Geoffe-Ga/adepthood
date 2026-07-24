@@ -235,21 +235,46 @@ def _assert_credentials_safe(origins: list[str]) -> None:
 _REQUIRED_GUMROAD_ENV_VARS = ("GUMROAD_API_TOKEN", "GUMROAD_WEBHOOK_SECRET")
 
 
-def validate_gumroad_config() -> None:
-    """Fail fast on missing Gumroad credentials in production.
+def _missing_gumroad_env_vars() -> list[str]:
+    """Return the Gumroad variable names that are unset or blank."""
+    return [name for name in _REQUIRED_GUMROAD_ENV_VARS if not os.getenv(name)]
 
-    In development/staging the integration may be unconfigured — the webhook
-    fails closed and license checks simply cannot succeed. A production deploy
-    without the token or webhook secret would silently drop real purchase
-    events, so boot refuses instead, mirroring the ``_get_secret_key`` startup
-    check (BUG-AUTH-011's "deploy never goes live" principle).
+
+def validate_gumroad_config() -> None:
+    """Enforce all-or-nothing Gumroad configuration in production.
+
+    In development/staging the integration may be unconfigured: the webhook
+    fails closed and license checks simply cannot succeed. In production the
+    pair is treated as one unit so adoption stays distinguishable from
+    misconfiguration. With neither variable set, Gumroad is merely inert
+    (both the webhook and license-gated signup already reject), so boot
+    proceeds behind one loud warning rather than taking the whole deploy
+    down. With exactly one set, the operator meant to enable Gumroad and got
+    it half-wired, which would silently drop real purchase events; that still
+    refuses to boot, mirroring the ``_get_secret_key`` startup check
+    (BUG-AUTH-011's "deploy never goes live" principle).
+
+    The pair is only the credentials half of the integration: other Gumroad
+    settings (notably the product allowlist) gate signup independently and
+    are documented in ``backend/.env.example``, so setting these two alone
+    is necessary but not sufficient for license-gated signup to succeed.
     """
     if os.getenv("ENV", "development") != "production":
         return
-    missing = [name for name in _REQUIRED_GUMROAD_ENV_VARS if not os.getenv(name)]
-    if missing:
-        msg = f"Missing required Gumroad configuration: {', '.join(missing)}"
-        raise RuntimeError(msg)
+    missing = _missing_gumroad_env_vars()
+    if not missing:
+        return
+    if len(missing) == len(_REQUIRED_GUMROAD_ENV_VARS):
+        logger.warning(
+            "gumroad_unconfigured: %s are unset, so license verification and "
+            "sale webhooks are disabled and license-gated signup rejects every "
+            "attempt; backend/.env.example documents the full Gumroad "
+            "configuration",
+            ", ".join(_REQUIRED_GUMROAD_ENV_VARS),
+        )
+        return
+    msg = f"Missing required Gumroad configuration: {', '.join(missing)}"
+    raise RuntimeError(msg)
 
 
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -389,8 +414,9 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # invoking it here turns "first user pays" into "deploy never goes live".
     _get_secret_key()
 
-    # Gumroad credentials are production-critical the same way SECRET_KEY is:
-    # fail the deploy at boot rather than dropping purchase webhooks later.
+    # All-or-nothing: a half-wired Gumroad pair fails the deploy at boot rather
+    # than dropping purchase webhooks later, while a wholly unset pair only
+    # warns: that is the pre-adoption state, and the endpoints fail closed.
     validate_gumroad_config()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,

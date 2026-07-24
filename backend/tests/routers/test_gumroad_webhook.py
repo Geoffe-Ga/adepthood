@@ -22,6 +22,8 @@ from models.gumroad_sale import GumroadSale
 
 WEBHOOK_PATH = "/webhooks/gumroad/ping"
 WEBHOOK_SECRET = "gumroad-webhook-shared-secret-test-only"  # pragma: allowlist secret
+WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
+GUESSED_SECRET = "guessed-gumroad-secret"  # pragma: allowlist secret
 
 
 def _sale_payload(**overrides: str) -> dict[str, str]:
@@ -126,6 +128,31 @@ async def test_missing_secret_returns_401_and_writes_nothing(
     assert webhook_secret == WEBHOOK_SECRET
 
     response = await async_client.post(WEBHOOK_PATH, data=_sale_payload())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert await _count_sales(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [None, {"secret": ""}, {"secret": GUESSED_SECRET}],
+    ids=["no_param", "blank_secret", "guessed_secret"],
+)
+async def test_unset_webhook_secret_rejects_every_ping(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    params: dict[str, str] | None,
+) -> None:
+    """An unconfigured shared secret authenticates nobody: every ping is 401.
+
+    Deliberately does not use the ``webhook_secret`` fixture: this pins the
+    fail-closed floor an unconfigured deployment relies on.
+    """
+    monkeypatch.delenv(WEBHOOK_SECRET_ENV, raising=False)
+
+    response = await async_client.post(WEBHOOK_PATH, params=params, data=_sale_payload())
 
     assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert await _count_sales(db_session) == 0

@@ -33,6 +33,9 @@ pytestmark = pytest.mark.real_license_gate
 
 SIGNUP_PATH = "/auth/signup"
 PRODUCT_IDS_ENV = "GUMROAD_APTITUDE_PRODUCT_IDS"
+API_TOKEN_ENV = "GUMROAD_API_TOKEN"
+WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
+GUMROAD_CREDENTIAL_ENV_VARS = (API_TOKEN_ENV, WEBHOOK_SECRET_ENV)
 VERIFY_SEAM = "domain.entitlements.verify_license"
 REJECT_DUPLICATE_SEAM = "routers.auth._reject_duplicate_signup_email"
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
@@ -329,6 +332,31 @@ async def test_products_off_the_allowlist_are_never_verified(
 
 
 @pytest.mark.asyncio
+async def test_signup_with_unconfigured_allowlist_rejects_and_calls_no_verifier(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset product allowlist grants nobody access and makes no outbound call.
+
+    Deliberately skips the ``allowlisted_products`` fixture: this pins the
+    fail-closed floor an unconfigured deployment relies on, where an empty
+    API token would otherwise be spent on a doomed Gumroad request.
+    """
+    monkeypatch.delenv(PRODUCT_IDS_ENV, raising=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert calls == []
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products")
 async def test_verification_stops_on_the_first_matching_product(
     async_client: AsyncClient,
@@ -503,6 +531,35 @@ async def test_gumroad_outage_fails_closed_with_503(
 
     assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert response.json()["detail"] == DETAIL_UNAVAILABLE
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_signup_with_unset_api_token_fails_closed_with_503(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A credentialless production deploy with a populated allowlist fails closed.
+
+    The startup check lets production boot with neither Gumroad credential
+    set, so this state is now reachable at request time. Verification is
+    still attempted for each allowlisted product, the blank token makes
+    Gumroad answer non-2xx, and the resulting unavailability is a 503 with
+    no account and no entitlement written.
+    """
+    for name in GUMROAD_CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls, unavailable=True))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == DETAIL_UNAVAILABLE
+    assert calls == [(ALLOWED_PRODUCT_ALPHA, LICENSE_KEY)]
     assert await _count_users(db_session) == 0
     assert await _count_entitlements(db_session) == 0
 
