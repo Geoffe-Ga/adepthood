@@ -147,5 +147,10 @@ plans/github-issues/COMMIT_*.md
 # Ralph parallel worktrees (ephemeral, per-issue isolation)
 .ralph/
 
+# Ralph loop bookkeeping — machine-local counters, not shared state. Tracking it
+# made every tick push a junk commit to main. Seed a fresh clone by copying
+# scripts/ralph/state.example.json over it.
+scripts/ralph/state.json
+
 # Knowledge-graph build artifacts (rebuilt locally / via release; see scripts/graph/)
 graphify-out/

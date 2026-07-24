@@ -114,6 +114,15 @@ re-green when `BEHIND`) described above.
 
 ## Configuration (`scripts/ralph/state.json`)
 
+`state.json` is **git-ignored** — it holds machine-local loop bookkeeping
+(completion counters, groom/de-slop timers), not shared state. Tracking it meant
+every tick pushed a counter-bump commit to `main`, which the `no-commit-to-branch`
+hook exists to prevent. Seed a fresh clone with:
+
+```bash
+cp scripts/ralph/state.example.json scripts/ralph/state.json
+```
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `max_workers` | `4` | Maximum concurrent worktrees. |
