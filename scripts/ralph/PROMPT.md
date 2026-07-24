@@ -77,6 +77,12 @@ graph/memory …` and commit both (small Markdown notes; repo Q&A only).
    design approach, touch-list, TDD test strategy, an **ordered dispatch list**,
    and **risk flags** (security / performance / deps / docs). You execute that
    list — you do not improvise the design.
+   **Fable fallback:** the chief-architect runs on Fable, a metered tier. If the
+   dispatch fails or returns nothing because Fable is unavailable (credits
+   exhausted, quota/rate limit, model not enabled, or a safety-classifier refusal
+   on a hardening issue), retry the **same** dispatch **once** with
+   `model: "opus"` and carry on. Never skip the plan step, and never improvise
+   the design in its place.
 6. **Dispatch the build.** The test- and implementation-specialists *embody* the
    `stay-green` Red→Green→Refactor discipline and `max-quality-no-shortcuts`
    (no bypasses) — that is now the TDD path; you do not separately invoke the
