@@ -4,11 +4,21 @@ description: "Strategic brain of a Ralph tick. Select to architect a single back
 level: 0
 phase: Plan
 tools: Read,Grep,Glob,Task
-model: opus
+model: fable
 delegates_to: [test-specialist, implementation-specialist, security-specialist, performance-specialist, documentation-specialist, dependency-review-specialist, code-review-orchestrator]
 receives_from: []
 ---
 # Chief Architect
+
+> **Model & fallback.** This agent runs on **Fable**; every other agent in the
+> taxonomy runs on Opus/Sonnet/Haiku. Fable is a metered tier, so the dispatch is
+> **fallback-aware**: if the conductor's `Agent(subagent_type: chief-architect)`
+> call fails or returns nothing because Fable is unavailable (credits exhausted,
+> quota/rate limit, model not enabled for the account), the conductor **retries
+> the same dispatch once with `model: "opus"`** and proceeds — a tick never
+> stalls on model availability. The plan contract below is identical on either
+> model. Fable also prefers **less-prescriptive prompts**: state the goal and
+> constraints, not step-by-step scaffolding.
 
 ## Identity
 

@@ -22,9 +22,10 @@ graph under a conductor is identical:
 ```
 ralph-tick (fleet ORCHESTRATOR — worker pool: reconcile · serialized-merge · lazy-sync · refill)
   └─ ralph-worker × up to 4 . L1  opus    per-issue CONDUCTOR in an isolated worktree
-       ├─ chief-architect ..... L0  opus    plan + ordered dispatch list (no code)
-       ├─ test-specialist ..... L2  fable   Gate 1 RED: failing tests          ─┐
-       ├─ implementation-spec.  L2  fable   Gate 1 GREEN + Refactor             │ run per
+       ├─ chief-architect ..... L0  fable   plan + ordered dispatch list (no code)
+       │                              ↳ falls back to opus when Fable is unavailable
+       ├─ test-specialist ..... L2  opus    Gate 1 RED: failing tests          ─┐
+       ├─ implementation-spec.  L2  opus    Gate 1 GREEN + Refactor             │ run per
        ├─ security-specialist . L2  opus    harden auth/JWT/CORS/input/DB       │ the
        ├─ performance-spec. ... L2  sonnet  profile/optimize hot paths          │ architect's
        ├─ documentation-spec. . L2  sonnet  docstrings/READMEs/ADRs             │ dispatch
@@ -62,24 +63,33 @@ specialists are leaf workers that do their own work and do not sub-delegate.
 
 ## Model tiers (strategic mix)
 
-The mix follows one owner-decided policy — **model by role type**:
-planning/orchestration on **Opus**, implementation on **Fable**, review on
+The mix follows one owner-decided policy — **model by role type**: strategic
+planning on **Fable**, orchestration and all code-writing on **Opus**, review on
 **Sonnet**, quick read-only checks on **Haiku**.
 
-**Opus** for planning and orchestration, where judgment drives every downstream
-decision: `chief-architect` (one wrong design compounds across every specialist
-that executes it) and `ralph-worker` (the per-issue conductor). Kept here too is
-`security-specialist` — its work is judgment-heavy threat modeling *and* it is
-deliberately barred from Fable (see the caveat below), so it stays on Opus rather
-than the implementation tier.
+**Fable** for the single highest-leverage strategic role: `chief-architect`. One
+wrong design compounds across every specialist that executes it, so the plan gets
+the strongest reasoning available. Fable is a **metered tier**, so this dispatch
+is fallback-aware — see below. Fable also prefers **less-prescriptive prompts**
+(state the goal and constraints; a contract is a format spec, not step-by-step
+scaffolding), which is why `chief-architect.md` reads as an output contract rather
+than a script.
 
-**Fable** for implementation — the code-writing roles: `implementation-specialist`
-(production code is the core quality lever) and `test-specialist` (test authoring
-is code-writing). Two Fable caveats shape the fleet: its safety classifiers target
-**cyber/bio** content (so the code-writing `security-specialist` stays on **Opus**,
-never Fable — legitimate hardening work can trip a false-positive refusal), and it
-prefers **less-prescriptive prompts** (state the goal and constraints; a
-specialist's contract is a format spec, not step-by-step scaffolding).
+> **Fable fallback (graceful degradation).** When the `Agent(subagent_type:
+> chief-architect)` call fails or comes back empty because Fable is unavailable —
+> credits exhausted, quota/rate limit, model not enabled, or a false-positive
+> refusal from its **cyber/bio** safety classifiers on a security-hardening issue
+> — the conductor **retries the same dispatch once with `model: "opus"`** and
+> continues the tick. A tick never stalls, and never silently skips the plan step,
+> on model availability. Opus is the fallback for every Fable role.
+
+**Opus** for orchestration and every code-writing role, where judgment drives the
+artifact that ships: `ralph-worker` (the per-issue conductor),
+`implementation-specialist` (production code is the core quality lever),
+`test-specialist` (test authoring is code-writing), and `security-specialist`
+(judgment-heavy threat modeling, plus hardening code). Opus is unmetered here and
+doubles as the Fable fallback, so the fleet degrades to a single-tier
+Opus/Sonnet/Haiku mix without any behavior change.
 
 **Sonnet** for review — well-scoped roles guided by an explicit plan or diff:
 `code-review-orchestrator` (Gate 2.5 synthesis) and the review-dimension
