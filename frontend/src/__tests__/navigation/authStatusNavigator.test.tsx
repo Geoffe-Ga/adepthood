@@ -34,6 +34,14 @@ jest.mock('@/navigation/RootStack', () => {
   return { __esModule: true, default: RootStackMock };
 });
 
+jest.mock('@/features/Auth/GetStartedScreen', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  const GetStartedMock = () =>
+    React.createElement(Text, { testID: 'get-started-screen' }, 'GetStarted');
+  return { __esModule: true, default: GetStartedMock };
+});
+
 jest.mock('@/features/Auth/LoginScreen', () => {
   const React = require('react');
   const { Text } = require('react-native');
@@ -140,10 +148,14 @@ describe('RootNavigator gated on authStatus (BUG-NAV-001 / BUG-NAV-002)', () => 
     expect(queryByTestId('root-stack')).toBeNull();
   });
 
-  it("mounts the AuthNavigator when authStatus is 'anonymous'", () => {
+  // The anonymous stack now opens on the pre-auth Gumroad surface; the
+  // navigator stub renders only the FIRST declared screen, so this also
+  // pins GetStarted as the initial route rather than Login.
+  it("mounts the AuthNavigator on GetStarted when authStatus is 'anonymous'", () => {
     mockAuthStatus('anonymous');
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
-    expect(getByTestId('login-screen')).toBeTruthy();
+    expect(getByTestId('get-started-screen')).toBeTruthy();
+    expect(queryByTestId('login-screen')).toBeNull();
     expect(queryByTestId('root-stack')).toBeNull();
     expect(queryByTestId('reauth-sheet')).toBeNull();
   });
@@ -154,6 +166,7 @@ describe('RootNavigator gated on authStatus (BUG-NAV-001 / BUG-NAV-002)', () => 
     expect(getByTestId('root-stack')).toBeTruthy();
     expect(queryByTestId('reauth-sheet')).toBeNull();
     expect(queryByTestId('login-screen')).toBeNull();
+    expect(queryByTestId('get-started-screen')).toBeNull();
   });
 
   it("mounts RootStack *and* the re-auth sheet when authStatus is 'reauth-required'", () => {

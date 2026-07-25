@@ -429,16 +429,44 @@ async function fetchWithTimeout(
   }
 }
 
+/** Last-resort ``detail`` when the body carries nothing we can safely show. */
+const FALLBACK_ERROR_DETAIL = 'Request failed';
+
+/** Joins several Pydantic complaints into one readable line. */
+const ERROR_DETAIL_SEPARATOR = '; ';
+
+/**
+ * Read a FastAPI validation rejection, whose ``detail`` is an array of
+ * ``{loc, msg, type, input?, ctx?}`` entries.
+ *
+ * Only ``msg`` is safe to surface. ``input`` echoes back whatever the user
+ * submitted — on signup that is their license key — and ``loc`` / ``ctx`` leak
+ * internal field names and constraints.
+ */
+function detailFromArray(entries: readonly unknown[]): string {
+  const messages: string[] = [];
+  for (const entry of entries) {
+    const msg = entry == null ? undefined : (entry as { msg?: unknown }).msg;
+    if (typeof msg === 'string' && msg.length > 0) {
+      messages.push(msg);
+    }
+  }
+  return messages.length > 0 ? messages.join(ERROR_DETAIL_SEPARATOR) : FALLBACK_ERROR_DETAIL;
+}
+
 async function extractErrorDetail(res: Response): Promise<string> {
   try {
     const errBody = await res.json();
     if (errBody.detail && typeof errBody.detail === 'string') {
       return errBody.detail;
     }
+    if (Array.isArray(errBody.detail)) {
+      return detailFromArray(errBody.detail);
+    }
   } catch {
     // response body wasn't JSON — use default
   }
-  return 'Request failed';
+  return FALLBACK_ERROR_DETAIL;
 }
 
 /**
@@ -2620,6 +2648,12 @@ export interface AuthRequest {
  */
 export interface SignupRequest extends AuthRequest {
   timezone?: string;
+  /**
+   * Gumroad license key proving the buyer owns the course. Lives on
+   * `SignupRequest` rather than `AuthRequest` so `auth.login` cannot send a
+   * credential the login endpoint has no use for.
+   */
+  license_key?: string;
 }
 
 export interface AuthResponse {

@@ -19,7 +19,13 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       // auth
       'invalid_credentials',
       'password_too_short',
+      'password_too_long',
       'unauthorized',
+      // gumroad license verification on signup
+      'invalid_license',
+      'license_required',
+      'too_many_license_attempts',
+      'license_verification_unavailable',
       // admin gate
       'admin_required',
       // resource not found
@@ -104,6 +110,42 @@ describe('practice-selection codes (BUG-PRACTICE-012)', () => {
   it('maps the transient replace conflict to a retry prompt', () => {
     const err = new ApiError(409, 'active_practice_exists_for_stage');
     expect(formatApiError(err)).toMatch(/try (switching )?again/i);
+  });
+});
+
+describe('gumroad license codes', () => {
+  // ``invalid_license`` is deliberately indistinguishable from a duplicate
+  // email on the wire (anti-enumeration), so the copy must not claim to know
+  // which of the two happened.
+  it('maps invalid_license to the approved ambiguous copy', () => {
+    expect(messageForCode('invalid_license')).toBe(
+      "We couldn't verify that key — double-check it matches the email and product.",
+    );
+  });
+
+  it('does not tell the user their email is already registered', () => {
+    expect(messageForCode('invalid_license')).not.toMatch(/already (registered|have an account)/i);
+  });
+
+  it.each([
+    ['license_required'],
+    ['too_many_license_attempts'],
+    ['license_verification_unavailable'],
+    ['password_too_long'], // pragma: allowlist secret
+  ])('gives %p actionable, snake_case-free copy', (code) => {
+    const message = messageForCode(code);
+
+    expect(message).toBeTruthy();
+    expect(message).not.toMatch(/[a-z]_[a-z]/);
+    expect(message).toMatch(/[.!?]$/);
+  });
+
+  it('tells the user the outage is transient rather than their fault', () => {
+    expect(messageForCode('license_verification_unavailable')).toMatch(/try again/i);
+  });
+
+  it('names the concrete password ceiling so the user can act', () => {
+    expect(messageForCode('password_too_long')).toMatch(/64/); // pragma: allowlist secret
   });
 });
 

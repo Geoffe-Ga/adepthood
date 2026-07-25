@@ -28,6 +28,7 @@ import { ThemeProvider, useTheme } from './design/ThemeContext';
 import { colors, SPACING } from './design/tokens';
 import CancelResetScreen from './features/Auth/CancelResetScreen';
 import ForgotPasswordScreen from './features/Auth/ForgotPasswordScreen';
+import GetStartedScreen from './features/Auth/GetStartedScreen';
 import LoginScreen from './features/Auth/LoginScreen';
 import { ReauthSheet } from './features/Auth/ReauthSheet';
 import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
@@ -41,8 +42,11 @@ import { useHydrateProgramStore } from './store/useProgramStore';
 import { useFirstRun } from './store/useWelcomeStore';
 
 type AuthStackParamList = {
+  GetStarted: undefined;
   Login: undefined;
-  Signup: undefined;
+  // ``licenseKey`` seeds the signup form for a buyer arriving with a key in
+  // hand; undefined for the plain "I have a license key" tap.
+  Signup: { licenseKey?: string } | undefined;
   ForgotPassword: undefined;
   ResetPassword: { token?: string } | undefined;
   CancelReset: { token?: string } | undefined;
@@ -91,6 +95,7 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
       // ``screens`` is keyed strictly on the param-list, but the same
       // linking config drives both AuthStack and RootStack here.
       ...({
+        GetStarted: 'get-started',
         Login: 'login',
         Signup: 'signup',
         ForgotPassword: 'forgot-password', // pragma: allowlist secret
@@ -108,6 +113,10 @@ const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 function AuthNavigator() {
   return (
     <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+      {/* Declared first, so an anonymous visitor opens on the pre-auth
+          Get Started surface rather than a log-in form for an account
+          they do not have yet. */}
+      <AuthStack.Screen name="GetStarted" component={GetStartedScreen} />
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="Signup" component={SignupScreen} />
       <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
