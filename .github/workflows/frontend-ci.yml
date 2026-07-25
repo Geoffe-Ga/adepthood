@@ -39,6 +39,12 @@ jobs:
       # the whole gate off. The gate narrows exceptions to specific GHSA ids
       # listed in frontend/.audit-allowlist.json, each with an expiry it
       # enforces — everything else still fails.
+      # The gate decides whether real vulnerabilities block a merge, so its own
+      # logic is tested — including that an unusable npm audit payload fails
+      # closed rather than reporting a clean tree.
+      - name: Audit gate tests
+        run: node --test scripts/frontend/test_audit_gate.mjs
+
       - name: Security audit (high+)
         run: node scripts/frontend/audit-gate.mjs
 
