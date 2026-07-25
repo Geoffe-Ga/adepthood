@@ -31,11 +31,16 @@ jobs:
         run: npm ci
 
       # Regression gate (audit-ci-07): fail if any high/critical advisory is
-      # reintroduced. The 41 moderate advisories (Expo SDK 52 toolchain) are
-      # below this threshold and tracked for the SDK upgrade.
+      # reintroduced. The moderate advisories (Expo SDK 52 toolchain) are below
+      # this threshold and tracked for the SDK upgrade.
+      #
+      # Runs through audit-gate.mjs rather than `npm audit --audit-level=high`
+      # directly: a single unfixable transitive advisory would otherwise force
+      # the whole gate off. The gate narrows exceptions to specific GHSA ids
+      # listed in frontend/.audit-allowlist.json, each with an expiry it
+      # enforces — everything else still fails.
       - name: Security audit (high+)
-        working-directory: frontend
-        run: npm audit --audit-level=high
+        run: node scripts/frontend/audit-gate.mjs
 
       - name: Lint
         working-directory: frontend
