@@ -27,6 +27,8 @@ __all__ = [
     "GOOGLE_ISSUERS",
     "GOOGLE_JWKS_URL",
     "GOOGLE_OAUTH_CLIENT_IDS_ENV_VAR",
+    "JWKS_TIMEOUT_SECONDS",
+    "build_jwk_client",
     "verify_google_id_token",
 ]
 
@@ -53,6 +55,17 @@ _JWKS_CACHE_SECONDS = 3600.0
 # time; the bound keeps a malformed ``kid`` stream from growing the cache.
 _MAX_CACHED_KEYS = 16
 
+# Wall-clock budget for a JWKS fetch. PyJWT's own default is 30 seconds, which
+# is far too generous here: a token naming a ``kid`` outside the cached set
+# makes the client refetch immediately (bypassing ``lifespan``), and that fetch
+# runs in the shared default thread pool -- the same pool bcrypt uses. An
+# unauthenticated caller sending random ``kid`` values could therefore park
+# workers that logins and signups need. Five seconds mirrors
+# ``GUMROAD_TIMEOUT_SECONDS`` and the reasoning behind it: verification sits on
+# an interactive path, so a wedged endpoint must fail fast rather than hold a
+# request -- and a thread -- open.
+JWKS_TIMEOUT_SECONDS: float = 5.0
+
 # Google's claim names, spelled once so a typo cannot silently disable a check.
 _SUBJECT_CLAIM = "sub"
 _EMAIL_CLAIM = "email"
@@ -72,6 +85,27 @@ def _google_client_ids() -> list[str]:
     return [client_id.strip() for client_id in raw.split(_CLIENT_ID_SEPARATOR) if client_id.strip()]
 
 
+def build_jwk_client() -> PyJWKClient:
+    """Construct the Google JWKS client, timeout and caches explicitly bounded.
+
+    Split out from the cached accessor so the bounds can be asserted without
+    reaching through an ``lru_cache`` (and without the network: constructing a
+    client fetches nothing).
+
+    Every argument here is a limit rather than a default. ``timeout`` in
+    particular is not optional: PyJWT's 30-second default, combined with the
+    forced refetch an unrecognised ``kid`` triggers, is how a stream of junk
+    tokens turns into parked threads in the pool bcrypt shares.
+    """
+    return PyJWKClient(
+        GOOGLE_JWKS_URL,
+        cache_keys=True,
+        max_cached_keys=_MAX_CACHED_KEYS,
+        lifespan=_JWKS_CACHE_SECONDS,
+        timeout=JWKS_TIMEOUT_SECONDS,
+    )
+
+
 @lru_cache(maxsize=1)
 def _get_jwk_client() -> PyJWKClient:
     """Return the process-wide, key-caching JWKS client for Google.
@@ -85,12 +119,7 @@ def _get_jwk_client() -> PyJWKClient:
     :func:`verify_google_id_token` resolves it per call rather than binding a
     client at import time: tests replace it wholesale to stay offline.
     """
-    return PyJWKClient(
-        GOOGLE_JWKS_URL,
-        cache_keys=True,
-        max_cached_keys=_MAX_CACHED_KEYS,
-        lifespan=_JWKS_CACHE_SECONDS,
-    )
+    return build_jwk_client()
 
 
 def _claim_str(claims: dict[str, Any], name: str) -> str | None:

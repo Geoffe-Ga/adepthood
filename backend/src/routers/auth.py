@@ -1621,6 +1621,7 @@ _REASON_OAUTH_LINKED = "oauth_linked"
 _REASON_OAUTH_SIGNUP = "oauth_signup"
 _REASON_OAUTH_NEEDS_LICENSE = "oauth_needs_license"
 _REASON_OAUTH_ACCOUNT_GATED = "oauth_account_gated"
+_REASON_OAUTH_LINK_CONFLICT = "oauth_link_conflict"
 
 # Single log event name so an operator greps one string and filters by
 # ``reason_code``.
@@ -1682,7 +1683,15 @@ async def _needs_license_conflict(email: str | None) -> HTTPException:
     nothing is ever interpolated into it.
 
     The dummy bcrypt verify matches the cost of the account-creating path, so
-    the refusals cannot be told apart by response time either.
+    the dominant CPU cost is the same whichever refusal fired.  That parity is
+    deliberately not claimed for wall-clock time: a refusal that reached the
+    license check has paid an outbound Gumroad round trip that a refusal
+    resolved from the database alone has not.  Closing that gap would mean
+    calling Gumroad on every sign-in, including the ordinary logins that need
+    no license at all, and the residual it leaves is narrow -- only the holder
+    of a provider-verified token for an address can reach those rungs, so the
+    most the timing distinguishes is the state of an account whose mailbox the
+    caller already controls.
 
     Returned rather than raised so every call site reads ``raise await
     _needs_license_conflict(...)`` -- the ``raise`` stays visible at the point
@@ -1974,7 +1983,12 @@ async def _create_oauth_account(
     await _grant_signup_entitlement(session, user, purchase)
     await claim_token_pack_sales(session, user)
     response = _auth_response_for(user)
-    await _insert_identity(session, response.user_id, claims.subject, email)
+    if not await _insert_identity(session, response.user_id, claims.subject, email):
+        # Expected only when a racer linked this subject to the account we just
+        # created, which leaves the caller signed in to the right account
+        # anyway.  Logged rather than ignored so that an integrity failure with
+        # some other cause is visible instead of silently looking like a login.
+        _log_oauth(_REASON_OAUTH_LINK_CONFLICT, email)
     _log_oauth(_REASON_OAUTH_SIGNUP, email)
     return response
 
@@ -2001,8 +2015,9 @@ async def google_oauth_signin(
 
     Everything else -- no license, a bad license, an unverified address, a
     token with no email, a disabled or deleted account -- is one 409 with
-    identical bytes and matched timing, so the endpoint answers no questions
-    about which accounts exist or which are gated.
+    identical bytes, so the endpoint answers no questions about which accounts
+    exist or which are gated.  See :func:`_needs_license_conflict` for the one
+    dimension along which that parity is bounded rather than absolute.
     """
     claims = await _verify_oauth_identity(payload.id_token)
     resolved = await _resolve_existing_account(session, claims)

@@ -41,7 +41,12 @@ from models.entitlement import Entitlement
 from models.user import User
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
-from services.oauth_google import GOOGLE_JWKS_URL, GOOGLE_OAUTH_CLIENT_IDS_ENV_VAR
+from services.oauth_google import (
+    GOOGLE_JWKS_URL,
+    GOOGLE_OAUTH_CLIENT_IDS_ENV_VAR,
+    JWKS_TIMEOUT_SECONDS,
+    build_jwk_client,
+)
 from services.oidc import OIDCIdentity
 
 if TYPE_CHECKING:
@@ -133,6 +138,9 @@ REASON_NEEDS_LICENSE = "oauth_needs_license"
 REASON_ACCOUNT_GATED = "oauth_account_gated"
 
 JWT_SEGMENT_COUNT = 3
+# Upper bound the JWKS fetch timeout must stay under. Anything longer holds a
+# shared thread-pool worker for longer than an interactive request should.
+MAX_ACCEPTABLE_JWKS_TIMEOUT = 10.0
 MAX_ID_TOKEN_LENGTH = 4096
 OVER_LENGTH_ID_TOKEN = "a" * (MAX_ID_TOKEN_LENGTH + 1)
 GARBAGE_TOKEN = "not.a.jwt"
@@ -530,6 +538,10 @@ _UNVERIFIABLE_TOKENS = (
     pytest.param(_mint_algorithm_confusion_token(), id="rs256-to-hs256-confusion"),
     pytest.param(GARBAGE_TOKEN, id="structurally-not-a-jwt"),
     pytest.param(_mint_token_missing("sub"), id="valid-signature-no-subject"),
+    # A token carrying no ``exp`` never expires, so absence has to be rejected
+    # outright rather than skipped the way an unasserted claim would be.
+    pytest.param(_mint_token_missing("exp"), id="valid-signature-no-expiry"),
+    pytest.param(_mint_token_missing("iat"), id="valid-signature-no-issued-at"),
 )
 
 
@@ -759,6 +771,55 @@ async def test_unverified_email_never_links_to_an_existing_account(
     assert user.email == EXISTING_EMAIL
     assert user.is_active is True
     assert _log_carries_marker(caplog, REASON_NEEDS_LICENSE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("license_verifier")
+@pytest.mark.parametrize(
+    "email_verified",
+    ["true", "True", 1],
+    ids=["string-true", "string-True", "integer-one"],
+)
+async def test_only_a_real_boolean_true_counts_as_a_verified_email(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    email_verified: object,
+) -> None:
+    """A truthy non-boolean ``email_verified`` must not be read as verified.
+
+    Google sends a JSON boolean, but other providers send the string ``"true"``
+    -- and a verifier that accepts anything truthy is exactly how an address
+    nobody proved ends up linked to somebody else's account.  Pinned because
+    the guard is a single ``is True`` that a well-meaning "be tolerant"
+    refactor would quietly widen.
+    """
+    await _seed_user(db_session)
+
+    response = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(
+            _mint_token(sub=FRESH_SUBJECT, email=EXISTING_EMAIL, email_verified=email_verified)
+        ),
+    )
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json()["detail"] == DETAIL_NEEDS_LICENSE
+    assert await _count_rows(db_session, AuthIdentity) == 0
+    assert await _count_rows(db_session, User) == 1
+
+
+def test_jwks_client_bounds_its_fetch_timeout() -> None:
+    """The JWKS fetch must not inherit PyJWT's 30-second default.
+
+    An unrecognised ``kid`` makes the client refetch immediately, bypassing the
+    key-set cache, and that fetch occupies a worker in the same default thread
+    pool bcrypt runs in.  An unbounded timeout therefore lets unauthenticated
+    junk tokens park threads that logins and signups need.
+    """
+    client = build_jwk_client()
+
+    assert client.timeout == JWKS_TIMEOUT_SECONDS
+    assert 0 < JWKS_TIMEOUT_SECONDS <= MAX_ACCEPTABLE_JWKS_TIMEOUT
 
 
 @pytest.mark.asyncio
