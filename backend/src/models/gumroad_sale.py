@@ -9,6 +9,11 @@ Gumroad to resend history.
 The row also carries the token-pack credit claim: ``token_pack_credited_at``
 is the exactly-once guard a wallet credit takes before moving any money, and
 ``token_pack_credited_user_id`` records which account received it.
+
+``revocation_processed_at`` is the mirror-image guard for reversals — the one
+claim every refund, dispute, cancellation, and subscription-ended event
+competes for, so a purchase is unwound exactly once no matter how many
+reversal pings Gumroad delivers.
 """
 
 from datetime import UTC, datetime
@@ -61,4 +66,13 @@ class GumroadSale(SQLModel, table=True):
         ondelete="SET NULL",
         index=True,
         nullable=True,
+    )
+    # The reversal claim guard, shared by every event that unwinds a purchase.
+    # NULL means "nothing has reversed this sale yet"; a guarded UPDATE stamps
+    # it, so the refund and the cancellation of the same subscription cannot
+    # both revoke. Sharing one column rather than one per event kind is the
+    # point: the second event to arrive has genuinely nothing left to undo.
+    revocation_processed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
     )
