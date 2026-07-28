@@ -35,6 +35,7 @@ from domain.entitlements import (
     PRODUCT_IDS_ENV_VAR,
     TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
     TOKEN_PACK_SIZES_ENV_VAR,
+    has_course_access,
 )
 from models.entitlement import Entitlement
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
@@ -66,6 +67,7 @@ REFUND_RESOURCE = "refund"
 UNKNOWN_SALE_MARKER = "unknown_sale"
 COVERED_MARKER = "covered_by_other_sale"
 NOT_APPLICABLE_MARKER = "cancellation_not_applicable"
+PREVIOUSLY_REVERSED_MARKER = "sale_previously_reversed"
 
 EXPECTED_SALES_AFTER_ORPHAN_CANCELLATION = 2
 
@@ -174,6 +176,11 @@ async def _refund_audits(db_session: AsyncSession) -> list[WalletAudit]:
         .execution_options(populate_existing=True)
     )
     return list(result.scalars().all())
+
+
+async def _active_entitlements(db_session: AsyncSession) -> list[Entitlement]:
+    """Return only the entitlement rows that are still live (``revoked_at`` unset)."""
+    return [row for row in await _entitlements(db_session) if row.revoked_at is None]
 
 
 async def _count_sales(db_session: AsyncSession) -> int:
@@ -407,6 +414,39 @@ async def test_cancellation_after_refund_claws_back_nothing_further(
     sale = await _reload_sale(db_session, PACK_SALE_ID)
     assert sale.refunded is True
     assert sale.revocation_processed_at == claimed_at
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_sale_ping_does_not_reinstate_cancelled_access(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A redelivered original sale ping must never undo a completed cancellation.
+
+    Cancellation leaves the same shape a refund does — the entitlement row is
+    stamped ``revoked_at`` and the sale carries a spent claim — so the sale
+    ping Gumroad re-delivers afterwards finds no active grant and would mint a
+    fresh one, silently resurrecting the subscription the buyer ended.
+    """
+    caplog.set_level(logging.DEBUG)
+    user_id = await _persist_user(db_session)
+    original_sale = _sale_payload()
+    await _ping(async_client, original_sale)
+    await _ping(async_client, _cancellation_payload())
+    claimed_at = (await _reload_sale(db_session, SALE_ID)).revocation_processed_at
+
+    response = await _ping(async_client, original_sale)
+
+    assert await _active_entitlements(db_session) == []
+    assert await has_course_access(db_session, user_id) is False
+    assert len(await _entitlements(db_session)) == 1
+    assert response.status_code == HTTPStatus.OK
+    assert claimed_at is not None
+    sale = await _reload_sale(db_session, SALE_ID)
+    assert sale.revocation_processed_at == claimed_at
+    assert sale.refunded is False
+    assert _log_carries_marker(caplog, PREVIOUSLY_REVERSED_MARKER)
 
 
 @pytest.mark.asyncio

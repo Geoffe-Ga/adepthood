@@ -71,6 +71,7 @@ _REFUNDED_FIELD = "refunded"
 # stored but deliberately moved nothing.
 _REASON_UNKNOWN_PRODUCT = "unknown_product"
 _REASON_REFUNDED_SALE = "refunded_sale"
+_REASON_PREVIOUSLY_REVERSED = "sale_previously_reversed"
 _REASON_SIZE_UNCONFIGURED = "token_pack_size_unconfigured"
 _REASON_PACK_CREDITED = "token_pack_credited"
 
@@ -163,6 +164,9 @@ async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> Non
     sale row alone is the outcome (the buyer's later license-gated signup
     converges by linking to it). The grant is idempotent, so webhook replays
     never duplicate an entitlement.
+
+    Requires the stored sale to be unreversed: a sale whose reversal claim is
+    already spent grants nothing, however many times Gumroad redelivers it.
     """
     if not is_aptitude_product_id(payload.get(_PRODUCT_ID_FIELD)):
         return
@@ -170,9 +174,24 @@ async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> Non
     if user is None:
         return
     sale_result = await session.execute(
-        select(GumroadSale).where(GumroadSale.gumroad_sale_id == payload["sale_id"])
+        select(GumroadSale)
+        .where(GumroadSale.gumroad_sale_id == payload["sale_id"])
+        # A reversal writes the claim through SQL alone, so an instance this
+        # session already holds would still read as unreversed; the guard
+        # below has to see the row as the database has it.
+        .execution_options(populate_existing=True)
     )
     sale = sale_result.scalars().first()
+    if sale is not None and sale.revocation_processed_at is not None:
+        # A reversal is permanent for the sale that funded the access, and it
+        # deliberately leaves the buyer with no active entitlement. Since the
+        # grant is only idempotent against a live one, a stale redelivery of
+        # the original purchase would mint a fresh grant and hand a refunded
+        # buyer back the access they were charged back for. The token-pack
+        # side needs no twin of this guard: ``token_pack_credited_at`` is a
+        # permanent one-way gate that no reversal ever clears.
+        logger.info("gumroad_webhook_event", extra={"reason_code": _REASON_PREVIOUSLY_REVERSED})
+        return
     await grant_course_access(session, user, sale=sale, reason_code=REASON_WEBHOOK_SALE)
 
 

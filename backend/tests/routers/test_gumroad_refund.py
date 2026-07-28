@@ -31,11 +31,17 @@ from domain.entitlements import (
     PRODUCT_IDS_ENV_VAR,
     TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
     TOKEN_PACK_SIZES_ENV_VAR,
+    has_course_access,
 )
 from models.entitlement import Entitlement
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.user import User
-from models.wallet_audit import BUCKET_OFFERING, REASON_GUMROAD_REFUND, WalletAudit
+from models.wallet_audit import (
+    BUCKET_OFFERING,
+    REASON_GUMROAD_PURCHASE,
+    REASON_GUMROAD_REFUND,
+    WalletAudit,
+)
 
 WEBHOOK_PATH = "/webhooks/gumroad/ping"
 WEBHOOK_SECRET = "gumroad-refund-shared-secret-test-only"  # pragma: allowlist secret
@@ -63,6 +69,7 @@ CANCELLATION_RESOURCE = "cancellation"
 
 UNKNOWN_SALE_MARKER = "unknown_sale"
 COVERED_MARKER = "covered_by_other_sale"
+PREVIOUSLY_REVERSED_MARKER = "sale_previously_reversed"
 
 # The buyer spent part of the pack before charging back, so the full-size
 # claw-back has to take the balance below zero.
@@ -201,6 +208,22 @@ async def _refund_audits(db_session: AsyncSession) -> list[WalletAudit]:
         .execution_options(populate_existing=True)
     )
     return list(result.scalars().all())
+
+
+async def _purchase_audits(db_session: AsyncSession) -> list[WalletAudit]:
+    """Return only the ``gumroad_purchase`` audit rows, oldest first."""
+    result = await db_session.execute(
+        select(WalletAudit)
+        .where(col(WalletAudit.reason) == REASON_GUMROAD_PURCHASE)
+        .order_by(col(WalletAudit.id))
+        .execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+async def _active_entitlements(db_session: AsyncSession) -> list[Entitlement]:
+    """Return only the entitlement rows that are still live (``revoked_at`` unset)."""
+    return [row for row in await _entitlements(db_session) if row.revoked_at is None]
 
 
 async def _count_sales(db_session: AsyncSession) -> int:
@@ -574,6 +597,65 @@ async def test_token_pack_refund_leaves_course_access_intact(
 
     assert (await _sole_entitlement(db_session)).revoked_at is None
     assert await _offering_balance(db_session, user_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_sale_ping_does_not_reinstate_refunded_access(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A redelivered original sale ping must never undo a completed refund.
+
+    Gumroad re-delivers any ping it believes went unacknowledged, so the
+    original purchase event can land again long after the money went back.
+    The grant is only idempotent against an *active* entitlement, and the
+    refund deliberately freed that slot, so re-dispatching the sale mints a
+    brand-new live row and hands a refunded buyer both their money and their
+    course access.
+    """
+    caplog.set_level(logging.DEBUG)
+    user_id = await _persist_user(db_session)
+    original_sale = _sale_payload()
+    await _ping(async_client, original_sale)
+    await _ping(async_client, _refund_payload())
+    claimed_at = (await _reload_sale(db_session, SALE_ID)).revocation_processed_at
+
+    response = await _ping(async_client, original_sale)
+
+    assert await _active_entitlements(db_session) == []
+    assert await has_course_access(db_session, user_id) is False
+    assert len(await _entitlements(db_session)) == 1
+    assert response.status_code == HTTPStatus.OK
+    assert claimed_at is not None
+    assert (await _reload_sale(db_session, SALE_ID)).revocation_processed_at == claimed_at
+    assert _log_carries_marker(caplog, PREVIOUSLY_REVERSED_MARKER)
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_pack_sale_after_a_refund_credits_nothing_further(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The wallet's one-way credit gate survives a replayed, already-refunded pack sale.
+
+    ``token_pack_credited_at`` is stamped permanently and no reversal clears
+    it, so the money side is already immune to the redelivery that reinstates
+    course access. Pinned here so narrowing the course grant cannot loosen
+    this gate on the way past.
+    """
+    user_id = await _persist_user(db_session)
+    original_pack_sale = _pack_payload()
+    await _ping(async_client, original_pack_sale)
+    await _ping(async_client, _pack_refund_payload())
+
+    response = await _ping(async_client, original_pack_sale)
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == 0
+    assert len(await _purchase_audits(db_session)) == 1
+    assert len(await _refund_audits(db_session)) == 1
+    assert await _entitlements(db_session) == []
 
 
 @pytest.mark.asyncio
