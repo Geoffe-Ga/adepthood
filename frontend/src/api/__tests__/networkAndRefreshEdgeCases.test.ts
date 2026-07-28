@@ -162,3 +162,88 @@ describe('error responses without a usable JSON detail', () => {
     });
   });
 });
+
+/**
+ * FastAPI answers a Pydantic rejection with an array-form ``detail``:
+ * ``[{loc, msg, type, input?, ctx?}]``. Only ``msg`` is safe to surface —
+ * ``input`` echoes back whatever the user submitted (which, on signup, is
+ * their license key) and ``loc`` leaks internal field names.
+ */
+describe('array-form Pydantic error detail', () => {
+  const LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
+  const TOO_LONG_MSG = 'String should have at most 128 characters';
+
+  function rejectWith(detail: unknown, status = 422) {
+    mockFetch.mockReturnValueOnce(
+      Promise.resolve({ ok: false, status, json: () => Promise.resolve({ detail }) }),
+    );
+  }
+
+  async function detailOf(promise: Promise<unknown>): Promise<string> {
+    let captured: string | undefined;
+    await promise.catch((err: { detail?: string }) => {
+      captured = err.detail;
+    });
+    expect(typeof captured).toBe('string');
+    return captured as string;
+  }
+
+  test('uses the msg of a single entry as the detail', async () => {
+    rejectWith([{ loc: ['body', 'license_key'], msg: TOO_LONG_MSG, type: 'string_too_long' }]);
+
+    await expect(habits.getStats(1)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 422,
+      detail: TOO_LONG_MSG,
+    });
+  });
+
+  test('joins multiple entries with a semicolon', async () => {
+    rejectWith([
+      { loc: ['body', 'email'], msg: 'Field required', type: 'missing' },
+      { loc: ['body', 'license_key'], msg: TOO_LONG_MSG, type: 'string_too_long' },
+    ]);
+
+    expect(await detailOf(habits.getStats(1))).toBe(`Field required; ${TOO_LONG_MSG}`);
+  });
+
+  test('falls back to a generic message when no entry carries a string msg', async () => {
+    rejectWith([{ loc: ['body', 'license_key'], type: 'missing' }, { msg: 42 }]);
+
+    expect(await detailOf(habits.getStats(1))).toBe('Request failed');
+  });
+
+  test('falls back to a generic message for an empty array', async () => {
+    rejectWith([]);
+
+    expect(await detailOf(habits.getStats(1))).toBe('Request failed');
+  });
+
+  test('never echoes the submitted input or the ctx object back to the client', async () => {
+    rejectWith([
+      {
+        loc: ['body', 'license_key'],
+        msg: TOO_LONG_MSG,
+        type: 'string_too_long',
+        input: LICENSE_KEY,
+        ctx: { max_length: 128 },
+      },
+    ]);
+
+    const detail = await detailOf(habits.getStats(1));
+
+    expect(detail).toBe(TOO_LONG_MSG);
+    expect(detail).not.toContain(LICENSE_KEY);
+    expect(detail).not.toContain('license_key');
+    expect(detail).not.toContain('max_length');
+  });
+
+  test('still prefers a plain string detail over the array branch', async () => {
+    rejectWith('license_required', 400);
+
+    await expect(habits.getStats(1)).rejects.toMatchObject({
+      status: 400,
+      detail: 'license_required',
+    });
+  });
+});

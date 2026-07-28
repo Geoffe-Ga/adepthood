@@ -79,6 +79,16 @@ export const authStyles = StyleSheet.create({
   inputSpacing: { marginBottom: SPACING.md },
   buttonSpacing: { marginBottom: SPACING.lg },
   error: { color: colors.danger, marginBottom: SPACING.md, textAlign: 'center' },
+  // Field-scoped error, left-aligned under its input so the eye reads it as
+  // belonging to that one field — unlike the centered form-level ``error``.
+  fieldError: {
+    color: colors.danger,
+    textAlign: 'left',
+    marginTop: SPACING.xs,
+    marginBottom: SPACING.xs,
+  },
+  // "Where's my key?" — a quiet self-serve exit next to the license field.
+  helpLink: { color: accent.primary, fontWeight: '500', marginBottom: SPACING.md },
   link: { textAlign: 'center', color: ink.soft },
   linkBold: { color: accent.primary, fontWeight: '600' },
   forgotLink: {
@@ -87,6 +97,16 @@ export const authStyles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: SPACING.md,
   },
+  // Get Started (pre-auth) layout: a body paragraph under the lead, then the
+  // terracotta callout band with breathing room before the quieter options.
+  body: {
+    ...TYPE.body,
+    color: ink.soft,
+    textAlign: 'center',
+    marginBottom: SPACING.xl,
+  },
+  // Separates the loud terracotta band from the quieter options beneath it.
+  ctaSpacing: { marginTop: SPACING.lg, marginBottom: SPACING.lg },
   successTitle: {
     ...TYPE.title,
     color: ink.primary,

@@ -30,7 +30,14 @@ import {
   shouldRefreshToken,
 } from '@/utils/token';
 
-type LoginOrSignup = (_emailOrUsername: string, _pw: string) => Promise<void>;
+type Login = (_emailOrUsername: string, _pw: string) => Promise<void>;
+
+/**
+ * Signup takes the buyer's Gumroad license key as a REQUIRED third argument:
+ * the paid-content gate is only real if the type system refuses a call that
+ * forgets it.
+ */
+type Signup = (_email: string, _password: string, _licenseKey: string) => Promise<void>;
 
 /**
  * BUG-NAV-001 / BUG-NAV-002: the navigator used to gate on the raw ``token``
@@ -77,8 +84,8 @@ interface AuthContextValue {
    * client-side guesses belong in the request, not here.
    */
   setUserTimezone: (_timezone: string) => void;
-  login: LoginOrSignup;
-  signup: LoginOrSignup;
+  login: Login;
+  signup: Signup;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   /** User dismissed the re-auth sheet: treat as an explicit logout. */
@@ -352,8 +359,8 @@ function useLoadStoredToken(mutators: AuthMutators): void {
 }
 
 interface AuthActions {
-  login: LoginOrSignup;
-  signup: LoginOrSignup;
+  login: Login;
+  signup: Signup;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   dismissReauth: () => Promise<void>;
@@ -398,11 +405,20 @@ const DUPLICATE_SIGNUP_SENTINEL_USER_ID = 0;
  * plus the server's record of the stored zone (which the backend may
  * have normalised) so the AuthContext can populate `userTimezone`
  * synchronously with the same value the rest of the API will return.
+ *
+ * The license key rides along verbatim — normalising it is the signup form's
+ * job, and a stray trim or case-fold here could mangle a key the buyer
+ * actually holds before Gumroad ever sees it.
  */
-async function signupWithDeviceTimezone(email: string, password: string): Promise<AuthResponse> {
+async function signupWithDeviceTimezone(
+  email: string,
+  password: string,
+  licenseKey: string,
+): Promise<AuthResponse> {
   const response = await authApi.signup({
     email,
     password,
+    license_key: licenseKey,
     timezone: detectDeviceTimezone(),
   });
   if (response.user_id === DUPLICATE_SIGNUP_SENTINEL_USER_ID) {
@@ -430,7 +446,7 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
 }
 
 function useAuthActions(mutators: AuthMutators): AuthActions {
-  const login = useCallback<LoginOrSignup>(
+  const login = useCallback<Login>(
     async (email, password) => {
       const response = await authApi.login({ email, password });
       await applyAuthResponse(response, mutators);
@@ -438,9 +454,9 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     [mutators],
   );
 
-  const signup = useCallback<LoginOrSignup>(
-    async (email, password) => {
-      const response = await signupWithDeviceTimezone(email, password);
+  const signup = useCallback<Signup>(
+    async (email, password, licenseKey) => {
+      const response = await signupWithDeviceTimezone(email, password, licenseKey);
       await applyAuthResponse(response, mutators);
     },
     [mutators],

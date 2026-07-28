@@ -61,6 +61,10 @@ jest.mock('@react-navigation/native-stack', () => ({
 }));
 
 // Mock child screens to simple identifiable components
+jest.mock('@/features/Auth/GetStartedScreen', () => {
+  const { Text } = require('react-native');
+  return () => <Text>GetStartedScreen</Text>;
+});
 jest.mock('@/features/Auth/LoginScreen', () => {
   const { Text } = require('react-native');
   return () => <Text>LoginScreen</Text>;
@@ -135,7 +139,14 @@ beforeEach(() => {
 });
 
 describe('App auth flow', () => {
-  it('shows auth screens when user is anonymous', () => {
+  it('shows the pre-auth Get Started surface when the user is anonymous', () => {
+    mockAuthState = { token: null, authStatus: 'anonymous' };
+    const { getByText } = render(<App />);
+
+    expect(getByText('GetStartedScreen')).toBeTruthy();
+  });
+
+  it('keeps the log-in form reachable in the anonymous stack', () => {
     mockAuthState = { token: null, authStatus: 'anonymous' };
     const { getByText } = render(<App />);
 
@@ -161,6 +172,7 @@ describe('App auth flow', () => {
     const { queryByText } = render(<App />);
 
     expect(queryByText('LoginScreen')).toBeNull();
+    expect(queryByText('GetStartedScreen')).toBeNull();
   });
 
   it('does not show main app when anonymous', () => {

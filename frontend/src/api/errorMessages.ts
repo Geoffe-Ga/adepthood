@@ -25,6 +25,10 @@ const PROVIDER_TROUBLE =
   "BotMason's AI provider is having trouble connecting. Give it a moment and tap retry.";
 const SESSION_EXPIRED = 'Your session has expired. Sign back in to continue.';
 const NO_ACCESS = "You don't have access to this.";
+// The backend caps at 64 characters so bcrypt's 72-byte limit can never
+// silently truncate. Naming the ceiling turns "try again" into a fix. // pragma: allowlist secret
+const PASSWORD_TOO_LONG =
+  'That password is longer than we can store. Shorten it to 64 characters or fewer.';
 
 /**
  * Map of backend ``detail`` strings (see ``backend/src/errors.py`` and each
@@ -36,6 +40,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   invalid_credentials:
     "That email and password don't match an account we have. Double-check both fields, or tap Sign Up if you're new.",
   password_too_short: 'Pick a password that is at least 8 characters long.', // pragma: allowlist secret
+  password_too_long: PASSWORD_TOO_LONG, // pragma: allowlist secret
   unauthorized: SESSION_EXPIRED,
   // BUG-API-018: distinct copy when the request was anonymous in the
   // first place -- "your session expired" implies a session that was
@@ -49,6 +54,17 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // BUG-AUTH-002: synthesised by AuthContext when the backend returns the user_id=0 anti-enumeration sentinel.
   email_in_use:
     'That email may already be registered. Try logging in, or use a different email to sign up.',
+
+  // --- Gumroad license verification (signup) ---------------------------
+  // ``invalid_license`` is deliberately indistinguishable from "this email is
+  // already registered" on the wire (anti-enumeration), so the copy must not
+  // claim to know which of the two happened.
+  invalid_license: "We couldn't verify that key — double-check it matches the email and product.",
+  license_required: 'Add the license key from your Gumroad receipt to continue.',
+  too_many_license_attempts:
+    "That's several tries in a row. Give it an hour, then try again with the key from your receipt.",
+  license_verification_unavailable:
+    "We can't reach Gumroad to check your key right now. Nothing is lost — give it a few minutes and try again.",
 
   // --- Admin -----------------------------------------------------------
   admin_required: 'Admin privileges are required for this action.',

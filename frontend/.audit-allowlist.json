@@ -1,0 +1,19 @@
+{
+  "$comment": [
+    "Advisories deliberately not failing the high+ audit gate, each scoped to one",
+    "GHSA id and each with a hard expiry the gate ENFORCES. An expired entry fails",
+    "the build exactly like an unallowlisted advisory would — the time box is real,",
+    "not a comment. Adding an entry here is an owner-level policy decision, not an",
+    "engineering convenience: everything else, including anything newly introduced,",
+    "still fails the gate. See scripts/frontend/audit-gate.mjs."
+  ],
+  "allow": [
+    {
+      "id": "GHSA-mh99-v99m-4gvg",
+      "package": "brace-expansion",
+      "expires": "2026-10-22",
+      "issue": 1975,
+      "reason": "Patched only in brace-expansion@5.0.8 with no 1.1.x/2.x backport (latest 2.x is 2.1.2). Unreachable: eslint-plugin-react@7.37.5 is the latest published version and pins minimatch ^3.1.2, and minimatch@3 calls brace-expansion as a function while v5 exports a non-callable __esModule object. Probed across the whole Expo ladder (SDK 52 -> 53 -> 57 ceiling); the advisory survives every rung, so #885 does not fix it. A blanket brace-expansion@5.0.8 override makes the audit pass and provably breaks the toolchain (minimatch@3.1.5 throws 'expand is not a function' at call time, after lint and tests look green)."
+    }
+  ]
+}

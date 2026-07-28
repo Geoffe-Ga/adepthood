@@ -34,3 +34,39 @@ function resolveApiBaseUrl(): string {
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
+
+// Gumroad is where the course is bought and where license-key help lives.
+// Both are public marketing pages with safe defaults, so — unlike
+// ``API_BASE_URL`` — a missing override is not a misconfiguration and must
+// never contribute to ``CONFIG_ERROR``.
+const DEFAULT_GUMROAD_PRODUCT_URL = 'https://adepthood.gumroad.com/l/aptitude';
+const DEFAULT_GUMROAD_HELP_URL = 'https://help.gumroad.com/article/76-license-keys';
+
+/**
+ * Resolve an ``EXPO_PUBLIC_*`` override, checking both routes the value can
+ * take.
+ *
+ * ``inlined`` is the result of a *static* ``process.env.EXPO_PUBLIC_…``
+ * reference at the call site: babel-preset-expo rewrites that expression to the
+ * build-time literal, which is the only way an override reaches a production
+ * bundle. ``name`` covers the runtime route, which Metro populates during
+ * development. The computed lookup is deliberate — the inliner only rewrites
+ * statically-keyed member expressions, so this one survives as a real read.
+ */
+function resolveEnvUrl(inlined: string | undefined, name: string, fallback: string): string {
+  return inlined || process.env[name] || fallback;
+}
+
+/** Product page the pre-auth Get Started CTA opens. */
+export const GUMROAD_PRODUCT_URL = resolveEnvUrl(
+  process.env.EXPO_PUBLIC_GUMROAD_PRODUCT_URL,
+  'EXPO_PUBLIC_GUMROAD_PRODUCT_URL',
+  DEFAULT_GUMROAD_PRODUCT_URL,
+);
+
+/** "Where's my key?" help article linked from the signup form. */
+export const GUMROAD_HELP_URL = resolveEnvUrl(
+  process.env.EXPO_PUBLIC_GUMROAD_HELP_URL,
+  'EXPO_PUBLIC_GUMROAD_HELP_URL',
+  DEFAULT_GUMROAD_HELP_URL,
+);

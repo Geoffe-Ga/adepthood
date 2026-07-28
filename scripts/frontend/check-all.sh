@@ -22,10 +22,11 @@ Usage: $(basename "$0") [OPTIONS]
 Run all quality checks in sequence.
 
 Runs:
-  1. Linting (ESLint)
-  2. Formatting (Prettier)
-  3. Type checking (TypeScript)
-  4. Tests (Jest)
+  1. Security audit (npm audit, high+, via audit-gate.mjs)
+  2. Linting (ESLint)
+  3. Formatting (Prettier)
+  4. Type checking (TypeScript)
+  5. Tests (Jest)
 
 OPTIONS:
     --verbose   Show detailed output
@@ -75,6 +76,10 @@ run_check() {
     echo ""
 }
 
+# Mirrors the CI job's first step. Without it, check-all.sh could report green
+# while CI's audit gate failed on the same commit — which is exactly what
+# happened on the Gumroad onboarding PR.
+run_check "Security audit" "audit-gate.mjs"
 run_check "Linting" "lint.sh" --check
 run_check "Formatting" "format.sh" --check
 run_check "Type checking" "typecheck.sh"
