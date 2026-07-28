@@ -56,6 +56,16 @@ REASON_MONTHLY_RESET = "monthly_reset"
 # apart from courtesy top-ups, and so a later refund claw-back can find
 # exactly the rows it must reverse.
 REASON_GUMROAD_PURCHASE = "gumroad_purchase"
+# ``gumroad_refund`` — the reversal of the row above, written when a refund
+# or chargeback ping claws the pack back out of ``BUCKET_OFFERING``.  The
+# ``delta`` is the negative of the original purchase, so
+# ``SUM(delta WHERE bucket='offering')`` still equals the live balance and a
+# refunded pack nets to zero across the pair.  Like the purchase it is
+# system-initiated with ``actor_user_id == user_id``: the buyer's own
+# chargeback moved their wallet, nobody granted or took anything by hand.
+# The claw-back is deliberately unclamped, so this row can carry the balance
+# below zero — spending the credits first must not make the refund cheaper.
+REASON_GUMROAD_REFUND = "gumroad_refund"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 __all__ = [
     "PRODUCT_IDS_ENV_VAR",
     "REASON_ADMIN_OVERRIDE",
+    "REASON_CANCELLATION",
     "REASON_DUPLICATE_SIGNUP",
     "REASON_EMAIL_MISMATCH",
     "REASON_REFUND",
@@ -74,9 +75,12 @@ logger = logging.getLogger(__name__)
 # per code so grep-by-reason in log aggregation has a single spelling.
 REASON_SIGNUP_REDEMPTION = "signup_redemption"
 REASON_WEBHOOK_SALE = "webhook_sale"
-# Forward-reserved for the post-grant revocation paths (refund-driven and
-# manual admin override); exported now so those code paths share this spelling.
+# The two webhook-driven revocations. Kept apart so an operator reading the
+# log can tell "the buyer got their money back" from "the subscription simply
+# lapsed" — the entitlement outcome is identical, the accounting is not.
 REASON_REFUND = "refund"
+REASON_CANCELLATION = "cancellation"
+# Still forward-reserved: no manual admin-override revocation path exists yet.
 REASON_ADMIN_OVERRIDE = "admin_override"
 REASON_DUPLICATE_SIGNUP = "duplicate_signup"
 REASON_EMAIL_MISMATCH = "email_mismatch"

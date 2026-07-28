@@ -41,6 +41,7 @@ from models.wallet_audit import (
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
     REASON_GUMROAD_PURCHASE,
+    REASON_GUMROAD_REFUND,
     REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
@@ -416,5 +417,43 @@ async def grant_purchase_credit(session: AsyncSession, user_id: int, amount: int
         user_id,
         amount,
         reason=REASON_GUMROAD_PURCHASE,
+        actor_user_id=user_id,
+    )
+
+
+async def claw_back_purchase_credit(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+) -> int | None:
+    """Debit a refunded Gumroad purchase's ``amount`` and return the new total.
+
+    The exact inverse of :func:`grant_purchase_credit`: ``amount`` is passed
+    in positive and applied as ``-amount``, so the audit pair for a refunded
+    pack sums to zero.  The buyer is their own actor again -- their
+    chargeback moved the wallet, nobody granted or confiscated anything by
+    hand.
+
+    **The resulting balance may be negative, and that is the point.**
+    ``_credit_offering`` does no clamping, so a buyer who spent half a pack
+    before disputing the charge is left overdrawn rather than keeping the
+    messages they spent.  Clamping at zero would make spending first a way to
+    get the credits for free.  A negative balance is still unspendable:
+    :func:`spend_one_message` guards its offering branch with
+    ``WHERE offering_balance > 0``, so the buyer simply has no paid capacity
+    until the shortfall is made good.  The audit arithmetic needs no special
+    case either -- ``balance_before = new_balance - amount`` is already
+    correct for a negative ``amount``.
+
+    Returns ``None`` (staging no audit row) when the user has vanished, so
+    the caller can log the orphaned reversal rather than record a debit
+    against nobody.  Does not commit: the caller owns the transaction so the
+    debit lands with whatever claim guards it.
+    """
+    return await _credit_offering(
+        session,
+        user_id,
+        -amount,
+        reason=REASON_GUMROAD_REFUND,
         actor_user_id=user_id,
     )
