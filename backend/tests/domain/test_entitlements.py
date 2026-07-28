@@ -20,10 +20,15 @@ from sqlmodel import SQLModel, col, select
 
 from domain.entitlements import (
     PRODUCT_IDS_ENV_VAR,
+    TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
+    TOKEN_PACK_SIZES_ENV_VAR,
     grant_course_access,
     has_course_access,
     is_aptitude_product_id,
+    is_token_pack_product_id,
     revoke_course_access,
+    token_pack_product_ids,
+    token_pack_size,
 )
 from models.entitlement import Entitlement, EntitlementKind
 from models.gumroad_sale import GumroadSale
@@ -39,6 +44,15 @@ SALE_ID = "S-500"
 GRANT_REASON_DEFAULT = "signup_redemption"
 REVOKE_REASON = "refund"
 STUB_USER_ID = 1
+TOKEN_PACK_PRODUCT_ID = "prod_pack_small"
+SECOND_TOKEN_PACK_PRODUCT_ID = "prod_pack_large"
+MALFORMED_PACK_PRODUCT_ID = "prod_pack_malformed"
+TOKEN_PACK_SIZE = 100
+SECOND_TOKEN_PACK_SIZE = 250
+REVISED_TOKEN_PACK_SIZE = 500
+# A full-width Unicode digit sequence, written as escapes so the source stays
+# pure ASCII: ``str.isdigit()`` accepts it but ``str.isascii()`` does not.
+NON_ASCII_DIGIT_SIZE = "\uff11\uff10\uff10"
 
 
 def _log_carries_reason(caplog: pytest.LogCaptureFixture, reason: str) -> bool:
@@ -277,3 +291,139 @@ async def test_distinct_users_hold_active_entitlements_simultaneously(
 
     assert await _count_entitlements(db_session, first_id) == 1
     assert await _count_entitlements(db_session, second_id) == 1
+
+
+def test_is_token_pack_product_id_is_false_when_allowlist_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset token-pack allowlist fails closed for every product id."""
+    monkeypatch.delenv(TOKEN_PACK_PRODUCT_IDS_ENV_VAR, raising=False)
+    assert is_token_pack_product_id(TOKEN_PACK_PRODUCT_ID) is False
+
+
+def test_is_token_pack_product_id_matches_only_allowlisted_products(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exact allowlist entry matches; an unlisted product does not."""
+    monkeypatch.setenv(
+        TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
+        f"{TOKEN_PACK_PRODUCT_ID},{SECOND_TOKEN_PACK_PRODUCT_ID}",
+    )
+    assert is_token_pack_product_id(TOKEN_PACK_PRODUCT_ID) is True
+    assert is_token_pack_product_id(SECOND_TOKEN_PACK_PRODUCT_ID) is True
+    assert is_token_pack_product_id(PRODUCT_ID) is False
+
+
+def test_is_token_pack_product_id_skips_blank_and_whitespace_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Padding, blank entries, and a trailing comma are all harmless."""
+    monkeypatch.setenv(
+        TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
+        f" {TOKEN_PACK_PRODUCT_ID} , ,,{SECOND_TOKEN_PACK_PRODUCT_ID},",
+    )
+    assert is_token_pack_product_id(TOKEN_PACK_PRODUCT_ID) is True
+    assert is_token_pack_product_id(SECOND_TOKEN_PACK_PRODUCT_ID) is True
+    assert is_token_pack_product_id("") is False
+    assert is_token_pack_product_id("   ") is False
+    assert is_token_pack_product_id(None) is False
+
+
+def test_token_pack_product_ids_returns_the_parsed_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parsed allowlist is the stripped, blank-free list of configured ids."""
+    monkeypatch.setenv(
+        TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
+        f" {TOKEN_PACK_PRODUCT_ID} ,, {SECOND_TOKEN_PACK_PRODUCT_ID},",
+    )
+    assert token_pack_product_ids() == [TOKEN_PACK_PRODUCT_ID, SECOND_TOKEN_PACK_PRODUCT_ID]
+
+
+def test_token_pack_product_ids_is_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unset allowlist parses to the empty list, not to a default product."""
+    monkeypatch.delenv(TOKEN_PACK_PRODUCT_IDS_ENV_VAR, raising=False)
+    assert token_pack_product_ids() == []
+
+
+def test_token_pack_size_parses_every_configured_pack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each ``product_id:count`` entry maps its id to the configured integer size."""
+    monkeypatch.setenv(
+        TOKEN_PACK_SIZES_ENV_VAR,
+        f"{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE}, "
+        f"{SECOND_TOKEN_PACK_PRODUCT_ID}:{SECOND_TOKEN_PACK_SIZE}",
+    )
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) == TOKEN_PACK_SIZE
+    assert token_pack_size(SECOND_TOKEN_PACK_PRODUCT_ID) == SECOND_TOKEN_PACK_SIZE
+
+
+def test_token_pack_size_is_none_for_unconfigured_and_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset size map, and an id missing from a set map, both yield None."""
+    monkeypatch.delenv(TOKEN_PACK_SIZES_ENV_VAR, raising=False)
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) is None
+    monkeypatch.setenv(TOKEN_PACK_SIZES_ENV_VAR, f"{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE}")
+    assert token_pack_size(SECOND_TOKEN_PACK_PRODUCT_ID) is None
+    assert token_pack_size(None) is None
+
+
+def test_token_pack_size_last_duplicate_entry_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repeated product id resolves to the right-most configured size."""
+    monkeypatch.setenv(
+        TOKEN_PACK_SIZES_ENV_VAR,
+        f"{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE},"
+        f"{TOKEN_PACK_PRODUCT_ID}:{REVISED_TOKEN_PACK_SIZE}",
+    )
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) == REVISED_TOKEN_PACK_SIZE
+
+
+@pytest.mark.parametrize(
+    "malformed_entry",
+    [
+        MALFORMED_PACK_PRODUCT_ID,
+        f"{MALFORMED_PACK_PRODUCT_ID}:",
+        f"{MALFORMED_PACK_PRODUCT_ID}:x",
+        f"{MALFORMED_PACK_PRODUCT_ID}:0",
+        f"{MALFORMED_PACK_PRODUCT_ID}:-5",
+        f"{MALFORMED_PACK_PRODUCT_ID}:1.5",
+        f"{MALFORMED_PACK_PRODUCT_ID}:{NON_ASCII_DIGIT_SIZE}",
+        f":{TOKEN_PACK_SIZE}",
+    ],
+)
+def test_token_pack_size_drops_malformed_entries_without_defaulting(
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_entry: str,
+) -> None:
+    """A malformed entry yields None for its id and never poisons its neighbour."""
+    monkeypatch.setenv(
+        TOKEN_PACK_SIZES_ENV_VAR,
+        f"{malformed_entry},{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE}",
+    )
+    assert token_pack_size(MALFORMED_PACK_PRODUCT_ID) is None
+    assert token_pack_size("") is None
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) == TOKEN_PACK_SIZE
+
+
+def test_token_pack_size_reads_the_environment_at_call_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-pointing the env var changes the answer without a module reload."""
+    monkeypatch.setenv(TOKEN_PACK_SIZES_ENV_VAR, f"{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE}")
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) == TOKEN_PACK_SIZE
+
+    monkeypatch.setenv(
+        TOKEN_PACK_SIZES_ENV_VAR, f"{TOKEN_PACK_PRODUCT_ID}:{REVISED_TOKEN_PACK_SIZE}"
+    )
+    assert token_pack_size(TOKEN_PACK_PRODUCT_ID) == REVISED_TOKEN_PACK_SIZE
+
+
+def test_is_token_pack_product_id_reads_the_environment_at_call_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rotating the allowlist takes effect on the next call, with no restart."""
+    monkeypatch.setenv(TOKEN_PACK_PRODUCT_IDS_ENV_VAR, TOKEN_PACK_PRODUCT_ID)
+    assert is_token_pack_product_id(TOKEN_PACK_PRODUCT_ID) is True
+
+    monkeypatch.setenv(TOKEN_PACK_PRODUCT_IDS_ENV_VAR, SECOND_TOKEN_PACK_PRODUCT_ID)
+    assert is_token_pack_product_id(TOKEN_PACK_PRODUCT_ID) is False

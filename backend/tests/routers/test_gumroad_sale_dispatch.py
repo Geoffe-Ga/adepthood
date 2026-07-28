@@ -6,6 +6,11 @@ course_access entitlement when a user with the buyer's email already exists
 with no matching user only the sale row is persisted; a later license-gated
 signup for that email converges by linking its entitlement to the stored
 sale; non-sale events never grant.
+
+The token-pack branch is exercised alongside it: a sale of an allowlisted
+token-pack product credits the buyer's offering wallet exactly once, by the
+configured pack size only, and never grants course access - the two product
+allowlists dispatch to disjoint side effects.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from domain.entitlements import TOKEN_PACK_PRODUCT_IDS_ENV_VAR, TOKEN_PACK_SIZES_ENV_VAR
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
 from models.user import User
+from models.wallet_audit import REASON_GUMROAD_PURCHASE, WalletAudit
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
 pytestmark = pytest.mark.real_license_gate
@@ -43,6 +50,19 @@ SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
 COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 WEBHOOK_SALE_MARKER = "webhook_sale"
+TOKEN_PACK_PRODUCT_ID = "prod_pack_small"
+UNSIZED_TOKEN_PACK_PRODUCT_ID = "prod_pack_unsized"
+UNKNOWN_PRODUCT_ID = "prod_not_sold_here"
+TOKEN_PACK_SIZE = 100
+TOKEN_PACK_SALE_ID = "S-200"
+UNKNOWN_PRODUCT_MARKER = "unknown_product"
+REFUNDED_SALE_MARKER = "refunded_sale"
+UNCONFIGURED_SIZE_MARKER = "token_pack_size_unconfigured"
+WRONG_WEBHOOK_SECRET = "not-the-shared-secret"  # pragma: allowlist secret
+# A payload field a naive implementation might trust; the credit must come
+# from the configured pack size alone.
+PAYLOAD_QUANTITY_FIELD = "quantity"
+PAYLOAD_QUANTITY_VALUE = "9999"
 
 
 @pytest.fixture
@@ -297,3 +317,297 @@ async def test_webhook_first_then_signup_links_entitlement_to_stored_sale(
     assert entitlement.user_id == signup.json()["user_id"]
     assert entitlement.kind == COURSE_ACCESS_KIND
     assert entitlement.revoked_at is None
+
+
+# -- Token-pack credit branch ------------------------------------------------
+
+
+@pytest.fixture
+def token_pack_config(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Allowlist the token-pack products and size only the sellable one.
+
+    ``UNSIZED_TOKEN_PACK_PRODUCT_ID`` is deliberately allowlisted without a
+    size so the unconfigured-size branch has a product to exercise.
+    """
+    monkeypatch.setenv(
+        TOKEN_PACK_PRODUCT_IDS_ENV_VAR,
+        f"{TOKEN_PACK_PRODUCT_ID},{UNSIZED_TOKEN_PACK_PRODUCT_ID}",
+    )
+    monkeypatch.setenv(TOKEN_PACK_SIZES_ENV_VAR, f"{TOKEN_PACK_PRODUCT_ID}:{TOKEN_PACK_SIZE}")
+    return TOKEN_PACK_PRODUCT_ID
+
+
+def _token_pack_payload(**overrides: str) -> dict[str, str]:
+    """Build a ping payload for a token-pack sale, with optional overrides."""
+    pack_defaults = {"sale_id": TOKEN_PACK_SALE_ID, "product_id": TOKEN_PACK_PRODUCT_ID}
+    return _sale_payload(**{**pack_defaults, **overrides})
+
+
+async def _offering_balance(db_session: AsyncSession, user_id: int) -> int:
+    """Return the user's persisted offering balance, read fresh."""
+    result = await db_session.execute(
+        select(User).where(User.id == user_id).execution_options(populate_existing=True)
+    )
+    return int(result.scalars().one().offering_balance)
+
+
+async def _count_purchase_audits(db_session: AsyncSession) -> int:
+    """Count only ``gumroad_purchase`` audit rows so other reasons cannot skew."""
+    result = await db_session.execute(
+        select(func.count())
+        .select_from(WalletAudit)
+        .where(WalletAudit.reason == REASON_GUMROAD_PURCHASE)
+    )
+    return int(result.scalar_one())
+
+
+async def _reload_sale(db_session: AsyncSession, sale_id: str) -> GumroadSale:
+    """Re-read one sale row from the database, bypassing the identity map."""
+    result = await db_session.execute(
+        select(GumroadSale)
+        .where(GumroadSale.gumroad_sale_id == sale_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalars().one()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_token_pack_ping_credits_registered_buyer(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A token-pack sale credits exactly the configured pack size and claims the sale."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(**{PAYLOAD_QUANTITY_FIELD: PAYLOAD_QUANTITY_VALUE}),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == TOKEN_PACK_SIZE
+    assert await _count_purchase_audits(db_session) == 1
+    sale = await _reload_sale(db_session, TOKEN_PACK_SALE_ID)
+    assert sale.token_pack_credited_at is not None
+    assert sale.token_pack_credited_user_id == user_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_replayed_token_pack_ping_credits_once(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A duplicate delivery of the same ping stays 200 and never double-credits."""
+    _user, user_id = await _persist_user(db_session)
+    payload = _token_pack_payload()
+
+    first = await async_client.post(WEBHOOK_PATH, params={"secret": webhook_secret}, data=payload)
+    second = await async_client.post(WEBHOOK_PATH, params={"secret": webhook_secret}, data=payload)
+
+    assert first.status_code == HTTPStatus.OK
+    assert second.status_code == HTTPStatus.OK
+    assert await _count_sales(db_session) == 1
+    assert await _offering_balance(db_session, user_id) == TOKEN_PACK_SIZE
+    assert await _count_purchase_audits(db_session) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_token_pack_ping_without_user_leaves_sale_unclaimed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """With no account yet the sale is stored unclaimed, awaiting the signup sweep."""
+    response = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=_token_pack_payload()
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_sales(db_session) == 1
+    sale = await _reload_sale(db_session, TOKEN_PACK_SALE_ID)
+    assert sale.token_pack_credited_at is None
+    assert sale.token_pack_credited_user_id is None
+    assert await _count_purchase_audits(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_aptitude_sale_leaves_offering_balance_untouched(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A course sale grants access without minting a single wallet credit."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=_sale_payload()
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_entitlements(db_session) == 1
+    assert await _offering_balance(db_session, user_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_token_pack_sale_grants_no_entitlement(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """Buying credits must never hand out course access."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=_token_pack_payload()
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == TOKEN_PACK_SIZE
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_refunded_token_pack_ping_credits_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A refunded sale is persisted for the record but never credited."""
+    caplog.set_level(logging.DEBUG)
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(refunded="true"),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_sales(db_session) == 1
+    assert await _offering_balance(db_session, user_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+    assert _log_carries_marker(caplog, REFUNDED_SALE_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_unsized_token_pack_product_credits_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An allowlisted pack with no configured size fails closed and says so."""
+    caplog.set_level(logging.DEBUG)
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(product_id=UNSIZED_TOKEN_PACK_PRODUCT_ID),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+    assert _log_carries_marker(caplog, UNCONFIGURED_SIZE_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_product_on_neither_allowlist_is_logged_and_inert(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unrecognised product grants nothing, credits nothing, and is flagged."""
+    caplog.set_level(logging.DEBUG)
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(product_id=UNKNOWN_PRODUCT_ID),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+    assert _log_carries_marker(caplog, UNKNOWN_PRODUCT_MARKER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_non_sale_resource_with_token_pack_product_credits_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A refund event carrying a pack product must not credit the wallet."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(resource_name=NON_SALE_RESOURCE),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _count_sales(db_session) == 1
+    assert await _offering_balance(db_session, user_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config")
+async def test_token_pack_email_match_is_case_insensitive(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A mixed-case buyer email still credits the lowercase stored account."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_token_pack_payload(email=MIXED_CASE_BUYER_EMAIL),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert await _offering_balance(db_session, user_id) == TOKEN_PACK_SIZE
+    assert await _count_purchase_audits(db_session) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("token_pack_config", "webhook_secret")
+async def test_forged_token_pack_ping_writes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A ping with the wrong shared secret mints no credits and stores no rows."""
+    _user, user_id = await _persist_user(db_session)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": WRONG_WEBHOOK_SECRET},
+        data=_token_pack_payload(),
+    )
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert await _count_sales(db_session) == 0
+    assert await _count_purchase_audits(db_session) == 0
+    assert await _offering_balance(db_session, user_id) == 0

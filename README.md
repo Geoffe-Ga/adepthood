@@ -71,7 +71,8 @@ uvicorn src.main:app --reload
 
 To exercise the Gumroad integration (license verification and the sale
 webhook), set `GUMROAD_API_TOKEN`, `GUMROAD_WEBHOOK_SECRET`,
-`GUMROAD_APTITUDE_PRODUCT_IDS`, and `GUMROAD_TOKEN_PACK_PRODUCT_IDS` — see
+`GUMROAD_APTITUDE_PRODUCT_IDS`, `GUMROAD_TOKEN_PACK_PRODUCT_IDS`, and
+`GUMROAD_TOKEN_PACK_SIZES` — see
 `backend/.env.example` for what each does and the [Gumroad API docs](https://gumroad.com/api)
 for how to obtain a seller token.
 

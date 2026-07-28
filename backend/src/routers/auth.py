@@ -53,6 +53,7 @@ from services.email import (
     EmailSender,
     get_email_sender,
 )
+from services.token_packs import claim_token_pack_sales
 from services.users import get_user_timezone
 
 if TYPE_CHECKING:
@@ -660,6 +661,9 @@ async def signup(
     generic detail with matched timing (anti-enumeration), and a Gumroad
     outage fails closed with 503.  Only the JWT leaves the backend — never
     any Gumroad verify-response field.
+
+    Once the account exists, any token pack bought under the same email
+    before signup is swept into the new wallet.
     """
     # Verify the license (a live Gumroad call) before the duplicate-email DB
     # check is deliberate: running the same first check for every email keeps an
@@ -679,6 +683,7 @@ async def signup(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     await _grant_signup_entitlement(session, user, purchase)
+    await claim_token_pack_sales(session, user)
     token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
