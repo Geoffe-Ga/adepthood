@@ -40,6 +40,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_GUMROAD_PURCHASE,
     REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
@@ -316,6 +317,54 @@ async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResul
     raise payment_required("insufficient_offerings")
 
 
+async def _credit_offering(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+    *,
+    reason: str,
+    actor_user_id: int,
+) -> int | None:
+    """Add ``amount`` to ``offering_balance`` and stage the matching audit row.
+
+    The shared atomic body behind every offering-bucket credit: one
+    ``UPDATE ... RETURNING`` (no lost-update window between read and
+    write) plus one staged ``WalletAudit``.  Deliberately does NOT
+    commit — the caller owns the transaction boundary, which is what
+    lets a credit land atomically alongside whatever else it guards.
+
+    Returns the post-credit balance, or ``None`` when no row matched
+    ``user_id`` (in which case nothing is staged).
+    """
+    result = await session.execute(
+        update(User)
+        .where(col(User.id) == user_id)
+        .values(offering_balance=col(User.offering_balance) + amount)
+        .returning(col(User.offering_balance))
+    )
+    new_balance = result.scalar()
+    if new_balance is None:
+        return None
+    new_balance_int = int(new_balance)
+    _stage_audit(
+        session,
+        _AuditEntry(
+            user_id=user_id,
+            actor_user_id=actor_user_id,
+            bucket=BUCKET_OFFERING,
+            reason=reason,
+            # ``balance_before`` is derived from the post-update value
+            # (``new_balance_int - amount``).  This relies on the
+            # ``UPDATE`` having applied the full ``amount`` -- which it
+            # does, because there is no clamping in the SQL.
+            delta=Decimal(amount),
+            balance_before=Decimal(new_balance_int - amount),
+            balance_after=Decimal(new_balance_int),
+        ),
+    )
+    return new_balance_int
+
+
 async def add_balance(
     session: AsyncSession,
     user_id: int,
@@ -338,16 +387,6 @@ async def add_balance(
     future cross-user grant path (e.g. a Stripe webhook or referral
     credit); no such caller exists yet.
     """
-    result = await session.execute(
-        update(User)
-        .where(col(User.id) == user_id)
-        .values(offering_balance=col(User.offering_balance) + amount)
-        .returning(col(User.offering_balance))
-    )
-    new_balance = result.scalar()
-    if new_balance is None:
-        return None
-    new_balance_int = int(new_balance)
     # ``actor`` defaults to ``user_id`` so a self-grant (legacy or future
     # non-admin caller) does not look like an admin-initiated mutation
     # in the audit log.  Picking ``admin_grant`` only when the actor is
@@ -355,20 +394,27 @@ async def add_balance(
     # honest if a Stripe webhook or referral-credit path ever calls in.
     actor = actor_user_id if actor_user_id is not None else user_id
     reason = REASON_ADMIN_GRANT if actor != user_id else REASON_SELF_GRANT
-    _stage_audit(
+    return await _credit_offering(session, user_id, amount, reason=reason, actor_user_id=actor)
+
+
+async def grant_purchase_credit(session: AsyncSession, user_id: int, amount: int) -> int | None:
+    """Credit ``amount`` bought credits to ``user_id`` and return the new total.
+
+    The wallet half of a Gumroad token-pack purchase.  The buyer is their
+    own actor -- nobody granted these credits, they paid for them -- so
+    the audit row records ``actor_user_id == user_id`` with reason
+    ``gumroad_purchase``, keeping revenue-backed credits distinguishable
+    from courtesy top-ups.
+
+    Returns ``None`` (staging no audit row) when the user has vanished, so
+    the caller can abandon the surrounding claim rather than record a
+    credit nobody received.  Does not commit: the caller owns the
+    transaction so the credit and its exactly-once guard land together.
+    """
+    return await _credit_offering(
         session,
-        _AuditEntry(
-            user_id=user_id,
-            actor_user_id=actor,
-            bucket=BUCKET_OFFERING,
-            reason=reason,
-            # ``balance_before`` is derived from the post-update value
-            # (``new_balance_int - amount``).  This relies on the
-            # ``UPDATE`` having applied the full ``amount`` -- which it
-            # does, because there is no clamping in the SQL.
-            delta=Decimal(amount),
-            balance_before=Decimal(new_balance_int - amount),
-            balance_after=Decimal(new_balance_int),
-        ),
+        user_id,
+        amount,
+        reason=REASON_GUMROAD_PURCHASE,
+        actor_user_id=user_id,
     )
-    return new_balance_int

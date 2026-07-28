@@ -1,9 +1,19 @@
-"""Course-access entitlement domain logic: grant, check, revoke, verify.
+"""Gumroad product classification plus course-access entitlement logic.
 
-The grant is idempotent (at most one active ``course_access`` row per user,
-backed by the partial unique index on the model) and every grant / revoke
-emits a structured log line carrying a ``reason_code`` — never a raw email
-or license key, only ids.
+Two concerns live together here on purpose. The first is classifying what a
+Gumroad product id *is* — the APTITUDE course
+(``GUMROAD_APTITUDE_PRODUCT_IDS``) or a BotMason token pack
+(``GUMROAD_TOKEN_PACK_PRODUCT_IDS`` plus its per-product sizes in
+``GUMROAD_TOKEN_PACK_SIZES``). One module owning every allowlist is what
+keeps the classifications from drifting apart, so a product can never both
+grant the course and mint credits by accident. Every allowlist is read at
+call time, so a rotation needs no restart, and every one fails closed: unset
+means "matches nothing".
+
+The second is the course-access entitlement itself: the grant is idempotent
+(at most one active ``course_access`` row per user, backed by the partial
+unique index on the model) and every grant / revoke emits a structured log
+line carrying a ``reason_code`` — never a raw email or license key, only ids.
 
 :func:`verify_aptitude_license` is the signup gate's verifier: it walks the
 ``GUMROAD_APTITUDE_PRODUCT_IDS`` allowlist calling the Gumroad client's
@@ -43,13 +53,18 @@ __all__ = [
     "REASON_REFUND",
     "REASON_SIGNUP_REDEMPTION",
     "REASON_WEBHOOK_SALE",
+    "TOKEN_PACK_PRODUCT_IDS_ENV_VAR",
+    "TOKEN_PACK_SIZES_ENV_VAR",
     "AptitudeLicenseCheck",
     "GumroadUnavailableError",
     "LicenseOutcome",
     "grant_course_access",
     "has_course_access",
     "is_aptitude_product_id",
+    "is_token_pack_product_id",
     "revoke_course_access",
+    "token_pack_product_ids",
+    "token_pack_size",
     "verify_aptitude_license",
 ]
 
@@ -71,6 +86,23 @@ REASON_EMAIL_MISMATCH = "email_mismatch"
 # tests can monkeypatch the environment).
 PRODUCT_IDS_ENV_VAR = "GUMROAD_APTITUDE_PRODUCT_IDS"
 _PRODUCT_IDS_SEPARATOR = ","
+
+# The token-pack half of the classification: which products are credit packs,
+# and how many credits each one is worth. Kept as two variables because the
+# allowlist is the security gate (is this a pack at all?) while the size map
+# is the money (how much?) — an operator can add a product to the allowlist
+# and see it credit nothing until they price it, rather than have a typo in
+# one variable silently mint an unintended amount.
+#
+# Both values are environment-variable *names*, not credentials; S105 fires
+# only because the constant names contain "token", the same false positive
+# ``_SECRET_PLACEHOLDER`` in the auth router silences.
+TOKEN_PACK_PRODUCT_IDS_ENV_VAR = "GUMROAD_TOKEN_PACK_PRODUCT_IDS"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+TOKEN_PACK_SIZES_ENV_VAR = "GUMROAD_TOKEN_PACK_SIZES"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+# ``GUMROAD_TOKEN_PACK_SIZES`` is ``product_id:count`` entries joined by
+# ``_PRODUCT_IDS_SEPARATOR``. Gumroad product ids never contain a colon, so
+# the first colon is an unambiguous field boundary.
+_SIZE_FIELD_SEPARATOR = ":"
 
 
 class LicenseOutcome(enum.Enum):
@@ -188,17 +220,98 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
     )
 
 
-def _allowlisted_product_ids() -> list[str]:
-    """Read the APTITUDE product allowlist from the environment at call time.
+def _split_ids(raw: str) -> list[str]:
+    """Parse one comma-separated product allowlist into stripped, non-blank ids.
 
-    Splits on commas, strips whitespace, and skips blanks so trailing
-    separators in the deployment config are harmless. An unset variable
-    yields an empty allowlist, which makes every key verify as INVALID.
+    Shared by both allowlists so they cannot diverge on tolerance: padding,
+    empty entries, and a trailing separator in the deployment config are all
+    harmless, and an empty string yields an empty list rather than one blank
+    id that would match a product-less ping.
     """
-    raw = os.getenv(PRODUCT_IDS_ENV_VAR, "")
     return [
         product_id.strip() for product_id in raw.split(_PRODUCT_IDS_SEPARATOR) if product_id.strip()
     ]
+
+
+def _allowlisted_product_ids() -> list[str]:
+    """Read the APTITUDE product allowlist from the environment at call time.
+
+    An unset variable yields an empty allowlist, which makes every key verify
+    as INVALID.
+    """
+    return _split_ids(os.getenv(PRODUCT_IDS_ENV_VAR, ""))
+
+
+def token_pack_product_ids() -> list[str]:
+    """Read the token-pack product allowlist from the environment at call time.
+
+    An unset variable yields an empty allowlist, so no sale can be classified
+    as a token pack until an operator configures one.
+    """
+    return _split_ids(os.getenv(TOKEN_PACK_PRODUCT_IDS_ENV_VAR, ""))
+
+
+def is_token_pack_product_id(product_id: str | None) -> bool:
+    """Return True when ``product_id`` is on the token-pack allowlist.
+
+    Mirrors :func:`is_aptitude_product_id`: a blank or unallowlisted id
+    (including an unset allowlist) returns False, so a sale of any other
+    product sold on the same Gumroad account can never mint wallet credits.
+    """
+    normalized = (product_id or "").strip()
+    return bool(normalized) and normalized in token_pack_product_ids()
+
+
+def _is_positive_count(raw: str) -> bool:
+    """Return True when ``raw`` is a plain ASCII decimal integer above zero.
+
+    ``isascii()`` rejects the non-ASCII digits ``isdigit()`` otherwise
+    accepts (full-width numerals, for instance) so the value that reaches
+    ``int()`` is always the one an operator can read back out of the config.
+    Zero and anything negative are rejected too: a non-positive pack size
+    would turn a purchase into a no-op or, worse, a debit.
+    """
+    return raw.isascii() and raw.isdigit() and int(raw) > 0
+
+
+def _parse_size_entry(entry: str) -> tuple[str, int] | None:
+    """Parse one ``product_id:count`` entry, or ``None`` when it is malformed.
+
+    Malformed entries are dropped rather than defaulted — there is no safe
+    fallback size for real money, and a neighbouring well-formed entry must
+    stay usable regardless of a typo elsewhere in the variable.
+    """
+    product_id, separator, raw_count = entry.partition(_SIZE_FIELD_SEPARATOR)
+    normalized_id = product_id.strip()
+    count = raw_count.strip()
+    if not separator or not normalized_id or not _is_positive_count(count):
+        return None
+    return normalized_id, int(count)
+
+
+def _token_pack_sizes() -> dict[str, int]:
+    """Read the token-pack size map from the environment at call time.
+
+    An unset variable yields an empty map, which makes every pack credit
+    nothing. A product id repeated across entries resolves to the right-most
+    one, matching how ``dict`` folds duplicate keys.
+    """
+    raw = os.getenv(TOKEN_PACK_SIZES_ENV_VAR, "")
+    parsed = (_parse_size_entry(entry) for entry in raw.split(_PRODUCT_IDS_SEPARATOR))
+    return dict(entry for entry in parsed if entry is not None)
+
+
+def token_pack_size(product_id: str | None) -> int | None:
+    """Return the configured credit count for ``product_id``, or ``None``.
+
+    ``None`` means "no size is configured", which every caller must treat as
+    "credit nothing" — a missing or malformed size is never substituted with
+    a default. A blank or absent id answers ``None`` rather than raising.
+    """
+    normalized = (product_id or "").strip()
+    if not normalized:
+        return None
+    return _token_pack_sizes().get(normalized)
 
 
 def is_aptitude_product_id(product_id: str | None) -> bool:

@@ -4,9 +4,14 @@ Gumroad POSTs a form-encoded "ping" for every sale-related event. The shared
 secret in the ``secret`` query parameter is checked (constant time) BEFORE the
 body is read, so an unauthenticated caller can never drive the parser. Valid
 pings are persisted verbatim into :class:`~models.gumroad_sale.GumroadSale`,
-idempotently keyed by ``sale_id``. A ``sale`` event additionally grants the
-buyer's ``course_access`` entitlement when a user with that email already
-exists — an idempotent side effect, so replays stay safe.
+idempotently keyed by ``sale_id``.
+
+A ``sale`` event additionally dispatches two side effects guarded by disjoint
+product allowlists, so at most one fires: the buyer's ``course_access``
+entitlement for an APTITUDE product, and a BotMason wallet credit for a token
+pack. Both are idempotent, so replays stay safe. The credited amount comes
+solely from the operator-configured pack-size map — never from a payload
+field, which a forged ping would control.
 
 Secrets discipline: the webhook secret, buyer email, and raw payload never
 appear in log text — only static markers and non-PII metadata do.
@@ -30,27 +35,40 @@ from domain.entitlements import (
     REASON_WEBHOOK_SALE,
     grant_course_access,
     is_aptitude_product_id,
+    is_token_pack_product_id,
+    token_pack_size,
 )
 from errors import bad_request
-from models.gumroad_sale import GumroadSale
+from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.user import User
+from services.token_packs import credit_token_pack_sale
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks/gumroad", tags=["gumroad"])
 
-# The one resource_name that carries an entitlement side effect (below).
-_SALE_RESOURCE_NAME = "sale"
-
 # resource_name values Gumroad documents for ping webhooks. Anything else is
 # still persisted (verbatim capture) but flagged with
 # ``reason_code=unhandled_event`` so operators notice new event types.
 KNOWN_RESOURCE_NAMES = frozenset(
-    {_SALE_RESOURCE_NAME, "refund", "dispute", "cancellation", "subscription_ended"}
+    {SALE_RESOURCE_NAME, "refund", "dispute", "cancellation", "subscription_ended"}
 )
 
 # Gumroad posts booleans as the form strings "true"/"false".
 _TRUE_FORM_VALUE = "true"
+
+# Payload keys this router reads by name more than once.
+_PRODUCT_ID_FIELD = "product_id"
+_EMAIL_FIELD = "email"
+_REFUNDED_FIELD = "refunded"
+
+# Structured-log reason codes for the sale-dispatch outcomes an operator
+# needs to be able to grep for. Each marks a ping that was accepted and
+# stored but deliberately moved nothing.
+_REASON_UNKNOWN_PRODUCT = "unknown_product"
+_REASON_REFUNDED_SALE = "refunded_sale"
+_REASON_SIZE_UNCONFIGURED = "token_pack_size_unconfigured"
+_REASON_PACK_CREDITED = "token_pack_credited"
 
 
 def _require_valid_secret(provided: str | None) -> None:
@@ -101,11 +119,11 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
     """Insert the GumroadSale row; a concurrent replay collapses to a no-op."""
     sale = GumroadSale(
         gumroad_sale_id=payload["sale_id"],
-        product_id=payload.get("product_id", ""),
-        email=payload.get("email", ""),
+        product_id=payload.get(_PRODUCT_ID_FIELD, ""),
+        email=payload.get(_EMAIL_FIELD, ""),
         resource_name=payload.get("resource_name", ""),
         is_recurring_charge=_coerce_form_flag(payload, "is_recurring_charge"),
-        refunded=_coerce_form_flag(payload, "refunded"),
+        refunded=_coerce_form_flag(payload, _REFUNDED_FIELD),
         raw_payload=payload,
     )
     session.add(sale)
@@ -117,25 +135,34 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
         await session.rollback()
 
 
+async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
+    """Return the account registered under ``email``, matched case-insensitively.
+
+    Gumroad reports the buyer's address as they typed it while accounts are
+    stored normalized, so every lookup from a ping has to fold case. A blank
+    address short-circuits rather than matching a row with an empty email.
+    """
+    normalized = email.strip().lower()
+    if not normalized:
+        return None
+    result = await session.execute(select(User).where(func.lower(User.email) == normalized))
+    return result.scalars().first()
+
+
 async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> None:
     """Grant course access for a sale ping when the buyer already signed up.
 
     Grants only for a sale of an APTITUDE product (the ping's ``product_id``
     must be on ``GUMROAD_APTITUDE_PRODUCT_IDS`` — the same allowlist the signup
     path enforces), so a future non-APTITUDE product sold on the same Gumroad
-    account never silently grants course access. Matches the buyer email
-    against stored users case-insensitively; with no match the sale row alone
-    is the outcome (the buyer's later license-gated signup converges by linking
-    to it). The grant is idempotent, so webhook replays never duplicate an
-    entitlement.
+    account never silently grants course access. With no matching user the
+    sale row alone is the outcome (the buyer's later license-gated signup
+    converges by linking to it). The grant is idempotent, so webhook replays
+    never duplicate an entitlement.
     """
-    if not is_aptitude_product_id(payload.get("product_id")):
+    if not is_aptitude_product_id(payload.get(_PRODUCT_ID_FIELD)):
         return
-    email = payload.get("email", "").strip().lower()
-    if not email:
-        return
-    user_result = await session.execute(select(User).where(func.lower(User.email) == email))
-    user = user_result.scalars().first()
+    user = await _find_user_by_email(session, payload.get(_EMAIL_FIELD, ""))
     if user is None:
         return
     sale_result = await session.execute(
@@ -143,6 +170,80 @@ async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> Non
     )
     sale = sale_result.scalars().first()
     await grant_course_access(session, user, sale=sale, reason_code=REASON_WEBHOOK_SALE)
+
+
+def _token_pack_credit_amount(payload: dict[str, str]) -> int | None:
+    """Return how many credits this ping should mint, or ``None`` for none.
+
+    Three gates, each failing closed: the product must be an allowlisted
+    token pack, the sale must not be refunded, and the pack must have a
+    configured size. The amount comes from that configured size alone —
+    never from ``price``, ``quantity``, or any other payload field, all of
+    which a forged ping would control.
+    """
+    product_id = payload.get(_PRODUCT_ID_FIELD)
+    if not is_token_pack_product_id(product_id):
+        return None
+    if _coerce_form_flag(payload, _REFUNDED_FIELD):
+        logger.info("gumroad_token_pack_skipped", extra={"reason_code": _REASON_REFUNDED_SALE})
+        return None
+    amount = token_pack_size(product_id)
+    if amount is None:
+        logger.info("gumroad_token_pack_skipped", extra={"reason_code": _REASON_SIZE_UNCONFIGURED})
+    return amount
+
+
+async def _credit_token_pack_for_sale(session: AsyncSession, payload: dict[str, str]) -> None:
+    """Credit the buyer's wallet for a sized, non-refunded token-pack sale.
+
+    With no account for the buyer's email yet the sale simply stays
+    unclaimed; the signup sweep delivers the credits when they register. The
+    credit itself is exactly-once per sale, so a replayed ping moves nothing.
+    """
+    amount = _token_pack_credit_amount(payload)
+    if amount is None:
+        return
+    user = await _find_user_by_email(session, payload.get(_EMAIL_FIELD, ""))
+    if user is None or user.id is None:
+        return
+    credited = await credit_token_pack_sale(
+        session, sale_id=payload["sale_id"], user_id=user.id, amount=amount
+    )
+    if credited is not None:
+        logger.info(
+            "gumroad_token_pack_credited",
+            extra={
+                "reason_code": _REASON_PACK_CREDITED,
+                "user_id": user.id,
+                "amount": amount,
+            },
+        )
+
+
+def _log_if_unknown_product(payload: dict[str, str]) -> None:
+    """Flag a sale whose product is on neither allowlist, since it is inert.
+
+    Both allowlists are operator configuration, so a product on neither is
+    either a new SKU nobody wired up or a rotation that dropped an id. The
+    ping is still stored verbatim; the log line is what makes the silence
+    noticeable.
+    """
+    product_id = payload.get(_PRODUCT_ID_FIELD)
+    if is_aptitude_product_id(product_id) or is_token_pack_product_id(product_id):
+        return
+    logger.info("gumroad_webhook_event", extra={"reason_code": _REASON_UNKNOWN_PRODUCT})
+
+
+async def _dispatch_sale(session: AsyncSession, payload: dict[str, str]) -> None:
+    """Run every side effect a ``sale`` ping carries, in order.
+
+    Classification first, so an unrecognised product is flagged even though
+    nothing follows it; then the course grant; then the token-pack credit.
+    The two grants are guarded by disjoint allowlists, so at most one fires.
+    """
+    _log_if_unknown_product(payload)
+    await _grant_for_sale(session, payload)
+    await _credit_token_pack_for_sale(session, payload)
 
 
 @router.post("/ping")
@@ -155,8 +256,8 @@ async def receive_ping(
 
     Always answers 200 on an authenticated, well-formed ping — including
     replays and unknown event types — so Gumroad never re-queues an event we
-    have already captured. A ``sale`` event additionally dispatches the
-    (idempotent) entitlement grant for an already-registered buyer.
+    have already captured. A ``sale`` event additionally dispatches its
+    (idempotent) entitlement grant and token-pack credit.
     """
     _require_valid_secret(secret)
     payload = await _read_ping_payload(request)
@@ -166,8 +267,8 @@ async def receive_ping(
         logger.info("gumroad_webhook_event reason_code=unhandled_event")
     if not await _sale_already_recorded(session, payload["sale_id"]):
         await _persist_sale(session, payload)
-    if resource_name == _SALE_RESOURCE_NAME:
-        await _grant_for_sale(session, payload)
+    if resource_name == SALE_RESOURCE_NAME:
+        await _dispatch_sale(session, payload)
     logger.info(
         "gumroad_webhook_accepted",
         extra={"reason_code": "accepted", "resource_name": resource_name},

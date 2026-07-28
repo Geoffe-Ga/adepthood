@@ -5,12 +5,21 @@ collapse onto the existing row. The typed columns cover the fields current
 features read; ``raw_payload`` keeps the posted form intact (string values
 stay strings) so later features can re-derive anything else without asking
 Gumroad to resend history.
+
+The row also carries the token-pack credit claim: ``token_pack_credited_at``
+is the exactly-once guard a wallet credit takes before moving any money, and
+``token_pack_credited_user_id`` records which account received it.
 """
 
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
+
+# Gumroad's ``resource_name`` for a purchase event — the only ping that
+# carries an entitlement or wallet side effect. Public so the router and the
+# token-pack sweep filter on one spelling.
+SALE_RESOURCE_NAME = "sale"
 
 
 class GumroadSale(SQLModel, table=True):
@@ -33,4 +42,23 @@ class GumroadSale(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    # The token-pack claim guard. NULL means "no wallet credit has been taken
+    # for this sale yet"; a guarded UPDATE stamps it, so only one writer can
+    # ever move the credits. It deliberately outlives the crediting account:
+    # a deleted-then-re-registered email must not re-mint the same pack.
+    token_pack_credited_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # Provenance for the credit — which account the pack landed in. ``SET
+    # NULL`` on user deletion mirrors ``WalletAudit.actor_user_id``: the
+    # financial trail survives the account, and the guard above still blocks
+    # a second credit.
+    token_pack_credited_user_id: int | None = Field(
+        default=None,
+        foreign_key="user.id",
+        ondelete="SET NULL",
+        index=True,
+        nullable=True,
     )
