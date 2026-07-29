@@ -150,6 +150,13 @@ def _throttle_prefix_length() -> int:
     and clamping ``129`` down would silently disable the grouping altogether.
     The default is the only value an operator would have chosen deliberately, so
     it is the only safe reading of a typo.
+
+    The range check asks only whether a value is a prefix, not whether it is a
+    wise one.  ``IPV6LENGTH`` itself is the deliberate opt-out -- it restores
+    exact per-address keying, and with it the rotation this module groups
+    against -- and a very small value groups very coarsely on purpose.  Both are
+    an operator's call to make; only a value that is not a prefix at all is
+    a typo this can recognise as such.
     """
     configured = _parse_prefix_length(os.getenv(IPV6_THROTTLE_PREFIX_ENV_VAR, ""))
     if configured is None or not (
@@ -215,6 +222,12 @@ def _throttle_key(address: _Address) -> str:
     disjoint by construction: IPv4 keys are dotted quads carrying neither ``:``
     nor ``/``, IPv6 prefix keys always carry ``/``, the unknown-client answer
     carries neither, and authenticated keys carry a ``user:`` prefix.
+
+    That ``/`` is also the separator ``limits`` joins its composite bucket key
+    with, so it is worth saying why introducing one here is safe: a collision
+    would need a key that is a strict prefix of another ending exactly at a
+    separator, i.e. a bare IPv6 address with no ``/N`` suffix, and no branch
+    below can emit one.
 
     ``_unmapped`` has already folded ``::ffff:203.0.113.5`` into an IPv4
     address, so a mapped literal takes the IPv4 arm for free -- prefixing it

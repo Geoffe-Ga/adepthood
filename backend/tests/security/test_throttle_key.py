@@ -20,11 +20,13 @@ independent of anything the throttle answer does.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlmodel import select
 from starlette.requests import Request
 
 from client_ip import (
@@ -36,7 +38,10 @@ from client_ip import (
 )
 from database import get_session
 from main import app
+from models.password_reset_token import PasswordResetToken
+from models.user import User
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
+from routers.auth import _hash_password
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -95,6 +100,19 @@ _SCOPED_IPV6_HOP = f"fe80::1%{_LONG_ZONE_ID}"
 # literal (39 chars) plus the longest prefix suffix ("/128").
 _MAX_THROTTLE_KEY_LENGTH = 43
 
+# The worst case that reaches that bound, so the bound is driven rather than
+# merely declared: the widest literal there is, cut at the shortest prefix
+# length whose network address still needs all eight groups written out.
+_WIDEST_IPV6_ADDRESS = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"  # pragma: allowlist secret
+_LONGEST_KEY_PREFIX_LEN = 113
+_LONGEST_THROTTLE_KEY = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:8000/113"  # pragma: allowlist secret
+
+# Every prefix length the module accepts, swept to prove no configuration can
+# produce a key wider than the bound above.
+_SHORTEST_PREFIX_LEN = 1
+_FULL_ADDRESS_PREFIX_LEN = 128
+_ALL_PREFIX_LENGTHS = range(_SHORTEST_PREFIX_LEN, _FULL_ADDRESS_PREFIX_LEN + 1)
+
 _CIDR_MARKER = "/"
 
 _SIGNUP_PATH = "/auth/signup"
@@ -109,6 +127,11 @@ _DETAIL_THROTTLED = "too_many_license_attempts"
 _RESET_PATH = "/auth/password-reset/request"
 _RESET_REQUESTS_PER_HOUR = 3
 _UNREGISTERED_EMAIL = "nobody@example.com"
+
+# Only a registered email reaches the branch that writes an audit row, so the
+# end-to-end audit case has to seed a user first.
+_REGISTERED_EMAIL = "audited@example.com"
+_REGISTERED_PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
 
 
 def _make_request(peer: tuple[str, int] | None, forwarded: str | None = None) -> Request:
@@ -218,7 +241,35 @@ def test_scoped_ipv6_hop_neither_crashes_nor_widens_the_key(
 
     assert key == _PROXY_PEER
     assert _LONG_ZONE_ID not in key
-    assert len(key) <= _MAX_THROTTLE_KEY_LENGTH
+
+
+def _key_at_prefix_length(monkeypatch: pytest.MonkeyPatch, prefix_len: int, address: str) -> str:
+    """Return the throttle key for ``address`` with ``prefix_len`` configured."""
+    monkeypatch.setenv(IPV6_THROTTLE_PREFIX_ENV_VAR, str(prefix_len))
+    return client_throttle_key(_proxied(monkeypatch, address))
+
+
+def test_widest_ipv6_input_at_any_prefix_length_stays_within_the_key_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No address and no configured prefix length can produce a key wider than the bound.
+
+    The bound is what every consumer of a key is sized against -- the limiter
+    backends and the audit column beside them -- so it is only a real bound if
+    some test can falsify it.  Sweeping every accepted prefix length across the
+    widest literal that exists is the whole input space for key width, and its
+    worst case is pinned as a literal: an unbounded value reaching a key, or a
+    key rendered uncompressed, changes the answer here.
+    """
+    keys = [
+        _key_at_prefix_length(monkeypatch, prefix_len, _WIDEST_IPV6_ADDRESS)
+        for prefix_len in _ALL_PREFIX_LENGTHS
+    ]
+    worst_case = _key_at_prefix_length(monkeypatch, _LONGEST_KEY_PREFIX_LEN, _WIDEST_IPV6_ADDRESS)
+
+    assert max(len(key) for key in keys) == _MAX_THROTTLE_KEY_LENGTH
+    assert worst_case == _LONGEST_THROTTLE_KEY
+    assert len(worst_case) == _MAX_THROTTLE_KEY_LENGTH
 
 
 def test_audit_answer_and_throttle_answer_do_not_converge(
@@ -417,3 +468,54 @@ async def test_per_route_limiter_buckets_by_prefix_not_by_address(
 
     assert capped.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert neighbour.status_code == HTTPStatus.ACCEPTED
+
+
+async def _seed_registered_user(db_session: AsyncSession, email: str) -> None:
+    """Insert an active user so a reset request takes its token-minting branch."""
+    db_session.add(
+        User(
+            email=email,
+            password_hash=await _hash_password(_REGISTERED_PASSWORD),
+            created_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+
+async def _recorded_request_ip(db_session: AsyncSession) -> str:
+    """Return the ``requested_ip`` written on the only reset-token row."""
+    rows = (await db_session.execute(select(PasswordResetToken))).scalars().all()
+    assert len(rows) == 1
+    return rows[0].requested_ip
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("wire_email_sender")
+async def test_audit_row_keeps_the_full_ipv6_address_the_throttle_grouped_away(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real IPv6 request must persist the exact address, never the prefix it throttles on.
+
+    The unit test above pins the two projections apart in isolation, but the
+    constraint the split exists to satisfy is a property of the whole request
+    path: widening the throttle must not widen the audit trail, or every reset
+    row would name a few billion hosts and identify nobody.  Wiring the audit
+    write to the throttle key -- the obvious way to "simplify" this module back
+    into one function -- is exactly what this catches.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _PROXY_PEER)
+    await _seed_registered_user(db_session, _REGISTERED_EMAIL)
+
+    async with _peer_client(db_session, (_PROXY_PEER, _PEER_PORT)) as client:
+        accepted = await client.post(
+            _RESET_PATH,
+            json={"email": _REGISTERED_EMAIL},
+            headers={"X-Forwarded-For": _IPV6_CLIENT},
+        )
+
+    assert accepted.status_code == HTTPStatus.ACCEPTED
+    recorded = await _recorded_request_ip(db_session)
+    assert recorded == _IPV6_CLIENT
+    assert recorded != _IPV6_CLIENT_KEY
+    assert _CIDR_MARKER not in recorded
