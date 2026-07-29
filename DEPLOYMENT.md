@@ -133,6 +133,7 @@ In the backend service's **Variables** tab, add:
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2) |
+| `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -367,6 +368,7 @@ than a migration.
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
+| `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
 | `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
@@ -466,21 +468,33 @@ inbox.  The corresponding runbook lives at `RECOVERY-RUNBOOK.md`
 
 ### Trusted Proxy / X-Forwarded-For
 
-The backend reads the client IP from `X-Forwarded-For` and writes it
-verbatim to `passwordresettoken.requested_ip` and to the
-`password_reset_event` audit log.  This is correct **only when every
-ingress path runs through a trusted reverse proxy that overwrites the
-header**.  Railway's edge network does this by default; if you front
-the API with an additional proxy or expose the container directly to
-the public internet, an attacker can spoof the source IP in the audit
-trail by sending the header themselves.
+`X-Forwarded-For` is honored only when the socket peer is inside
+`TRUSTED_PROXY_CIDRS` (see the variable reference above for the
+exact format).  The default is empty, and the resolver **fails
+closed**: with nothing configured the header is ignored entirely,
+and rate limiting, the invalid-license throttle, and the login /
+password-reset audit rows (`LoginAttempt.ip_address`,
+`PasswordResetToken.requested_ip`) all key on the raw socket peer
+instead -- which behind any real ingress means every client shares
+one rate-limit bucket and one audited address.
 
-For Railway / managed-edge deployments no extra configuration is
-needed.  For self-managed deployments, terminate TLS at a proxy
-(nginx, Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and
-appends the real peer address.  Operators investigating an abuse
-report should treat the `ip_address` audit field as authoritative
-only to the extent the ingress chain is trusted.
+The same variable also feeds uvicorn's `--forwarded-allow-ips`, so
+it governs whether `X-Forwarded-Proto` is trusted too.  Until it is
+set, the app believes it is serving `http`, so the trailing-slash
+redirect and any absolute URL it builds stay `http://` -- which
+browsers refuse to follow cross-origin.  A production boot without
+it set logs a `trusted_proxies_unconfigured` warning at startup.
+Write entries in network-address form (`10.0.0.0/8`), not host form
+(`10.0.0.5/8`): uvicorn's parser rejects the latter silently, so
+`X-Forwarded-Proto` trust quietly stops working while the rest of
+the app keeps working.
+
+For self-managed deployments, terminate TLS at a proxy (nginx,
+Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and appends
+the real peer address, then list only that proxy in
+`TRUSTED_PROXY_CIDRS`.  Operators investigating an abuse report
+should treat the audit `ip_address` as authoritative only to the
+extent the ingress chain, and this configuration, are trusted.
 
 ---
 

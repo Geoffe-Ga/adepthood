@@ -13,6 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from client_ip import TRUSTED_PROXIES_ENV_VAR
 from models.login_attempt import LoginAttempt
 from models.user import User
 from routers.auth import (
@@ -28,6 +29,11 @@ from routers.auth import (
 SIGNUP_URL = "/auth/signup"
 LOGIN_URL = "/auth/login"
 SECRET_KEY = "test-secret-key-for-unit-tests-only"  # pragma: allowlist secret
+
+# Socket peer ``httpx.ASGITransport`` reports for the ``async_client`` fixture,
+# and a documentation-range address for the header that must never outrank it.
+TRANSPORT_PEER_IP = "127.0.0.1"
+FORWARDED_CLIENT_IP = "203.0.113.5"
 
 
 async def _signup(
@@ -621,6 +627,36 @@ async def test_login_records_attempt_on_success(
     success_attempts = [a for a in attempts if a.success]
     assert len(success_attempts) >= 1
     assert success_attempts[0].email == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_login_attempt_records_socket_peer_not_forwarded_header(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unvouched X-Forwarded-For cannot author the audited ``ip_address``.
+
+    This row is what an investigator reads after a credential-stuffing run, so
+    an attacker-chosen address in it makes the trail worthless.
+    """
+    monkeypatch.delenv(TRUSTED_PROXIES_ENV_VAR, raising=False)
+
+    response = await async_client.post(
+        LOGIN_URL,
+        json={
+            "email": "stuffing@example.com",
+            "password": "wrongpassword999",  # pragma: allowlist secret
+        },
+        headers={"X-Forwarded-For": FORWARDED_CLIENT_IP},
+    )
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+
+    result = await db_session.execute(select(LoginAttempt))
+    attempts = list(result.scalars().all())
+    assert len(attempts) == 1
+    assert attempts[0].ip_address == TRANSPORT_PEER_IP
+    assert attempts[0].ip_address != FORWARDED_CLIENT_IP
 
 
 # ── Security headers ────────────────────────────────────────────────────
