@@ -20,10 +20,15 @@
 #      fallback token rescues the call, because a capability gap papered over by
 #      a second token is still a capability gap worth knowing about.
 #
-# Tokens travel by environment only - never in argv, never echoed, no `set -x`:
+# Tokens travel by environment only - never in an external command's argv (the
+# fallback is passed to a shell function, which stays in-process and off every
+# process listing), never echoed, no `set -x`:
 #   GH_TOKEN           primary token (gh reads it itself)
 #   FALLBACK_GH_TOKEN  optional second token, tried once if the primary fails
 #                      and only when it actually differs from GH_TOKEN
+# That invariant also requires NOT running under GH_DEBUG=api, which makes gh
+# dump request headers - Authorization included - into the very stderr this
+# script reprints verbatim.
 #
 # Usage:  ensure-issue-label.sh <issue-number> <label> [--repo <owner/repo>]
 # Exit:   0 = applied and verified | 1 = label missing/unverifiable | 2 = usage
@@ -55,6 +60,10 @@ done
 [[ "$issue" =~ ^[0-9]+$ ]] || die "$USAGE"
 [[ -n "$label" ]]          || die "$USAGE"
 [[ -n "$repo" ]]           || die "--repo is required when GITHUB_REPOSITORY is unset"
+# $repo is interpolated into an API path, so its shape is a security boundary,
+# not a nicety: `owner/../../user` would redirect the write at another resource.
+# Only the characters GitHub allows in an owner or repo name get through.
+[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "invalid --repo: expected owner/repo"
 
 # --- reporting helpers -------------------------------------------------------
 #
@@ -170,8 +179,10 @@ if [[ "$readback_ec" -ne 0 ]]; then
 fi
 
 # Exact, per-label comparison: a repo label named `<label>-bot` must not be read
-# as `<label>`. -x anchors the whole line, -F keeps the label a literal.
-if ! printf '%s\n' "$labels" | grep -qxF -- "$label"; then
+# as `<label>`. -x anchors the whole line, -F keeps the label a literal. A
+# herestring, not a pipe: under `pipefail` an early-exiting grep can SIGPIPE the
+# writer, which would read here as a false "silently dropped".
+if ! grep -qxF -- "$label" <<<"$labels"; then
   printf 'ensure-issue-label: the %s token API call reported success, but issue #%s does not carry label %s - it was silently dropped.\n' \
     "$applied_by" "$issue" "$label" >&2
   report_block "Labels actually read back from issue #$issue:" "$labels"

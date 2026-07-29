@@ -55,13 +55,19 @@ jobs:
       github.event_name != 'pull_request_target' ||
       github.actor == 'dependabot[bot]'
     steps:
-      - name: Check out repo metadata only (no PR head)
-        # We never check out or build the PR head — only the base repo, for
-        # nothing more than a clean workspace. The bridge reads PR data via the
-        # gh API, not the checkout.
+      - name: Check out base-branch scripts (never the PR head)
+        # LOAD-BEARING, not just a clean workspace: this checkout supplies the
+        # copy of scripts/ralph/ensure-issue-label.sh that the run: block below
+        # executes. Under pull_request_target the default ref is the BASE
+        # branch, so that code is trusted. NEVER add a `ref:` pointing at the PR
+        # head — this job holds a write-capable token, so running head code
+        # would be arbitrary code execution by any PR author.
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 1
+          # The job runs no git commands, so the token has no reason to be
+          # persisted into .git/config where later steps could reuse it.
+          persist-credentials: false
 
       - name: Bridge Dependabot PRs into Ralph issues
         env:
@@ -175,24 +181,29 @@ jobs:
             # re-reach this point (the PR body now links the issue, so
             # `body_links_issue` short-circuits), so the script's diagnosis
             # names the one-time manual fix.
-            local label_output="" label_error=""
-            if label_output="$(scripts/ralph/ensure-issue-label.sh \
-              "$issue_num" dependencies --repo "$REPO" 2>&1)"; then
-              # Even on success the output may carry a ::warning:: about a token
-              # whose gap the fallback papered over — always surface it.
-              echo "$label_output"
-            else
-              label_error="$label_output"
-            fi
+            local label_output="" label_error="" label_ec=0
+            label_output="$(scripts/ralph/ensure-issue-label.sh \
+              "$issue_num" dependencies --repo "$REPO" 2>&1)" || label_ec=$?
+            # Even on success the output may carry a ::warning:: about a token
+            # whose gap the fallback papered over — always surface it.
+            echo "$label_output"
 
-            # Failure handling differs by path. The single-PR event path fails
-            # loud and immediate (exit 1). The reconciler processes a whole
-            # batch, so one PR's label-verify failure must NOT skip every later
-            # PR: record the diagnosis and let the caller continue, then fail
-            # the run once at the end. The issue is filed and its PR is already
-            # linked, so `body_links_issue` short-circuits any re-run — no
-            # duplicate is ever minted while the label is added by hand.
-            if [ -n "$label_error" ]; then
+            # Failure is the EXIT CODE, never output emptiness: a non-zero exit
+            # that printed nothing (killed by a signal, say) is precisely the
+            # failure class the old `|| true` hid.
+            #
+            # Handling then differs by path. The single-PR event path fails loud
+            # and immediate (exit 1). The reconciler processes a whole batch, so
+            # one PR's label-verify failure must NOT skip every later PR: record
+            # the diagnosis and let the caller continue, then fail the run once
+            # at the end. The issue is filed and its PR is already linked, so
+            # `body_links_issue` short-circuits any re-run — no duplicate is
+            # ever minted while the label is added by hand.
+            if [ "$label_ec" -ne 0 ]; then
+              label_error="$label_output"
+              # An empty payload would annotate as a bare `::error::`; give the
+              # exit code itself a voice instead.
+              [ -n "$label_error" ] || label_error="ensure-issue-label.sh exited $label_ec without output; the 'dependencies' label on issue #$issue_num is unverified."
               if [ "$EVENT_NAME" = "pull_request_target" ]; then
                 echo "::error::$label_error" >&2
                 exit 1
