@@ -11,10 +11,32 @@ jest.mock('@/context/AuthContext', () => {
   };
 });
 
+jest.mock('../SocialAuthButtons', () => {
+  const ReactModule = require('react');
+  const { Text } = require('react-native');
+  return {
+    SocialAuthButtons: () =>
+      ReactModule.createElement(Text, { testID: 'social-auth-section' }, 'Continue with Google'),
+  };
+});
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { _mockLogin: mockLogin } = require('@/context/AuthContext') as any;
 
 import LoginScreen from '../LoginScreen';
+
+const SOCIAL_SECTION_ID = 'social-auth-section';
+
+/** Rendered testIDs in tree order, so "below" is a real assertion. */
+function testIdOrder(node: unknown, ids: string[] = []): string[] {
+  if (node === null || typeof node !== 'object') return ids;
+  const element = node as { props?: { testID?: string }; children?: unknown[] };
+  const testID = element.props === undefined ? undefined : element.props.testID;
+  if (typeof testID === 'string') ids.push(testID);
+  const children = Array.isArray(element.children) ? element.children : [];
+  for (const child of children) testIdOrder(child, ids);
+  return ids;
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -133,5 +155,21 @@ describe('LoginScreen', () => {
     const { getByTestId } = render(<LoginScreen navigation={mockNavigation} />);
     fireEvent.press(getByTestId('login-forgot-password'));
     expect(mockNavigation.navigate).toHaveBeenCalledWith('ForgotPassword');
+  });
+
+  it('offers the social sign-in section', () => {
+    const { getByTestId } = render(<LoginScreen navigation={mockNavigation} />);
+
+    expect(getByTestId(SOCIAL_SECTION_ID)).toBeTruthy();
+  });
+
+  // Email/password stays the primary path; Google is the alternative offered
+  // underneath it, not the headline.
+  it('places the social section below the primary login action', () => {
+    const { toJSON } = render(<LoginScreen navigation={mockNavigation} />);
+    const ids = testIdOrder(toJSON());
+
+    expect(ids).toContain('login-submit');
+    expect(ids.indexOf(SOCIAL_SECTION_ID)).toBeGreaterThan(ids.indexOf('login-submit'));
   });
 });

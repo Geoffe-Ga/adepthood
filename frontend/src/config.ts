@@ -52,20 +52,24 @@ const DEFAULT_GUMROAD_HELP_URL = 'https://help.gumroad.com/article/76-license-ke
  * bundle. ``name`` covers the runtime route, which Metro populates during
  * development. The computed lookup is deliberate — the inliner only rewrites
  * statically-keyed member expressions, so this one survives as a real read.
+ *
+ * Call it with both halves of the same variable, always writing the first
+ * argument as a literal member expression:
+ * ``resolveEnv(process.env.EXPO_PUBLIC_FOO, 'EXPO_PUBLIC_FOO', 'default')``.
  */
-function resolveEnvUrl(inlined: string | undefined, name: string, fallback: string): string {
+export function resolveEnv(inlined: string | undefined, name: string, fallback: string): string {
   return inlined || process.env[name] || fallback;
 }
 
 /** Product page the pre-auth Get Started CTA opens. */
-export const GUMROAD_PRODUCT_URL = resolveEnvUrl(
+export const GUMROAD_PRODUCT_URL = resolveEnv(
   process.env.EXPO_PUBLIC_GUMROAD_PRODUCT_URL,
   'EXPO_PUBLIC_GUMROAD_PRODUCT_URL',
   DEFAULT_GUMROAD_PRODUCT_URL,
 );
 
 /** "Where's my key?" help article linked from the signup form. */
-export const GUMROAD_HELP_URL = resolveEnvUrl(
+export const GUMROAD_HELP_URL = resolveEnv(
   process.env.EXPO_PUBLIC_GUMROAD_HELP_URL,
   'EXPO_PUBLIC_GUMROAD_HELP_URL',
   DEFAULT_GUMROAD_HELP_URL,

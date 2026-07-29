@@ -89,6 +89,15 @@ export const authStyles = StyleSheet.create({
   },
   // "Where's my key?" — a quiet self-serve exit next to the license field.
   helpLink: { color: accent.primary, fontWeight: '500', marginBottom: SPACING.md },
+  // Social sign-in, offered *under* the email form. A hairline rule with a
+  // quiet "or" is the whole announcement: this is an alternative the user may
+  // take, not a louder path competing with the primary one.
+  socialSection: { marginTop: SPACING.md },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.lg },
+  dividerRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: surface.hairline },
+  dividerLabel: { color: ink.muted, marginHorizontal: SPACING.md },
+  licenseStep: { marginTop: SPACING.lg },
+  licenseStepLead: { color: ink.soft, marginBottom: SPACING.sm },
   link: { textAlign: 'center', color: ink.soft },
   linkBold: { color: accent.primary, fontWeight: '600' },
   forgotLink: {

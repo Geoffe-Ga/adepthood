@@ -64,6 +64,21 @@ export type AuthStatus = 'loading' | 'authenticated' | 'reauth-required' | 'anon
 
 type ConfirmReset = (_token: string, _newPassword: string) => Promise<void>;
 
+/**
+ * Outcome of a Google ID-token exchange, returned as a value rather than
+ * signalled by a throw: ``needs_license`` is a normal branch of the flow (it
+ * opens the inline license step), and a caller's ``catch`` would flatten it
+ * into the generic error path and lose that step.
+ */
+export type GoogleSignInResult =
+  { kind: 'success' } | { kind: 'needs_license' } | { kind: 'error'; error: unknown };
+
+/**
+ * Exchange a Google ID token — plus, on the retry leg, the buyer's license key
+ * — for a session. Total: it never throws.
+ */
+type LoginWithGoogle = (_idToken: string, _licenseKey?: string) => Promise<GoogleSignInResult>;
+
 interface AuthContextValue {
   token: string | null;
   authStatus: AuthStatus;
@@ -86,6 +101,11 @@ interface AuthContextValue {
   setUserTimezone: (_timezone: string) => void;
   login: Login;
   signup: Signup;
+  /**
+   * Sign in with a Google ID token. The token is a per-call argument and is
+   * never retained by the context — the caller owns its lifetime.
+   */
+  loginWithGoogle: LoginWithGoogle;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   /** User dismissed the re-auth sheet: treat as an explicit logout. */
@@ -361,6 +381,7 @@ function useLoadStoredToken(mutators: AuthMutators): void {
 interface AuthActions {
   login: Login;
   signup: Signup;
+  loginWithGoogle: LoginWithGoogle;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   dismissReauth: () => Promise<void>;
@@ -427,6 +448,54 @@ async function signupWithDeviceTimezone(
   return response;
 }
 
+/** The one 409 the Google exchange uses for every non-cryptographic refusal. */
+const NEEDS_LICENSE_STATUS = 409;
+const NEEDS_LICENSE_DETAIL = 'needs_license';
+
+/**
+ * A 409 whose detail is anything else is NOT the license refusal — routing it
+ * to the license step would strand the user re-entering a key that was never
+ * the problem.
+ */
+function isNeedsLicenseRefusal(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === NEEDS_LICENSE_STATUS &&
+    err.detail === NEEDS_LICENSE_DETAIL
+  );
+}
+
+/**
+ * POST /auth/oauth/google with the device's IANA timezone attached, mapping
+ * every outcome to a {@link GoogleSignInResult}.
+ *
+ * Lives at module scope for the same reason ``signupWithDeviceTimezone`` does:
+ * it keeps ``useAuthActions`` a list of one-line delegations. ``license_key`` is
+ * omitted entirely rather than sent as ``undefined`` so the first exchange
+ * carries no trace of a credential the user has not been asked for yet.
+ *
+ * Only the success branch touches auth state; a refusal leaves the device
+ * exactly as anonymous as it found it.
+ */
+async function exchangeGoogleIdToken(
+  idToken: string,
+  licenseKey: string | undefined,
+  mutators: AuthMutators,
+): Promise<GoogleSignInResult> {
+  try {
+    const response = await authApi.oauthGoogle({
+      id_token: idToken,
+      ...(licenseKey === undefined ? {} : { license_key: licenseKey }),
+      timezone: detectDeviceTimezone(),
+    });
+    await applyAuthResponse(response, mutators);
+    return { kind: 'success' };
+  } catch (err: unknown) {
+    if (isNeedsLicenseRefusal(err)) return { kind: 'needs_license' };
+    return { kind: 'error', error: err };
+  }
+}
+
 /**
  * Shared "user logged out / session ended" tear-down used by both
  * ``logout`` and ``dismissReauth``.  Extracted so the ``useAuthActions``
@@ -462,6 +531,11 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     [mutators],
   );
 
+  const loginWithGoogle = useCallback<LoginWithGoogle>(
+    (idToken, licenseKey) => exchangeGoogleIdToken(idToken, licenseKey, mutators),
+    [mutators],
+  );
+
   const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
@@ -490,8 +564,16 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   // Memoize the bundle so the context value's ``useMemo`` actually short-
   // circuits on renders where none of the identity-stable callbacks changed.
   return useMemo(
-    () => ({ login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset }),
-    [login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset],
+    () => ({
+      login,
+      signup,
+      loginWithGoogle,
+      logout,
+      onUnauthorized,
+      dismissReauth,
+      confirmPasswordReset,
+    }),
+    [login, signup, loginWithGoogle, logout, onUnauthorized, dismissReauth, confirmPasswordReset],
   );
 }
 
