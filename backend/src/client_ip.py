@@ -9,6 +9,17 @@ from the right, because a client can prepend entries that the proxy appends
 to.  Unset or blank config trusts nobody: the header is ignored everywhere and
 every control keys on the socket peer.
 
+One trust walk, two answers.  ``resolve_client_ip`` says *who was this,
+exactly* and belongs in audit rows and logs, where forensic precision is the
+whole point.  ``client_throttle_key`` says *whose budget does this spend* and
+belongs in every limiter, where the unit has to be a customer rather than an
+address: a residential IPv6 subscriber is delegated an entire /64, so keying a
+throttle on the full address hands one subscriber 2**64 buckets and no cap can
+ever trip.  IPv4 has no such gift -- one client, one address -- so it is keyed
+on the address unchanged; grouping it by prefix would make unrelated customers
+behind one carrier NAT throttle each other.  Both projections read the same
+resolved address object so they can never drift apart on trust.
+
 Deliberately a leaf module -- it imports nothing of ours.  :mod:`rate_limit`
 and ``routers.auth`` both need this answer, and ``rate_limit_keys`` documents
 the import cycle between those two that a dependency-free module avoids.
@@ -23,6 +34,18 @@ from fastapi import Request
 
 # Comma-separated IPs and/or CIDR blocks naming the proxies we operate.
 TRUSTED_PROXIES_ENV_VAR = "TRUSTED_PROXY_CIDRS"
+
+# How much of an IPv6 address identifies the subscriber rather than the host
+# they picked this second.  Configurable because an upstream that delegates
+# wider than a /64 needs a wider bucket to hold one customer.
+IPV6_THROTTLE_PREFIX_ENV_VAR = "IPV6_THROTTLE_PREFIX_LEN"
+
+# The size residential upstreams are expected to delegate, and the fallback for
+# any configured value we cannot use.
+DEFAULT_IPV6_THROTTLE_PREFIX_LEN = 64
+
+# A prefix length is a bit count, so anything below one bit is not a prefix.
+_MIN_IPV6_THROTTLE_PREFIX_LEN = 1
 
 # Both the config variable and the forwarded header are comma-separated lists.
 _ENTRY_SEPARATOR = ","
@@ -51,6 +74,14 @@ def _parse_address(value: str) -> _Address | None:
     """Parse ``value`` as an IP literal, or None when it is not one."""
     try:
         return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _parse_prefix_length(raw: str) -> int | None:
+    """Parse one config value as a bit count, or None when it is not one."""
+    try:
+        return int(raw)
     except ValueError:
         return None
 
@@ -108,6 +139,26 @@ def _trusted_networks() -> list[_Network]:
     return [network for network in parsed if network is not None]
 
 
+def _throttle_prefix_length() -> int:
+    """Read the IPv6 throttle prefix length from the environment at call time.
+
+    Reading per call means retuning the bucket needs no restart, exactly as for
+    the proxy allowlist.  Only an integer in ``[1, IPV6LENGTH]`` is a usable
+    prefix, and every other value degrades to the default rather than being
+    clamped into range: ``0`` would collapse every IPv6 client on earth into one
+    bucket -- a self-inflicted denial of service on all legitimate IPv6 users --
+    and clamping ``129`` down would silently disable the grouping altogether.
+    The default is the only value an operator would have chosen deliberately, so
+    it is the only safe reading of a typo.
+    """
+    configured = _parse_prefix_length(os.getenv(IPV6_THROTTLE_PREFIX_ENV_VAR, ""))
+    if configured is None or not (
+        _MIN_IPV6_THROTTLE_PREFIX_LEN <= configured <= ipaddress.IPV6LENGTH
+    ):
+        return DEFAULT_IPV6_THROTTLE_PREFIX_LEN
+    return configured
+
+
 def _is_trusted(address: _Address, networks: list[_Network]) -> bool:
     """Return True when ``address`` sits inside one of our proxy networks."""
     return any(address in network for network in networks)
@@ -153,21 +204,70 @@ def _socket_peer(request: Request) -> _Address | None:
     return None if peer is None else _client_address(peer.host)
 
 
-def resolve_client_ip(request: Request) -> str:
-    """Return the address to charge this request to: throttles and audit agree on it.
+def _throttle_key(address: _Address) -> str:
+    """Return the budget ``address`` spends from: its prefix if IPv6, itself if IPv4.
+
+    CIDR text is the form on purpose.  ``ipaddress`` compresses a network
+    canonically, so the two limiter backends -- which compare keys for byte
+    equality -- cannot mint a duplicate bucket for one prefix, and the key
+    states the prefix it was cut at, so retuning the config visibly re-buckets
+    rather than quietly reusing stale counters.  The key namespaces stay
+    disjoint by construction: IPv4 keys are dotted quads carrying neither ``:``
+    nor ``/``, IPv6 prefix keys always carry ``/``, the unknown-client answer
+    carries neither, and authenticated keys carry a ``user:`` prefix.
+
+    ``_unmapped`` has already folded ``::ffff:203.0.113.5`` into an IPv4
+    address, so a mapped literal takes the IPv4 arm for free -- prefixing it
+    would group the whole mapped range, i.e. the entire IPv4 internet, into a
+    single bucket.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return str(address)
+    prefixed = f"{address}/{_throttle_prefix_length()}"
+    return str(ipaddress.ip_network(prefixed, strict=False))
+
+
+def _resolved_client(request: Request) -> _Address | None:
+    """Return the address to charge this request to, or None when there is none.
 
     Falls back to the socket peer whenever the forwarded chain cannot be
     trusted or cannot be believed -- an unvouched peer, a missing header, a
     chain of nothing but our own proxies, or a chosen hop that is not an IP
-    literal.  A peer that is not an IP literal itself resolves to
-    ``_UNKNOWN_CLIENT``, so a junk or over-wide value can reach neither a
-    rate-limit key nor an audit column.
+    literal.  A peer that is not an IP literal itself yields None, so a junk or
+    over-wide value can reach neither a rate-limit key nor an audit column.
+
+    The single shared resolution behind both projections below: one trust walk,
+    one canonicalisation of mapped literals, one rejection of zone ids, so what
+    a throttle charges and what an audit row records can never drift apart.
     """
     peer = _socket_peer(request)
     if peer is None:
-        return _UNKNOWN_CLIENT
+        return None
     networks = _trusted_networks()
     if not _is_trusted(peer, networks):
-        return str(peer)
+        return peer
     hop = _client_hop(_forwarded_hops(request), networks)
-    return str(peer if hop is None else hop)
+    return peer if hop is None else hop
+
+
+def resolve_client_ip(request: Request) -> str:
+    """Return exactly who made this request, for audit rows and logs.
+
+    The forensic projection: the full address, never widened, because an audit
+    trail that names a /64 names a few billion hosts and identifies nobody.
+    Throttles must not use this -- see :func:`client_throttle_key`.
+    """
+    address = _resolved_client(request)
+    return _UNKNOWN_CLIENT if address is None else str(address)
+
+
+def client_throttle_key(request: Request) -> str:
+    """Return whose budget this request spends, for every rate limiter.
+
+    The throttle projection: the same resolved client as
+    :func:`resolve_client_ip`, but grouped onto the prefix its subscriber was
+    delegated when it is IPv6, so rotating through that delegation cannot buy a
+    fresh bucket per request.
+    """
+    address = _resolved_client(request)
+    return _UNKNOWN_CLIENT if address is None else _throttle_key(address)

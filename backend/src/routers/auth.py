@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from client_ip import resolve_client_ip
+from client_ip import client_throttle_key, resolve_client_ip
 from database import get_session
 from domain.dates import ensure_aware
 from domain.entitlements import (
@@ -512,12 +512,12 @@ async def _reject_invalid_license(
 ) -> NoReturn:
     """Reject a signup whose license failed verification (anti-enumeration).
 
-    Counts the attempt toward the per-IP invalid-license cap, records an
+    Counts the attempt toward the invalid-license cap, records an
     email-mismatch marker server-side (fingerprint only — never the raw
     email or key), spends the dummy bcrypt verify for timing parity, then
     raises the generic 400 — or 429 once the hourly cap is exceeded.
     """
-    allowed = record_invalid_license_attempt(resolve_client_ip(request))
+    allowed = record_invalid_license_attempt(client_throttle_key(request))
     if outcome is LicenseOutcome.EMAIL_MISMATCH:
         logger.info(
             "signup_license_rejected",
@@ -1953,7 +1953,7 @@ async def _resolve_existing_account(
 
 
 async def _count_invalid_license_attempt(request: Request, license_key: str | None) -> None:
-    """Charge a failed non-blank key against the per-IP hourly cap.
+    """Charge a failed non-blank key against the hourly cap for this client.
 
     Without this the OAuth route would be a free bypass of the brute-force
     throttle ``/auth/signup`` enforces: an attacker could grind license keys
@@ -1962,7 +1962,7 @@ async def _count_invalid_license_attempt(request: Request, license_key: str | No
     """
     if not (license_key or "").strip():
         return
-    if record_invalid_license_attempt(resolve_client_ip(request)):
+    if record_invalid_license_attempt(client_throttle_key(request)):
         return
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
