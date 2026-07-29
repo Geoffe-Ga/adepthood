@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from client_ip import TRUSTED_PROXIES_ENV_VAR
 from database import async_session_factory, get_session
 from errors import install_exception_handlers
 from middleware import (
@@ -277,6 +278,40 @@ def validate_gumroad_config() -> None:
     raise RuntimeError(msg)
 
 
+def validate_trusted_proxy_config() -> None:
+    """Announce a production boot that trusts no reverse proxy.
+
+    An unconfigured allowlist is a degraded state, not a broken one, so this
+    never raises on any path: with ``TRUSTED_PROXY_CIDRS`` unset the app is
+    perfectly serviceable, it simply cannot tell one client behind the ingress
+    from another.  Every control that keys on an address -- the per-route rate
+    limiter, the hourly invalid-license throttle, the login and password-reset
+    audit rows -- then sees the ingress itself, so one bucket and one audited
+    address cover the whole internet.  The same variable governs uvicorn's
+    proxy-header trust set, so ``X-Forwarded-Proto`` is untrusted too and the
+    app believes it is serving http, which downgrades redirects and any
+    absolute URL it builds.
+
+    Nothing else surfaces this: the degraded behaviour looks like ordinary
+    operation until a brute-forcer is throttled alongside honest traffic or an
+    audit row names the proxy.  Outside production an unset value is the normal
+    local case (there is no proxy to trust) and stays silent, mirroring
+    ``validate_gumroad_config``'s treatment of a wholly unconfigured pair.
+    """
+    if os.getenv("ENV", "development") != "production":
+        return
+    if os.getenv(TRUSTED_PROXIES_ENV_VAR, "").strip():
+        return
+    logger.warning(
+        "trusted_proxies_unconfigured: %s is unset, so X-Forwarded-For is "
+        "ignored and every client behind the ingress shares one rate-limit "
+        "bucket and one audited IP address; X-Forwarded-Proto is not trusted "
+        "either, so redirects and absolute URLs stay http://. Set it to the "
+        "platform's ingress range -- backend/.env.example documents the format",
+        TRUSTED_PROXIES_ENV_VAR,
+    )
+
+
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
@@ -418,6 +453,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # than dropping purchase webhooks later, while a wholly unset pair only
     # warns: that is the pre-adoption state, and the endpoints fail closed.
     validate_gumroad_config()
+
+    # A production boot with no proxy allowlist still serves traffic, but every
+    # client behind the ingress shares one throttle bucket and one audit IP --
+    # a state only this warning makes visible.
+    validate_trusted_proxy_config()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.

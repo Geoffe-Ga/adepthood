@@ -133,6 +133,7 @@ In the backend service's **Variables** tab, add:
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2) |
+| `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -367,6 +368,7 @@ than a migration.
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
+| `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
 | `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
