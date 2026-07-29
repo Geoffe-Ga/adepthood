@@ -28,6 +28,7 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@react-native-async-storage/async-storage$': '<rootDir>/src/__mocks__/async-storage.js',
     '^expo-secure-store$': '<rootDir>/src/__mocks__/expo-secure-store.js',
+    '^expo-apple-authentication$': '<rootDir>/src/__mocks__/expo-apple-authentication.js',
     '^expo-auth-session/providers/google$': '<rootDir>/src/__mocks__/expo-auth-session-google.js',
     '^expo-web-browser$': '<rootDir>/src/__mocks__/expo-web-browser.js',
     '^expo-av$': '<rootDir>/src/__mocks__/expo-av.js',
