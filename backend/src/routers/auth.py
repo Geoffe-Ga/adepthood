@@ -17,7 +17,7 @@ import jwt
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -34,7 +34,8 @@ from domain.entitlements import (
     verify_aptitude_license,
 )
 from domain.timezone import normalize_timezone
-from errors import bad_request, service_unavailable
+from errors import bad_request, conflict, service_unavailable
+from models.auth_identity import AuthIdentity, AuthProvider
 from models.gumroad_sale import GumroadSale
 from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
@@ -53,6 +54,8 @@ from services.email import (
     EmailSender,
     get_email_sender,
 )
+from services.oauth_google import verify_google_id_token
+from services.oidc import OIDCIdentity, OIDCTokenError
 from services.token_packs import claim_token_pack_sales
 from services.users import get_user_timezone
 
@@ -1584,3 +1587,443 @@ async def cancel_password_reset(
     cancelled_email = user.email if user is not None else ""
     await session.commit()
     _log_reset_event("cancelled", cancelled_email, request)
+
+
+# ---------------------------------------------------------------------------
+# Social sign-in (Google OAuth / OIDC)
+# ---------------------------------------------------------------------------
+
+# Ceiling on the submitted ``id_token``.  Real Google id_tokens run well under
+# 2 KB; the cap exists so an over-length body is rejected by Pydantic *before*
+# any JWKS lookup is attempted, denying an attacker a free way to drive
+# outbound key fetches (and CPU) with garbage.
+_MAX_ID_TOKEN_LENGTH = 4096
+
+# Entropy for the unusable password minted behind a social account.  32 bytes
+# encodes to a 43-character URL-safe string (256 bits) -- comfortably inside
+# bcrypt's 72-byte input window and never shown to anyone, so no password can
+# ever authenticate the row.
+_SOCIAL_PASSWORD_BYTES = 32
+
+# The two client-visible details of the OAuth ladder.  401 is spent *only* on
+# "this token failed cryptographic verification"; every other refusal collapses
+# onto the single 409 below.  Keep both immutable and never interpolate:
+# byte-identical rejections are what stop the endpoint being an oracle for
+# which accounts exist, which are banned, and which license keys are real.
+_DETAIL_INVALID_OAUTH_TOKEN = "invalid_oauth_token"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+_DETAIL_NEEDS_LICENSE = "needs_license"
+
+# Server-side-only reason codes for the OAuth audit trail.  These carry the
+# distinctions the wire response deliberately refuses to make.
+_REASON_OAUTH_INVALID_TOKEN = "oauth_invalid_token"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+_REASON_OAUTH_LOGIN = "oauth_login"
+_REASON_OAUTH_LINKED = "oauth_linked"
+_REASON_OAUTH_SIGNUP = "oauth_signup"
+_REASON_OAUTH_NEEDS_LICENSE = "oauth_needs_license"
+_REASON_OAUTH_ACCOUNT_GATED = "oauth_account_gated"
+_REASON_OAUTH_LINK_CONFLICT = "oauth_link_conflict"
+
+# Single log event name so an operator greps one string and filters by
+# ``reason_code``.
+_OAUTH_LOG_EVENT = "oauth_signin"
+
+
+class GoogleOAuthRequest(BaseModel):
+    """Google sign-in payload -- an ``id_token``, plus first-run extras.
+
+    ``id_token`` carries an explicit ``_MAX_ID_TOKEN_LENGTH`` bound for the
+    same reason ``AuthRequest.password`` carries one: without it an unbounded
+    string reaches the verifier, and each attempt can cost a signing-key
+    lookup.  The bound rejects abuse at the schema layer, before any of that
+    work happens.
+
+    ``license_key`` is optional because most sign-ins are logins or links to an
+    already-paid account; it is only consulted on the rung that would create a
+    brand-new account, which stays license-gated exactly like ``/auth/signup``.
+
+    ``timezone`` mirrors :class:`SignupRequest`: validated at the trust
+    boundary so a malformed IANA string is a 422 rather than a permanently
+    stored bad value, and omitting it keeps the column at ``"UTC"``.
+    """
+
+    id_token: str = Field(min_length=1, max_length=_MAX_ID_TOKEN_LENGTH)
+    license_key: str | None = Field(default=None, max_length=_MAX_LICENSE_KEY_LENGTH)
+    timezone: str = DEFAULT_USER_TIMEZONE
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _validate_timezone(cls, value: object) -> str:
+        """Reject malformed IANA strings before they reach the DB."""
+        return normalize_timezone(value, DEFAULT_USER_TIMEZONE)
+
+
+def _log_oauth(reason_code: str, email: str | None = None) -> None:
+    """Emit one OAuth audit line, carrying no user-supplied material.
+
+    The email is reduced to the same non-reversible fingerprint every other
+    auth log line uses, and the ``id_token`` is never passed in at all -- it is
+    a replayable credential, so a single leaked log line would be a working
+    session for whoever reads the log.
+    """
+    extra: dict[str, object] = {"reason_code": reason_code}
+    if email:
+        extra["email_fingerprint"] = _email_log_fingerprint(email)
+    logger.info(_OAUTH_LOG_EVENT, extra=extra)
+
+
+async def _needs_license_conflict(email: str | None) -> HTTPException:
+    """Build the one refusal every OAuth path that is not a bad token shares.
+
+    A brand-new email without a license, an invalid license under the hourly
+    cap, an unverified address colliding with an existing account, a token with
+    no email at all, and an account an operator has disabled or deleted all
+    end here and receive the *same bytes*: same status, same body, same
+    length.  Any variation between them would tell an unauthenticated caller
+    which accounts exist and which are banned, so the detail is a constant and
+    nothing is ever interpolated into it.
+
+    The dummy bcrypt verify matches the cost of the account-creating path, so
+    the dominant CPU cost is the same whichever refusal fired.  That parity is
+    deliberately not claimed for wall-clock time: a refusal that reached the
+    license check has paid an outbound Gumroad round trip that a refusal
+    resolved from the database alone has not.  Closing that gap would mean
+    calling Gumroad on every sign-in, including the ordinary logins that need
+    no license at all, and the residual it leaves is narrow -- only the holder
+    of a provider-verified token for an address can reach those rungs, so the
+    most the timing distinguishes is the state of an account whose mailbox the
+    caller already controls.
+
+    Returned rather than raised so every call site reads ``raise await
+    _needs_license_conflict(...)`` -- the ``raise`` stays visible at the point
+    of refusal instead of hiding inside a helper.
+    """
+    await _consume_dummy_password_verify()
+    _log_oauth(_REASON_OAUTH_NEEDS_LICENSE, email)
+    return conflict(_DETAIL_NEEDS_LICENSE)
+
+
+async def _gated_account_conflict(email: str | None) -> HTTPException:
+    """Record that the refusal was a gated account, then build the generic 409.
+
+    The distinction exists only in the log: an operator investigating a
+    disabled account needs to see ``oauth_account_gated``, while the caller
+    must not be able to tell it apart from "we have never heard of you".
+    """
+    _log_oauth(_REASON_OAUTH_ACCOUNT_GATED, email)
+    return await _needs_license_conflict(email)
+
+
+async def _verify_oauth_identity(id_token: str) -> OIDCIdentity:
+    """Verify the submitted ``id_token``, or raise the only 401 this route uses.
+
+    401 is reserved *exclusively* for "the token itself did not verify", which
+    is a statement about the token and reveals nothing about any account.
+    ``from None`` severs the chain so the raw token inside the verifier's error
+    context cannot surface in a traceback or a 500 body.
+    """
+    try:
+        return await verify_google_id_token(id_token)
+    except OIDCTokenError:
+        _log_oauth(_REASON_OAUTH_INVALID_TOKEN)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_DETAIL_INVALID_OAUTH_TOKEN,
+        ) from None
+
+
+def _require_user_id(user: User) -> int:
+    """Return a committed user's primary key, refusing to continue without one."""
+    if user.id is None:
+        msg = "User ID unexpectedly None after database commit"
+        raise RuntimeError(msg)
+    return user.id
+
+
+def _auth_response_for(user: User) -> AuthResponse:
+    """Mint a session token for ``user`` in the standard auth-response shape."""
+    user_id = _require_user_id(user)
+    token, _ = _create_token(user_id)
+    return AuthResponse(token=token, user_id=user_id, timezone=user.timezone)
+
+
+def _linkable_email(claims: OIDCIdentity) -> str | None:
+    """Return the normalized address an identity may link or create with.
+
+    Only a provider-verified email qualifies.  An unverified address is the
+    account-takeover vector this endpoint exists to close -- anyone can put
+    someone else's address on an account at most providers -- so it neither
+    links to an existing account nor creates a new one, no matter what else
+    the request carries.
+    """
+    if not claims.email_verified or claims.email is None:
+        return None
+    return claims.email.strip().lower()
+
+
+async def _find_identity(session: AsyncSession, subject: str) -> AuthIdentity | None:
+    """Return the stored Google link for ``subject``, or ``None``.
+
+    Keyed on the provider subject rather than the email because a subject is
+    the only identifier a provider promises never to reassign.
+    """
+    result = await session.execute(
+        select(AuthIdentity).where(
+            AuthIdentity.provider == AuthProvider.GOOGLE,
+            AuthIdentity.subject == subject,
+        )
+    )
+    return result.scalars().first()
+
+
+async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
+    """Case-insensitively find the account owning ``email``.
+
+    Compares on ``lower(email)`` rather than trusting stored casing so a legacy
+    row written before the normalizing boundary landed still matches.
+    """
+    result = await session.execute(select(User).where(func.lower(col(User.email)) == email))
+    return result.scalars().first()
+
+
+async def _insert_identity(
+    session: AsyncSession,
+    user_id: int,
+    subject: str,
+    email: str,
+) -> bool:
+    """Persist the provider link; ``False`` when a concurrent caller won it.
+
+    The ``(provider, subject)`` unique constraint is what makes the race safe:
+    the loser rolls back and re-resolves against the row the winner wrote, and
+    because both were resolving the same subject they converge on the same
+    account.
+
+    ``email_at_link_time`` records the verified address that authorised the
+    link.  ``User.email_verified`` is deliberately left alone -- that column
+    belongs to the (unbuilt) email-verification flow, and setting it from a
+    provider claim would silently satisfy a gate it was never meant to satisfy.
+    """
+    session.add(
+        AuthIdentity(
+            user_id=user_id,
+            provider=AuthProvider.GOOGLE,
+            subject=subject,
+            email_at_link_time=email,
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return False
+    return True
+
+
+async def _login_via_identity(
+    session: AsyncSession,
+    identity: AuthIdentity,
+    email: str | None,
+) -> AuthResponse:
+    """Mint a token for an already-linked identity, or take the generic exit.
+
+    A link whose account has been soft-disabled, soft-deleted, or hard-deleted
+    is refused with the same 409 an unknown caller gets.  Spending the 401 here
+    would confirm to any holder of a valid Google token that the identity it
+    names is attached to a banned Adepthood account.
+    """
+    user = await session.get(User, identity.user_id)
+    if user is None or _user_state_reject_reason(user) is not None:
+        raise await _gated_account_conflict(email)
+    _log_oauth(_REASON_OAUTH_LOGIN, email)
+    return _auth_response_for(user)
+
+
+async def _link_or_relogin(
+    session: AsyncSession,
+    user: User,
+    claims: OIDCIdentity,
+    email: str,
+) -> AuthResponse:
+    """Attach a first Google link to ``user``, re-resolving once if a racer won."""
+    if await _insert_identity(session, _require_user_id(user), claims.subject, email):
+        _log_oauth(_REASON_OAUTH_LINKED, email)
+        return _auth_response_for(user)
+    identity = await _find_identity(session, claims.subject)
+    if identity is None:
+        raise await _needs_license_conflict(email)
+    return await _login_via_identity(session, identity, email)
+
+
+async def _resolve_existing_account(
+    session: AsyncSession,
+    claims: OIDCIdentity,
+) -> AuthResponse | None:
+    """Walk the two rungs that need no license: stored link, then verified email.
+
+    Returns ``None`` when neither rung matched, which hands the caller down to
+    the license-gated creation rung.  Anything that matched but must not
+    proceed (a disabled or deleted account) never returns at all -- it raises
+    the generic refusal from inside.
+    """
+    identity = await _find_identity(session, claims.subject)
+    if identity is not None:
+        return await _login_via_identity(session, identity, claims.email)
+    email = _linkable_email(claims)
+    if email is None:
+        return None
+    user = await _find_user_by_email(session, email)
+    if user is None:
+        return None
+    if _user_state_reject_reason(user) is not None:
+        raise await _gated_account_conflict(email)
+    return await _link_or_relogin(session, user, claims, email)
+
+
+async def _count_invalid_license_attempt(request: Request, license_key: str | None) -> None:
+    """Charge a failed non-blank key against the per-IP hourly cap.
+
+    Without this the OAuth route would be a free bypass of the brute-force
+    throttle ``/auth/signup`` enforces: an attacker could grind license keys
+    here at the per-minute rate forever.  A blank key never reached Gumroad and
+    is not a guess, so it is not counted.
+    """
+    if not (license_key or "").strip():
+        return
+    if record_invalid_license_attempt(_get_client_ip(request)):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=_DETAIL_TOO_MANY_LICENSE_ATTEMPTS,
+    )
+
+
+async def _verify_oauth_license(
+    request: Request,
+    email: str,
+    license_key: str | None,
+) -> GumroadPurchase:
+    """Verify the APTITUDE license backing a brand-new social account.
+
+    Anything short of VERIFIED lands on the generic 409 -- a missing key, a
+    wrong key, and a key bought under a different address are indistinguishable
+    on the wire.  A Gumroad outage fails closed with 503 before any row is
+    written; ``from None`` severs the chain so the caught error's request body
+    (which carries the license key) is unreachable via ``__cause__``.
+    """
+    try:
+        check = await verify_aptitude_license(email, license_key)
+    except GumroadUnavailableError:
+        raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
+    if check.outcome is LicenseOutcome.VERIFIED and check.purchase is not None:
+        return check.purchase
+    await _count_invalid_license_attempt(request, license_key)
+    raise await _needs_license_conflict(email)
+
+
+async def _insert_social_user(session: AsyncSession, email: str, timezone: str) -> User | None:
+    """Create the account behind a social sign-in; ``None`` when a racer won.
+
+    The stored hash is a fresh 256-bit random run through the same bcrypt cost
+    the password flow uses.  That satisfies the NOT NULL hash contract while
+    guaranteeing no password can ever authenticate the row, and it keeps the
+    creation path's timing indistinguishable from an ordinary signup.
+    """
+    password_hash = await _hash_password(secrets.token_urlsafe(_SOCIAL_PASSWORD_BYTES))
+    user = User(email=email, password_hash=password_hash, timezone=timezone)
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return None
+    await session.refresh(user)
+    return user
+
+
+async def _reresolve_after_create_race(
+    session: AsyncSession,
+    claims: OIDCIdentity,
+) -> AuthResponse:
+    """Re-walk the login / link rungs once after losing the account-create race.
+
+    The winner has now committed the account this request was about to create,
+    so the same two rungs that ran a moment ago resolve to it.  Bounded to one
+    retry: a second miss means something other than a race, and the generic
+    refusal is the honest answer.
+    """
+    resolved = await _resolve_existing_account(session, claims)
+    if resolved is None:
+        raise await _needs_license_conflict(claims.email)
+    return resolved
+
+
+async def _create_oauth_account(
+    request: Request,
+    session: AsyncSession,
+    payload: GoogleOAuthRequest,
+    claims: OIDCIdentity,
+    email: str,
+) -> AuthResponse:
+    """Create the license-verified account, grant the course, and link the identity.
+
+    The license is verified before any row is written (verify-then-create), and
+    any token pack bought under the same address before this sign-in is swept
+    into the new wallet, exactly as ``/auth/signup`` does.
+
+    The identity link is written last, and the response is built before it, so
+    that losing the link race (a concurrent caller resolved the same subject
+    against the account we just created) rolls back only that insert.  Reading
+    an ORM attribute after that rollback would be a lazy load outside the
+    greenlet; the racer's row points at the same account anyway.
+    """
+    purchase = await _verify_oauth_license(request, email, payload.license_key)
+    user = await _insert_social_user(session, email, payload.timezone)
+    if user is None:
+        return await _reresolve_after_create_race(session, claims)
+    await _grant_signup_entitlement(session, user, purchase)
+    await claim_token_pack_sales(session, user)
+    response = _auth_response_for(user)
+    if not await _insert_identity(session, response.user_id, claims.subject, email):
+        # Expected only when a racer linked this subject to the account we just
+        # created, which leaves the caller signed in to the right account
+        # anyway.  Logged rather than ignored so that an integrity failure with
+        # some other cause is visible instead of silently looking like a login.
+        _log_oauth(_REASON_OAUTH_LINK_CONFLICT, email)
+    _log_oauth(_REASON_OAUTH_SIGNUP, email)
+    return response
+
+
+@router.post("/oauth/google", response_model=AuthResponse)
+@limiter.limit("5/minute")
+async def google_oauth_signin(
+    request: Request,
+    payload: GoogleOAuthRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuthResponse:
+    """Sign in (or, with a license, sign up) with a Google ``id_token``.
+
+    Four rungs, tried in order, and exactly two possible refusals:
+
+    1. The token is verified against Google's published keys.  Failure is the
+       only 401 this route emits, and it writes nothing.
+    2. A stored ``(google, subject)`` link logs its account straight in.
+    3. Otherwise a *verified* provider email links onto the account that
+       already owns it.  An unverified email never links -- that is the
+       account-takeover vector.
+    4. Otherwise a verified email plus a valid APTITUDE license creates the
+       account, exactly as ``/auth/signup`` would.
+
+    Everything else -- no license, a bad license, an unverified address, a
+    token with no email, a disabled or deleted account -- is one 409 with
+    identical bytes, so the endpoint answers no questions about which accounts
+    exist or which are gated.  See :func:`_needs_license_conflict` for the one
+    dimension along which that parity is bounded rather than absolute.
+    """
+    claims = await _verify_oauth_identity(payload.id_token)
+    resolved = await _resolve_existing_account(session, claims)
+    if resolved is not None:
+        return resolved
+    email = _linkable_email(claims)
+    if email is None:
+        raise await _needs_license_conflict(claims.email)
+    return await _create_oauth_account(request, session, payload, claims, email)
