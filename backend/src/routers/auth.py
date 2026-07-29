@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from client_ip import resolve_client_ip
 from database import get_session
 from domain.dates import ensure_aware
 from domain.entitlements import (
@@ -357,18 +358,6 @@ def _create_token(user_id: int) -> tuple[str, str]:
     return token, jti
 
 
-def _get_client_ip(request: Request) -> str:
-    """Extract client IP from the request, respecting X-Forwarded-For."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        # First address in the chain is the original client
-        return forwarded.split(",")[0].strip()
-    client = request.client
-    if client is not None:
-        return client.host
-    return "unknown"
-
-
 async def _record_attempt(
     session: AsyncSession,
     email: str,
@@ -528,7 +517,7 @@ async def _reject_invalid_license(
     email or key), spends the dummy bcrypt verify for timing parity, then
     raises the generic 400 — or 429 once the hourly cap is exceeded.
     """
-    allowed = record_invalid_license_attempt(_get_client_ip(request))
+    allowed = record_invalid_license_attempt(resolve_client_ip(request))
     if outcome is LicenseOutcome.EMAIL_MISMATCH:
         logger.info(
             "signup_license_rejected",
@@ -765,7 +754,7 @@ async def login(
     payload: AuthRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
-    ip_address = _get_client_ip(request)
+    ip_address = resolve_client_ip(request)
 
     # Wrap the lockout-check + verify + record sequence in a per-email
     # serialization so concurrent failed attempts cannot all pass the
@@ -1244,7 +1233,7 @@ async def _mint_and_persist_reset_token(
         user_id=user.id,
         lookup_key=_make_lookup_key(plaintext),
         token_hash=await _hash_reset_token(plaintext),
-        requested_ip=_get_client_ip(request),
+        requested_ip=resolve_client_ip(request),
         requested_user_agent=user_agent,
         expires_at=datetime.now(UTC) + _PASSWORD_RESET_TTL,
     )
@@ -1329,7 +1318,7 @@ def _log_reset_event(action: str, email: str, request: Request) -> None:
         extra={
             "action": action,
             "email_fingerprint": _email_log_fingerprint(email),
-            "ip_address": _get_client_ip(request),
+            "ip_address": resolve_client_ip(request),
             "timestamp": datetime.now(UTC).isoformat(),
         },
     )
@@ -1973,7 +1962,7 @@ async def _count_invalid_license_attempt(request: Request, license_key: str | No
     """
     if not (license_key or "").strip():
         return
-    if record_invalid_license_attempt(_get_client_ip(request)):
+    if record_invalid_license_attempt(resolve_client_ip(request)):
         return
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -4,16 +4,20 @@ from limits import RateLimitItemPerHour
 from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+
+from client_ip import resolve_client_ip
 
 # Default rate limit applied to all endpoints that don't declare their own.
 # Auth endpoints override this with stricter per-route limits (3/min signup,
 # 5/min login). The global default protects against scraping and general abuse.
 DEFAULT_RATE_LIMIT = "60/minute"
 
-# Rate limiter keyed by client IP address. Shared across routers so all
-# endpoints use a single limiter with consistent state.
-limiter = Limiter(key_func=get_remote_address, default_limits=[DEFAULT_RATE_LIMIT])
+# Rate limiter keyed by the trusted-proxy-resolved client address, so it agrees
+# with the invalid-license throttle and the audit trail instead of keying on a
+# forgeable header or on a proxy every user shares. Shared across routers so all
+# endpoints use a single limiter with consistent state. Building the limiter at
+# import time is safe: the trusted-proxy config is read per request.
+limiter = Limiter(key_func=resolve_client_ip, default_limits=[DEFAULT_RATE_LIMIT])
 
 # Second-layer throttle for signup attempts that fail license verification:
 # distinct from the 3/minute signup limit above so a license brute-forcer is

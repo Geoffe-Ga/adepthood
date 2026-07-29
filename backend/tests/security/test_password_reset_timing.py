@@ -27,7 +27,9 @@ from statistics import median
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlmodel import select
 
+from models.password_reset_token import PasswordResetToken
 from models.user import User
 from routers.auth import _consume_dummy_bcrypt, _hash_password
 from services.email import RecordingEmailSender
@@ -68,6 +70,14 @@ _REQUEST_TOLERANCE_FRACTION = 0.5
 _TOLERANCE_MS = 250
 
 _PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
+
+# Environment variable naming the proxy networks whose X-Forwarded-For we honour.
+_TRUSTED_PROXIES_ENV_VAR = "TRUSTED_PROXY_CIDRS"
+
+# Socket peer that ``httpx.ASGITransport`` reports for the ``async_client``
+# fixture; the trusted-proxy config below must name it for the header to count.
+_TRANSPORT_PEER_IP = "127.0.0.1"
+_FORWARDED_CLIENT_IP = "203.0.113.5"
 
 
 pytestmark = pytest.mark.usefixtures("wire_email_sender")
@@ -162,25 +172,57 @@ async def test_request_response_shape_identical_hit_vs_miss(
     assert hit.json() == miss.json()
 
 
+async def _request_reset_behind_forwarded_for(client: AsyncClient, email: str) -> None:
+    """Request a reset for ``email`` carrying a forwarded client address."""
+    response = await client.post(
+        "/auth/password-reset/request",
+        json={"email": email},
+        headers={"X-Forwarded-For": _FORWARDED_CLIENT_IP},
+    )
+    assert response.status_code == 202
+
+
+async def _recorded_request_ip(db_session: AsyncSession) -> str:
+    """Return the ``requested_ip`` written on the only reset-token row."""
+    rows = (await db_session.execute(select(PasswordResetToken))).scalars().all()
+    assert len(rows) == 1
+    return rows[0].requested_ip
+
+
 @pytest.mark.asyncio
 async def test_request_ip_is_recorded_with_x_forwarded_for(
     async_client: AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SPEC R9 audit trail: ``requested_ip`` honours ``X-Forwarded-For``."""
+    """SPEC R9 audit trail: a trusted proxy's ``X-Forwarded-For`` is the recorded IP."""
+    monkeypatch.setenv(_TRUSTED_PROXIES_ENV_VAR, _TRANSPORT_PEER_IP)
     await _seed_user(db_session, "audit@example.com")
-    response = await async_client.post(
-        "/auth/password-reset/request",
-        json={"email": "audit@example.com"},
-        headers={"X-Forwarded-For": "203.0.113.5"},
-    )
-    assert response.status_code == 202
-    from sqlmodel import select  # noqa: PLC0415
 
-    from models.password_reset_token import PasswordResetToken  # noqa: PLC0415
+    await _request_reset_behind_forwarded_for(async_client, "audit@example.com")
 
-    rows = (await db_session.execute(select(PasswordResetToken))).scalars().all()
-    assert rows[0].requested_ip == "203.0.113.5"
+    assert await _recorded_request_ip(db_session) == _FORWARDED_CLIENT_IP
+
+
+@pytest.mark.asyncio
+async def test_request_ip_ignores_x_forwarded_for_without_a_trusted_proxy(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit integrity: an unvouched header cannot poison ``requested_ip``.
+
+    With no trusted proxy configured the header is attacker-controlled, so the
+    socket peer is the only address worth writing to the audit trail.
+    """
+    monkeypatch.delenv(_TRUSTED_PROXIES_ENV_VAR, raising=False)
+    await _seed_user(db_session, "spoofed@example.com")
+
+    await _request_reset_behind_forwarded_for(async_client, "spoofed@example.com")
+
+    recorded = await _recorded_request_ip(db_session)
+    assert recorded == _TRANSPORT_PEER_IP
+    assert recorded != _FORWARDED_CLIENT_IP
 
 
 async def _measure_confirm(client: AsyncClient, token: str, new_password: str) -> float:
