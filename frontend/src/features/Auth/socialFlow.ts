@@ -144,6 +144,11 @@ export function useSocialFlowController<C>(
 
   const exchange = useCallback(
     (credential: C, licenseKey?: string) => {
+      // A provider sheet can outlive the screen that opened it, and its promise
+      // settles into this callback afterwards. Refuse the whole exchange once
+      // unmounted, so the write below can never repopulate the credential the
+      // unmount cleanup just cleared.
+      if (!flow.current.mounted) return;
       flow.current.attempt += 1;
       const ticket = flow.current.attempt;
       flow.current.credential = credential;

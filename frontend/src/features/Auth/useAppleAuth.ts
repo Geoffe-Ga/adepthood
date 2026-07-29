@@ -57,11 +57,16 @@ function joinFullName(fullName: AppleAuthenticationFullName | null): string | un
  * Ask Apple to authorize us. Returns ``null`` when the sheet came back without
  * an identity token: there is nothing to exchange, and no reason to spend a
  * round trip finding that out.
+ *
+ * Absent and blank are the same answer. A whitespace-only token is a dead
+ * sheet dressed as a credential — not something to ask the server to judge —
+ * so both spellings take the identical fallback path.
  */
 async function requestAppleCredential(): Promise<AppleCredential | null> {
   const credential = await signInAsync({ requestedScopes: REQUESTED_SCOPES });
-  if (credential.identityToken === null) return null;
-  return { idToken: credential.identityToken, fullName: joinFullName(credential.fullName) };
+  const idToken = credential.identityToken;
+  if (idToken === null || idToken.trim() === '') return null;
+  return { idToken, fullName: joinFullName(credential.fullName) };
 }
 
 /**

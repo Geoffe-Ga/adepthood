@@ -73,9 +73,6 @@ type ConfirmReset = (_token: string, _newPassword: string) => Promise<void>;
 export type SocialSignInResult =
   { kind: 'success' } | { kind: 'needs_license' } | { kind: 'error'; error: unknown };
 
-/** The Google flow's name for the shared outcome, kept for its call sites. */
-export type GoogleSignInResult = SocialSignInResult;
-
 /**
  * Exchange a Google ID token — plus, on the retry leg, the buyer's license key
  * — for a session. Total: it never throws.

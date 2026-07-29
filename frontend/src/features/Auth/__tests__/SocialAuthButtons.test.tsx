@@ -38,12 +38,31 @@ const mockUseAppleAuth = useAppleAuth as unknown as jest.Mock;
 const mockUseAppleAvailable = useAppleSignInAvailable as unknown as jest.Mock;
 
 const GOOGLE_LABEL = 'Continue with Google';
+/** The shared stem both providers' license fields extend — never an accessible name on its own. */
 const LICENSE_LABEL = 'Gumroad license key';
+const GOOGLE_LICENSE_LABEL = `${LICENSE_LABEL} for Google sign-in`;
+const APPLE_LICENSE_LABEL = `${LICENSE_LABEL} for Apple sign-in`;
+/** The help link's name is scoped the same way, and for the same reason. */
+const HELP_LABEL = 'Find your license key';
+const GOOGLE_HELP_LABEL = `${HELP_LABEL} for Google sign-in`;
+const APPLE_HELP_LABEL = `${HELP_LABEL} for Apple sign-in`;
+const SUBMIT_LABEL = 'Submit license key';
+const GOOGLE_SUBMIT_LABEL = `${SUBMIT_LABEL} for Google sign-in`;
+const APPLE_SUBMIT_LABEL = `${SUBMIT_LABEL} for Apple sign-in`;
 const LICENSE_SUBMIT_ID = 'social-auth-license-submit';
 const GOOGLE_BUTTON_ID = 'social-auth-google';
+const GOOGLE_ERROR_ID = 'social-auth-error';
+const GOOGLE_LICENSE_HELP_ID = 'social-auth-google-license-help';
 const APPLE_BUTTON_ID = 'social-auth-apple';
 const APPLE_ERROR_ID = 'social-auth-apple-error';
 const APPLE_LICENSE_SUBMIT_ID = 'social-auth-apple-license-submit';
+const APPLE_LICENSE_HELP_ID = 'social-auth-apple-license-help';
+/**
+ * The unscoped identifiers ``LicenseKeyField`` still defaults to for the signup
+ * form's single field. Two providers on one screen may not share them.
+ */
+const UNSCOPED_LICENSE_ERROR_ID = 'signup-license-error';
+const UNSCOPED_LICENSE_HELP_ID = 'signup-license-help';
 const VALID_LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
 const TOO_SHORT_KEY = 'abc'; // pragma: allowlist secret
 const TOO_SHORT_COPY = 'That key looks too short — a Gumroad key is at least 8 characters.';
@@ -84,17 +103,32 @@ interface RenderedNode {
   children?: unknown[] | null;
 }
 
+/** Every string value of one prop, in render order, across the whole tree. */
+function collectProp(node: unknown, key: string): string[] {
+  if (Array.isArray(node)) return node.flatMap((child) => collectProp(child, key));
+  if (node === null || typeof node !== 'object') return [];
+  const { props, children } = node as RenderedNode;
+  const value = props === undefined ? undefined : props[key];
+  const own = typeof value === 'string' ? [value] : [];
+  return [...own, ...collectProp(children ?? [], key)];
+}
+
 /**
  * Every testID in render order. Comparing these sequences pins layout: a
  * hidden placeholder for an absent provider would show up as an extra slot.
  */
 function testIdsOf(node: unknown): string[] {
-  if (Array.isArray(node)) return node.flatMap((child) => testIdsOf(child));
-  if (node === null || typeof node !== 'object') return [];
-  const { props, children } = node as RenderedNode;
-  const testId = props === undefined ? undefined : props.testID;
-  const own = typeof testId === 'string' ? [testId] : [];
-  return [...own, ...testIdsOf(children ?? [])];
+  return collectProp(node, 'testID');
+}
+
+/** Every accessible name in render order — what a screen reader would announce. */
+function labelsOf(node: unknown): string[] {
+  return collectProp(node, 'accessibilityLabel');
+}
+
+/** Only the names belonging to a license field, so unrelated controls cannot mask a clash. */
+function licenseLabelsOf(node: unknown): string[] {
+  return labelsOf(node).filter((label) => label.startsWith(LICENSE_LABEL));
 }
 
 beforeEach(() => {
@@ -149,15 +183,15 @@ describe('SocialAuthButtons — inline license step', () => {
 
     const { getByLabelText } = render(<SocialAuthButtons />);
 
-    expect(getByLabelText(LICENSE_LABEL)).toBeTruthy();
+    expect(getByLabelText(GOOGLE_LICENSE_LABEL)).toBeTruthy();
     expect(getByLabelText(GOOGLE_LABEL)).toBeTruthy();
     expect(signIn).not.toHaveBeenCalled();
   });
 
   it('hides the license field while idle', () => {
-    const { queryByLabelText } = render(<SocialAuthButtons />);
+    const { toJSON } = render(<SocialAuthButtons />);
 
-    expect(queryByLabelText(LICENSE_LABEL)).toBeNull();
+    expect(licenseLabelsOf(toJSON())).toEqual([]);
   });
 
   it('announces the refusal copy to screen readers', () => {
@@ -174,7 +208,7 @@ describe('SocialAuthButtons — inline license step', () => {
     setGoogleAuth({ status: 'needsLicense' });
     const { getByLabelText, getByTestId } = render(<SocialAuthButtons />);
 
-    fireEvent.changeText(getByLabelText(LICENSE_LABEL), VALID_LICENSE_KEY);
+    fireEvent.changeText(getByLabelText(GOOGLE_LICENSE_LABEL), VALID_LICENSE_KEY);
     fireEvent.press(getByTestId(LICENSE_SUBMIT_ID));
 
     expect(submitLicenseKey).toHaveBeenCalledWith(VALID_LICENSE_KEY);
@@ -186,7 +220,7 @@ describe('SocialAuthButtons — client-side license validation', () => {
     setGoogleAuth({ status: 'needsLicense' });
     const { getByLabelText, getByTestId, getByRole } = render(<SocialAuthButtons />);
 
-    fireEvent.changeText(getByLabelText(LICENSE_LABEL), TOO_SHORT_KEY);
+    fireEvent.changeText(getByLabelText(GOOGLE_LICENSE_LABEL), TOO_SHORT_KEY);
     fireEvent.press(getByTestId(LICENSE_SUBMIT_ID));
 
     expect(submitLicenseKey).not.toHaveBeenCalled();
@@ -227,7 +261,7 @@ describe('SocialAuthButtons — busy state', () => {
     setGoogleAuth({ status: 'needsLicense', submitting: true });
 
     const { getByLabelText, getByTestId } = render(<SocialAuthButtons />);
-    fireEvent.changeText(getByLabelText(LICENSE_LABEL), VALID_LICENSE_KEY);
+    fireEvent.changeText(getByLabelText(GOOGLE_LICENSE_LABEL), VALID_LICENSE_KEY);
     fireEvent.press(getByTestId(LICENSE_SUBMIT_ID));
 
     expect(submitLicenseKey).not.toHaveBeenCalled();
@@ -244,6 +278,9 @@ describe('SocialAuthButtons — Apple availability gate', () => {
 
     const { queryByTestId, toJSON } = render(<SocialAuthButtons />);
 
+    // Without this the baseline could be empty — an ``AppleSignIn`` that always
+    // returned null would satisfy the comparison below and prove nothing.
+    expect(withApple).toContain(APPLE_BUTTON_ID);
     expect(queryByTestId(APPLE_BUTTON_ID)).toBeNull();
     expect(testIdsOf(toJSON())).toEqual(withApple.filter((id) => !id.startsWith(APPLE_BUTTON_ID)));
   });
@@ -310,7 +347,7 @@ describe('SocialAuthButtons — Apple flow', () => {
     setAppleAuth({ status: 'needsLicense' });
     const { getByLabelText, getByTestId } = render(<SocialAuthButtons />);
 
-    fireEvent.changeText(getByLabelText(LICENSE_LABEL), VALID_LICENSE_KEY);
+    fireEvent.changeText(getByLabelText(APPLE_LICENSE_LABEL), VALID_LICENSE_KEY);
     fireEvent.press(getByTestId(APPLE_LICENSE_SUBMIT_ID));
 
     expect(appleSubmitLicenseKey).toHaveBeenCalledWith(VALID_LICENSE_KEY);
@@ -348,5 +385,80 @@ describe('SocialAuthButtons — Apple button theming', () => {
     );
 
     expect(getByTestId(APPLE_BUTTON_ID).props.buttonStyle).toBe(expected);
+  });
+});
+
+// Nothing disables one provider's button while the other is mid-flow, so both
+// license steps can be on screen at once. Two fields announcing the same name,
+// or two nodes answering to the same testID, make the pair unusable by voice
+// control and ambiguous to a screen reader.
+describe('SocialAuthButtons — both providers at the license step', () => {
+  function renderBothLicenseSteps(error: string | null = null) {
+    mockUseAppleAvailable.mockReturnValue(true);
+    setGoogleAuth({ status: 'needsLicense', error });
+    setAppleAuth({ status: 'needsLicense', error });
+    return render(<SocialAuthButtons />);
+  }
+
+  it('gives each license field an accessible name naming its provider', () => {
+    const { queryAllByLabelText } = renderBothLicenseSteps();
+
+    expect(queryAllByLabelText(GOOGLE_LICENSE_LABEL)).toHaveLength(1);
+    expect(queryAllByLabelText(APPLE_LICENSE_LABEL)).toHaveLength(1);
+    expect(queryAllByLabelText(LICENSE_LABEL)).toHaveLength(0);
+  });
+
+  it('leaves no two license fields sharing an accessible name', () => {
+    const { toJSON } = renderBothLicenseSteps();
+    const names = licenseLabelsOf(toJSON());
+
+    expect(names).toEqual([GOOGLE_LICENSE_LABEL, APPLE_LICENSE_LABEL]);
+  });
+
+  it('scopes each help link to its own provider', () => {
+    const { getByTestId, queryAllByTestId } = renderBothLicenseSteps();
+
+    expect(getByTestId(GOOGLE_LICENSE_HELP_ID)).toBeTruthy();
+    expect(getByTestId(APPLE_LICENSE_HELP_ID)).toBeTruthy();
+    expect(queryAllByTestId(UNSCOPED_LICENSE_HELP_ID)).toHaveLength(0);
+    // A shared testID is only half the clash: two links reading out the same
+    // name are just as ambiguous to a screen reader and to voice control.
+    expect(getByTestId(GOOGLE_LICENSE_HELP_ID).props.accessibilityLabel).toBe(GOOGLE_HELP_LABEL);
+    expect(getByTestId(APPLE_LICENSE_HELP_ID).props.accessibilityLabel).toBe(APPLE_HELP_LABEL);
+    expect(GOOGLE_HELP_LABEL).not.toBe(APPLE_HELP_LABEL);
+  });
+
+  it('names each submit button for the provider it finishes', () => {
+    const { getByTestId, queryAllByLabelText } = renderBothLicenseSteps();
+
+    expect(getByTestId(LICENSE_SUBMIT_ID).props.accessibilityLabel).toBe(GOOGLE_SUBMIT_LABEL);
+    expect(getByTestId(APPLE_LICENSE_SUBMIT_ID).props.accessibilityLabel).toBe(APPLE_SUBMIT_LABEL);
+    expect(queryAllByLabelText(SUBMIT_LABEL)).toHaveLength(0);
+  });
+
+  it('keeps the two error slots on distinct testIDs', () => {
+    const { getByTestId, queryAllByTestId } = renderBothLicenseSteps(REFUSAL_COPY);
+
+    expect(getByTestId(GOOGLE_ERROR_ID)).toHaveTextContent(REFUSAL_COPY);
+    expect(getByTestId(APPLE_ERROR_ID)).toHaveTextContent(REFUSAL_COPY);
+    expect(queryAllByTestId(UNSCOPED_LICENSE_ERROR_ID)).toHaveLength(0);
+  });
+
+  it('answers every testID exactly once with both license steps open', () => {
+    const ids = testIdsOf(renderBothLicenseSteps(REFUSAL_COPY).toJSON());
+
+    expect(ids).toContain(GOOGLE_BUTTON_ID);
+    expect(ids).toContain(APPLE_BUTTON_ID);
+    expect([...new Set(ids)]).toEqual(ids);
+  });
+
+  it('still routes each submitted key to its own provider', () => {
+    const { getByLabelText, getByTestId } = renderBothLicenseSteps();
+
+    fireEvent.changeText(getByLabelText(APPLE_LICENSE_LABEL), VALID_LICENSE_KEY);
+    fireEvent.press(getByTestId(APPLE_LICENSE_SUBMIT_ID));
+
+    expect(appleSubmitLicenseKey).toHaveBeenCalledWith(VALID_LICENSE_KEY);
+    expect(submitLicenseKey).not.toHaveBeenCalled();
   });
 });

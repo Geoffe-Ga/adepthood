@@ -67,6 +67,7 @@ import { useAppleAuth, useAppleSignInAvailable } from '../useAppleAuth';
 import { ApiError, auth } from '@/api';
 import { USER_FACING_ERROR_MESSAGES } from '@/api/errorMessages';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import * as authStorage from '@/storage/authStorage';
 import { loadToken, saveToken } from '@/storage/authStorage';
 
 const DEVICE_TIMEZONE = 'America/Chicago';
@@ -82,6 +83,12 @@ const JOINED_NAME = 'Ada Lovelace';
 const APPLE_FALLBACK_COPY = "We couldn't finish that Apple sign-in. Try again in a moment.";
 /** The coded rejection ``expo-apple-authentication`` raises when the user backs out. */
 const CANCEL_CODE = 'ERR_REQUEST_CANCELED';
+/**
+ * Everything one Apple authorization yields that is the provider's to hold and
+ * ours to spend once. None of it may reach the device's disk: the session JWT
+ * is the only credential worth persisting.
+ */
+const APPLE_ONLY_SECRETS = [APPLE_ID_TOKEN, JOINED_NAME, GIVEN_NAME, FAMILY_NAME];
 
 const mockIsAvailableAsync = isAvailableAsync as unknown as jest.Mock;
 const mockSignInAsync = signInAsync as unknown as jest.Mock;
@@ -153,6 +160,22 @@ function cancelRejection(): Error {
 function payloadFor(index: number): Record<string, unknown> {
   const [payload] = mockOauthApple.mock.calls[index] as [Record<string, unknown>];
   return payload;
+}
+
+/**
+ * Every argument handed to every persistence entry point, as one searchable
+ * string — a leak through any of them, not just ``saveToken``, is a leak.
+ */
+function persistedArguments(): string {
+  const calls = Object.values(authStorage)
+    .map((entry) => (entry as unknown as { mock?: { calls: unknown[][] } }).mock?.calls)
+    .filter((entry) => entry !== undefined);
+  expect(calls).not.toHaveLength(0);
+  return JSON.stringify(calls);
+}
+
+function expectNoAppleSecrets(serialized: string): void {
+  for (const secret of APPLE_ONLY_SECRETS) expect(serialized).not.toContain(secret);
 }
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -257,6 +280,9 @@ describe('useAppleAuth — request payload', () => {
     [{ givenName: GIVEN_NAME, familyName: FAMILY_NAME }, JOINED_NAME],
     [{ givenName: GIVEN_NAME }, GIVEN_NAME],
     [{ familyName: FAMILY_NAME }, FAMILY_NAME],
+    // Each part is trimmed before the join, never after: joining first would
+    // leave the padding buried inside the name as ``Ada   Lovelace``.
+    [{ givenName: `  ${GIVEN_NAME}  `, familyName: FAMILY_NAME }, JOINED_NAME],
   ];
 
   it.each(NAME_CASES)('joins the name parts %o into full_name %p', async (parts, expected) => {
@@ -380,27 +406,41 @@ describe('useAppleAuth — cancellation', () => {
 });
 
 describe('useAppleAuth — unexpected failures', () => {
-  it('surfaces the fallback copy when the credential carries no identity token', async () => {
-    mockSignInAsync.mockResolvedValueOnce(appleCredential({ identityToken: null }));
-    const harness = await readyHarness();
+  // Both spellings mean the same thing — the sheet came back with nothing to
+  // exchange — and an empty token is no more sendable than an absent one.
+  const ABSENT_TOKEN_CASES: Array<[string, string | null]> = [
+    ['is null', null],
+    ['is an empty string', ''],
+  ];
 
-    await pressSignIn(harness);
+  it.each(ABSENT_TOKEN_CASES)(
+    'surfaces the fallback copy when the identity token %s',
+    async (_label, identityToken) => {
+      mockSignInAsync.mockResolvedValueOnce(appleCredential({ identityToken }));
+      const harness = await readyHarness();
 
-    expect(harness.result.current.apple.error).toBe(APPLE_FALLBACK_COPY);
-    expect(harness.result.current.apple.status).toBe('idle');
-    expect(harness.result.current.apple.submitting).toBe(false);
-    expect(mockOauthApple).not.toHaveBeenCalled();
-  });
+      await pressSignIn(harness);
 
-  it('releases the guard after a token-less credential so the user can retry', async () => {
-    mockSignInAsync.mockResolvedValueOnce(appleCredential({ identityToken: null }));
-    const harness = await readyHarness();
-    await pressSignIn(harness);
+      expect(harness.result.current.apple.error).toBe(APPLE_FALLBACK_COPY);
+      expect(harness.result.current.apple.status).toBe('idle');
+      expect(harness.result.current.apple.submitting).toBe(false);
+      expect(mockOauthApple).not.toHaveBeenCalled();
+    },
+  );
 
-    await pressSignIn(harness);
+  it.each(ABSENT_TOKEN_CASES)(
+    'releases the guard, with no exchange spent, when the identity token %s',
+    async (_label, identityToken) => {
+      mockSignInAsync.mockResolvedValue(appleCredential({ identityToken }));
+      const harness = await readyHarness();
+      await pressSignIn(harness);
 
-    expect(mockSignInAsync).toHaveBeenCalledTimes(2);
-  });
+      await pressSignIn(harness);
+
+      expect(mockSignInAsync).toHaveBeenCalledTimes(2);
+      expect(mockOauthApple).not.toHaveBeenCalled();
+    },
+  );
 
   // A cancel is silent; anything else is a real failure and must say so.
   it('surfaces the fallback copy when the Apple sheet fails for any other reason', async () => {
@@ -453,6 +493,33 @@ describe('useAppleAuth — token hygiene', () => {
     expect(serialized).not.toContain(GIVEN_NAME);
     expect(harness.result.current.apple.error).not.toContain(APPLE_ID_TOKEN);
     expect(harness.result.current.apple.error).not.toContain(GIVEN_NAME);
+  });
+
+  // Serializing the hook's return value only reaches its three plain fields, so
+  // the invariant that actually matters — nothing reaches the disk — has to be
+  // read off the persistence layer's own call records.
+  it('writes nothing to storage while the license step holds the credential', async () => {
+    const harness = await readyHarness();
+    await reachLicenseStep(harness, namedCredential());
+
+    expect(mockSaveToken).not.toHaveBeenCalled();
+    expectNoAppleSecrets(JSON.stringify(mockSaveToken.mock.calls));
+    expectNoAppleSecrets(persistedArguments());
+  });
+
+  it('persists the session token and nothing else once the exchange succeeds', async () => {
+    mockSignInAsync.mockResolvedValueOnce(namedCredential());
+    const harness = await readyHarness();
+
+    await pressSignIn(harness);
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockSaveToken.mock.calls).toEqual([[SESSION_JWT]]);
+    expectNoAppleSecrets(JSON.stringify(mockSaveToken.mock.calls));
+    // The session JWT proves the sweep really reads the persistence layer, so
+    // the absences below are findings rather than an empty search.
+    expect(persistedArguments()).toContain(SESSION_JWT);
+    expectNoAppleSecrets(persistedArguments());
   });
 });
 

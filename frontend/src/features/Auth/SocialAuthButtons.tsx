@@ -39,10 +39,55 @@ function AuthDivider(): React.JSX.Element {
   );
 }
 
+/**
+ * How one provider's license step names itself. Nothing disables the other
+ * provider's button, so both steps can be on screen at once: every name and
+ * every testID here has to say which provider it belongs to, or voice control
+ * and a screen reader are both handed an ambiguity.
+ */
+interface LicenseStepIds {
+  fieldLabel: string;
+  helpLabel: string;
+  submitLabel: string;
+  helpTestID: string;
+  errorTestID: string;
+  submitTestID: string;
+}
+
+/** Scope one provider's license step: shared copy, suffixed with whose step it is. */
+function licenseIdsFor(
+  provider: string,
+  testIdPrefix: string,
+  submitTestID: string,
+): LicenseStepIds {
+  const suffix = `for ${provider} sign-in`;
+  return {
+    fieldLabel: `Gumroad license key ${suffix}`,
+    helpLabel: `Find your license key ${suffix}`,
+    submitLabel: `Submit license key ${suffix}`,
+    helpTestID: `${testIdPrefix}-license-help`,
+    errorTestID: `${testIdPrefix}-license-error`,
+    submitTestID,
+  };
+}
+
+// Google's submit keeps its original, unprefixed testID: it shipped first and
+// nothing else answers to it.
+const GOOGLE_LICENSE_IDS = licenseIdsFor(
+  'Google',
+  'social-auth-google',
+  'social-auth-license-submit',
+);
+const APPLE_LICENSE_IDS = licenseIdsFor(
+  'Apple',
+  'social-auth-apple',
+  'social-auth-apple-license-submit',
+);
+
 interface LicenseStepProps {
   value: string;
   submitting: boolean;
-  submitTestID: string;
+  ids: LicenseStepIds;
   onChangeText: (_value: string) => void;
   onSubmit: () => void;
 }
@@ -56,7 +101,7 @@ interface LicenseStepProps {
 function LicenseStep({
   value,
   submitting,
-  submitTestID,
+  ids,
   onChangeText,
   onSubmit,
 }: LicenseStepProps): React.JSX.Element {
@@ -65,14 +110,22 @@ function LicenseStep({
       <Text style={styles.licenseStepLead}>
         One more step: add the license key from your Gumroad receipt.
       </Text>
-      <LicenseKeyField value={value} onChangeText={onChangeText} onPressHelp={openLicenseHelp} />
+      <LicenseKeyField
+        value={value}
+        accessibilityLabel={ids.fieldLabel}
+        errorTestID={ids.errorTestID}
+        helpTestID={ids.helpTestID}
+        helpAccessibilityLabel={ids.helpLabel}
+        onChangeText={onChangeText}
+        onPressHelp={openLicenseHelp}
+      />
       <Button
-        accessibilityLabel="Submit license key"
+        accessibilityLabel={ids.submitLabel}
         busy={submitting}
         disabled={submitting}
         label={submitting ? 'Checking...' : 'Continue'}
         onPress={onSubmit}
-        testID={submitTestID}
+        testID={ids.submitTestID}
       />
     </View>
   );
@@ -83,7 +136,7 @@ interface ProviderFlowProps {
   /** The provider's own button — Google's is ours to draw, Apple's is Apple's. */
   button: React.ReactNode;
   errorTestID: string;
-  licenseSubmitTestID: string;
+  license: LicenseStepIds;
 }
 
 /**
@@ -95,7 +148,7 @@ function ProviderFlow({
   state,
   button,
   errorTestID,
-  licenseSubmitTestID,
+  license,
 }: ProviderFlowProps): React.JSX.Element {
   const [licenseKey, setLicenseKey] = useState('');
   const [invalidKey, setInvalidKey] = useState<string | null>(null);
@@ -135,7 +188,7 @@ function ProviderFlow({
         <LicenseStep
           value={licenseKey}
           submitting={state.submitting}
-          submitTestID={licenseSubmitTestID}
+          ids={license}
           onChangeText={handleChangeKey}
           onSubmit={handleSubmitKey}
         />
@@ -154,7 +207,7 @@ function GoogleSignIn(): React.JSX.Element {
     <ProviderFlow
       state={state}
       errorTestID="social-auth-error"
-      licenseSubmitTestID="social-auth-license-submit"
+      license={GOOGLE_LICENSE_IDS}
       button={
         <Button
           accessibilityLabel={GOOGLE_LABEL}
@@ -190,7 +243,7 @@ function AppleSignIn(): React.JSX.Element {
     <ProviderFlow
       state={state}
       errorTestID="social-auth-apple-error"
-      licenseSubmitTestID="social-auth-apple-license-submit"
+      license={APPLE_LICENSE_IDS}
       button={
         <AppleAuthenticationButton
           accessibilityLabel={APPLE_LABEL}
