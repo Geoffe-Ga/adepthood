@@ -64,6 +64,8 @@ const OTHER_ID_TOKEN = 'second-header.second-payload.second-signature';
 const SESSION_JWT = 'session.jwt.signature';
 const VALID_LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
 const AUTH_REQUEST = { url: 'https://accounts.google.com/o/oauth2/v2/auth' };
+/** Asserted by value: the hook keeps its fallback copy module-private on purpose. */
+const GOOGLE_FALLBACK_COPY = "We couldn't finish that Google sign-in. Try again in a moment.";
 
 const mockUseAuthRequest = useAuthRequest as unknown as jest.Mock;
 const mockOauthGoogle = auth.oauthGoogle as unknown as jest.Mock;
@@ -446,5 +448,42 @@ describe('useGoogleAuth — unexpected failures', () => {
     expect(harness.result.current.google.status).toBe('idle');
     expect(harness.result.current.google.error).toBe(USER_FACING_ERROR_MESSAGES.network_error);
     expect(harness.result.current.auth.authStatus).toBe('anonymous');
+  });
+
+  it('surfaces the fallback copy when a success response carries no id token', async () => {
+    const harness = await readyHarness();
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, { type: 'success', params: {}, authentication: null });
+    await flushMicrotasks();
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_FALLBACK_COPY);
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(harness.result.current.auth.authStatus).toBe('anonymous');
+  });
+
+  it('surfaces the fallback copy and frees the guard when the prompt itself rejects', async () => {
+    promptAsync.mockRejectedValueOnce(new Error('no browser available'));
+    const harness = await readyHarness();
+
+    await act(async () => {
+      harness.result.current.google.signIn();
+    });
+
+    await waitFor(() => expect(harness.result.current.google.error).not.toBeNull());
+    expect(harness.result.current.google.error).toBe(GOOGLE_FALLBACK_COPY);
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+
+    expect(promptAsync).toHaveBeenCalledTimes(2);
   });
 });
