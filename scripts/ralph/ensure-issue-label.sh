@@ -64,6 +64,19 @@ done
 # not a nicety: `owner/../../user` would redirect the write at another resource.
 # Only the characters GitHub allows in an owner or repo name get through.
 [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "invalid --repo: expected owner/repo"
+# That class is necessary but not sufficient, and the gap is easy to miss: a
+# character class that ADMITS a dot is not the same as one that admits a
+# dot-only SEGMENT. `.` has to stay in the class - GitHub genuinely allows it
+# inside a name, and `owner.name/repo.js` is a real repository - so `../repo`,
+# `./repo` and `owner/..` all satisfy the regex above while still detaching the
+# path from the repo the caller named. One rule closes every variant of that:
+# each segment must carry at least one non-dot character. The regex already
+# guarantees exactly one `/`, so these two expansions ARE the two segments, and
+# both are checked because they interpolate at different depths of the URL.
+has_non_dot_char() { [[ "$1" =~ [^.] ]]; }
+if ! has_non_dot_char "${repo%%/*}" || ! has_non_dot_char "${repo##*/}"; then
+  die "invalid --repo: owner and repo must each contain a non-dot character"
+fi
 
 # --- reporting helpers -------------------------------------------------------
 #

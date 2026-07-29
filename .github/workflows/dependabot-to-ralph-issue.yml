@@ -200,10 +200,16 @@ jobs:
             # `body_links_issue` short-circuits any re-run — no duplicate is
             # ever minted while the label is added by hand.
             if [ "$label_ec" -ne 0 ]; then
-              label_error="$label_output"
-              # An empty payload would annotate as a bare `::error::`; give the
-              # exit code itself a voice instead.
-              [ -n "$label_error" ] || label_error="ensure-issue-label.sh exited $label_ec without output; the 'dependencies' label on issue #$issue_num is unverified."
+              # Actions renders only the FIRST line of an `::error::` as an
+              # annotation; every later line falls through as plain log text. So
+              # the annotation is a synthesized one-liner and the verbatim gh
+              # stderr stays where `echo "$label_output"` already put it in full
+              # — feeding the whole block in here would render one line in the UI
+              # and dribble the remainder out as a second, half-rendered copy of
+              # what is already logged. Pointing at the log keeps the diagnostic
+              # fidelity that is this call's whole purpose. Synthesized
+              # unconditionally, so there is no empty payload left to guard.
+              label_error="ensure-issue-label.sh exited $label_ec; the 'dependencies' label on issue #$issue_num is unverified — see the verbatim gh output logged above."
               if [ "$EVENT_NAME" = "pull_request_target" ]; then
                 echo "::error::$label_error" >&2
                 exit 1

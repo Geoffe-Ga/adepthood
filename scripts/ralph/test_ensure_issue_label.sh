@@ -320,14 +320,47 @@ check "no repo from either source makes no POST" "0" "$(attempts)"
 no_leak "no repo from either source"
 
 # --- 8. a repo value is interpolated into an API path, so validate it --------
-# INTENTIONALLY RED: path traversal in --repo must be rejected before it can
-# redirect the write at another resource. Asserted as ONE composite check so the
-# pending guard reads as a single gap rather than two.
+# The shape of $repo is a security boundary, not a nicety: `owner/../../user`
+# walks the REST path back out of `repos/` and would aim the write at an
+# unrelated resource. Rejection must happen BEFORE the first gh call, so each
+# value is one composite check pinning exit code and attempt count together —
+# a guard that only fails after a hopeful POST has already gone out is not a
+# guard, and split assertions would let that half-failure read as half green.
 scenario
 run "$ISSUE" "$LABEL" --repo "owner/../../user"
 check "path-traversal --repo is rejected before any gh call" \
       "ec=2 posts=0" "ec=$EC posts=$(attempts)"
 no_leak "path-traversal --repo"
+
+# The subtle half of the same boundary. `.` is a legal character INSIDE an
+# owner or repo name, so a character-class test alone still admits a segment
+# made of nothing BUT dots: `..` climbs to the parent collection and `.`
+# re-enters the current one, either of which detaches the path from the repo
+# the caller named. Both positions are covered because the two segments are
+# interpolated at different depths of the URL and a check that anchors only the
+# owner half would still let the repo half through.
+for BAD_REPO in "../repo" "owner/.." "./repo" "owner/."; do
+  scenario
+  run "$ISSUE" "$LABEL" --repo "$BAD_REPO"
+  check "dot-segment --repo [$BAD_REPO] is rejected before any gh call" \
+        "ec=2 posts=0" "ec=$EC posts=$(attempts)"
+  no_leak "dot-segment --repo [$BAD_REPO]"
+done
+
+# The counterweight, and the reason the rule above cannot simply be "no dots":
+# GitHub really does allow them inside a name (`owner.name`, `repo.js`), so
+# closing the traversal hole must not start rejecting live repositories. The
+# stub matches on request shape rather than on the repo, so this run goes all
+# the way through apply and read-back; the endpoint assertion then proves the
+# accepted value is carried into the path verbatim rather than merely tolerated.
+readonly DOTTED_REPO="owner.name/repo.js"
+scenario
+run "$ISSUE" "$LABEL" --repo "$DOTTED_REPO"
+check    "dotted-but-legal --repo is accepted and applied" \
+         "ec=0 posts=1" "ec=$EC posts=$(attempts)"
+contains "dotted-but-legal --repo reaches the REST labels endpoint intact" \
+         "repos/$DOTTED_REPO/issues/$ISSUE/labels" "$(api_calls)"
+no_leak  "dotted-but-legal --repo"
 
 printf '\nensure-issue-label tests: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
