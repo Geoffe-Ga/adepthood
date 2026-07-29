@@ -194,6 +194,22 @@ describe('google oauth codes', () => {
   });
 });
 
+// ``invalid_oauth_token`` is the single 401 detail behind BOTH oauth routes
+// (Google and Apple), so copy that names one provider misattributes half the
+// failures — a user who tapped Apple must not be told Google failed.
+describe('oauth credential copy is provider-neutral', () => {
+  it.each([[/google/i], [/apple/i]])('never names %p as the provider', (provider) => {
+    expect(USER_FACING_ERROR_MESSAGES.invalid_oauth_token).not.toMatch(provider);
+  });
+
+  it('still says a sign-in failed verification and invites a retry', () => {
+    const copy = USER_FACING_ERROR_MESSAGES.invalid_oauth_token;
+
+    expect(copy).toMatch(/sign-in/i);
+    expect(copy).toMatch(/try again/i);
+  });
+});
+
 describe('messageForCode', () => {
   it('returns the mapped copy for a known code', () => {
     expect(messageForCode('invalid_credentials')).toContain('email and password');

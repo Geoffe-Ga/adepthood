@@ -35,5 +35,11 @@ platform: with no ID for the platform the app is running on (whitespace counts
 as no ID), the Google button is not rendered at all and email sign-in is the
 only path. Set them one platform at a time to roll the flow out gradually.
 
+Sign in with Apple has no `EXPO_PUBLIC_*` switch of its own. The button appears
+only where `AppleAuthentication.isAvailableAsync()` reports that the platform
+supports it (iOS 13 and later), so there is nothing to set per environment —
+what makes it work is `ios.usesAppleSignIn: true` in `app.json`, which is what
+lands the entitlement in a build.
+
 For deploy steps and where to set these in Railway, see
 [`../DEPLOYMENT.md`](../DEPLOYMENT.md).

@@ -7,6 +7,7 @@ import {
   ink,
   onShowcase,
   surface,
+  touchTarget,
   type as typeRamp,
 } from '@/design/tokens';
 
@@ -96,6 +97,10 @@ export const authStyles = StyleSheet.create({
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.lg },
   dividerRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: surface.hairline },
   dividerLabel: { color: ink.muted, marginHorizontal: SPACING.md },
+  // Apple renders its own button, so all we own is the box it sits in: full
+  // width like the Google button above it, and the shared 44dp floor that
+  // matches ``Button.base.minHeight`` and clears Apple's HIG minimum.
+  appleButton: { width: '100%', height: touchTarget.minimum, marginTop: SPACING.md },
   licenseStep: { marginTop: SPACING.lg },
   licenseStepLead: { color: ink.soft, marginBottom: SPACING.sm },
   link: { textAlign: 'center', color: ink.soft },
