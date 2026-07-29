@@ -23,6 +23,15 @@ jest.mock('@/utils/openExternalUrl', () => ({
   openExternalUrl: jest.fn(() => Promise.resolve(true)),
 }));
 
+jest.mock('../SocialAuthButtons', () => {
+  const ReactModule = require('react');
+  const { Text } = require('react-native');
+  return {
+    SocialAuthButtons: () =>
+      ReactModule.createElement(Text, { testID: 'social-auth-section' }, 'Continue with Google'),
+  };
+});
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { _mockSignup: mockSignup } = require('@/context/AuthContext') as any;
 
@@ -81,8 +90,40 @@ function pressHelpLink(screen: Screen): void {
   fireEvent.press(screen.getByTestId(HELP_LINK_ID));
 }
 
+const SOCIAL_SECTION_ID = 'social-auth-section';
+
+/** Rendered testIDs in tree order, so "below" is a real assertion. */
+function testIdOrder(node: unknown, ids: string[] = []): string[] {
+  if (node === null || typeof node !== 'object') return ids;
+  const element = node as { props?: { testID?: string }; children?: unknown[] };
+  const testID = element.props === undefined ? undefined : element.props.testID;
+  if (typeof testID === 'string') ids.push(testID);
+  const children = Array.isArray(element.children) ? element.children : [];
+  for (const child of children) testIdOrder(child, ids);
+  return ids;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+describe('SignupScreen social sign-in', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('offers the social sign-in section', () => {
+    const { getByTestId } = render(<SignupScreen navigation={mockNavigation} />);
+
+    expect(getByTestId(SOCIAL_SECTION_ID)).toBeTruthy();
+  });
+
+  // The license-key form stays the primary path; Google is offered underneath.
+  it('places the social section below the primary signup action', () => {
+    const { toJSON } = render(<SignupScreen navigation={mockNavigation} />);
+    const ids = testIdOrder(toJSON());
+
+    expect(ids).toContain('signup-submit');
+    expect(ids.indexOf(SOCIAL_SECTION_ID)).toBeGreaterThan(ids.indexOf('signup-submit'));
+  });
 });
 
 describe('SignupScreen', () => {

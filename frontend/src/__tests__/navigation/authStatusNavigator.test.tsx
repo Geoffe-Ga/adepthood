@@ -101,6 +101,7 @@ type MockAuth = {
   setUserTimezone: jest.Mock;
   login: jest.Mock;
   signup: jest.Mock;
+  loginWithGoogle: jest.Mock;
   logout: jest.Mock;
   onUnauthorized: jest.Mock;
   dismissReauth: jest.Mock;
@@ -115,6 +116,7 @@ function buildAuth(overrides: Partial<MockAuth> = {}): MockAuth {
     setUserTimezone: jest.fn(),
     login: jest.fn(() => Promise.resolve()),
     signup: jest.fn(() => Promise.resolve()),
+    loginWithGoogle: jest.fn(() => Promise.resolve({ kind: 'success' })),
     logout: jest.fn(() => Promise.resolve()),
     onUnauthorized: jest.fn(),
     dismissReauth: jest.fn(() => Promise.resolve()),

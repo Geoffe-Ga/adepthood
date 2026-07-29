@@ -7,6 +7,7 @@ import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
 import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
+import { SocialAuthButtons } from './SocialAuthButtons';
 import { useAuthSubmit } from './useAuthSubmit';
 
 import { Button } from '@/components/Button';
@@ -127,6 +128,8 @@ export default function LoginScreen({ navigation }: Props) {
         onNavigateSignup={() => navigation.navigate('Signup')}
         onNavigateForgot={() => navigation.navigate('ForgotPassword')}
       />
+      {/* Below the primary action on purpose: an offered option, not a push. */}
+      <SocialAuthButtons />
     </AuthScreenContainer>
   );
 }

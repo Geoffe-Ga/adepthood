@@ -2656,6 +2656,21 @@ export interface SignupRequest extends AuthRequest {
   license_key?: string;
 }
 
+/**
+ * Payload for ``POST /auth/oauth/google`` — the Google ID-token exchange.
+ *
+ * ``id_token`` is the credential Google minted for this app; the backend
+ * verifies it cryptographically and mints a session of our own. ``license_key``
+ * only rides along on the retry leg, after the server has refused once with a
+ * ``409 needs_license``, so the first exchange never carries a credential the
+ * user has not been asked for.
+ */
+export interface OAuthGoogleRequest {
+  id_token: string;
+  license_key?: string;
+  timezone?: string;
+}
+
 export interface AuthResponse {
   token: string;
   user_id: number;
@@ -2704,6 +2719,22 @@ export const auth = {
       method: 'POST',
       body: credentials,
       schema: authResponseSchema,
+    });
+  },
+  /**
+   * Trade a Google ID token for an Adepthood session.
+   *
+   * Anonymous by design — this is an entry point, so no ``token`` is sent and
+   * a 401 here means "that Google credential did not verify", never "your
+   * session expired". ``loginAuthResponseSchema`` applies for the same reason
+   * login and refresh use it: the ``user_id == 0`` sentinel belongs to
+   * ``/auth/signup`` alone, so a zero here would be a zombie session.
+   */
+  oauthGoogle(payload: OAuthGoogleRequest): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/oauth/google', {
+      method: 'POST',
+      body: payload,
+      schema: loginAuthResponseSchema,
     });
   },
   refresh(token: string): Promise<AuthResponse> {

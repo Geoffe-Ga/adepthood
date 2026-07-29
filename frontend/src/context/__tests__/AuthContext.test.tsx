@@ -17,6 +17,7 @@ jest.mock('@/api', () => {
       requestPasswordReset: jest.fn(),
       confirmPasswordReset: jest.fn(),
       cancelPasswordReset: jest.fn(),
+      oauthGoogle: jest.fn(),
     },
     setTokenGetter: jest.fn(),
     setOnUnauthorized: jest.fn(),
@@ -251,6 +252,135 @@ describe('AuthContext', () => {
 
       expect(mockSaveToken).not.toHaveBeenCalled();
       expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+  });
+
+  describe('loginWithGoogle', () => {
+    const ID_TOKEN = 'google-header.google-payload.google-signature';
+    const LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
+
+    async function readyAuth() {
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
+      return result;
+    }
+
+    it('returns a success result and authenticates the device on 200', async () => {
+      mockAuth.oauthGoogle.mockResolvedValue({ token: 'google-jwt', user_id: 5 });
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toEqual({ kind: 'success' });
+      expect(mockSaveToken).toHaveBeenCalledWith('google-jwt');
+      expect(result.current.token).toBe('google-jwt');
+      expect(result.current.authStatus).toBe('authenticated');
+    });
+
+    it('attaches the device timezone and omits the license key when none is given', async () => {
+      mockAuth.oauthGoogle.mockResolvedValue({ token: 'google-jwt', user_id: 5 });
+      const result = await readyAuth();
+
+      await act(async () => {
+        await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      // Jest pins TZ=UTC, so ``detectDeviceTimezone`` resolves deterministically.
+      expect(mockAuth.oauthGoogle).toHaveBeenCalledWith({
+        id_token: ID_TOKEN,
+        timezone: 'UTC',
+      });
+    });
+
+    it('forwards the license key verbatim when one is supplied', async () => {
+      mockAuth.oauthGoogle.mockResolvedValue({ token: 'google-jwt', user_id: 5 });
+      const result = await readyAuth();
+
+      await act(async () => {
+        await result.current.loginWithGoogle(ID_TOKEN, LICENSE_KEY);
+      });
+
+      expect(mockAuth.oauthGoogle).toHaveBeenCalledWith({
+        id_token: ID_TOKEN,
+        license_key: LICENSE_KEY,
+        timezone: 'UTC',
+      });
+    });
+
+    // The 409 must arrive as a value, not a throw: a caller's catch block
+    // would flatten it into the generic error branch and lose the license step.
+    it('returns needs_license on a 409 without mutating auth state', async () => {
+      mockAuth.oauthGoogle.mockRejectedValue(new ApiError(409, 'needs_license'));
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toEqual({ kind: 'needs_license' });
+      expect(mockSaveToken).not.toHaveBeenCalled();
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it('returns an error result carrying the original failure on a 500', async () => {
+      const failure = new ApiError(500, 'internal_error');
+      mockAuth.oauthGoogle.mockRejectedValue(failure);
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toEqual({ kind: 'error', error: failure });
+      expect(mockSaveToken).not.toHaveBeenCalled();
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    it('returns an error result rather than throwing on a network failure', async () => {
+      mockAuth.oauthGoogle.mockRejectedValue(new TypeError('Network request failed'));
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toMatchObject({ kind: 'error' });
+      expect(result.current.authStatus).toBe('anonymous');
+    });
+
+    // A 409 whose detail is something else is NOT the license refusal — routing
+    // it to the license step would put the user in an unresolvable loop.
+    it('treats a 409 with a different detail as a plain error', async () => {
+      mockAuth.oauthGoogle.mockRejectedValue(new ApiError(409, 'email_in_use'));
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toMatchObject({ kind: 'error' });
+    });
+
+    it('treats a 401 invalid_oauth_token as a plain error, not a license refusal', async () => {
+      mockAuth.oauthGoogle.mockRejectedValue(new ApiError(401, 'invalid_oauth_token'));
+      const result = await readyAuth();
+
+      let outcome;
+      await act(async () => {
+        outcome = await result.current.loginWithGoogle(ID_TOKEN);
+      });
+
+      expect(outcome).toMatchObject({ kind: 'error' });
       expect(result.current.authStatus).toBe('anonymous');
     });
   });

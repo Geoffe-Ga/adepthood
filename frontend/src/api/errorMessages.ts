@@ -29,6 +29,9 @@ const NO_ACCESS = "You don't have access to this.";
 // silently truncate. Naming the ceiling turns "try again" into a fix. // pragma: allowlist secret
 const PASSWORD_TOO_LONG =
   'That password is longer than we can store. Shorten it to 64 characters or fewer.';
+// Shared by the signup form's ``license_required`` and the Google exchange's
+// ``needs_license`` so the two roads to "we need your key" read identically.
+const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
 
 /**
  * Map of backend ``detail`` strings (see ``backend/src/errors.py`` and each
@@ -60,11 +63,23 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // already registered" on the wire (anti-enumeration), so the copy must not
   // claim to know which of the two happened.
   invalid_license: "We couldn't verify that key — double-check it matches the email and product.",
-  license_required: 'Add the license key from your Gumroad receipt to continue.',
+  license_required: ADD_LICENSE_KEY,
   too_many_license_attempts:
     "That's several tries in a row. Give it an hour, then try again with the key from your receipt.",
   license_verification_unavailable:
     "We can't reach Gumroad to check your key right now. Nothing is lost — give it a few minutes and try again.",
+
+  // --- Google sign-in exchange -----------------------------------------
+  // The backend collapses every non-cryptographic refusal — no license, a bad
+  // license, an unverified or absent email, a disabled account — into one
+  // byte-identical 409 so the endpoint cannot be used to enumerate accounts.
+  // This copy must not reconstruct the distinction the wire format destroyed:
+  // it names the only step the user can actually take and nothing else.
+  needs_license: ADD_LICENSE_KEY,
+  // 401 means the Google credential itself failed verification (expired,
+  // replayed, wrong audience) — nothing about the user's account or purchase,
+  // so the remedy is simply another sign-in attempt.
+  invalid_oauth_token: 'That Google sign-in could not be verified. Try again in a moment.',
 
   // --- Admin -----------------------------------------------------------
   admin_required: 'Admin privileges are required for this action.',
