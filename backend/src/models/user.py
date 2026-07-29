@@ -25,6 +25,13 @@ def _default_reset_date() -> datetime:
 # timezone column existed (legacy rows backfilled to ``"UTC"``).
 DEFAULT_USER_TIMEZONE = "UTC"
 
+# Ceiling on the human-readable name shown beside a user's shared content.
+# Generous enough for a full legal name in any script, short enough that the
+# value stays renderable in a single line of UI — and, because it is enforced
+# at the request boundary too, an over-long name is refused rather than
+# silently truncated into a name its owner never chose.
+DISPLAY_NAME_MAX_LENGTH = 120
+
 
 class User(SQLModel, table=True):
     """Represents a user account.
@@ -66,6 +73,14 @@ class User(SQLModel, table=True):
     # the default so SQLModel forces every caller to supply a hash and a
     # blank-password account becomes impossible at the schema level.
     password_hash: str = Field(min_length=1)
+    # The name the user goes by, when they have supplied one.  Written once, at
+    # account creation, from whatever the sign-in path knew: a social provider's
+    # verified ``name`` claim, or (for Sign in with Apple, which never puts the
+    # name in the token) the name the client forwarded on the first
+    # authorization.  ``None`` is the ordinary steady state -- password signups
+    # supply no name -- so every reader must carry a fallback.  Nullable with no
+    # server default so existing rows need no backfill.
+    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX_LENGTH)
     timezone: str = Field(
         default=DEFAULT_USER_TIMEZONE,
         sa_column=Column(

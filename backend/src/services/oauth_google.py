@@ -5,8 +5,8 @@ endpoint, the two interchangeable spellings of Google's issuer, the accepted
 ``aud`` allowlist, and the projection of Google's claim names onto
 :class:`services.oidc.OIDCIdentity`. The verification itself — algorithm
 pinning, required claims, the single collapsed failure mode — belongs to
-:mod:`services.oidc`, so an Apple adapter can be added beside this one without
-re-deriving (or subtly weakening) any of it.
+:mod:`services.oidc`, so :mod:`services.oauth_apple` sits beside this one
+without re-deriving (or subtly weakening) any of it.
 
 The client-id allowlist is read from the environment at call time, so rotating
 or adding a platform's OAuth client needs no restart. It fails closed: unset or
@@ -21,7 +21,13 @@ from typing import Any
 
 from jwt import PyJWKClient
 
-from services.oidc import OIDCIdentity, verify_oidc_id_token
+from services.oidc import (
+    JWKS_TIMEOUT_SECONDS,
+    OIDCIdentity,
+    build_bounded_jwk_client,
+    claim_str,
+    verify_oidc_id_token,
+)
 
 __all__ = [
     "GOOGLE_ISSUERS",
@@ -46,26 +52,6 @@ GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 # requested the token, and both are legitimate, so both must verify.
 GOOGLE_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 
-# How long a cached JWKS set may be reused before it is refetched. An hour is
-# far shorter than Google's key-rotation cadence (days), so a rotated key is
-# picked up automatically, while ordinary sign-ins pay no network round trip.
-_JWKS_CACHE_SECONDS = 3600.0
-
-# Ceiling on individually cached signing keys. Google publishes a handful at a
-# time; the bound keeps a malformed ``kid`` stream from growing the cache.
-_MAX_CACHED_KEYS = 16
-
-# Wall-clock budget for a JWKS fetch. PyJWT's own default is 30 seconds, which
-# is far too generous here: a token naming a ``kid`` outside the cached set
-# makes the client refetch immediately (bypassing ``lifespan``), and that fetch
-# runs in the shared default thread pool -- the same pool bcrypt uses. An
-# unauthenticated caller sending random ``kid`` values could therefore park
-# workers that logins and signups need. Five seconds mirrors
-# ``GUMROAD_TIMEOUT_SECONDS`` and the reasoning behind it: verification sits on
-# an interactive path, so a wedged endpoint must fail fast rather than hold a
-# request -- and a thread -- open.
-JWKS_TIMEOUT_SECONDS: float = 5.0
-
 # Google's claim names, spelled once so a typo cannot silently disable a check.
 _SUBJECT_CLAIM = "sub"
 _EMAIL_CLAIM = "email"
@@ -88,22 +74,12 @@ def _google_client_ids() -> list[str]:
 def build_jwk_client() -> PyJWKClient:
     """Construct the Google JWKS client, timeout and caches explicitly bounded.
 
-    Split out from the cached accessor so the bounds can be asserted without
-    reaching through an ``lru_cache`` (and without the network: constructing a
-    client fetches nothing).
-
-    Every argument here is a limit rather than a default. ``timeout`` in
-    particular is not optional: PyJWT's 30-second default, combined with the
-    forced refetch an unrecognised ``kid`` triggers, is how a stream of junk
-    tokens turns into parked threads in the pool bcrypt shares.
+    The bounds themselves live in :func:`services.oidc.build_bounded_jwk_client`
+    so Google and Apple cannot drift apart on the one setting -- ``timeout`` --
+    whose absence turns junk tokens into parked threads in the pool bcrypt
+    shares. All this adapter contributes is the endpoint.
     """
-    return PyJWKClient(
-        GOOGLE_JWKS_URL,
-        cache_keys=True,
-        max_cached_keys=_MAX_CACHED_KEYS,
-        lifespan=_JWKS_CACHE_SECONDS,
-        timeout=JWKS_TIMEOUT_SECONDS,
-    )
+    return build_bounded_jwk_client(GOOGLE_JWKS_URL)
 
 
 @lru_cache(maxsize=1)
@@ -122,14 +98,6 @@ def _get_jwk_client() -> PyJWKClient:
     return build_jwk_client()
 
 
-def _claim_str(claims: dict[str, Any], name: str) -> str | None:
-    """Return a non-blank string claim, or ``None`` when absent or malformed."""
-    value = claims.get(name)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value
-
-
 def _identity_from_claims(claims: dict[str, Any]) -> OIDCIdentity:
     """Project Google's verified claim set onto the neutral identity shape.
 
@@ -141,12 +109,12 @@ def _identity_from_claims(claims: dict[str, Any]) -> OIDCIdentity:
     no usable ``email`` reports ``email_verified=False``, because an address
     that is not there cannot have been verified.
     """
-    email = _claim_str(claims, _EMAIL_CLAIM)
+    email = claim_str(claims, _EMAIL_CLAIM)
     return OIDCIdentity(
         subject=str(claims[_SUBJECT_CLAIM]),
         email=email,
         email_verified=email is not None and claims.get(_EMAIL_VERIFIED_CLAIM) is True,
-        name=_claim_str(claims, _NAME_CLAIM),
+        name=claim_str(claims, _NAME_CLAIM),
     )
 
 

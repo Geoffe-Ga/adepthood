@@ -14,6 +14,11 @@ from sqlmodel import select
 
 from models.practice import Practice
 from models.practice_share_link import PracticeShareLink
+from models.user import User
+
+# A display name that shares no substring with the owner's email local-part, so
+# the assertion cannot pass on the derived fallback by accident.
+_STORED_DISPLAY_NAME = "Willow of the Fen"
 
 
 def _timer_cfg(duration_minutes: float) -> dict[str, object]:
@@ -204,6 +209,37 @@ async def test_preview_returns_practice_and_owner_display_name(
     # Issue #348 constraint: do not expose the original owner's user id.
     assert "submitted_by_user_id" not in data
     assert "created_by_user_id" not in data
+
+
+@pytest.mark.asyncio
+async def test_preview_prefers_a_stored_display_name_over_the_email_derivation(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A name the owner actually has beats the local-part of their address.
+
+    The email-derived fallback exists only for accounts that never supplied a
+    name; once one is stored, leaking ``carol`` from ``carol@example.com``
+    would be both wrong and needlessly revealing about the address.
+    """
+    owner_headers, owner_id = await _signup(async_client, "carol")
+    practice_id = await _create_custom_practice(async_client, owner_headers)
+    link = await _mint_link(async_client, owner_headers, practice_id)
+
+    owner = await db_session.get(User, owner_id)
+    assert owner is not None
+    owner.display_name = _STORED_DISPLAY_NAME
+    db_session.add(owner)
+    await db_session.commit()
+
+    recipient_headers, _ = await _signup(async_client, "dave")
+    resp = await async_client.get(
+        f"/practices/share/{cast('str', link['token'])}",
+        headers=recipient_headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["created_by_display_name"] == _STORED_DISPLAY_NAME
 
 
 @pytest.mark.asyncio

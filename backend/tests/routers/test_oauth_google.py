@@ -932,6 +932,35 @@ async def test_new_email_with_valid_license_creates_the_account(
 
 
 @pytest.mark.asyncio
+async def test_created_account_takes_its_display_name_from_the_name_claim(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """Google's verified ``name`` claim seeds the account's stored display name.
+
+    Google, unlike Apple, puts the name in the token itself, so the create rung
+    reads it from the verified claims rather than from anything the client sent
+    alongside them.
+    """
+    license_verifier.grant(VALID_LICENSE_KEY, NEW_EMAIL)
+
+    response = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(
+            _mint_token(sub=NEW_SUBJECT, email=NEW_EMAIL, name=DISPLAY_NAME),
+            license_key=VALID_LICENSE_KEY,
+        ),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    user = await db_session.get(User, response.json()["user_id"])
+    assert user is not None
+    await db_session.refresh(user)
+    assert user.display_name == DISPLAY_NAME
+
+
+@pytest.mark.asyncio
 async def test_social_accounts_get_distinct_unusable_passwords(
     async_client: AsyncClient,
     db_session: AsyncSession,
