@@ -18,6 +18,11 @@ from rate_limit_keys import per_user_rate_limit_key
 # its own module globals at call time, so monkeypatch it there.
 _TARGET = "rate_limit_keys.extract_user_id_from_authorization"
 
+# One residential IPv6 subscriber is delegated a whole /64, so keying the
+# anonymous fallback on the full address hands them 2**64 buckets.
+_IPV6_CLIENT = "2001:db8:1:1::1"
+_IPV6_CLIENT_KEY = "2001:db8:1:1::/64"  # pragma: allowlist secret
+
 
 def _request(*, authorization: str | None = None, client_ip: str = "203.0.113.7") -> Request:
     headers = [(b"authorization", authorization.encode())] if authorization is not None else []
@@ -42,6 +47,28 @@ def test_malformed_token_falls_back_to_ip(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(_TARGET, _raise)
     assert per_user_rate_limit_key(_request(client_ip="198.51.100.4")) == "198.51.100.4"
+
+
+@pytest.mark.parametrize("authorization", [None, "Bearer garbage"])
+def test_anonymous_ipv6_fallback_keys_on_the_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    authorization: str | None,
+) -> None:
+    """The unauthenticated fallback must group an IPv6 client by delegated prefix.
+
+    Pre-auth probes are exactly the traffic this fallback throttles, so keying
+    them on the full address lets one subscriber rotate through their /64 and
+    never spend the same bucket twice.
+    """
+
+    def _raise(_auth: str | None) -> int:
+        raise HTTPException(status_code=401, detail="invalid")
+
+    monkeypatch.setattr(_TARGET, _raise)
+
+    key = per_user_rate_limit_key(_request(authorization=authorization, client_ip=_IPV6_CLIENT))
+
+    assert key == _IPV6_CLIENT_KEY
 
 
 def test_programmer_bug_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
