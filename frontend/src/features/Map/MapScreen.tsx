@@ -882,9 +882,34 @@ const MapLoading = (): React.JSX.Element => (
   </View>
 );
 
-const MapError = ({ message }: { message: string }): React.JSX.Element => (
-  <View style={styles.centered} testID="map-error">
+// Cold-start failure: announce it, say what to do, and offer the same explicit
+// retry the refresh banner and history error use — never a silent auto-retry.
+const MapError = ({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}): React.JSX.Element => (
+  <View
+    style={styles.centered}
+    testID="map-error"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
     <Text style={styles.errorText}>{message}</Text>
+    <Text style={styles.errorHint}>
+      Your map isn&apos;t lost — it just couldn&apos;t load. Check your connection and try again.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.errorRetry}
+      testID="map-error-retry"
+    >
+      <Text style={styles.errorRetryText}>Try again</Text>
+    </TouchableOpacity>
   </View>
 );
 
@@ -1319,11 +1344,14 @@ const MapScreen = (): React.JSX.Element => {
     [stages],
   );
 
+  // A failed load leaves the store at exactly {stages: [], loading: false}, so the
+  // ``error`` term is what stops this cold-start fetch re-firing forever. Recovery
+  // is the retry button: loadStages clears ``error`` itself, re-arming the guard.
   useEffect(() => {
-    if (stages.length === 0 && !loading) {
+    if (stages.length === 0 && !loading && !error) {
       void stageService.loadStages();
     }
-  }, [stages.length, loading]);
+  }, [stages.length, loading, error]);
 
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
@@ -1333,7 +1361,7 @@ const MapScreen = (): React.JSX.Element => {
   const { drawer, onDrawerSelectStage } = useMapDrawer(lens);
 
   if (loading && stages.length === 0) return <MapLoading />;
-  if (error && stages.length === 0) return <MapError message={error} />;
+  if (error && stages.length === 0) return <MapError message={error} onRetry={handleRefresh} />;
 
   return (
     <MapContent
