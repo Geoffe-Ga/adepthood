@@ -67,6 +67,14 @@ const styles = StyleSheet.create({
     textAlign: CENTER,
     paddingHorizontal: spacing(2),
   },
+  // A load that returned nothing is not a failure, so the headline reads in
+  // plain ink rather than the alarm colour; the hint/retry are shared.
+  emptyText: {
+    color: ink.primary,
+    fontSize: 14,
+    textAlign: CENTER,
+    paddingHorizontal: spacing(2),
+  },
   // The human "what to do next" line under the verbatim server message.
   errorHint: {
     color: ink.muted,
