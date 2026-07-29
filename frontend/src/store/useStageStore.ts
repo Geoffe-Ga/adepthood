@@ -27,12 +27,15 @@ export interface StageStoreState {
   cycleNumber: number;
   loading: boolean;
   error: string | null;
+  /** Whether a stage load has been started at least once since the last reset. */
+  hasAttempted: boolean;
 
   setStages: (_stages: StageData[]) => void;
   setCurrentStage: (_stageNumber: number) => void;
   setCycleNumber: (_cycleNumber: number) => void;
   setLoading: (_loading: boolean) => void;
   setError: (_error: string | null) => void;
+  markAttempted: () => void;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
   /** BUG-FE-STATE-001: wipe every field back to its initial value on logout. */
   reset: () => void;
@@ -46,6 +49,7 @@ const INITIAL_STATE = {
   cycleNumber: 1,
   loading: false,
   error: null as string | null,
+  hasAttempted: false,
 };
 
 const stageCollection = createNormalizedById<StageData>((stage) => stage.stageNumber);
@@ -65,6 +69,7 @@ export const useStageStore = create<StageStoreState>((set) => ({
   setCycleNumber: (cycleNumber) => set({ cycleNumber }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
+  markAttempted: () => set({ hasAttempted: true }),
   updateStageProgress: (stageNumber, progress) =>
     set((state) => {
       const existing = state.stagesByNumber[stageNumber];
@@ -106,3 +111,4 @@ export const selectCurrentStage = (state: StageStoreState): number => state.curr
 export const selectCycleNumber = (state: StageStoreState): number => state.cycleNumber;
 export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
 export const selectStagesError = (state: StageStoreState): string | null => state.error;
+export const selectStagesAttempted = (state: StageStoreState): boolean => state.hasAttempted;

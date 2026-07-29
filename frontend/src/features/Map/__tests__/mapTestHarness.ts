@@ -88,6 +88,8 @@ export interface MapMockState {
   currentStage: number;
   loading: boolean;
   error: string | null;
+  /** Whether a stage load has been started at least once this session. */
+  hasAttempted: boolean;
   cycleNumber: number;
   derivedStage: number | null;
   derivedWeek: number | null;
@@ -104,6 +106,7 @@ function createDefaultState(): MapMockState {
     currentStage: 1,
     loading: false,
     error: null,
+    hasAttempted: false,
     cycleNumber: 1,
     derivedStage: 1,
     derivedWeek: 1,
@@ -149,7 +152,7 @@ export const mockIsStageUnlocked = (
 
 /** Build the ``useStageStore`` state slice from the current ``mockMapState``. */
 export function buildMockStageState() {
-  const { stages, currentStage, loading, error, cycleNumber } = mockMapState;
+  const { stages, currentStage, loading, error, hasAttempted, cycleNumber } = mockMapState;
   return {
     stages,
     stagesByNumber: Object.fromEntries(stages.map((s) => [s.stageNumber, s])),
@@ -157,11 +160,13 @@ export function buildMockStageState() {
     currentStage,
     loading,
     error,
+    hasAttempted,
     cycleNumber,
     setStages: jest.fn(),
     setCurrentStage: jest.fn(),
     setLoading: jest.fn(),
     setError: jest.fn(),
+    markAttempted: jest.fn(),
     updateStageProgress: jest.fn(),
     setCycleNumber: jest.fn(),
   };
@@ -253,6 +258,7 @@ export function mockStageStoreModule() {
     selectCurrentStage: (s: { currentStage: unknown }) => s.currentStage,
     selectStagesLoading: (s: { loading: unknown }) => s.loading,
     selectStagesError: (s: { error: unknown }) => s.error,
+    selectStagesAttempted: (s: { hasAttempted: boolean }) => s.hasAttempted,
     selectCycleNumber: (s: { cycleNumber: number }) => s.cycleNumber,
     selectStageByNumber:
       (n: number | null | undefined) => (s: { stagesByNumber: Record<number, unknown> }) =>

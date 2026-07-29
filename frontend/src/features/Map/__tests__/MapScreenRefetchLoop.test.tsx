@@ -166,4 +166,51 @@ describe('MapScreen — cold-start fetch is not a retry loop', () => {
     expect(tree.root.findByProps({ testID: 'journey-read' })).toBeTruthy();
     expect(mockListAll).toHaveBeenCalledTimes(2);
   });
+
+  it('fetches the stage list exactly once when the server returns an empty list', async () => {
+    mockListAll.mockResolvedValue([]);
+
+    const tree = renderMap();
+    await flushRounds();
+
+    // A load that succeeds with nothing leaves the store back at its guard-passing
+    // shape, so only a recorded attempt can stop the effect re-arming itself.
+    expect(mockListAll).toHaveBeenCalledTimes(1);
+    expect(tree.root.findByProps({ testID: 'map-empty' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ testID: 'map-loading' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'map-error' })).toHaveLength(0);
+  });
+
+  it('renders the empty state with a way forward instead of a spinner', async () => {
+    mockListAll.mockResolvedValue([]);
+
+    const tree = renderMap();
+    await flushRounds();
+
+    const retry = tree.root.findByProps({ testID: 'map-empty-retry' });
+    expect(retry.props.accessibilityRole).toBe('button');
+    expect(retry.props.accessibilityLabel).toBe('Try again');
+
+    act(() => retry.props.onPress());
+    await flushRounds();
+
+    expect(mockListAll).toHaveBeenCalledTimes(2);
+    expect(tree.root.findByProps({ testID: 'map-empty' })).toBeTruthy();
+  });
+
+  it('a logout reset re-arms the cold-start fetch on a fresh mount', async () => {
+    mockListAll.mockResolvedValue([]);
+
+    const first = renderMap();
+    await flushRounds();
+    expect(mockListAll).toHaveBeenCalledTimes(1);
+
+    act(() => first.unmount());
+    act(() => useStageStore.getState().reset());
+
+    renderMap();
+    await flushRounds();
+
+    expect(mockListAll).toHaveBeenCalledTimes(2);
+  });
 });
