@@ -17,12 +17,34 @@ from __future__ import annotations
 import logging
 
 import pytest
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
+from slowapi.middleware import SlowAPIMiddleware
 
 from main import app
+from middleware import (
+    CorrelationIdMiddleware,
+    ForwardedProtoMiddleware,
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+)
 from observability import TRACE_ID_HEADER, TraceIdLogFilter
 
 client = TestClient(app)
+
+# The stack as a request meets it, outermost first.  ``add_middleware`` inserts
+# at the front of ``user_middleware``, so this list is the reverse of the
+# registration order in ``main``.  Compared by class name, as the CORS config
+# test does: Starlette types ``Middleware.cls`` as a factory protocol rather than
+# a class, so the entries and these classes have no comparable static type.
+_OUTER_TO_INNER = [
+    ForwardedProtoMiddleware.__name__,
+    RequestLoggingMiddleware.__name__,
+    CorrelationIdMiddleware.__name__,
+    SecurityHeadersMiddleware.__name__,
+    CORSMiddleware.__name__,
+    SlowAPIMiddleware.__name__,
+]
 
 
 def test_every_middleware_side_effect_fires_on_one_request(
@@ -51,8 +73,28 @@ def test_every_middleware_side_effect_fires_on_one_request(
     # CORSMiddleware exposed the trace id to cross-origin readers.
     exposed = response.headers.get("access-control-expose-headers", "")
     assert TRACE_ID_HEADER.lower() in exposed.lower()
-    # RequestLoggingMiddleware (outermost) emitted the access record.
+    # RequestLoggingMiddleware (outermost logging layer) emitted the access record.
     assert any(r.message == "request_completed" for r in caplog.records)
+
+
+def test_forwarded_proto_middleware_is_the_outermost_layer() -> None:
+    """``ForwardedProtoMiddleware`` must sit above every other layer, and stay there.
+
+    Registration order is asserted directly here, which the behaviour-first
+    cases above deliberately avoid, because this one invariant has no
+    behavioural signature to assert instead.  The scheme has exactly two
+    consumers today -- Starlette's ``Router``, which builds the trailing-slash
+    307's ``Location`` from ``scope["scheme"]``, and any absolute URL a handler
+    mints -- and both sit below *every* user middleware, so the end-to-end
+    redirect cases in ``tests/middleware/test_forwarded_proto.py`` pass from any
+    slot in this list.  They would keep passing if a later change re-registered
+    this layer somewhere inside the stack, at which point every layer above it
+    would silently start reading the ingress hop's scheme rather than the
+    client's.  Pinning the order is the only thing that catches that.
+    """
+    observed = [getattr(entry.cls, "__name__", "") for entry in app.user_middleware]
+
+    assert observed == _OUTER_TO_INNER
 
 
 def test_preflight_response_carries_security_headers() -> None:
@@ -146,7 +188,7 @@ def test_install_trace_id_logging_runs_at_import() -> None:
 def test_request_logging_middleware_emits_one_record_per_request(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The outermost RequestLoggingMiddleware logs an access record on every call."""
+    """The outermost logging layer, RequestLoggingMiddleware, logs a record on every call."""
     with caplog.at_level(logging.INFO, logger="adepthood.access"):
         client.get("/auth/login")
     completed = [r for r in caplog.records if r.message == "request_completed"]

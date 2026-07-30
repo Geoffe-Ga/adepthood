@@ -62,17 +62,16 @@ EXPOSE 8000
 # `src.main:app`) because PYTHONPATH is set to /app/src; this matches the
 # module layout used in tests.
 #
-# --proxy-headers lets uvicorn believe X-Forwarded-Proto, which the app needs to
-# know it is served over https: without it, redirects (e.g. the trailing-slash
-# 307) and any absolute URL it builds downgrade to http://, which browsers
-# refuse to follow cross-origin.  --forwarded-allow-ips names the peers allowed
-# to assert that, and it reads the same TRUSTED_PROXY_CIDRS the application
-# uses, so one setting governs both layers and they cannot drift apart.  A
-# wildcard here would trust every forwarding peer and so let any client rewrite
-# its own address: uvicorn overwrites the socket peer with the left-most,
-# caller-chosen X-Forwarded-For entry, forging rate-limit keys and audit rows
-# before application code runs.  The default is loopback, so an unset variable
-# fails closed onto the real socket peer -- and, stated plainly, proto trust is
-# off in that state too, so the https-dependent redirects above only work once
-# an operator sets the variable to the platform's ingress range.
-CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips=${TRUSTED_PROXY_CIDRS:-127.0.0.1}"]
+# --no-proxy-headers explicitly disables uvicorn's ProxyHeadersMiddleware.  The
+# switch is the pair --proxy-headers/--no-proxy-headers and it defaults to
+# ENABLED, so leaving it out is not the same as turning it off: the layer would
+# still mount, trusting whatever FORWARDED_ALLOW_IPS names (default 127.0.0.1).
+# That matters because the layer rewrites scope["client"] from the left-most --
+# i.e. caller-chosen -- X-Forwarded-For entry as well as the scheme from
+# X-Forwarded-Proto, before any application code runs and under a second trust
+# set the app never sees.  With it off, the application owns the whole
+# forwarding policy against TRUSTED_PROXY_CIDRS: the forwarded-proto middleware
+# for the scheme, client_ip for the address.  One trust set, one parser.  The
+# flag also disarms FORWARDED_ALLOW_IPS, which would otherwise re-arm that layer
+# from the environment without any flag appearing in this CMD.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --no-proxy-headers"]
