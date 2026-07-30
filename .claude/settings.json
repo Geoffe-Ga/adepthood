@@ -20,16 +20,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "Read|Glob",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "command -v graphify >/dev/null 2>&1 && graphify hook-guard read || true",
-            "timeout": 10
-          }
-        ]
       }
     ]
   }

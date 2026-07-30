@@ -50,9 +50,12 @@ today — **never stall on graph absence.**
 **Step 0.6 — Record what the graph taught you.** When a graph query
 materially shaped (or misled) the tick, save the trace: `graphify save-result
 --question "…" --answer "…" --nodes <returned labels> --outcome
-useful|dead_end|corrected [--correction "…"] --memory-dir graph/memory/`, then
-regenerate `graph/reflections/LESSONS.md` via `graphify reflect --memory-dir
-graph/memory …` and commit both (small Markdown notes; repo Q&A only).
+useful|dead_end|corrected [--correction "…"] --memory-dir graph/memory/` and
+commit the new trace file (a small Markdown note; repo Q&A only). Do NOT run
+`graphify reflect` or touch `graph/reflections/LESSONS.md` in a worker: the
+weekly playbook workflow regenerates that digest itself from the committed
+traces, and per-tick regeneration of one shared file forces needless
+behind-main rebases across parallel lanes.
 
 1. **Read your assignment.** `gh issue view "$RALPH_ISSUE" --comments`.
 2. **Read the house rules** (re-read every iteration — ticks are stateless):

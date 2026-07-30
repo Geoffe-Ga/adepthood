@@ -2,10 +2,11 @@
 # scripts/graph/test_hook_guards.sh
 #
 # Offline tests for the PreToolUse hook-guard wiring in .claude/settings.json:
-# pins the config shape (Bash + Read|Glob matchers, SessionStart untouched)
-# and the fail-soft invariant (graphify absent or exiting non-zero must never
-# block the tool call) by extracting the real command strings via jq and
-# running them against fake PATH environments.
+# pins the config shape (a single Bash matcher — the Read|Glob guard was
+# deliberately removed in #2031 to reclaim ~1s of Python startup per Read/Glob
+# call; SessionStart untouched) and the fail-soft invariant (graphify absent
+# or exiting non-zero must never block the tool call) by extracting the real
+# command strings via jq and running them against fake PATH environments.
 #
 # Run:  bash scripts/graph/test_hook_guards.sh
 set -euo pipefail
@@ -33,13 +34,15 @@ ln -s "$(command -v bash)" "$WORK/nograph/bash"
 
 # --- group 1: config shape ---------------------------------------------------
 ENTRY_COUNT="$(jq '.hooks.PreToolUse | length' "$SETTINGS")"
-check "PreToolUse has exactly 2 entries" "2" "$ENTRY_COUNT"
+check "PreToolUse has exactly 1 entry (Bash only)" "1" "$ENTRY_COUNT"
 
 BASH_MATCHER_COUNT="$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Bash")] | length' "$SETTINGS")"
 check "one PreToolUse entry matches Bash" "1" "$BASH_MATCHER_COUNT"
 
+# The Read|Glob guard was removed on purpose (#2031: ~1s cold-start tax on
+# every Read/Glob call). Pin its absence so it doesn't silently creep back.
 READ_MATCHER_COUNT="$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Read|Glob")] | length' "$SETTINGS")"
-check "one PreToolUse entry matches Read|Glob" "1" "$READ_MATCHER_COUNT"
+check "no PreToolUse entry matches Read|Glob (removed in #2031)" "0" "$READ_MATCHER_COUNT"
 
 SESSION_START_COUNT="$(jq '.hooks.SessionStart | length' "$SETTINGS")"
 check "SessionStart still has exactly one entry" "1" "$SESSION_START_COUNT"
@@ -50,26 +53,18 @@ check_contains "SessionStart hook is untouched" "$SESSION_START_CMD" "session-st
 BASH_TIMEOUT="$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[0].timeout] | first' "$SETTINGS")"
 check "Bash hook has a 10s timeout" "10" "$BASH_TIMEOUT"
 
-READ_TIMEOUT="$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Read|Glob") | .hooks[0].timeout] | first' "$SETTINGS")"
-check "Read|Glob hook has a 10s timeout" "10" "$READ_TIMEOUT"
-
 BASH_CMD="$(jq -r '.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[0].command' "$SETTINGS")"
-READ_CMD="$(jq -r '.hooks.PreToolUse[]? | select(.matcher == "Read|Glob") | .hooks[0].command' "$SETTINGS")"
 
-if [[ -z "$BASH_CMD" || -z "$READ_CMD" ]]; then
-  bad "PreToolUse Bash and Read|Glob commands both extracted (non-empty)"
-  echo "  skip - fail-soft and wiring checks (no command strings to run)"
+if [[ -z "$BASH_CMD" ]]; then
+  bad "PreToolUse Bash command extracted (non-empty)"
+  echo "  skip - fail-soft and wiring checks (no command string to run)"
 else
-  ok "PreToolUse Bash and Read|Glob commands both extracted (non-empty)"
+  ok "PreToolUse Bash command extracted (non-empty)"
 
   # --- group 2: binary absent = fail soft ------------------------------------
   rc=0
   env PATH="$WORK/nograph" bash -c "$BASH_CMD" </dev/null || rc=$?
   check "Bash hook exits 0 when graphify is absent from PATH" "0" "$rc"
-
-  rc=0
-  env PATH="$WORK/nograph" bash -c "$READ_CMD" </dev/null || rc=$?
-  check "Read|Glob hook exits 0 when graphify is absent from PATH" "0" "$rc"
 
   # --- group 3: guard-failure = fail soft -------------------------------------
   cat > "$WORK/binfail/graphify" <<'STUB'
@@ -82,10 +77,6 @@ STUB
   rc=0
   env PATH="$WORK/binfail:$PATH" bash -c "$BASH_CMD" </dev/null || rc=$?
   check "Bash hook exits 0 when graphify guard blocks (exit 2)" "0" "$rc"
-
-  rc=0
-  env PATH="$WORK/binfail:$PATH" bash -c "$READ_CMD" </dev/null || rc=$?
-  check "Read|Glob hook exits 0 when graphify guard blocks (exit 2)" "0" "$rc"
 
   # --- group 4: correct wiring -------------------------------------------------
   LOG="$WORK/graphify.log"
@@ -100,10 +91,6 @@ STUB
   : > "$LOG"
   env PATH="$WORK/binlog:$PATH" bash -c "$BASH_CMD" </dev/null || true
   check_contains "Bash hook invokes graphify with hook-guard search" "$(cat "$LOG")" "hook-guard search"
-
-  : > "$LOG"
-  env PATH="$WORK/binlog:$PATH" bash -c "$READ_CMD" </dev/null || true
-  check_contains "Read|Glob hook invokes graphify with hook-guard read" "$(cat "$LOG")" "hook-guard read"
 fi
 
 # --- summary ------------------------------------------------------------------
