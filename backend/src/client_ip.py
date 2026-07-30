@@ -47,8 +47,12 @@ IPV6_THROTTLE_PREFIX_ENV_VAR = "IPV6_THROTTLE_PREFIX_LEN"
 # any configured value we cannot use.
 DEFAULT_IPV6_THROTTLE_PREFIX_LEN = 64
 
-# A prefix length is a bit count, so anything below one bit is not a prefix.
-_MIN_IPV6_THROTTLE_PREFIX_LEN = 1
+# A prefix length is a bit count, so anything below one bit is not a prefix and
+# nothing wider than the address itself is one either.  Both are public because
+# the boot-time config check quotes this range back to the operator, and a range
+# stated in two places is a range that eventually disagrees with itself.
+MIN_IPV6_THROTTLE_PREFIX_LEN = 1
+MAX_IPV6_THROTTLE_PREFIX_LEN = ipaddress.IPV6LENGTH
 
 # Both the config variable and the forwarded header are comma-separated lists.
 _ENTRY_SEPARATOR = ","
@@ -87,6 +91,23 @@ def _parse_prefix_length(raw: str) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def _usable_prefix_length(raw: str) -> int | None:
+    """Return the prefix ``raw`` asks for, or None when it does not name one.
+
+    The single judgement of what counts as a prefix, so the runtime and the
+    boot-time check below cannot come to different conclusions about the same
+    string: whatever the runtime would discard is exactly what boot announces.
+    ``int`` tolerates surrounding whitespace, so a padded value is configuration
+    rather than a typo, and a blank value names no prefix at all.
+    """
+    configured = _parse_prefix_length(raw)
+    if configured is None:
+        return None
+    if not (MIN_IPV6_THROTTLE_PREFIX_LEN <= configured <= MAX_IPV6_THROTTLE_PREFIX_LEN):
+        return None
+    return configured
 
 
 def _is_scoped(address: _Address) -> bool:
@@ -146,13 +167,12 @@ def _throttle_prefix_length() -> int:
     """Read the IPv6 throttle prefix length from the environment at call time.
 
     Reading per call means retuning the bucket needs no restart, exactly as for
-    the proxy allowlist.  Only an integer in ``[1, IPV6LENGTH]`` is a usable
-    prefix, and every other value degrades to the default rather than being
-    clamped into range: ``0`` would collapse every IPv6 client on earth into one
-    bucket -- a self-inflicted denial of service on all legitimate IPv6 users --
-    and clamping ``129`` down would silently disable the grouping altogether.
-    The default is the only value an operator would have chosen deliberately, so
-    it is the only safe reading of a typo.
+    the proxy allowlist.  Anything that is not a usable prefix degrades to the
+    default rather than being clamped into range: ``0`` would collapse every
+    IPv6 client on earth into one bucket -- a self-inflicted denial of service
+    on all legitimate IPv6 users -- and clamping ``129`` down would silently
+    disable the grouping altogether.  The default is the only value an operator
+    would have chosen deliberately, so it is the only safe reading of a typo.
 
     The range check asks only whether a value is a prefix, not whether it is a
     wise one.  ``IPV6LENGTH`` itself is the deliberate opt-out -- it restores
@@ -160,13 +180,13 @@ def _throttle_prefix_length() -> int:
     against -- and a very small value groups very coarsely on purpose.  Both are
     an operator's call to make; only a value that is not a prefix at all is
     a typo this can recognise as such.
+
+    Deliberately silent about that fallback.  This runs on every IPv6 request,
+    so logging here would turn one typo into a log flood at request rate; the
+    announcement belongs to boot, via :func:`unusable_throttle_prefix_config`.
     """
-    configured = _parse_prefix_length(os.getenv(IPV6_THROTTLE_PREFIX_ENV_VAR, ""))
-    if configured is None or not (
-        _MIN_IPV6_THROTTLE_PREFIX_LEN <= configured <= ipaddress.IPV6LENGTH
-    ):
-        return DEFAULT_IPV6_THROTTLE_PREFIX_LEN
-    return configured
+    configured = _usable_prefix_length(os.getenv(IPV6_THROTTLE_PREFIX_ENV_VAR, ""))
+    return DEFAULT_IPV6_THROTTLE_PREFIX_LEN if configured is None else configured
 
 
 def _is_trusted(address: _Address, networks: list[_Network]) -> bool:
@@ -310,3 +330,25 @@ def peer_is_trusted_proxy(connection: HTTPConnection) -> bool:
     """
     peer = _socket_peer(connection)
     return peer is not None and _is_trusted(peer, _trusted_networks())
+
+
+def unusable_throttle_prefix_config() -> str | None:
+    """Return the configured prefix value the runtime cannot use, else None.
+
+    Exists so a caller that *can* log -- boot, once -- can say what the silent
+    per-request fallback in :func:`_throttle_prefix_length` swallowed.  This
+    module stays a leaf and stays quiet: it reports the finding and lets its
+    caller decide what to do about it.
+
+    Unset and blank both answer None.  ``backend/.env.example`` ships the
+    variable present but empty, so treating blank as a mistake would fire the
+    warning on every stock boot and teach operators to ignore it.  The value
+    comes back verbatim rather than stripped, because the operator has to
+    recognise what they typed -- a stray space is the whole bug.
+    """
+    raw = os.getenv(IPV6_THROTTLE_PREFIX_ENV_VAR)
+    if raw is None or not raw.strip():
+        return None
+    if _usable_prefix_length(raw) is not None:
+        return None
+    return raw

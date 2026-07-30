@@ -125,11 +125,19 @@ def _sanitized_500(
     Shared by the catch-all and the journal-decryption handlers so both emit the
     same ``{error, request_id}`` body + trace header while logging a distinct
     event name (``log_event``) and returning a distinct ``error_code``.
+
+    Logs at ERROR with an explicit ``exc_info=exc`` rather than calling
+    ``logger.exception()``: this helper runs one frame below the Starlette
+    handler and outside any ``except`` block, so a bare ``logger.exception()``
+    would depend on ``sys.exc_info()`` still being populated by an enclosing
+    frame.  Naming the exception we were handed keeps the traceback attached
+    without that ambient coupling.
     """
     request_id = getattr(request.state, "request_id", None) or get_trace_id() or NO_TRACE
     truncated_path = truncate_log_path(request.url.path)
-    logger.exception(
+    logger.error(
         log_event,
+        exc_info=exc,
         extra={
             "request_id": request_id,
             "request_path": truncated_path,
