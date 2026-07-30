@@ -98,6 +98,30 @@ def test_unhandled_exception_logs_with_request_id(
     assert getattr(record, "request_method", None) == "GET"
 
 
+def test_unhandled_exception_log_carries_traceback(
+    app_with_failing_route: FastAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The log record attaches the originating exception, not just its name.
+
+    The handler's contract is that the client sees a sanitised envelope
+    *because* the server-side log keeps the full traceback for support to
+    look up by request ID.  The handler runs outside an ``except`` block,
+    so it must name the exception explicitly rather than rely on the
+    ambient ``sys.exc_info()`` a bare ``logger.exception()`` would read.
+    """
+    client = TestClient(app_with_failing_route, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger="errors"):
+        client.get("/__boom__")
+    record = next(r for r in caplog.records if r.message == "unhandled_exception")
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+    exc_type, exc_value, traceback = record.exc_info
+    assert exc_type is RuntimeError
+    assert isinstance(exc_value, RuntimeError)
+    assert traceback is not None
+
+
 def test_unhandled_exception_calls_sentry_capture(app_with_failing_route: FastAPI) -> None:
     """The handler forwards to ``sentry.capture_exception`` (today a stub)."""
     captured: list[tuple[BaseException, dict[str, object]]] = []

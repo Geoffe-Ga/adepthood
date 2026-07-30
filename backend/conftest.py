@@ -81,27 +81,35 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
     # TOCTOU in ``create_habit`` is closed at the DB layer.  Mirrors the
     # production migration ``b5c6d7e8f9a0``; SQLite supports
     # ``lower()`` / ``trim()`` in functional indexes natively.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_habit_user_lower_name_unique_test" '
-    "ON habit (user_id, lower(trim(name)))",
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_habit_user_lower_name_unique_test" '
+        "ON habit (user_id, lower(trim(name)))"
+    ),
     # practice presets: one preset row per (stage_number, normalized name).
     # Closes the seeder-race duplication noted in PR fixing the
     # 5-4-3-2-1 duplicate. Mirrors production migration ``d2e3f4a5b6c7``;
     # user-submitted practices are exempt via the partial ``WHERE`` clause.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practice_preset_stage_lower_name_unique_test" '
-    "ON practice (stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL",
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_practice_preset_stage_lower_name_unique_test" '
+        "ON practice (stage_number, lower(trim(name))) WHERE submitted_by_user_id IS NULL"
+    ),
     # coursestage: one row per stage_number. Closes the two-worker startup
     # seeder race that duplicated every stage on a fresh database and left
     # the Course screen serving the content-less duplicate ("No Content
     # Yet" with all-200 responses). Mirrors production migration
     # ``e8f9a0b1c2d3``.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_number_unique_test" '
-    "ON coursestage (stage_number)",
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_number_unique_test" '
+        "ON coursestage (stage_number)"
+    ),
     # stagecontent: one ``content://`` reference per stage — the seeder's
     # stable chapter identity. Scoped to the content:// scheme so legacy
     # rows with empty/CMS urls stay unconstrained. Mirrors production
     # migration ``e8f9a0b1c2d3``.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_stagecontent_stage_content_ref_unique_test" '
-    "ON stagecontent (course_stage_id, url) WHERE url LIKE 'content://%'",
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_stagecontent_stage_content_ref_unique_test" '
+        "ON stagecontent (course_stage_id, url) WHERE url LIKE 'content://%'"
+    ),
 )
 
 # Concurrency-only indexes: the regular ``db_session`` fixture deliberately
@@ -115,8 +123,10 @@ _SQLITE_CONCURRENT_ONLY_INDEXES: tuple[str, ...] = (
     # Production keys uniqueness off the ``local_day`` column the check-in
     # service writes, so the mirror indexes the same column rather than
     # re-deriving a day from ``timestamp``.
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
-    "ON goalcompletion (goal_id, user_id, local_day)",
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_goal_completion_unique_per_day_test" '
+        "ON goalcompletion (goal_id, user_id, local_day)"
+    ),
 )
 
 
