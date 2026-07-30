@@ -23,6 +23,7 @@ from database import async_session_factory, get_session
 from errors import install_exception_handlers
 from middleware import (
     CorrelationIdMiddleware,
+    ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
@@ -287,10 +288,12 @@ def validate_trusted_proxy_config() -> None:
     from another.  Every control that keys on an address -- the per-route rate
     limiter, the hourly invalid-license throttle, the login and password-reset
     audit rows -- then sees the ingress itself, so one bucket and one audited
-    address cover the whole internet.  The same variable governs uvicorn's
-    proxy-header trust set, so ``X-Forwarded-Proto`` is untrusted too and the
-    app believes it is serving http, which downgrades redirects and any
-    absolute URL it builds.
+    address cover the whole internet.  The same variable gates
+    :class:`ForwardedProtoMiddleware`, so ``X-Forwarded-Proto`` is untrusted too
+    and the app believes it is serving http, which downgrades redirects and any
+    absolute URL it builds.  The runtime image disables uvicorn's own
+    proxy-header layer outright, so this one variable really is the whole
+    forwarding policy.
 
     Nothing else surfaces this: the degraded behaviour looks like ordinary
     operation until a brute-forcer is throttled alongside honest traffic or an
@@ -305,9 +308,9 @@ def validate_trusted_proxy_config() -> None:
     logger.warning(
         "trusted_proxies_unconfigured: %s is unset, so X-Forwarded-For is "
         "ignored and every client behind the ingress shares one rate-limit "
-        "bucket and one audited IP address; X-Forwarded-Proto is not trusted "
-        "either, so redirects and absolute URLs stay http://. Set it to the "
-        "platform's ingress range -- backend/.env.example documents the format",
+        "bucket and one audited IP address; the app ignores X-Forwarded-Proto from "
+        "every peer too, so redirects and absolute URLs stay http://. Set it to "
+        "the platform's ingress range -- backend/.env.example documents the format",
         TRUSTED_PROXIES_ENV_VAR,
     )
 
@@ -500,16 +503,23 @@ install_exception_handlers(app)
 # becomes the OUTERMOST layer.  We register innermost-first so the actual
 # request flow becomes:
 #
-#   RequestLoggingMiddleware  (outermost; always emits an access record)
-#   -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
-#      -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
-#         -> CORSMiddleware  (preflight handling + ACAO / ACAC)
-#            -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
-#               -> route handler
+#   ForwardedProtoMiddleware  (outermost; settles scope["scheme"])
+#   -> RequestLoggingMiddleware  (always emits an access record)
+#      -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
+#         -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
+#            -> CORSMiddleware  (preflight handling + ACAO / ACAC)
+#               -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#                  -> route handler
 #
 # Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
 # rate-limited responses inherit the security-header set; putting trace-id
 # outside CORS means even preflight responses echo ``X-Request-ID``.
+#
+# Forwarded-proto has to be outermost of all: Starlette's ``Router`` builds the
+# trailing-slash 307's ``Location`` from ``scope["scheme"]``, so the scheme has
+# to be settled before anything routes, and settling it above every other layer
+# means any of them that later reads the scheme sees the client-facing one
+# rather than the ingress hop's.
 origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
@@ -528,6 +538,7 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(ForwardedProtoMiddleware)
 
 # Register feature routers
 app.include_router(admin_router)

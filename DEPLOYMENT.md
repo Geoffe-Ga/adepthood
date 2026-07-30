@@ -479,23 +479,56 @@ password-reset audit rows (`LoginAttempt.ip_address`,
 instead -- which behind any real ingress means every client shares
 one rate-limit bucket and one audited address.
 
-The same variable also feeds uvicorn's `--forwarded-allow-ips`, so
-it governs whether `X-Forwarded-Proto` is trusted too.  Until it is
-set, the app believes it is serving `http`, so the trailing-slash
-redirect and any absolute URL it builds stay `http://` -- which
-browsers refuse to follow cross-origin.  A production boot without
-it set logs a `trusted_proxies_unconfigured` warning at startup.
-Write entries in network-address form (`10.0.0.0/8`), not host form
-(`10.0.0.5/8`): uvicorn's parser rejects the latter silently, so
-`X-Forwarded-Proto` trust quietly stops working while the rest of
-the app keeps working.
+The same variable governs whether `X-Forwarded-Proto` is trusted.
+Until it is set, the app believes it is serving `http`, so the
+trailing-slash redirect and any absolute URL it builds stay
+`http://` -- which browsers refuse to follow cross-origin.  A
+production boot without it set logs a `trusted_proxies_unconfigured`
+warning at startup.
+
+Both decisions are taken inside the application, against this one
+variable: the forwarded-proto middleware for the scheme, `client_ip`
+for the address.  The runtime image starts uvicorn with
+`--no-proxy-headers` on purpose.  The explicit negative is required:
+that switch is the flag pair `--proxy-headers/--no-proxy-headers`
+and it defaults to **enabled**, so merely omitting it leaves
+uvicorn's own layer mounted and trusting loopback.  While that layer
+is mounted it rewrites the socket peer from the left-most,
+caller-chosen `X-Forwarded-For` entry as well as the scheme, before
+any application code runs and under a second trust set the app never
+sees.
+
+Do **not** set `FORWARDED_ALLOW_IPS`.  It is an environment variable
+uvicorn reads directly (a common PaaS copy-paste), and it is the way
+that server-side layer gets widened without any flag appearing in
+the image's `CMD`.  `--no-proxy-headers` disarms it, and the
+application ignores it entirely: `TRUSTED_PROXY_CIDRS` is the only
+forwarding trust set that has any effect here.
+
+The innermost trusted proxy must still **set** (replace)
+`X-Forwarded-Proto` to the client-facing scheme as a single value
+(`proxy_set_header X-Forwarded-Proto $scheme;` in nginx) rather than
+pass the caller's through.  The middleware takes the *last* field
+line, which is the proxy's only if the proxy actually writes one; a
+trusted proxy -- or an L4 hop -- that forwards the caller's header
+unmodified hands the caller the scheme, because the caller's line is
+then the only line.  `proxy_set_header` replaces, which is why it is
+the safe form.  A proxy that appends to an existing header instead
+produces a comma-joined value, which is ignored, and the redirect
+then falls back to `http://`.  When several field lines arrive, the
+last one wins, and only `http`, `https`, `ws`, and `wss` are
+accepted.
 
 For self-managed deployments, terminate TLS at a proxy (nginx,
 Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and appends
 the real peer address, then list only that proxy in
-`TRUSTED_PROXY_CIDRS`.  Operators investigating an abuse report
-should treat the audit `ip_address` as authoritative only to the
-extent the ingress chain, and this configuration, are trusted.
+`TRUSTED_PROXY_CIDRS`.  That variable accepts only IP addresses and
+CIDR blocks, so the proxy has to reach the app over TCP: a proxy
+connected over a unix socket has no IP peer, can never be trusted,
+and its `X-Forwarded-Proto` is ignored (redirects stay `http://`).
+Operators investigating an abuse report should treat the audit
+`ip_address` as authoritative only to the extent the ingress chain,
+and this configuration, are trusted.
 
 Once a peer address is resolved, the rate limiter and the
 invalid-license throttle key on it a little differently than the

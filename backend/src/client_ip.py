@@ -7,7 +7,9 @@ header is therefore evidence only when the socket peer is itself a proxy the
 operator declared in ``TRUSTED_PROXY_CIDRS``, and even then the chain is read
 from the right, because a client can prepend entries that the proxy appends
 to.  Unset or blank config trusts nobody: the header is ignored everywhere and
-every control keys on the socket peer.
+every control keys on the socket peer.  The same trust walk also decides
+whether ``X-Forwarded-Proto`` is believed, through
+:func:`peer_is_trusted_proxy`.
 
 One trust walk, two answers.  ``resolve_client_ip`` says *who was this,
 exactly* and belongs in audit rows and logs, where forensic precision is the
@@ -31,6 +33,7 @@ import ipaddress
 import os
 
 from fastapi import Request
+from starlette.requests import HTTPConnection
 
 # Comma-separated IPs and/or CIDR blocks naming the proxies we operate.
 TRUSTED_PROXIES_ENV_VAR = "TRUSTED_PROXY_CIDRS"
@@ -205,9 +208,14 @@ def _client_hop(hops: list[str], networks: list[_Network]) -> _Address | None:
     return None
 
 
-def _socket_peer(request: Request) -> _Address | None:
-    """Return the peer that opened the connection, or None when there is none to key on."""
-    peer = request.client
+def _socket_peer(connection: HTTPConnection) -> _Address | None:
+    """Return the peer that opened the connection, or None when there is none to key on.
+
+    Typed on :class:`HTTPConnection` rather than :class:`Request` because only
+    ``.client`` is read, and the scheme decision below runs before a request
+    body exists.  ``Request`` is a subclass, so every caller here is unaffected.
+    """
+    peer = connection.client
     return None if peer is None else _client_address(peer.host)
 
 
@@ -284,3 +292,21 @@ def client_throttle_key(request: Request) -> str:
     """
     address = _resolved_client(request)
     return _UNKNOWN_CLIENT if address is None else _throttle_key(address)
+
+
+def peer_is_trusted_proxy(connection: HTTPConnection) -> bool:
+    """Report whether the socket peer is one of the proxies the operator declared.
+
+    The trust projection: exactly the decision :func:`_resolved_client` takes
+    before it will read ``X-Forwarded-For``, exposed so that whoever is allowed
+    to report the scheme and whoever is allowed to report the client address are
+    settled against one allowlist and one parser.  Two trust walks could
+    disagree; one cannot.
+
+    Because it goes through ``_socket_peer`` it inherits that resolution
+    wholesale -- the IPv4-mapped folding that lets a plain IPv4 config entry
+    still name a proxy a dual-stack listener reports as ``::ffff:...``, and the
+    rejection of scoped IPv6 literals -- rather than re-deciding any of it here.
+    """
+    peer = _socket_peer(connection)
+    return peer is not None and _is_trusted(peer, _trusted_networks())

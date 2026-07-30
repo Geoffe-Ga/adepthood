@@ -1,4 +1,8 @@
-"""Request-logging middleware — outermost layer of the ASGI stack.
+"""Request-logging middleware — outermost layer that touches the response.
+
+Only :class:`middleware.forwarded_proto.ForwardedProtoMiddleware` sits above
+it, and that layer only settles ``scope["scheme"]`` on the way in — it wraps no
+response — so the access record below still describes the whole response path.
 
 Sits *outside* :class:`observability.CorrelationIdMiddleware` so the
 log line emitted for every request always carries a ``trace_id`` field

@@ -9,9 +9,11 @@ the right so a client-prepended entry cannot win.
 
 The integration cases fake the ASGI socket peer through ``ASGITransport`` and
 assert that the slowapi limiter and the invalid-license throttle agree on the
-key the resolver produces.  One case reaches past the application entirely and
-pins the runtime image's uvicorn flags, because a proxy-header trust set
-declared in the CMD overwrites ``request.client`` before this module runs.
+key the resolver produces.  A further group reaches past the application
+entirely and pins the runtime image's uvicorn flags -- both as tokens in the
+Dockerfile CMD and as the ASGI stack uvicorn actually builds from them -- so
+that no server-level layer can rewrite the socket peer or the request scheme
+before this module runs.
 """
 
 from __future__ import annotations
@@ -25,8 +27,10 @@ import pytest
 from annotated_types import MaxLen
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
+from uvicorn.config import Config
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from client_ip import TRUSTED_PROXIES_ENV_VAR, resolve_client_ip
+from client_ip import TRUSTED_PROXIES_ENV_VAR, peer_is_trusted_proxy, resolve_client_ip
 from database import get_session
 from main import app
 from models.password_reset_token import PasswordResetToken
@@ -99,6 +103,22 @@ _DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 _CMD_DIRECTIVE = "CMD "
 _WILDCARD_ALLOW_IPS = "--forwarded-allow-ips=*"
 _PROXY_HEADERS_FLAG = "--proxy-headers"
+_FORWARDED_ALLOW_IPS_FLAG = "--forwarded-allow-ips"
+# Uvicorn spells the switch as the pair ``--proxy-headers/--no-proxy-headers``,
+# and the off form contains the on form as a substring, so the CMD has to be
+# compared token by token rather than searched for text.
+_NO_PROXY_HEADERS_FLAG = "--no-proxy-headers"
+_FLAG_VALUE_SEPARATOR = "="
+_CMD_JSON_PUNCTUATION = '[],"'
+
+# The import string the CMD hands uvicorn, resolved through the same
+# ``backend/src`` sys.path entry the suite itself runs on.
+_APP_IMPORT_STRING = "main:app"
+# Uvicorn's own fallback trust set when no allowlist is given, and the
+# environment variable that silently replaces it.
+_UVICORN_DEFAULT_TRUSTED_PEER = "127.0.0.1"
+_FORWARDED_ALLOW_IPS_ENV_VAR = "FORWARDED_ALLOW_IPS"
+_TRUST_EVERY_PEER = "*"
 
 _RESET_PATH = "/auth/password-reset/request"
 _RESET_REQUESTS_PER_HOUR = 3
@@ -330,16 +350,160 @@ def test_runtime_image_never_trusts_every_forwarding_peer() -> None:
     )
 
 
-def test_runtime_image_shares_one_trust_set_with_the_application() -> None:
-    """Whatever uvicorn trusts for proxy headers must be what the app trusts."""
-    cmd = _runtime_cmd()
-    if _PROXY_HEADERS_FLAG not in cmd:
-        return
-    assert TRUSTED_PROXIES_ENV_VAR in cmd, (
-        f"backend/Dockerfile CMD enables {_PROXY_HEADERS_FLAG} without deriving "
-        f"its allowed peers from {TRUSTED_PROXIES_ENV_VAR}; two trust sets that "
-        "can diverge means uvicorn may rewrite request.client for a peer the "
-        "application would never have trusted."
+def _runtime_cmd_tokens() -> list[str]:
+    """Return the runtime CMD split into tokens with its JSON-array punctuation stripped."""
+    return [token.strip(_CMD_JSON_PUNCTUATION) for token in _runtime_cmd().split()]
+
+
+def _runtime_cmd_flag_names() -> set[str]:
+    """Return every option name in the runtime CMD, discarding any attached value."""
+    return {token.split(_FLAG_VALUE_SEPARATOR)[0] for token in _runtime_cmd_tokens()}
+
+
+def _uvicorn_config(*, proxy_headers: bool) -> Config:
+    """Build a uvicorn config for the deployed app, leaving global logging untouched."""
+    return Config(_APP_IMPORT_STRING, proxy_headers=proxy_headers, log_config=None)
+
+
+def _uvicorn_default_config() -> Config:
+    """Build the config uvicorn produces when the command line names no forwarding flag."""
+    return Config(_APP_IMPORT_STRING, log_config=None)
+
+
+def _runtime_proxy_headers() -> bool:
+    """Resolve the ``proxy_headers`` setting the runtime CMD tokens hand uvicorn.
+
+    The switch is a flag pair, so omitting both spellings does not disable
+    anything -- it leaves uvicorn's own default in force.
+    """
+    tokens = _runtime_cmd_tokens()
+    if _NO_PROXY_HEADERS_FLAG in tokens:
+        return False
+    if _PROXY_HEADERS_FLAG in tokens:
+        return True
+    return _uvicorn_default_config().proxy_headers
+
+
+def _loaded_app(config: Config) -> object:
+    """Return the outermost ASGI object uvicorn would serve under ``config``."""
+    config.load()
+    return config.loaded_app
+
+
+def test_runtime_image_disables_uvicorn_proxy_header_handling() -> None:
+    """The CMD must switch the proxy-header layer off explicitly, not merely omit it.
+
+    Uvicorn's ``ProxyHeadersMiddleware`` is all-or-nothing: while it is mounted
+    it rewrites ``scope["client"]`` from ``X-Forwarded-For`` as well as
+    ``scope["scheme"]`` from ``X-Forwarded-Proto``, under its own allowlist
+    parser, before any application code runs.  Two trust sets that can diverge
+    is one too many, so the server-side layer has to be turned off and every
+    forwarding decision taken inside the application against
+    ``TRUSTED_PROXY_CIDRS``.
+    """
+    assert _NO_PROXY_HEADERS_FLAG in _runtime_cmd_tokens(), (
+        f"backend/Dockerfile CMD must pass {_NO_PROXY_HEADERS_FLAG}; leaving the "
+        "flag out keeps uvicorn's ProxyHeadersMiddleware mounted, so a loopback "
+        "caller can still rewrite request.client and the request scheme under a "
+        f"trust set the application never sees, not {TRUSTED_PROXIES_ENV_VAR}."
+    )
+
+
+def test_runtime_image_never_enables_uvicorn_proxy_header_handling() -> None:
+    """No bare enabling token may switch the server-side rewriting layer back on."""
+    assert _PROXY_HEADERS_FLAG not in _runtime_cmd_tokens(), (
+        f"backend/Dockerfile CMD must not pass {_PROXY_HEADERS_FLAG}; uvicorn "
+        "would rewrite request.client from the left-most X-Forwarded-For entry "
+        "under a trust set the application never sees."
+    )
+
+
+def test_runtime_image_declares_no_server_level_forwarding_trust_set() -> None:
+    """The image must name no proxy allowlist of its own, wildcard or otherwise."""
+    assert _FORWARDED_ALLOW_IPS_FLAG not in _runtime_cmd_flag_names(), (
+        f"backend/Dockerfile CMD must not pass {_FORWARDED_ALLOW_IPS_FLAG}; a "
+        "server-level trust set can diverge from the one the application "
+        f"enforces from {TRUSTED_PROXIES_ENV_VAR}."
+    )
+
+
+def test_uvicorn_wraps_the_app_in_a_peer_rewriter_when_no_flag_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting the flag is not the same as disabling it: the default mounts the rewriter.
+
+    This is the canary that makes the explicit flag mandatory.  If uvicorn ever
+    flips its default, this case fails and the reason for the flag can be
+    revisited; until then it records that a bare command line ships a layer
+    which trusts loopback and rewrites the peer above the application.
+
+    The trust set is read only through ``in``, which is the container protocol
+    the class exposes.  Its address-extraction helper is deliberately left
+    alone: that method has been renamed between uvicorn releases, so a test that
+    called it would pin this suite to one version of a third party rather than
+    to the behaviour we actually depend on.
+    """
+    monkeypatch.delenv(_FORWARDED_ALLOW_IPS_ENV_VAR, raising=False)
+    config = _uvicorn_default_config()
+
+    loaded = _loaded_app(config)
+
+    assert config.proxy_headers is True
+    assert isinstance(loaded, ProxyHeadersMiddleware)
+    # Loopback is vouched for by default, so anything sharing the host -- a
+    # sidecar, another container on the same network namespace -- may rewrite
+    # the peer; a caller out on the internet may not.  That asymmetry is the
+    # whole reason the layer has to be switched off rather than left at its
+    # default.
+    assert _UVICORN_DEFAULT_TRUSTED_PEER in loaded.trusted_hosts
+    assert _CLIENT_IP not in loaded.trusted_hosts
+
+
+def test_uvicorn_leaves_the_app_unwrapped_when_proxy_headers_are_disabled() -> None:
+    """Turning the setting off is what actually removes the rewriting layer."""
+    loaded = _loaded_app(_uvicorn_config(proxy_headers=False))
+
+    assert not isinstance(loaded, ProxyHeadersMiddleware)
+
+
+def test_runtime_cmd_serves_the_app_with_no_peer_rewriter_above_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Served exactly as the image serves it, nothing above the app can rewrite the peer.
+
+    This ties the Dockerfile to the behaviour it is supposed to buy: the flags
+    the CMD carries are fed to a real uvicorn config, and the loaded stack must
+    hand requests straight to the application.
+    """
+    monkeypatch.delenv(_FORWARDED_ALLOW_IPS_ENV_VAR, raising=False)
+
+    loaded = _loaded_app(_uvicorn_config(proxy_headers=_runtime_proxy_headers()))
+
+    assert not isinstance(loaded, ProxyHeadersMiddleware), (
+        "the flags in backend/Dockerfile CMD leave uvicorn's "
+        "ProxyHeadersMiddleware mounted above the application, so request.client "
+        "and the request scheme are rewritten before resolve_client_ip runs."
+    )
+
+
+def test_forwarded_allow_ips_env_var_cannot_reinstate_a_server_level_trust_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wildcard in the deploy environment must not buy back a trust set the app never sees.
+
+    Uvicorn reads ``FORWARDED_ALLOW_IPS`` when no allowlist is passed, so an
+    operator or platform variable can widen server-side trust to every peer.
+    With the rewriting layer switched off there is nothing for that variable to
+    configure.
+    """
+    monkeypatch.setenv(_FORWARDED_ALLOW_IPS_ENV_VAR, _TRUST_EVERY_PEER)
+
+    loaded = _loaded_app(_uvicorn_config(proxy_headers=_runtime_proxy_headers()))
+
+    assert not isinstance(loaded, ProxyHeadersMiddleware), (
+        f"{_FORWARDED_ALLOW_IPS_ENV_VAR} re-arms uvicorn's ProxyHeadersMiddleware "
+        "to trust every peer because backend/Dockerfile CMD does not disable the "
+        "proxy-header layer outright."
     )
 
 
@@ -396,6 +560,59 @@ def test_ipv4_mapped_socket_peer_is_trusted_by_a_plain_ipv4_config_entry(
     resolved = resolve_client_ip(_make_request((_MAPPED_PROXY_PEER, _PEER_PORT), _CLIENT_IP))
 
     assert resolved == _CLIENT_IP
+
+
+def test_peer_inside_the_configured_range_is_a_trusted_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The trust projection says yes for exactly the peers the allowlist names."""
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TRUSTED_PROXY_NET)
+
+    assert peer_is_trusted_proxy(_make_request((_PROXY_PEER, _PEER_PORT))) is True
+
+
+def test_peer_outside_the_configured_range_is_not_a_trusted_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A peer the allowlist does not name gets no say over any forwarded header."""
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TRUSTED_PROXY_NET)
+
+    assert peer_is_trusted_proxy(_make_request((_UNTRUSTED_PEER, _PEER_PORT))) is False
+
+
+def test_absent_socket_peer_is_not_a_trusted_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A connection with no peer at all cannot be one of our proxies."""
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TRUSTED_PROXY_NET)
+
+    assert peer_is_trusted_proxy(_make_request(None)) is False
+
+
+@pytest.mark.parametrize("configured", [None, "", _ALL_GARBAGE_CONFIG])
+def test_unconfigured_trust_makes_every_peer_untrusted(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: str | None,
+) -> None:
+    """Config that names no parseable network vouches for nobody, fail-closed."""
+    if configured is None:
+        monkeypatch.delenv(TRUSTED_PROXIES_ENV_VAR, raising=False)
+    else:
+        monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, configured)
+
+    assert peer_is_trusted_proxy(_make_request((_PROXY_PEER, _PEER_PORT))) is False
+
+
+def test_ipv4_mapped_peer_is_trusted_by_a_plain_ipv4_config_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The trust projection folds mapped literals rather than re-deciding trust itself.
+
+    A dual-stack listener reports the proxy as ``::ffff:192.0.2.10``, which no
+    IPv4 entry contains; only reusing the resolver's own canonicalisation keeps
+    the two answers from disagreeing about who a proxy is.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _PROXY_PEER)
+
+    assert peer_is_trusted_proxy(_make_request((_MAPPED_PROXY_PEER, _PEER_PORT))) is True
 
 
 def test_padding_and_blank_entries_tolerated_in_config_and_header(
