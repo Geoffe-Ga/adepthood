@@ -43,7 +43,7 @@ from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
 from models.revoked_token import RevokedToken
 from models.user import DEFAULT_USER_TIMEZONE, DISPLAY_NAME_MAX_LENGTH, User
-from rate_limit import limiter, record_invalid_license_attempt
+from rate_limit import invalid_license_cap_exhausted, limiter, record_invalid_license_attempt
 from schemas.password_reset import (
     PasswordResetAccepted,
     PasswordResetCancel,
@@ -505,6 +505,45 @@ async def _serialize_login(session: AsyncSession, email: str) -> AsyncIterator[N
         yield
 
 
+async def _reject_if_license_cap_exhausted(request: Request, license_key: str | None) -> None:
+    """Refuse a client that has spent its hourly budget, before any Gumroad call.
+
+    This is the front gate of the two-layer cap. The cap exists to stop a
+    client grinding license keys through Gumroad, so it has to be consulted
+    *before* the verify loop rather than only when shaping the response: an
+    unmatched key costs one outbound request per allowlisted product, and a
+    throttle applied afterwards would let a spent client keep paying that cost
+    on every guess. The peek is non-consuming, so asking never charges the
+    client. Deliberately unguarded: a storage failure must propagate rather
+    than be swallowed into an allow, which is the very hole this closes.
+
+    A blank or whitespace-only key short-circuits inside the license gate
+    before any egress, so it is not a guess and there is nothing here to
+    protect -- it passes through to the ordinary ``license_required`` refusal,
+    the same exemption ``_count_invalid_license_attempt`` makes.
+
+    The refusal answers exactly as the in-band 429 does -- same status, same
+    detail, charged against the same throttle key -- and spends the dummy
+    bcrypt that the signup path's own 429 spends, which the OAuth in-band 429
+    skips. Wall-clock parity with the pre-gate 429 is
+    deliberately not claimed -- refusing before the Gumroad round trip is
+    necessarily faster than refusing after one, and the 429 status already
+    discloses the throttled state outright, so there is nothing left for the
+    timing to leak. This is the doctrine ``_needs_license_conflict``
+    documents. Routing the OAuth rung through here also gives its capped case
+    the dummy verify it previously skipped.
+    """
+    if not (license_key or "").strip():
+        return
+    if not invalid_license_cap_exhausted(client_throttle_key(request)):
+        return
+    await _consume_dummy_password_verify()
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=_DETAIL_TOO_MANY_LICENSE_ATTEMPTS,
+    )
+
+
 async def _reject_invalid_license(
     request: Request,
     email: str,
@@ -516,6 +555,11 @@ async def _reject_invalid_license(
     email-mismatch marker server-side (fingerprint only — never the raw
     email or key), spends the dummy bcrypt verify for timing parity, then
     raises the generic 400 — or 429 once the hourly cap is exceeded.
+
+    That 429 is the second layer of the cap, not a duplicate of the front
+    gate: two concurrent requests can both pass a non-consuming peek with the
+    budget one short, and whichever ``hit`` comes back False here must still
+    answer 429 rather than fall through to the ordinary 400.
     """
     allowed = record_invalid_license_attempt(client_throttle_key(request))
     if outcome is LicenseOutcome.EMAIL_MISMATCH:
@@ -538,12 +582,20 @@ async def _reject_invalid_license(
 async def _verify_signup_license(request: Request, payload: SignupRequest) -> GumroadPurchase:
     """Run the verify-then-create license gate; return the matched purchase.
 
+    The hourly invalid-license cap is consulted first, so a client that has
+    spent its budget is refused before Gumroad is contacted at all; the
+    consuming charge and its backstop 429 come later, once a verify has
+    actually failed. Refusing up front means a capped client holding a
+    genuine key waits out the hour too, which is unavoidable: whether the key
+    is real is unknowable without the request the cap forbids.
+
     Every rejection path spends the same dummy bcrypt verify the success
     path spends on the real hash, so timing does not leak which check
     failed. A Gumroad outage fails closed with 503 before any row is
     written; ``from None`` severs the chain so the caught error's Request
     body (which carries the license key) is unreachable via ``__cause__``.
     """
+    await _reject_if_license_cap_exhausted(request, payload.license_key)
     try:
         check = await verify_aptitude_license(payload.email, payload.license_key)
     except GumroadUnavailableError:
@@ -1959,6 +2011,11 @@ async def _count_invalid_license_attempt(request: Request, license_key: str | No
     throttle ``/auth/signup`` enforces: an attacker could grind license keys
     here at the per-minute rate forever.  A blank key never reached Gumroad and
     is not a guess, so it is not counted.
+
+    This runs after the verify, so the 429 it raises is the concurrency
+    backstop behind ``_reject_if_license_cap_exhausted``, not a duplicate of
+    it: concurrent requests can both clear a non-consuming peek on the last
+    unit of budget, and whichever ``hit`` comes back False must still refuse.
     """
     if not (license_key or "").strip():
         return
@@ -1982,7 +2039,12 @@ async def _verify_oauth_license(
     on the wire.  A Gumroad outage fails closed with 503 before any row is
     written; ``from None`` severs the chain so the caught error's request body
     (which carries the license key) is unreachable via ``__cause__``.
+
+    The hourly cap is consulted before the verify, so a client that has spent
+    its budget here is refused with 429 without Gumroad being contacted; the
+    consuming charge and its backstop stay after the failed verify.
     """
+    await _reject_if_license_cap_exhausted(request, license_key)
     try:
         check = await verify_aptitude_license(email, license_key)
     except GumroadUnavailableError:

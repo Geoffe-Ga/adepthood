@@ -47,6 +47,21 @@ def record_invalid_license_attempt(throttle_key: str) -> bool:
     return _invalid_license_limiter.hit(_INVALID_LICENSE_ITEM, throttle_key)
 
 
+def invalid_license_cap_exhausted(throttle_key: str) -> bool:
+    """Report whether ``throttle_key`` has already spent its hourly budget.
+
+    A non-consuming peek at the moving window: it reads the counter without
+    acquiring an entry, so asking costs the client nothing. True means the
+    caller must refuse *before* making any outbound Gumroad call, which is the
+    whole point of the cap -- a throttle that only shapes the response still
+    lets a spent client drive one verify request per allowlisted product on
+    every guess. The consuming charge remains
+    ``record_invalid_license_attempt``, which the caller applies after a
+    verify actually fails.
+    """
+    return not _invalid_license_limiter.test(_INVALID_LICENSE_ITEM, throttle_key)
+
+
 def reset_invalid_license_attempts() -> None:
     """Clear every invalid-license counter (test isolation between cases)."""
     _invalid_license_storage.reset()
