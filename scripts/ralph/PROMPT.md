@@ -50,9 +50,12 @@ today — **never stall on graph absence.**
 **Step 0.6 — Record what the graph taught you.** When a graph query
 materially shaped (or misled) the tick, save the trace: `graphify save-result
 --question "…" --answer "…" --nodes <returned labels> --outcome
-useful|dead_end|corrected [--correction "…"] --memory-dir graph/memory/`, then
-regenerate `graph/reflections/LESSONS.md` via `graphify reflect --memory-dir
-graph/memory …` and commit both (small Markdown notes; repo Q&A only).
+useful|dead_end|corrected [--correction "…"] --memory-dir graph/memory/` and
+commit the new trace file (a small Markdown note; repo Q&A only). Do NOT run
+`graphify reflect` or touch `graph/reflections/LESSONS.md` in a worker: the
+weekly playbook workflow regenerates that digest itself from the committed
+traces, and per-tick regeneration of one shared file forces needless
+behind-main rebases across parallel lanes.
 
 1. **Read your assignment.** `gh issue view "$RALPH_ISSUE" --comments`.
 2. **Read the house rules** (re-read every iteration — ticks are stateless):
@@ -130,10 +133,22 @@ graph/memory …` and commit both (small Markdown notes; repo Q&A only).
 - Never write to `main` directly (except `scripts/ralph/state.json`, which the
   orchestrator handles).
 - Never force-push. Rewrite on a fresh branch if needed.
-- **`dependencies` issues:** the in-flight PR is Dependabot's own branch
-  (linked via `Closes`); push fixes **there**, not a fresh branch. A breaking
-  major is a normal Gate-1 TDD adaptation — never pin back, suppress, or weaken
-  a gate. The three SDK-tied pins are deferred to the Expo SDK 53 epic (#885).
+- **`dependencies` issues are ADOPTED, never built.** Your worktree is already
+  checked out on Dependabot's own branch and a PR against `main` already exists
+  (linked via `Closes`). **Never create a branch and never run `gh pr create`** —
+  a second PR is the failure mode this path exists to prevent; you push commits
+  to the branch you are on. Your **first** action is
+  `scripts/ralph/fleet.sh sync "$RALPH_ISSUE"`: a bot branch is usually many
+  commits behind `main`, and adapting against a stale base is wasted work. Then
+  adapt **forward**. A breaking major is a normal Gate-1 TDD adaptation — never
+  pin a dependency back, never drop a pin from a grouped bump to make the group
+  green (the group lands whole or not at all), never suppress, never weaken a
+  gate. SDK-tied exclusions are not your problem: `.github/dependabot.yml`
+  enforces them at source with `ignore:` version ranges (deferred to the Expo
+  SDK 53 epic #885), so such a PR never reaches you. Your push to the bot branch
+  is what makes the Claude review runnable on it — the review job skips only
+  while the PR is untouched by anyone but Dependabot — so an adapted bump goes
+  through Gate 4 normally.
 - Never disable a CI check or pre-commit hook, and never lower a quality
   threshold to pass. No `# noqa` / `# type: ignore` / `// @ts-ignore` /
   `// eslint-disable` / `@pytest.mark.skip` without an `Issue #N`

@@ -22,9 +22,16 @@ predict which files a change will touch before we make it. So the loop never
 - **Merge pessimistically, but never with a barrier.** Merges to `main` are
   **serialized** (one at a time — the single orchestrator session serializes them
   for free) and each merge is **always up-to-date**: a lane merges only when it is
-  `LGTM` + CI-green + up-to-date with `main` (`mergeStateStatus == CLEAN`). If a
-  sibling merged after this lane went green, the lane is `BEHIND`; it **syncs the
-  new `main` into its branch (by merge, not rebase — a plain push updates the PR
+  `LGTM` + CI-green + **proven** current with `main` — the compare API's
+  `behind_by == 0`, as `pr-ready.sh` measures it. `mergeStateStatus` is *not* a
+  freshness signal: GitHub computes `BEHIND` only when the base branch enforces
+  strict/up-to-date status checks, which this repo does not, so a branch many
+  commits behind `main` reports `CLEAN`. The `BEHIND` path below was designed but
+  had never once fired here, so lanes were routinely merging out of date on a
+  green that proved nothing about today's `main`. `CLEAN` is retained only as the
+  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`. If a sibling
+  merged after this lane went green, the lane is behind; it **syncs the new
+  `main` into its branch (by merge, not rebase — a plain push updates the PR
   and re-runs CI, never a force-push)** and merges on a later wake once green
   again. A lane that cannot cleanly sync **drops to Gate 1**. This sync is **lazy**
   — a lane only pays it when it is itself about to merge, not proactively every
@@ -40,8 +47,8 @@ the real, updated `main`), and it **never** stalls a ready lane behind a slow on
 ```
 pick optimistically ──▶ N lanes build in parallel (isolated worktrees)
         │
-   a lane goes LGTM+green ──▶ up-to-date (CLEAN)? ──▶ merge NOW, refill its slot
-        │                 ──▶ BEHIND? ── sync main in (lazy) ── re-green ── merge next wake
+   a lane goes LGTM+green ──▶ current (behind_by == 0)? ──▶ merge NOW, refill slot
+        │                 ──▶ behind? ── sync main in (lazy) ── re-green ── merge next wake
    sync conflict?         ──▶ that lane drops to Gate 1 (never a forced merge)
 ```
 
@@ -70,9 +77,11 @@ On each wake it:
 
 1. **Reconciles** — releases worktrees whose PR merged/closed (`fleet.sh
    reconcile`), freeing their slots.
-2. **Merges every ready lane** — any PR that is `LGTM` + green + up-to-date
-   (`mergeStateStatus == CLEAN`) merges *now*, serialized; a `BEHIND` lane lazily
-   syncs first and merges on a later wake. A ready lane never waits for a slow one.
+2. **Merges every ready lane** — any PR that `pr-ready.sh` calls `ready`
+   (`LGTM` + green + `CLEAN` + the compare API's `behind_by == 0`; `CLEAN` alone
+   is not freshness — see above) merges *now*, serialized; a lane that is behind
+   lazily syncs first and merges on a later wake. A ready lane never waits for a
+   slow one.
 3. **Advances failing lanes** — a `ralph-worker` is dispatched into the worktree
    of any PR that needs a fix (CI failure → `ci-debugging`; `CHANGES_REQUESTED` →
    `address-feedback`).
@@ -81,7 +90,7 @@ On each wake it:
 5. **Arms per-lane wakes** — background workers wake it on their own completion;
    each in-flight PR is `subscribe_pr_activity`-subscribed so its CI/verdict wakes
    it independently; a modest `ScheduleWakeup` backstops the CI-success /
-   `BEHIND→green` transitions the webhook doesn't deliver. Then it ends the turn.
+   behind→green transitions the webhook doesn't deliver. Then it ends the turn.
 
 **Workers are background tasks.** Each `ralph-worker` is launched with
 `run_in_background: true` and **never awaited** — launch, end the turn, and let its
@@ -110,7 +119,85 @@ filters and open-PR exclusion, it:
 
 These heuristics only reduce *sync churn*; they are **not** the correctness
 mechanism. Correctness is the serialized, always-up-to-date merge (lazy sync +
-re-green when `BEHIND`) described above.
+re-green when behind) described above.
+
+## Dependency lanes (Dependabot)
+
+`.github/workflows/dependabot-to-ralph-issue.yml` files one `dependencies` issue
+per bot PR and appends `Closes #<issue>` to that PR, so **the Dependabot PR is
+Ralph's in-flight PR**. The loop therefore **adopts** such a lane instead of
+building it: `fleet.sh adopt <issue> <PR>` puts the worktree on Dependabot's own
+head branch, so fixes push there and a second PR is never opened.
+
+**The picker needs no `RALPH_EXCLUDE_LABELS` override.** A bridged issue is
+already never picked: `pick-next.sh` scans open PR bodies for
+`(closes|fixes|resolves) #N`, and the bridge put `Closes #<issue>` there, so the
+issue already reads as in-flight. Setting the override is a hazard in its own
+right — it **replaces** the default exclusion list rather than adding to it, so
+it silently re-admits `epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the
+rest.
+
+### `pr-ready.sh` tokens
+
+One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
+`.claude/commands/ralph-tick.md` Step 1 must always agree.
+
+| Token | Means | Remedy |
+| --- | --- | --- |
+| `ready` | fresh `LGTM` + CI green + `CLEAN` + `behind_by == 0`. | Merge now. |
+| `ready-unreviewed` | CI green *with at least one non-review check actually `SUCCESS`* + `CLEAN` + `behind_by == 0`, but this PR has no review gate: Dependabot both authored it and pushed its HEAD commit, and every `claude-review` entry reported `SKIPPED`. | Merge — on a `dependencies` lane only. On any other lane the review workflow is misconfigured: stop and investigate. |
+| `behind` | `LGTM` + green but not current with `main`. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
+| `pending` | CI still running. | Wait for a later wake. |
+| `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
+| `awaiting-review` | no fresh `LGTM` — missing, stale, or non-LGTM. | Wait; `address-feedback` on `CHANGES_REQUESTED`. |
+| `optout` | `do-not-auto-merge` on the PR or on the issue it closes. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
+| *non-zero exit* | could not classify (API failure, expired token). | Leave the lane alone this wake; the next wake retries. |
+
+**Gate 4 on a bot PR.** `claude-code-review.yml` skips runs whose `github.actor`
+is Dependabot, because GitHub withholds Actions secrets from them. That skip was
+re-keyed from the PR's author to the actor, so once one of our commits lands on
+the bot branch — which every synced or adapted lane produces — the review runs
+and the bump clears Gate 4 normally. `ready-unreviewed` therefore covers only the
+residual case: a bump already current with `main` and already green, that nobody
+had to touch. The whole merge evidence there is green CI **verified against
+current `main`**, and `pr-ready.sh` pins each word of that:
+
+- **Green must mean CI ran.** `gh pr checks` exits 0 when every check merely
+  skipped, and each test workflow is `paths:`-filtered to its own sources — so a
+  `github-actions` ecosystem bump (only `.github/workflows/*.yml`) matches none
+  and lands **zero** checks. At least one non-review check must report `SUCCESS`,
+  or "green CI replaces the review" is a claim about nothing, on exactly the PRs
+  that rewire the workflows holding our secrets.
+- **Untouched must mean untouched.** The rollup is per-HEAD-commit, so a bot
+  force-push (`@dependabot recreate`, a group recomputation) after we adapted a
+  branch would hand back a fresh all-`SKIPPED` rollup with the author still
+  `app/dependabot`. The PR's author *and* its HEAD commit's author must both be
+  Dependabot.
+- **Never a human PR.** The author match is exact (`app/dependabot`), so no skip
+  condition landing on the review workflow can leak this token onto a human lane.
+
+**Consent.** The previous operating rule — a bot-PR merge needs the repo owner's
+explicit OK — is *replaced* by that evidence, not silently dropped. The per-PR
+human hold is the `do-not-auto-merge` label on the PR or on its bridge issue: its
+**absence** is what lets a lane merge, and its presence stops the loop dead
+(`optout`). An *undeterminable* hold (the label lookup failed) is a tooling error
+that stalls the lane, never a silent "no hold". The label must exist in the repo
+for a human to apply it — `scripts/setup-scan-labels.sh` creates it idempotently,
+run via `.github/workflows/labels-bootstrap.yml` (`workflow_dispatch`).
+
+**A grouped bump lands whole or not at all.** Never remove a pin from the group
+and never pin one back to make it green — adapt the code instead.
+
+**SDK exclusions live in `.github/dependabot.yml`**, as `ignore:` version ranges
+(`styleq >=0.2.0`, `expo-av >=16.0.0`, `expo-notifications >=0.30.0`, and ~20
+more, deferred to epic #885), so Dependabot never opens such a PR. The loop
+deliberately does **not** re-encode that list: a name-only blocklist would be
+both redundant and wrong — it would defer an allowed in-range patch such as
+`styleq 0.1.4`.
+
+**Orphan cleanup.** A bot PR closed *without* merging leaves its bridge issue
+orphaned — the `Closes` never fires, and the picker's in-flight scan sees only
+open PRs — so the bridge workflow's reconciler closes those.
 
 ## Configuration (`scripts/ralph/state.json`)
 
@@ -140,6 +227,7 @@ back to the one-issue-at-a-time loop with zero other changes.
 | `count` / `free` | Active count / remaining capacity (honors `parallel_enabled`). |
 | `path <N>` | Worktree path for issue N (exit 1 if none). |
 | `assign <N> <slug>` | Create/reuse a worktree off `origin/main`; prints its path; refuses when full. |
+| `adopt <N> <PR>` | Create/reuse a worktree for issue N on PR's **existing** head branch (a bot PR's), so fixes push there instead of opening a second PR; prints its path; refuses a fork PR, a full fleet, and reuse of an existing worktree that sits on a different branch (an `assign`ed lane would push to `issue/<N>-<slug>` and open that second PR). |
 | `sync <N>` | Merge latest `origin/main` into issue N's branch (no force-push); exit 3 on conflict (aborted, left clean). |
 | `release <N>` | Remove issue N's worktree + delete its branch. |
 | `reconcile` | Release worktrees whose PR merged/closed or whose issue is closed; prune. |
@@ -149,27 +237,43 @@ GitHub**, never from stored bookkeeping, so the loop stays re-entrant.
 
 ## Tests
 
-Two offline suites cover the fleet, both run in CI by
+Five offline suites cover the fleet — four shell, one Python — all run in CI by
 `.github/workflows/ralph-recap-tests.yml` on any `scripts/ralph/**` change:
 
 - `scripts/ralph/test_fleet.sh` builds a throwaway repo (with an `origin` remote
-  and a fake `gh`) and exercises assign / list / count / free / path / sync
-  (clean **and** conflicting) / release / reconcile.
+  and a fake `gh`) and exercises assign / adopt / list / count / free / path /
+  sync (clean **and** conflicting) / release / reconcile.
 - `scripts/ralph/test_pick_next.sh` stubs `gh` and exercises the picker's
   parallel-awareness: first-worker-lowest, worktree exclusion, in-flight-PR
   exclusion, the `solo` guard (candidate and active), the same-epic guard, the
   `parallelizable` override, and `RALPH_RESPECT_EPICS=0`.
+- `scripts/ralph/test_pr_ready.sh` stubs `gh` and pins every status token: CI
+  classification from the **exit code** (8 ⇒ `pending`, never `ready`), the
+  stale-verdict guard, the `do-not-auto-merge` hold — including that it resolves
+  the *last* issue link in the body and that an unreadable label answer fails
+  closed (exit 2, not "no hold") — the freshness guard (`CLEAN` is not proof of
+  being current) and its laziness (only a would-be-`ready` lane pays for the
+  compare probe), and the `ready-unreviewed` path.
+- `scripts/ralph/test_ensure_issue_label.sh` covers `ensure-issue-label.sh`, the
+  prove-it-stuck labeller the Dependabot bridge files its issues with.
+- `pytest scripts/ralph` (`test_recap_stats.py`) covers the recap's pure stats
+  math and its backlog filter.
 
 ```bash
 bash scripts/ralph/test_fleet.sh
 bash scripts/ralph/test_pick_next.sh
+bash scripts/ralph/test_pr_ready.sh
+bash scripts/ralph/test_ensure_issue_label.sh
+python -m pytest scripts/ralph -q
 ```
 
 ## Failure modes and how they're handled
 
 | Scenario | Handling |
 | --- | --- |
-| Two "independent" issues touch the same file | Whichever merges first wins; the other goes `BEHIND`, lazily syncs main in, re-greens, then merges. A sync conflict ⇒ drops to Gate 1. Never a broken merge. |
+| Two "independent" issues touch the same file | Whichever merges first wins; the other reads `behind`, lazily syncs main in, re-greens, then merges. A sync conflict ⇒ drops to Gate 1. Never a broken merge. |
+| A lane is green but out of date with `main` | Its own green proves nothing about today's `main`. `pr-ready.sh` derives freshness from the compare API (`behind_by`), not `mergeStateStatus`, so this reads `behind` even while GitHub says `CLEAN`; the lane syncs, re-greens, and merges on a later wake. |
+| A bot PR whose review job cannot run | Untouched Dependabot PRs trigger no `claude-review` (no secrets for bot-actor runs). Any commit of ours on that branch makes the job runnable, so a synced or adapted bump clears Gate 4 normally; an untouched, already-current, already-green bump merges as `ready-unreviewed` on freshness-verified CI that demonstrably ran, with no `do-not-auto-merge` hold set. |
 | A slow lane would stall a fast one | It can't — lanes are independent; a ready lane merges immediately and its slot refills without waiting on any sibling. |
 | A worker crashes / abandons an issue | `reconcile` releases it once its PR closes; an un-PR'd stale worktree is re-detected and either resumed or released on the next wake. |
 | Fleet silts up with merged work | `reconcile` at the top of every wake GCs merged/closed worktrees. |

@@ -95,8 +95,29 @@ jobs:
           TOTAL=$(jq '[.check_runs[] | select(.conclusion != "skipped" and .conclusion != "neutral")] | length' runs.json)
           GREEN=$(jq '[.check_runs[] | select(.conclusion == "success")] | length'                             runs.json)
 
+          # Green + LGTM is not enough to clear a merge. The same two conditions
+          # scripts/ralph/pr-ready.sh enforces apply here, or this job would clear
+          # the very lanes that helper refuses: a branch behind its base (whose
+          # green proves nothing about today's main) and one a human put on hold.
+          # A missing PR object yields no labels, so both fail closed.
+          PR_JSON=$(gh api "repos/$REPO/pulls/$PR" 2>/dev/null || echo '{}')
+          BASE=$(jq -r '.base.ref // empty' <<<"$PR_JSON")
+          HELD=$(jq -r 'if .labels == null then "unknown"
+                        elif ([.labels[].name] | index("do-not-auto-merge")) then "yes"
+                        else "no" end' <<<"$PR_JSON")
+          # behind_by counts base commits the head lacks; anything but a literal
+          # 0 - including an empty answer from a failed or malformed compare - is
+          # "not current".
+          BEHIND=$(gh api "repos/$REPO/compare/$BASE...$SHA?per_page=1" --jq '.behind_by' 2>/dev/null || true)
+
           if [ "$GREEN" = "$TOTAL" ] && [ "$VERDICT" = "LGTM" ]; then
-            ACTION="You are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks. Please proceed."
+            if [ "$HELD" != "no" ]; then
+              ACTION="NOT cleared to merge: the do-not-auto-merge hold is set on this PR (or its labels could not be read). A human owns this one - leave it alone."
+            elif [ "$BEHIND" != "0" ]; then
+              ACTION="NOT cleared to merge: this head is not current with ${BASE:-its base} (behind_by='${BEHIND}'). Sync main in and let CI re-run first."
+            else
+              ACTION="You are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks. Please proceed."
+            fi
           else
             ACTION="pull comment ${ID} to see in-depth feedback and continue iterating"
           fi

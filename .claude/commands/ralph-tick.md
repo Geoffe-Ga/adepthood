@@ -89,11 +89,19 @@ scripts/ralph/fleet.sh free                  # open slots right now
 ```
 If `scripts/ralph/.paused` exists: `ScheduleWakeup` (~1800s, reason "ralph paused") and end the turn. Do not pick or work.
 
-Snapshot **every in-flight Ralph PR** with its mergeability, CI, and verdict:
+Snapshot **every in-flight Ralph PR** with its mergeability, CI, and verdict.
+The pool is the union of **two trusted authors** — `@me` and `app/dependabot`.
+Dependabot's PRs are authored by the bot, so an `--author "@me"` query never
+matches them and bridged `dependencies` lanes rot outside the loop; dropping
+`--author` entirely is not the fix, because that would sweep an outside
+contributor's WIP PR into the merge pool. The `Closes|Fixes|Resolves` body
+filter stays on both:
 ```bash
-gh pr list --state open --author "@me" \
-  --json number,headRefName,body,mergeable,mergeStateStatus \
-  --jq '.[] | select(.body | test("(?i)(closes|fixes|resolves)\\s+#[0-9]+"))'
+for RALPH_AUTHOR in "@me" "app/dependabot"; do
+  gh pr list --state open --author "$RALPH_AUTHOR" \
+    --json number,headRefName,body,mergeable,mergeStateStatus \
+    --jq '.[] | select(.body | test("(?i)(closes|fixes|resolves)\\s+#[0-9]+"))'
+done
 ```
 Each in-flight PR is a lane in Gate 3/4; each occupied worktree without a PR yet
 is a lane still building (its worker is running in the background). Together they
@@ -110,9 +118,13 @@ eyeball the CI rollup or grep `gh pr checks` (its output is TAB-delimited, so a
 `': pending'` grep silently misses a still-running check and a false READY can
 merge a pending/failing PR). The helper keys CI off the `gh pr checks` **exit
 code** (`0`=green, `8`=pending, else=failed) and only honours an LGTM verdict
-posted **after** the PR's HEAD commit (stale-verdict guard):
+posted **after** the PR's HEAD commit (stale-verdict guard). It also proves
+freshness against `main` with the compare API rather than trusting
+`mergeStateStatus`, and honours the `do-not-auto-merge` human hold. Capture the
+exit code alongside the token — the helper exits non-zero when it cannot classify
+a lane, and an unchecked `$STATUS` would just come back empty:
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM")   # ready | behind | pending | ci-failed | awaiting-review
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | pending | ci-failed | awaiting-review | optout
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -120,9 +132,9 @@ gh pr view "$PR_NUM" --comments --json state,mergeable,mergeStateStatus,statusCh
 ```
 Then act on `$STATUS`:
 
-- **`ready`** (`Verdict: LGTM` fresh + CI green + `mergeStateStatus` `CLEAN`,
-  i.e. up-to-date with `main`). **Merge it now** — do not wait for any other
-  lane:
+- **`ready`** (`Verdict: LGTM` fresh + CI green + `mergeStateStatus` `CLEAN` +
+  the compare API reporting `behind_by == 0`). **Merge it now** — do not wait for
+  any other lane:
   ```bash
   gh pr merge "$PR_NUM" --squash --delete-branch
   ISSUE_N=<issue this PR closed>
@@ -133,9 +145,39 @@ Then act on `$STATUS`:
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
-- **`behind`** (`LGTM` + green but `mergeStateStatus` is `BEHIND` — a sibling
-  merged after this lane went green). **Do not merge stale.** Sync it and let CI
-  re-run:
+- **`ready-unreviewed`** (green + `CLEAN` + `behind_by == 0`, but the review gate
+  does not exist for this PR: `claude-review` reported `SKIPPED`, Dependabot
+  authored it **and** pushed its HEAD commit, and at least one non-review check
+  actually passed). **Merge it only for a `dependencies` lane** — the merge steps
+  are otherwise identical to `ready`. That is the only PR class where the review
+  gate provably cannot exist: `claude-code-review.yml` skips runs Dependabot itself
+  triggers because GitHub withholds the OAuth secret from them. The helper already
+  enforces the Dependabot conditions, so this token on any other lane means
+  the review workflow is **misconfigured** — leave that lane alone and investigate
+  before merging anything.
+  What replaces Gate 4 here is green CI **verified against current `main`**
+  (`behind_by == 0`, so the green is today's `main`, not a stale base) plus the
+  `do-not-auto-merge` hold, which is checked first and would have printed
+  `optout`. That substitution is only honest when CI actually ran, so the helper
+  also requires a real non-review check to have SUCCEEDED: every test workflow is
+  `paths:`-filtered to its own sources, so a `github-actions` ecosystem bump
+  touches only `.github/workflows/*.yml`, matches none of them, and would
+  otherwise read as "green" with zero checks — on precisely the PRs that rewire
+  the workflows holding our secrets. And because the rollup is per-HEAD-commit, it
+  requires Dependabot to have pushed that commit too: a bot force-push (a
+  `@dependabot recreate`, a group recomputation) after we adapted a branch would
+  otherwise re-clear our hand-written code as never-touched.
+  Note the narrow scope: a bump that needed a sync or a forward
+  adaptation gets a **real** Claude review, because our push makes the review job
+  runnable on the bot's branch — so `ready-unreviewed` only ever applies to a bump
+  that was already current with `main` and already green, i.e. one nobody touched.
+- **`behind`** (`LGTM` + green but not current with `main` — a sibling merged
+  after this lane went green). This fires on `mergeStateStatus` `BEHIND` **and**
+  on the far more common case where GitHub says `CLEAN` yet the compare API
+  reports `behind_by > 0`: GitHub only computes `BEHIND` when the base branch
+  enforces strict status checks, which this repo does not. Same remedy either
+  way. **Do not merge stale** — a branch's own green CI says nothing about
+  today's `main`:
   ```bash
   scripts/ralph/fleet.sh sync "$ISSUE_N" || echo "SYNC-CONFLICT $ISSUE_N"
   ```
@@ -154,11 +196,28 @@ Then act on `$STATUS`:
   conflict (`fleet.sh sync` → conflict-fix worker → push); the post-resolution
   push triggers the PR's real CI + review.
 - **`ci-failed`** — a check failed. Advance it via Step 2 (`ci-debugging`).
+- **`optout`** — the PR, or the issue it closes, carries `do-not-auto-merge`.
+  **Leave it entirely alone**: do not merge it, do not sync it, do not dispatch a
+  `ci-debugging` or `address-feedback` worker at it. A human owns this PR. Do not
+  `assign`/`adopt` a worktree for it either, and skip it when refilling in Step 4.
+  A lane it already occupies **stays occupied**: `fleet.sh reconcile` releases only
+  on `MERGED`/`CLOSED`, and you are told above not to touch this lane, so a PR
+  labelled mid-flight holds its worktree until the human resolves it (or runs
+  `fleet.sh release <N>` to take the slot back). That is deliberate — releasing it
+  would discard the work a human paused, which is the opposite of a hold.
+  The label must **exist in the repo** before anyone can apply it:
+  `scripts/setup-scan-labels.sh` creates it idempotently, and
+  `.github/workflows/labels-bootstrap.yml` (`workflow_dispatch`) is how to run
+  that. A hold nobody can apply is not a control.
+- **`RC` non-zero** (`$STATUS` empty) — the helper hit a tooling error (API
+  failure, expired token), so this lane **could not be classified**. Leave it
+  exactly as it is this wake: do not merge, do not sync, do not dispatch a
+  worker. The next wake retries it.
 
-You may merge more than one lane in a wake, but **re-check `mergeStateStatus`
-before each merge** — merging one lane can push the others `BEHIND`. Serialized,
-always up-to-date: correctness holds; a ready lane is never held back by a slow
-sibling.
+You may merge more than one lane in a wake, but **re-run `pr-ready.sh` before
+each merge** — merging one lane pushes every other lane behind `main`, and only
+that helper's compare probe can see it. Serialized, always up-to-date:
+correctness holds; a ready lane is never held back by a slow sibling.
 
 If any merge happened, commit the `state.json` bump **once** — a single commit
 covering every merge this wake (state-only changes may go directly on `main`).
@@ -179,13 +238,28 @@ reuses the existing branch):
   re-clear Gate 2/2.5, push.
 - **In progress** (CI running, or verdict not yet posted): do nothing — this
   lane's PR subscription (Step 5) wakes you when it changes.
-- **`dependencies` PRs** (from `dependabot-to-ralph-issue.yml`): the in-flight PR
-  is **Dependabot's own branch** (linked via `Closes`). Push Gate-1/Gate-3 fixes
-  **to that branch**, never a fresh branch or second PR. A breaking major is a
-  normal Gate-1 TDD adaptation — never pin back, suppress, or weaken a gate.
-  Dependabot stops rebasing once the PR carries a non-Dependabot commit. The three
-  SDK-tied pins (styleq, expo-av, expo-notifications) are deferred to the Expo SDK
-  53 epic (#885).
+- **`dependencies` PRs** (from `dependabot-to-ralph-issue.yml`): these are
+  **adopted, never built**. The in-flight PR is already **Dependabot's own
+  branch** (linked via `Closes`), so attach the lane to that branch rather than
+  cutting a new one:
+  ```bash
+  WT=$(scripts/ralph/fleet.sh adopt "$ISSUE_N" "$PR_NUM")   # lane on the bot's head branch
+  ```
+  The worker's **first** action in an adopted lane is `scripts/ralph/fleet.sh
+  sync "$ISSUE_N"` — a bot branch is typically many commits behind `main`, and
+  debugging its CI against a stale base wastes the whole lane. Then fix forward
+  on that branch: push Gate-1/Gate-3 fixes **to it**, never a fresh branch and
+  never a second PR. A breaking major is a normal Gate-1 TDD adaptation —
+  **never pin a dependency back, never remove a pin from a grouped PR to make
+  the group green** (the group lands whole or not at all), never suppress, never
+  weaken a gate. Dependabot stops rebasing once the PR carries a non-Dependabot
+  commit. SDK-tied exclusions need no handling here: `.github/dependabot.yml`
+  enforces them at source with `ignore:` version ranges (`styleq >=0.2.0`,
+  `expo-av >=16.0.0`, `expo-notifications >=0.30.0`, and ~20 more, all deferred
+  to the Expo SDK 53 epic #885), so Dependabot never opens such a PR. The loop
+  deliberately does **not** re-encode that list: a name-only blocklist would be
+  both redundant and wrong — it would defer an allowed in-range patch such as
+  `styleq 0.1.4`.
 
 These fix-workers are background too — launch, don't await.
 
@@ -242,6 +316,15 @@ labelled, so `release` its worktree (`scripts/ralph/fleet.sh release "$N"`) so
 the slot refills on the next wake; a `pr_opened` worker leaves its worktree in
 Gate 3/4.
 
+**Do not set `RALPH_EXCLUDE_LABELS`** — in particular, do not add `dependencies`
+to it. A bridged `dependencies` issue is already never picked here: `pick-next.sh`
+scans open PR bodies for `(closes|fixes|resolves) #N`, and the bridge appends
+`Closes #<issue>` to the Dependabot PR, so the issue reads as in-flight and the
+picker skips it. Those issues are adopted in Step 2, not assigned in Step 4.
+The override is also a hazard in its own right: it **replaces** the default
+exclusion list rather than adding to it, so setting it silently re-admits
+`epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the rest.
+
 ### Step 5 — Arm per-lane wakes, then end the turn
 
 You want a wake the moment **any single lane** changes — not a barrier that waits
@@ -260,8 +343,10 @@ for all of them. Arrange, in this order of preference:
    does not stack subscriptions, so just (re)subscribe every open PR each wake.
    Unsubscribe a PR once it merges/closes.
 3. **`ScheduleWakeup` fallback** (~1200–1800s): webhooks do **not** deliver CI
-   *success*, `BEHIND→green` transitions, or merges, so keep one modest fallback
+   *success*, `behind`→green transitions, or merges, so keep one modest fallback
    armed to re-poll Step 0–4 for any lane that quietly went green or up-to-date.
+   A lane going stale is invisible to webhooks entirely — `main` moving emits no
+   event on the lane's PR — so this fallback is the only thing that notices it.
 
 Then **end the turn.** Do not run a Monitor that waits for all lanes to be
 terminal — that is the barrier this design removes. Each independent wake re-runs
@@ -273,12 +358,15 @@ Step 0 and merges/refills whatever is ready.
 
 Pool of 4: issues A, B, C, D building in parallel. B is a tiny fix, D is a large
 feature.
-1. B finishes Gate 2.5, opens its PR; CI + review pass → B is `LGTM`+green+`CLEAN`.
+1. B finishes Gate 2.5, opens its PR; CI + review pass and it is current with
+   `main`, so `pr-ready.sh` prints `ready`.
 2. A wake fires (B's verdict). Step 1 merges **B now** — A, C, D are untouched and
    still mid-gate. Step 4 sees a free slot and assigns **E**, launching its worker.
 3. D is still at Gate 1. It never blocked B, and B's merge didn't wait for D.
-4. C later goes `LGTM`+green but is now `BEHIND` (B and E landed). Step 1 syncs C;
-   CI re-runs; C merges on the next wake once green. D keeps going the whole time.
+4. C later goes `LGTM`+green, but B and E landed meanwhile, so it is two commits
+   behind `main`. GitHub still calls C `CLEAN` — only the compare probe sees it —
+   and `pr-ready.sh` prints `behind`. Step 1 syncs C; CI re-runs; C merges on the
+   next wake once green. D keeps going the whole time.
 
 Continuous throughput, four lanes always busy, merges strictly serialized and
 always up-to-date.
@@ -292,7 +380,21 @@ still worktree-isolated, same gates, same drop-backs.
 
 ## Hard rules (do not deviate)
 - **Merges to `main` are serialized and always up-to-date.** Merge a lane only
-  when `LGTM` + green + `mergeStateStatus == CLEAN`; a `BEHIND` lane syncs first.
+  when `pr-ready.sh` prints `ready` — or `ready-unreviewed` on a `dependencies`
+  lane, per the rule below. Every other token syncs, waits, or is fixed first, and
+  no other evidence merges a lane.
+- **"Up to date" means `behind_by == 0`, never `mergeStateStatus`.** `CLEAN` is
+  not a freshness signal in a repo without strict status checks.
+- **A Dependabot PR merges on exactly the same evidence as any other lane** —
+  freshness-verified green CI against current `main` plus a fresh `LGTM` verdict.
+  No extra human sign-off is required or waited for; `do-not-auto-merge` on the
+  PR (or its linked issue) is the per-PR human hold. **One exception, and only
+  one:** a bump nobody had to touch never gets a verdict at all (the review job
+  skips runs Dependabot triggers), so `pr-ready.sh` prints `ready-unreviewed` and
+  that lane merges on verified-current green CI alone — where "green" means the
+  helper also proved at least one real check passed, since a workflow-only bump
+  can match every `paths:` filter's complement and land zero checks. No other PR
+  class may ever merge without `LGTM`.
 - **Never make a fast lane wait on a slow one.** No per-tick barrier, no
   all-lanes Monitor. Act on whichever lane a wake is about; refill freed slots
   immediately.

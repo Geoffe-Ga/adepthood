@@ -11,7 +11,9 @@ name: Dependabot → Ralph Issue Bridge
 # Two triggers, one idempotent reconciler:
 #   - pull_request_target (dependabot-only): real-time, links a PR as it opens.
 #   - workflow_dispatch + schedule: backfill / safety net; clears the existing
-#     backlog and re-links any PR whose body Dependabot later overwrites.
+#     backlog, re-links any PR whose body Dependabot later overwrites, and closes
+#     bridge issues whose PR is gone (a superseded PR closes unmerged, so its
+#     `Closes` never fires and the issue would rot as a stale adoption ticket).
 #
 # SECURITY — pull_request_target runs with the base-repo token (it has
 # issues:write / pull-requests:write, which a dependabot-triggered
@@ -94,6 +96,15 @@ jobs:
           # comment in the issue body; the dedup check greps for it so re-runs
           # never double-file.
           marker_for() { printf '<!-- dependabot-pr:%s -->' "$1"; }
+
+          # The inverse of marker_for: recover the PR number from an issue body,
+          # empty when the body carries no marker. Builds its pattern FROM
+          # marker_for so the marker's shape stays defined in exactly one place.
+          pr_from_marker() {
+            local pattern
+            pattern="$(marker_for '\([0-9][0-9]*\)')"
+            printf '%s' "$1" | sed -n "s/.*$pattern.*/\1/p" | head -n 1
+          }
 
           # True if a PR body already links an issue via Closes/Fixes/Resolves.
           body_links_issue() {
@@ -253,12 +264,55 @@ jobs:
             bridge_pr "$num" "$ttl"
           done
 
-          # Surface every deferred label-verify failure at once and fail the
-          # run, so the batch completes but a permission gap or persistent API
-          # flake is never silently swallowed. Each issue is filed and its PR
-          # linked, so the only manual step is adding the missing label(s).
+          # Close orphaned bridge issues. A Dependabot PR that is superseded by a
+          # newer grouped PR closes WITHOUT merging, so its `Closes #N` never
+          # fires and the issue stays open forever — and pick-next.sh's in-flight
+          # scan only sees OPEN PRs, so the next Ralph tick would hand that issue
+          # to a worker who builds it on a brand-new branch and opens a second PR.
+          echo "Reconciler: closing bridge issues whose PR is closed or merged."
+          bridged="$(gh issue list --repo "$REPO" --label dependencies --state open \
+            --limit 200 --json number,body)"
+          bridged_count="$(printf '%s' "$bridged" | jq 'length')"
+          echo "Found $bridged_count open dependencies issue(s)."
+
+          for i in $(seq 0 $((bridged_count - 1))); do
+            inum="$(printf '%s' "$bridged" | jq -r ".[$i].number")"
+            ibody="$(printf '%s' "$bridged" | jq -r ".[$i].body")"
+            # No marker ⇒ not a bridge issue ⇒ none of this job's business.
+            linked_pr="$(pr_from_marker "$ibody")"
+            if [ -z "$linked_pr" ]; then
+              continue
+            fi
+            linked_state="$(gh pr view "$linked_pr" --repo "$REPO" \
+              --json state --jq .state 2>/dev/null || true)"
+            # An OPEN PR is the healthy in-flight case; an unreadable state (PR
+            # deleted, transient API error) is left alone rather than guessed at.
+            if [ "$linked_state" != "CLOSED" ] && [ "$linked_state" != "MERGED" ]; then
+              continue
+            fi
+            # A superseded PR was never planned to land; a merged one completed.
+            if [ "$linked_state" = "MERGED" ]; then
+              close_reason="completed"
+            else
+              close_reason="not planned"
+            fi
+            # Same convention as the label failures above: record and continue, so
+            # one un-closable issue never skips the rest of the batch.
+            if gh issue close "$inum" --repo "$REPO" --reason "$close_reason" \
+              --comment "Dependabot PR #$linked_pr is $linked_state, so this adoption ticket is obsolete. Closing it so it is not picked up as new work." >/dev/null; then
+              echo "Closed orphaned issue #$inum (PR #$linked_pr $linked_state)."
+            else
+              reconcile_failures+=("could not close orphaned issue #$inum whose PR #$linked_pr is $linked_state")
+              echo "Close failed for issue #$inum — recorded; continuing the batch." >&2
+            fi
+          done
+
+          # Surface every deferred failure at once and fail the run, so the batch
+          # completes but a permission gap or persistent API flake is never
+          # silently swallowed. Every issue is filed and its PR linked, so the
+          # manual steps are only the ones named below.
           if [ "${#reconcile_failures[@]}" -gt 0 ]; then
-            echo "::error::${#reconcile_failures[@]} bridged PR(s) could not have their 'dependencies' label verified; add the label(s) by hand (details below)." >&2
+            echo "::error::${#reconcile_failures[@]} reconciler step(s) need a manual fix — add the missing 'dependencies' label(s) or close the named issue(s) by hand (details below)." >&2
             for failure in "${reconcile_failures[@]}"; do
               echo "::error::$failure" >&2
             done
