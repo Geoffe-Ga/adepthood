@@ -18,7 +18,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from client_ip import TRUSTED_PROXIES_ENV_VAR
+from client_ip import (
+    DEFAULT_IPV6_THROTTLE_PREFIX_LEN,
+    IPV6_THROTTLE_PREFIX_ENV_VAR,
+    MAX_IPV6_THROTTLE_PREFIX_LEN,
+    MIN_IPV6_THROTTLE_PREFIX_LEN,
+    TRUSTED_PROXIES_ENV_VAR,
+    unusable_throttle_prefix_config,
+)
 from database import async_session_factory, get_session
 from errors import install_exception_handlers
 from middleware import (
@@ -315,6 +322,43 @@ def validate_trusted_proxy_config() -> None:
     )
 
 
+def validate_ipv6_throttle_prefix_config() -> None:
+    """Announce a throttle prefix length the runtime read and could not use.
+
+    The per-request path degrades to the default in silence, and it has to:
+    it runs on every IPv6 request, so a typo that logged there would arrive at
+    request rate.  Boot is the one place the finding can be stated once, which
+    makes this the only signal an operator who typed ``4 8`` for ``48`` will
+    ever get -- the app otherwise looks perfectly healthy while throttling on a
+    prefix nobody asked for.
+
+    Unlike ``validate_trusted_proxy_config`` this is not gated on ``ENV``.  That
+    check warns about an *unset* variable, which is the normal local state; this
+    one warns about a value that was typed wrong, and a value typed wrong in
+    staging is wrong there too -- staging, hand-tuned, is exactly where it gets
+    typed.  Never raises: a mistuned bucket is a degraded state, not a broken
+    one, and taking a deploy down over a fallback that already worked would be
+    a worse outage than the typo.
+    """
+    raw = unusable_throttle_prefix_config()
+    if raw is None:
+        return
+    logger.warning(
+        "ipv6_throttle_prefix_unusable: %s is set to %r, which is not an "
+        "integer in [%d, %d], so the configured value is ignored and IPv6 "
+        "throttle keys group on the default /%d prefix instead of the one you "
+        "asked for. The value is a prefix length in bits, so a smaller number "
+        "covers a larger delegation and %d restores exact per-address keying "
+        "-- backend/.env.example documents the format",
+        IPV6_THROTTLE_PREFIX_ENV_VAR,
+        raw,
+        MIN_IPV6_THROTTLE_PREFIX_LEN,
+        MAX_IPV6_THROTTLE_PREFIX_LEN,
+        DEFAULT_IPV6_THROTTLE_PREFIX_LEN,
+        MAX_IPV6_THROTTLE_PREFIX_LEN,
+    )
+
+
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
@@ -461,6 +505,10 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # client behind the ingress shares one throttle bucket and one audit IP --
     # a state only this warning makes visible.
     validate_trusted_proxy_config()
+
+    # A prefix length that is not a prefix length is discarded silently on every
+    # request, so boot is the only place a typo in it can be said out loud.
+    validate_ipv6_throttle_prefix_config()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.
