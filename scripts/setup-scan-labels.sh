@@ -30,6 +30,9 @@ label "P3" "0E8A16" "Hygiene: dead code, types, docs, TODOs"
 echo "Consumption gate…"
 label "agent-ready" "1D76DB" "Fully specified; Ralph may pick up"
 
+echo "Human-hold label (honoured by pick-next.sh and pr-ready.sh)…"
+label "do-not-auto-merge" "5319E7" "Human hold: Ralph will not adopt, fix, or merge this PR/issue"
+
 echo "Scan provenance labels…"
 for scan in deps security bugs dead-code complexity coverage perf todo \
             types mutation docs a11y; do
