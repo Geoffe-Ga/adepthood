@@ -6,8 +6,9 @@ everything else) without creating User or Entitlement rows or leaking that
 an account exists; the verifier is consulted only for products on the
 GUMROAD_APTITUDE_PRODUCT_IDS allowlist and stops on the first success; a
 Gumroad outage fails closed with 503; more than ten invalid-license attempts
-per client per hour are throttled with 429; every failure path still spends
-a dummy bcrypt verify for timing parity.
+per client per hour are throttled with 429 and cost Gumroad nothing, because
+the cap is consulted before any outbound verify; every failure path still
+spends a dummy bcrypt verify for timing parity.
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ REJECT_DUPLICATE_SEAM = "routers.auth._reject_duplicate_signup_email"
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
 ALLOWLIST = f"{ALLOWED_PRODUCT_ALPHA},{ALLOWED_PRODUCT_BETA}"
+# One outbound verify per allowlisted product is spent on every unmatched key.
+ALLOWLIST_PRODUCT_COUNT = len(ALLOWLIST.split(","))
 UNLISTED_PRODUCT = "prod_unlisted"
 SIGNUP_EMAIL = "seeker@example.com"
 MIXED_CASE_LICENSE_EMAIL = "Seeker@Example.COM"
@@ -52,6 +55,9 @@ COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 JWT_SEGMENT_COUNT = 3
 INVALID_LICENSE_ATTEMPT_CAP = 10
+INVALID_ATTEMPT_EMAIL_PREFIX = "attempt-"
+FINAL_ATTEMPT_EMAIL = "attempt-final@example.com"
+BLANK_LICENSE_KEY = ""
 TRUSTED_PROXY_CIDRS_ENV = "TRUSTED_PROXY_CIDRS"
 # Documentation-range prefix (RFC 5737) for the spoofed forwarded addresses.
 SPOOFED_IP_PREFIX = "203.0.113."
@@ -567,6 +573,22 @@ async def test_signup_with_unset_api_token_fails_closed_with_503(
     assert await _count_entitlements(db_session) == 0
 
 
+async def _exhaust_invalid_license_cap(async_client: AsyncClient) -> None:
+    """Spend the client's whole hourly budget on rejected invalid-license signups.
+
+    Each attempt uses a distinct email so nothing is refused as a duplicate:
+    every one of them has to land on the invalid-license path and charge the
+    cap. Requires an already-patched verifier that matches no product.
+    """
+    for attempt in range(INVALID_LICENSE_ATTEMPT_CAP):
+        response = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com"),
+        )
+        assert response.status_code == HTTPStatus.BAD_REQUEST
+        assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
 async def test_eleventh_invalid_license_attempt_is_throttled(
@@ -577,21 +599,108 @@ async def test_eleventh_invalid_license_attempt_is_throttled(
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
 
-    for attempt in range(INVALID_LICENSE_ATTEMPT_CAP):
-        response = await async_client.post(
-            SIGNUP_PATH,
-            json=_signup_payload(email=f"attempt-{attempt}@example.com"),
-        )
-        assert response.status_code == HTTPStatus.BAD_REQUEST
-        assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+    await _exhaust_invalid_license_cap(async_client)
 
     throttled = await async_client.post(
         SIGNUP_PATH,
-        json=_signup_payload(email="attempt-final@example.com"),
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL),
     )
 
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_capped_client_causes_no_outbound_gumroad_call(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client whose hourly budget is spent drives zero further Gumroad calls.
+
+    The cap exists to stop a client grinding license keys through Gumroad, so
+    it has to be consulted before the per-product verify loop runs. Once the
+    budget is gone the refusal must cost Gumroad nothing: no allowlisted
+    product is queried, so the recorded call list cannot grow.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+
+    await _exhaust_invalid_license_cap(async_client)
+    calls_while_uncapped = len(calls)
+    assert calls_while_uncapped == INVALID_LICENSE_ATTEMPT_CAP * ALLOWLIST_PRODUCT_COUNT
+
+    throttled = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    assert len(calls) == calls_while_uncapped
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_capped_client_with_valid_license_is_refused_without_gumroad_call(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capped client is refused even holding a key that would have verified.
+
+    This is the deliberate cost of refusing before the call: whether the key
+    is genuine is unknowable without the very Gumroad request the cap forbids,
+    so the throttle wins and the legitimate buyer waits out the hour. The
+    refusal is the same 429, no outbound call is made, and no account or
+    entitlement is created off an unverified key.
+    """
+    failing_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, failing_calls))
+    await _exhaust_invalid_license_cap(async_client)
+
+    granting_calls: list[tuple[str, str]] = []
+    granting_results = {ALLOWED_PRODUCT_ALPHA: _license_result()}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(granting_results, granting_calls))
+
+    throttled = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    assert granting_calls == []
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_capped_client_with_blank_license_key_still_gets_license_required(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank key answers license_required even from a capped client, never 429.
+
+    A blank key short-circuits inside the license gate before any Gumroad
+    request, so it is not a guess and there is no egress for the cap to
+    protect. Refusing it with the throttle instead would both mislabel a
+    malformed request and let an attacker learn where the cap stands.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+    await _exhaust_invalid_license_cap(async_client)
+    calls_while_uncapped = len(calls)
+
+    response = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL, license_key=BLANK_LICENSE_KEY),
+    )
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json()["detail"] == DETAIL_LICENSE_REQUIRED
+    assert len(calls) == calls_while_uncapped
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
 
 
 def _spoofed_forwarded_ip(attempt: int) -> str:
@@ -680,3 +789,35 @@ async def test_invalid_license_path_consumes_a_dummy_bcrypt_verify(
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert response.json()["detail"] == DETAIL_INVALID_LICENSE
     assert password_verify_spy.await_count + reset_token_spy.await_count >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_throttled_license_path_consumes_a_dummy_bcrypt_verify(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The over-cap 429 spends the same dummy bcrypt every other rejection spends.
+
+    Refusing before the outbound call makes the throttled path cheaper than the
+    uncapped one, so the CPU cost has to stay: without it the 429 would answer
+    measurably faster and hand an attacker a timing oracle for the cap state.
+    The spy stands in for the real hash, so it is installed before the budget
+    is spent and its count is compared across the final request only.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+    password_verify_spy = AsyncMock(return_value=None)
+    monkeypatch.setattr("routers.auth._consume_dummy_password_verify", password_verify_spy)
+
+    await _exhaust_invalid_license_cap(async_client)
+    awaits_while_uncapped = password_verify_spy.await_count
+
+    throttled = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    assert password_verify_spy.await_count == awaits_while_uncapped + 1
