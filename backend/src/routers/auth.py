@@ -522,9 +522,10 @@ async def _reject_if_license_cap_exhausted(request: Request, license_key: str | 
     protect -- it passes through to the ordinary ``license_required`` refusal,
     the same exemption ``_count_invalid_license_attempt`` makes.
 
-    The refusal is byte-identical to the in-band 429: same status, same
-    detail, same throttle key, and the same dummy bcrypt so the CPU cost
-    matches every other rejection. Wall-clock parity with the pre-gate 429 is
+    The refusal answers exactly as the in-band 429 does -- same status, same
+    detail, charged against the same throttle key -- and spends the dummy
+    bcrypt that the signup path's own 429 spends, which the OAuth in-band 429
+    skips. Wall-clock parity with the pre-gate 429 is
     deliberately not claimed -- refusing before the Gumroad round trip is
     necessarily faster than refusing after one, and the 429 status already
     discloses the throttled state outright, so there is nothing left for the

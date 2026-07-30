@@ -28,6 +28,7 @@ from sqlmodel import select
 from integrations.gumroad import GumroadUnavailableError
 from models.entitlement import Entitlement
 from models.user import User
+from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
 pytestmark = pytest.mark.real_license_gate
@@ -39,6 +40,7 @@ WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
 GUMROAD_CREDENTIAL_ENV_VARS = (API_TOKEN_ENV, WEBHOOK_SECRET_ENV)
 VERIFY_SEAM = "domain.entitlements.verify_license"
 REJECT_DUPLICATE_SEAM = "routers.auth._reject_duplicate_signup_email"
+CAP_PEEK_SEAM = "routers.auth.invalid_license_cap_exhausted"
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
 ALLOWLIST = f"{ALLOWED_PRODUCT_ALPHA},{ALLOWED_PRODUCT_BETA}"
@@ -54,10 +56,10 @@ SALE_ID = "S-900"
 COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 JWT_SEGMENT_COUNT = 3
-INVALID_LICENSE_ATTEMPT_CAP = 10
 INVALID_ATTEMPT_EMAIL_PREFIX = "attempt-"
 FINAL_ATTEMPT_EMAIL = "attempt-final@example.com"
 BLANK_LICENSE_KEY = ""
+WHITESPACE_LICENSE_KEY = "   "
 TRUSTED_PROXY_CIDRS_ENV = "TRUSTED_PROXY_CIDRS"
 # Documentation-range prefix (RFC 5737) for the spoofed forwarded addresses.
 SPOOFED_IP_PREFIX = "203.0.113."
@@ -580,7 +582,7 @@ async def _exhaust_invalid_license_cap(async_client: AsyncClient) -> None:
     every one of them has to land on the invalid-license path and charge the
     cap. Requires an already-patched verifier that matches no product.
     """
-    for attempt in range(INVALID_LICENSE_ATTEMPT_CAP):
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
         response = await async_client.post(
             SIGNUP_PATH,
             json=_signup_payload(email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com"),
@@ -628,7 +630,7 @@ async def test_capped_client_causes_no_outbound_gumroad_call(
 
     await _exhaust_invalid_license_cap(async_client)
     calls_while_uncapped = len(calls)
-    assert calls_while_uncapped == INVALID_LICENSE_ATTEMPT_CAP * ALLOWLIST_PRODUCT_COUNT
+    assert calls_while_uncapped == INVALID_LICENSE_MAX_PER_HOUR * ALLOWLIST_PRODUCT_COUNT
 
     throttled = await async_client.post(
         SIGNUP_PATH,
@@ -638,6 +640,48 @@ async def test_capped_client_causes_no_outbound_gumroad_call(
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
     assert len(calls) == calls_while_uncapped
+
+
+def _peek_reports_budget_remaining(_key: str) -> bool:
+    """Stand in for the non-consuming peek answering that budget is left."""
+    return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_racing_past_the_peek_is_still_refused_by_the_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consuming charge answers 429 on its own once the peek has been cleared.
+
+    The front gate only peeks, so it cannot serialise anything: with the
+    budget one unit short, two concurrent requests can both read "not
+    exhausted" and both walk on to the verify. Whichever of them then loses
+    the consuming charge has to answer 429 rather than fall through to the
+    ordinary invalid_license, or the cap leaks one extra refusal shape per
+    race. A sequential test cannot produce that interleaving, so the peek is
+    replaced with one that reports budget remaining while the charge stays
+    real -- exactly the state the losing racer observes.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+    await _exhaust_invalid_license_cap(async_client)
+    calls_while_uncapped = len(calls)
+
+    monkeypatch.setattr(CAP_PEEK_SEAM, _peek_reports_budget_remaining)
+    throttled = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    # The verify loop ran, so the refusal came from the charge, not the peek.
+    assert len(calls) == calls_while_uncapped + ALLOWLIST_PRODUCT_COUNT
+    assert await _count_users(db_session) == 0
+    assert await _count_entitlements(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -674,10 +718,16 @@ async def test_capped_client_with_valid_license_is_refused_without_gumroad_call(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+@pytest.mark.parametrize(
+    "blank_license_key",
+    [BLANK_LICENSE_KEY, WHITESPACE_LICENSE_KEY],
+    ids=["empty", "whitespace-only"],
+)
 async def test_capped_client_with_blank_license_key_still_gets_license_required(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    blank_license_key: str,
 ) -> None:
     """A blank key answers license_required even from a capped client, never 429.
 
@@ -685,6 +735,10 @@ async def test_capped_client_with_blank_license_key_still_gets_license_required(
     request, so it is not a guess and there is no egress for the cap to
     protect. Refusing it with the throttle instead would both mislabel a
     malformed request and let an attacker learn where the cap stands.
+
+    A whitespace-only key is blank by the same measure the gate uses, so it
+    is pinned alongside the empty one: dropping the strip would turn it into
+    a throttled guess that also spends outbound Gumroad calls.
     """
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
@@ -693,7 +747,7 @@ async def test_capped_client_with_blank_license_key_still_gets_license_required(
 
     response = await async_client.post(
         SIGNUP_PATH,
-        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL, license_key=BLANK_LICENSE_KEY),
+        json=_signup_payload(email=FINAL_ATTEMPT_EMAIL, license_key=blank_license_key),
     )
 
     assert response.status_code == HTTPStatus.BAD_REQUEST
@@ -723,7 +777,7 @@ async def test_rotating_x_forwarded_for_cannot_reset_the_invalid_license_cap(
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
 
-    for attempt in range(INVALID_LICENSE_ATTEMPT_CAP):
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
         response = await async_client.post(
             SIGNUP_PATH,
             json=_signup_payload(email=f"spoofed-{attempt}@example.com"),
@@ -735,7 +789,7 @@ async def test_rotating_x_forwarded_for_cannot_reset_the_invalid_license_cap(
     throttled = await async_client.post(
         SIGNUP_PATH,
         json=_signup_payload(email="spoofed-final@example.com"),
-        headers={"X-Forwarded-For": _spoofed_forwarded_ip(INVALID_LICENSE_ATTEMPT_CAP)},
+        headers={"X-Forwarded-For": _spoofed_forwarded_ip(INVALID_LICENSE_MAX_PER_HOUR)},
     )
 
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS

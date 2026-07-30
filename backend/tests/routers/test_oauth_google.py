@@ -62,6 +62,7 @@ LOGIN_PATH = "/auth/login"
 # a live network fetch of Google's signing keys, so every test replaces it.
 JWKS_SEAM = "services.oauth_google._get_jwk_client"
 VERIFY_SEAM = "domain.entitlements.verify_license"
+CAP_PEEK_SEAM = "routers.auth.invalid_license_cap_exhausted"
 
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
@@ -1116,6 +1117,48 @@ async def test_capped_client_causes_no_outbound_gumroad_call_via_oauth(
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
     assert len(license_verifier.calls) == calls_while_uncapped
+
+
+def _peek_reports_budget_remaining(_key: str) -> bool:
+    """Stand in for the non-consuming peek answering that budget is left."""
+    return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_racing_past_the_peek_is_still_refused_by_the_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consuming charge answers 429 on its own once the peek has been cleared.
+
+    The front gate only peeks, so it cannot serialise anything: with the
+    budget one unit short, two concurrent OAuth attempts can both read "not
+    exhausted" and both walk on to the verify. Whichever of them then loses
+    the consuming charge has to answer 429 rather than fall through to the
+    ordinary needs_license 409, or a race hands back the wrong refusal. A
+    sequential test cannot produce that interleaving, so the peek is replaced
+    with one that reports budget remaining while the charge stays real --
+    exactly the state the losing racer observes.
+    """
+    await _exhaust_invalid_license_cap(async_client)
+    calls_while_uncapped = len(license_verifier.calls)
+
+    monkeypatch.setattr(CAP_PEEK_SEAM, _peek_reports_budget_remaining)
+    final_token = _mint_token(sub=THROTTLE_SUBJECT_FINAL, email=UNCLAIMED_EMAIL)
+    throttled = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(final_token, license_key=INVALID_LICENSE_KEY),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    # The verify loop ran, so the refusal came from the charge, not the peek.
+    assert len(license_verifier.calls) == calls_while_uncapped + ALLOWLIST_PRODUCT_COUNT
+    assert await _count_rows(db_session, User) == 0
+    assert await _count_rows(db_session, AuthIdentity) == 0
 
 
 # ---------------------------------------------------------------------------
