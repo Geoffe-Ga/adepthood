@@ -52,6 +52,9 @@ COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 JWT_SEGMENT_COUNT = 3
 INVALID_LICENSE_ATTEMPT_CAP = 10
+TRUSTED_PROXY_CIDRS_ENV = "TRUSTED_PROXY_CIDRS"
+# Documentation-range prefix (RFC 5737) for the spoofed forwarded addresses.
+SPOOFED_IP_PREFIX = "203.0.113."
 # One character past the schema's license_key ceiling; must be rejected by
 # Pydantic before any outbound Gumroad verify runs.
 OVER_LENGTH_LICENSE_KEY = "A" * 129
@@ -585,6 +588,45 @@ async def test_eleventh_invalid_license_attempt_is_throttled(
     throttled = await async_client.post(
         SIGNUP_PATH,
         json=_signup_payload(email="attempt-final@example.com"),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+
+
+def _spoofed_forwarded_ip(attempt: int) -> str:
+    """Build a distinct forged X-Forwarded-For value for ``attempt``."""
+    return f"{SPOOFED_IP_PREFIX}{attempt + 1}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_rotating_x_forwarded_for_cannot_reset_the_invalid_license_cap(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh forged X-Forwarded-For per attempt does not mint a fresh hourly bucket.
+
+    With no trusted proxy configured the header carries no authority, so every
+    attempt keys on the socket peer and the cap still trips on the next one.
+    """
+    monkeypatch.delenv(TRUSTED_PROXY_CIDRS_ENV, raising=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub({}, calls))
+
+    for attempt in range(INVALID_LICENSE_ATTEMPT_CAP):
+        response = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(email=f"spoofed-{attempt}@example.com"),
+            headers={"X-Forwarded-For": _spoofed_forwarded_ip(attempt)},
+        )
+        assert response.status_code == HTTPStatus.BAD_REQUEST
+        assert response.json()["detail"] == DETAIL_INVALID_LICENSE
+
+    throttled = await async_client.post(
+        SIGNUP_PATH,
+        json=_signup_payload(email="spoofed-final@example.com"),
+        headers={"X-Forwarded-For": _spoofed_forwarded_ip(INVALID_LICENSE_ATTEMPT_CAP)},
     )
 
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS

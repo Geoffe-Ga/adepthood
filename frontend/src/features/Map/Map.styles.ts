@@ -67,6 +67,39 @@ const styles = StyleSheet.create({
     textAlign: CENTER,
     paddingHorizontal: spacing(2),
   },
+  // A load that returned nothing is not a failure, so the headline reads in
+  // plain ink rather than the alarm colour; the hint/retry are shared.
+  emptyText: {
+    color: ink.primary,
+    fontSize: 14,
+    textAlign: CENTER,
+    paddingHorizontal: spacing(2),
+  },
+  // The human "what to do next" line under the verbatim server message.
+  errorHint: {
+    color: ink.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: CENTER,
+    marginTop: spacing(1),
+    paddingHorizontal: spacing(2),
+  },
+  // Stacked under the message in the centered layout rather than sitting inline
+  // like the refresh banner's retry, so it needs its own top margin.
+  errorRetry: {
+    marginTop: spacing(2),
+    minHeight: touchTarget.minimum,
+    justifyContent: CENTER,
+    paddingVertical: spacing(1),
+    paddingHorizontal: spacing(2),
+    borderRadius: radius.sm,
+    backgroundColor: accent.primary,
+  },
+  errorRetryText: {
+    ...editorialType.action,
+    color: accent.onPrimary,
+    textAlign: CENTER,
+  },
 
   // --- The single responsive row grid --------------------------------------
   grid: {

@@ -64,6 +64,33 @@ export type AuthStatus = 'loading' | 'authenticated' | 'reauth-required' | 'anon
 
 type ConfirmReset = (_token: string, _newPassword: string) => Promise<void>;
 
+/**
+ * Outcome of a social ID-token exchange, returned as a value rather than
+ * signalled by a throw: ``needs_license`` is a normal branch of the flow (it
+ * opens the inline license step), and a caller's ``catch`` would flatten it
+ * into the generic error path and lose that step.
+ */
+export type SocialSignInResult =
+  { kind: 'success' } | { kind: 'needs_license' } | { kind: 'error'; error: unknown };
+
+/**
+ * Exchange a Google ID token — plus, on the retry leg, the buyer's license key
+ * — for a session. Total: it never throws.
+ */
+type LoginWithGoogle = (_idToken: string, _licenseKey?: string) => Promise<SocialSignInResult>;
+
+/**
+ * Exchange an Apple ID token for a session. ``fullName`` is Apple's one-shot
+ * gift — offered only on the very first authorization — so it rides along on
+ * every leg of the flow, including the license retry that actually creates the
+ * account. Total: it never throws.
+ */
+type LoginWithApple = (
+  _idToken: string,
+  _fullName?: string,
+  _licenseKey?: string,
+) => Promise<SocialSignInResult>;
+
 interface AuthContextValue {
   token: string | null;
   authStatus: AuthStatus;
@@ -86,6 +113,17 @@ interface AuthContextValue {
   setUserTimezone: (_timezone: string) => void;
   login: Login;
   signup: Signup;
+  /**
+   * Sign in with a Google ID token. The token is a per-call argument and is
+   * never retained by the context — the caller owns its lifetime.
+   */
+  loginWithGoogle: LoginWithGoogle;
+  /**
+   * Sign in with an Apple ID token, optionally carrying the name Apple handed
+   * over on first authorization. Both the token and the name are per-call
+   * arguments the context never retains — the caller owns their lifetime.
+   */
+  loginWithApple: LoginWithApple;
   logout: () => Promise<void>;
   onUnauthorized: () => void;
   /** User dismissed the re-auth sheet: treat as an explicit logout. */
@@ -358,7 +396,13 @@ function useLoadStoredToken(mutators: AuthMutators): void {
   }, [mutators]);
 }
 
-interface AuthActions {
+/** The provider-specific sign-in actions, memoized together by {@link useSocialLogins}. */
+interface SocialLogins {
+  loginWithGoogle: LoginWithGoogle;
+  loginWithApple: LoginWithApple;
+}
+
+interface AuthActions extends SocialLogins {
   login: Login;
   signup: Signup;
   logout: () => Promise<void>;
@@ -427,6 +471,112 @@ async function signupWithDeviceTimezone(
   return response;
 }
 
+/** The one 409 both social exchanges use for every non-cryptographic refusal. */
+const NEEDS_LICENSE_STATUS = 409;
+const NEEDS_LICENSE_DETAIL = 'needs_license';
+
+/**
+ * A 409 whose detail is anything else is NOT the license refusal — routing it
+ * to the license step would strand the user re-entering a key that was never
+ * the problem.
+ */
+function isNeedsLicenseRefusal(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === NEEDS_LICENSE_STATUS &&
+    err.detail === NEEDS_LICENSE_DETAIL
+  );
+}
+
+/**
+ * Map an exchange rejection onto the non-success half of a
+ * {@link SocialSignInResult}: only the collapsed 409 opens the license step,
+ * everything else is a plain error the caller renders as copy.
+ */
+function refusalResult(err: unknown): SocialSignInResult {
+  if (isNeedsLicenseRefusal(err)) return { kind: 'needs_license' };
+  return { kind: 'error', error: err };
+}
+
+/**
+ * POST /auth/oauth/google with the device's IANA timezone attached, mapping
+ * every outcome to a {@link SocialSignInResult}.
+ *
+ * Lives at module scope for the same reason ``signupWithDeviceTimezone`` does:
+ * it keeps ``useAuthActions`` a list of one-line delegations. ``license_key`` is
+ * omitted entirely rather than sent as ``undefined`` so the first exchange
+ * carries no trace of a credential the user has not been asked for yet.
+ *
+ * Only the success branch touches auth state; a refusal leaves the device
+ * exactly as anonymous as it found it.
+ */
+async function exchangeGoogleIdToken(
+  idToken: string,
+  licenseKey: string | undefined,
+  mutators: AuthMutators,
+): Promise<SocialSignInResult> {
+  try {
+    const response = await authApi.oauthGoogle({
+      id_token: idToken,
+      ...(licenseKey === undefined ? {} : { license_key: licenseKey }),
+      timezone: detectDeviceTimezone(),
+    });
+    await applyAuthResponse(response, mutators);
+    return { kind: 'success' };
+  } catch (err: unknown) {
+    return refusalResult(err);
+  }
+}
+
+/**
+ * POST /auth/oauth/apple — the Google exchange's twin, plus Apple's one-shot
+ * name.
+ *
+ * ``full_name`` and ``license_key`` are each omitted as *keys* rather than sent
+ * as ``undefined``: the wire payload should carry nothing the user has not
+ * supplied. The name rides along on the license retry too, because that retry
+ * is the request that creates the account — and Apple will never offer the name
+ * again.
+ */
+async function exchangeAppleIdToken(
+  idToken: string,
+  fullName: string | undefined,
+  licenseKey: string | undefined,
+  mutators: AuthMutators,
+): Promise<SocialSignInResult> {
+  try {
+    const response = await authApi.oauthApple({
+      id_token: idToken,
+      ...(fullName === undefined ? {} : { full_name: fullName }),
+      ...(licenseKey === undefined ? {} : { license_key: licenseKey }),
+      timezone: detectDeviceTimezone(),
+    });
+    await applyAuthResponse(response, mutators);
+    return { kind: 'success' };
+  } catch (err: unknown) {
+    return refusalResult(err);
+  }
+}
+
+/**
+ * The social sign-in actions, bundled into one memoized object so
+ * ``useAuthActions`` stays a short list of delegations under the max-lines cap.
+ */
+function useSocialLogins(mutators: AuthMutators): SocialLogins {
+  const loginWithGoogle = useCallback<LoginWithGoogle>(
+    (idToken, licenseKey) => exchangeGoogleIdToken(idToken, licenseKey, mutators),
+    [mutators],
+  );
+
+  const loginWithApple = useCallback<LoginWithApple>(
+    (idToken, fullName, licenseKey) =>
+      exchangeAppleIdToken(idToken, fullName, licenseKey, mutators),
+    [mutators],
+  );
+
+  return useMemo(() => ({ loginWithGoogle, loginWithApple }), [loginWithGoogle, loginWithApple]);
+}
+
 /**
  * Shared "user logged out / session ended" tear-down used by both
  * ``logout`` and ``dismissReauth``.  Extracted so the ``useAuthActions``
@@ -462,6 +612,8 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     [mutators],
   );
 
+  const socialLogins = useSocialLogins(mutators);
+
   const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
@@ -490,8 +642,16 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   // Memoize the bundle so the context value's ``useMemo`` actually short-
   // circuits on renders where none of the identity-stable callbacks changed.
   return useMemo(
-    () => ({ login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset }),
-    [login, signup, logout, onUnauthorized, dismissReauth, confirmPasswordReset],
+    () => ({
+      login,
+      signup,
+      ...socialLogins,
+      logout,
+      onUnauthorized,
+      dismissReauth,
+      confirmPasswordReset,
+    }),
+    [login, signup, socialLogins, logout, onUnauthorized, dismissReauth, confirmPasswordReset],
   );
 }
 

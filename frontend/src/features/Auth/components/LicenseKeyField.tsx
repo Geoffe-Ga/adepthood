@@ -20,11 +20,26 @@ const HELP_LINK_HIT_SLOP = {
   right: HELP_LINK_SLOP,
 };
 
+/**
+ * What the signup form's single license field answers to. Any screen that draws
+ * two of these at once — the social row, with both providers at their license
+ * step — must override all three, or it ships a duplicate accessible name and a
+ * testID two nodes answer to.
+ */
+const DEFAULT_ERROR_TEST_ID = 'signup-license-error';
+const DEFAULT_HELP_TEST_ID = 'signup-license-help';
+const DEFAULT_HELP_LABEL = 'Find your license key';
+
 interface LicenseKeyFieldProps extends TextInputProps {
   /** Inline, field-scoped error copy; hidden when null. */
   error?: string | null;
   /** Opens the "where do I find my key" help page. */
   onPressHelp: () => void;
+  /** Identifiers for the error slot and the help link, scoped by the caller when it draws more than one field. */
+  errorTestID?: string;
+  helpTestID?: string;
+  /** The help link's accessible name — likewise scoped when two links are on screen together. */
+  helpAccessibilityLabel?: string;
 }
 
 /**
@@ -39,10 +54,16 @@ interface LicenseKeyFieldProps extends TextInputProps {
  * while ``autoComplete="off"`` is what suppresses Android's autofill
  * heuristics (which otherwise fire regardless of ``textContentType``) and the
  * browser's form history on web.
+ *
+ * The input's own accessible name arrives through the spread, which is applied
+ * last so a caller drawing two fields can name each one for its provider.
  */
 export function LicenseKeyField({
   error,
   onPressHelp,
+  errorTestID = DEFAULT_ERROR_TEST_ID,
+  helpTestID = DEFAULT_HELP_TEST_ID,
+  helpAccessibilityLabel = DEFAULT_HELP_LABEL,
   ...rest
 }: LicenseKeyFieldProps): React.JSX.Element {
   return (
@@ -64,17 +85,17 @@ export function LicenseKeyField({
           accessibilityRole="alert"
           accessibilityLiveRegion="polite"
           style={styles.fieldError}
-          testID="signup-license-error"
+          testID={errorTestID}
         >
           {error}
         </Text>
       ) : null}
       <TouchableOpacity
-        accessibilityLabel="Find your license key"
+        accessibilityLabel={helpAccessibilityLabel}
         accessibilityRole="link"
         hitSlop={HELP_LINK_HIT_SLOP}
         onPress={onPressHelp}
-        testID="signup-license-help"
+        testID={helpTestID}
       >
         <Text style={styles.helpLink}>Where&apos;s my key?</Text>
       </TouchableOpacity>

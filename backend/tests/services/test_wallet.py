@@ -22,6 +22,7 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_GUMROAD_PURCHASE,
     REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
@@ -32,6 +33,7 @@ from services.wallet import (
     SpendResult,
     add_balance,
     get_user_fresh,
+    grant_purchase_credit,
     preflight_deduction,
     require_user_fresh,
     reset_monthly_usage_if_due,
@@ -497,3 +499,65 @@ async def test_reset_audit_balance_before_under_racing_spend_is_within_one(
     refreshed = await real_get_user_fresh(db_session, user_id)
     assert refreshed is not None
     assert refreshed.monthly_messages_used == 0
+
+
+# -- Gumroad token-pack purchase credit --------------------------------------
+
+# Seeded starting balance plus the pack size the purchase credits.
+_SEEDED_PURCHASE_BALANCE = 4
+_PURCHASE_PACK_SIZE = 100
+_MISSING_USER_ID = 999
+
+
+@pytest.mark.asyncio
+async def test_grant_purchase_credit_adds_amount_and_returns_new_total(
+    db_session: AsyncSession,
+) -> None:
+    """A purchase credit adds exactly ``amount`` and reports the post-credit total."""
+    user = await _make_user(db_session, offering_balance=_SEEDED_PURCHASE_BALANCE)
+    assert user.id is not None
+
+    new_total = await grant_purchase_credit(db_session, user.id, _PURCHASE_PACK_SIZE)
+    await db_session.commit()
+
+    expected = _SEEDED_PURCHASE_BALANCE + _PURCHASE_PACK_SIZE
+    assert new_total == expected
+    refreshed = await get_user_fresh(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.offering_balance == expected
+
+
+@pytest.mark.asyncio
+async def test_grant_purchase_credit_writes_one_gumroad_purchase_audit_row(
+    db_session: AsyncSession,
+) -> None:
+    """The credit stages exactly one offering-bucket row tagged ``gumroad_purchase``."""
+    user = await _make_user(db_session, offering_balance=_SEEDED_PURCHASE_BALANCE)
+    assert user.id is not None
+
+    await grant_purchase_credit(db_session, user.id, _PURCHASE_PACK_SIZE)
+    await db_session.commit()
+
+    rows = await _audit_rows(db_session, user.id)
+    assert len(rows) == 1
+    audit = rows[0]
+    assert audit.user_id == user.id
+    # The buyer is their own actor: nobody else initiated this credit.
+    assert audit.actor_user_id == user.id
+    assert audit.bucket == BUCKET_OFFERING
+    assert audit.reason == REASON_GUMROAD_PURCHASE
+    assert audit.delta == Decimal(_PURCHASE_PACK_SIZE)
+    assert audit.balance_before == Decimal(_SEEDED_PURCHASE_BALANCE)
+    assert audit.balance_after == Decimal(_SEEDED_PURCHASE_BALANCE + _PURCHASE_PACK_SIZE)
+
+
+@pytest.mark.asyncio
+async def test_grant_purchase_credit_missing_user_returns_none_without_audit(
+    db_session: AsyncSession,
+) -> None:
+    """An unknown buyer yields None and must not leave an orphan audit row."""
+    result = await grant_purchase_credit(db_session, _MISSING_USER_ID, _PURCHASE_PACK_SIZE)
+    await db_session.commit()
+
+    assert result is None
+    assert await _audit_rows(db_session, _MISSING_USER_ID) == []

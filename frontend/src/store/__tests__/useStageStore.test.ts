@@ -26,12 +26,7 @@ const makeStage = (stageNumber: number, overrides: Partial<StageData> = {}): Sta
 describe('useStageStore', () => {
   beforeEach(() => {
     const { useStageStore } = require('../useStageStore');
-    act(() => {
-      useStageStore.getState().setStages([]);
-      useStageStore.getState().setCurrentStage(1);
-      useStageStore.getState().setLoading(false);
-      useStageStore.getState().setError(null);
-    });
+    act(() => useStageStore.getState().reset());
   });
 
   it('starts with empty stages, no loading, no error', () => {
@@ -138,6 +133,33 @@ describe('useStageStore', () => {
     act(() => useStageStore.getState().setStages([makeStage(7)]));
     act(() => resetAllStores());
     expect(useStageStore.getState().stages).toEqual([]);
+  });
+
+  describe('hasAttempted', () => {
+    it('is false before any load has been started', () => {
+      const { useStageStore } = require('../useStageStore');
+      expect(useStageStore.getState().hasAttempted).toBe(false);
+    });
+
+    it('markAttempted() records that a load has been started', () => {
+      const { useStageStore } = require('../useStageStore');
+      act(() => useStageStore.getState().markAttempted());
+      expect(useStageStore.getState().hasAttempted).toBe(true);
+    });
+
+    it('reset() clears hasAttempted so a fresh sign-in loads again', () => {
+      const { useStageStore } = require('../useStageStore');
+      act(() => useStageStore.getState().markAttempted());
+      act(() => useStageStore.getState().reset());
+      expect(useStageStore.getState().hasAttempted).toBe(false);
+    });
+
+    it('selectStagesAttempted reads hasAttempted from state', () => {
+      const { useStageStore, selectStagesAttempted } = require('../useStageStore');
+      expect(selectStagesAttempted(useStageStore.getState())).toBe(false);
+      act(() => useStageStore.getState().markAttempted());
+      expect(selectStagesAttempted(useStageStore.getState())).toBe(true);
+    });
   });
 
   describe('cycleNumber', () => {

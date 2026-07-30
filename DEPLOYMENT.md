@@ -133,6 +133,7 @@ In the backend service's **Variables** tab, add:
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2) |
+| `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -367,6 +368,8 @@ than a migration.
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
+| `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
+| `IPV6_THROTTLE_PREFIX_LEN` | No | `64` | Bit length of the IPv6 prefix that throttle keys (the rate limiter and the invalid-license throttle) group on, so one subscriber's delegated address range can't mint one bucket per address. Audit rows always keep the full address regardless. Valid range `1`-`128`; anything else falls back to the default rather than being clamped. A smaller number covers a larger delegation: lower it to `56`/`48` if you see IPv6 abuse, raise it to `128` to restore per-address keying (which reopens the bypass). |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
 | `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
@@ -466,21 +469,104 @@ inbox.  The corresponding runbook lives at `RECOVERY-RUNBOOK.md`
 
 ### Trusted Proxy / X-Forwarded-For
 
-The backend reads the client IP from `X-Forwarded-For` and writes it
-verbatim to `passwordresettoken.requested_ip` and to the
-`password_reset_event` audit log.  This is correct **only when every
-ingress path runs through a trusted reverse proxy that overwrites the
-header**.  Railway's edge network does this by default; if you front
-the API with an additional proxy or expose the container directly to
-the public internet, an attacker can spoof the source IP in the audit
-trail by sending the header themselves.
+`X-Forwarded-For` is honored only when the socket peer is inside
+`TRUSTED_PROXY_CIDRS` (see the variable reference above for the
+exact format).  The default is empty, and the resolver **fails
+closed**: with nothing configured the header is ignored entirely,
+and rate limiting, the invalid-license throttle, and the login /
+password-reset audit rows (`LoginAttempt.ip_address`,
+`PasswordResetToken.requested_ip`) all key on the raw socket peer
+instead -- which behind any real ingress means every client shares
+one rate-limit bucket and one audited address.
 
-For Railway / managed-edge deployments no extra configuration is
-needed.  For self-managed deployments, terminate TLS at a proxy
-(nginx, Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and
-appends the real peer address.  Operators investigating an abuse
-report should treat the `ip_address` audit field as authoritative
-only to the extent the ingress chain is trusted.
+The same variable governs whether `X-Forwarded-Proto` is trusted.
+Until it is set, the app believes it is serving `http`, so the
+trailing-slash redirect and any absolute URL it builds stay
+`http://` -- which browsers refuse to follow cross-origin.  A
+production boot without it set logs a `trusted_proxies_unconfigured`
+warning at startup.
+
+Both decisions are taken inside the application, against this one
+variable: the forwarded-proto middleware for the scheme, `client_ip`
+for the address.  The runtime image starts uvicorn with
+`--no-proxy-headers` on purpose.  The explicit negative is required:
+that switch is the flag pair `--proxy-headers/--no-proxy-headers`
+and it defaults to **enabled**, so merely omitting it leaves
+uvicorn's own layer mounted and trusting loopback.  While that layer
+is mounted it rewrites the socket peer from the left-most,
+caller-chosen `X-Forwarded-For` entry as well as the scheme, before
+any application code runs and under a second trust set the app never
+sees.
+
+Do **not** set `FORWARDED_ALLOW_IPS`.  It is an environment variable
+uvicorn reads directly (a common PaaS copy-paste), and it is the way
+that server-side layer gets widened without any flag appearing in
+the image's `CMD`.  `--no-proxy-headers` disarms it, and the
+application ignores it entirely: `TRUSTED_PROXY_CIDRS` is the only
+forwarding trust set that has any effect here.
+
+The innermost trusted proxy must still **set** (replace)
+`X-Forwarded-Proto` to the client-facing scheme as a single value
+(`proxy_set_header X-Forwarded-Proto $scheme;` in nginx) rather than
+pass the caller's through.  The middleware takes the *last* field
+line, which is the proxy's only if the proxy actually writes one; a
+trusted proxy -- or an L4 hop -- that forwards the caller's header
+unmodified hands the caller the scheme, because the caller's line is
+then the only line.  `proxy_set_header` replaces, which is why it is
+the safe form.  A proxy that appends to an existing header instead
+produces a comma-joined value, which is ignored, and the redirect
+then falls back to `http://`.  When several field lines arrive, the
+last one wins, and only `http`, `https`, `ws`, and `wss` are
+accepted.
+
+For self-managed deployments, terminate TLS at a proxy (nginx,
+Caddy, Cloudflare) that strips inbound `X-Forwarded-For` and appends
+the real peer address, then list only that proxy in
+`TRUSTED_PROXY_CIDRS`.  That variable accepts only IP addresses and
+CIDR blocks, so the proxy has to reach the app over TCP: a proxy
+connected over a unix socket has no IP peer, can never be trusted,
+and its `X-Forwarded-Proto` is ignored (redirects stay `http://`).
+Operators investigating an abuse report should treat the audit
+`ip_address` as authoritative only to the extent the ingress chain,
+and this configuration, are trusted.
+
+Once a peer address is resolved, the rate limiter and the
+invalid-license throttle key on it a little differently than the
+audit rows do: an IPv6 address is grouped onto its delegated prefix
+(`IPV6_THROTTLE_PREFIX_LEN`, default `64`) rather than kept exact,
+because a residential or cloud subscriber owns an entire delegated
+prefix and could otherwise rotate through it to mint one throttle
+bucket per address and never trip the cap.  IPv4 is never affected
+-- one client, one address.  This changes throttle keys only: the
+audit rows (`LoginAttempt.ip_address`,
+`PasswordResetToken.requested_ip`) always record the exact address,
+never the prefix, so an operator tracing an abusive IP in the audit
+log will not find it truncated.  The value IS the prefix length, so
+a *smaller* number covers a *larger* delegation.  An integer outside
+`1`-`128`, or a non-integer, falls back to the default of `64`
+rather than being clamped, since silently disabling the grouping is
+worse than ignoring a typo.
+
+`64` is the *smallest* delegation a subscriber receives, not the
+typical one.  A customer handed a `/56` still holds 256 `/64`s and a
+`/48` holds 65,536, so the hourly caps are divided by that much for
+them and the same rotation works one level up.  If you see licence
+grinding or signup abuse from IPv6, `IPV6_THROTTLE_PREFIX_LEN=56`
+(or `48`) is the lever.  The default stays at `64` because widening
+it for everyone would merge unrelated customers on any ISP that does
+delegate a `/64` each -- the collateral this setting is deliberately
+avoiding on the IPv4 side.
+
+The grouping cuts the other way too, and it is worth knowing before
+you debug a support ticket.  A `/64` is exactly one LAN, so an
+office or campus on SLAAC, a VPN exit pool, or a NAT64/CGN pool is a
+single throttle bucket for all of its users -- against the 60/minute
+global default, 5/minute login, and 3/hour password reset.  That is
+the same treatment those users would already get behind a NATted
+IPv4 address, but it is a change from per-address keying.  If such a
+site is your traffic and you see spurious `429`s, setting `128`
+restores exact per-address keying, at the cost of reopening the
+address-rotation bypass this setting exists to close.
 
 ---
 

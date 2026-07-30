@@ -40,6 +40,8 @@ from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
     REASON_ADMIN_GRANT,
+    REASON_GUMROAD_PURCHASE,
+    REASON_GUMROAD_REFUND,
     REASON_MONTHLY_RESET,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
@@ -316,6 +318,54 @@ async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResul
     raise payment_required("insufficient_offerings")
 
 
+async def _credit_offering(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+    *,
+    reason: str,
+    actor_user_id: int,
+) -> int | None:
+    """Add ``amount`` to ``offering_balance`` and stage the matching audit row.
+
+    The shared atomic body behind every offering-bucket credit: one
+    ``UPDATE ... RETURNING`` (no lost-update window between read and
+    write) plus one staged ``WalletAudit``.  Deliberately does NOT
+    commit — the caller owns the transaction boundary, which is what
+    lets a credit land atomically alongside whatever else it guards.
+
+    Returns the post-credit balance, or ``None`` when no row matched
+    ``user_id`` (in which case nothing is staged).
+    """
+    result = await session.execute(
+        update(User)
+        .where(col(User.id) == user_id)
+        .values(offering_balance=col(User.offering_balance) + amount)
+        .returning(col(User.offering_balance))
+    )
+    new_balance = result.scalar()
+    if new_balance is None:
+        return None
+    new_balance_int = int(new_balance)
+    _stage_audit(
+        session,
+        _AuditEntry(
+            user_id=user_id,
+            actor_user_id=actor_user_id,
+            bucket=BUCKET_OFFERING,
+            reason=reason,
+            # ``balance_before`` is derived from the post-update value
+            # (``new_balance_int - amount``).  This relies on the
+            # ``UPDATE`` having applied the full ``amount`` -- which it
+            # does, because there is no clamping in the SQL.
+            delta=Decimal(amount),
+            balance_before=Decimal(new_balance_int - amount),
+            balance_after=Decimal(new_balance_int),
+        ),
+    )
+    return new_balance_int
+
+
 async def add_balance(
     session: AsyncSession,
     user_id: int,
@@ -338,16 +388,6 @@ async def add_balance(
     future cross-user grant path (e.g. a Stripe webhook or referral
     credit); no such caller exists yet.
     """
-    result = await session.execute(
-        update(User)
-        .where(col(User.id) == user_id)
-        .values(offering_balance=col(User.offering_balance) + amount)
-        .returning(col(User.offering_balance))
-    )
-    new_balance = result.scalar()
-    if new_balance is None:
-        return None
-    new_balance_int = int(new_balance)
     # ``actor`` defaults to ``user_id`` so a self-grant (legacy or future
     # non-admin caller) does not look like an admin-initiated mutation
     # in the audit log.  Picking ``admin_grant`` only when the actor is
@@ -355,20 +395,65 @@ async def add_balance(
     # honest if a Stripe webhook or referral-credit path ever calls in.
     actor = actor_user_id if actor_user_id is not None else user_id
     reason = REASON_ADMIN_GRANT if actor != user_id else REASON_SELF_GRANT
-    _stage_audit(
+    return await _credit_offering(session, user_id, amount, reason=reason, actor_user_id=actor)
+
+
+async def grant_purchase_credit(session: AsyncSession, user_id: int, amount: int) -> int | None:
+    """Credit ``amount`` bought credits to ``user_id`` and return the new total.
+
+    The wallet half of a Gumroad token-pack purchase.  The buyer is their
+    own actor -- nobody granted these credits, they paid for them -- so
+    the audit row records ``actor_user_id == user_id`` with reason
+    ``gumroad_purchase``, keeping revenue-backed credits distinguishable
+    from courtesy top-ups.
+
+    Returns ``None`` (staging no audit row) when the user has vanished, so
+    the caller can abandon the surrounding claim rather than record a
+    credit nobody received.  Does not commit: the caller owns the
+    transaction so the credit and its exactly-once guard land together.
+    """
+    return await _credit_offering(
         session,
-        _AuditEntry(
-            user_id=user_id,
-            actor_user_id=actor,
-            bucket=BUCKET_OFFERING,
-            reason=reason,
-            # ``balance_before`` is derived from the post-update value
-            # (``new_balance_int - amount``).  This relies on the
-            # ``UPDATE`` having applied the full ``amount`` -- which it
-            # does, because there is no clamping in the SQL.
-            delta=Decimal(amount),
-            balance_before=Decimal(new_balance_int - amount),
-            balance_after=Decimal(new_balance_int),
-        ),
+        user_id,
+        amount,
+        reason=REASON_GUMROAD_PURCHASE,
+        actor_user_id=user_id,
     )
-    return new_balance_int
+
+
+async def claw_back_purchase_credit(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+) -> int | None:
+    """Debit a refunded Gumroad purchase's ``amount`` and return the new total.
+
+    The exact inverse of :func:`grant_purchase_credit`: ``amount`` is passed
+    in positive and applied as ``-amount``, so the audit pair for a refunded
+    pack sums to zero.  The buyer is their own actor again -- their
+    chargeback moved the wallet, nobody granted or confiscated anything by
+    hand.
+
+    **The resulting balance may be negative, and that is the point.**
+    ``_credit_offering`` does no clamping, so a buyer who spent half a pack
+    before disputing the charge is left overdrawn rather than keeping the
+    messages they spent.  Clamping at zero would make spending first a way to
+    get the credits for free.  A negative balance is still unspendable:
+    :func:`spend_one_message` guards its offering branch with
+    ``WHERE offering_balance > 0``, so the buyer simply has no paid capacity
+    until the shortfall is made good.  The audit arithmetic needs no special
+    case either -- ``balance_before = new_balance - amount`` is already
+    correct for a negative ``amount``.
+
+    Returns ``None`` (staging no audit row) when the user has vanished, so
+    the caller can log the orphaned reversal rather than record a debit
+    against nobody.  Does not commit: the caller owns the transaction so the
+    debit lands with whatever claim guards it.
+    """
+    return await _credit_offering(
+        session,
+        user_id,
+        -amount,
+        reason=REASON_GUMROAD_REFUND,
+        actor_user_id=user_id,
+    )

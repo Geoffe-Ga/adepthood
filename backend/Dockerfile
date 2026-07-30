@@ -62,10 +62,16 @@ EXPOSE 8000
 # `src.main:app`) because PYTHONPATH is set to /app/src; this matches the
 # module layout used in tests.
 #
-# --proxy-headers + --forwarded-allow-ips="*": the app runs behind Railway's
-# TLS-terminating proxy, so it must trust X-Forwarded-Proto to know it is on
-# https.  Without this, redirects (e.g. the trailing-slash 307) and any absolute
-# URL the app builds downgrade to http://, which browsers refuse to follow on a
-# cross-origin request — saving/loading then fails (#790).  Railway's only
-# ingress is its proxy, so trusting all forwarding peers is safe here.
-CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips=*"]
+# --no-proxy-headers explicitly disables uvicorn's ProxyHeadersMiddleware.  The
+# switch is the pair --proxy-headers/--no-proxy-headers and it defaults to
+# ENABLED, so leaving it out is not the same as turning it off: the layer would
+# still mount, trusting whatever FORWARDED_ALLOW_IPS names (default 127.0.0.1).
+# That matters because the layer rewrites scope["client"] from the left-most --
+# i.e. caller-chosen -- X-Forwarded-For entry as well as the scheme from
+# X-Forwarded-Proto, before any application code runs and under a second trust
+# set the app never sees.  With it off, the application owns the whole
+# forwarding policy against TRUSTED_PROXY_CIDRS: the forwarded-proto middleware
+# for the scheme, client_ip for the address.  One trust set, one parser.  The
+# flag also disarms FORWARDED_ALLOW_IPS, which would otherwise re-arm that layer
+# from the environment without any flag appearing in this CMD.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --no-proxy-headers"]

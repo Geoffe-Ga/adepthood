@@ -48,6 +48,24 @@ REASON_SELF_GRANT = "self_grant"
 # the same as ``user_id`` for resets — they're scheduled
 # system-initiated mutations rather than admin actions.
 REASON_MONTHLY_RESET = "monthly_reset"
+# ``gumroad_purchase`` — a token pack the buyer paid for on Gumroad,
+# credited to ``BUCKET_OFFERING`` as a positive ``delta``.  Like the
+# monthly reset it is system-initiated, so ``actor_user_id`` equals
+# ``user_id``: nobody granted these credits, the buyer bought them.
+# Distinct from ``self_grant`` so revenue-backed credits can be summed
+# apart from courtesy top-ups, and so a later refund claw-back can find
+# exactly the rows it must reverse.
+REASON_GUMROAD_PURCHASE = "gumroad_purchase"
+# ``gumroad_refund`` — the reversal of the row above, written when a refund
+# or chargeback ping claws the pack back out of ``BUCKET_OFFERING``.  The
+# ``delta`` is the negative of the original purchase, so
+# ``SUM(delta WHERE bucket='offering')`` still equals the live balance and a
+# refunded pack nets to zero across the pair.  Like the purchase it is
+# system-initiated with ``actor_user_id == user_id``: the buyer's own
+# chargeback moved their wallet, nobody granted or took anything by hand.
+# The claw-back is deliberately unclamped, so this row can carry the balance
+# below zero — spending the credits first must not make the refund cheaper.
+REASON_GUMROAD_REFUND = "gumroad_refund"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

@@ -2656,6 +2656,39 @@ export interface SignupRequest extends AuthRequest {
   license_key?: string;
 }
 
+/**
+ * Payload for ``POST /auth/oauth/google`` — the Google ID-token exchange.
+ *
+ * ``id_token`` is the credential Google minted for this app; the backend
+ * verifies it cryptographically and mints a session of our own. ``license_key``
+ * only rides along on the retry leg, after the server has refused once with a
+ * ``409 needs_license``, so the first exchange never carries a credential the
+ * user has not been asked for.
+ */
+export interface OAuthGoogleRequest {
+  id_token: string;
+  license_key?: string;
+  timezone?: string;
+}
+
+/**
+ * Payload for ``POST /auth/oauth/apple`` — mirrors ``AppleOAuthRequest`` in
+ * ``backend/src/routers/auth.py``.
+ *
+ * Same shape as the Google exchange plus ``full_name``, which is Apple's
+ * one-shot gift: the name is never in the token, and Apple hands it to the
+ * client only on the very first authorization. The client forwards it here or
+ * it is lost forever — which is also why the backend reads it only on the rung
+ * that creates a brand-new row, never to relabel an account that already
+ * exists.
+ */
+export interface OAuthAppleRequest {
+  id_token: string;
+  full_name?: string;
+  license_key?: string;
+  timezone?: string;
+}
+
 export interface AuthResponse {
   token: string;
   user_id: number;
@@ -2704,6 +2737,37 @@ export const auth = {
       method: 'POST',
       body: credentials,
       schema: authResponseSchema,
+    });
+  },
+  /**
+   * Trade a Google ID token for an Adepthood session.
+   *
+   * Anonymous by design — this is an entry point, so no ``token`` is sent and
+   * a 401 here means "that Google credential did not verify", never "your
+   * session expired". ``loginAuthResponseSchema`` applies for the same reason
+   * login and refresh use it: the ``user_id == 0`` sentinel belongs to
+   * ``/auth/signup`` alone, so a zero here would be a zombie session.
+   */
+  oauthGoogle(payload: OAuthGoogleRequest): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/oauth/google', {
+      method: 'POST',
+      body: payload,
+      schema: loginAuthResponseSchema,
+    });
+  },
+  /**
+   * Trade an Apple ID token for an Adepthood session.
+   *
+   * Anonymous by design, exactly like the Google exchange, and validated with
+   * ``loginAuthResponseSchema`` for the same reason: the ``user_id == 0``
+   * sentinel belongs to ``/auth/signup`` alone, so a zero here would be a
+   * zombie session.
+   */
+  oauthApple(payload: OAuthAppleRequest): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/oauth/apple', {
+      method: 'POST',
+      body: payload,
+      schema: loginAuthResponseSchema,
     });
   },
   refresh(token: string): Promise<AuthResponse> {

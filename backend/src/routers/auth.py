@@ -7,8 +7,9 @@ import hashlib
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
@@ -17,11 +18,12 @@ import jwt
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from client_ip import client_throttle_key, resolve_client_ip
 from database import get_session
 from domain.dates import ensure_aware
 from domain.entitlements import (
@@ -34,12 +36,13 @@ from domain.entitlements import (
     verify_aptitude_license,
 )
 from domain.timezone import normalize_timezone
-from errors import bad_request, service_unavailable
+from errors import bad_request, conflict, service_unavailable
+from models.auth_identity import AuthIdentity, AuthProvider
 from models.gumroad_sale import GumroadSale
 from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
 from models.revoked_token import RevokedToken
-from models.user import DEFAULT_USER_TIMEZONE, User
+from models.user import DEFAULT_USER_TIMEZONE, DISPLAY_NAME_MAX_LENGTH, User
 from rate_limit import limiter, record_invalid_license_attempt
 from schemas.password_reset import (
     PasswordResetAccepted,
@@ -53,6 +56,10 @@ from services.email import (
     EmailSender,
     get_email_sender,
 )
+from services.oauth_apple import verify_apple_id_token
+from services.oauth_google import verify_google_id_token
+from services.oidc import OIDCIdentity, OIDCTokenError
+from services.token_packs import claim_token_pack_sales
 from services.users import get_user_timezone
 
 if TYPE_CHECKING:
@@ -351,18 +358,6 @@ def _create_token(user_id: int) -> tuple[str, str]:
     return token, jti
 
 
-def _get_client_ip(request: Request) -> str:
-    """Extract client IP from the request, respecting X-Forwarded-For."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        # First address in the chain is the original client
-        return forwarded.split(",")[0].strip()
-    client = request.client
-    if client is not None:
-        return client.host
-    return "unknown"
-
-
 async def _record_attempt(
     session: AsyncSession,
     email: str,
@@ -517,12 +512,12 @@ async def _reject_invalid_license(
 ) -> NoReturn:
     """Reject a signup whose license failed verification (anti-enumeration).
 
-    Counts the attempt toward the per-IP invalid-license cap, records an
+    Counts the attempt toward the invalid-license cap, records an
     email-mismatch marker server-side (fingerprint only — never the raw
     email or key), spends the dummy bcrypt verify for timing parity, then
     raises the generic 400 — or 429 once the hourly cap is exceeded.
     """
-    allowed = record_invalid_license_attempt(_get_client_ip(request))
+    allowed = record_invalid_license_attempt(client_throttle_key(request))
     if outcome is LicenseOutcome.EMAIL_MISMATCH:
         logger.info(
             "signup_license_rejected",
@@ -660,6 +655,9 @@ async def signup(
     generic detail with matched timing (anti-enumeration), and a Gumroad
     outage fails closed with 503.  Only the JWT leaves the backend — never
     any Gumroad verify-response field.
+
+    Once the account exists, any token pack bought under the same email
+    before signup is swept into the new wallet.
     """
     # Verify the license (a live Gumroad call) before the duplicate-email DB
     # check is deliberate: running the same first check for every email keeps an
@@ -679,6 +677,7 @@ async def signup(
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
     await _grant_signup_entitlement(session, user, purchase)
+    await claim_token_pack_sales(session, user)
     token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
@@ -755,7 +754,7 @@ async def login(
     payload: AuthRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuthResponse:
-    ip_address = _get_client_ip(request)
+    ip_address = resolve_client_ip(request)
 
     # Wrap the lockout-check + verify + record sequence in a per-email
     # serialization so concurrent failed attempts cannot all pass the
@@ -1234,7 +1233,7 @@ async def _mint_and_persist_reset_token(
         user_id=user.id,
         lookup_key=_make_lookup_key(plaintext),
         token_hash=await _hash_reset_token(plaintext),
-        requested_ip=_get_client_ip(request),
+        requested_ip=resolve_client_ip(request),
         requested_user_agent=user_agent,
         expires_at=datetime.now(UTC) + _PASSWORD_RESET_TTL,
     )
@@ -1319,7 +1318,7 @@ def _log_reset_event(action: str, email: str, request: Request) -> None:
         extra={
             "action": action,
             "email_fingerprint": _email_log_fingerprint(email),
-            "ip_address": _get_client_ip(request),
+            "ip_address": resolve_client_ip(request),
             "timestamp": datetime.now(UTC).isoformat(),
         },
     )
@@ -1579,3 +1578,595 @@ async def cancel_password_reset(
     cancelled_email = user.email if user is not None else ""
     await session.commit()
     _log_reset_event("cancelled", cancelled_email, request)
+
+
+# ---------------------------------------------------------------------------
+# Social sign-in (Google / Apple OIDC)
+# ---------------------------------------------------------------------------
+
+# Ceiling on the submitted ``id_token``.  Real provider id_tokens run well under
+# 2 KB; the cap exists so an over-length body is rejected by Pydantic *before*
+# any JWKS lookup is attempted, denying an attacker a free way to drive
+# outbound key fetches (and CPU) with garbage.
+_MAX_ID_TOKEN_LENGTH = 4096
+
+# Entropy for the unusable password minted behind a social account.  32 bytes
+# encodes to a 43-character URL-safe string (256 bits) -- comfortably inside
+# bcrypt's 72-byte input window and never shown to anyone, so no password can
+# ever authenticate the row.
+_SOCIAL_PASSWORD_BYTES = 32
+
+# The two client-visible details of the OAuth ladder.  401 is spent *only* on
+# "this token failed cryptographic verification"; every other refusal collapses
+# onto the single 409 below.  Keep both immutable and never interpolate:
+# byte-identical rejections are what stop the endpoint being an oracle for
+# which accounts exist, which are banned, and which license keys are real.
+_DETAIL_INVALID_OAUTH_TOKEN = "invalid_oauth_token"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+_DETAIL_NEEDS_LICENSE = "needs_license"
+
+# Server-side-only reason codes for the OAuth audit trail.  These carry the
+# distinctions the wire response deliberately refuses to make.
+_REASON_OAUTH_INVALID_TOKEN = "oauth_invalid_token"  # noqa: S105  # nosec B105  # pragma: allowlist secret
+_REASON_OAUTH_LOGIN = "oauth_login"
+_REASON_OAUTH_LINKED = "oauth_linked"
+_REASON_OAUTH_SIGNUP = "oauth_signup"
+_REASON_OAUTH_NEEDS_LICENSE = "oauth_needs_license"
+_REASON_OAUTH_ACCOUNT_GATED = "oauth_account_gated"
+_REASON_OAUTH_LINK_CONFLICT = "oauth_link_conflict"
+
+# Single log event name so an operator greps one string and filters by
+# ``reason_code``.
+_OAUTH_LOG_EVENT = "oauth_signin"
+
+# What a provider adapter contributes to the ladder: turn a raw ``id_token``
+# into verified claims, or raise ``OIDCTokenError``.  Narrowing the seam to one
+# callable is what keeps "one resolution ladder, two thin adapters" true.
+_OIDCVerifier = Callable[[str], Awaitable[OIDCIdentity]]
+
+
+@dataclass(frozen=True)
+class _OAuthAttempt:
+    """One social sign-in in flight: who vouched, for whom, under what name.
+
+    Bundled rather than passed as three more arguments down every rung so the
+    ladder stays provider-agnostic without any rung growing an argument list
+    nobody can read.
+
+    ``display_name`` is the *proposed* name, and only the rung that creates a
+    brand-new row ever reads it.  Google supplies it from the verified ``name``
+    claim, Apple from the request body -- and for both the write is once-only,
+    so no later sign-in can rename an account that already exists.
+    """
+
+    provider: AuthProvider
+    claims: OIDCIdentity
+    display_name: str | None
+
+
+class OAuthSignInRequest(BaseModel):
+    """What every social sign-in carries -- an ``id_token``, plus first-run extras.
+
+    ``id_token`` carries an explicit ``_MAX_ID_TOKEN_LENGTH`` bound for the
+    same reason ``AuthRequest.password`` carries one: without it an unbounded
+    string reaches the verifier, and each attempt can cost a signing-key
+    lookup.  The bound rejects abuse at the schema layer, before any of that
+    work happens.
+
+    ``license_key`` is optional because most sign-ins are logins or links to an
+    already-paid account; it is only consulted on the rung that would create a
+    brand-new account, which stays license-gated exactly like ``/auth/signup``.
+
+    ``timezone`` mirrors :class:`SignupRequest`: validated at the trust
+    boundary so a malformed IANA string is a 422 rather than a permanently
+    stored bad value, and omitting it keeps the column at ``"UTC"``.
+
+    Shared as a base class rather than copied per provider so a bound added
+    here can never be added to one provider's route and forgotten on another's.
+    """
+
+    id_token: str = Field(min_length=1, max_length=_MAX_ID_TOKEN_LENGTH)
+    license_key: str | None = Field(default=None, max_length=_MAX_LICENSE_KEY_LENGTH)
+    timezone: str = DEFAULT_USER_TIMEZONE
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _validate_timezone(cls, value: object) -> str:
+        """Reject malformed IANA strings before they reach the DB."""
+        return normalize_timezone(value, DEFAULT_USER_TIMEZONE)
+
+
+class GoogleOAuthRequest(OAuthSignInRequest):
+    """Google sign-in payload -- the shared shape, unchanged.
+
+    Google puts the user's name in the ``id_token`` itself, so there is nothing
+    for the client to add: everything the create rung needs arrives inside the
+    verified claims.
+    """
+
+
+class AppleOAuthRequest(OAuthSignInRequest):
+    """Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.
+
+    Apple never puts the name in the token.  It is handed to the client once,
+    during the very first authorization, and never sent again -- so the client
+    forwards it here or it is lost.  That also makes it the one field on this
+    route the provider has *not* vouched for, which is why the ladder consults
+    it only when creating a brand-new row: a later request carrying a different
+    name can never relabel an account that already exists.
+
+    Blank (or whitespace-only) means "no name", not an empty name, so the
+    column stays ``NULL`` and every reader's fallback keeps working.  The
+    length bound matches the column's, so an over-long name is a 422 here
+    rather than a truncating write or a 500 from mid-transaction.
+    """
+
+    full_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX_LENGTH)
+
+    @field_validator("full_name")
+    @classmethod
+    def _normalize_full_name(cls, value: str | None) -> str | None:
+        """Trim surrounding whitespace and treat a blank result as absent."""
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+def _log_oauth(reason_code: str, email: str | None = None) -> None:
+    """Emit one OAuth audit line, carrying no user-supplied material.
+
+    The email is reduced to the same non-reversible fingerprint every other
+    auth log line uses, and the ``id_token`` is never passed in at all -- it is
+    a replayable credential, so a single leaked log line would be a working
+    session for whoever reads the log.
+    """
+    extra: dict[str, object] = {"reason_code": reason_code}
+    if email:
+        extra["email_fingerprint"] = _email_log_fingerprint(email)
+    logger.info(_OAUTH_LOG_EVENT, extra=extra)
+
+
+async def _needs_license_conflict(email: str | None) -> HTTPException:
+    """Build the one refusal every OAuth path that is not a bad token shares.
+
+    A brand-new email without a license, an invalid license under the hourly
+    cap, an unverified address colliding with an existing account, a token with
+    no email at all, and an account an operator has disabled or deleted all
+    end here and receive the *same bytes*: same status, same body, same
+    length.  Any variation between them would tell an unauthenticated caller
+    which accounts exist and which are banned, so the detail is a constant and
+    nothing is ever interpolated into it.
+
+    The dummy bcrypt verify matches the cost of the account-creating path, so
+    the dominant CPU cost is the same whichever refusal fired.  That parity is
+    deliberately not claimed for wall-clock time: a refusal that reached the
+    license check has paid an outbound Gumroad round trip that a refusal
+    resolved from the database alone has not.  Closing that gap would mean
+    calling Gumroad on every sign-in, including the ordinary logins that need
+    no license at all, and the residual it leaves is narrow -- only the holder
+    of a provider-verified token for an address can reach those rungs, so the
+    most the timing distinguishes is the state of an account whose mailbox the
+    caller already controls.
+
+    Returned rather than raised so every call site reads ``raise await
+    _needs_license_conflict(...)`` -- the ``raise`` stays visible at the point
+    of refusal instead of hiding inside a helper.
+    """
+    await _consume_dummy_password_verify()
+    _log_oauth(_REASON_OAUTH_NEEDS_LICENSE, email)
+    return conflict(_DETAIL_NEEDS_LICENSE)
+
+
+async def _gated_account_conflict(email: str | None) -> HTTPException:
+    """Record that the refusal was a gated account, then build the generic 409.
+
+    The distinction exists only in the log: an operator investigating a
+    disabled account needs to see ``oauth_account_gated``, while the caller
+    must not be able to tell it apart from "we have never heard of you".
+    """
+    _log_oauth(_REASON_OAUTH_ACCOUNT_GATED, email)
+    return await _needs_license_conflict(email)
+
+
+async def _verify_oauth_identity(id_token: str, verifier: _OIDCVerifier) -> OIDCIdentity:
+    """Verify the submitted ``id_token``, or raise the only 401 this route uses.
+
+    401 is reserved *exclusively* for "the token itself did not verify", which
+    is a statement about the token and reveals nothing about any account.
+    ``from None`` severs the chain so the raw token inside the verifier's error
+    context cannot surface in a traceback or a 500 body.
+
+    The provider's verifier is injected rather than chosen here so every
+    provider inherits this exact refusal -- same status, same detail, same log
+    line -- instead of each route growing its own near-copy of it.
+    """
+    try:
+        return await verifier(id_token)
+    except OIDCTokenError:
+        _log_oauth(_REASON_OAUTH_INVALID_TOKEN)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_DETAIL_INVALID_OAUTH_TOKEN,
+        ) from None
+
+
+def _require_user_id(user: User) -> int:
+    """Return a committed user's primary key, refusing to continue without one."""
+    if user.id is None:
+        msg = "User ID unexpectedly None after database commit"
+        raise RuntimeError(msg)
+    return user.id
+
+
+def _auth_response_for(user: User) -> AuthResponse:
+    """Mint a session token for ``user`` in the standard auth-response shape."""
+    user_id = _require_user_id(user)
+    token, _ = _create_token(user_id)
+    return AuthResponse(token=token, user_id=user_id, timezone=user.timezone)
+
+
+def _linkable_email(claims: OIDCIdentity) -> str | None:
+    """Return the normalized address an identity may link or create with.
+
+    Only a provider-verified email qualifies.  An unverified address is the
+    account-takeover vector this endpoint exists to close -- anyone can put
+    someone else's address on an account at most providers -- so it neither
+    links to an existing account nor creates a new one, no matter what else
+    the request carries.
+    """
+    if not claims.email_verified or claims.email is None:
+        return None
+    return claims.email.strip().lower()
+
+
+async def _find_identity(
+    session: AsyncSession,
+    provider: AuthProvider,
+    subject: str,
+) -> AuthIdentity | None:
+    """Return the stored ``provider`` link for ``subject``, or ``None``.
+
+    Keyed on the provider subject rather than the email because a subject is
+    the only identifier a provider promises never to reassign -- and scoped by
+    provider because subjects are only unique within one, so an unscoped lookup
+    would let a collision across providers resolve to the wrong account.
+    """
+    result = await session.execute(
+        select(AuthIdentity).where(
+            AuthIdentity.provider == provider,
+            AuthIdentity.subject == subject,
+        )
+    )
+    return result.scalars().first()
+
+
+async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
+    """Case-insensitively find the account owning ``email``.
+
+    Compares on ``lower(email)`` rather than trusting stored casing so a legacy
+    row written before the normalizing boundary landed still matches.
+    """
+    result = await session.execute(select(User).where(func.lower(col(User.email)) == email))
+    return result.scalars().first()
+
+
+async def _insert_identity(
+    session: AsyncSession,
+    provider: AuthProvider,
+    user_id: int,
+    subject: str,
+    email: str,
+) -> bool:
+    """Persist the provider link; ``False`` when a concurrent caller won it.
+
+    The ``(provider, subject)`` unique constraint is what makes the race safe:
+    the loser rolls back and re-resolves against the row the winner wrote, and
+    because both were resolving the same subject they converge on the same
+    account.
+
+    ``email_at_link_time`` records the verified address that authorised the
+    link.  ``User.email_verified`` is deliberately left alone -- that column
+    belongs to the (unbuilt) email-verification flow, and setting it from a
+    provider claim would silently satisfy a gate it was never meant to satisfy.
+    """
+    session.add(
+        AuthIdentity(
+            user_id=user_id,
+            provider=provider,
+            subject=subject,
+            email_at_link_time=email,
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return False
+    return True
+
+
+async def _login_via_identity(
+    session: AsyncSession,
+    identity: AuthIdentity,
+    email: str | None,
+) -> AuthResponse:
+    """Mint a token for an already-linked identity, or take the generic exit.
+
+    A link whose account has been soft-disabled, soft-deleted, or hard-deleted
+    is refused with the same 409 an unknown caller gets.  Spending the 401 here
+    would confirm to any holder of a valid provider token that the identity it
+    names is attached to a banned Adepthood account.
+    """
+    user = await session.get(User, identity.user_id)
+    if user is None or _user_state_reject_reason(user) is not None:
+        raise await _gated_account_conflict(email)
+    _log_oauth(_REASON_OAUTH_LOGIN, email)
+    return _auth_response_for(user)
+
+
+async def _link_or_relogin(
+    session: AsyncSession,
+    attempt: _OAuthAttempt,
+    user: User,
+    email: str,
+) -> AuthResponse:
+    """Attach a first provider link to ``user``, re-resolving once if a racer won.
+
+    The account already exists, so ``attempt.display_name`` is deliberately not
+    consulted: the name on that row (or its deliberate absence) belongs to its
+    owner, and letting a sign-in overwrite it would make this route a rename
+    endpoint for anyone holding a valid token.
+    """
+    subject = attempt.claims.subject
+    if await _insert_identity(session, attempt.provider, _require_user_id(user), subject, email):
+        _log_oauth(_REASON_OAUTH_LINKED, email)
+        return _auth_response_for(user)
+    identity = await _find_identity(session, attempt.provider, subject)
+    if identity is None:
+        raise await _needs_license_conflict(email)
+    return await _login_via_identity(session, identity, email)
+
+
+async def _resolve_existing_account(
+    session: AsyncSession,
+    attempt: _OAuthAttempt,
+) -> AuthResponse | None:
+    """Walk the two rungs that need no license: stored link, then verified email.
+
+    Returns ``None`` when neither rung matched, which hands the caller down to
+    the license-gated creation rung.  Anything that matched but must not
+    proceed (a disabled or deleted account) never returns at all -- it raises
+    the generic refusal from inside.
+    """
+    claims = attempt.claims
+    identity = await _find_identity(session, attempt.provider, claims.subject)
+    if identity is not None:
+        return await _login_via_identity(session, identity, claims.email)
+    email = _linkable_email(claims)
+    if email is None:
+        return None
+    user = await _find_user_by_email(session, email)
+    if user is None:
+        return None
+    if _user_state_reject_reason(user) is not None:
+        raise await _gated_account_conflict(email)
+    return await _link_or_relogin(session, attempt, user, email)
+
+
+async def _count_invalid_license_attempt(request: Request, license_key: str | None) -> None:
+    """Charge a failed non-blank key against the hourly cap for this client.
+
+    Without this the OAuth route would be a free bypass of the brute-force
+    throttle ``/auth/signup`` enforces: an attacker could grind license keys
+    here at the per-minute rate forever.  A blank key never reached Gumroad and
+    is not a guess, so it is not counted.
+    """
+    if not (license_key or "").strip():
+        return
+    if record_invalid_license_attempt(client_throttle_key(request)):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=_DETAIL_TOO_MANY_LICENSE_ATTEMPTS,
+    )
+
+
+async def _verify_oauth_license(
+    request: Request,
+    email: str,
+    license_key: str | None,
+) -> GumroadPurchase:
+    """Verify the APTITUDE license backing a brand-new social account.
+
+    Anything short of VERIFIED lands on the generic 409 -- a missing key, a
+    wrong key, and a key bought under a different address are indistinguishable
+    on the wire.  A Gumroad outage fails closed with 503 before any row is
+    written; ``from None`` severs the chain so the caught error's request body
+    (which carries the license key) is unreachable via ``__cause__``.
+    """
+    try:
+        check = await verify_aptitude_license(email, license_key)
+    except GumroadUnavailableError:
+        raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
+    if check.outcome is LicenseOutcome.VERIFIED and check.purchase is not None:
+        return check.purchase
+    await _count_invalid_license_attempt(request, license_key)
+    raise await _needs_license_conflict(email)
+
+
+async def _insert_social_user(
+    session: AsyncSession,
+    email: str,
+    timezone: str,
+    display_name: str | None,
+) -> User | None:
+    """Create the account behind a social sign-in; ``None`` when a racer won.
+
+    The stored hash is a fresh 256-bit random run through the same bcrypt cost
+    the password flow uses.  That satisfies the NOT NULL hash contract while
+    guaranteeing no password can ever authenticate the row, and it keeps the
+    creation path's timing indistinguishable from an ordinary signup.
+
+    ``display_name`` is written here and only here.  Apple hands the name over
+    exactly once, on the first authorization, so this insert is the sole
+    opportunity to keep it.
+    """
+    password_hash = await _hash_password(secrets.token_urlsafe(_SOCIAL_PASSWORD_BYTES))
+    user = User(
+        email=email,
+        password_hash=password_hash,
+        timezone=timezone,
+        display_name=display_name,
+    )
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return None
+    await session.refresh(user)
+    return user
+
+
+async def _reresolve_after_create_race(
+    session: AsyncSession,
+    attempt: _OAuthAttempt,
+) -> AuthResponse:
+    """Re-walk the login / link rungs once after losing the account-create race.
+
+    The winner has now committed the account this request was about to create,
+    so the same two rungs that ran a moment ago resolve to it.  Bounded to one
+    retry: a second miss means something other than a race, and the generic
+    refusal is the honest answer.
+    """
+    resolved = await _resolve_existing_account(session, attempt)
+    if resolved is None:
+        raise await _needs_license_conflict(attempt.claims.email)
+    return resolved
+
+
+async def _create_oauth_account(
+    request: Request,
+    session: AsyncSession,
+    payload: OAuthSignInRequest,
+    attempt: _OAuthAttempt,
+    email: str,
+) -> AuthResponse:
+    """Create the license-verified account, grant the course, and link the identity.
+
+    The license is verified before any row is written (verify-then-create), and
+    any token pack bought under the same address before this sign-in is swept
+    into the new wallet, exactly as ``/auth/signup`` does.
+
+    The identity link is written last, and the response is built before it, so
+    that losing the link race (a concurrent caller resolved the same subject
+    against the account we just created) rolls back only that insert.  Reading
+    an ORM attribute after that rollback would be a lazy load outside the
+    greenlet; the racer's row points at the same account anyway.
+    """
+    purchase = await _verify_oauth_license(request, email, payload.license_key)
+    user = await _insert_social_user(session, email, payload.timezone, attempt.display_name)
+    if user is None:
+        return await _reresolve_after_create_race(session, attempt)
+    await _grant_signup_entitlement(session, user, purchase)
+    await claim_token_pack_sales(session, user)
+    response = _auth_response_for(user)
+    if not await _insert_identity(
+        session, attempt.provider, response.user_id, attempt.claims.subject, email
+    ):
+        # Expected only when a racer linked this subject to the account we just
+        # created, which leaves the caller signed in to the right account
+        # anyway.  Logged rather than ignored so that an integrity failure with
+        # some other cause is visible instead of silently looking like a login.
+        _log_oauth(_REASON_OAUTH_LINK_CONFLICT, email)
+    _log_oauth(_REASON_OAUTH_SIGNUP, email)
+    return response
+
+
+async def _resolve_oauth_user(
+    request: Request,
+    session: AsyncSession,
+    payload: OAuthSignInRequest,
+    attempt: _OAuthAttempt,
+) -> AuthResponse:
+    """Walk the three rungs below verification: log in, link, or create.
+
+    Every provider shares this ladder verbatim.  That is the security property,
+    not just a tidiness one: the moment a provider gets its own copy, the two
+    drift, and a divergence in which refusals collapse onto the single 409
+    reopens the account-enumeration oracle on whichever route drifted.
+    """
+    resolved = await _resolve_existing_account(session, attempt)
+    if resolved is not None:
+        return resolved
+    email = _linkable_email(attempt.claims)
+    if email is None:
+        raise await _needs_license_conflict(attempt.claims.email)
+    return await _create_oauth_account(request, session, payload, attempt, email)
+
+
+@router.post("/oauth/google", response_model=AuthResponse)
+@limiter.limit("5/minute")
+async def google_oauth_signin(
+    request: Request,
+    payload: GoogleOAuthRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuthResponse:
+    """Sign in (or, with a license, sign up) with a Google ``id_token``.
+
+    Four rungs, tried in order, and exactly two possible refusals:
+
+    1. The token is verified against Google's published keys.  Failure is the
+       only 401 this route emits, and it writes nothing.
+    2. A stored ``(google, subject)`` link logs its account straight in.
+    3. Otherwise a *verified* provider email links onto the account that
+       already owns it.  An unverified email never links -- that is the
+       account-takeover vector.
+    4. Otherwise a verified email plus a valid APTITUDE license creates the
+       account, exactly as ``/auth/signup`` would.
+
+    Everything else -- no license, a bad license, an unverified address, a
+    token with no email, a disabled or deleted account -- is one 409 with
+    identical bytes, so the endpoint answers no questions about which accounts
+    exist or which are gated.  See :func:`_needs_license_conflict` for the one
+    dimension along which that parity is bounded rather than absolute.
+
+    Google puts the display name in the token, so the name a new account is
+    created under comes from the verified claims rather than from anything the
+    client chose to send.
+    """
+    claims = await _verify_oauth_identity(payload.id_token, verify_google_id_token)
+    attempt = _OAuthAttempt(
+        provider=AuthProvider.GOOGLE,
+        claims=claims,
+        display_name=claims.name,
+    )
+    return await _resolve_oauth_user(request, session, payload, attempt)
+
+
+@router.post("/oauth/apple", response_model=AuthResponse)
+@limiter.limit("5/minute")
+async def apple_oauth_signin(
+    request: Request,
+    payload: AppleOAuthRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuthResponse:
+    """Sign in (or, with a license, sign up) with an Apple ``id_token``.
+
+    The same four rungs as :func:`google_oauth_signin`, on the same shared
+    ladder, with the same two possible refusals -- deliberately, so neither
+    route can become an enumeration oracle the other is not.
+
+    Two things are Apple-shaped, and both are handled outside this function:
+    ``email`` arrives only on the very first authorization (so rung 2 keys on
+    the stored subject, which every later token still carries), and the user's
+    name is never in the token at all.  ``full_name`` from the request body
+    fills that gap, and because it is the one unvouched-for field on the route
+    it is read only by the rung that creates a brand-new row.
+    """
+    claims = await _verify_oauth_identity(payload.id_token, verify_apple_id_token)
+    attempt = _OAuthAttempt(
+        provider=AuthProvider.APPLE,
+        claims=claims,
+        display_name=payload.full_name,
+    )
+    return await _resolve_oauth_user(request, session, payload, attempt)

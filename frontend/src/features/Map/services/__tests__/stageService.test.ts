@@ -145,6 +145,33 @@ describe('stageService', () => {
     expect(state.stages).toHaveLength(0);
   });
 
+  it('loadStages marks the attempt when the request resolves', async () => {
+    mockList.mockResolvedValueOnce([makeApiStage(1)]);
+
+    const { stageService } = require('../stageService');
+    const { useStageStore } = require('../../../../store/useStageStore');
+
+    await act(async () => {
+      await stageService.loadStages();
+    });
+
+    expect(useStageStore.getState().hasAttempted).toBe(true);
+  });
+
+  it('loadStages marks the attempt when the request rejects', async () => {
+    // Marking at request start, not on success: a failed load must count too.
+    mockList.mockRejectedValueOnce(new Error('Network error'));
+
+    const { stageService } = require('../stageService');
+    const { useStageStore } = require('../../../../store/useStageStore');
+
+    await act(async () => {
+      await stageService.loadStages();
+    });
+
+    expect(useStageStore.getState().hasAttempted).toBe(true);
+  });
+
   it('loadStages maps StageData metadata fields correctly', async () => {
     mockList.mockResolvedValueOnce([
       makeApiStage(1, {

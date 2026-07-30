@@ -26,6 +26,7 @@ import {
   selectCurrentStage,
   selectCycleNumber,
   selectStages,
+  selectStagesAttempted,
   selectStagesError,
   selectStagesLoading,
   useStageStore,
@@ -882,9 +883,54 @@ const MapLoading = (): React.JSX.Element => (
   </View>
 );
 
-const MapError = ({ message }: { message: string }): React.JSX.Element => (
-  <View style={styles.centered} testID="map-error">
+// Cold-start failure: announce it, say what to do, and offer the same explicit
+// retry the refresh banner and history error use — never a silent auto-retry.
+const MapError = ({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}): React.JSX.Element => (
+  <View
+    style={styles.centered}
+    testID="map-error"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
     <Text style={styles.errorText}>{message}</Text>
+    <Text style={styles.errorHint}>
+      Your map isn&apos;t lost — it just couldn&apos;t load. Check your connection and try again.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.errorRetry}
+      testID="map-error-retry"
+    >
+      <Text style={styles.errorRetryText}>Try again</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+// A load that succeeded with nothing: calm, not alarming — say so plainly and
+// offer the same explicit retry, rather than leaving a spinner or a blank grid.
+const MapEmpty = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View style={styles.centered} testID="map-empty">
+    <Text style={styles.emptyText}>The map has nothing to show yet.</Text>
+    <Text style={styles.errorHint}>
+      Your stages haven&apos;t arrived from the server. Try again in a moment.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.errorRetry}
+      testID="map-empty-retry"
+    >
+      <Text style={styles.errorRetryText}>Try again</Text>
+    </TouchableOpacity>
   </View>
 );
 
@@ -1295,17 +1341,19 @@ const useMapDrawer = (
   return { drawer, onDrawerSelectStage };
 };
 
-/** Read the five Map-relevant slices of the stage store in one place. */
+/** Read the Map-relevant slices of the stage store in one place. */
 const useMapStageStore = () => ({
   stages: useStageStore(selectStages),
   loading: useStageStore(selectStagesLoading),
   error: useStageStore(selectStagesError),
+  hasAttempted: useStageStore(selectStagesAttempted),
   storeCurrentStage: useStageStore(selectCurrentStage),
   cycleNumber: useStageStore(selectCycleNumber),
 });
 
 const MapScreen = (): React.JSX.Element => {
-  const { stages, loading, error, storeCurrentStage, cycleNumber } = useMapStageStore();
+  const { stages, loading, error, hasAttempted, storeCurrentStage, cycleNumber } =
+    useMapStageStore();
   // Prefer the date-driven stage; the server's count-based one is the fallback.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
@@ -1319,11 +1367,15 @@ const MapScreen = (): React.JSX.Element => {
     [stages],
   );
 
+  // One automatic attempt per session: a load that fails — or succeeds with an
+  // empty list — lands back on this guard's shape, so only the store's recorded
+  // attempt stops it re-firing. Every later attempt is user-initiated; the
+  // store's logout ``reset`` clears the flag and re-arms the cold start.
   useEffect(() => {
-    if (stages.length === 0 && !loading) {
+    if (stages.length === 0 && !loading && !error && !hasAttempted) {
       void stageService.loadStages();
     }
-  }, [stages.length, loading]);
+  }, [stages.length, loading, error, hasAttempted]);
 
   const handleRefresh = useCallback(() => void stageService.loadStages(), []);
   const handleCloseModal = useCallback(() => setActiveStage(null), []);
@@ -1333,7 +1385,8 @@ const MapScreen = (): React.JSX.Element => {
   const { drawer, onDrawerSelectStage } = useMapDrawer(lens);
 
   if (loading && stages.length === 0) return <MapLoading />;
-  if (error && stages.length === 0) return <MapError message={error} />;
+  if (error && stages.length === 0) return <MapError message={error} onRetry={handleRefresh} />;
+  if (hasAttempted && stages.length === 0) return <MapEmpty onRetry={handleRefresh} />;
 
   return (
     <MapContent

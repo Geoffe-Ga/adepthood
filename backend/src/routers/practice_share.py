@@ -315,7 +315,11 @@ async def preview_share_link(
     if link.created_by_user_id is not None:
         owner = await session.get(User, link.created_by_user_id)
         if owner is not None:
-            display_name = _display_name_from_email(owner.email)
+            # A name the owner actually supplied beats one derived from their
+            # address: the derivation is a fallback for accounts that have no
+            # name, and leaking the local-part of an email when a real name is
+            # on file is both wrong and needlessly revealing.
+            display_name = owner.display_name or _display_name_from_email(owner.email)
 
     return ShareLinkPreviewResponse(
         practice_id=cast("int", practice.id),

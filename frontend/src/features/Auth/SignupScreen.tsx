@@ -7,6 +7,7 @@ import { AuthScreenContainer } from './AuthScreenContainer';
 import { EmailField } from './components/EmailField';
 import { LicenseKeyField } from './components/LicenseKeyField';
 import { PasswordField } from './components/PasswordField';
+import { SocialAuthButtons } from './SocialAuthButtons';
 import { useSignupForm } from './useSignupForm';
 import type { SignupForm } from './useSignupForm';
 
@@ -118,6 +119,8 @@ export default function SignupScreen({ navigation, route }: Props) {
         onNavigateLogin={() => navigation.navigate('Login')}
         submitting={form.submitting}
       />
+      {/* Below the primary action on purpose: an offered option, not a push. */}
+      <SocialAuthButtons />
     </AuthScreenContainer>
   );
 }

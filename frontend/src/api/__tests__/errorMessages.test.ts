@@ -26,6 +26,9 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'license_required',
       'too_many_license_attempts',
       'license_verification_unavailable',
+      // google oauth exchange
+      'needs_license',
+      'invalid_oauth_token',
       // admin gate
       'admin_required',
       // resource not found
@@ -146,6 +149,64 @@ describe('gumroad license codes', () => {
 
   it('names the concrete password ceiling so the user can act', () => {
     expect(messageForCode('password_too_long')).toMatch(/64/); // pragma: allowlist secret
+  });
+});
+
+describe('google oauth codes', () => {
+  // The backend collapses every non-cryptographic refusal (no license, bad
+  // license, unverified email, no email claim, disabled account) into one
+  // byte-identical 409. The copy must not reconstruct the distinction the
+  // wire format deliberately destroyed.
+  it.each([['email'], ['account'], ['verified'], ['disabled'], ['deleted']])(
+    'never names %p as the cause of a needs_license refusal',
+    (word) => {
+      expect(messageForCode('needs_license')).not.toMatch(new RegExp(word, 'i'));
+    },
+  );
+
+  it('points the user at their license key as the next action', () => {
+    expect(messageForCode('needs_license')).toMatch(/license key/i);
+  });
+
+  it('gives invalid_oauth_token retry-shaped copy rather than a license prompt', () => {
+    const message = messageForCode('invalid_oauth_token');
+
+    expect(message).toBeTruthy();
+    expect(message).not.toMatch(/license/i);
+    expect(message).toMatch(/try again/i);
+  });
+
+  it.each([['needs_license'], ['invalid_oauth_token']])(
+    'gives %p snake_case-free copy that ends in punctuation',
+    (code) => {
+      const message = messageForCode(code);
+
+      expect(message).not.toMatch(/[a-z]_[a-z]/);
+      expect(message).toMatch(/[.!?]$/);
+    },
+  );
+
+  it('routes the 409 through formatApiError rather than the generic conflict copy', () => {
+    const message = formatApiError(new ApiError(409, 'needs_license'));
+
+    expect(message).toBe(messageForCode('needs_license'));
+    expect(message).not.toMatch(/refresh and try again/i);
+  });
+});
+
+// ``invalid_oauth_token`` is the single 401 detail behind BOTH oauth routes
+// (Google and Apple), so copy that names one provider misattributes half the
+// failures — a user who tapped Apple must not be told Google failed.
+describe('oauth credential copy is provider-neutral', () => {
+  it.each([[/google/i], [/apple/i]])('never names %p as the provider', (provider) => {
+    expect(USER_FACING_ERROR_MESSAGES.invalid_oauth_token).not.toMatch(provider);
+  });
+
+  it('still says a sign-in failed verification and invites a retry', () => {
+    const copy = USER_FACING_ERROR_MESSAGES.invalid_oauth_token;
+
+    expect(copy).toMatch(/sign-in/i);
+    expect(copy).toMatch(/try again/i);
   });
 });
 

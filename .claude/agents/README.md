@@ -47,12 +47,24 @@ the spawn mechanism, which is always the conductor. Only the two orchestrators
 (chief-architect, code-review-orchestrator) hold the `Task` tool; the six
 specialists are leaf workers that do their own work and do not sub-delegate.
 
-The two **Gate 1** specialists — `test-specialist` and `implementation-specialist`
-— also hold `Bash`, because their handoff contracts assert an *observed* result
-(`Status: RED` / `Status: GREEN`). Without it those lines were self-reported from
-reading the code and the conductor had to re-verify everything itself. The other
-four specialists stay read-only/edit-only: their contracts report findings, not
-run outcomes.
+**Four specialists hold `Bash`**, because their handoff contracts assert an
+*observed* result rather than a reading of the code: `test-specialist` and
+`implementation-specialist` (`Status: RED` / `Status: GREEN`),
+`security-specialist` (`Status: HARDENED`, plus a workflow that says "write a
+failing security test first" and "verify with `scripts/backend/security.sh`" —
+both impossible without it), and `documentation-specialist` (`Status:
+DOCUMENTED`, gated on `interrogate` actually passing). Each of their contracts
+carries an `Observed:` line and the rule that a status is a claim about a run,
+never an expectation.
+
+Without `Bash` those statuses were self-reported, and the conductor had to
+re-verify every one — which it did not always do. Two concrete costs paid before
+the grant: a security assessment accepted as verified while its claimed coverage
+had never been executed, and a docs change that told operators to *raise* a
+prefix length when the fix required *lowering* it.
+
+The remaining two stay edit-only by design: `performance-specialist` and
+`dependency-review-specialist` report findings, not run outcomes.
 
 > **Frontmatter caveat.** The Claude Code runtime only reads `name`,
 > `description`, `tools`, and `model`. The extra fields here — `level`, `phase`,

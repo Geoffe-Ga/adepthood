@@ -63,6 +63,7 @@ _RAW_SQL_MANAGED_INDEXES: frozenset[str] = frozenset(
         "ix_practice_preset_stage_lower_name_unique",  # d2e3f4a5b6c7: lower(trim(name)) WHERE submitted_by_user_id IS NULL
         "ix_coursestage_stage_number_unique",  # e8f9a0b1c2d3: (stage_number)
         "ix_stagecontent_stage_content_ref_unique",  # e8f9a0b1c2d3: (course_stage_id, url) WHERE url LIKE 'content://%'
+        "ix_gumroadsale_lower_email",  # b8c9d0e1f2a3: lower(email)
     }
 )
 

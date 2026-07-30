@@ -91,6 +91,9 @@ export const stageService = {
     const store = useStageStore.getState();
     store.setLoading(true);
     store.setError(null);
+    // Marked at request start, not on settle, so the attempt lands in the same
+    // synchronous window as ``setLoading`` — an unmount mid-flight still counts.
+    store.markAttempted();
     try {
       const apiStages = await stagesApi.listAll(token);
       // Sort descending by stage_number (10 at top, 1 at bottom) to match

@@ -55,13 +55,19 @@ jobs:
       github.event_name != 'pull_request_target' ||
       github.actor == 'dependabot[bot]'
     steps:
-      - name: Check out repo metadata only (no PR head)
-        # We never check out or build the PR head — only the base repo, for
-        # nothing more than a clean workspace. The bridge reads PR data via the
-        # gh API, not the checkout.
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Check out base-branch scripts (never the PR head)
+        # LOAD-BEARING, not just a clean workspace: this checkout supplies the
+        # copy of scripts/ralph/ensure-issue-label.sh that the run: block below
+        # executes. Under pull_request_target the default ref is the BASE
+        # branch, so that code is trusted. NEVER add a `ref:` pointing at the PR
+        # head — this job holds a write-capable token, so running head code
+        # would be arbitrary code execution by any PR author.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 1
+          # The job runs no git commands, so the token has no reason to be
+          # persisted into .git/config where later steps could reuse it.
+          persist-credentials: false
 
       - name: Bridge Dependabot PRs into Ralph issues
         env:
@@ -69,6 +75,11 @@ jobs:
           # deslop.yml) so the issue/PR edits are authored by an account
           # the mobile webhook recognizes; fall back to the run's GITHUB_TOKEN.
           GH_TOKEN: ${{ secrets.GEOFFE_GA_PAT || secrets.GITHUB_TOKEN }}
+          # Second credential for the label call only. This ADDS NO PERMISSION:
+          # it is the run's own token, which the permissions: block above already
+          # grants issues: write. It exists because GH_TOKEN prefers the PAT, and
+          # the PAT is the credential observed to be denied label writes.
+          FALLBACK_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           # Event-driven PR metadata, read ONLY from the trusted event payload.
@@ -155,40 +166,50 @@ jobs:
 
             echo "Linked PR #$pr → issue #$issue_num via Closes."
 
-            # The REST create endpoint silently drops labels when the token
-            # lacks push/triage access — which would break the marker dedup
-            # above (it filters on the `dependencies` label). Re-apply the
-            # label with a dedicated call (that endpoint errors instead of
-            # dropping) and verify it stuck, so a permission gap fails loudly
-            # rather than leaving an unlabeled, picker-invisible issue.
-            # Swallow this call's own error: the read-back verification below is
-            # the authoritative diagnosis, so a failure here would be redundant.
-            gh issue edit "$issue_num" --repo "$REPO" \
-              --add-label dependencies || true
+            # Re-apply the `dependencies` label and prove it stuck: the marker
+            # dedup above filters on that label, so an unlabeled issue is also a
+            # picker-invisible one. Delegated to a script because the obvious
+            # call, `gh issue edit --add-label`, performs the GraphQL mutation
+            # addLabelsToLabelable, which the PAT in GH_TOKEN is observed to be
+            # denied; the `issues: write` declared above governs the run's
+            # GITHUB_TOKEN, which that call never used. The script POSTs to the
+            # REST labels endpoint (needs only issues:write, and errors instead
+            # of dropping), retries once with FALLBACK_GH_TOKEN, verifies by
+            # read-back, and prints the verbatim gh stderr of every failure —
+            # the old `|| true` discarded exactly that answer, leaving the
+            # diagnosis below to guess, and it guessed wrong. A re-run cannot
+            # re-reach this point (the PR body now links the issue, so
+            # `body_links_issue` short-circuits), so the script's diagnosis
+            # names the one-time manual fix.
+            local label_output="" label_error="" label_ec=0
+            label_output="$(scripts/ralph/ensure-issue-label.sh \
+              "$issue_num" dependencies --repo "$REPO" 2>&1)" || label_ec=$?
+            # Even on success the output may carry a ::warning:: about a token
+            # whose gap the fallback papered over — always surface it.
+            echo "$label_output"
 
-            # Verify the label stuck. Capture the read call's own success
-            # separately from the label match so the two failure modes keep
-            # distinct diagnoses: a failed read is a transient API flake, while
-            # a successful read that omits the label is a real permission gap.
-            # A re-run cannot re-reach this check (the PR body now links the
-            # issue, so `body_links_issue` short-circuits), so both branches
-            # point to the same one-time manual fix: add the label by hand.
-            local labels label_error=""
-            if ! labels="$(gh issue view "$issue_num" --repo "$REPO" \
-              --json labels --jq '.labels[].name')"; then
-              label_error="Could not verify the label on issue #$issue_num (transient GitHub API error); the re-apply may have succeeded — if the issue is missing the label, add it once: gh issue edit $issue_num --add-label dependencies"
-            elif ! printf '%s\n' "$labels" | grep -qx dependencies; then
-              label_error="The 'dependencies' label is absent on issue #$issue_num after re-apply (the token likely lacks Issues/triage permission); add it once by hand: gh issue edit $issue_num --add-label dependencies"
-            fi
-
-            # Failure handling differs by path. The single-PR event path fails
-            # loud and immediate (exit 1). The reconciler processes a whole
-            # batch, so one PR's label-verify failure must NOT skip every later
-            # PR: record the diagnosis and let the caller continue, then fail
-            # the run once at the end. The issue is filed and its PR is already
-            # linked, so `body_links_issue` short-circuits any re-run — no
-            # duplicate is ever minted while the label is added by hand.
-            if [ -n "$label_error" ]; then
+            # Failure is the EXIT CODE, never output emptiness: a non-zero exit
+            # that printed nothing (killed by a signal, say) is precisely the
+            # failure class the old `|| true` hid.
+            #
+            # Handling then differs by path. The single-PR event path fails loud
+            # and immediate (exit 1). The reconciler processes a whole batch, so
+            # one PR's label-verify failure must NOT skip every later PR: record
+            # the diagnosis and let the caller continue, then fail the run once
+            # at the end. The issue is filed and its PR is already linked, so
+            # `body_links_issue` short-circuits any re-run — no duplicate is
+            # ever minted while the label is added by hand.
+            if [ "$label_ec" -ne 0 ]; then
+              # Actions renders only the FIRST line of an `::error::` as an
+              # annotation; every later line falls through as plain log text. So
+              # the annotation is a synthesized one-liner and the verbatim gh
+              # stderr stays where `echo "$label_output"` already put it in full
+              # — feeding the whole block in here would render one line in the UI
+              # and dribble the remainder out as a second, half-rendered copy of
+              # what is already logged. Pointing at the log keeps the diagnostic
+              # fidelity that is this call's whole purpose. Synthesized
+              # unconditionally, so there is no empty payload left to guard.
+              label_error="ensure-issue-label.sh exited $label_ec; the 'dependencies' label on issue #$issue_num is unverified — see the verbatim gh output logged above."
               if [ "$EVENT_NAME" = "pull_request_target" ]; then
                 echo "::error::$label_error" >&2
                 exit 1

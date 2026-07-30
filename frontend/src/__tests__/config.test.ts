@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { API_BASE_URL, CONFIG_ERROR, validateApiBaseUrl } from '../config';
+import { API_BASE_URL, CONFIG_ERROR, resolveEnv, validateApiBaseUrl } from '../config';
 import type * as ConfigModule from '../config';
 
 const HTTPS_URL = 'https://api.example.com';
@@ -135,6 +135,54 @@ describe('config', () => {
       const config = loadConfig();
 
       expect(config.CONFIG_ERROR).toBeNull();
+    });
+  });
+
+  // ``resolveEnv`` generalises the double-read workaround the Gumroad URLs
+  // already use: babel-preset-expo rewrites a *static* ``process.env.EXPO_
+  // PUBLIC_…`` reference to a build-time literal (the only route into a
+  // production bundle), while the computed ``process.env[name]`` lookup
+  // survives as a real read for Metro's dev-time injection.
+  describe('resolveEnv', () => {
+    const ORIGINAL_ENV = { ...process.env };
+    const PROBE_NAME = 'EXPO_PUBLIC_RESOLVE_ENV_PROBE';
+    const INLINED_VALUE = 'from-the-build-time-literal';
+    const RUNTIME_VALUE = 'from-process-env';
+    const FALLBACK_VALUE = 'the-default';
+
+    beforeEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env[PROBE_NAME];
+    });
+
+    afterEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+    });
+
+    it('prefers the inlined literal over the runtime lookup', () => {
+      process.env[PROBE_NAME] = RUNTIME_VALUE;
+
+      expect(resolveEnv(INLINED_VALUE, PROBE_NAME, FALLBACK_VALUE)).toBe(INLINED_VALUE);
+    });
+
+    it('falls back to the runtime lookup when the inlined literal is undefined', () => {
+      process.env[PROBE_NAME] = RUNTIME_VALUE;
+
+      expect(resolveEnv(undefined, PROBE_NAME, FALLBACK_VALUE)).toBe(RUNTIME_VALUE);
+    });
+
+    it('treats an empty inlined literal as absent', () => {
+      process.env[PROBE_NAME] = RUNTIME_VALUE;
+
+      expect(resolveEnv('', PROBE_NAME, FALLBACK_VALUE)).toBe(RUNTIME_VALUE);
+    });
+
+    it('returns the fallback when neither route carries a value', () => {
+      expect(resolveEnv(undefined, PROBE_NAME, FALLBACK_VALUE)).toBe(FALLBACK_VALUE);
+    });
+
+    it('returns an empty-string fallback rather than undefined', () => {
+      expect(resolveEnv(undefined, PROBE_NAME, '')).toBe('');
     });
   });
 });
