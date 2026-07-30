@@ -1,5 +1,8 @@
 """Shared rate limiter instances for the application."""
 
+import time
+from collections.abc import Callable
+
 from limits import RateLimitItemPerHour
 from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
@@ -28,9 +31,138 @@ limiter = Limiter(key_func=client_throttle_key, default_limits=[DEFAULT_RATE_LIM
 # capped per hour even if they pace themselves under the per-minute limit.
 INVALID_LICENSE_MAX_PER_HOUR = 10
 
-_invalid_license_storage = MemoryStorage()
-_invalid_license_limiter = MovingWindowRateLimiter(_invalid_license_storage)
-_INVALID_LICENSE_ITEM = RateLimitItemPerHour(INVALID_LICENSE_MAX_PER_HOUR)
+# How many tracked keys it takes before the throttle first scans for keys to
+# evict. A deployment quiet enough to stay under this floor never scans at all,
+# and the floor is also where the mark resets once the store empties out.
+_SWEEP_MIN_TRACKED = 64
+
+# The next scan is scheduled at this multiple of the population that survived
+# the last one, which amortises sweeping: a store holding many genuinely active
+# clients does not pay a full scan on every recorded attempt. Must stay strictly
+# greater than one -- at one, a store of live keys would rescan on every attempt.
+_SWEEP_GROWTH_FACTOR = 2
+
+
+class _InvalidLicenseThrottle:
+    """Hourly invalid-license counter over a self-bounding in-memory store.
+
+    The backing ``MemoryStorage`` empties an expired key's event list but never
+    drops the key itself, so a long-lived process would keep one dict entry per
+    throttle key it had ever seen. This wrapper remembers when each key was last
+    charged and periodically evicts the keys whose window has fully rolled off,
+    bounding the store by the peak concurrent population instead of letting it
+    grow without limit as total traffic accumulates. The mark only ratchets up
+    on a completed sweep and never shrinks, so a burst's dead keys stay resident
+    until traffic climbs back to that peak: the store is bounded, not minimal.
+
+    Eviction can never be premature, which matters because this throttle is a
+    security control: an attacker must not be able to clear their own counter by
+    provoking a sweep. A key's recorded last-attempt reading comes from the same
+    wall clock the ``limits`` moving window stamps its entries with, so it is at
+    or after the newest entry's arrival time; an age strictly greater than one
+    full expiry therefore proves every entry has already left the window. That
+    implication only holds while the clock is the one stamping those entries,
+    which is why the default is wall clock rather than a monotonic source.
+
+    Attributes:
+        storage: Event store backing the moving window.
+        item: The hourly cap this throttle enforces.
+        last_attempt: Raw throttle key to the clock reading of its most recent
+            recorded attempt. Public, along with the rest, so this module's own
+            unit tests can inspect the store without reaching through private
+            names.
+        sweep_at: Tracked-key count at which the next scan runs.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        """Build an empty throttle.
+
+        Args:
+            clock: Source of the current time, in seconds. In production it must
+                be the same wall clock the moving window stamps its entries
+                with, hence the ``time.time`` default; a deterministic clock
+                injected by tests need only be applied consistently, so it is
+                free to start at any origin.
+        """
+        self.storage = MemoryStorage()
+        self.item = RateLimitItemPerHour(INVALID_LICENSE_MAX_PER_HOUR)
+        self.last_attempt: dict[str, float] = {}
+        self.sweep_at: int = _SWEEP_MIN_TRACKED
+        self._limiter = MovingWindowRateLimiter(self.storage)
+        self._clock = clock
+
+    def record(self, throttle_key: str) -> bool:
+        """Charge one attempt against ``throttle_key``.
+
+        Args:
+            throttle_key: Grouped client key the attempt is charged to.
+
+        Returns:
+            True while the client remains under the hourly cap, False once the
+            cap is spent.
+        """
+        allowed = self._limiter.hit(self.item, throttle_key)
+        # Refreshed even when the attempt was denied, so retention follows the
+        # last attempt rather than the first: a client still hammering after
+        # spending its cap keeps its counter alive instead of ageing out of the
+        # store while it is actively abusing us.
+        self.last_attempt[throttle_key] = self._clock()
+        self._sweep_if_crowded()
+        return allowed
+
+    def exhausted(self, throttle_key: str) -> bool:
+        """Report whether ``throttle_key`` has already spent its hourly budget.
+
+        Args:
+            throttle_key: Grouped client key to peek at.
+
+        Returns:
+            True once the cap is spent. The peek consumes nothing and triggers
+            no sweep, so asking costs the client nothing.
+        """
+        return not self._limiter.test(self.item, throttle_key)
+
+    def reset(self) -> None:
+        """Drop every counter and return the sweep mark to its floor."""
+        self.storage.reset()
+        self.last_attempt.clear()
+        self.sweep_at = _SWEEP_MIN_TRACKED
+
+    def _sweep_if_crowded(self) -> None:
+        """Evict fully rolled-off keys once the tracked set reaches the mark."""
+        if len(self.last_attempt) < self.sweep_at:
+            return
+        now = self._clock()
+        expiry = self.item.get_expiry()
+        # Snapshot: the loop mutates the dict it is walking.
+        for throttle_key, last in list(self.last_attempt.items()):
+            # Strictly greater: the library's own membership test is inclusive
+            # (an entry still occupies a slot while ``atime >= now - expiry``),
+            # so an age of exactly one expiry can still be a live key. Past
+            # that, every entry's arrival time falls below the bound, which
+            # makes evicting a key the library would still count impossible.
+            if now - last > expiry:
+                self._forget(throttle_key)
+        self.sweep_at = max(_SWEEP_MIN_TRACKED, _SWEEP_GROWTH_FACTOR * len(self.last_attempt))
+
+    def _forget(self, throttle_key: str) -> None:
+        """Drop one key from the tracking map and from the event store.
+
+        Args:
+            throttle_key: Raw client key to evict. The store is keyed by the
+                item's namespaced form of it, so purging by the raw key would
+                silently leave the entry behind.
+        """
+        del self.last_attempt[throttle_key]
+        storage_key = self.item.key_for(throttle_key)
+        # Serialise against the library's background sweeper, which truncates
+        # this key's event list under this same lock after reading it; dropping
+        # the key between those two steps would raise on that thread.
+        with self.storage.locks[storage_key]:
+            self.storage.clear(storage_key)
+
+
+_invalid_license_throttle = _InvalidLicenseThrottle()
 
 
 def record_invalid_license_attempt(throttle_key: str) -> bool:
@@ -44,7 +176,7 @@ def record_invalid_license_attempt(throttle_key: str) -> bool:
     is recorded against the moving window); returns False once the cap is
     exceeded, at which point the caller should answer 429.
     """
-    return _invalid_license_limiter.hit(_INVALID_LICENSE_ITEM, throttle_key)
+    return _invalid_license_throttle.record(throttle_key)
 
 
 def invalid_license_cap_exhausted(throttle_key: str) -> bool:
@@ -59,9 +191,9 @@ def invalid_license_cap_exhausted(throttle_key: str) -> bool:
     ``record_invalid_license_attempt``, which the caller applies after a
     verify actually fails.
     """
-    return not _invalid_license_limiter.test(_INVALID_LICENSE_ITEM, throttle_key)
+    return _invalid_license_throttle.exhausted(throttle_key)
 
 
 def reset_invalid_license_attempts() -> None:
     """Clear every invalid-license counter (test isolation between cases)."""
-    _invalid_license_storage.reset()
+    _invalid_license_throttle.reset()
