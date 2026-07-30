@@ -12,11 +12,15 @@ on:
 
 jobs:
   claude-review:
-    # Skip Dependabot PRs: GitHub does not expose Actions secrets (incl.
-    # CLAUDE_CODE_OAUTH_TOKEN) to dependabot-triggered runs, so the action would
-    # hard-fail before reviewing and block the PR's required check. Dependency
-    # bumps merge on green CI + human judgment instead.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # Skip runs Dependabot itself triggered: GitHub withholds Actions secrets
+    # (incl. CLAUDE_CODE_OAUTH_TOKEN) from a run whose ACTOR is Dependabot, so
+    # the action would hard-fail before reviewing and block the PR's check. That
+    # withholding is keyed to the actor, not to who opened the PR — and the PR's
+    # author stays `dependabot[bot]` forever, so keying the skip there suppressed
+    # the review permanently on bot PRs we had already pushed to, the very runs
+    # where the secrets ARE available. Once one of our commits lands on the
+    # branch, the synchronize run is ours and the bump gets a real review.
+    if: github.actor != 'dependabot[bot]'
 
     runs-on: ubuntu-latest
     permissions:

@@ -27,6 +27,18 @@ worktree). Your whole job is to carry your issue from Gate 1 through Gate 2.5 an
   (`.ralph/worktrees/issue-<N>`), already created off the latest `origin/main`
   on branch `issue/<N>-<slug>`.
 
+### Exception: an adopted `dependencies` lane
+
+For a `dependencies` issue the orchestrator used `fleet.sh adopt`, so your
+worktree sits on **Dependabot's own branch** (e.g. `dependabot/pip/…`), not an
+`issue/<N>-<slug>` branch, and a PR against `main` already exists. Push your
+commits to that branch; do **not** run `gh pr create`. Run
+`scripts/ralph/fleet.sh sync "$RALPH_ISSUE"` first — the bot branch is usually
+well behind `main` — then adapt forward per `scripts/ralph/PROMPT.md`. Your push
+to that branch is also what makes the Claude review runnable on it (the review
+job skips only while the PR is untouched by anyone but Dependabot), so an adapted
+bump goes through Gate 4 normally.
+
 ## The one rule that makes parallelism safe: stay in your worktree
 
 **Every file read, edit, test run, commit, and `check-all.sh` invocation happens
@@ -76,7 +88,15 @@ So, concretely:
   orchestrator owns the serialized-merge + `fleet.sh sync` step (see `FLEET.md`).
   If it hands you a post-sync conflict to resolve, fix it as a Gate-1 change and
   push normally (the sync used a merge, so no force-push is ever needed).
-- Never open a second PR for your issue, and never pick up a different issue.
+  **The one carve-out is an adopted `dependencies` lane** (above): there you run
+  `scripts/ralph/fleet.sh sync "$RALPH_ISSUE"` yourself, once, as your first
+  action. That is still the orchestrator's mechanism — `fleet.sh sync`, a merge,
+  never a hand-rolled `git merge` and never a rebase — just run at the only moment
+  the orchestrator cannot, since a bot branch arrives many commits stale and every
+  minute you spend adapting against that stale base is wasted.
+- Never open a second PR for your issue, and never pick up a different issue. In
+  an adopted `dependencies` lane that means no `gh pr create` at all — the
+  Dependabot PR is your PR.
 - Never weaken a gate. The anti-bypass block in
   `.claude/agents/shared/adepthood-constraints.md` is non-negotiable.
 - Never use the Task-tracking tools (TaskCreate/…) for this work — the GitHub
