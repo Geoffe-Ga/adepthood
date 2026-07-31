@@ -2,8 +2,9 @@ name: Graph federate
 
 # Merges adepthood's own code graph with the published knowledge graphs of its
 # satellite repos (Creek-Vault, aptitude-course, wavelength-demo,
-# WavelengthWatch) into one pan-graph and publishes it on the SAME rolling
-# `knowledge-graph` release that graph-build and graph-semantic maintain.
+# WavelengthWatch, adepthood-docs) into one pan-graph and publishes it on the
+# SAME rolling `knowledge-graph` release that graph-build and graph-semantic
+# maintain.
 #
 # This workflow uploads ONLY pan-graph.json + pan-meta.json. It NEVER writes
 # graph.json / graph-meta.json, so it cannot clobber the assets that graph-build
@@ -119,13 +120,14 @@ jobs:
           mkdir -p fed
           # name|human-repo|url — ORDER IS SIGNIFICANT: it fixes the merge-graphs
           # argument order and therefore the deterministic per-repo node-id
-          # prefixes in the pan-graph. All four satellites have default branch
+          # prefixes in the pan-graph. All five satellites have default branch
           # `main` (verified), which the raw.githubusercontent.com URLs pin.
           satellites=(
             "creek|Creek-Vault|https://github.com/Geoffe-Ga/Creek-Vault/releases/download/knowledge-graph/graph.json"
             "course|aptitude-course|https://raw.githubusercontent.com/Geoffe-Ga/aptitude-course/main/graphify-out/graph.json"
             "demo|wavelength-demo|https://raw.githubusercontent.com/Geoffe-Ga/wavelength-demo/main/graphify-out/graph.json"
             "watch|WavelengthWatch|https://raw.githubusercontent.com/Geoffe-Ga/WavelengthWatch/main/graphify-out/graph.json"
+            "docs|adepthood-docs|https://raw.githubusercontent.com/Geoffe-Ga/adepthood-docs/main/graphify-out/graph.json"
           )
           : > fed/present.txt
           present=()
@@ -149,7 +151,7 @@ jobs:
               rm -rf "fed/$name"
             fi
           done
-          # Single source of truth for the meta step: a five-repo manifest with
+          # Single source of truth for the meta step: a six-repo manifest with
           # present flags. adepthood is always present here (its fetch is fatal).
           # The satellite table is serialized straight out of the bash array so it
           # can never drift from the loop above.
