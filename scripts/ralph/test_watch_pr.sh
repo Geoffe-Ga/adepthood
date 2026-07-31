@@ -134,6 +134,22 @@ check "watcher polled exactly three times" "3" "$(cat "$COUNT_FILE")"
 run_watch behind pending behind
 check "behind is a terminal token" "WATCH 103 behind" "$(watch 103 1 30)"
 
+# changes-requested — a fresh non-LGTM verdict (upstream Creek-Vault#1097) —
+# must END the watch promptly: Gate 4 has already spoken and the orchestrator
+# owes the lane an address-feedback worker, so sleeping out the timeout on it
+# is the exact latency the watcher exists to remove. The fix lives entirely in
+# pr-ready.sh's vocabulary: the token falls outside IN_FLIGHT_TOKENS, so the
+# in-flight set itself must stay exactly (pending, awaiting-review) — adding
+# the new token there would silence this wake again.
+run_watch changes pending awaiting-review changes-requested
+rc=0
+out="$(watch 112 1 30)" || rc=$?
+check "a fresh non-LGTM verdict ends the watch with its token" "WATCH 112 changes-requested" "$out"
+check "a changes-requested watch exits 0" "0" "$rc"
+check "watcher stopped polling the moment the verdict token arrived" "3" "$(cat "$COUNT_FILE")"
+check "IN_FLIGHT_TOKENS still lists exactly pending and awaiting-review" "1" \
+  "$(grep -c 'IN_FLIGHT_TOKENS=("pending" "awaiting-review")' "$SRC" || true)"
+
 # --- pidfile idempotence: blind re-launch every wake must be free ------------
 sleep 60 &
 HOLDER=$!
