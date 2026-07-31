@@ -13,9 +13,9 @@
 
 ## Purpose
 
-This filename is retained deliberately for link stability — several
-backend source docstrings and `docs/adr/0002` reference it by path —
-even though its role has changed. It is no longer a draft contract
+This filename is retained deliberately for link stability — two backend
+source docstrings, `graph/ontology-spine.md`, and a drift-guard test
+reference it by path — even though its role has changed. It is no longer a draft contract
 awaiting cross-repo ratification. It is now a **pointer**: Creek
 Vault's own published contract is the single source of truth for
 every request/response shape, and this document holds only the pinned

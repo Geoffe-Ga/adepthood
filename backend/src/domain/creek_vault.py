@@ -23,9 +23,9 @@ Two invariants are load-bearing and deliberately encoded in the types:
   can normalize any transport failure to :class:`CreekVaultUnavailableError`
   *without* echoing the entry body or an API key into the message.
 
-Cross-references the authoritative contract in
-``docs/creek-vault-mcp-contract.md``; ontology and tier naming (notably the
-``PUBLIC``/``OPEN`` mismatch) come from there.
+Cross-references ``docs/creek-vault-mcp-contract.md`` for adepthood's own tier
+and ontology mapping (notably the ``PUBLIC``/``OPEN`` name mismatch); Creek's
+published contract, which that document points at, owns the wire shapes.
 """
 
 from __future__ import annotations

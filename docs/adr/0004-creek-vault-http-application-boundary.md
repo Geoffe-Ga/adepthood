@@ -204,17 +204,24 @@ adepthood's tier-name mapping, its Aspect/Frequency projection, its
 marginalia-kind mapping, and its shipped fallback behavior.
 
 The filename `docs/creek-vault-mcp-contract.md` is retained
-deliberately, for two reasons: link stability — five inbound
-references would otherwise need updating and re-reviewing, several of
-them backend source docstrings that cross-reference it by path
-(`domain/creek_vault.py`, `services/creek_vault_client.py`,
-`services/creek_vault_write.py`) plus `docs/adr/0002` and
-`graph/ontology-spine.md` — and because the shipped transport genuinely
+deliberately, for two reasons: link stability — four inbound
+references would otherwise need updating and re-reviewing
+(`backend/src/domain/creek_vault.py` and
+`backend/src/services/creek_vault_client.py`, which cross-reference it
+by path from their module docstrings; `graph/ontology-spine.md`; and
+the drift guard `backend/tests/test_contract_version_docs.py`, which
+reads the file by path) — and because the shipped transport genuinely
 is still MCP until the HTTP cutover in Decision 1 lands; renaming a
 doc titled "MCP contract" while MCP is still the live transport would
 be premature.
 
-**Rejected — deleting or renaming the file:** breaks five live inbound
+Two former inbound references are repointed rather than retained,
+because they cited the doc for material it no longer owns:
+`docs/adr/0002` and `backend/src/services/creek_vault_write.py` both
+now cite Decision 6 below, which is where the intimate-transit rule
+actually lives.
+
+**Rejected — deleting or renaming the file:** breaks four live inbound
 references for no reader benefit; nothing about the filename is wrong
 while MCP remains the shipped transport.
 

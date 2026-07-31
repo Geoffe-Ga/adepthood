@@ -27,14 +27,14 @@ streamable-HTTP framing (initialize, then ``tools/call``) and refuses a
 plaintext ``http://`` URL to any non-loopback host, because every session
 carries the ``CREEK_VAULT_API_KEY`` bearer credential (and each call's tier
 metadata) that must never cross a network in cleartext -- TLS misconfiguration
-fails closed at construction. This seam does not itself encrypt the
-entry *body*: the contract's end-to-end, ciphertext-only intimate-transit rule
-(a client-held key the operator cannot decrypt) is a property of the write path
-built on this seam -- enforced where the body is assembled -- not of the seam's
-construction, and so is deliberately out of scope here rather than forgotten.
+fails closed at construction. This seam does not itself encrypt the entry
+*body*: the end-to-end, ciphertext-only intimate-transit rule of Decision 6
+in ``docs/adr/0004-creek-vault-http-application-boundary.md`` (a user-held
+key the operator cannot decrypt) is enforced where the body is assembled, in
+the write path built on this seam -- out of scope here, not forgotten.
 
-Cross-references ``docs/creek-vault-mcp-contract.md`` for the wire surface and
-the graceful-degradation guarantees.
+Cross-references ``docs/creek-vault-mcp-contract.md`` for the shipped
+per-capability fallback rules; Creek's published contract owns the wire shapes.
 """
 
 from __future__ import annotations
