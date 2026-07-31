@@ -1,1 +1,8 @@
 graphifyy==0.9.26
+# Anthropic SDK for the `--backend claude` semantic pass (graph-semantic.yml).
+# graphifyy treats it as an optional extra, so it must be pinned explicitly —
+# without it every semantic chunk fails with "the 'anthropic' package is
+# required for this backend". Kept on its own line (not the [anthropic]
+# extra) because the workflows parse the graphifyy pin with
+# `sed -n 's/^graphifyy==//p'`. Version matches backend/requirements.txt.
+anthropic==0.120.0
