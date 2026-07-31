@@ -32,8 +32,8 @@ Runs:
   3. Type checking (MyPy)
   4. Security checks (Bandit + Safety)
   5. Complexity analysis (Radon)
-  6. Unit tests
-  7. Coverage report
+  6. Unit tests (measured under coverage)
+  7. Coverage report (reports on the data step 6 wrote; no second test run)
 
 OPTIONS:
     --verbose   Show detailed output
@@ -114,8 +114,14 @@ run_check "Formatting" "format.sh" --check
 run_check "Type checking" "typecheck.sh"
 run_check "Security checks" "security.sh"
 run_check "Complexity analysis" "complexity.sh"
+# The coverage stage reports on whatever data is on disk, so the disk has to
+# be cleared first: coverage.py appends parallel data files, and a leftover
+# .coverage or coverage.xml would be reported - and handed to CI - as if it
+# described this run.
+rm -f .coverage .coverage.* coverage.xml
+
 run_check "Unit tests" "test.sh" --unit
-run_check "Coverage report" "coverage.sh"
+run_check "Coverage report" "coverage.sh" --report-only --xml
 
 echo "=== Quality Checks Summary ==="
 echo "Passed: ${#PASSED_CHECKS[@]}"

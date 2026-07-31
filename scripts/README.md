@@ -17,7 +17,7 @@ scripts/
 │   ├── format.sh      # ruff format
 │   ├── typecheck.sh   # mypy
 │   ├── test.sh        # pytest (--unit / --integration / --e2e / --all)
-│   ├── coverage.sh    # pytest with coverage (≥90%)
+│   ├── coverage.sh    # pytest with coverage (≥90%); --report-only reports on existing data
 │   ├── security.sh    # bandit + pip-audit
 │   ├── complexity.sh  # radon + xenon
 │   └── pr-status.sh   # gh CLI workflow monitor for PRs
