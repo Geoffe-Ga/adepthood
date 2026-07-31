@@ -16,12 +16,12 @@ so a successful write always carries an empty tag tuple.
 **Intimate content is deliberately not sent here.** An entry classified
 ``intimate`` short-circuits to :attr:`VaultWriteStatus.SKIPPED_INTIMATE` before
 any vault call -- not even a handshake. This is a considered deferral, not a
-permanent prohibition: the Creek Vault contract's intimate transit path
-(``docs/creek-vault-mcp-contract.md`` decisions (a) ciphertext-only, client-held
-key the operator cannot decrypt, and (b) attestation-gated transit) is not yet
-built. Until that path exists, routing intimate bodies through this plaintext
-ingest surface would violate the writer's chosen depth, so the safe answer is to
-withhold them here and revisit once the encrypted, attested channel lands.
+permanent prohibition: the intimate-transit path recorded in Decision 6 of
+``docs/adr/0004-creek-vault-http-application-boundary.md`` -- (a) ciphertext
+under a user-held key the operator cannot decrypt, (b) writes only against an
+attested enclave -- is entirely unshipped. Until it exists, routing intimate
+bodies through this plaintext ingest surface would violate the writer's chosen
+depth, so the safe answer is to withhold them here until that channel lands.
 """
 
 from __future__ import annotations

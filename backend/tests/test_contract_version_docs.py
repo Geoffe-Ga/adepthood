@@ -1,0 +1,185 @@
+"""Drift guards between the Creek Vault contract in code and the docs that pin it.
+
+Two kinds of restatement rot silently without a guard, and both are covered here.
+
+*Version restatements.* ``CONTRACT_VERSION`` in ``domain.creek_vault`` is the
+single source of truth for the version adepthood advertises at handshake.  The
+MCP contract document and the ADR that pins the HTTP application boundary both
+restate that version in a bolded bullet.  These meta-tests read the two markdown
+files and assert the restated versions still equal the constant, that the version
+is strict semver (no draft suffix), and that the contract doc keeps a live
+pointer to the ADR.
+
+*Ownership pointers.* The intimate-transit sub-decisions live in the boundary
+ADR's Decision 6; the contract doc explicitly disclaims owning them.  A docstring
+that cites the contract doc as the source of those decisions therefore points at
+a document that denies holding the rule.  The remaining meta-tests pin that
+ownership from both ends: the docs must keep saying where the rule lives, and no
+``backend/src`` module docstring may cite the contract doc as a decision's owner
+or discuss intimate transit without naming the ADR that owns it.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+from collections.abc import Iterator
+from pathlib import Path
+
+from domain.creek_vault import CONTRACT_VERSION
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ADR_DOC = _REPO_ROOT / "docs" / "adr" / "0004-creek-vault-http-application-boundary.md"
+_CONTRACT_DOC = _REPO_ROOT / "docs" / "creek-vault-mcp-contract.md"
+_BACKEND_SRC = _REPO_ROOT / "backend" / "src"
+
+_STRICT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+_CONTRACT_VERSION_LABEL = re.compile(
+    r"^- \*\*Contract version:\*\* (\d+\.\d+\.\d+)",
+    re.MULTILINE,
+)
+_PINNED_VERSION_LABEL = re.compile(
+    r"^- \*\*Pinned contract version:\*\* (\d+\.\d+\.\d+)",
+    re.MULTILINE,
+)
+
+_ADR_POINTER = "adr/0004-creek-vault-http-application-boundary.md"
+_RETIRED_DRAFT_VERSION = "0.1.0-draft"
+_EXPECTED_LABEL_MATCHES = 1
+
+# The repo-relative paths source docstrings cite the two documents by.
+_CONTRACT_DOC_PATH = "docs/creek-vault-mcp-contract.md"
+_ADR_DOC_PATH = "docs/adr/0004-creek-vault-http-application-boundary.md"
+
+# The sentence the contract doc uses to hand the intimate-transit rule to the
+# ADR.  If it is reworded, the docstrings that rely on it need re-reviewing too.
+_CONTRACT_DOC_DISCLAIMER = "Decision 6, not in this document"
+
+# The ADR section that owns the rule, and the four sub-decisions it carries.
+_INTIMATE_DECISION_HEADING = "## Decision 6"
+_INTIMATE_SUB_DECISIONS = (
+    "**(a) Transit topology",
+    "**(b) Write-vs-read",
+    "**(c) Reflection-output provenance",
+    "**(d) Custody end-state",
+)
+
+# Matches a docstring citing the contract doc as the *owner* of a decision, e.g.
+# "``docs/creek-vault-mcp-contract.md`` decisions (a) ...".  Creek's published
+# contract owns wire shapes and the ADRs own decisions; this doc owns neither.
+# Deliberately narrow, to keep the legitimate citations it still earns (its tier
+# mapping and fallback rules) from tripping it; the keyword-pair check below is
+# the wording-independent backstop for phrasings this pattern would miss.
+_CONTRACT_DOC_AS_DECISION_OWNER = re.compile(
+    r"creek-vault-mcp-contract\.md`*(?:'s)?[\s,]*(?:sub-)?decisions?\b",
+    re.IGNORECASE,
+)
+
+# A module docstring mentioning both of these is discussing the intimate-transit
+# rule and must therefore name the ADR that records it.
+_INTIMATE_TRANSIT_MARKERS = ("intimate", "transit")
+
+
+def _module_docstrings() -> Iterator[tuple[Path, str]]:
+    """Yield every ``backend/src`` module path with its whitespace-normalized docstring.
+
+    Normalizing runs of whitespace to single spaces lets the pointer patterns
+    match across the line wrapping the formatter imposes on long docstrings.
+    """
+    for path in sorted(_BACKEND_SRC.rglob("*.py")):
+        docstring = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))
+        if docstring:
+            yield path, " ".join(docstring.split())
+
+
+def test_contract_version_is_strict_semver() -> None:
+    """The advertised contract version carries no pre-release suffix."""
+    assert _STRICT_SEMVER.match(CONTRACT_VERSION), (
+        f"CONTRACT_VERSION must be strict MAJOR.MINOR.PATCH semver, got {CONTRACT_VERSION!r}."
+    )
+
+
+def test_boundary_adr_exists() -> None:
+    """The ADR pinning the Creek Vault HTTP application boundary is present."""
+    assert _ADR_DOC.is_file(), f"Missing boundary ADR at {_ADR_DOC}."
+
+
+def test_contract_doc_version_matches_constant() -> None:
+    """The contract doc's version bullet restates CONTRACT_VERSION exactly."""
+    matches = _CONTRACT_VERSION_LABEL.findall(_CONTRACT_DOC.read_text())
+    assert len(matches) == _EXPECTED_LABEL_MATCHES, (
+        f"Expected exactly one '- **Contract version:** <semver>' line in {_CONTRACT_DOC}, "
+        f"found {len(matches)}: {matches}."
+    )
+    assert matches[0] == CONTRACT_VERSION, (
+        f"Contract doc advertises {matches[0]!r} but CONTRACT_VERSION is {CONTRACT_VERSION!r}."
+    )
+
+
+def test_adr_pinned_version_matches_constant() -> None:
+    """ADR 0004's pinned-version bullet restates CONTRACT_VERSION exactly."""
+    matches = _PINNED_VERSION_LABEL.findall(_ADR_DOC.read_text())
+    assert len(matches) == _EXPECTED_LABEL_MATCHES, (
+        f"Expected exactly one '- **Pinned contract version:** <semver>' line in {_ADR_DOC}, "
+        f"found {len(matches)}: {matches}."
+    )
+    assert matches[0] == CONTRACT_VERSION, (
+        f"ADR pins {matches[0]!r} but CONTRACT_VERSION is {CONTRACT_VERSION!r}."
+    )
+
+
+def test_contract_doc_points_at_adr_and_drops_draft_version() -> None:
+    """The contract doc links the boundary ADR and no longer names the draft version."""
+    text = _CONTRACT_DOC.read_text()
+    assert _ADR_POINTER in text, (
+        f"Contract doc must link the boundary ADR ({_ADR_POINTER}) so the pointer cannot rot."
+    )
+    assert _RETIRED_DRAFT_VERSION not in text, (
+        f"Contract doc still mentions the retired {_RETIRED_DRAFT_VERSION!r} version."
+    )
+
+
+def test_contract_doc_disclaims_the_intimate_transit_rule() -> None:
+    """The contract doc still hands the intimate-transit rule to the ADR by name."""
+    assert _CONTRACT_DOC_DISCLAIMER in _CONTRACT_DOC.read_text(encoding="utf-8"), (
+        f"Contract doc must keep saying the intimate-transit rule lives in the ADR "
+        f"({_CONTRACT_DOC_DISCLAIMER!r}); source docstrings cite the ADR on that basis."
+    )
+
+
+def test_boundary_adr_owns_the_intimate_transit_sub_decisions() -> None:
+    """ADR 0004's Decision 6 still carries all four intimate-transit sub-decisions."""
+    text = _ADR_DOC.read_text(encoding="utf-8")
+    assert _INTIMATE_DECISION_HEADING in text, (
+        f"ADR must keep the {_INTIMATE_DECISION_HEADING!r} heading that docstrings cite."
+    )
+    missing = [marker for marker in _INTIMATE_SUB_DECISIONS if marker not in text]
+    assert not missing, f"ADR Decision 6 is missing sub-decisions: {missing}."
+
+
+def test_no_backend_source_cites_the_contract_doc_as_a_decision_owner() -> None:
+    """No ``backend/src`` docstring attributes a decision to the pointer doc."""
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for path, docstring in _module_docstrings()
+        if _CONTRACT_DOC_AS_DECISION_OWNER.search(docstring)
+    ]
+    assert not offenders, (
+        f"These module docstrings cite {_CONTRACT_DOC_PATH} as a decision's owner, but "
+        f"that document disclaims owning decisions -- cite {_ADR_DOC_PATH} instead: "
+        f"{offenders}."
+    )
+
+
+def test_backend_sources_discussing_intimate_transit_cite_the_adr() -> None:
+    """Docstrings covering intimate transit name the ADR that records the rule."""
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for path, docstring in _module_docstrings()
+        if all(marker in docstring.lower() for marker in _INTIMATE_TRANSIT_MARKERS)
+        and _ADR_DOC_PATH not in docstring
+    ]
+    assert not offenders, (
+        f"These module docstrings discuss intimate transit without citing "
+        f"{_ADR_DOC_PATH}, the document that records the rule: {offenders}."
+    )
