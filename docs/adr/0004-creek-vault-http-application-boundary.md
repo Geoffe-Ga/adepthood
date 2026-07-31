@@ -26,9 +26,9 @@ seam for this ADR:
 3. Creek's `reflect` returns `{status, tool, tier_ceiling, routed_tier,
    notes[], essay_grounded, essay?}`, each note exactly `{quote, kind,
    note}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`), while
-   adepthood's client reads a bare scalar `payload["reflection"]`
-   (`creek_vault_client.py:406-407`) and never touches `notes`,
-   `essay`, or `essay_grounded`.
+   adepthood's client reads a bare scalar
+   `payload.get("reflection")` (`creek_vault_client.py:406-407`) and
+   never touches `notes`, `essay`, or `essay_grounded`.
 4. Creek's `wheel` returns `{status, tool, tier_ceiling,
    total_classified, unclassified, wheel: {F1..F10: {name, count,
    share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`), while
@@ -282,7 +282,7 @@ them.
 | --- | --- | --- | --- |
 | `reflect` params `{consumer, body, tier_ceiling}` (`backend/src/services/creek_vault_client.py:277-279`) | `reflect(content, entry_ref, privacy_tier_ceiling)` (`creek-tools/creek_mcp/server.py:332-346`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #2047 |
 | `wheel` params `{"consumer": CONSUMER_ID}` (`creek_vault_client.py:426`) | `wheel(privacy_tier_ceiling)` only (`server.py:349-358`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #2047 |
-| `reflect` result read as scalar `payload["reflection"]` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
+| `reflect` result read as scalar `payload.get("reflection")` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
 | `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity | adepthood #1937 |
 | Major-only version gate, a no-op pre-1.0 (`_CONTRACT_MAJOR`, `creek_vault_client.py:79,242`) | `CONTRACT_VERSION = "0.2.0"` (`creek-tools/creek_mcp/contract.py:18`) | Exact-minor comparison per Decision 4; pin lives here, comparison code lands in #2045 | both repos |
 

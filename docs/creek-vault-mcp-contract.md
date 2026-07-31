@@ -81,7 +81,7 @@ Creek's `creek.reflect` emits margin notes with a `kind` drawn from
 seven values: `{reframe, fear, longing, value, pattern, tension,
 gift}` (`creek-tools/creek_mcp/tools/reflect.py:85`). Adepthood's
 `MarginaliaKind` permits only three: `{theme, connection, symbol}`
-(`backend/src/models/marginalia.py:23-27`), enforced by a database
+(`backend/src/models/marginalia.py:23-28`), enforced by a database
 `CHECK` constraint (`marginalia.py:42-45`) and mirrored in
 `domain/resonance.py:21`'s `VALID_KINDS`. A raw passthrough of Creek's
 `kind` would be rejected by that constraint outright — the two
@@ -97,17 +97,21 @@ Every capability degrades independently; a vault missing one
 capability is still used for the others it supports:
 
 - **JOURNAL** — if absent from the handshake, or the vault is
-  otherwise unavailable, the write path reports `DEGRADED` or
-  `UNAVAILABLE` (`backend/src/services/creek_vault_write.py:83-90`);
-  the operator's own Postgres remains the sole system of record for
-  that content either way.
+  otherwise unavailable, the write path reports `UNAVAILABLE`
+  (`backend/src/services/creek_vault_write.py:83-90`); if the
+  handshake succeeds but the ingest call itself fails, it reports
+  `DEGRADED` (`creek_vault_write.py:153`). The operator's own
+  Postgres remains the sole system of record for that content
+  either way.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path (`backend/src/services/creek_vault_reflect.py:105-120`).
   Content already flagged by the care gate never calls the vault for a
   reflection at all, regardless of vault availability.
-- **WHEEL** — if absent, or if the returned payload fails field-level
-  validation, adepthood computes `WheelBalanceResponse` locally
-  (`backend/src/services/creek_vault_wheel.py:95-110`).
+- **WHEEL** — if absent, or if the returned payload fails
+  field-level validation, `fetch_vault_wheel` returns `None`
+  (`backend/src/services/creek_vault_wheel.py:97-113`), and
+  `select_wheel_balance` then falls back to computing the balance
+  locally (`creek_vault_wheel.py:115-120`).
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.
