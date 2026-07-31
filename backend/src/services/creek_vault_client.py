@@ -36,7 +36,11 @@ Transport security: both configured transports refuse a plaintext ``http://``
 URL to any non-loopback host, because every request carries the
 ``CREEK_VAULT_API_KEY`` bearer credential (and, over MCP, each call's tier
 metadata) that must never cross a network in cleartext -- TLS misconfiguration
-fails closed at construction, before the key is bound to anything.
+fails closed at construction, before the key is bound to anything. Both also
+refuse a URL carrying userinfo, a query, or a fragment: userinfo is itself a
+credential that httpx would log unmasked and turn into a Basic-auth downgrade
+of our bearer, and a query or fragment would silently redirect the credential
+away from the endpoint the operator configured.
 :class:`_McpStreamableHttpTransport` speaks MCP streamable-HTTP framing
 (initialize, then ``tools/call``); :class:`HttpCreekVaultClient` speaks
 request/response JSON over a shared, credential-free pooled connection
@@ -53,13 +57,14 @@ per-capability fallback rules; Creek's published contract owns the wire shapes.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import NoReturn, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 import httpx
 from mcp import ClientSession
@@ -90,16 +95,31 @@ _VAULT_TIMEOUT_SECONDS = 10.0
 
 # The same budget applied to each phase of an HTTP call separately -- connect,
 # read, write, and pool acquisition -- rather than as httpx's bare scalar. Naming
-# every phase keeps the ceiling explicit and total: a vault that accepts the
-# connection and then never answers is bounded by the read phase, and a starved
-# connection pool is bounded by the pool phase, so no phase can silently inherit
-# an unbounded default.
+# every phase means none can silently inherit an unbounded default: a vault that
+# accepts the connection and then goes quiet is bounded by the read phase, and a
+# starved connection pool is bounded by the pool phase. These are per-phase
+# budgets, *not* a request deadline -- httpx restarts the read budget on every
+# socket read, so a vault that trickles stays inside all four indefinitely.
+# Bounding the call as a whole is :data:`_VAULT_TOTAL_DEADLINE_SECONDS`'s job.
 _VAULT_HTTP_TIMEOUT = httpx.Timeout(
     connect=_VAULT_TIMEOUT_SECONDS,
     read=_VAULT_TIMEOUT_SECONDS,
     write=_VAULT_TIMEOUT_SECONDS,
     pool=_VAULT_TIMEOUT_SECONDS,
 )
+
+# How many per-phase budgets one whole capability fetch may span. Three is the
+# count of phases a single GET actually traverses -- pool acquisition, connect,
+# read -- so a request that is legitimately slow at every one of them still
+# finishes inside the deadline, while a vault that never finishes does not.
+_VAULT_DEADLINE_PHASE_BUDGETS = 3
+
+# Wall-clock ceiling (seconds) on one whole capability fetch. Necessary because
+# httpx's phase budgets are not a request deadline: the ``read`` timeout is
+# restarted by every socket read, so a vault trickling one byte just inside it
+# stays within all four budgets forever while holding a pooled connection and a
+# worker -- and the journal write path handshakes on every write.
+_VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TIMEOUT_SECONDS * _VAULT_DEADLINE_PHASE_BUDGETS
 
 # How a "MAJOR.MINOR.PATCH" version string decomposes, and how many of its
 # leading components must match for two contract versions to interoperate. ADR
@@ -183,19 +203,61 @@ _PROTOCOL_MCP = "mcp"
 _PROTOCOL_HTTP = "http"
 
 
-def _require_secure_vault_url(url: str) -> None:
-    """Reject a plaintext vault URL to a non-loopback host, failing closed.
+# URL components a configured vault URL must not carry, in the order their
+# names are reported. ``userinfo`` (the ``user:pass@`` prefix) is itself a
+# credential: httpx renders it *unmasked* in ``str(url)`` -- which is what its
+# own INFO request log formats -- and, absent an explicit ``auth=``, derives
+# ``BasicAuth`` from it whose auth flow *assigns* ``Authorization``, silently
+# replacing our bearer with a weaker scheme. ``query`` and ``fragment`` break
+# the capability URL instead: it is built by appending a path to the configured
+# string, so either one swallows that path and aims the credential at an
+# endpoint the operator never configured.
+_FORBIDDEN_URL_PARTS = ("userinfo", "query", "fragment")
 
-    A configured vault is reached over :class:`_McpStreamableHttpTransport`,
-    whose MCP streamable-HTTP session sends the ``CREEK_VAULT_API_KEY`` bearer
-    credential (and each call's tier metadata) over the wire. Allowing a
-    plaintext ``http://`` URL to a remote host would expose that credential in
-    cleartext, so a misconfiguration raises
-    here rather than silently leaking. Plaintext to a loopback host is permitted
-    for local development. The message names only the scheme and host -- never
-    the API key.
+
+def _forbidden_url_parts(parsed: SplitResult) -> tuple[str, ...]:
+    """Return the names of the disallowed components ``parsed`` carries.
+
+    Userinfo counts as present whenever either half is set, so a degenerate
+    ``https://user@host`` (empty password) is caught alongside the full form.
+    """
+    carried = (
+        parsed.username is not None or parsed.password is not None,
+        bool(parsed.query),
+        bool(parsed.fragment),
+    )
+    return tuple(name for name, found in zip(_FORBIDDEN_URL_PARTS, carried, strict=True) if found)
+
+
+def _require_bare_vault_url(parsed: SplitResult) -> None:
+    """Reject a vault URL carrying userinfo, a query, or a fragment.
+
+    The message names only the offending *component names*: it reaches logs,
+    and one of the components it can name -- userinfo -- is a credential, so
+    echoing any value here would be the very leak this check exists to prevent.
+    """
+    parts = _forbidden_url_parts(parsed)
+    if parts:
+        raise ValueError(f"CREEK_VAULT_URL must not carry these URL components: {', '.join(parts)}")
+
+
+def _require_secure_vault_url(url: str) -> None:
+    """Reject a vault URL that is unsafe to bind a credential to, failing closed.
+
+    Guards both configured transports -- :class:`_McpStreamableHttpTransport`
+    and :class:`HttpCreekVaultClient` -- each of which sends the
+    ``CREEK_VAULT_API_KEY`` bearer credential (and, over MCP, each call's tier
+    metadata) over the wire, so any future transport must keep calling it too.
+    Two rules: the URL must carry no userinfo, query, or fragment
+    (:func:`_require_bare_vault_url`, applied to every scheme), and a plaintext
+    ``http://`` URL is allowed only to a loopback host, since cleartext to a
+    remote host would expose the credential on the network. A misconfiguration
+    raises here rather than silently leaking, before the key is bound to
+    anything. The message names only component names, the scheme, and the host
+    -- never the API key.
     """
     parsed = urlsplit(url)
+    _require_bare_vault_url(parsed)
     if parsed.scheme == "https":
         return
     if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
@@ -525,6 +587,12 @@ class HandshakeDegradeReason(enum.StrEnum):
     while an unreachable vault is an infrastructure problem, and a malformed
     payload is a vault bug. Values are the wire strings telemetry counts by, so
     they are part of this module's contract and must not be reworded casually.
+
+    ``UNREACHABLE`` is the widest of the four and its name slightly overstates
+    it: every non-2xx status lands there too, so it also absorbs a 401 (a bad
+    credential -- a configuration problem) and a 500 (a vault-side fault).
+    Telemetry should read it as "the call did not complete", not strictly as
+    "the network is down".
     """
 
     UNREACHABLE = "unreachable"
@@ -550,7 +618,13 @@ def _build_pooled_vault_client() -> httpx.AsyncClient:
     header per request; the pool contributes only the reused connection and the
     timeout budget.
     """
-    return httpx.AsyncClient(timeout=_VAULT_HTTP_TIMEOUT)
+    # ``follow_redirects`` is pinned rather than inherited from httpx's default:
+    # not following redirects is a security property here, not a preference.
+    # httpx preserves an *explicitly set* ``Authorization`` header across a
+    # same-scheme cross-host redirect, so a hijacked or compromised vault could
+    # 302 our bearer straight to an attacker's host. Refusing to follow turns
+    # that into a non-2xx status, which degrades the handshake to unreachable.
+    return httpx.AsyncClient(timeout=_VAULT_HTTP_TIMEOUT, follow_redirects=False)
 
 
 class _VaultHttpPool:
@@ -655,6 +729,15 @@ class HttpCreekVaultClient:
         Resolved per call rather than in ``__init__`` so merely constructing an
         adapter never forces the pool into existence, and so a pool closed and
         later reopened is picked up without rebuilding the adapter.
+
+        One narrow window remains, by choice: a request that has already taken
+        the pooled client when :func:`close_creek_vault_http_pool` runs at
+        shutdown will see httpx's ``RuntimeError("Cannot send a request, as the
+        client has been closed.")``. That is deliberately *not* in any degrade
+        set -- catching bare ``RuntimeError`` would mask genuine bugs, and this
+        one can only surface as a process is already stopping. The pool
+        self-heals for every later call, because :meth:`_VaultHttpPool.aclose`
+        nulls the slot and the next :meth:`get` builds a fresh client.
         """
         if self._http_client is not None:
             return self._http_client
@@ -669,11 +752,19 @@ class HttpCreekVaultClient:
         non-JSON body raises ``json.JSONDecodeError``; both are degraded by the
         caller. A body that decodes to something other than a JSON object is a
         malformed payload, so it raises ``TypeError`` rather than being cast.
+
+        The request runs under a whole-call deadline because httpx's ``read``
+        budget is per socket-read rather than a deadline, so a trickling vault
+        would otherwise hold this coroutine (and its pooled connection) open
+        indefinitely. Expiry raises ``TimeoutError``, an ``OSError`` subclass,
+        so it lands in the caller's existing transport branch and degrades to
+        unreachable -- the degrade set is unchanged.
         """
-        response = await self._active_client().get(
-            f"{self._url}{_CAPABILITIES_PATH}",
-            headers={"Authorization": f"Bearer {self._api_key}"},
-        )
+        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
+            response = await self._active_client().get(
+                f"{self._url}{_CAPABILITIES_PATH}",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping):

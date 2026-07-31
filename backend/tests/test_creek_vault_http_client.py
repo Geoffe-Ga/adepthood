@@ -9,8 +9,9 @@ has not shipped.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -34,10 +35,12 @@ from main import app, lifespan
 from services.creek_vault_client import (
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
+    _VAULT_TOTAL_DEADLINE_SECONDS,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
+    _build_pooled_vault_client,
     _contract_version_compatible,
     _VaultHttpPool,
     build_creek_vault_client,
@@ -53,11 +56,36 @@ _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
 _SENTINEL_KEY = "SENTINEL_VAULT_KEY_DO_NOT_LEAK"
 
+# A password smuggled into the URL's userinfo component. httpx renders userinfo
+# unmasked in ``str(url)`` and in its own INFO request log, and derives Basic
+# auth from it that silently replaces our bearer -- so the adapter must refuse
+# such a URL, and its refusal message must not repeat this value.
+_URL_PASSWORD = "URLPASSWORD_DO_NOT_LEAK"  # pragma: allowlist secret
+
+_USERINFO_VAULT_URL = f"https://opuser:{_URL_PASSWORD}@vault.example.test"
+
+# A configured URL carrying a path prefix: still legal, and the capability path
+# must be appended to it rather than replacing it.
+_PATH_VAULT_URL = f"{_VAULT_URL}/vault/"
+
 _ENTRY_BODY = "a floor-level journal entry"
 
 _CREATED_AT = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
 
 _POOL_ATTR = "services.creek_vault_client._VAULT_HTTP_POOL"
+
+_DEADLINE_ATTR = "services.creek_vault_client._VAULT_TOTAL_DEADLINE_SECONDS"
+
+# A whole-request deadline short enough to expire during a test, paired with a
+# handler sleep two orders of magnitude longer so the deadline -- never the
+# sleep -- is what ends the call. The sleep is cancelled the moment the deadline
+# fires, so the test costs milliseconds, not seconds.
+_TINY_DEADLINE_SECONDS = 0.02
+_SLOW_HANDLER_SLEEP_SECONDS = 5.0
+
+# The redirect status a hijacked or misconfigured vault would answer with; it
+# must degrade rather than forward the bearer to the Location host.
+_REDIRECT_STATUS_FOUND = 302
 
 _PROTOCOL_MEMBERS = (
     "handshake",
@@ -70,7 +98,11 @@ _PROTOCOL_MEMBERS = (
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
-ClientFactory = Callable[[Handler], httpx.AsyncClient]
+# Narrower than ``Awaitable`` on purpose: ``httpx.MockTransport`` accepts a
+# coroutine function specifically, so a wider alias fails to type-check at the
+# call site.
+AsyncHandler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
+ClientFactory = Callable[[Handler | AsyncHandler], httpx.AsyncClient]
 
 
 def _handshake_payload(
@@ -119,6 +151,27 @@ def _raising_handler(exc: Exception) -> Handler:
         raise exc
 
     return _handle
+
+
+def _redirect_handler(location: str) -> Handler:
+    """Return a handler answering with a redirect to ``location`` and no body."""
+
+    def _handle(_request: httpx.Request) -> httpx.Response:
+        """Answer with the fixed redirect."""
+        return httpx.Response(_REDIRECT_STATUS_FOUND, headers={"Location": location})
+
+    return _handle
+
+
+async def _slow_handler(_request: httpx.Request) -> httpx.Response:
+    """Sleep far past any plausible deadline instead of answering.
+
+    Stands in for a vault that accepts the connection and then trickles: every
+    per-phase httpx budget stays unexhausted, so only a whole-request deadline
+    can end the call.
+    """
+    await asyncio.sleep(_SLOW_HANDLER_SLEEP_SECONDS)
+    return httpx.Response(200, json={})
 
 
 def _healthy_handler(capabilities: Sequence[str]) -> Handler:
@@ -195,7 +248,7 @@ async def http_clients() -> AsyncGenerator[ClientFactory, None]:
     """Yield a factory for MockTransport-backed clients, closing each afterwards."""
     created: list[httpx.AsyncClient] = []
 
-    def _build(handler: Handler) -> httpx.AsyncClient:
+    def _build(handler: Handler | AsyncHandler) -> httpx.AsyncClient:
         """Build one in-memory client and register it for teardown."""
         client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler), timeout=_VAULT_HTTP_TIMEOUT
@@ -367,6 +420,46 @@ async def test_pooled_client_carries_the_explicit_timeout() -> None:
     client = pool.get()
     assert client.timeout == _VAULT_HTTP_TIMEOUT
     await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pooled_client_refuses_to_follow_redirects() -> None:
+    """The pooled client pins redirect-following off rather than inheriting the default."""
+    client = _build_pooled_vault_client()
+    try:
+        assert client.follow_redirects is False
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_redirecting_vault_degrades_instead_of_forwarding_the_bearer(
+    http_clients: ClientFactory,
+) -> None:
+    """A 302 degrades to unreachable: the bearer is never re-sent to the Location host."""
+    handler = _redirect_handler("https://attacker.example.test/v1/capabilities")
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+
+
+def test_the_total_deadline_exceeds_a_single_phase_budget() -> None:
+    """The whole-request deadline leaves room for a slow connect *and* a slow read."""
+    assert _VAULT_TOTAL_DEADLINE_SECONDS > _VAULT_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_a_trickling_vault_is_bounded_by_the_whole_request_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    http_clients: ClientFactory,
+) -> None:
+    """A call that outlives the deadline degrades to unreachable rather than hanging."""
+    monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(_slow_handler))
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
 
 
 @pytest.mark.asyncio
@@ -573,6 +666,46 @@ def test_http_factory_accepts_a_plaintext_loopback_url(monkeypatch: pytest.Monke
     monkeypatch.setenv("CREEK_VAULT_API_KEY", _API_KEY)
     monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "http")
     assert isinstance(build_creek_vault_client(), HttpCreekVaultClient)
+
+
+@pytest.mark.parametrize(
+    ("url", "part"),
+    [
+        pytest.param(_USERINFO_VAULT_URL, "userinfo", id="userinfo"),
+        pytest.param(f"{_VAULT_URL}/api?tenant=1", "query", id="query"),
+        pytest.param(f"{_VAULT_URL}#frag", "fragment", id="fragment"),
+    ],
+)
+def test_http_client_rejects_a_url_carrying_userinfo_query_or_fragment(url: str, part: str) -> None:
+    """Userinfo (a credential, and a silent Basic-auth downgrade), query, and fragment refuse."""
+    with pytest.raises(ValueError, match=part) as exc_info:
+        HttpCreekVaultClient(url, _SENTINEL_KEY)
+    message = str(exc_info.value)
+    assert _URL_PASSWORD not in message
+    assert _SENTINEL_KEY not in message
+
+
+def test_mcp_transport_rejects_a_url_carrying_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP transport shares the validator, so it refuses the same URL shapes."""
+    monkeypatch.setenv("CREEK_VAULT_URL", _USERINFO_VAULT_URL)
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "mcp")
+    with pytest.raises(ValueError, match="userinfo") as exc_info:
+        build_creek_vault_client()
+    message = str(exc_info.value)
+    assert _URL_PASSWORD not in message
+    assert _SENTINEL_KEY not in message
+
+
+@pytest.mark.asyncio
+async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
+    http_clients: ClientFactory,
+) -> None:
+    """A path prefix stays legal and the capability path is appended to it."""
+    handler = _RecordingHandler(_handshake_payload([CreekCapability.JOURNAL.value]))
+    client = HttpCreekVaultClient(_PATH_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    assert (await client.handshake()).available is True
+    assert str(handler.requests[0].url) == f"{_VAULT_URL}/vault/v1/capabilities"
 
 
 @pytest.mark.parametrize(
