@@ -74,6 +74,7 @@ from services.content_repository import (
     content_version_info,
     get_content_repository,
 )
+from services.creek_vault_client import close_creek_vault_http_pool
 
 logger = logging.getLogger(__name__)
 
@@ -532,6 +533,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     _log_botmason_provider()
 
     yield
+
+    # The pooled Creek Vault connection must not outlive the app: closing it on
+    # shutdown releases its sockets deterministically instead of leaving an open
+    # httpx client to be reclaimed during interpreter teardown. A no-op when no
+    # vault was ever contacted, since the pool builds lazily.
+    await close_creek_vault_http_pool()
 
 
 app = FastAPI(lifespan=lifespan)

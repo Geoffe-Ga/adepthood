@@ -49,7 +49,7 @@ _VAULT_URL = "https://vault.example.test"
 
 _CAPABILITIES_URL = f"{_VAULT_URL}/v1/capabilities"
 
-_API_KEY = "creek-vault-test-key"
+_API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
 _SENTINEL_KEY = "SENTINEL_VAULT_KEY_DO_NOT_LEAK"
 
