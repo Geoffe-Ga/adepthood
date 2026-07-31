@@ -42,8 +42,12 @@ readonly DEFAULT_TIMEOUT_SECONDS=1800
 readonly MAX_QUIET_ERRORS=3
 
 # The two pr-ready.sh tokens that mean "still in flight — keep waiting". Every
-# other token (ready, ready-unreviewed, behind, ci-failed, optout) is terminal
-# for the watch: the orchestrator has something to act on RIGHT NOW.
+# other token (ready, ready-unreviewed, behind, ci-failed, changes-requested,
+# optout) is terminal for the watch: the orchestrator has something to act on
+# RIGHT NOW. changes-requested — a fresh non-LGTM verdict — is DELIBERATELY
+# outside this set (upstream report Creek-Vault#1097): a lane whose review
+# wants changes needs the orchestrator sooner, not a timeout, so the wake falls
+# out of pr-ready.sh's vocabulary with no change here. Do not add it.
 readonly IN_FLIGHT_TOKENS=("pending" "awaiting-review")
 
 die() {
