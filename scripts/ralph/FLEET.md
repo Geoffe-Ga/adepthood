@@ -153,7 +153,8 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `behind` | `LGTM` + green but not current with `main`. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
 | `pending` | CI still running. | Wait for a later wake. |
 | `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
-| `awaiting-review` | no fresh `LGTM` — missing, stale, or non-LGTM. | Wait; `address-feedback` on `CHANGES_REQUESTED`. |
+| `changes-requested` | a fresh verdict (posted after HEAD) that is not `LGTM` — `CHANGES_REQUESTED` or `COMMENTS`. Gate 4 failed. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
+| `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
 | `optout` | `do-not-auto-merge` on the PR or on the issue it closes. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
 | *non-zero exit* | could not classify (API failure, expired token). | Leave the lane alone this wake; the next wake retries. |
 
@@ -241,7 +242,7 @@ GitHub**, never from stored bookkeeping, so the loop stays re-entrant.
 
 ## Tests
 
-Five offline suites cover the fleet — four shell, one Python — all run in CI by
+Seven offline suites cover the fleet — six shell, one Python — all run in CI by
 `.github/workflows/ralph-recap-tests.yml` on any `scripts/ralph/**` change:
 
 - `scripts/ralph/test_fleet.sh` builds a throwaway repo (with an `origin` remote
@@ -257,7 +258,15 @@ Five offline suites cover the fleet — four shell, one Python — all run in CI
   the *last* issue link in the body and that an unreadable label answer fails
   closed (exit 2, not "no hold") — the freshness guard (`CLEAN` is not proof of
   being current) and its laziness (only a would-be-`ready` lane pays for the
-  compare probe), and the `ready-unreviewed` path.
+  compare probe), the `ready-unreviewed` path, and the `changes-requested`
+  split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting).
+- `scripts/ralph/test_watch_pr.sh` covers `watch-pr.sh`, the per-lane hot
+  watcher local sessions background: pidfile idempotence, the
+  in-flight→terminal-token exit (including that `changes-requested` ends the
+  watch), API-error tolerance, the `gone` exit, and the timeout.
+- `scripts/ralph/test_exec_bits.sh` asserts every `scripts/ralph/*.sh` is
+  committed `100755` (`git ls-files -s`), so a directly-invoked script can
+  never again ship exiting 126 — the mode CI's `bash <script>` launches mask.
 - `scripts/ralph/test_ensure_issue_label.sh` covers `ensure-issue-label.sh`, the
   prove-it-stuck labeller the Dependabot bridge files its issues with.
 - `pytest scripts/ralph` (`test_recap_stats.py`) covers the recap's pure stats
@@ -267,6 +276,8 @@ Five offline suites cover the fleet — four shell, one Python — all run in CI
 bash scripts/ralph/test_fleet.sh
 bash scripts/ralph/test_pick_next.sh
 bash scripts/ralph/test_pr_ready.sh
+bash scripts/ralph/test_watch_pr.sh
+bash scripts/ralph/test_exec_bits.sh
 bash scripts/ralph/test_ensure_issue_label.sh
 python -m pytest scripts/ralph -q
 ```

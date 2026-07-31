@@ -124,7 +124,7 @@ freshness against `main` with the compare API rather than trusting
 exit code alongside the token — the helper exits non-zero when it cannot classify
 a lane, and an unchecked `$STATUS` would just come back empty:
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | pending | ci-failed | awaiting-review | optout
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | pending | ci-failed | changes-requested | awaiting-review | optout
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -184,9 +184,17 @@ Then act on `$STATUS`:
   A clean sync → dispatch its `ralph-worker` to re-clear Gate 2 locally and push;
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
-- **`pending`** / **`awaiting-review`** — CI is still running or no fresh LGTM
-  verdict exists yet. Leave the lane; its Step 5 wake (webhook subscription, or
-  the local `watch-pr.sh` watcher) fires when CI or the verdict changes. **Exception — missing review usually means a merge
+- **`changes-requested`** — a fresh verdict (posted after this HEAD) that is
+  not `LGTM`: `CHANGES_REQUESTED` or `COMMENTS`. **Gate 4 failed** — advance it
+  via Step 2 (`address-feedback`). Never leave this lane to wait: the verdict
+  already arrived, and this token exists precisely so the watcher wakes on it
+  instead of sleeping out its timeout (a fresh non-LGTM used to read as
+  `awaiting-review`, which the watcher counts as in-flight).
+- **`pending`** / **`awaiting-review`** — CI is still running, or the verdict
+  is genuinely missing or stale (predates HEAD; a fresh non-LGTM prints
+  `changes-requested` instead). Leave the lane; its Step 5 wake (webhook
+  subscription, or the local `watch-pr.sh` watcher) fires when CI or the
+  verdict changes. **Exception — missing review usually means a merge
   conflict:** if the verdict never arrives and the `claude-review` check is
   absent from the rollup entirely, check
   `gh pr view N --json mergeable,mergeStateStatus` FIRST. A `CONFLICTING`/`DIRTY`
@@ -229,7 +237,8 @@ into that PR's worktree only if it needs a fix (re-attach a worktree with
 `scripts/ralph/fleet.sh assign "$N" "<slug>"` if reconcile removed it — `assign`
 reuses the existing branch):
 
-- **Gate 4 failed** (`CHANGES_REQUESTED`/`COMMENTS`): worker runs the
+- **Gate 4 failed** (`pr-ready.sh` printed `changes-requested`: the fresh
+  verdict is `CHANGES_REQUESTED`/`COMMENTS`): worker runs the
   **`address-feedback`** flow in the worktree — triage, TDD fix loop dispatching
   the specialist that owns each comment, re-clear Gate 2 + Gate 2.5, push, reply,
   resolve threads.
