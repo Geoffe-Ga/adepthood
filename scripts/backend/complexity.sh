@@ -24,7 +24,7 @@ Analyze code complexity using Radon and Xenon.
 
 Metrics:
   - Cyclomatic complexity (should be <= 10)
-  - Maintainability index (should be >= 20)
+  - Maintainability index (should be >= B)
   - Cognitive complexity
 
 OPTIONS:
@@ -62,13 +62,19 @@ echo "=== Code Complexity Analysis ==="
 if command -v radon &> /dev/null; then
     echo ""
     echo "Cyclomatic Complexity (should be <= 10):"
-    radon cc -a src/ || true
+    if ! radon cc -a src/; then
+        echo "Error: Radon cyclomatic-complexity check failed" >&2
+        exit 1
+    fi
 
     echo ""
-    echo "Maintainability Index (should be >= 20):"
-    radon mi -a src/ || true
+    echo "Maintainability Index (should be >= B):"
+    if ! radon mi src/ -n B; then
+        echo "Error: Radon maintainability-index check failed" >&2
+        exit 1
+    fi
 else
-    echo "Warning: radon not installed, skipping cyclomatic complexity check" >&2
+    echo "Warning: radon not installed, skipping Radon complexity checks" >&2
 fi
 
 # Check complexity with Xenon
