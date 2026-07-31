@@ -22,7 +22,11 @@ Usage: $(basename "$0") [OPTIONS]
 
 Run all quality checks in sequence.
 
+A dependency-drift preflight runs first and aborts the whole run when it
+fails, because every check below measures the installed packages.
+
 Runs:
+  0. Dependency drift preflight (deps.sh) - aborts on failure
   1. Linting (Ruff)
   2. Formatting (ruff format)
   3. Type checking (MyPy)
@@ -62,6 +66,25 @@ if $VERBOSE; then
 fi
 
 echo "=== Running All Quality Checks ==="
+echo ""
+
+# Fail-fast preflight, not a collected run_check: every check below measures
+# the *installed* packages, so a verdict produced from a drifted virtualenv
+# does not predict CI. Carrying on would hand back seven meaningless results
+# instead of the one that matters. The frontend suite sets the precedent by
+# putting its audit gate first for the same reason.
+#
+# The exit code is captured with `||` rather than inside an `if ! ...` body,
+# where `$?` would already have been reset to 0 by the negation.
+DRIFT_EXIT=0
+"$SCRIPT_DIR/deps.sh" $VERBOSE_FLAG || DRIFT_EXIT=$?
+if [ "$DRIFT_EXIT" -ne 0 ]; then
+    echo "" >&2
+    echo "Aborting: the active environment does not match the pinned requirements." >&2
+    echo "Every remaining check would measure packages CI never installs." >&2
+    echo "Fix with: pip install -r backend/requirements.txt -r backend/requirements-dev.txt" >&2
+    exit "$DRIFT_EXIT"
+fi
 echo ""
 
 FAILED_CHECKS=()
