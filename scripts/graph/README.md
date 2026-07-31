@@ -184,17 +184,18 @@ The ledger also feeds the Discord Ralph recap's knowledge-graph line — see
 after `graph-build`'s 04:40 code rebuild — plus manual `workflow_dispatch`
 and `repository_dispatch` (event type `graph-updated`, which a satellite
 repo can send to poke a re-federation). It merges adepthood's own code graph
-with the published knowledge graphs of four satellite repos (Creek-Vault,
-aptitude-course, wavelength-demo, WavelengthWatch) into one
+with the published knowledge graphs of five satellite repos (Creek-Vault,
+aptitude-course, wavelength-demo, WavelengthWatch, adepthood-docs) into one
 `pan-graph.json`, published on the SAME rolling `knowledge-graph` release
 that `graph-build` and `graph-semantic` maintain.
 
-The five source graphs come from two mechanisms. aptitude-course,
-wavelength-demo, and WavelengthWatch commit theirs in-tree at
-`graphify-out/graph.json` on `main`, fetched over
-`raw.githubusercontent.com`. Creek-Vault's graph is ~30 MB and is never
-committed — it ships as a rolling release asset instead. adepthood's own
-graph comes from its own `knowledge-graph` release, same as above.
+The six source graphs come from two mechanisms. aptitude-course,
+wavelength-demo, WavelengthWatch, and adepthood-docs (the prose-only docs
+corpus repo) commit theirs in-tree at `graphify-out/graph.json` on `main`,
+fetched over `raw.githubusercontent.com`. Creek-Vault's graph is ~30 MB and
+is never committed — it ships as a rolling release asset instead.
+adepthood's own graph comes from its own `knowledge-graph` release, same as
+above.
 
 An unfetchable satellite logs a `::warning` and is excluded from that
 build; only a missing adepthood-own graph fails the job. `pan-meta.json`
@@ -213,9 +214,10 @@ $0 / `GITHUB_TOKEN`-only: the built-in token (`contents: write`) covers the
 own-graph download and the release publish; every satellite fetch —
 including Creek-Vault's release asset — is unauthenticated public HTTPS.
 
-**GO-PRIVATE caveat**: every satellite fetch assumes the repo is public. If
-any satellite ever goes private, its fetch starts 404ing *and* — the
-dangerous half — a pan-graph already carrying its structure must move off
+**GO-PRIVATE caveat**: every satellite fetch — adepthood-docs included —
+assumes the repo is public. If any satellite ever goes private, its fetch
+starts 404ing *and* — the dangerous half — a pan-graph already carrying
+its structure must move off
 this public release; distribution needs revisiting then (an authenticated
 fetch plus a private artifact store), not a token quietly wired into the
 fetch step.
