@@ -13,7 +13,10 @@
 #   behind           LGTM (fresh) + CI green but the branch is not current → sync first
 #   pending          CI still running → wait for a later wake
 #   ci-failed        CI has a failing/errored check → Step 2 (ci-debugging)
-#   awaiting-review  no fresh LGTM verdict (missing, stale, or non-LGTM) → wait / Step 2
+#   changes-requested  a FRESH verdict (posted after the PR's HEAD commit) that
+#                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
+#                    (address-feedback): Gate 4 has spoken and wants changes
+#   awaiting-review  no verdict yet, or only a stale one (predates HEAD) → wait
 #   optout           `do-not-auto-merge` on the PR or on the issue it closes → the
 #                    loop does not act on this PR AT ALL (no merge, no sync, no
 #                    ci-debugging worker); a human owns it. Checked first, and an
@@ -59,7 +62,20 @@
 #
 # Stale-verdict guard: a review verdict only counts when it was posted AFTER the
 # PR's HEAD commit. An LGTM from before the latest push is stale (it reviewed
-# older code) and must not gate a merge.
+# older code) and must not gate a merge — and a stale non-LGTM likewise reads as
+# `awaiting-review` (the re-review is owed), never as `changes-requested`.
+#
+# WHY `changes-requested` EXISTS (upstream report Creek-Vault#1097): this token
+# used to be folded into `awaiting-review`, which watch-pr.sh counts as
+# in-flight — so the hot watch could wake on an LGTM in seconds but slept out
+# its full timeout on the one Gate 4 outcome that needs the orchestrator
+# SOONER. Splitting it lets the watcher exit on it with no change to its
+# in-flight set. Precedence is untouched: the check sits exactly where
+# `awaiting-review` is emitted — after optout/pending/ci-failed and the
+# missing-HEAD fail-closed guard — and fail-closed behaviour is preserved: an
+# unreadable verdict lookup still aborts non-zero (a tooling error, no token),
+# and a malformed freshness/flag field degrades to `awaiting-review`, never to
+# the new token.
 #
 # Freshness guard: `mergeStateStatus` is NOT a freshness signal. GitHub only
 # reports BEHIND when the base branch enforces strict/up-to-date status checks,
@@ -277,10 +293,20 @@ review_gate_absent() {
 # Fresh LGTM ⇔ latest verdict is LGTM AND its createdAt is strictly newer than
 # the HEAD commit. RFC3339 UTC timestamps are fixed-width, so a lexical string
 # compare is a correct chronological compare (portable — no date arithmetic).
-# Absent that, the lane waits for review unless there is no review to wait for,
-# in which case it still has to clear every non-review condition below.
+# Absent that, three states stay distinguishable because they route differently
+# (see the header): a FRESH non-LGTM verdict is `changes-requested` — the
+# review ran and wants changes, so neither waiting nor `ready-unreviewed` can
+# ever apply — while a missing or stale verdict waits as `awaiting-review`
+# unless there is no review to wait for, in which case the lane still has to
+# clear every non-review condition below. The freshness test mirrors the LGTM
+# one exactly, and the flag must be the literal jq `false`: a malformed field
+# (a stray `|` shifting it) matches neither branch and degrades to
+# `awaiting-review` — fail closed, never a fresh-verdict claim.
 ready_token="ready"
 if [[ "$verdict_lgtm" != "true" || -z "$verdict_date" ]] || ! [[ "$verdict_date" > "$head_date" ]]; then
+  if [[ "$verdict_lgtm" == "false" && -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]]; then
+    echo "changes-requested"; exit 0
+  fi
   review_gate_absent || { echo "awaiting-review"; exit 0; }
   ready_token="ready-unreviewed"
 fi

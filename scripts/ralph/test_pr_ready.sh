@@ -6,7 +6,9 @@
 # lane. CI state is keyed off the `gh pr checks` EXIT CODE (0=green, 8=pending,
 # else=failed), never a text grep of its TAB-delimited output, and an LGTM
 # verdict only counts when it is fresher than the PR's HEAD commit (stale-verdict
-# guard). We put a fake, arg-aware `gh` on PATH and assert every classification.
+# guard). A fresh verdict that is NOT LGTM is its own token, `changes-requested`
+# — distinct from the missing/stale `awaiting-review`, so watch-pr.sh can wake
+# on it. We put a fake, arg-aware `gh` on PATH and assert every classification.
 #
 # Three further dimensions are pinned here: a `do-not-auto-merge` opt-out that
 # short-circuits every other check; a freshness guard proving `CLEAN` alone
@@ -177,13 +179,31 @@ check "green + BEHIND + fresh LGTM → behind" "behind" \
 check "green + CLEAN + STALE LGTM → awaiting-review" "awaiting-review" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true" run 100)"
 
-# --- no verdict yet → awaiting-review --------------------------------------
-check "green + CLEAN + no verdict → awaiting-review" "awaiting-review" \
+# --- changes-requested: a fresh non-LGTM verdict is actionable, not in-flight
+# Upstream report Creek-Vault#1097: collapsing "missing", "stale", and "fresh
+# non-LGTM" into one token made watch-pr.sh (whose in-flight set contains
+# awaiting-review) structurally blind to a CHANGES_REQUESTED/COMMENTS verdict —
+# the one Gate 4 outcome that needs the orchestrator SOONER. The four-way
+# distinction pinned here: missing and stale verdicts genuinely wait
+# (awaiting-review); a verdict posted AFTER HEAD that is not LGTM is a Gate 4
+# failure the watcher must wake on (changes-requested).
+check "no verdict yet → awaiting-review" "awaiting-review" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" run 100)"
 
-# --- fresh but non-LGTM verdict (e.g. changes requested) → awaiting-review --
-check "green + CLEAN + fresh non-LGTM → awaiting-review" "awaiting-review" \
+check "stale non-LGTM verdict → awaiting-review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|false" run 100)"
+
+check "fresh LGTM + green + current → ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 run 100)"
+
+check "green + CLEAN + fresh non-LGTM → changes-requested" "changes-requested" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" run 100)"
+
+# Fail closed: only the literal jq `false` flag on a provably fresh timestamp
+# may claim the new token — a malformed flag (a stray `|` shifting fields, a
+# non-boolean) degrades to awaiting-review, never to changes-requested.
+check "malformed verdict flag → awaiting-review, never changes-requested" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|garbage" run 100)"
 
 # --- REAL jq: exercise the production verdict regex against real bodies ----
 # The verdict `claude-code-review.yml` posts is `## Verdict: <X>` at the END of a
@@ -200,8 +220,9 @@ if command -v jq >/dev/null 2>&1; then
        run 100)"
 
   # `**Verdict:** CHANGES_REQUESTED` whose prose mentions "LGTM" must NOT count as
-  # LGTM — the exact false-positive a whole-body match would cause.
-  check "real CHANGES_REQUESTED w/ 'LGTM' in prose → awaiting-review" "awaiting-review" \
+  # LGTM — the exact false-positive a whole-body match would cause. It IS a
+  # fresh non-LGTM verdict, so it classifies as changes-requested.
+  check "real CHANGES_REQUESTED w/ 'LGTM' in prose → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"Not ready for LGTM yet.\n\n**Verdict:** CHANGES_REQUESTED\n"}')" \
        run 100)"
@@ -378,6 +399,12 @@ check "opt-out lane classifies as optout" "optout" \
      PR_LABELS="$OPTOUT" BEHIND_BY=17 COMPARE_SENTINEL="$S_OPTOUT" run 100)"
 probed "opt-out lane never probes freshness" "no" "$S_OPTOUT"
 
+S_CHANGES="$WORK/compare-changes-requested"
+check "fresh non-LGTM stays changes-requested with a stale branch" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" \
+     BEHIND_BY=17 COMPARE_SENTINEL="$S_CHANGES" run 100)"
+probed "changes-requested lane never probes freshness" "no" "$S_CHANGES"
+
 # --- ready-unreviewed: the PR class whose review gate cannot exist -----------
 # `claude-code-review.yml` never runs while Dependabot is the only pusher (GitHub
 # withholds the OAuth secret from runs it triggers), so the job reports SKIPPED,
@@ -525,6 +552,15 @@ check "fresh LGTM still classifies as ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" REVIEW_SENTINEL="$S_GATE_LGTM" run 100)"
 probed "a fresh verdict never probes the review gate" "no" "$S_GATE_LGTM"
+
+# A fresh non-LGTM verdict answers the review question by itself: the review
+# ran and wants changes, so ready-unreviewed can never apply and the gate probe
+# would be a wasted API call on every lane awaiting its fix worker.
+S_GATE_CHANGES="$WORK/gate-changes-requested"
+check "fresh non-LGTM still classifies as changes-requested" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" REVIEW_SENTINEL="$S_GATE_CHANGES" run 100)"
+probed "a fresh non-LGTM verdict never probes the review gate" "no" "$S_GATE_CHANGES"
 
 S_GATE_PENDING="$WORK/gate-pending"
 check "reviewless lane with pending CI stays pending" "pending" \
