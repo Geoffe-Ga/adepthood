@@ -93,10 +93,13 @@ echo "=== Code Complexity Analysis ==="
 # cannot gate anything. Xenon, below, is the cyclomatic gate; this listing is
 # what tells the operator which blocks a xenon failure is about. Thresholds are
 # passed explicitly so the gate never depends on the ambient [tool.radon]
-# configuration, and there is no `|| true`, so a rejected argv still aborts.
+# configuration. The `||` branch reports a rejected argv or an unreadable tree
+# and still exits non-zero -- it is the opposite of the `|| true` it replaces,
+# which discarded exactly that failure.
 echo ""
 echo "Cyclomatic Complexity (rank $CC_REPORT_RANK or worse; Xenon is the gate):"
-radon cc -a -n "$CC_REPORT_RANK" src/
+radon cc -a -n "$CC_REPORT_RANK" src/ ||
+    { echo "Error: radon could not analyze cyclomatic complexity" >&2; exit "$EXIT_ANALYSIS_ERROR"; }
 
 if $VERBOSE; then
     echo "Running Xenon complexity check..."
@@ -108,9 +111,13 @@ xenon \
     src/ || { echo "✗ Complexity exceeds thresholds" >&2; exit "$EXIT_THRESHOLD_EXCEEDED"; }
 
 # The maintainability gate. radon exits 0 while printing a rank-C module, so
-# its *output* is the signal: any listed module is a violation. Deliberately a
-# plain assignment and not `local` -- `local` would swallow the command
-# substitution's exit status and re-silence an argv fault under `set -e`.
+# its *output* is the signal: any listed module is a violation. It also fails
+# closed on a file radon cannot parse, which xenon only warns about.
+#
+# Keep this a bare assignment at script scope. If it is ever moved into a
+# function, do not write `local mi_report=$(...)`: `local` supplies its own exit
+# status, so `set -e` would stop seeing radon's and the argv fault this gate
+# exists to fix would be silently back.
 echo ""
 echo "Maintainability Index (must rank better than $MI_VIOLATION_RANK):"
 mi_report=$(radon mi -s -n "$MI_VIOLATION_RANK" src/)
