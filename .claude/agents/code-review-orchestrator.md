@@ -63,7 +63,10 @@ Route only the dimensions the diff actually touches — no redundant reviews.
    changed a finding, have the conductor record it via `graphify save-result …
    --memory-dir graph/memory/` (`--outcome corrected --correction "…"` when the
    graph was wrong). Those committed Markdown notes feed the weekly `graphify
-   reflect` digest; repo Q&A only, never secrets.
+   reflect` digest; repo Q&A only, never secrets. **Gatecheck:** the tick's
+   planned PR body must carry a truthful `## Graph` line (query used → what it
+   changed, or `skipped: <reason>`); a missing or boilerplate line is a
+   finding, not a pass.
 2. **Primary path — review the applicable dimensions yourself** against each
    specialist's checklist (above) and the shared constraints. You run on Sonnet
    so a single agent can carry every dimension at review-tier cost. **Enhancement:** where
