@@ -11,6 +11,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../backend" && pwd)"
 # never drift into enforcing two different percentages.
 COVERAGE_THRESHOLD=90
 
+# coverage.py's own exit status for a percentage that missed --fail-under (see
+# its `coverage.cmdline`). Every other non-zero status it returns means the
+# report could not be produced at all, which says nothing about how much code
+# the suite covered -- so the two must not be reported as the same failure.
+COVERAGE_PY_FAIL_UNDER_STATUS=2
+
 HTML_REPORT=false
 XML_REPORT=false
 REPORT_ONLY=false
@@ -53,7 +59,8 @@ OPTIONS:
 EXIT CODES:
     0           Coverage threshold met
     1           Coverage below threshold
-    2           Error running coverage (including missing coverage data)
+    2           Coverage could not be reported: missing coverage data, or the
+                report itself failed (unreadable data, bad configuration)
 
 EXAMPLES:
     $(basename "$0")                     # Run coverage with terminal report
@@ -96,10 +103,24 @@ if $REPORT_ONLY; then
 
     echo "Reporting from existing coverage data: $COVERAGE_DATA_FILE"
 
-    coverage report "--fail-under=$COVERAGE_THRESHOLD" || {
+    # A shortfall and a broken reporter are different verdicts for the operator:
+    # one means write more tests, the other means the coverage data or config is
+    # unusable. The status is captured with `||` rather than inside an
+    # `if ! ...` body, where `$?` would already have been reset to 0 by the
+    # negation.
+    REPORT_STATUS=0
+    coverage report "--fail-under=$COVERAGE_THRESHOLD" || REPORT_STATUS=$?
+
+    if [ "$REPORT_STATUS" -eq "$COVERAGE_PY_FAIL_UNDER_STATUS" ]; then
         echo "✗ Coverage below threshold" >&2
         exit 1
-    }
+    fi
+
+    if [ "$REPORT_STATUS" -ne 0 ]; then
+        echo "✗ Coverage report failed (coverage exited $REPORT_STATUS)" >&2
+        echo "  The coverage data or configuration is unusable, not undercovered." >&2
+        exit 2
+    fi
 
     if $XML_REPORT; then
         coverage xml
