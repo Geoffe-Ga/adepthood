@@ -145,7 +145,8 @@ jobs:
               "built_at": os.environ["BUILT_AT"],
               "sha": os.environ["SHA"],
               "nodes": len(graph.get("nodes", [])),
-              "edges": len(graph.get("edges", [])),
+              # graphify emits node-link JSON: edges live under "links".
+              "edges": len(graph.get("links") or graph.get("edges") or []),
               "graphifyy": os.environ["GRAPHIFYY_VERSION"],
               "kind": "code-only",
           }
@@ -318,7 +319,12 @@ jobs:
             echo "staleness issue #$existing already open — skipping"
             exit 0
           fi
-          # AGE_DAYS arrives via env, never inlined ${{ }} into the run block.
+          # AGE_DAYS arrives via env, never inlined as a workflow expression
+          # in the run block. (Do NOT write the literal expression-delimiter
+          # pair in ANY run script, even inside a shell comment: GitHub
+          # expands expressions before bash ever sees the text, and an empty
+          # one is a compile error that killed every run of this workflow
+          # from Jul 22 to Jul 31 with zero jobs and no error surfaced.)
           body="$(printf 'The knowledge graph semantic layer is %s days old — past the 14-day staleness threshold.\n\nRun the "Graph semantic" workflow (workflow_dispatch on .github/workflows/graph-semantic.yml) to rebuild the semantic layer, then close this issue.\n' "$AGE_DAYS")"
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Knowledge graph semantic layer is stale" \

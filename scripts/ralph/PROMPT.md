@@ -120,6 +120,9 @@ behind-main rebases across parallel lanes.
    never `--no-verify`).
 10. **Push & open the PR** with `gh pr create --body-file <tmpfile>`. Body
     includes: `## Summary` (1–3 bullets), `## Test plan` (what you ran),
+    `## Graph` (one truthful line: the `graphify query`/`affected` call that
+    shaped this tick and the node it surfaced, or `skipped: <reason>` —
+    graph absent, trivial mechanical change, etc.; reviewers check this),
     `Closes #$RALPH_ISSUE` on its own line (marks in-flight for the picker and
     auto-closes the issue on merge), and `Refs #<parent-epic>` if the issue
     names one.
@@ -161,7 +164,8 @@ behind-main rebases across parallel lanes.
 ## Definition of done for this call
 - [ ] chief-architect produced the plan; you dispatched the specialists it named
       (and only those).
-- [ ] PR open against `main`; body contains `Closes #$RALPH_ISSUE`.
+- [ ] PR open against `main`; body contains `Closes #$RALPH_ISSUE` and a
+      truthful `## Graph` line (query used → what it changed, or why skipped).
 - [ ] The relevant `./scripts/<side>/check-all.sh` exits 0 (Gate 2 green).
 - [ ] code-review-orchestrator returned `CLEAN` before push (Gate 2.5).
 - [ ] New tests pass; existing tests still pass; thresholds met.
