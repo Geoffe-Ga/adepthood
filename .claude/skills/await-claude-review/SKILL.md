@@ -124,6 +124,29 @@ A CI failure event for `head.sha` may mean the reviewer action itself failed (ti
 2. If the failed run is the **review action** (look for the workflow that runs `@claude` review): post `@claude please review` via `mcp__github__add_issue_comment` to retrigger, then stay subscribed.
 3. If the failed run is **other CI** (lint, tests, build): surface the failure to the user and recommend handing off to `ci-debugging`. Stay subscribed — the reviewer action may still post.
 
+## Local Sessions (no webhook MCP)
+
+`subscribe_pr_activity` exists only in remote (web/mobile) sessions. In a local
+terminal session the tool is simply unavailable — there are **no webhook wakes
+at all**, and subscribing is not an option. Do not fall back to a foreground
+wait; instead arm a **background watcher** whose exit is the wake (a background
+Bash task's completion re-invokes the session):
+
+- **In Ralph repos**: launch `scripts/ralph/watch-pr.sh <N>` with
+  `run_in_background: true`. It polls `pr-ready.sh`, exits the moment the lane
+  leaves `pending`/`awaiting-review` (verdict posted, CI failed, ready, gone),
+  and prints `WATCH <N> <token>` for the woken session to act on. It is
+  idempotent via a pidfile, so re-launching every turn is safe.
+- **Elsewhere**: launch `gh pr checks <N> --watch` plus a verdict-comment poll
+  (e.g. a small loop over `gh pr view <N> --json comments` grepping the
+  canonical Verdict regex) as a background task.
+
+The event semantics are the same as the webhook table above — the watcher's
+exit stands in for the `<github-webhook-activity>` message, and Step 4
+(re-fetch, author check, currency check, parse) still runs on wake exactly as
+written. **Never foreground sleep** while waiting for a verdict, on either
+platform.
+
 ### Step 6: Cleanup
 
 The caller should call `mcp__github__unsubscribe_pr_activity` once the PR merges, closes, or the verdict gate is no longer needed. This helper does not unsubscribe on its own — leave the lifecycle to the caller.
@@ -198,3 +221,7 @@ What to do:
 4. Do **not** retry by re-subscribing in a loop. Repeated subscriptions in this failure mode produce repeated silence, not retries.
 
 This is a delivery-layer property of the environment, not a bug in this skill.
+In the Ralph loop this failure mode is additionally bounded to ~3 minutes: the
+`ralph-tick` Step 5 adaptive fallback arms a short (~180s) `ScheduleWakeup`
+whenever any lane has an open PR in Gate 3/4, so a dropped comment wake costs
+at most one short fallback period instead of a full 1200–1800s one.
