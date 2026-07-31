@@ -136,13 +136,13 @@ class TestHandshakeResultPopulated:
         """Every constructor argument is readable back unchanged."""
         result = HandshakeResult(
             available=True,
-            contract_version="0.1.0-draft",
+            contract_version="9.9.9",
             ontology_version="1.0.0",
             capabilities=frozenset({CreekCapability.HANDSHAKE, CreekCapability.JOURNAL}),
             attestation={"quote": "sentinel-attestation"},
         )
         assert result.available is True
-        assert result.contract_version == "0.1.0-draft"
+        assert result.contract_version == "9.9.9"
         assert result.ontology_version == "1.0.0"
         assert result.capabilities == frozenset(
             {CreekCapability.HANDSHAKE, CreekCapability.JOURNAL}
@@ -187,8 +187,11 @@ def test_vault_ingest_request_round_trips_entry_id_and_tier() -> None:
 
 
 def test_contract_version_constant() -> None:
-    """CONTRACT_VERSION matches the draft version negotiated in the contract doc."""
-    assert CONTRACT_VERSION == "0.1.0-draft"
+    """CONTRACT_VERSION pins the version adepthood advertises at handshake.
+
+    It tracks Creek's published contract constant, and the docs restate it.
+    """
+    assert CONTRACT_VERSION == "0.2.0"
 
 
 def test_consumer_id_constant() -> None:

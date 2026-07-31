@@ -39,7 +39,7 @@ from typing import Protocol
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.1.0-draft"
+CONTRACT_VERSION = "0.2.0"
 
 # The identifier adepthood presents to Creek Vault so the vault's router can
 # scope capabilities and attestation to this consumer.

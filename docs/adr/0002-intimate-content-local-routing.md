@@ -124,8 +124,8 @@ voice is generated *inside* the enclave — which implies something
 about the entry does cross, under attestation, to get there. #950 is
 where that tension gets settled, not this ADR.
 
-**Resolution:** this fork is now settled in the draft contract,
-`docs/creek-vault-mcp-contract.md`.
+**Resolution:** this fork is now settled in
+[ADR 0004](0004-creek-vault-http-application-boundary.md), Decision 6.
 
 ## Consequences
 
