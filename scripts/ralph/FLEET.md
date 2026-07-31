@@ -87,10 +87,14 @@ On each wake it:
    `address-feedback`).
 4. **Refills every open slot** — while `fleet.sh free > 0` and `pick-next.sh`
    yields a compatible issue, assign a worktree and launch a `ralph-worker`.
-5. **Arms per-lane wakes** — background workers wake it on their own completion;
-   each in-flight PR is `subscribe_pr_activity`-subscribed so its CI/verdict wakes
-   it independently; a modest `ScheduleWakeup` backstops the CI-success /
-   behind→green transitions the webhook doesn't deliver. Then it ends the turn.
+5. **Arms per-lane wakes (platform-aware)** — background workers wake it on
+   their own completion. Remote sessions `subscribe_pr_activity`-subscribe each
+   in-flight PR and arm a short (~180s) `ScheduleWakeup` while any PR is in
+   Gate 3/4 (long ~1200–1800s only when every lane is still building). Local
+   sessions have no webhooks: each in-flight PR instead gets a background
+   `scripts/ralph/watch-pr.sh <N>` watcher (idempotent via pidfile) whose exit
+   on state-change IS the wake, with the long fallback kept as the safety net.
+   Then it ends the turn.
 
 **Workers are background tasks.** Each `ralph-worker` is launched with
 `run_in_background: true` and **never awaited** — launch, end the turn, and let its

@@ -185,8 +185,8 @@ Then act on `$STATUS`:
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
 - **`pending`** / **`awaiting-review`** — CI is still running or no fresh LGTM
-  verdict exists yet. Leave the lane; its Step 5 subscription wakes you when CI
-  or the verdict changes. **Exception — missing review usually means a merge
+  verdict exists yet. Leave the lane; its Step 5 wake (webhook subscription, or
+  the local `watch-pr.sh` watcher) fires when CI or the verdict changes. **Exception — missing review usually means a merge
   conflict:** if the verdict never arrives and the `claude-review` check is
   absent from the rollup entirely, check
   `gh pr view N --json mergeable,mergeStateStatus` FIRST. A `CONFLICTING`/`DIRTY`
@@ -237,7 +237,8 @@ reuses the existing branch):
   the worktree — reproduce locally, fix the root cause (failing test first),
   re-clear Gate 2/2.5, push.
 - **In progress** (CI running, or verdict not yet posted): do nothing — this
-  lane's PR subscription (Step 5) wakes you when it changes.
+  lane's Step 5 wake (webhook subscription, or the local `watch-pr.sh`
+  watcher) fires when it changes.
 - **`dependencies` PRs** (from `dependabot-to-ralph-issue.yml`): these are
   **adopted, never built**. The in-flight PR is already **Dependabot's own
   branch** (linked via `Closes`), so attach the lane to that branch rather than
@@ -325,28 +326,64 @@ The override is also a hazard in its own right: it **replaces** the default
 exclusion list rather than adding to it, so setting it silently re-admits
 `epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the rest.
 
-### Step 5 — Arm per-lane wakes, then end the turn
+### Step 5 — Arm per-lane wakes (platform-aware), then end the turn
 
 You want a wake the moment **any single lane** changes — not a barrier that waits
-for all of them. Arrange, in this order of preference:
+for all of them. **Background workers** already wake you on their own completion,
+so nothing needs arming for a lane that's still building. For lanes in Gate 3/4
+(an open PR), the wake mechanism depends on the platform — detect it first: if
+the `mcp__github__subscribe_pr_activity` tool is available you are **REMOTE**
+(web/mobile session, webhooks deliverable); if it is not, you are **LOCAL**
+(terminal session, **no webhooks at all**).
 
-1. **Background workers** already wake you on their own completion — nothing to
-   arm for a lane that's still building.
-2. **Per-PR webhook subscriptions** for every in-flight PR, so any one PR's CI
+**REMOTE — webhooks plus an adaptive fallback:**
+
+1. **Per-PR webhook subscriptions** for every in-flight PR, so any one PR's CI
    failure or new review verdict wakes you independently:
    ```
    mcp__github__subscribe_pr_activity  (owner, repo, pullNumber)   # once per open PR
    ```
    Comment and CI-failure events arrive as `<github-webhook-activity>` and wake
-   this session; a verdict comment wakes you directly. `subscribe_pr_activity` is
-   **idempotent** — re-subscribing an already-watched PR every wake is safe and
-   does not stack subscriptions, so just (re)subscribe every open PR each wake.
-   Unsubscribe a PR once it merges/closes.
-3. **`ScheduleWakeup` fallback** (~1200–1800s): webhooks do **not** deliver CI
-   *success*, `behind`→green transitions, or merges, so keep one modest fallback
-   armed to re-poll Step 0–4 for any lane that quietly went green or up-to-date.
-   A lane going stale is invisible to webhooks entirely — `main` moving emits no
-   event on the lane's PR — so this fallback is the only thing that notices it.
+   this session; a verdict comment wakes you directly, and `iteration-trigger.yml`
+   converts a fully-green CI run into a PR comment, so full-green is a wake too.
+   `subscribe_pr_activity` is **idempotent** — re-subscribing an already-watched
+   PR every wake is safe and does not stack subscriptions, so just (re)subscribe
+   every open PR each wake. Unsubscribe a PR once it merges/closes.
+2. **Adaptive `ScheduleWakeup` fallback**: webhooks do **not** deliver individual
+   CI *successes*, `behind`→green transitions, or merges, and comment-event
+   delivery is documented best-effort (see `await-claude-review`'s dropped-webhook
+   troubleshooting). So size the fallback to the pool's temperature:
+   - **Hot** (~180s): if ANY lane has an open PR in Gate 3/4 — pending CI,
+     awaiting a verdict, or behind/syncing. Rationale: this catches
+     verdict-before-CI-green orderings and the documented dropped-webhook failure
+     mode within minutes instead of a full fallback period.
+   - **Cold** (~1200–1800s): only when every lane is still building (or the pool
+     is empty). A lane going stale is invisible to webhooks entirely — `main`
+     moving emits no event on the lane's PR — so a fallback always stays armed.
+
+**LOCAL — background watchers ARE the webhooks:**
+
+`subscribe_pr_activity` is remote-only; a local session that merely armed the
+long fallback would sleep the full 1200–1800s past a ready lane. But a
+background Bash task's exit re-invokes the session — a watcher process that
+exits on state-change IS a wake. So:
+
+1. For **each** in-flight PR, launch the per-lane watcher as a **background**
+   Bash task (`run_in_background: true`):
+   ```bash
+   scripts/ralph/watch-pr.sh "$PR_NUM"      # polls pr-ready.sh; exits on state-change
+   ```
+   It polls `pr-ready.sh` (default every 30s) and exits the moment the lane
+   leaves `pending`/`awaiting-review`, printing `WATCH <PR> <token>` — the wake
+   that lands you back at Step 0 with the lane's fresh classification. It is
+   **idempotent** via a pidfile (`/tmp/ralph-watch-<repo>-<PR>.pid`): a PR
+   already under a live watch prints `already-watching` and exits immediately,
+   so just blindly launch one for every open PR every wake.
+2. Keep the **`ScheduleWakeup` fallback** (~1200–1800s) armed as the safety net
+   for a crashed or timed-out watcher (its default timeout is 1800s).
+3. **NEVER foreground-block** — no foreground `sleep`, no foreground
+   `gh pr checks --watch`. A foreground wait is the all-lanes barrier this
+   design removes; the watcher backgrounds the waiting instead.
 
 Then **end the turn.** Do not run a Monitor that waits for all lanes to be
 terminal — that is the barrier this design removes. Each independent wake re-runs
