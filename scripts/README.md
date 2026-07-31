@@ -10,7 +10,8 @@ original scripts assume a flat repo; these have been adapted for the
 ```
 scripts/
 ├── backend/           # Python quality gates — runs against backend/
-│   ├── check-all.sh   # Run lint + format + typecheck + security + complexity + tests
+│   ├── check-all.sh   # Drift preflight, then lint + format + typecheck + security + complexity + tests
+│   ├── deps.sh        # Fail when the venv drifts from the requirements pins
 │   ├── fix-all.sh     # Auto-fix linting and formatting
 │   ├── lint.sh        # ruff
 │   ├── format.sh      # ruff format

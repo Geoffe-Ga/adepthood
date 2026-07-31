@@ -64,6 +64,7 @@ adepthood/
 # Environment setup (idempotent)
 source .venv/bin/activate           # ALWAYS activate before Python work
 pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+# Installs what is missing but never what is stale; scripts/backend/deps.sh fails the gate on drift
 
 # Quality checks
 pre-commit run --all-files          # Run ALL hooks — do this before every commit
