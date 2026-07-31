@@ -62,6 +62,13 @@ fixable = ["ALL"]
 # (when run from repo root by pre-commit).
 "tests/**/*.py" = ["S101", "S105", "S106", "S107", "PLR2004", "FBT001", "FBT003"]
 "backend/tests/**/*.py" = ["S101", "S105", "S106", "S107", "PLR2004", "FBT001", "FBT003"]
+# Script meta-tests shell out to repo-owned scripts with literal argv (S603):
+# the shell script *is* the unit under test, so there is no in-process seam to
+# drive it through. ruff unions the ignore lists of every matching pattern, so
+# this only adds to the tests/** list above. Both spellings again, for the same
+# reason.
+"tests/scripts/**/*.py" = ["S603"]
+"backend/tests/scripts/**/*.py" = ["S603"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
 # Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time

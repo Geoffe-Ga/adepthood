@@ -64,10 +64,24 @@ jobs:
           # Verify branch coverage meets the threshold by parsing coverage.xml.
           # Threshold starts at 80% (current baseline ~82%); tighten as test
           # coverage improves, especially in services/botmason.py (70%).
-          # Error suppression removed: a pytest crash (collection/import/plugin
-          # error) must fail this step, not let the parser read a stale or
-          # partial coverage.xml from a prior run.
-          pytest --cov=src --cov-report=xml --cov-branch -q --no-header
+          #
+          # The report is regenerated from the coverage data the pre-push-hook
+          # step above already collected (backend-tests-coverage runs the whole
+          # suite under --cov), rather than by running the suite a second time
+          # in the same job. Staleness is not reachable here: the checkout is
+          # fresh and both .coverage and coverage.xml are gitignored, so no
+          # artifact can predate this job. A pytest crash (collection/import/
+          # plugin error) fails the step that ran it, and coverage data that
+          # never arrived fails the guard below - never a silent skip.
+          # The --include filter reproduces the {src, scripts} file set that
+          # step measured (verified identical: 190 files either way, and a
+          # branch rate of 92.33% vs 92.44% - run-to-run jitter, against an
+          # 80% gate).
+          if [ ! -f .coverage ]; then
+            echo "::error::.coverage not found - the test step collected no coverage data"
+            exit 1
+          fi
+          coverage xml -o coverage.xml --include="src/*,scripts/*"
           python3 -c "
           import os, sys, xml.etree.ElementTree as ET
           if not os.path.exists('coverage.xml'):
