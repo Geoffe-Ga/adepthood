@@ -14,6 +14,8 @@ from domain.creek_vault import (
     TIER_CEILING_BY_CLASSIFICATION,
     CreekCapability,
     HandshakeResult,
+    VaultErrorCode,
+    VaultIngestAction,
     VaultIngestRequest,
     VaultTierCeiling,
     tier_ceiling_for,
@@ -103,6 +105,32 @@ class TestCreekCapability:
     def test_wheel_value_is_wire_name(self) -> None:
         """WHEEL's value is the creek.wheel wire name."""
         assert CreekCapability.WHEEL.value == "creek.wheel"
+
+
+class TestRatifiedWireVocabularies:
+    """The two vault-supplied vocabularies, pinned to the exact strings on the wire.
+
+    Both are parsed straight off a vault response and both are closed sets: a
+    value that drifts stops matching what Creek sends, which silently degrades
+    every write rather than failing loudly, so the members are pinned in order.
+    """
+
+    def test_error_codes_are_the_four_ratified_strings(self) -> None:
+        """The error vocabulary is exactly the four codes Creek ratified, in order."""
+        assert [code.value for code in VaultErrorCode] == [
+            "invalid_request",
+            "unsupported_capability",
+            "incompatible_version",
+            "temporarily_unavailable",
+        ]
+
+    def test_ingest_actions_are_the_three_upsert_outcomes(self) -> None:
+        """An upsert reports exactly one of three actions, and they are wire strings."""
+        assert [action.value for action in VaultIngestAction] == [
+            "created",
+            "updated",
+            "unchanged",
+        ]
 
 
 class TestHandshakeResultUnavailable:

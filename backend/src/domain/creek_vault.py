@@ -103,6 +103,24 @@ def tier_ceiling_for(classification: str) -> VaultTierCeiling:
         raise ValueError(f"unknown journal classification: {classification!r}") from None
 
 
+class VaultErrorCode(enum.StrEnum):
+    """The machine-readable failure vocabulary a vault may answer an error with.
+
+    Deliberately closed: these four are the codes Creek has ratified, and they
+    are the *only* strings the adapter may ever parse out of a vault response.
+    Anything else -- a newer code, a typo, or a hostile string smuggling control
+    characters toward a log -- is dropped on the floor rather than stored or
+    rendered, so a vault can never choose what text appears in adepthood's
+    exceptions or telemetry. Values are the wire strings, so they are contract
+    and must not be reworded casually.
+    """
+
+    INVALID_REQUEST = "invalid_request"
+    UNSUPPORTED_CAPABILITY = "unsupported_capability"
+    INCOMPATIBLE_VERSION = "incompatible_version"
+    TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
+
+
 class CreekVaultError(RuntimeError):
     """Base type for every Creek Vault failure callers should degrade on.
 
@@ -119,6 +137,43 @@ class CreekVaultUnavailableError(CreekVaultError):
     exception. Its message is deliberately static and capability-named -- it
     must never interpolate the entry body or an API key, since exception
     strings surface in logs and tracebacks (privacy invariant).
+    """
+
+
+class CreekVaultContractError(CreekVaultError):
+    """The vault answered, and what it refused was *our* end of the contract.
+
+    Raised when a reachable, authenticated vault rejects the call because the
+    payload we sent, the contract version we pinned, or the capability we
+    claimed is wrong. That makes it a defect on adepthood's side with a concrete
+    remedy (fix the request, realign the pins) -- deliberately a different type
+    from :class:`CreekVaultUnavailableError`, because "the vault said no" and
+    "the vault was not there" call for opposite operator responses and would be
+    indistinguishable if they shared a type.
+
+    ``code`` carries the vault's reason only when it is one of our own
+    :class:`VaultErrorCode` members; an unrecognized wire string is dropped and
+    leaves it ``None``. Like every error in this hierarchy the *message* must
+    stay static and content-free -- exception strings reach logs and tracebacks,
+    so they may never interpolate the entry body, the API key, or any
+    vault-supplied text.
+    """
+
+    def __init__(self, message: str, *, code: VaultErrorCode | None = None) -> None:
+        """Store the static message and, when the vault named one we know, its code."""
+        super().__init__(message)
+        self.code = code
+
+
+class CreekVaultAuthError(CreekVaultError):
+    """A reachable vault rejected our credential.
+
+    Distinct from :class:`CreekVaultUnavailableError` on purpose: a rejected key
+    is a *configuration* problem (unset, stale, or scoped wrong) that a restart
+    or a retry will not cure, and reporting it as "no vault present" would hide
+    a broken deployment behind the same silence as a deliberately vault-less
+    one. Its message is static and capability-named for the same privacy reason
+    as the rest of the hierarchy.
     """
 
 
@@ -190,6 +245,22 @@ class VaultIngestRequest:
     created_at: datetime
 
 
+class VaultIngestAction(enum.StrEnum):
+    """What the vault actually did with an upserted entry.
+
+    Ingest is keyed off the entry's stable id, so a re-send edits one fragment
+    in place instead of creating a second. That makes the outcome three-valued,
+    and the distinction is worth carrying rather than flattening into "stored":
+    ``UNCHANGED`` says a re-send was a no-op, ``UPDATED`` says the vault's copy
+    moved, and only ``CREATED`` is a genuinely new fragment. Values are the wire
+    strings the vault answers with.
+    """
+
+    CREATED = "created"
+    UPDATED = "updated"
+    UNCHANGED = "unchanged"
+
+
 @dataclass(frozen=True)
 class VaultIngestResult:
     """Outcome of an ingest attempt.
@@ -198,10 +269,16 @@ class VaultIngestResult:
     was not durably written -- notably on the local-fallback path, where the
     operator's Postgres remains the sole system of record and ingest is a no-op
     rather than an error.
+
+    ``action`` is what the vault did with the fragment, when it says so. It
+    defaults to ``None`` for the transports that do not report one (the MCP
+    path) and for every not-stored result, so "the vault did not tell us" stays
+    distinguishable from any of the three real outcomes.
     """
 
     stored: bool
     vault_ref: str | None
+    action: VaultIngestAction | None = None
 
 
 @dataclass(frozen=True)
