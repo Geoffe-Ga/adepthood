@@ -107,6 +107,22 @@ class GuardFailure:
     detail: str
 
 
+@dataclass(frozen=True)
+class LiveFailure:
+    """A stage of live I/O that failed outright instead of answering something.
+
+    Attributes:
+        stage: What the run was doing, phrased for the report -- e.g.
+            ``"the identity bootstrap"``.
+        target: The instance the run was pointed at.
+        summary: The exception's type and message, shortened to one line.
+    """
+
+    stage: str
+    target: str
+    summary: str
+
+
 def _is_success(status: int) -> bool:
     """Report whether ``status`` is a 2xx."""
     return _SUCCESS_FLOOR <= status < _SUCCESS_CEILING
@@ -174,6 +190,30 @@ def judge(cell: Cell, status: int) -> Verdict:
     if cell is Cell.POSITIVE_CONTROL:
         return _judge_control(status)
     return _judge_probe(cell, status)
+
+
+def require_live_stages_completed(failure: LiveFailure | None) -> GuardFailure | None:
+    """Prove every stage of live I/O reached an answer instead of erroring out.
+
+    Args:
+        failure: The stage that failed, or ``None`` when all of them completed.
+
+    Returns:
+        ``None`` when the run got far enough to have a verdict of its own. An
+        instance that refuses the connection, a database that will not accept
+        the identity insert, a login that answers something unexpected -- each
+        leaves the matrix having probed nothing, and each would otherwise leave
+        the process on an uncaught exception, which exits 1: bit-for-bit the
+        code for a genuine authorization finding. Reporting it here is what
+        keeps "the harness never authenticated" distinguishable from "user B
+        read user A's journal".
+    """
+    if failure is None:
+        return None
+    return GuardFailure(
+        guard="require_live_stages_completed",
+        detail=f"{failure.stage} against {failure.target} failed: {failure.summary}",
+    )
 
 
 def require_auth_established(

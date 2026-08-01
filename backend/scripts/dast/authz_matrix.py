@@ -29,7 +29,10 @@ Exit codes:
     2 — at least one route has neither a seed strategy nor an allow-list entry,
         so the matrix does not cover the application it claims to.
     3 — a vacuity guard tripped: the run proved nothing, which outranks both of
-        the above because its "clean" would have been meaningless.
+        the above because its "clean" would have been meaningless. A target that
+        could not be reached at all lands here too, deliberately: an uncaught
+        exception would exit 1, and a consumer keying off the exit code cannot
+        tell that apart from a real finding.
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ from functools import partial
 from pathlib import Path
 
 from httpx import AsyncClient
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.user import User
@@ -64,6 +69,7 @@ from scripts.dast.runner import (
     DEFAULT_MIN_ROUTES,
     Bootstrap,
     Identity,
+    LiveTargetError,
     MatrixConfig,
     ReplayBodies,
     forwarded_for,
@@ -93,6 +99,10 @@ _SEED_TIMEZONE = "UTC"
 
 _REQUEST_TIMEOUT_SECONDS = 30.0
 _LOGIN_PATH = "/auth/login"
+
+# What the report says instead of a DSN it could not even parse. Echoing the
+# string back verbatim would put whatever it does contain into the log.
+_UNPARSEABLE_DSN = "<unparseable database URL>"
 
 
 @dataclass(frozen=True)
@@ -133,18 +143,20 @@ def _new_credentials(label: str) -> _Credentials:
     )
 
 
-async def _insert_users(database_url: str, credentials: Sequence[_Credentials]) -> None:
-    """Insert the identities' rows through the application's own ORM.
+def _redacted(database_url: str) -> str:
+    """Render a database URL with its password removed, for a line of output.
 
-    Args:
-        database_url: The async database URL the target instance is using.
-        credentials: The identities to create.
-
-    Signup is gated on a live license verification with no local override, so a
-    row insert is the only way to make an identity from outside the process. The
-    password is hashed with the application's own hasher, which is what lets the
-    real login route accept it a moment later.
+    A report is pasted into issues and CI logs, so the DSN has to be nameable
+    without the credential in it travelling along.
     """
+    try:
+        return make_url(database_url).render_as_string(hide_password=True)
+    except ArgumentError:
+        return _UNPARSEABLE_DSN
+
+
+async def _commit_users(database_url: str, credentials: Sequence[_Credentials]) -> None:
+    """Open an engine of the harness's own, insert every identity's row, dispose of it."""
     engine = create_async_engine(database_url)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
@@ -160,6 +172,38 @@ async def _insert_users(database_url: str, credentials: Sequence[_Credentials]) 
             await session.commit()
     finally:
         await engine.dispose()
+
+
+async def _insert_users(database_url: str, credentials: Sequence[_Credentials]) -> None:
+    """Insert the identities' rows through the application's own ORM.
+
+    Args:
+        database_url: The async database URL the target instance is using.
+        credentials: The identities to create.
+
+    Raises:
+        LiveTargetError: When the database cannot be reached or will not accept
+            the rows. Left to propagate as-is it would exit the process on 1 --
+            the code that means "a foreign object was reached" -- so it is
+            re-raised as the type the runner reports as a harness error, naming
+            the DSN it could not use. The DSN is scrubbed out of the driver's own
+            message too, because several drivers echo it back.
+
+    Signup is gated on a live license verification with no local override, so a
+    row insert is the only way to make an identity from outside the process. The
+    password is hashed with the application's own hasher, which is what lets the
+    real login route accept it a moment later.
+    """
+    try:
+        await _commit_users(database_url, credentials)
+    except (SQLAlchemyError, OSError) as error:
+        redacted = _redacted(database_url)
+        detail = str(error).replace(database_url, redacted)
+        message = (
+            f"the identity database {redacted} could not be used to insert the identities: "
+            f"{type(error).__name__}: {detail}"
+        )
+        raise LiveTargetError(message) from error
 
 
 async def _login(client: AsyncClient, credentials: _Credentials) -> Identity:

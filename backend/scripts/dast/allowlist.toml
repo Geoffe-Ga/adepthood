@@ -102,30 +102,34 @@ path     = "/course/content/{content_id}/mark-read"
 category = "shared_catalog"
 reason   = "global course catalog; the call mutates only the caller's own read state"
 
-# The seedable practice is a catalog preset, because submitting one is capped at
-# five per minute per user and the matrix needs one per cell. A preset is
-# readable and shareable by every user by design, so a second identity reaching
-# it is the feature rather than a leak. The ownership rule that does exist here
-# -- a draft is visible only to its submitter -- is exercised in-process by
-# tests/security/test_idor.py.
+# These three are excused because the application deliberately grants every
+# authenticated user access to a preset: ``require_visible_practice`` returns any
+# approved practice to anybody, and the share-link resolver admits a practice
+# whose ``submitted_by_user_id`` is NULL. Probing them cross-user would report a
+# LEAK for behaviour that is the feature, which is how a gate starts crying wolf.
+# The ownership rule that does exist here -- a draft is visible only to its
+# submitter -- is exercised in-process by tests/security/test_idor.py. The seed
+# is a catalog preset for the same reason, plus a mechanical one: submitting is
+# capped at five per minute per user, keyed on the JWT subject, and the matrix
+# needs a practice per cell.
 
 [[route]]
 method   = "GET"
 path     = "/practices/{practice_id}"
 category = "shared_catalog"
-reason   = "approved catalog presets are readable by every authenticated user by design"
+reason   = "any approved preset is readable by every authenticated user by design, so a cross-user read here is the feature and probing it would report a false LEAK"
 
 [[route]]
 method   = "GET"
 path     = "/practices/{practice_id}/share-links"
 category = "shared_catalog"
-reason   = "the listing is already filtered to the caller's own links, so a preset returns []"
+reason   = "reaching a submitter-less preset is permitted by design; the listing is filtered to the caller's own links, so a preset returns []"
 
 [[route]]
 method   = "POST"
 path     = "/practices/{practice_id}/share-link"
 category = "shared_catalog"
-reason   = "minting a link for a preset is explicitly permitted; presets have no submitter"
+reason   = "minting a link for a preset is explicitly permitted (submitted_by_user_id IS NULL passes the resolver), so a denial here is not the expected answer"
 
 # --- Role-gated -------------------------------------------------------------
 

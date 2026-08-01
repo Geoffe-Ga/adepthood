@@ -22,18 +22,29 @@ a global per-minute rate limit, and a throttled matrix answers uniformly no to
 everything -- which is indistinguishable from an application that denies
 correctly. Spreading the requests keeps the limiter out of the way, and the
 throttling guard fails the run outright if a single 429 gets through anyway.
+
+Because this is the module that touches the network, it is also the module that
+must never let the network end the process. An uncaught exception exits 1, and 1
+is the code for a genuine authorization finding -- so an unreachable instance
+would report as a BOLA. Every live stage therefore runs inside :func:`_stage`,
+which turns an operational failure into a named guard failure and lets the run
+finish as an ordinary report with exit code 3.
 """
 
 from __future__ import annotations
 
 import secrets
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError
+from textwrap import shorten
 from time import perf_counter
 
 import jwt
-from httpx import AsyncClient, Response
+from httpx import AsyncClient, HTTPError, Response
+from sqlalchemy.exc import SQLAlchemyError
 
 from scripts.dast.discovery import RouteSpec, discover_routes, is_object_scoped
 from scripts.dast.policy import AllowlistEntry, Classification, classify_routes
@@ -54,9 +65,11 @@ from scripts.dast.verdict import (
     Cell,
     CellResult,
     GuardFailure,
+    LiveFailure,
     judge,
     require_allowlist_bounded,
     require_auth_established,
+    require_live_stages_completed,
     require_minimum_coverage,
     require_no_throttling,
     require_positive_controls,
@@ -95,6 +108,38 @@ _FORWARDED_OCTETS = 3
 _OCTET_RANGE = 256
 
 ReplayBodies = Mapping[tuple[str, str], Mapping[str, object]]
+
+
+class LiveTargetError(Exception):
+    """A resource the run depends on could not be reached or used.
+
+    Raised where the failing resource is not the HTTP target the runner already
+    names -- the identity bootstrap's database above all -- so the message can
+    carry that resource itself. The runner reports it as a harness error instead
+    of letting it leave the process, because an uncaught exception exits 1, the
+    same code the gate uses for a genuine authorization finding.
+    """
+
+
+# Failures of the target, its database, or the network in between: each leaves
+# the matrix with nothing to say about authorization, so each is reported rather
+# than raised. Deliberately narrow -- a ``TypeError`` in the harness is a bug and
+# must still surface as one -- and deliberately all ``Exception`` subclasses, so
+# ``KeyboardInterrupt`` and ``SystemExit`` are never captured here.
+_OPERATIONAL_ERRORS = (HTTPError, OSError, SQLAlchemyError, JSONDecodeError, LiveTargetError)
+
+# The live stages, phrased the way the report should name them.
+_STAGE_BOOTSTRAP = "the identity bootstrap"
+_STAGE_AUTH_PROBE = "the auth probe"
+_STAGE_DISCOVERY = f"the {_OPENAPI_PATH} fetch"
+_STAGE_PROBES = "the route probes"
+
+# One driver error can run to several paragraphs; a gate's output wants a line.
+_MAX_SUMMARY_CHARS = 240
+
+# The auth probe of a run that never reached it: no status at all, which is not
+# 200 and not 401, so nothing downstream can read it as a healthy answer.
+_NO_STATUS = 0
 
 
 @dataclass(frozen=True)
@@ -166,7 +211,13 @@ class _AuthProbe:
 
 @dataclass(frozen=True)
 class _Outcome:
-    """One finished run, before it is graded into a report."""
+    """One finished run, before it is graded into a report.
+
+    ``live_failure`` is set only when a stage of live I/O failed outright, in
+    which case every other field is empty by construction. That is deliberate:
+    the tallies of a run that broke off partway are not numbers anybody should
+    read as coverage, and reporting zero says plainly that nothing was proven.
+    """
 
     routes: tuple[RouteSpec, ...]
     classification: Classification
@@ -176,6 +227,38 @@ class _Outcome:
     unseedable: tuple[str, ...]
     statuses: tuple[int, ...]
     elapsed_seconds: float
+    live_failure: LiveFailure | None = None
+
+
+class _StageError(Exception):
+    """An operational failure, tagged with the live stage it happened in."""
+
+    def __init__(self, stage: str, cause: Exception) -> None:
+        """Record which stage failed and what it raised."""
+        super().__init__(f"{stage}: {cause}")
+        self.stage = stage
+        self.cause = cause
+
+
+@contextmanager
+def _stage(name: str) -> Iterator[None]:
+    """Tag any operational failure raised inside the block with the stage's name.
+
+    Args:
+        name: How the report should name what was being done.
+
+    Yields:
+        Nothing; the block is the stage.
+
+    Raises:
+        _StageError: When the target, its database, or the network failed. Every
+            other exception passes through untouched, because a bug in the
+            harness must not be laundered into "the instance was unreachable".
+    """
+    try:
+        yield
+    except _OPERATIONAL_ERRORS as error:
+        raise _StageError(name, error) from error
 
 
 def forwarded_for() -> str:
@@ -301,6 +384,29 @@ async def _run_route(session: _Session, route: RouteSpec) -> tuple[CellResult, .
     return tuple(results)
 
 
+async def _fetch_document(session: _Session) -> Mapping[str, object]:
+    """Fetch the target's own OpenAPI document.
+
+    Args:
+        session: The run's state.
+
+    Returns:
+        The parsed document, or an empty one when the body is valid JSON that is
+        not a document at all -- which the coverage guard then reports as a
+        harness error, the same as any other run that probed nothing.
+
+    ``raise_for_status`` is what turns an instance answering 404 or 502 here into
+    a named failure rather than a parse error three lines later.
+    """
+    response = await _send(session, "GET", _OPENAPI_PATH, token=None)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, Mapping):
+        return {}
+    document: Mapping[str, object] = payload
+    return document
+
+
 async def _probe_auth(session: _Session) -> _AuthProbe:
     """Ask the probe route the same question twice: with a credential, and without."""
     path = session.config.auth_probe_path
@@ -346,6 +452,12 @@ def _collect_guards(outcome: _Outcome, config: MatrixConfig) -> tuple[GuardFailu
     unit suite, which is both earlier feedback and independent of which instance
     this run happens to be pointed at.
     """
+    live = require_live_stages_completed(outcome.live_failure)
+    if live is not None:
+        # A run that broke off has nothing trustworthy to say about coverage,
+        # seeding, or throttling, and the other guards would only restate that
+        # one collapse in seven less useful ways.
+        return (live,)
     classification = outcome.classification
     considered = (
         len(classification.covered)
@@ -392,6 +504,82 @@ def _build_report(outcome: _Outcome, config: MatrixConfig, base_url: str) -> Mat
     )
 
 
+async def _collect_outcome(
+    client: AsyncClient,
+    *,
+    bootstrap: Bootstrap,
+    config: MatrixConfig,
+    started: float,
+) -> _Outcome:
+    """Run every live stage in order and gather what they saw.
+
+    Each stage is named as it runs, so a failure can say which one of them the
+    run died in rather than only that something did.
+    """
+    with _stage(_STAGE_BOOTSTRAP):
+        owner, intruder = await bootstrap(client)
+    session = _Session(
+        client=client,
+        config=config,
+        owner=owner,
+        intruder=intruder,
+        forged_token=_forged_token(),
+    )
+    with _stage(_STAGE_AUTH_PROBE):
+        probe = await _probe_auth(session)
+    with _stage(_STAGE_DISCOVERY):
+        routes = discover_routes(await _fetch_document(session))
+    classification = classify_routes(
+        routes,
+        seed_registry=config.seed_registry,
+        allowlist=config.allowlist,
+    )
+    with _stage(_STAGE_PROBES):
+        results, unseedable = await _probe_routes(session, classification.covered)
+    return _Outcome(
+        routes=routes,
+        classification=classification,
+        probe=probe,
+        results=results,
+        seeded=len(classification.covered) - len(unseedable),
+        unseedable=unseedable,
+        statuses=tuple(session.statuses),
+        elapsed_seconds=perf_counter() - started,
+    )
+
+
+def _summarize(cause: Exception) -> str:
+    """Render one operational failure as a single actionable line.
+
+    A :class:`LiveTargetError` already names what failed and which resource was
+    involved, so repeating its class name would be noise. Anything else is named
+    by its type, which for a driver or transport error is the useful half.
+    """
+    described = (
+        str(cause) if isinstance(cause, LiveTargetError) else f"{type(cause).__name__}: {cause}"
+    )
+    return shorten(described, width=_MAX_SUMMARY_CHARS, placeholder=" ...")
+
+
+def _failed_outcome(error: _StageError, *, target: str, elapsed_seconds: float) -> _Outcome:
+    """Describe a run that never reached a verdict, so it still becomes a report."""
+    return _Outcome(
+        routes=(),
+        classification=Classification(covered=(), allowlisted=(), uncovered=()),
+        probe=_AuthProbe(authenticated_status=_NO_STATUS, unauthenticated_status=_NO_STATUS),
+        results=(),
+        seeded=0,
+        unseedable=(),
+        statuses=(),
+        elapsed_seconds=elapsed_seconds,
+        live_failure=LiveFailure(
+            stage=error.stage,
+            target=target,
+            summary=_summarize(error.cause),
+        ),
+    )
+
+
 async def run_matrix(
     client: AsyncClient,
     *,
@@ -410,36 +598,23 @@ async def run_matrix(
         config: The tables and thresholds this run uses.
 
     Returns:
-        The graded report. Failures inside the matrix -- a route that will not
-        seed, an owner who cannot reach their own object -- are reported rather
-        than raised, so a run always produces a verdict instead of a traceback.
+        The graded report -- always a report, never a traceback. Failures inside
+        the matrix (a route that will not seed, an owner who cannot reach their
+        own object) are graded as such, and failures of the live target itself
+        (a refused connection, a database that will not take the identity
+        insert) come back as the live-stage guard. Both are exit code 3, which
+        no consumer can confuse with the 1 an uncaught exception would produce.
     """
     started = perf_counter()
-    owner, intruder = await bootstrap(client)
-    session = _Session(
-        client=client,
-        config=config,
-        owner=owner,
-        intruder=intruder,
-        forged_token=_forged_token(),
-    )
-    probe = await _probe_auth(session)
-    document = await _send(session, "GET", _OPENAPI_PATH, token=None)
-    routes = discover_routes(document.json())
-    classification = classify_routes(
-        routes,
-        seed_registry=config.seed_registry,
-        allowlist=config.allowlist,
-    )
-    results, unseedable = await _probe_routes(session, classification.covered)
-    outcome = _Outcome(
-        routes=routes,
-        classification=classification,
-        probe=probe,
-        results=results,
-        seeded=len(classification.covered) - len(unseedable),
-        unseedable=unseedable,
-        statuses=tuple(session.statuses),
-        elapsed_seconds=perf_counter() - started,
-    )
-    return _build_report(outcome, config, str(client.base_url))
+    target = str(client.base_url)
+    try:
+        outcome = await _collect_outcome(
+            client, bootstrap=bootstrap, config=config, started=started
+        )
+    except _StageError as error:
+        outcome = _failed_outcome(
+            error,
+            target=target,
+            elapsed_seconds=perf_counter() - started,
+        )
+    return _build_report(outcome, config, target)

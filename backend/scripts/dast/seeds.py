@@ -142,12 +142,28 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             },
             id_pointer=("id",),
         ),
-        # Read from the catalog rather than submitted, because submitting is
-        # capped at five practices per minute per user and the matrix needs one
-        # for every cell of every route that names a practice. The three routes
-        # that address this id directly are allow-listed for the same reason a
-        # preset is safe to reuse here: nothing can destroy it and everyone may
-        # read it. It is a prerequisite for the objects that *are* probed --
+        # Read from the catalog rather than submitted, for two reasons.
+        #
+        # The first is that probing a *shared* practice is the only honest thing
+        # to do here: the application deliberately lets any authenticated user
+        # reach a preset. ``require_visible_practice`` returns any approved
+        # practice to anybody, and the share-link resolver admits a practice
+        # whose ``submitted_by_user_id`` is NULL by design. Cross-user access to
+        # a preset is therefore the feature, and the three routes that address
+        # this id directly are allow-listed saying exactly that -- a matrix that
+        # probed them against a submitted practice instead would report a
+        # false-positive LEAK and teach everyone to ignore the gate. The
+        # ownership rule that does exist (a draft is visible only to its
+        # submitter) is pinned in-process by tests/security/test_idor.py.
+        #
+        # The second is mechanical: submitting is capped at five practices per
+        # minute per user, keyed on the JWT subject rather than the client
+        # address, so the per-request forwarded address the rest of the matrix
+        # relies on cannot spread that cost -- and the matrix needs a practice
+        # for every cell of every route that names one.
+        #
+        # Reusing one preset across cells is safe because nothing here can
+        # destroy it. It is a prerequisite for the objects that *are* probed --
         # share links and user-practices, both of which stay fresh per cell.
         # Stage 1's canonical preset is a sense-grounding practice, and it is
         # the first practice row the seeder inserts, so an unordered listing

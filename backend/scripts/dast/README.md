@@ -48,6 +48,13 @@ Optional flags: `--allowlist PATH`, `--min-routes 20`, `--budget-seconds 120`,
 `3` outranks `1` on purpose. A run that could not prove anything must be louder
 than a run that proved everything was fine.
 
+An instance that cannot be reached, a database that will not take the identity
+rows, an `/openapi.json` that never arrives — all of those are `3` as well, via
+the `require_live_stages_completed` guard, and the report names the stage, the
+target, and the error. That is not a detail: an uncaught exception exits `1`,
+which is bit-for-bit the code for a real finding, so a harness that let one
+escape would report "we found a BOLA" every time the instance was simply down.
+
 ## How one route is probed
 
 A fresh object is seeded **per cell**, as identity A, and then four cells run in

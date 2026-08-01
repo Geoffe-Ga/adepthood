@@ -49,7 +49,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 
 from scripts.dast.authz_matrix import HarnessOverrides, main
-from scripts.dast.runner import Identity, MatrixConfig
+from scripts.dast.runner import Bootstrap, Identity, MatrixConfig
 from scripts.dast.seeds import SeedSpec
 
 # The stub is driven in-process through ASGITransport, so this URL is never
@@ -521,32 +521,81 @@ def stub_config(*, min_routes: int = STUB_OBJECT_SCOPED_ROUTES) -> MatrixConfig:
     )
 
 
-def drive_main(deployment: StubDeployment, *, min_routes: int) -> int:
-    """Run the CLI end to end against a stub app and return its exit code.
+def stub_overrides(client: AsyncClient, *, bootstrap: Bootstrap | None) -> HarnessOverrides:
+    """Bundle the seams that point the CLI at a stub app.
+
+    Args:
+        client: The client the run should use.
+        bootstrap: The identity bootstrap to inject, or ``None`` to leave the
+            production one in place -- which is how a test drives the real ORM
+            insert against a deliberately unusable database URL.
+    """
+    return HarnessOverrides(
+        client=client,
+        bootstrap=bootstrap,
+        seed_registry=STUB_SEED_REGISTRY,
+        replay_bodies=STUB_REPLAY_BODIES,
+        auth_probe_path=STUB_AUTH_PROBE_PATH,
+    )
+
+
+def close_client(client: AsyncClient) -> None:
+    """Close a client from synchronous test code, which owns no event loop."""
+    asyncio.run(client.aclose())
+
+
+def drive_main_with(
+    overrides: HarnessOverrides,
+    *,
+    min_routes: int,
+    database_url: str = UNUSED_DATABASE_URL,
+) -> int:
+    """Run the CLI end to end with one set of injected seams.
 
     ``main`` owns the event loop, so this is deliberately synchronous: an async
-    test could not call it without nesting ``asyncio.run`` inside a running
-    loop. The client is built here and closed afterwards because nothing that
-    injects a client should also be expected to own its lifetime.
+    test could not call it without nesting ``asyncio.run`` inside a running loop.
     """
-    client = stub_client(deployment)
+    return main(
+        [
+            "--base-url",
+            STUB_BASE_URL,
+            "--database-url",
+            database_url,
+            "--min-routes",
+            str(min_routes),
+        ],
+        overrides=overrides,
+    )
+
+
+def drive_main(
+    deployment: StubDeployment,
+    *,
+    min_routes: int,
+    client: AsyncClient | None = None,
+    bootstrap: Bootstrap | None = None,
+) -> int:
+    """Run the CLI end to end against a stub app and return its exit code.
+
+    Args:
+        deployment: The stub to probe.
+        min_routes: The coverage floor this run is given.
+        client: A client to use instead of a plain one onto the stub, for tests
+            that need one live stage to fail while the others keep working.
+        bootstrap: An identity bootstrap to use instead of the stub's own.
+
+    Returns:
+        The exit code. The client is closed here because nothing that injects a
+        client should also be expected to own its lifetime.
+    """
+    session_client = client if client is not None else stub_client(deployment)
     try:
-        return main(
-            [
-                "--base-url",
-                STUB_BASE_URL,
-                "--database-url",
-                UNUSED_DATABASE_URL,
-                "--min-routes",
-                str(min_routes),
-            ],
-            overrides=HarnessOverrides(
-                client=client,
-                bootstrap=make_stub_bootstrap(deployment),
-                seed_registry=STUB_SEED_REGISTRY,
-                replay_bodies=STUB_REPLAY_BODIES,
-                auth_probe_path=STUB_AUTH_PROBE_PATH,
+        return drive_main_with(
+            stub_overrides(
+                session_client,
+                bootstrap=bootstrap if bootstrap is not None else make_stub_bootstrap(deployment),
             ),
+            min_routes=min_routes,
         )
     finally:
-        asyncio.run(client.aclose())
+        close_client(session_client)
