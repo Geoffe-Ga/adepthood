@@ -1,0 +1,124 @@
+name: DAST Authorization Matrix
+
+# Starts an ephemeral instance and asks one question of every route that names
+# an object by id in its path: can identity B reach identity A's object? The
+# in-process suite already asserts specific ownership rules; this job is the one
+# that exercises the whole stack over a real socket, so a middleware or routing
+# change that bypasses those rules surfaces here.
+#
+# ``pull_request`` and never ``pull_request_target``: this job checks out and
+# runs the head of the branch under test, so it must not hold write-scoped
+# credentials.
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-authz.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-authz.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dast-authz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authz-matrix:
+    runs-on: ubuntu-latest
+    # The two-minute acceptance criterion is enforced inside the harness by
+    # --budget-seconds, which measures the matrix itself; this ceiling only
+    # stops a wedged server or a hung install from running forever.
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+      BASE_URL: http://127.0.0.1:8000
+      UVICORN_LOG: /tmp/uvicorn.log
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+
+      - name: Migrate the throwaway database
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Start the target instance
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          # The matrix sends a distinct forwarded client address per request so
+          # the global per-minute limit cannot turn it into a page of uniform,
+          # meaningless denials. Trusting the loopback proxy is what makes that
+          # header evidence on this instance, which the job started itself; it
+          # changes no code and weakens no production control. Any 429 that
+          # still gets through fails the run rather than passing as a denial.
+          TRUSTED_PROXY_CIDRS: 127.0.0.1/32
+        run: |
+          # Started the way the Dockerfile does -- module ``main`` with
+          # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
+          # import layout production runs.
+          PYTHONPATH=src python -m uvicorn main:app \
+            --host 127.0.0.1 --port 8000 --log-level warning > "$UVICORN_LOG" 2>&1 &
+
+      - name: Wait for readiness
+        run: |
+          # The startup seeder runs deliberately: the catalog rows it creates are
+          # what several seed strategies resolve against.
+          for _ in $(seq 1 45); do
+            if curl -fsS "$BASE_URL/health/ready" > /dev/null; then
+              echo "instance is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the instance never became ready"
+          cat "$UVICORN_LOG"
+          exit 1
+
+      - name: Run the authorization matrix
+        working-directory: backend
+        run: |
+          PYTHONPATH=src python -m scripts.dast.authz_matrix \
+            --base-url "$BASE_URL" \
+            --database-url "$DATABASE_URL"
+
+      - name: Server log
+        if: always()
+        run: cat "$UVICORN_LOG" || true

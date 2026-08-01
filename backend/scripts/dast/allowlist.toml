@@ -1,0 +1,162 @@
+# Routes the authorization matrix deliberately does not probe.
+#
+# Every entry needs a method, a path exactly as the OpenAPI document spells it,
+# a category from the closed vocabulary in policy.py, and a reason a reviewer
+# can disagree with. An entry that no longer matches a live route fails the
+# build, so this file cannot become a graveyard, and the allow-list may never
+# excuse more than half the routes that carry a path parameter.
+#
+# Prefer a working seed strategy to an entry here every time.
+
+# --- Templated routes that carry no object reference ------------------------
+# The path parameter names a curriculum position or a public document, not a
+# row somebody owns, so a cross-user probe would be answered 200 by design.
+
+[[route]]
+method   = "GET"
+path     = "/course/site-resources/{slug}/body"
+category = "not_object_scoped"
+reason   = "slug names a published site document, not a per-user row"
+
+[[route]]
+method   = "GET"
+path     = "/course/stages/{stage_number}/content"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; the response is scoped to the caller"
+
+[[route]]
+method   = "GET"
+path     = "/course/stages/{stage_number}/intro"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; the response is scoped to the caller"
+
+[[route]]
+method   = "GET"
+path     = "/course/stages/{stage_number}/intro/body"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; the response is scoped to the caller"
+
+[[route]]
+method   = "GET"
+path     = "/course/stages/{stage_number}/progress"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; progress is read for the caller only"
+
+[[route]]
+method   = "GET"
+path     = "/prompts/{week_number}"
+category = "not_object_scoped"
+reason   = "week_number is a curriculum position; the prompt set is the same for everyone"
+
+[[route]]
+method   = "POST"
+path     = "/prompts/{week_number}/respond"
+category = "not_object_scoped"
+reason   = "week_number is a curriculum position; the response is stored against the caller"
+
+[[route]]
+method   = "GET"
+path     = "/stages/{stage_number}/history"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; history is read for the caller only"
+
+[[route]]
+method   = "GET"
+path     = "/stages/{stage_number}/progress"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; progress is read for the caller only"
+
+# --- Capability tokens ------------------------------------------------------
+# The path carries an unguessable share token rather than a row id: holding the
+# token is the authorization, so reaching the resource with it is the feature.
+
+[[route]]
+method   = "GET"
+path     = "/practices/share/{token}"
+category = "capability_token"
+reason   = "share tokens are bearer capabilities; a second user holding one is the point"
+
+[[route]]
+method   = "POST"
+path     = "/practices/share/{token}/import"
+category = "capability_token"
+reason   = "share tokens are bearer capabilities; a second user holding one is the point"
+
+# --- Shared catalog ---------------------------------------------------------
+
+[[route]]
+method   = "GET"
+path     = "/course/content/{content_id}"
+category = "shared_catalog"
+reason   = "global course catalog; no per-user owner to cross"
+
+[[route]]
+method   = "GET"
+path     = "/course/content/{content_id}/body"
+category = "shared_catalog"
+reason   = "global course catalog; no per-user owner to cross"
+
+[[route]]
+method   = "POST"
+path     = "/course/content/{content_id}/mark-read"
+category = "shared_catalog"
+reason   = "global course catalog; the call mutates only the caller's own read state"
+
+# The seedable practice is a catalog preset, because submitting one is capped at
+# five per minute per user and the matrix needs one per cell. A preset is
+# readable and shareable by every user by design, so a second identity reaching
+# it is the feature rather than a leak. The ownership rule that does exist here
+# -- a draft is visible only to its submitter -- is exercised in-process by
+# tests/security/test_idor.py.
+
+[[route]]
+method   = "GET"
+path     = "/practices/{practice_id}"
+category = "shared_catalog"
+reason   = "approved catalog presets are readable by every authenticated user by design"
+
+[[route]]
+method   = "GET"
+path     = "/practices/{practice_id}/share-links"
+category = "shared_catalog"
+reason   = "the listing is already filtered to the caller's own links, so a preset returns []"
+
+[[route]]
+method   = "POST"
+path     = "/practices/{practice_id}/share-link"
+category = "shared_catalog"
+reason   = "minting a link for a preset is explicitly permitted; presets have no submitter"
+
+# --- Role-gated -------------------------------------------------------------
+
+[[route]]
+method   = "POST"
+path     = "/admin/stage-progress/{user_id}/repair"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+# --- No way to create the object from outside the process -------------------
+
+[[route]]
+method   = "POST"
+path     = "/invitations/{invitation_id}/dismiss"
+category = "no_seed_strategy"
+reason   = "invitations are generated server-side; there is no endpoint that creates one"
+
+[[route]]
+method   = "POST"
+path     = "/journal/marginalia/{marginalia_id}/essay"
+category = "no_seed_strategy"
+reason   = "marginalia are model-generated; a fresh entry's marginalia list comes back empty"
+
+[[route]]
+method   = "POST"
+path     = "/journal/suggestions/{suggestion_id}/accept"
+category = "no_seed_strategy"
+reason   = "suggestions are model-generated; a fresh entry's suggestion list comes back empty"
+
+[[route]]
+method   = "POST"
+path     = "/journal/suggestions/{suggestion_id}/dismiss"
+category = "no_seed_strategy"
+reason   = "suggestions are model-generated; a fresh entry's suggestion list comes back empty"
