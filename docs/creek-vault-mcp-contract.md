@@ -122,7 +122,7 @@ capability is still used for the others it supports:
   advertised `creek.journal` — an unadvertised capability is refused
   locally, with no request sent — before issuing a `PUT` to the
   entry's own `/v1/journal-entries/{entry_id}` URL
-  (`backend/src/services/creek_vault_client.py:1238-1264`). Either
+  (`backend/src/services/creek_vault_client.py:1241-1288`). Either
   way, if the vault is absent or otherwise unavailable at handshake
   time, the write path reports `UNAVAILABLE`
   (`backend/src/services/creek_vault_write.py:266-267`); if the
@@ -148,7 +148,7 @@ capability is still used for the others it supports:
   notes survive the marginalia-kind translation above also falls
   back, rather than rendering an empty note set. A vault response is
   untrusted input: the number of notes adepthood will accept from one
-  response is bounded, and each note's quote and body are
+  response is bounded, and each note's quote and note text are
   length-bounded, before anything is built from them. Additive fields
   Creek may add later — its optional `essay`, and any future
   related-praxis or related-eddies fields — are ignored rather than
