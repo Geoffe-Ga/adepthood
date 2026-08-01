@@ -1,0 +1,63 @@
+name: Creek contract drift
+
+# Ask Creek, once a week, whether it still publishes the /v1 contract bytes this
+# repo vendored under backend/tests/fixtures/creek_v1/. The conformance suite
+# reads every wire shape it asserts out of that vendored copy, so upstream can
+# move without a single test going red -- the copy silently stops describing the
+# server and the divergence surfaces in production instead of in review. This
+# job is the only thing that looks.
+#
+# Scheduled and manual only, deliberately: no push and no pull_request trigger.
+# A PR check that reached out to the live network would make every build depend
+# on a third party's availability, would let a PR author's branch decide what
+# gets fetched, and would turn an upstream outage into a merge blocker. The
+# offline half of the same script (`verify`) runs in the normal test suite on
+# every PR, and that is where the fast feedback belongs.
+#
+# creek-vault is a public repository, so the raw fetch is unauthenticated and
+# this workflow references no secret at all. There is nothing here for a
+# compromised step to exfiltrate.
+#
+# Exit 1 (drift) and exit 2 (could not verify) both fail the job, and neither is
+# swallowed. Exit 2 is not a softer outcome than exit 1: a run that could not
+# reach Creek, or that was served something it refused to parse, has proven
+# nothing about the pin. Letting it pass would turn this gate into a weekly
+# green checkmark that means "nobody looked".
+
+on:
+  schedule:
+    # Saturdays 08:30 UTC -- the weekday 08:00 slots are taken by the scan
+    # workflows, and a weekend run leaves the whole week to act on a finding.
+    - cron: "30 8 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creek-contract-drift
+  cancel-in-progress: false
+
+jobs:
+  compare-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the drift check's only dependency
+        # The check imports httpx and nothing else from the app, so installing
+        # the whole backend requirement set would only widen the surface of a
+        # job that talks to the network. The version comes from the repo's own
+        # pins as a constraint rather than being restated here, so this job can
+        # never quietly fetch with a different httpx than the app ships.
+        run: pip install -c backend/requirements.txt httpx
+
+      - name: Compare the vendored bundle against what Creek publishes today
+        working-directory: backend
+        run: python -m scripts.creek_contract_drift compare
