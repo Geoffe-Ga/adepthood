@@ -42,7 +42,7 @@ import asyncio
 import secrets
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
@@ -120,8 +120,10 @@ class HarnessOverrides:
 
     client: AsyncClient | None = None
     bootstrap: Bootstrap | None = None
-    seed_registry: Mapping[str, SeedSpec] = SEED_REGISTRY
-    replay_bodies: ReplayBodies = REPLAY_BODIES
+    # Both constants are ``MappingProxyType``, which Python 3.11 rejects as a
+    # dataclass default; the factories hand back those same shared objects.
+    seed_registry: Mapping[str, SeedSpec] = field(default_factory=lambda: SEED_REGISTRY)
+    replay_bodies: ReplayBodies = field(default_factory=lambda: REPLAY_BODIES)
     auth_probe_path: str = DEFAULT_AUTH_PROBE_PATH
 
 

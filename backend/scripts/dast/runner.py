@@ -180,8 +180,10 @@ class MatrixConfig:
         max_allowlist_fraction: The share of routes the allow-list may excuse.
     """
 
-    seed_registry: Mapping[str, SeedSpec] = SEED_REGISTRY
-    replay_bodies: ReplayBodies = REPLAY_BODIES
+    # Both constants are ``MappingProxyType``, which Python 3.11 rejects as a
+    # dataclass default; the factories hand back those same shared objects.
+    seed_registry: Mapping[str, SeedSpec] = field(default_factory=lambda: SEED_REGISTRY)
+    replay_bodies: ReplayBodies = field(default_factory=lambda: REPLAY_BODIES)
     allowlist: tuple[AllowlistEntry, ...] = ()
     auth_probe_path: str = DEFAULT_AUTH_PROBE_PATH
     min_routes: int = DEFAULT_MIN_ROUTES
