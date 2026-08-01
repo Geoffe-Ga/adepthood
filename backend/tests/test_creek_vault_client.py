@@ -31,6 +31,7 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from services.creek_vault_client import (
+    _MAX_FRAGMENT_ID_LENGTH,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
     _extract_tool_payload,
@@ -353,6 +354,24 @@ def test_parse_ingest_result_missing_fragment_id_is_not_stored() -> None:
 def test_parse_ingest_result_empty_fragment_id_is_not_stored() -> None:
     """An ok status with an empty fragment_id parses to stored=False with no vault_ref."""
     result = _parse_ingest_result({"status": "ok", "fragment_id": ""})
+    assert result == VaultIngestResult(stored=False, vault_ref=None)
+
+
+@pytest.mark.parametrize(
+    "fragment_id",
+    [
+        pytest.param("f" * (_MAX_FRAGMENT_ID_LENGTH + 1), id="oversized"),
+        pytest.param("frag\r\n\x00-1", id="unprintable"),
+    ],
+)
+def test_parse_ingest_result_unstorable_fragment_id_is_not_stored(fragment_id: str) -> None:
+    """An ok status whose ref is too long or unprintable is not-stored, on this transport too.
+
+    ``vault_ref`` is persisted verbatim on the entry, so the same bound has to
+    hold whichever transport answered -- an MCP vault gets no wider a channel
+    into that column than an HTTP one.
+    """
+    result = _parse_ingest_result({"status": "ok", "fragment_id": fragment_id})
     assert result == VaultIngestResult(stored=False, vault_ref=None)
 
 

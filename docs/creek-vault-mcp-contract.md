@@ -96,13 +96,31 @@ deliberately **not** invented in this document.
 Every capability degrades independently; a vault missing one
 capability is still used for the others it supports:
 
-- **JOURNAL** — if absent from the handshake, or the vault is
-  otherwise unavailable, the write path reports `UNAVAILABLE`
-  (`backend/src/services/creek_vault_write.py:83-90`); if the
-  handshake succeeds but the ingest call itself fails, it reports
-  `DEGRADED` (`creek_vault_write.py:153`). The operator's own
-  Postgres remains the sole system of record for that content
-  either way.
+- **JOURNAL** — the one capability with a ratified `/v1` shape, so it
+  is wired up on both transports adepthood can select via
+  `CREEK_VAULT_PROTOCOL` (default `mcp`, unchanged): the MCP client
+  calls the vault's ingest tool directly, and the HTTP client
+  (`CREEK_VAULT_PROTOCOL=http`) gates on the handshake having
+  advertised `creek.journal` — an unadvertised capability is refused
+  locally, with no request sent — before issuing a `PUT` to the
+  entry's own `/v1/journal-entries/{entry_id}` URL
+  (`backend/src/services/creek_vault_client.py:1095-1121`). Either
+  way, if the vault is absent or otherwise unavailable at handshake
+  time, the write path reports `UNAVAILABLE`
+  (`backend/src/services/creek_vault_write.py:266-267`); if the
+  handshake succeeds but the ingest call itself fails — or answers
+  with a payload the client cannot verify as a durably stored write —
+  it reports `DEGRADED` (`creek_vault_write.py:276-277`). Under HTTP,
+  a failed ingest is further classified into one of three kinds an
+  operator can act on differently — a contract violation (bad
+  payload, an unclaimed capability, or a version mismatch), a
+  rejected credential (401/403), or a plain unavailable vault
+  (timeout, 5xx, an unreadable success body) — each logged with its
+  own `VaultDegradeReason` in content-free structured fields
+  (`creek_vault_write.py:77-95`). **A failed replication is dropped,
+  not queued: there is no retry and no backlog.** The write is logged
+  once and forgotten, and the operator's own Postgres remains the
+  sole system of record for that content either way.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path (`backend/src/services/creek_vault_reflect.py:105-120`).
   Content already flagged by the care gate never calls the vault for a

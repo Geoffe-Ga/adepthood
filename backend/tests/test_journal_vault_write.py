@@ -1,13 +1,16 @@
 """Integration tests wiring the journal router to the Creek Vault write path.
 
-RED: the create/update journal endpoints do not yet call
-``services.creek_vault_write.store_and_classify`` and ``JournalEntry`` does not
-yet carry ``vault_ref`` / ``vault_tags`` columns, so every test here fails
-until both are implemented.
+These drive the real create/update endpoints against a scripted vault client to
+pin the guarantee the router owes the writer: the entry lands in Postgres and
+comes back to the user whatever the vault does, and the ``vault_ref`` /
+``vault_tags`` columns are reconciled to the write outcome -- written on a
+durable ingest, cleared when an entry turns intimate, and left alone on a
+transient failure so a passing blip never drops a good reference.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from http import HTTPStatus
 
 import pytest
@@ -18,9 +21,12 @@ from sqlmodel import col, select
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
+    CreekVaultContractError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultErrorCode,
+    VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
@@ -102,6 +108,43 @@ class SequencedVaultClient:
     async def wheel(self) -> VaultWheelBalance:
         """Return an empty wheel balance (unused by the write path)."""
         return VaultWheelBalance(aspects=())
+
+
+# The one fragment a vault keyed off a stable entry id keeps handing back, no
+# matter how often the entry is re-sent.
+_STABLE_FRAGMENT_ID = "vault-fragment-stable"
+
+
+def _stable_action(seen: Sequence[str], body: str) -> VaultIngestAction:
+    """Return created on first sight, unchanged for an identical re-send, updated otherwise."""
+    if not seen:
+        return VaultIngestAction.CREATED
+    if seen[-1] == body:
+        return VaultIngestAction.UNCHANGED
+    return VaultIngestAction.UPDATED
+
+
+class StableFragmentVaultClient(SequencedVaultClient):
+    """Fake vault that edits one fragment in place: the ref never changes across re-sends.
+
+    The realistic counterpart to :class:`SequencedVaultClient`'s incrementing
+    refs -- a vault keying its fragment off the entry id answers the same
+    ``fragment_id`` every time and reports what it did in ``action``.
+    """
+
+    def __init__(self) -> None:
+        """Start with no ingested bodies and no recorded actions."""
+        super().__init__()
+        self.actions: list[VaultIngestAction] = []
+        self._bodies: list[str] = []
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Record the request and answer with this entry's one stable fragment id."""
+        self.ingest_calls.append(request)
+        action = _stable_action(self._bodies, request.body)
+        self.actions.append(action)
+        self._bodies.append(request.body)
+        return VaultIngestResult(stored=True, vault_ref=_STABLE_FRAGMENT_ID, action=action)
 
 
 @pytest.mark.asyncio
@@ -309,3 +352,83 @@ async def test_patch_from_intimate_to_personal_ingests(
     row = await _entry_row(db_session, entry_id)
     assert len(fake.ingest_calls) == 1
     assert row.vault_ref == "vault-ref-1"
+
+
+@pytest.mark.asyncio
+async def test_patch_message_edit_with_a_stable_fragment_id_keeps_the_vault_ref(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A vault that edits its fragment in place leaves the persisted ref exactly where it was."""
+    fake = StableFragmentVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_stable_ref")
+
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "Original body.", "classification": "public"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+    first_row = await _entry_row(db_session, entry_id)
+    assert first_row.vault_ref == _STABLE_FRAGMENT_ID
+
+    patched = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "Revised body."}, headers=headers
+    )
+    assert patched.status_code == HTTPStatus.OK
+
+    second_row = await _entry_row(db_session, entry_id)
+    assert fake.actions == [VaultIngestAction.CREATED, VaultIngestAction.UPDATED]
+    assert second_row.vault_ref == _STABLE_FRAGMENT_ID
+
+
+@pytest.mark.asyncio
+async def test_resending_unchanged_content_leaves_one_vault_ref(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Re-sending identical content reports unchanged and never earns the row a second ref."""
+    fake = StableFragmentVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_unchanged")
+    message = "A body saved twice, word for word."
+
+    created = await async_client.post(
+        "/journal/",
+        json={"message": message, "classification": "public"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+
+    patched = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": message}, headers=headers
+    )
+    assert patched.status_code == HTTPStatus.OK
+
+    row = await _entry_row(db_session, entry_id)
+    assert fake.actions == [VaultIngestAction.CREATED, VaultIngestAction.UNCHANGED]
+    assert row.vault_ref == _STABLE_FRAGMENT_ID
+
+
+@pytest.mark.asyncio
+async def test_entry_saves_locally_when_ingest_raises_a_contract_error(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A contract fault is ours to fix, never the writer's to lose: the entry still saves."""
+    fake = SequencedVaultClient(
+        ingest_error=CreekVaultContractError(
+            "creek vault rejected the request", code=VaultErrorCode.INVALID_REQUEST
+        )
+    )
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_contract_error")
+
+    resp = await async_client.post(
+        "/journal/",
+        json={"message": "Written against a rejected contract.", "classification": "personal"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+    row = await _entry_row(db_session, int(resp.json()["id"]))
+    assert row.vault_ref is None
+    assert len(fake.ingest_calls) == 1
