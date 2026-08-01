@@ -293,8 +293,8 @@ class VaultWheelAspect:
     """One Aspect's fullness at a stage, in a vault-computed wheel read.
 
     A domain-native mirror of the transport's per-Aspect wheel row so the seam's
-    return type stays pure Python; the adapter validates the wire payload against
-    the Pydantic schema and then projects it onto this value.
+    return type stays pure Python; the adapter owns the wire shape and projects
+    it onto this value.
     """
 
     stage_number: int
@@ -308,8 +308,8 @@ class VaultWheelBalance:
 
     The domain-layer return type of :meth:`CreekVaultClient.wheel` -- a plain,
     immutable value carrying no FastAPI/DB/schema dependency, exactly as the rest
-    of this module. The concrete adapter owns the (schema-backed) parse and hands
-    back this value, keeping the domain free of the Pydantic response type.
+    of this module. The concrete adapter owns the parse and hands back this
+    value, keeping the domain free of any wire or response type.
     """
 
     aspects: tuple[VaultWheelAspect, ...]
@@ -351,10 +351,11 @@ class CreekVaultClient(Protocol):
     async def wheel(self) -> VaultWheelBalance:
         """Return a Wheel-of-Wholeness balance read from the vault's corpus.
 
-        Unlike the other capabilities, a wheel payload whose *fields* are
-        malformed is not normalized to :class:`CreekVaultUnavailableError`: the
-        adapter surfaces a parse error so the read/compute path that consumes the
-        wheel owns field-level validation. The wheel is an optional read, never a
-        write, so a caller that cannot obtain it falls back to computing the
+        Degrades exactly like every other capability: a malformed, refused, or
+        otherwise unreadable payload is normalized to
+        :class:`CreekVaultUnavailableError` rather than surfacing a parse error.
+        Domain-range validation of a well-formed balance belongs to the
+        read/compute path that consumes it. The wheel is an optional read, never
+        a write, so a caller that cannot obtain it falls back to computing the
         balance locally.
         """

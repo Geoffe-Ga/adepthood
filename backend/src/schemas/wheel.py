@@ -18,11 +18,13 @@ class WheelAspect(BaseModel):
 class WheelBalanceResponse(BaseModel):
     """The ten Aspect fullness values in canonical stage order.
 
-    The Aspect list is capped at ``TOTAL_STAGES`` so a vault-supplied wheel read
-    parsed through this schema cannot materialize an unbounded number of rows;
-    an over-cap payload fails validation and the consumer degrades to the local
-    balance. The local producer always emits exactly ``TOTAL_STAGES`` rows, so
-    the cap never constrains the in-app path.
+    Adepthood's own response shape for the wheel endpoint, never a parse of
+    anything a vault sends: the seam's client owns creek's wire shape and hands
+    the read path a domain value, which is relabelled and rendered through here
+    like any locally-computed balance. The ``TOTAL_STAGES`` cap is therefore
+    purely defensive -- the one producer that fills this model always emits
+    exactly that many rows, and the cap is what keeps a future one from
+    silently serializing more.
     """
 
     aspects: list[WheelAspect] = Field(max_length=TOTAL_STAGES)

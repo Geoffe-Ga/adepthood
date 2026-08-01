@@ -76,6 +76,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.exceptions import McpError
 from mcp.types import CallToolResult, ErrorData
 
+from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONSUMER_ID,
     CONTRACT_VERSION,
@@ -97,7 +98,6 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
-from schemas.wheel import WheelBalanceResponse
 
 # Timeout (seconds) for a single HTTP call to the vault. Bounds how long a slow
 # or hung vault can block a request before adepthood degrades to local.
@@ -233,6 +233,39 @@ _MARGINALIA_KIND_BY_CREEK_KIND: Mapping[str, str] = {
     "tension": "theme",
     "gift": "theme",
 }
+
+# The privacy ceiling adepthood presents when it asks for a wheel. Only
+# aggregate per-Frequency counts and shares cross this seam -- never fragment
+# content -- so the ceiling governs what the vault *counts*, not what it hands
+# back. ``personal`` is the honest maximum: intimate content never reaches the
+# vault from adepthood at all, and creek independently caps a network consumer
+# below intimate. ``open`` would be worse than useless rather than safer,
+# because creek ranks unclassified content with personal: an open ceiling
+# silently excludes every not-yet-classified fragment, so a young corpus reads
+# back as an all-zero wheel.
+_WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
+
+# The status a ``creek.wheel`` response reports when it actually computed a
+# wheel. Its own constant rather than a reuse of :data:`_JOURNAL_OK_STATUS` or
+# :data:`_REFLECT_OK_STATUS`, for the reason those two are already kept apart:
+# the capabilities merely happen to spell their success the same way today, and
+# coupling them would let one capability's future rename silently change how
+# another is parsed.
+_WHEEL_OK_STATUS = "ok"
+
+# The Frequency keys adepthood will read out of the vault's wheel map, in
+# canonical order -- one per curriculum stage, so ``F1`` is stage 1. A whitelist
+# rather than an iteration of whatever the vault sent, so a code creek adds
+# later is ignored exactly as an unknown capability string already is.
+_WHEEL_FREQUENCY_CODES: tuple[str, ...] = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
+
+# Longest Frequency name adepthood will accept from a wheel entry. A *bound*,
+# not a format -- the vault owns what it calls its own Frequencies -- and a
+# generous one, since the longest name either side actually ships is under
+# thirty characters. It exists because that string is carried into a domain
+# value and can reach a log, and without a ceiling a compromised vault could
+# answer with a string of any size at all.
+_MAX_WHEEL_ASPECT_NAME_LENGTH = 128
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -622,6 +655,85 @@ def _reflect_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, o
     return {"content": body, "privacy_tier_ceiling": tier_ceiling.value}
 
 
+def _wheel_params() -> Mapping[str, object]:
+    """Map a wheel request onto the ``creek.wheel`` wire fields.
+
+    Exactly one: the privacy ceiling the vault's router enforces while it counts.
+    There is no ``consumer`` key -- the vault learns the caller from the MCP
+    session itself, exactly as it already does for ingest and reflect -- and no
+    other caller-supplied parameter exists on this tool.
+    """
+    return {"privacy_tier_ceiling": _WHEEL_TIER_CEILING.value}
+
+
+def _wheel_fullness(raw: object) -> float | None:
+    """Return a Frequency's share as a float, or ``None`` when it is not a number.
+
+    Booleans are rejected *before* the numeric test, because ``isinstance(True,
+    int)`` is ``True`` and a bare numeric check would silently read ``True`` as a
+    completely full Frequency. The ``0.0..1.0`` bound is deliberately not checked
+    here: the read path's own aspect check owns it, and its chained comparison
+    already rejects ``NaN`` and the infinities. That is a division of labor
+    between the two halves of the seam, not a gap in either.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    return float(raw)
+
+
+def _wheel_aspect(entry: object, stage_number: int) -> VaultWheelAspect | None:
+    """Project one Frequency entry onto a domain aspect, or drop it whole.
+
+    Both halves have to survive on their own terms: a numeric ``share`` and a
+    non-blank ``name`` within :data:`_MAX_WHEEL_ASPECT_NAME_LENGTH`. A partial
+    entry is dropped rather than completed with a default, which would show the
+    user a Frequency reading neither they nor the vault ever produced.
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    fullness = _wheel_fullness(entry.get("share"))
+    name = _bounded_text(entry.get("name"), _MAX_WHEEL_ASPECT_NAME_LENGTH)
+    if fullness is None or name is None:
+        return None
+    return VaultWheelAspect(stage_number=stage_number, aspect=name, fullness=fullness)
+
+
+def _wheel_aspects(wheel: Mapping[str, object]) -> tuple[VaultWheelAspect, ...]:
+    """Project the whitelisted Frequency codes onto aspects, dropping the unusable ones.
+
+    Walks :data:`_WHEEL_FREQUENCY_CODES` rather than the mapping's own keys, so
+    the stage number comes from adepthood's canonical order and any code outside
+    the whitelist is ignored. The caller decides what a short result means.
+    """
+    return tuple(
+        aspect
+        for stage_number, code in enumerate(_WHEEL_FREQUENCY_CODES, start=1)
+        if (aspect := _wheel_aspect(wheel.get(code), stage_number)) is not None
+    )
+
+
+def _parse_wheel(payload: Mapping[str, object]) -> VaultWheelBalance | None:
+    """Project a ``creek.wheel`` response onto a domain balance, or ``None`` if unusable.
+
+    Answers ``None`` -- never raises -- so the caller owns the degrade. Three
+    conditions: a literal :data:`_WHEEL_OK_STATUS`, which is the strict equality
+    that makes ``refused``, ``empty``, and any status a future creek adds all
+    degrade rather than be mined for numbers; a ``wheel`` that is a mapping; and
+    a usable entry for *every* Frequency code. That last one is all-or-nothing on
+    purpose: one bad Frequency rejects the whole read rather than yielding a ring
+    with a hole in it.
+    """
+    if payload.get("status") != _WHEEL_OK_STATUS:
+        return None
+    wheel = payload.get("wheel")
+    if not isinstance(wheel, Mapping):
+        return None
+    aspects = _wheel_aspects(wheel)
+    if len(aspects) != len(_WHEEL_FREQUENCY_CODES):
+        return None
+    return VaultWheelBalance(aspects=aspects)
+
+
 def _content_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
     """Build the params for a ``creek.classify`` call, whose wire shape is unverified."""
     return {"consumer": CONSUMER_ID, "body": body, "tier_ceiling": tier_ceiling.value}
@@ -762,32 +874,24 @@ class McpCreekVaultClient:
     async def wheel(self) -> VaultWheelBalance:
         """Return a vault-computed Wheel-of-Wholeness read, requiring WHEEL.
 
-        The wire payload is validated against :class:`WheelBalanceResponse` (the
-        schema import is legitimate in this adapter layer) and then projected onto
-        the pure-domain :class:`VaultWheelBalance` the seam contract returns, so
-        the domain module carries no schema dependency.
+        Creek answers with a per-Frequency map keyed ``F1``..``F10``, which
+        :func:`_parse_wheel` projects onto the pure-domain
+        :class:`VaultWheelBalance` the seam contract returns -- so the domain
+        module carries no wire dependency.
 
-        A well-formed mapping whose *fields* do not match the schema still raises
-        ``pydantic.ValidationError`` here rather than degrading to
-        :class:`CreekVaultUnavailableError`. That is the one un-normalized error
-        path in this client and is deliberate: field-level wheel validation and a
-        response-size ceiling belong with the read/compute path that consumes the
-        wheel. It does not weaken the floor guarantee -- the wheel is an optional
-        read, never a write, and a caller that cannot obtain it falls back to
-        computing the balance locally.
+        A malformed or refused wheel degrades exactly like every other
+        capability, to :class:`CreekVaultUnavailableError` carrying the same
+        static, capability-named message, so no payload content can reach a log
+        or a traceback. The wheel is an optional read, never a write, and a
+        caller that cannot obtain it falls back to computing the balance locally.
         """
-        payload = await self._invoke(CreekCapability.WHEEL, {"consumer": CONSUMER_ID})
-        validated = WheelBalanceResponse.model_validate(payload)
-        return VaultWheelBalance(
-            aspects=tuple(
-                VaultWheelAspect(
-                    stage_number=aspect.stage_number,
-                    aspect=aspect.aspect,
-                    fullness=aspect.fullness,
-                )
-                for aspect in validated.aspects
-            ),
-        )
+        payload = await self._invoke(CreekCapability.WHEEL, _wheel_params())
+        balance = _parse_wheel(payload)
+        if balance is None:
+            raise CreekVaultUnavailableError(
+                f"creek vault returned a malformed response: {CreekCapability.WHEEL.value}"
+            )
+        return balance
 
 
 class HandshakeDegradeReason(enum.StrEnum):
