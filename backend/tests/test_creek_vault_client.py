@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
@@ -30,8 +31,11 @@ from domain.creek_vault import (
     VaultWheelAspect,
     VaultWheelBalance,
 )
+from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from services.creek_vault_client import (
+    _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
+    _MAX_REFLECT_NOTES,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
     _extract_tool_payload,
@@ -39,12 +43,25 @@ from services.creek_vault_client import (
     _ingest_params,
     _McpStreamableHttpTransport,
     _parse_ingest_result,
+    _parse_reflection,
+    _reflect_params,
     build_creek_vault_client,
 )
 
 _VAULT_URL = "https://vault.example.test"
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+
+# One well-formed creek note's quote and note text, reused so the hygiene matrix
+# can pair exactly one malformed item against a known-good sibling.
+_REFLECT_QUOTE = "the river kept moving"
+_REFLECT_NOTE = "You keep reaching for motion when you write about rest."
+
+# Creek's seven published note kinds, restated here on purpose: this literal is
+# the pin against the vocabulary drifting out from under the mapping table.
+_CREEK_NOTE_KINDS = frozenset(
+    {"reframe", "fear", "longing", "value", "pattern", "tension", "gift"},
+)
 
 
 def _handshake_payload(
@@ -62,6 +79,23 @@ def _handshake_payload(
         "contract_version": contract_version,
         "ontology_version": ontology_version,
         "attestation": attestation,
+    }
+
+
+def _creek_note(kind: object, quote: object, note: object) -> dict[str, object]:
+    """Build one creek.reflect note item, allowing deliberately malformed field types."""
+    return {"kind": kind, "quote": quote, "note": note}
+
+
+def _reflect_payload(notes: object) -> dict[str, object]:
+    """Build a well-formed creek.reflect ok-status response carrying ``notes``."""
+    return {
+        "status": "ok",
+        "tool": CreekCapability.REFLECT.value,
+        "tier_ceiling": VaultTierCeiling.OPEN.value,
+        "routed_tier": VaultTierCeiling.OPEN.value,
+        "notes": notes,
+        "essay_grounded": False,
     }
 
 
@@ -460,8 +494,37 @@ async def test_classify_missing_tags_returns_empty_classification() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reflect_success_returns_reflection_text() -> None:
-    """reflect() returns the reflection string from a successful vault response."""
+async def test_reflect_renders_creek_notes_as_the_marginalia_contract() -> None:
+    """reflect() turns creek's own note shape into the strict marginalia JSON contract."""
+    transport = ScriptedTransport(
+        responses={
+            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.REFLECT.value]),
+            CreekCapability.REFLECT.value: _reflect_payload(
+                [
+                    _creek_note("pattern", _REFLECT_QUOTE, _REFLECT_NOTE),
+                    _creek_note("fear", "I stalled again", "The stall gets named plainly here."),
+                ]
+            ),
+        }
+    )
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    result = await client.reflect("body text", VaultTierCeiling.OPEN)
+    assert json.loads(result) == {
+        "notes": [
+            {"kind": "connection", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE},
+            {
+                "kind": "theme",
+                "quote": "I stalled again",
+                "note": "The stall gets named plainly here.",
+            },
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_reflect_legacy_reflection_shaped_payload_yields_no_reflection() -> None:
+    """A payload carrying only the old reflection key has no ok status, so the caller falls back."""
     transport = ScriptedTransport(
         responses={
             CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.REFLECT.value]),
@@ -471,22 +534,197 @@ async def test_reflect_success_returns_reflection_text() -> None:
     client = McpCreekVaultClient(transport=transport)
     await client.handshake()
     result = await client.reflect("body text", VaultTierCeiling.OPEN)
-    assert result == "a warm note"
-
-
-@pytest.mark.asyncio
-async def test_reflect_missing_reflection_returns_empty_string() -> None:
-    """reflect() returns the empty string when the response reflection is absent or wrong-typed."""
-    transport = ScriptedTransport(
-        responses={
-            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.REFLECT.value]),
-            CreekCapability.REFLECT.value: {"reflection": 123},
-        }
-    )
-    client = McpCreekVaultClient(transport=transport)
-    await client.handshake()
-    result = await client.reflect("body text", VaultTierCeiling.OPEN)
     assert result == ""
+
+
+def test_reflect_params_sends_only_content_and_privacy_tier_ceiling() -> None:
+    """Reflect params carry exactly the creek.reflect wire fields, with no consumer key."""
+    params = _reflect_params("some body", VaultTierCeiling.PERSONAL)
+    assert params == {"content": "some body", "privacy_tier_ceiling": "personal"}
+    assert {"consumer", "body", "tier_ceiling"}.isdisjoint(params)
+
+
+@pytest.mark.parametrize(
+    ("creek_kind", "marginalia_kind"),
+    [
+        pytest.param("pattern", "connection", id="pattern"),
+        pytest.param("reframe", "theme", id="reframe"),
+        pytest.param("fear", "theme", id="fear"),
+        pytest.param("longing", "theme", id="longing"),
+        pytest.param("value", "theme", id="value"),
+        pytest.param("tension", "theme", id="tension"),
+        pytest.param("gift", "theme", id="gift"),
+    ],
+)
+def test_parse_reflection_maps_each_creek_kind(creek_kind: str, marginalia_kind: str) -> None:
+    """Each of creek's seven note kinds renders as its ratified marginalia kind."""
+    payload = _reflect_payload([_creek_note(creek_kind, _REFLECT_QUOTE, _REFLECT_NOTE)])
+    assert json.loads(_parse_reflection(payload)) == {
+        "notes": [{"kind": marginalia_kind, "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {
+                "status": "empty",
+                "tool": CreekCapability.REFLECT.value,
+                "tier_ceiling": VaultTierCeiling.OPEN.value,
+                "routed_tier": VaultTierCeiling.OPEN.value,
+                "notes": [],
+                "essay_grounded": False,
+            },
+            id="empty",
+        ),
+        pytest.param(
+            {
+                "status": "escalate",
+                "tool": CreekCapability.REFLECT.value,
+                "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+                "reason": "care signal detected in the submitted content",
+                "care_signal": {"severity": "high", "category": "self_harm"},
+            },
+            id="escalate",
+        ),
+        pytest.param(
+            {
+                "status": "refused",
+                "tool": CreekCapability.REFLECT.value,
+                "tier_ceiling": VaultTierCeiling.OPEN.value,
+                "reason": "requested content exceeds the configured tier ceiling",
+            },
+            id="refused",
+        ),
+        pytest.param(
+            {"notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
+            id="status_missing",
+        ),
+        pytest.param(
+            {"status": "partial", "notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
+            id="status_unknown_future",
+        ),
+        pytest.param(
+            {"status": 123, "notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
+            id="status_wrong_typed",
+        ),
+    ],
+)
+def test_parse_reflection_non_ok_status_yields_no_reflection(payload: Mapping[str, object]) -> None:
+    """Any status other than the literal ok yields no reflection, even carrying usable notes."""
+    assert _parse_reflection(payload) == ""
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param([], id="empty_list"),
+        pytest.param("not-a-list", id="string"),
+        pytest.param({}, id="mapping"),
+        pytest.param(
+            ["not-a-mapping", _creek_note("prophecy", _REFLECT_QUOTE, _REFLECT_NOTE), 7],
+            id="every_item_malformed",
+        ),
+    ],
+)
+def test_parse_reflection_ok_without_usable_notes_yields_no_reflection(notes: object) -> None:
+    """An ok status with nothing usable yields no reflection rather than an empty notes list."""
+    assert _parse_reflection(_reflect_payload(notes)) == ""
+
+
+def test_parse_reflection_ok_without_a_notes_key_yields_no_reflection() -> None:
+    """An ok payload with no notes key at all yields no reflection, never a bare notes list."""
+    payload = {"status": "ok", "tool": CreekCapability.REFLECT.value}
+    assert _parse_reflection(payload) == ""
+
+
+@pytest.mark.parametrize(
+    "bad_note",
+    [
+        pytest.param("not-a-mapping", id="non_mapping_item"),
+        pytest.param(_creek_note("prophecy", _REFLECT_QUOTE, _REFLECT_NOTE), id="unknown_kind"),
+        pytest.param(_creek_note(7, _REFLECT_QUOTE, _REFLECT_NOTE), id="non_string_kind"),
+        pytest.param({"kind": "gift", "note": _REFLECT_NOTE}, id="missing_quote"),
+        pytest.param({"kind": "gift", "quote": _REFLECT_QUOTE}, id="missing_note"),
+        pytest.param(_creek_note("gift", 7, _REFLECT_NOTE), id="non_string_quote"),
+        pytest.param(_creek_note("gift", _REFLECT_QUOTE, 7), id="non_string_note"),
+        pytest.param(_creek_note("gift", "", _REFLECT_NOTE), id="empty_quote"),
+        pytest.param(_creek_note("gift", " \n\t ", _REFLECT_NOTE), id="whitespace_quote"),
+        pytest.param(_creek_note("gift", _REFLECT_QUOTE, ""), id="empty_note"),
+        pytest.param(_creek_note("gift", _REFLECT_QUOTE, " \n\t "), id="whitespace_note"),
+        pytest.param(
+            _creek_note("gift", "q" * (ANCHOR_TEXT_MAX + 1), _REFLECT_NOTE), id="oversized_quote"
+        ),
+        pytest.param(
+            _creek_note("gift", _REFLECT_QUOTE, "n" * (NOTE_MAX + 1)), id="oversized_note"
+        ),
+    ],
+)
+def test_parse_reflection_drops_a_malformed_note_keeping_its_sibling(bad_note: object) -> None:
+    """A malformed note is dropped item by item, never taking its well-formed sibling with it."""
+    payload = _reflect_payload([bad_note, _creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)])
+    assert json.loads(_parse_reflection(payload)) == {
+        "notes": [{"kind": "theme", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
+    }
+
+
+def test_parse_reflection_keeps_notes_at_the_exact_length_boundaries() -> None:
+    """A quote of exactly ANCHOR_TEXT_MAX and a note of exactly NOTE_MAX both survive."""
+    quote = "q" * ANCHOR_TEXT_MAX
+    note = "n" * NOTE_MAX
+    payload = _reflect_payload([_creek_note("value", quote, note)])
+    assert json.loads(_parse_reflection(payload)) == {
+        "notes": [{"kind": "theme", "quote": quote, "note": note}]
+    }
+
+
+def test_parse_reflection_passes_the_quote_through_verbatim() -> None:
+    """A quote keeps its exact surrounding whitespace, since adepthood anchors it verbatim."""
+    quote = f"  {_REFLECT_QUOTE}  "
+    payload = _reflect_payload([_creek_note("pattern", quote, _REFLECT_NOTE)])
+    assert json.loads(_parse_reflection(payload)) == {
+        "notes": [{"kind": "connection", "quote": quote, "note": _REFLECT_NOTE}]
+    }
+
+
+def test_parse_reflection_caps_the_note_count_keeping_the_leading_prefix() -> None:
+    """Only the first _MAX_REFLECT_NOTES notes are rendered, in the order the vault sent them."""
+    over_cap = [
+        _creek_note("gift", _REFLECT_QUOTE, f"note number {index}")
+        for index in range(_MAX_REFLECT_NOTES + 3)
+    ]
+    rendered = json.loads(_parse_reflection(_reflect_payload(over_cap)))
+    assert [note["note"] for note in rendered["notes"]] == [
+        f"note number {index}" for index in range(_MAX_REFLECT_NOTES)
+    ]
+
+
+def test_parse_reflection_ignores_additive_response_fields() -> None:
+    """Essay and relation fields creek may add do not change the rendered marginalia."""
+    notes = [_creek_note("longing", _REFLECT_QUOTE, _REFLECT_NOTE)]
+    bare: Mapping[str, object] = {"status": "ok", "notes": notes}
+    enriched: Mapping[str, object] = {
+        **_reflect_payload(notes),
+        "essay": "a grounded essay the strict marginalia contract has no room for",
+        "essay_grounded": True,
+        "related_praxis": ["morning-sit"],
+        "related_eddies": [{"id": "eddy-1"}],
+    }
+    assert json.loads(_parse_reflection(enriched)) == json.loads(_parse_reflection(bare))
+    assert json.loads(_parse_reflection(enriched)) == {
+        "notes": [{"kind": "theme", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
+    }
+
+
+def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:
+    """Every mapped kind is one domain.resonance will actually anchor."""
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND.values()) <= VALID_KINDS
+
+
+def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
+    """The mapping's keys are exactly creek's seven published note kinds."""
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
 
 
 @pytest.mark.asyncio

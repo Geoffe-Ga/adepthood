@@ -17,10 +17,13 @@ handshake, so the vault is provably untouched for those entries.
 The vault's ``reflect`` output is fed straight into
 :func:`~domain.resonance.generate_marginalia`, which anchors verbatim quotes on
 adepthood's side and expects the same strict ``{"notes": [...]}`` JSON the cloud
-LLM returns. Because the cloud-shaped prompt is *not* forwarded across the seam
-(the vault builds its own enclave-side prompt), the vault is responsible for
-emitting that contract; a non-conforming reflection simply anchors to zero notes,
-exactly as a malformed cloud completion already does.
+LLM returns. The cloud-shaped prompt is *not* forwarded across the seam (the
+vault builds its own enclave-side prompt), and the vault answers in its own reply
+shape rather than adepthood's -- so translating that shape into this contract
+belongs to the client adapter (:mod:`services.creek_vault_client`), not to the
+vault. A reflection the adapter cannot render, because the vault declined,
+escalated, or answered with nothing usable, arrives here as a blank string and
+defers to the cloud ``fallback`` rather than anchoring to zero notes.
 
 Intimate content is out of scope here by construction: the router's privacy floor
 returns for an intimate entry before this module is ever reached, so

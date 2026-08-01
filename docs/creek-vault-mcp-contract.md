@@ -75,7 +75,7 @@ Creek's frequency classification of corpus content, while adepthood's
 ten stages are `CourseStage` rows tied to the APTITUDE program. The
 concrete field-by-field projection is owned by adepthood #1937.
 
-## Marginalia mapping (adepthood-owned, vocabulary gap)
+## Marginalia mapping (adepthood-owned)
 
 Creek's `creek.reflect` emits margin notes with a `kind` drawn from
 seven values: `{reframe, fear, longing, value, pattern, tension,
@@ -84,12 +84,30 @@ gift}` (`creek-tools/creek_mcp/tools/reflect.py:85`). Adepthood's
 (`backend/src/models/marginalia.py:23-28`), enforced by a database
 `CHECK` constraint (`marginalia.py:42-45`) and mirrored in
 `domain/resonance.py:21`'s `VALID_KINDS`. A raw passthrough of Creek's
-`kind` would be rejected by that constraint outright — the two
-vocabularies are not aligned and there is no trivial one-to-one
-mapping. The concrete kind-by-kind mapping (which of Creek's seven
-kinds maps to which of adepthood's three, and what happens to the ones
-that don't fit cleanly) is owned by adepthood #1936 and is
-deliberately **not** invented in this document.
+`kind` would be rejected by that constraint outright, so the
+translation below happens in adepthood's client adapter, not in
+Creek — Creek owns its own vocabulary and must not be asked to learn
+adepthood's:
+
+| Creek kind | Adepthood kind | Why |
+| --- | --- | --- |
+| `pattern` | `connection` | Creek grounds its notes in the surrounding corpus, so a recurrence note is exactly adepthood's cross-entry "connection" |
+| `reframe` | `theme` | A reinterpretation of this one entry, not a cross-entry link |
+| `fear` | `theme` | An affective reading of the entry's own content |
+| `longing` | `theme` | Same: affect surfaced from the entry itself |
+| `value` | `theme` | A value the entry expresses is a theme of the entry |
+| `tension` | `theme` | An intra-entry tension is thematic, not relational across entries |
+| `gift` | `theme` | A quality observed in the entry — thematic |
+
+Unrecognized kinds are dropped, not coerced: a `kind` adepthood does
+not know is never stored or rendered — the same drop-don't-coerce
+discipline the client already applies to unknown capability and
+error-code strings. Dropping one note does not discard its siblings.
+
+`symbol` is deliberately unused. Nothing in Creek's vocabulary denotes
+an image standing for something else, and forcing a non-symbol note
+onto that kind would misrender it. `symbol` remains reachable only
+from adepthood's own cloud reflection path.
 
 ## Per-capability fallback rules (as shipped)
 
@@ -104,7 +122,7 @@ capability is still used for the others it supports:
   advertised `creek.journal` — an unadvertised capability is refused
   locally, with no request sent — before issuing a `PUT` to the
   entry's own `/v1/journal-entries/{entry_id}` URL
-  (`backend/src/services/creek_vault_client.py:1095-1121`). Either
+  (`backend/src/services/creek_vault_client.py:1238-1264`). Either
   way, if the vault is absent or otherwise unavailable at handshake
   time, the write path reports `UNAVAILABLE`
   (`backend/src/services/creek_vault_write.py:266-267`); if the
@@ -122,9 +140,20 @@ capability is still used for the others it supports:
   once and forgotten, and the operator's own Postgres remains the
   sole system of record for that content either way.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
-  LLM reflection path (`backend/src/services/creek_vault_reflect.py:105-120`).
-  Content already flagged by the care gate never calls the vault for a
-  reflection at all, regardless of vault availability.
+  LLM reflection path (`backend/src/services/creek_vault_reflect.py:108-123`).
+  The same fallback fires for a response whose `status` is anything
+  other than `ok` — Creek's `empty`, its `escalate` care-signal
+  envelope, and its `refused` envelope all yield no vault reflection,
+  exactly as an absent capability does. An `ok` response none of whose
+  notes survive the marginalia-kind translation above also falls
+  back, rather than rendering an empty note set. A vault response is
+  untrusted input: the number of notes adepthood will accept from one
+  response is bounded, and each note's quote and body are
+  length-bounded, before anything is built from them. Additive fields
+  Creek may add later — its optional `essay`, and any future
+  related-praxis or related-eddies fields — are ignored rather than
+  erroring. Content already flagged by the care gate never calls the
+  vault for a reflection at all, regardless of vault availability.
 - **WHEEL** — if absent, or if the returned payload fails
   field-level validation, `fetch_vault_wheel` returns `None`
   (`backend/src/services/creek_vault_wheel.py:97-113`), and
