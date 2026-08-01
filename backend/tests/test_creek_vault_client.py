@@ -121,6 +121,15 @@ _WHEEL_ASPECT_NAMES = (
     "Emptiness",
 )
 
+# A JSON integer whose magnitude no float can hold. Every integer literal is
+# valid JSON and Python decodes one to an arbitrary-precision ``int``, so a
+# hostile or buggy vault can put this in a ``share``; ``float()`` on it raises
+# ``OverflowError``, an ``ArithmeticError`` that sits in neither the client's
+# transport degrade set nor the read path's ``CreekVaultError`` catch. The
+# exponent is a decade past the ~1.8e308 float ceiling and far inside CPython's
+# 4300-digit integer-parsing limit, so it is a value that really does arrive.
+_FLOAT_OVERFLOWING_SHARE = 10**400
+
 
 def _wheel_entry(name: object, share: object) -> dict[str, object]:
     """Build one creek.wheel Frequency entry, allowing deliberately malformed field types."""
@@ -937,6 +946,12 @@ _UNUSABLE_WHEEL_PAYLOADS: list[tuple[str, Mapping[str, object]]] = [
         "share_null",
         _wheel_payload(_wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], None))),
     ),
+    (
+        "share_an_int_no_float_can_hold",
+        _wheel_payload(
+            _wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], _FLOAT_OVERFLOWING_SHARE))
+        ),
+    ),
     ("name_missing", _wheel_payload(_wheel_map_with("F5", {"share": 0.5}))),
     ("name_blank", _wheel_payload(_wheel_map_with("F5", _wheel_entry("", 0.5)))),
     ("name_whitespace_only", _wheel_payload(_wheel_map_with("F5", _wheel_entry("   ", 0.5)))),
@@ -946,6 +961,18 @@ _UNUSABLE_WHEEL_PAYLOADS: list[tuple[str, Mapping[str, object]]] = [
         _wheel_payload(
             _wheel_map_with("F5", _wheel_entry("x" * (_MAX_WHEEL_ASPECT_NAME_LENGTH + 1), 0.5))
         ),
+    ),
+    (
+        "name_carrying_a_newline",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\nWARN root: pay up", 0.5))),
+    ),
+    (
+        "name_carrying_an_ansi_escape",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\x1b[31m", 0.5))),
+    ),
+    (
+        "name_carrying_a_bidi_override",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\u202e", 0.5))),
     ),
 ]
 

@@ -675,25 +675,44 @@ def _wheel_fullness(raw: object) -> float | None:
     here: the read path's own aspect check owns it, and its chained comparison
     already rejects ``NaN`` and the infinities. That is a division of labor
     between the two halves of the seam, not a gap in either.
+
+    The conversion itself is guarded because JSON has no integer ceiling: a
+    literal past the float range decodes to an arbitrary-precision ``int``, and
+    ``float()`` then raises ``OverflowError`` -- an ``ArithmeticError`` that is in
+    neither this client's transport degrade set nor the read path's
+    ``CreekVaultError`` catch, so it would escape the seam as a crash on the
+    caller's request path. A share no float can hold is simply unreadable, which
+    is what ``None`` already means here.
     """
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         return None
-    return float(raw)
+    try:
+        return float(raw)
+    except OverflowError:
+        return None
 
 
 def _wheel_aspect(entry: object, stage_number: int) -> VaultWheelAspect | None:
     """Project one Frequency entry onto a domain aspect, or drop it whole.
 
     Both halves have to survive on their own terms: a numeric ``share`` and a
-    non-blank ``name`` within :data:`_MAX_WHEEL_ASPECT_NAME_LENGTH`. A partial
-    entry is dropped rather than completed with a default, which would show the
-    user a Frequency reading neither they nor the vault ever produced.
+    non-blank, printable ``name`` within :data:`_MAX_WHEEL_ASPECT_NAME_LENGTH`. A
+    partial entry is dropped rather than completed with a default, which would
+    show the user a Frequency reading neither they nor the vault ever produced.
+
+    Printability is required for the same reason :func:`_is_storable_ref` requires
+    it of a fragment id: a Frequency name is short label text, so a control
+    character in one is never legitimate, and a name carrying CR/LF, an ANSI
+    escape, or a bidirectional override is exactly the payload that forges a log
+    line or misrenders a label. The name is relabelled away before this wheel is
+    rendered, but this helper is the boundary, and a value that is inert wherever
+    it lands does not depend on that.
     """
     if not isinstance(entry, Mapping):
         return None
     fullness = _wheel_fullness(entry.get("share"))
     name = _bounded_text(entry.get("name"), _MAX_WHEEL_ASPECT_NAME_LENGTH)
-    if fullness is None or name is None:
+    if fullness is None or name is None or not name.isprintable():
         return None
     return VaultWheelAspect(stage_number=stage_number, aspect=name, fullness=fullness)
 
