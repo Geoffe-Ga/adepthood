@@ -91,7 +91,7 @@ mako==1.3.12
     # via alembic
 markupsafe==3.0.3
     # via mako
-mcp==1.28.1
+mcp==2.0.0
     # via -r backend/requirements.txt
 openai==2.48.0
     # via -r backend/requirements.txt
