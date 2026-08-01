@@ -142,17 +142,11 @@ repos:
 
       # Expensive hooks run on pre-push only. This keeps `git commit` under
       # ~10s while still gating pushes on the full quality suite.
-      - id: xenon-complexity
-        name: xenon complexity check
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && xenon src/ --max-absolute A --max-modules A --max-average A'
-        language: system
-        pass_filenames: false
-        files: ^backend/.*\.py$
-        stages: [pre-push]
-
-      - id: radon-maintainability
-        name: radon maintainability index
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && radon mi src/ -n B -s'
+      # Delegates to the script rather than restating the thresholds, so the
+      # hook and `check-all.sh` can never gate at different grades again.
+      - id: backend-complexity
+        name: backend complexity gate (xenon + radon)
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/complexity.sh'
         language: system
         pass_filenames: false
         files: ^backend/.*\.py$
