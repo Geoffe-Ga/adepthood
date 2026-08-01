@@ -19,7 +19,7 @@ scripts/
 │   ├── test.sh        # pytest (--unit / --integration / --e2e / --all)
 │   ├── coverage.sh    # pytest with coverage (≥90%); --report-only reports on existing data
 │   ├── security.sh    # bandit + pip-audit
-│   ├── complexity.sh  # radon + xenon
+│   ├── complexity.sh  # radon + xenon; gates at xenon A grade and MI rank ≥ B
 │   └── pr-status.sh   # gh CLI workflow monitor for PRs
 ├── frontend/          # TypeScript quality gates — runs against frontend/
 │   ├── check-all.sh

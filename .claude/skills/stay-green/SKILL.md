@@ -44,7 +44,7 @@ pre-commit run --all-files
 
 When checks fail: read errors, fix issues, run again. Repeat until all green.
 
-Quality checks include: formatting (Black + isort), linting (Ruff), type checking (MyPy), complexity (<=10 per function), security (Bandit), tests with coverage (>=90%), file hygiene.
+Quality checks include: formatting (Black + isort), linting (Ruff), type checking (MyPy), complexity (xenon A grade, <=5 per block), security (Bandit), tests with coverage (>=90%), file hygiene.
 
 ### Work is DONE when:
 1. All tests pass (Gate 1 complete)
@@ -95,11 +95,11 @@ $ pre-commit run --all-files
 # Add tests for uncovered lines, then re-run pre-commit
 ```
 
-### Error: Complexity above 10
+### Error: Complexity worse than A grade (cyclomatic 5, maintainability rank B)
 ```bash
-./scripts/complexity.sh  # Find complex functions
+./scripts/backend/complexity.sh  # Find complex functions
 # Extract helper functions, simplify branching
-# Then verify: ./scripts/complexity.sh && pre-commit run --all-files
+# Then verify: ./scripts/backend/complexity.sh && pre-commit run --all-files
 ```
 
 ### Error: Type errors from MyPy
