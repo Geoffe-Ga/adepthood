@@ -609,6 +609,20 @@ def fetch_upstream_file(url: str) -> bytes:
     Returns:
         The response body.
 
+    The body is streamed and the running total is checked against
+    :data:`MAX_FILE_BYTES` after each chunk, so the cap stops the download
+    rather than merely refusing what has already been buffered. Reading the
+    whole response first would let a compromised or malfunctioning publisher
+    decide how much memory this process holds, with only the timeout as a
+    bound -- and a cap that reports its refusal after paying the full cost is
+    not really a cap.
+
+    Args:
+        url: The URL to fetch, as built by :func:`upstream_url`.
+
+    Returns:
+        The response body.
+
     Raises:
         UpstreamFetchError: When the URL is not HTTPS, or when the body exceeds
             :data:`MAX_FILE_BYTES`. Redirects are not followed, because a
@@ -618,12 +632,18 @@ def fetch_upstream_file(url: str) -> bytes:
     """
     if not url.startswith(_HTTPS_SCHEME):
         raise UpstreamFetchError(_INSECURE_URL_REASON)
-    response = httpx.get(url, follow_redirects=False, timeout=FETCH_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    content = response.content
-    if len(content) > MAX_FILE_BYTES:
-        raise UpstreamFetchError(_OVERSIZED_REASON)
-    return content
+    chunks: list[bytes] = []
+    received = 0
+    with httpx.stream(
+        "GET", url, follow_redirects=False, timeout=FETCH_TIMEOUT_SECONDS
+    ) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes():
+            received += len(chunk)
+            if received > MAX_FILE_BYTES:
+                raise UpstreamFetchError(_OVERSIZED_REASON)
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _fetch_body(name: str, fetch: Fetcher) -> bytes | Unverifiable:

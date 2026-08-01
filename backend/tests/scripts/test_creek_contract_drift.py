@@ -34,7 +34,8 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from http import HTTPStatus
 from pathlib import Path
 
@@ -192,18 +193,51 @@ def _constant_fetcher(body: bytes) -> Fetcher:
     return _fetch
 
 
-def _stub_get(status: int, body: bytes) -> Callable[..., httpx.Response]:
-    """Build a stand-in for ``httpx.get`` answering every URL with one response."""
+class _ScriptedStream:
+    """A stand-in for the streaming response ``httpx.stream`` yields.
 
-    def _get(url: str, **_options: object) -> httpx.Response:
-        """Answer with the fixed status and body."""
-        return httpx.Response(status, content=body, request=httpx.Request("GET", url))
+    Records how many chunks were actually pulled, which is what lets a test
+    assert the size cap *stopped* a download rather than merely refusing a body
+    it had already paid to receive in full.
+    """
 
-    return _get
+    def __init__(self, status: int, chunks: Sequence[bytes], url: str) -> None:
+        """Store the scripted response and the URL it answers for."""
+        self._status = status
+        self._chunks = tuple(chunks)
+        self._url = url
+        self.pulled = 0
+
+    def raise_for_status(self) -> None:
+        """Raise the same error httpx would for a non-success status."""
+        if self._status >= HTTPStatus.BAD_REQUEST:
+            request = httpx.Request("GET", self._url)
+            raise httpx.HTTPStatusError(
+                f"status {self._status}",
+                request=request,
+                response=httpx.Response(self._status, request=request),
+            )
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        """Yield the scripted chunks, counting each one as it is consumed."""
+        for chunk in self._chunks:
+            self.pulled += 1
+            yield chunk
 
 
-def _forbidden_get(url: str, **_options: object) -> httpx.Response:
-    """Stand in for ``httpx.get`` where no request may be made at all."""
+def _stub_stream(stream: _ScriptedStream) -> Callable[..., AbstractContextManager[_ScriptedStream]]:
+    """Build a stand-in for ``httpx.stream`` that yields one scripted response."""
+
+    @contextmanager
+    def _stream(_method: str, _url: str, **_options: object) -> Iterator[_ScriptedStream]:
+        """Yield the scripted response for the duration of the block."""
+        yield stream
+
+    return _stream
+
+
+def _forbidden_stream(_method: str, url: str, **_options: object) -> AbstractContextManager[object]:
+    """Stand in for ``httpx.stream`` where no request may be made at all."""
     raise _FetchNotScriptedError(url)
 
 
@@ -674,10 +708,17 @@ def test_upstream_url_addresses_the_public_raw_content_host() -> None:
 def test_fetch_upstream_file_returns_the_body_the_raw_host_served(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real fetcher is a thin read, exercised here against a stubbed transport."""
-    monkeypatch.setattr(httpx, "get", _stub_get(HTTPStatus.OK, CHANGED_BODY))
+    """The real fetcher is a thin read, exercised here against a stubbed transport.
 
-    assert fetch_upstream_file(upstream_url(MANIFEST_NAME)) == CHANGED_BODY
+    The body arrives as several chunks so the reassembly is exercised rather
+    than assumed: a fetcher that returned only the first chunk would still hash
+    to something, and that something would compare unequal for the wrong reason.
+    """
+    url = upstream_url(MANIFEST_NAME)
+    chunks = [CHANGED_BODY[:4], CHANGED_BODY[4:9], CHANGED_BODY[9:]]
+    monkeypatch.setattr(httpx, "stream", _stub_stream(_ScriptedStream(HTTPStatus.OK, chunks, url)))
+
+    assert fetch_upstream_file(url) == CHANGED_BODY
 
 
 def test_fetch_upstream_file_refuses_a_plaintext_url_before_requesting_it(
@@ -688,7 +729,7 @@ def test_fetch_upstream_file_refuses_a_plaintext_url_before_requesting_it(
     The stub raises on any call at all, so the refusal is proven to happen
     before the request rather than after it.
     """
-    monkeypatch.setattr(httpx, "get", _forbidden_get)
+    monkeypatch.setattr(httpx, "stream", _forbidden_stream)
 
     with pytest.raises(UpstreamFetchError):
         fetch_upstream_file("http://raw.githubusercontent.com/Geoffe-Ga/creek-vault/main/x.json")
@@ -696,18 +737,37 @@ def test_fetch_upstream_file_refuses_a_plaintext_url_before_requesting_it(
 
 def test_fetch_upstream_file_raises_on_an_error_status(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 404 body is not a contract file, so it must not be handed on as one."""
-    monkeypatch.setattr(httpx, "get", _stub_get(HTTPStatus.NOT_FOUND, CHANGED_BODY))
+    url = upstream_url(MANIFEST_NAME)
+    stream = _ScriptedStream(HTTPStatus.NOT_FOUND, [CHANGED_BODY], url)
+    monkeypatch.setattr(httpx, "stream", _stub_stream(stream))
 
     with pytest.raises(httpx.HTTPStatusError):
-        fetch_upstream_file(upstream_url(MANIFEST_NAME))
+        fetch_upstream_file(url)
+
+    assert stream.pulled == 0, "the status must be refused before any body is read"
 
 
-def test_fetch_upstream_file_refuses_an_oversized_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The size bound lives in the fetcher too, so no caller can be handed an unbounded body."""
-    monkeypatch.setattr(httpx, "get", _stub_get(HTTPStatus.OK, b"x" * (MAX_FILE_BYTES + 1)))
+def test_fetch_upstream_file_stops_an_oversized_download_instead_of_buffering_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The size bound must end the transfer, not merely refuse what already arrived.
+
+    A cap checked only after the whole body is in memory lets a compromised or
+    malfunctioning publisher decide how much this process holds, with nothing
+    but the timeout to stop it -- so the assertion here is not just that the
+    fetcher raised, but that it stopped pulling chunks partway through. The
+    scripted body is twice the cap, delivered in eighths.
+    """
+    url = upstream_url(MANIFEST_NAME)
+    chunk_count = 16
+    chunk_size = MAX_FILE_BYTES // (chunk_count // 2)
+    stream = _ScriptedStream(HTTPStatus.OK, [b"x" * chunk_size] * chunk_count, url)
+    monkeypatch.setattr(httpx, "stream", _stub_stream(stream))
 
     with pytest.raises(UpstreamFetchError):
-        fetch_upstream_file(upstream_url(MANIFEST_NAME))
+        fetch_upstream_file(url)
+
+    assert stream.pulled < chunk_count, "the download must be abandoned, not merely rejected"
 
 
 def test_main_verify_returns_clean_on_the_vendored_bundle(
