@@ -96,6 +96,7 @@ from domain.creek_vault import (
     VaultWheelAspect,
     VaultWheelBalance,
 )
+from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
 from schemas.wheel import WheelBalanceResponse
 
 # Timeout (seconds) for a single HTTP call to the vault. Bounds how long a slow
@@ -195,6 +196,43 @@ _JOURNAL_OK_STATUS = "ok"
 # column on every save, which without a ceiling lets a compromised vault grow
 # the operator's database by as much as it cares to answer with.
 _MAX_FRAGMENT_ID_LENGTH = 256
+
+# The status a ``creek.reflect`` response reports when it actually produced
+# notes. Deliberately its own constant rather than a reuse of
+# :data:`_JOURNAL_OK_STATUS`: the two capabilities merely happen to spell their
+# success the same way today, and coupling them would let either one's future
+# rename silently change how the other is parsed.
+_REFLECT_OK_STATUS = "ok"
+
+# How many notes of a reflect response adepthood will even look at. Double
+# Creek's own shipped cap of six, so a vault that modestly raises its cap still
+# lands whole, while a buggy or hostile one is bounded to roughly twelve times
+# (:data:`~domain.resonance.ANCHOR_TEXT_MAX` + :data:`~domain.resonance.NOTE_MAX`)
+# plus JSON overhead -- about 12 KB serialized -- instead of however much it
+# cares to answer with. This is a bound on *untrusted vault output before
+# serialization*, independent of the separate anchoring cap
+# :mod:`domain.resonance` applies to how many of these notes survive onto the
+# entry; neither one substitutes for the other.
+_MAX_REFLECT_NOTES = 12
+
+# How Creek's seven published note kinds render in adepthood's marginalia
+# vocabulary. ``pattern`` is the one that speaks across entries -- Creek grounds
+# its notes in the surrounding corpus, so a recurrence note is exactly what
+# adepthood calls a ``connection`` -- while the other six each observe something
+# about this one entry and so render as a ``theme``. Adepthood's third kind,
+# ``symbol``, is deliberately unused: nothing in Creek's vocabulary denotes an
+# image standing for something else, and forcing a non-symbol onto it would
+# render the note as something it is not. A kind absent from this table is
+# dropped, never coerced onto a nearest neighbor.
+_MARGINALIA_KIND_BY_CREEK_KIND: Mapping[str, str] = {
+    "pattern": "connection",
+    "reframe": "theme",
+    "fear": "theme",
+    "longing": "theme",
+    "value": "theme",
+    "tension": "theme",
+    "gift": "theme",
+}
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -484,8 +522,108 @@ def _parse_classification(payload: Mapping[str, object]) -> VaultClassification:
     return VaultClassification(tags=tuple(item for item in raw if isinstance(item, str)))
 
 
+def _bounded_text(raw: object, limit: int) -> str | None:
+    """Return a vault-supplied string when it is usable text within ``limit``, else ``None``.
+
+    Three conditions, each of which a note cannot do without: it is a string at
+    all (a number or a nested object is not text), it carries something other
+    than whitespace (a blank quote anchors to nothing and a blank note says
+    nothing), and it fits the marginalia field it is bound for, so no vault can
+    answer with an unbounded string. The value is returned **verbatim** rather
+    than stripped, because adepthood anchors a quote by matching it
+    character-for-character against the entry body -- trimming here would
+    silently break the very anchor this check exists to protect.
+    """
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > limit:
+        return None
+    return raw
+
+
+def _marginalia_kind(raw: object) -> str | None:
+    """Map one Creek note kind onto adepthood's, or ``None`` when we do not know it.
+
+    Mirrors :func:`_coerce_capability` and :func:`_coerce_ingest_action`: an
+    unknown or wrong-typed kind is dropped rather than raising or being coerced
+    onto a neighbor, so a vault that invents a kind loses that one note instead
+    of having it rendered as something the user never wrote.
+    """
+    if not isinstance(raw, str):
+        return None
+    return _MARGINALIA_KIND_BY_CREEK_KIND.get(raw)
+
+
+def _reflection_note(item: object) -> dict[str, str] | None:
+    """Project one Creek note onto the marginalia contract, or drop it whole.
+
+    This is the boundary where an untrusted vault's output becomes something
+    adepthood renders back to the user, so every field has to survive on its own
+    terms: a mappable kind, a quote within
+    :data:`~domain.resonance.ANCHOR_TEXT_MAX`, a note within
+    :data:`~domain.resonance.NOTE_MAX`. A partial note is dropped rather than
+    completed with a default, which would put words in the user's Higher Self
+    that neither they nor the vault ever wrote.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    kind = _marginalia_kind(item.get("kind"))
+    quote = _bounded_text(item.get("quote"), ANCHOR_TEXT_MAX)
+    note = _bounded_text(item.get("note"), NOTE_MAX)
+    if kind is None or quote is None or note is None:
+        return None
+    return {"kind": kind, "quote": quote, "note": note}
+
+
+def _reflection_notes(raw: object) -> list[dict[str, str]]:
+    """Narrow a vault's note list to the ones adepthood can actually render.
+
+    Answers with an empty list -- never raises -- for anything that is not a
+    list, since a malformed reflection must defer to the cloud rather than break
+    the resonance pass. Only the leading :data:`_MAX_REFLECT_NOTES` items are
+    considered, order preserved, so an over-eager or hostile vault cannot grow
+    this work (or the JSON it feeds) without bound; inside that prefix each item
+    stands or falls alone, so one malformed note never costs its siblings.
+    """
+    if not isinstance(raw, list):
+        return []
+    return [
+        note for item in raw[:_MAX_REFLECT_NOTES] if (note := _reflection_note(item)) is not None
+    ]
+
+
+def _parse_reflection(payload: Mapping[str, object]) -> str:
+    """Render a ``creek.reflect`` response as the strict marginalia JSON contract.
+
+    Answers with the empty string -- which the caller reads as "no vault
+    reflection", deferring to the cloud -- in every case but one: a literal
+    ``ok`` status carrying at least one renderable note. The strict equality is
+    what makes ``empty``, ``escalate`` (Creek's care handoff), ``refused``, and
+    any status a future Creek adds all defer rather than be mined for notes.
+    Zero surviving notes defers too, deliberately: rendering ``{"notes": []}``
+    would suppress the fallback and leave the user with a Higher Self that said
+    nothing at all, which is worse than a cloud answer.
+    """
+    if payload.get("status") != _REFLECT_OK_STATUS:
+        return ""
+    notes = _reflection_notes(payload.get("notes"))
+    if not notes:
+        return ""
+    return json.dumps({"notes": notes})
+
+
+def _reflect_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
+    """Map a reflection request onto the ``creek.reflect`` wire fields.
+
+    Exactly two: the body to reflect on, and the privacy ceiling the vault's
+    router enforces. No ``consumer`` key -- the vault learns the caller from the
+    MCP session itself, as it already does for ingest -- and no ``entry_ref``,
+    since adepthood reflects on an ad-hoc body rather than on a fragment the
+    vault has already stored.
+    """
+    return {"content": body, "privacy_tier_ceiling": tier_ceiling.value}
+
+
 def _content_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
-    """Build the shared params for a content-bearing call (classify/reflect)."""
+    """Build the params for a ``creek.classify`` call, whose wire shape is unverified."""
     return {"consumer": CONSUMER_ID, "body": body, "tier_ceiling": tier_ceiling.value}
 
 
@@ -611,10 +749,15 @@ class McpCreekVaultClient:
         return _parse_classification(payload)
 
     async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
-        """Produce a Higher Self reflection over the corpus, requiring REFLECT."""
-        payload = await self._invoke(CreekCapability.REFLECT, _content_params(body, tier_ceiling))
-        reflection = payload.get("reflection")
-        return reflection if isinstance(reflection, str) else ""
+        """Produce a Higher Self reflection over the corpus, requiring REFLECT.
+
+        Returns the vault's own notes translated into the marginalia JSON
+        contract the resonance pass anchors against (:func:`_parse_reflection`),
+        or the empty string when the vault declined, escalated, or answered with
+        nothing renderable -- which the caller reads as "defer to the cloud".
+        """
+        payload = await self._invoke(CreekCapability.REFLECT, _reflect_params(body, tier_ceiling))
+        return _parse_reflection(payload)
 
     async def wheel(self) -> VaultWheelBalance:
         """Return a vault-computed Wheel-of-Wholeness read, requiring WHEEL.
