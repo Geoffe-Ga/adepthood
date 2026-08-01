@@ -55,6 +55,56 @@ def test_normalize_verdict_defaults_to_comments() -> None:
     assert rs.normalize_verdict("Some notes.\nVerdict: COMMENTS") == rs.COMMENTS
 
 
+def test_normalize_verdict_comments_with_lgtm_in_prose_is_comments() -> None:
+    # Real reviewer pattern: a COMMENTS verdict whose rationale says the PR is
+    # "mergeable as-is" and name-drops LGTM. Body-wide substring search would
+    # misread this as LGTM and the review round would vanish from the metric.
+    body = (
+        "Solid change overall. This is mergeable as-is and close to LGTM,\n"
+        "but the docstring drift below is worth a pass first.\n\n"
+        "## Verdict: COMMENTS\n"
+    )
+    assert rs.normalize_verdict(body) == rs.COMMENTS
+
+
+def test_normalize_verdict_lgtm_with_changes_requested_in_prose_is_lgtm() -> None:
+    # Real reviewer pattern: an LGTM verdict describing CHANGES_REQUESTED
+    # behavior in prose. Body-wide substring search would misread this as
+    # CHANGES_REQUESTED and the PR would drop out of the average as never-LGTM'd.
+    body = (
+        "The retry path now handles the CHANGES_REQUESTED wake correctly.\n\n"
+        "**Verdict: LGTM**\n"
+    )
+    assert rs.normalize_verdict(body) == rs.LGTM
+
+
+def test_normalize_verdict_bold_colon_changes_requested() -> None:
+    assert rs.normalize_verdict("**Verdict:** CHANGES_REQUESTED") == rs.CHANGES_REQUESTED
+
+
+def test_normalize_verdict_none_when_verdict_only_in_prose() -> None:
+    # The word "verdict" in running prose is not a verdict line.
+    body = "Still waiting on the reviewer's verdict before merging this one."
+    assert rs.normalize_verdict(body) is None
+
+
+def test_normalize_verdict_last_verdict_line_wins() -> None:
+    # A review quoting an earlier round's verdict line: the trailing verdict
+    # line is the authoritative one.
+    body = (
+        "Previously I said:\n"
+        "Verdict: CHANGES_REQUESTED\n"
+        "All of that is addressed now.\n\n"
+        "## Verdict: LGTM\n"
+    )
+    assert rs.normalize_verdict(body) == rs.LGTM
+
+
+def test_normalize_verdict_is_case_insensitive() -> None:
+    assert rs.normalize_verdict("verdict: lgtm") == rs.LGTM
+    assert rs.normalize_verdict("## verdict: changes requested") == rs.CHANGES_REQUESTED
+
+
 # ---------- iterations_before_lgtm ----------
 
 
@@ -69,6 +119,19 @@ def test_iterations_before_lgtm_zero_for_clean_merge() -> None:
 
 def test_iterations_before_lgtm_none_when_never_lgtm() -> None:
     assert rs.iterations_before_lgtm([rs.CHANGES_REQUESTED, rs.COMMENTS]) is None
+
+
+def test_iterations_before_lgtm_counts_comments_round_from_raw_bodies() -> None:
+    # Integration through normalize_verdict: a COMMENTS round whose prose
+    # mentions LGTM must still count as one feedback round before the real
+    # LGTM — the user-visible "Review iterations" bug read this as 0.
+    bodies = [
+        "Close to LGTM but see the notes.\n\n## Verdict: COMMENTS",
+        "All addressed.\n\n## Verdict: LGTM",
+    ]
+    verdicts = [v for v in (rs.normalize_verdict(b) for b in bodies) if v is not None]
+    assert verdicts == [rs.COMMENTS, rs.LGTM]
+    assert rs.iterations_before_lgtm(verdicts) == 1
 
 
 # ---------- merge_rate ----------

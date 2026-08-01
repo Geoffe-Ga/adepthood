@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from collections import Counter
 from collections.abc import Iterable
 
@@ -38,23 +39,31 @@ def parse_iso(timestamp: str) -> dt.datetime:
     return dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
 
+# The reviewer's verdict line, in any of its published shapes ("Verdict: LGTM",
+# "## Verdict: COMMENTS", "**Verdict:** CHANGES_REQUESTED", ...). Anchored to
+# the start of a line so verdict tokens mentioned in prose never match.
+_VERDICT_LINE = re.compile(
+    r"^\s*(?:#+\s*|\*\*)?VERDICT[:*\s]+(LGTM|CHANGES_REQUESTED|CHANGES REQUESTED|COMMENTS)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def normalize_verdict(raw: str) -> str | None:
     """Collapse a Claude review comment body to a single verdict token.
 
-    Returns None when the body carries no recognizable verdict line, so callers
-    can ignore non-review comments. The check mirrors the grep ladder in
-    `iteration-trigger.yml`: CHANGES_REQUESTED wins over a bare LGTM mention so
-    a comment that says "this is not yet LGTM, changes requested" is counted as
-    a change request.
+    Only line-anchored `Verdict:` lines count — the same anchored parse
+    `iteration-trigger.yml`'s grep ladder uses — because real review bodies
+    routinely mention the other tokens in prose (a COMMENTS review saying
+    "not yet LGTM", an LGTM review describing CHANGES_REQUESTED behavior).
+    When several verdict lines appear, the last one wins: earlier matches are
+    usually quotes of a previous round, and the reviewer's authoritative
+    verdict line trails the comment. Returns None when no verdict line is
+    present, so callers can ignore non-review comments.
     """
-    upper = raw.upper()
-    if "VERDICT" not in upper:
+    matches = _VERDICT_LINE.findall(raw)
+    if not matches:
         return None
-    if "CHANGES_REQUESTED" in upper or "CHANGES REQUESTED" in upper:
-        return CHANGES_REQUESTED
-    if "LGTM" in upper:
-        return LGTM
-    return COMMENTS
+    return matches[-1].upper().replace(" ", "_")
 
 
 def iterations_before_lgtm(verdicts: list[str]) -> int | None:

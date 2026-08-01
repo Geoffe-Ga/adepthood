@@ -7,6 +7,8 @@ and ``select_reflection_llm`` are implemented.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
 from domain.creek_vault import (
@@ -21,10 +23,17 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultWheelBalance,
 )
-from domain.resonance import ResonanceLLM
+from domain.resonance import ResonanceLLM, generate_marginalia
+from services.creek_vault_client import McpCreekVaultClient
 from services.creek_vault_reflect import VaultResonanceLLM, select_reflection_llm
 
 _BODY = "the body under reflection"
+
+# A body plus two verbatim substrings of it, so the vault's quotes anchor for
+# real rather than being paraphrases the resonance pass would drop.
+_LOOP_STALL_QUOTE = "I stalled again"
+_LOOP_RIVER_QUOTE = "the river kept moving"
+_LOOP_BODY = f"{_LOOP_STALL_QUOTE} this week, and yet {_LOOP_RIVER_QUOTE} without me."
 
 
 class RecordingVaultClient:
@@ -97,6 +106,64 @@ class RecordingFallbackLLM:
         """Record ``prompt`` and return the sentinel completion."""
         self.prompts.append(prompt)
         return self._result
+
+
+class ScriptedReflectTransport:
+    """A minimal vault transport: a REFLECT-capable handshake, then one scripted reflect payload."""
+
+    def __init__(self, reflect_payload: Mapping[str, object]) -> None:
+        """Store the creek.reflect response this fake answers every reflect call with."""
+        self._reflect_payload = reflect_payload
+
+    async def call(self, method: str, _params: Mapping[str, object]) -> Mapping[str, object]:
+        """Answer creek.handshake as a REFLECT-capable vault, anything else with the payload."""
+        if method == CreekCapability.HANDSHAKE.value:
+            return {
+                "available": True,
+                "capabilities": [CreekCapability.REFLECT.value],
+                "contract_version": CONTRACT_VERSION,
+                "ontology_version": "1.0.0",
+                "attestation": None,
+            }
+        return self._reflect_payload
+
+
+@pytest.mark.asyncio
+async def test_vault_reflection_reaches_marginalia_instead_of_the_cloud_fallback() -> None:
+    """A creek-shaped vault reflection anchors as marginalia without deferring to the cloud."""
+    payload: Mapping[str, object] = {
+        "status": "ok",
+        "tool": CreekCapability.REFLECT.value,
+        "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+        "routed_tier": VaultTierCeiling.PERSONAL.value,
+        "essay_grounded": False,
+        "notes": [
+            {
+                "kind": "pattern",
+                "quote": _LOOP_RIVER_QUOTE,
+                "note": "Motion keeps answering the weeks you call stalled.",
+            },
+            {
+                "kind": "fear",
+                "quote": _LOOP_STALL_QUOTE,
+                "note": "You name the stall plainly before anything else.",
+            },
+        ],
+    }
+    client = McpCreekVaultClient(transport=ScriptedReflectTransport(payload))
+    await client.handshake()
+    fallback = RecordingFallbackLLM()
+    llm = VaultResonanceLLM(
+        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
+    )
+
+    anchored = await generate_marginalia(_LOOP_BODY, llm=llm)
+
+    assert [(note.kind, note.anchor_text) for note in anchored] == [
+        ("connection", _LOOP_RIVER_QUOTE),
+        ("theme", _LOOP_STALL_QUOTE),
+    ]
+    assert fallback.prompts == []
 
 
 @pytest.mark.asyncio
