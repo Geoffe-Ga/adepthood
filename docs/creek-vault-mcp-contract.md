@@ -130,17 +130,17 @@ where adepthood says "Intellectual Understanding" and "Embodied
 Understanding", for instance.
 
 Because of that mismatch, the vault's `name` is validated and carried
-as the faithful wire value at the seam (bounded and non-blank —
-`_wheel_aspect`, `creek_vault_client.py:695-717`), but it is never what
-the user reads. The read path relabels every item from adepthood's own
-`CourseStage` rows before rendering
-(`_relabelled_items`, `backend/src/services/creek_vault_wheel.py:135-152`,
+as the faithful wire value at the seam (bounded, non-blank, and
+printable — `_wheel_aspect`, `creek_vault_client.py:695-717`), but it
+is never what the user reads. The read path relabels every item from
+adepthood's own `CourseStage` rows before rendering
+(`_relabelled_items`, `backend/src/services/creek_vault_wheel.py:141-158`,
 calling the now-public `aspect_labels_by_stage`,
 `backend/src/domain/wheel.py:54-69`). A wheel that cannot be relabelled
 in full — a missing or blank `CourseStage` row for any of the ten
 stages — is discarded whole rather than rendered as a hybrid of vault
 words and adepthood words
-(`select_wheel_balance`, `creek_vault_wheel.py:155-168`). This is what
+(`select_wheel_balance`, `creek_vault_wheel.py:161-174`). This is what
 "Creek must not invent our stage/aspect vocabulary on our behalf" means
 concretely: creek's `name` never reaches a screen.
 
@@ -248,7 +248,7 @@ capability is still used for the others it supports:
   vault for a reflection at all, regardless of vault availability.
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
-  (`backend/src/services/creek_vault_wheel.py:119-132`). A malformed or
+  (`backend/src/services/creek_vault_wheel.py:119-138`). A malformed or
   refused payload degrades exactly like every other capability: the seam
   adapter now normalizes it to `CreekVaultUnavailableError`
   (`backend/src/services/creek_vault_client.py:893-913`) rather than
@@ -264,7 +264,7 @@ capability is still used for the others it supports:
   would blank a Map the local computation can fill
   (`_carries_signal`, `creek_vault_wheel.py:84-94`). Any of these causes
   `select_wheel_balance` to fall back to computing the balance locally
-  (`creek_vault_wheel.py:155-168`).
+  (`creek_vault_wheel.py:161-174`).
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.

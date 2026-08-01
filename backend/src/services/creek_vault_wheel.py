@@ -125,6 +125,12 @@ async def fetch_vault_wheel(client: CreekVaultClient) -> list[WheelItem] | None:
     usable wheel -- a seam error from the call, a field-level or structural
     violation on the returned balance, or a well-formed but wholly-zero wheel --
     collapses to ``None``, the signal for the caller to compute locally.
+
+    "Validated" is about ranges and structure, not provenance: each item's
+    ``aspect`` is still the *vault's* word for that Frequency, bounded and
+    printable but not adepthood's vocabulary. Every caller must relabel it from
+    the curriculum before rendering or logging it, as
+    :func:`select_wheel_balance` does.
     """
     await client.handshake()
     if not (client.is_available() and client.supports(CreekCapability.WHEEL)):
