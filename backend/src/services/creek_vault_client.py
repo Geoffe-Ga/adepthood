@@ -140,14 +140,31 @@ _PRE_1_0_MAJOR = "0"
 _PRE_1_0_MATCHED_COMPONENTS = 2
 _POST_1_0_MATCHED_COMPONENTS = 1
 
-# Transport-layer failures we normalize to a degraded state. ``OSError`` covers
-# connection/timeout errors, ``httpx.HTTPError`` covers every httpx transport
-# and status failure underneath the MCP session, ``McpError`` covers an MCP
-# protocol failure or a tool call that returned ``isError`` (raised by
-# :func:`_extract_tool_payload` with a static, content-free message),
-# ``ExceptionGroup`` covers a streamable-HTTP connection failure (anyio task
-# groups wrap the underlying ``httpx.ConnectError`` in a builtins
-# ``ExceptionGroup``; catching the ``Exception``-only group -- never
+# Every way an httpx call can fail to land, whether it left this process or
+# not. ``OSError`` covers connection and timeout errors (the whole-request
+# deadline raises ``TimeoutError``, an ``OSError`` subclass), and
+# ``httpx.HTTPError`` covers every transport and status failure.
+# ``httpx.InvalidURL`` has to be named separately because it is *not* an
+# ``HTTPError`` -- httpx raises it, from outside its own hierarchy, while
+# building the request, so an unparseable vault URL would otherwise escape every
+# degrade set and turn an optional replication into an exception on the caller's
+# request path. A URL httpx cannot build a request for is unreachable in exactly
+# the sense a refused connection is (the construction-time validator already
+# refused the *unsafe* URLs, which is a different question), so it degrades the
+# same way rather than raising.
+_HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    httpx.HTTPError,
+    httpx.InvalidURL,
+)
+
+# Transport-layer failures we normalize to a degraded state.
+# :data:`_HTTP_CALL_FAILED_ERRORS` covers the httpx layer underneath the MCP
+# session, ``McpError`` covers an MCP protocol failure or a tool call that
+# returned ``isError`` (raised by :func:`_extract_tool_payload` with a static,
+# content-free message), ``ExceptionGroup`` covers a streamable-HTTP connection
+# failure (anyio task groups wrap the underlying ``httpx.ConnectError`` in a
+# builtins ``ExceptionGroup``; catching the ``Exception``-only group -- never
 # ``BaseExceptionGroup`` -- stays safe under cancellation), and
 # ``json.JSONDecodeError`` covers a content-text block whose body is not JSON.
 # All of these normalize the per-capability path to unavailable exactly as the
@@ -155,8 +172,7 @@ _POST_1_0_MATCHED_COMPONENTS = 1
 # (``json.JSONDecodeError`` is a ``ValueError`` subclass, so it is already
 # covered by the handshake's parse-error set).
 _TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
-    OSError,
-    httpx.HTTPError,
+    *_HTTP_CALL_FAILED_ERRORS,
     McpError,
     ExceptionGroup,
     json.JSONDecodeError,
@@ -170,6 +186,15 @@ _MCP_TOOL_ERROR_CODE = -32000
 # The status value a ``creek.journal`` response reports on a durable write. Any
 # other status -- or a missing one -- parses conservatively to "not stored".
 _JOURNAL_OK_STATUS = "ok"
+
+# Longest vault-issued fragment id adepthood will keep as an entry's durable
+# reference. Opaque handles are short by nature -- a UUID is 36 characters -- so
+# this is generous by nearly an order of magnitude, and it is a *bound*, not a
+# format: the vault owns the shape of its own ids. It exists because that string
+# is persisted verbatim into a journal entry's unbounded ``vault_ref`` text
+# column on every save, which without a ceiling lets a compromised vault grow
+# the operator's database by as much as it cares to answer with.
+_MAX_FRAGMENT_ID_LENGTH = 256
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -402,16 +427,51 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     )
 
 
+def _is_storable_ref(fragment_id: str) -> bool:
+    """Return whether a vault-issued id is safe to persist as an entry's ``vault_ref``.
+
+    Three conditions, and the last two are why this exists. Non-empty, because a
+    blank id is no reference at all. Within :data:`_MAX_FRAGMENT_ID_LENGTH`, so a
+    compromised vault cannot answer every journal save with an arbitrarily large
+    string that lands in an unbounded text column. And printable, because this
+    is the one vault-chosen string adepthood *stores* rather than drops:
+    ``str.isprintable`` rejects NUL (which a Postgres text column refuses
+    outright, turning a hostile response into a failed write of an
+    already-saved entry), CR/LF (log injection, should the ref ever be
+    rendered), and the zero-width and bidi-override codepoints the journal's own
+    write boundary already sanitizes out of user text.
+    """
+    return (
+        bool(fragment_id)
+        and len(fragment_id) <= _MAX_FRAGMENT_ID_LENGTH
+        and fragment_id.isprintable()
+    )
+
+
+def _usable_fragment_id(payload: Mapping[str, object]) -> str | None:
+    """Return the vault's fragment id when it is storable, else ``None``.
+
+    A missing, blank, non-string, oversized, or unprintable id is unusable as a
+    durable reference (see :func:`_is_storable_ref`), and coercing one
+    (``str(7)``) would fabricate a ref the vault never issued. Shared by both
+    transports: an MCP vault gets no wider a channel into the ``vault_ref``
+    column than an HTTP one.
+    """
+    fragment_id = payload.get("fragment_id")
+    if isinstance(fragment_id, str) and _is_storable_ref(fragment_id):
+        return fragment_id
+    return None
+
+
 def _parse_ingest_result(payload: Mapping[str, object]) -> VaultIngestResult:
     """Parse a ``creek.journal`` response, defaulting missing/odd fields conservatively.
 
-    Only an ``"ok"`` status paired with a non-empty string ``fragment_id``
-    counts as durably stored; a missing, empty, or wrong-typed field parses to
-    a not-stored result rather than fabricating a vault ref.
+    Only an ``"ok"`` status paired with a storable ``fragment_id`` counts as
+    durably stored; a missing, empty, wrong-typed, oversized, or unprintable
+    field parses to a not-stored result rather than fabricating a vault ref.
     """
-    fragment_id = payload.get("fragment_id")
-    status_ok = payload.get("status") == _JOURNAL_OK_STATUS
-    if status_ok and isinstance(fragment_id, str) and fragment_id:
+    fragment_id = _usable_fragment_id(payload)
+    if payload.get("status") == _JOURNAL_OK_STATUS and fragment_id is not None:
         return VaultIngestResult(stored=True, vault_ref=fragment_id)
     return VaultIngestResult(stored=False, vault_ref=None)
 
@@ -620,6 +680,11 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 # capability document are the only ``/v1`` shapes Creek has ratified.
 _JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
 
+# The percent-encoded form of ``.``, used to neutralize a dot segment in an
+# entry id (see :func:`_entry_path_segment`). Uppercase because RFC 3986 names
+# uppercase hex the normal form for percent-encoding.
+_ENCODED_DOT = "%2E"
+
 # Statuses that mean "your credential was refused" rather than "the vault is
 # missing". Checked before any body parsing, since a gateway rejecting the
 # bearer will not answer in the vault's error vocabulary at all.
@@ -729,6 +794,23 @@ def _refuse_unratified(capability: CreekCapability) -> NoReturn:
     raise CreekCapabilityUnsupportedError(_unsupported_message(capability)) from None
 
 
+def _entry_path_segment(entry_id: int) -> str:
+    """Encode an entry id into exactly one path segment that cannot climb out of it.
+
+    ``quote(..., safe="")`` blocks the obvious escape by encoding ``/``, but it
+    leaves a dot alone even with nothing marked safe -- so a segment of ``..``
+    survives encoding intact and every URL parser (httpx included) then
+    normalizes it away, aiming the ``PUT`` one level above the journal
+    collection. Encoding the dot with :data:`_ENCODED_DOT` is what makes the
+    segment inert; a percent-encoded dot is not a dot segment, so nothing
+    normalizes it. An id is an integer today, so this changes no URL adepthood
+    actually builds -- it is here because the entry *body* is what rides on this
+    request, and a future identifier type must not be able to redirect it by its
+    shape alone.
+    """
+    return quote(str(entry_id), safe="").replace(".", _ENCODED_DOT)
+
+
 def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
     """Map an ingest request onto the ratified ``/v1`` journal-entry fields.
 
@@ -761,26 +843,15 @@ def _coerce_ingest_action(raw: object) -> VaultIngestAction | None:
         return None
 
 
-def _usable_fragment_id(payload: Mapping[str, object]) -> str | None:
-    """Return the vault's fragment id when it is a non-empty string, else ``None``.
-
-    A blank, missing, or non-string id is unusable as a durable reference, and
-    coercing one (``str(7)``) would fabricate a ref the vault never issued.
-    """
-    fragment_id = payload.get("fragment_id")
-    if isinstance(fragment_id, str) and fragment_id:
-        return fragment_id
-    return None
-
-
 def _parse_http_ingest_result(payload: object) -> VaultIngestResult:
     """Project a 2xx ingest body onto a result, conservatively.
 
-    A durable write needs both halves: an action we recognize *and* a usable
+    A durable write needs both halves: an action we recognize *and* a storable
     fragment id. Anything less -- a body that is not a JSON object, an unknown
-    action, a blank id -- parses to not-stored, which the write path records as
-    a degraded write. That is the safe direction: reporting a write we cannot
-    verify would let the entry look replicated when it is not.
+    action, a blank or oversized or unprintable id -- parses to not-stored,
+    which the write path records as a degraded write. That is the safe
+    direction: reporting a write we cannot verify would let the entry look
+    replicated when it is not.
     """
     if isinstance(payload, Mapping):
         action = _coerce_ingest_action(payload.get("action"))
@@ -963,18 +1034,18 @@ class HttpCreekVaultClient:
 
         The ``except`` clauses are split (where the MCP client uses one combined
         set) purely to attribute the degradation: every branch returns the same
-        canonical unavailable result. ``httpx.HTTPError`` covers connection
-        failures, timeouts, and every non-2xx status raised by
-        ``raise_for_status``; ``OSError`` covers a socket-level failure that
-        escapes httpx's own hierarchy. A payload that parsed but whose vault
-        reported itself unavailable is not an error at all -- it is the vault
-        answering honestly -- and is recorded as such.
+        canonical unavailable result. :data:`_HTTP_CALL_FAILED_ERRORS` covers
+        connection failures, timeouts, every non-2xx status raised by
+        ``raise_for_status``, a socket-level failure escaping httpx's hierarchy,
+        and a URL httpx will not build a request for. A payload that parsed but
+        whose vault reported itself unavailable is not an error at all -- it is
+        the vault answering honestly -- and is recorded as such.
         """
         try:
             result = _parse_handshake(await self._fetch_capabilities())
         except _IncompatibleContractVersionError:
             return HandshakeResult.unavailable(), HandshakeDegradeReason.INCOMPATIBLE_VERSION
-        except (httpx.HTTPError, OSError):
+        except _HTTP_CALL_FAILED_ERRORS:
             return HandshakeResult.unavailable(), HandshakeDegradeReason.UNREACHABLE
         except _PARSE_ERROR_TYPES:
             return HandshakeResult.unavailable(), HandshakeDegradeReason.MALFORMED_PAYLOAD
@@ -1003,21 +1074,22 @@ class HttpCreekVaultClient:
     async def _put_journal_entry(self, request: VaultIngestRequest) -> httpx.Response:
         """Upsert one entry at its own URL, normalizing any transport failure.
 
-        The entry id is percent-encoded with nothing left safe, so it can only
-        ever contribute one path segment -- an id is an integer today, but a URL
+        The entry id contributes exactly one inert path segment
+        (:func:`_entry_path_segment`) -- an id is an integer today, but a URL
         assembled by concatenation is exactly where a future identifier type
-        would otherwise smuggle in a path traversal.
+        would otherwise smuggle in a path traversal, and the entry body is what
+        rides on this request.
 
         Every transport failure (connection refused, a socket error, the
-        whole-request deadline expiring) becomes
-        :class:`CreekVaultUnavailableError` with ``from None``: the original
-        exception's text can carry the URL or the entry body, and neither its
-        message nor its traceback context may ride along.
+        whole-request deadline expiring, a URL httpx will not build a request
+        for) becomes :class:`CreekVaultUnavailableError` with ``from None``: the
+        original exception's text can carry the URL or the entry body, and
+        neither its message nor its traceback context may ride along.
         """
-        entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{quote(str(request.entry_id), safe='')}"
+        entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{_entry_path_segment(request.entry_id)}"
         try:
             return await self._authorized_request("PUT", entry_url, _journal_entry_body(request))
-        except (httpx.HTTPError, OSError):
+        except _HTTP_CALL_FAILED_ERRORS:
             raise CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE) from None
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:

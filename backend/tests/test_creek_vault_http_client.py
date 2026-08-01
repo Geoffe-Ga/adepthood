@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -42,6 +43,7 @@ from domain.creek_vault import (
 )
 from main import app, lifespan
 from services.creek_vault_client import (
+    _MAX_FRAGMENT_ID_LENGTH,
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
     _VAULT_TOTAL_DEADLINE_SECONDS,
@@ -51,6 +53,7 @@ from services.creek_vault_client import (
     McpCreekVaultClient,
     _build_pooled_vault_client,
     _contract_version_compatible,
+    _entry_path_segment,
     _VaultHttpPool,
     build_creek_vault_client,
     close_creek_vault_http_pool,
@@ -99,6 +102,26 @@ _FRAGMENT_ID = "frag-7"
 # string has to be dropped rather than stored, formatted, or logged.
 _HOSTILE_CODE_SENTINEL = "HOSTILE_VAULT_CODE_SENTINEL"
 _HOSTILE_VAULT_CODE = f"not_a_real_code\r\n{_HOSTILE_CODE_SENTINEL}"
+
+# Two fragment ids a compromised vault could answer a healthy 2xx with. The
+# oversized one is storage amplification -- ``vault_ref`` is an unbounded text
+# column written on every journal save -- and the hostile one carries the bytes
+# (NUL, CRLF) that a text column rejects outright and a log line must never
+# receive. Neither may become an entry's durable vault reference.
+_OVERSIZED_FRAGMENT_ID = "f" * (_MAX_FRAGMENT_ID_LENGTH + 1)
+_HOSTILE_FRAGMENT_ID = "frag\r\n\x00-7"
+
+# The longest fragment id that is still storable, so the bound is asserted at
+# its edge rather than merely somewhere beyond it.
+_LONGEST_USABLE_FRAGMENT_ID = "f" * _MAX_FRAGMENT_ID_LENGTH
+
+# A vault URL whose port is not a number. ``urlsplit`` accepts it -- so the
+# construction-time security validator does too, since it never reads the port
+# -- while httpx refuses to build a request for it, raising ``InvalidURL`` from
+# outside its own ``HTTPError`` hierarchy. It stands in for an operator typo (a
+# shell-interpolated port that came out non-numeric), which must degrade like
+# any other unreachable vault rather than raise into the caller's request path.
+_UNPARSEABLE_VAULT_URL = "https://vault.example.test:not-a-port"
 
 _POOL_ATTR = "services.creek_vault_client._VAULT_HTTP_POOL"
 
@@ -454,6 +477,12 @@ async def test_handshake_gets_v1_capabilities_with_bearer_auth(
     assert request.method == "GET"
     assert str(request.url) == _CAPABILITIES_URL
     assert request.headers["Authorization"] == f"Bearer {_API_KEY}"
+    # The shared request helper passes ``json=None`` here so one code path can
+    # serve both the GET and the journal PUT; httpx encodes that as no body at
+    # all, and this pins it -- a GET carrying a body is ambiguous to every proxy
+    # between here and the vault.
+    assert request.content == b""
+    assert "content-type" not in request.headers
 
 
 @pytest.mark.asyncio
@@ -980,6 +1009,29 @@ async def test_ingest_puts_v1_journal_entries_with_bearer_and_exact_body(
 
 
 @pytest.mark.parametrize(
+    "entry_id",
+    [
+        pytest.param("..", id="parent_directory"),
+        pytest.param("../../v1", id="two_levels_up"),
+        pytest.param(".", id="current_directory"),
+        pytest.param("7/../../admin", id="embedded_traversal"),
+    ],
+)
+def test_entry_path_segment_cannot_climb_out_of_the_journal_collection(entry_id: str) -> None:
+    """A dot-segment id stays inside the collection instead of redirecting the body.
+
+    ``entry_id`` is typed ``int``, so this is a guard on the *shape* of the URL
+    builder rather than a reachable input today -- but the entry body rides on
+    this request, so the segment must be inert whatever the identifier type
+    becomes. The cast is the point of the test: it is the future change,
+    written down.
+    """
+    segment = _entry_path_segment(cast("int", entry_id))
+    url = httpx.URL(f"{_VAULT_URL}/v1/journal-entries/{segment}")
+    assert str(url).startswith(f"{_VAULT_URL}/v1/journal-entries/")
+
+
+@pytest.mark.parametrize(
     "tier",
     [VaultTierCeiling.OPEN, VaultTierCeiling.PERSONAL],
     ids=["open", "personal"],
@@ -1028,6 +1080,14 @@ async def test_ingest_success_projects_action_and_fragment_id(
             _IngestReply(payload=_ingest_payload(action="teleported")), id="unknown_action"
         ),
         pytest.param(_IngestReply(payload=[_FRAGMENT_ID]), id="json_is_not_an_object"),
+        pytest.param(
+            _IngestReply(payload=_ingest_payload(_OVERSIZED_FRAGMENT_ID)),
+            id="oversized_fragment_id",
+        ),
+        pytest.param(
+            _IngestReply(payload=_ingest_payload(_HOSTILE_FRAGMENT_ID)),
+            id="unprintable_fragment_id",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -1041,6 +1101,38 @@ async def test_ingest_without_a_usable_fragment_id_parses_to_not_stored(
     assert result.stored is False
     assert result.vault_ref is None
     assert result.action is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_accepts_a_fragment_id_at_the_length_bound(
+    http_clients: ClientFactory,
+) -> None:
+    """The bound refuses only what exceeds it, so a legitimate long handle still stores."""
+    handler = _VaultRouteHandler(
+        [_IngestReply(payload=_ingest_payload(_LONGEST_USABLE_FRAGMENT_ID))]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    result = await client.ingest(_ingest_request())
+    assert result.stored is True
+    assert result.vault_ref == _LONGEST_USABLE_FRAGMENT_ID
+
+
+@pytest.mark.asyncio
+async def test_write_path_degrades_on_an_unstorable_fragment_id(
+    http_clients: ClientFactory,
+) -> None:
+    """A hostile ref never becomes an entry's vault_ref -- the write degrades instead."""
+    handler = _VaultRouteHandler([_IngestReply(payload=_ingest_payload(_HOSTILE_FRAGMENT_ID))])
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_ENTRY_BODY,
+        classification="public",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.DEGRADED
+    assert outcome.vault_ref is None
 
 
 @pytest.mark.asyncio
@@ -1328,6 +1420,46 @@ async def test_unknown_classification_sends_nothing_over_http(
             classification="bogus",
             created_at=_CREATED_AT,
         )
+    assert handler.requests == []
+
+
+@pytest.mark.asyncio
+async def test_handshake_degrades_when_httpx_cannot_parse_the_vault_url(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault URL httpx refuses to build a request for is unreachable, not a crash."""
+    handler = _VaultRouteHandler()
+    client = HttpCreekVaultClient(
+        _UNPARSEABLE_VAULT_URL, _API_KEY, http_client=http_clients(handler)
+    )
+    result = await client.handshake()
+    assert result.available is False
+    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+    assert handler.requests == []
+
+
+@pytest.mark.asyncio
+async def test_write_path_degrades_when_httpx_cannot_parse_the_vault_url(
+    http_clients: ClientFactory,
+) -> None:
+    """A misconfigured vault URL degrades the write instead of raising into the caller.
+
+    ``httpx.InvalidURL`` sits outside the ``HTTPError`` hierarchy, so it is the
+    one transport-layer failure that could escape the seam and turn a saved
+    entry into a 500 for the user who saved it.
+    """
+    handler = _VaultRouteHandler()
+    client = HttpCreekVaultClient(
+        _UNPARSEABLE_VAULT_URL, _API_KEY, http_client=http_clients(handler)
+    )
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_SENTINEL_BODY,
+        classification="public",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.UNAVAILABLE
     assert handler.requests == []
 
 
