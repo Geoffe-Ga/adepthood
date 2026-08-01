@@ -18,9 +18,12 @@ Three implementations of :class:`~domain.creek_vault.CreekVaultClient` live here
   handshaking with a single ``GET /v1/capabilities``. It degrades the same way,
   and additionally records *which* failure mode degraded it
   (:class:`HandshakeDegradeReason`) so contract-version skew stays countable
-  apart from a vault that is merely unreachable. Its per-capability calls all
-  refuse for now: Creek's ratified ``/v1`` request/response shapes have not
-  shipped, and guessing a wire format is worse than staying local.
+  apart from a vault that is merely unreachable. Journal ingest is the one
+  capability whose ``/v1`` shape Creek has ratified, so it is wired up as a
+  ``PUT`` of the entry's own URL; classify, reflect, and wheel still refuse,
+  because guessing an unratified wire format is worse than staying local. A
+  failed ingest is *dropped*, not queued -- there is no retry and no backlog
+  today, and the local Postgres row stays the system of record either way.
 * :class:`LocalFallbackCreekVaultClient` -- the no-vault path. Handshake reports
   unavailable, nothing is supported, ingest is a silent no-op (operator Postgres
   stays the system of record), and the read/compute capabilities raise
@@ -63,8 +66,9 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from http import HTTPStatus
 from typing import NoReturn, Protocol
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, quote, urlsplit
 
 import httpx
 from mcp import ClientSession
@@ -77,10 +81,15 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
     CreekVaultClient,
+    CreekVaultContractError,
+    CreekVaultError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultErrorCode,
+    VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
@@ -601,10 +610,51 @@ class HandshakeDegradeReason(enum.StrEnum):
     VAULT_REPORTED_UNAVAILABLE = "vault_reported_unavailable"
 
 
-# The vault's capability document, relative to the configured base URL. The one
-# endpoint adepthood can call today: Creek's ratified ``/v1`` request/response
-# shapes for the other capabilities have not shipped.
+# The vault's capability document, relative to the configured base URL.
 _CAPABILITIES_PATH = "/v1/capabilities"
+
+# The collection a journal entry is upserted into, relative to the configured
+# base URL. One entry is one resource: the write is a ``PUT`` of the entry's own
+# id, which is what makes a re-send idempotent (the vault edits the fragment it
+# already keyed off that id instead of appending a second one). This and the
+# capability document are the only ``/v1`` shapes Creek has ratified.
+_JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
+
+# Statuses that mean "your credential was refused" rather than "the vault is
+# missing". Checked before any body parsing, since a gateway rejecting the
+# bearer will not answer in the vault's error vocabulary at all.
+_CREDENTIAL_REJECTED_STATUSES: frozenset[int] = frozenset(
+    {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}
+)
+
+# Vault error codes that mean adepthood got the call wrong -- a bad payload, a
+# capability we should not have claimed, or a version we should not have pinned.
+# Every one of them is fixed by changing adepthood, so they map to a contract
+# error. ``TEMPORARILY_UNAVAILABLE`` is deliberately absent: it is the vault
+# reporting on itself, which is an availability fault.
+_CONTRACT_ERROR_CODES: frozenset[VaultErrorCode] = frozenset(
+    {
+        VaultErrorCode.INVALID_REQUEST,
+        VaultErrorCode.UNSUPPORTED_CAPABILITY,
+        VaultErrorCode.INCOMPATIBLE_VERSION,
+    }
+)
+
+# The three static, capability-named messages the ingest path may raise with.
+# Built from the capability enum rather than written as literals so they cannot
+# drift from the wire name, and content-free by construction: no branch may
+# interpolate the entry body, the API key, or a vault-supplied string into an
+# exception that will reach a log or a traceback.
+_INGEST_FAILED_MESSAGE = f"creek vault call failed: {CreekCapability.JOURNAL.value}"
+_INGEST_REJECTED_MESSAGE = f"creek vault rejected the request: {CreekCapability.JOURNAL.value}"
+_CREDENTIAL_REJECTED_MESSAGE = (
+    f"creek vault rejected the credential: {CreekCapability.JOURNAL.value}"
+)
+
+# The one not-stored result every unreadable 2xx collapses to. Interned because
+# it is value-identical on each of those paths, and named so no branch is
+# tempted to invent a ``vault_ref`` the vault never issued.
+_NOT_STORED_RESULT = VaultIngestResult(stored=False, vault_ref=None, action=None)
 
 
 def _build_pooled_vault_client() -> httpx.AsyncClient:
@@ -679,6 +729,121 @@ def _refuse_unratified(capability: CreekCapability) -> NoReturn:
     raise CreekCapabilityUnsupportedError(_unsupported_message(capability)) from None
 
 
+def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
+    """Map an ingest request onto the ratified ``/v1`` journal-entry fields.
+
+    Exactly three fields, and no more: the entry id travels in the URL (it is
+    the resource), and the tier ceiling the MCP shape carries as a separate
+    ``privacy_tier_ceiling`` is redundant here, since a journal write always
+    stores at the writer's own tier. Sending a field the ratified shape does not
+    name would be guessing.
+    """
+    return {
+        "content": request.body,
+        "timestamp": request.created_at.isoformat(),
+        "tier": request.tier.value,
+    }
+
+
+def _coerce_ingest_action(raw: object) -> VaultIngestAction | None:
+    """Map the vault's reported action onto our enum, or ``None`` if we do not know it.
+
+    Mirrors :func:`_coerce_capability`: an unknown or wrong-typed value is
+    dropped rather than raising, so the string a vault chose can never reach a
+    message or a log. An unknown action is not a durable write, though -- the
+    caller treats ``None`` as "we could not read this response".
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return VaultIngestAction(raw)
+    except ValueError:
+        return None
+
+
+def _usable_fragment_id(payload: Mapping[str, object]) -> str | None:
+    """Return the vault's fragment id when it is a non-empty string, else ``None``.
+
+    A blank, missing, or non-string id is unusable as a durable reference, and
+    coercing one (``str(7)``) would fabricate a ref the vault never issued.
+    """
+    fragment_id = payload.get("fragment_id")
+    if isinstance(fragment_id, str) and fragment_id:
+        return fragment_id
+    return None
+
+
+def _parse_http_ingest_result(payload: object) -> VaultIngestResult:
+    """Project a 2xx ingest body onto a result, conservatively.
+
+    A durable write needs both halves: an action we recognize *and* a usable
+    fragment id. Anything less -- a body that is not a JSON object, an unknown
+    action, a blank id -- parses to not-stored, which the write path records as
+    a degraded write. That is the safe direction: reporting a write we cannot
+    verify would let the entry look replicated when it is not.
+    """
+    if isinstance(payload, Mapping):
+        action = _coerce_ingest_action(payload.get("action"))
+        fragment_id = _usable_fragment_id(payload)
+        if action is not None and fragment_id is not None:
+            return VaultIngestResult(stored=True, vault_ref=fragment_id, action=action)
+    return _NOT_STORED_RESULT
+
+
+def _vault_error_code(response: httpx.Response) -> VaultErrorCode | None:
+    """Read the vault's own error code from an error body, parsing only what we know.
+
+    Four narrowing steps, each of which fails to ``None`` rather than raising: a
+    body that is not JSON, JSON that is not an object, a ``code`` that is not a
+    string, and a string that is not one of :class:`VaultErrorCode`'s members.
+    The last step is the security-relevant one -- an unrecognized code is
+    *dropped*, never stored or echoed, so a compromised vault cannot inject text
+    (control characters and all) into an exception message or a log record.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    return _coerce_error_code(payload.get("code"))
+
+
+def _coerce_error_code(raw: object) -> VaultErrorCode | None:
+    """Map a wire ``code`` string onto our enum, dropping anything unrecognized."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return VaultErrorCode(raw)
+    except ValueError:
+        return None
+
+
+def _ingest_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a non-2xx ingest response into the failure it actually is.
+
+    The order encodes what each answer tells an operator to do:
+
+    1. A refused credential is a configuration fault with its own remedy, and it
+       is decided on the status alone -- a gateway that rejects our bearer never
+       reaches the vault's error vocabulary.
+    2. A code we recognize is authoritative over the status class; the vault
+       naming itself temporarily unavailable is the one such code that is *not*
+       our defect.
+    3. With no readable code, the status class decides: 4xx means the vault
+       faulted the request we sent (ours to fix), and everything else -- 5xx, a
+       redirect we refuse to follow -- means the call did not land (not ours).
+    """
+    if response.status_code in _CREDENTIAL_REJECTED_STATUSES:
+        return CreekVaultAuthError(_CREDENTIAL_REJECTED_MESSAGE)
+    code = _vault_error_code(response)
+    if code in _CONTRACT_ERROR_CODES:
+        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE, code=code)
+    if code is None and response.is_client_error:
+        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE)
+    return CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE)
+
+
 class HttpCreekVaultClient:
     """A :class:`CreekVaultClient` that speaks plain HTTP/JSON to a configured vault.
 
@@ -689,13 +854,22 @@ class HttpCreekVaultClient:
     **degrades, never crashes**: :meth:`handshake` collapses every transport,
     parsing, and version failure into :meth:`HandshakeResult.unavailable`.
 
-    The capability calls all refuse with
-    :class:`CreekCapabilityUnsupportedError`, *including* ones the vault
-    advertises. Creek's ratified ``/v1`` request/response shapes for them have
-    not shipped upstream, and this adapter will not guess a wire format: a
-    refusal degrades the caller onto its local pipeline, whereas a wrong guess
-    would send real journal content into a surface nobody has agreed on. Wiring
-    them up is follow-on work, gated on that document.
+    Journal ingest is the one capability whose ``/v1`` request/response shape
+    Creek has ratified, so :meth:`ingest` is wired up: it gates on the
+    handshake exactly as the MCP client does, sends a ``PUT`` to the entry's own
+    URL, and splits the answer into a durable write, a not-stored write, or one of
+    three failure types (contract, auth, unavailable) an operator can act on
+    differently. A failed ingest is **dropped, not queued** -- there is no retry
+    and no backlog today, and it does not need one, because the local Postgres
+    row is the system of record and the user's save already succeeded.
+
+    :meth:`classify`, :meth:`reflect`, and :meth:`wheel` still refuse with
+    :class:`CreekCapabilityUnsupportedError`, *including* when the vault
+    advertises them. Their shapes have not shipped upstream, and this adapter
+    will not guess a wire format: a refusal degrades the caller onto its local
+    pipeline, whereas a wrong guess would send real journal content into a
+    surface nobody has agreed on. Wiring them up is follow-on work, gated on
+    that document.
 
     A plain class on purpose -- no dataclass, no custom ``__repr__`` -- so the
     default object repr can never render the bearer credential this instance
@@ -743,28 +917,41 @@ class HttpCreekVaultClient:
             return self._http_client
         return _VAULT_HTTP_POOL.get()
 
+    async def _authorized_request(
+        self, method: str, url: str, json_body: Mapping[str, object] | None = None
+    ) -> httpx.Response:
+        """Send one authorized vault request under the whole-request deadline.
+
+        The single place any request leaves this adapter, so the two properties
+        that must hold for *every* call hold once. The authorization header is
+        built here, per call, so the credential lives only for the duration of
+        the request and never on the shared pooled client.
+
+        The deadline is necessary because httpx's ``read`` budget is per
+        socket-read rather than a deadline: a trickling vault would otherwise
+        hold this coroutine (and its pooled connection) open indefinitely.
+        Expiry raises ``TimeoutError``, an ``OSError`` subclass, so it lands in
+        each caller's existing transport branch. The module constant is read at
+        call time rather than captured, so a redeployment (or a test) can move
+        the ceiling without rebuilding the adapter.
+        """
+        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
+            return await self._active_client().request(
+                method,
+                url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json=json_body,
+            )
+
     async def _fetch_capabilities(self) -> Mapping[str, object]:
         """Fetch and minimally narrow the vault's capability document.
 
-        The authorization header is built here, per call, so the credential
-        lives only for the duration of the request and never on the shared
-        pooled client. A non-2xx status raises ``httpx.HTTPStatusError`` and a
-        non-JSON body raises ``json.JSONDecodeError``; both are degraded by the
-        caller. A body that decodes to something other than a JSON object is a
-        malformed payload, so it raises ``TypeError`` rather than being cast.
-
-        The request runs under a whole-call deadline because httpx's ``read``
-        budget is per socket-read rather than a deadline, so a trickling vault
-        would otherwise hold this coroutine (and its pooled connection) open
-        indefinitely. Expiry raises ``TimeoutError``, an ``OSError`` subclass,
-        so it lands in the caller's existing transport branch and degrades to
-        unreachable -- the degrade set is unchanged.
+        A non-2xx status raises ``httpx.HTTPStatusError`` and a non-JSON body
+        raises ``json.JSONDecodeError``; both are degraded by the caller. A body
+        that decodes to something other than a JSON object is a malformed
+        payload, so it raises ``TypeError`` rather than being cast.
         """
-        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
-            response = await self._active_client().get(
-                f"{self._url}{_CAPABILITIES_PATH}",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-            )
+        response = await self._authorized_request("GET", f"{self._url}{_CAPABILITIES_PATH}")
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping):
@@ -813,9 +1000,53 @@ class HttpCreekVaultClient:
         """Return whether the cached handshake advertised ``capability``."""
         return capability in self._last_handshake.capabilities
 
-    async def ingest(self, _request: VaultIngestRequest, /) -> VaultIngestResult:
-        """Refuse ingest: the ``/v1`` write shape is unratified (Postgres stays authoritative)."""
-        _refuse_unratified(CreekCapability.JOURNAL)
+    async def _put_journal_entry(self, request: VaultIngestRequest) -> httpx.Response:
+        """Upsert one entry at its own URL, normalizing any transport failure.
+
+        The entry id is percent-encoded with nothing left safe, so it can only
+        ever contribute one path segment -- an id is an integer today, but a URL
+        assembled by concatenation is exactly where a future identifier type
+        would otherwise smuggle in a path traversal.
+
+        Every transport failure (connection refused, a socket error, the
+        whole-request deadline expiring) becomes
+        :class:`CreekVaultUnavailableError` with ``from None``: the original
+        exception's text can carry the URL or the entry body, and neither its
+        message nor its traceback context may ride along.
+        """
+        entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{quote(str(request.entry_id), safe='')}"
+        try:
+            return await self._authorized_request("PUT", entry_url, _journal_entry_body(request))
+        except (httpx.HTTPError, OSError):
+            raise CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE) from None
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Upsert ``request`` into the vault, requiring the JOURNAL capability.
+
+        Gated on the cached handshake first, exactly as
+        :meth:`McpCreekVaultClient._invoke` gates: a vault that did not
+        advertise JOURNAL is refused *locally*, so no entry body is ever put on
+        the wire toward a surface that never claimed to accept it.
+
+        The answer splits three ways. A 2xx is projected by
+        :func:`_parse_http_ingest_result`, which reports not-stored rather than
+        inventing a ref it could not read. A 2xx whose body will not decode at
+        all is an unavailable vault, not a failed write -- we cannot tell what
+        happened, and a proxy error page served as 200 is the usual cause. A
+        non-2xx is classified by :func:`_ingest_failure` into the fault it
+        represents. Every raise uses ``from None`` so no vault-supplied text
+        reaches a traceback.
+        """
+        if not self.supports(CreekCapability.JOURNAL):
+            raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.JOURNAL))
+        response = await self._put_journal_entry(request)
+        if not response.is_success:
+            raise _ingest_failure(response) from None
+        try:
+            payload = response.json()
+        except ValueError:
+            raise CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE) from None
+        return _parse_http_ingest_result(payload)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: its ``/v1`` request/response shape is unratified."""

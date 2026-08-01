@@ -8,6 +8,7 @@ tests assume.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -15,9 +16,14 @@ import pytest
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
+    CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultErrorCode,
+    VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
@@ -25,6 +31,7 @@ from domain.creek_vault import (
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_write import (
+    VaultDegradeReason,
     VaultWriteOutcome,
     VaultWriteStatus,
     get_creek_vault_client,
@@ -33,6 +40,16 @@ from services.creek_vault_write import (
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _BODY = "A quiet entry about the week's practice."
+
+_ENTRY_ID = 101
+
+# A body and an error text distinctive enough to spot in any log record. The
+# degrade log must be a static message with content-free structured fields, so
+# neither the writer's words nor a vault's own error prose may appear.
+_SENTINEL_BODY = "SENTINEL_JOURNAL_BODY_DO_NOT_LOG"
+_SENTINEL_ERROR_TEXT = "SENTINEL_VAULT_ERROR_TEXT_DO_NOT_LOG"
+
+_DEGRADED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
 
 
 class RecordingVaultClient:
@@ -298,3 +315,147 @@ def test_get_creek_vault_client_returns_local_fallback_by_default(
     monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
     client = get_creek_vault_client()
     assert isinstance(client, LocalFallbackCreekVaultClient)
+
+
+def _logged_fields(caplog: pytest.LogCaptureFixture, field: str) -> list[object]:
+    """Return every value of the structured ``field`` across the captured records."""
+    return [
+        value for record in caplog.records if (value := getattr(record, field, None)) is not None
+    ]
+
+
+async def _write_with(
+    caplog: pytest.LogCaptureFixture,
+    ingest: VaultIngestResult | Exception,
+    body: str = _BODY,
+) -> VaultWriteOutcome:
+    """Run one write against a fake scripted with ``ingest``, capturing its logs afresh."""
+    caplog.clear()
+    client = RecordingVaultClient(ingest=ingest)
+    return await store_and_classify(
+        client, body=body, classification="personal", created_at=_CREATED_AT, entry_id=_ENTRY_ID
+    )
+
+
+@pytest.mark.asyncio
+async def test_contract_failure_and_unavailability_log_distinct_reasons(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One degraded outcome, two operator stories: a rejected payload is not a missing vault.
+
+    Both failures must stay invisible to the caller (the entry is saved either
+    way) and yet be countable apart, since a contract fault is fixed by changing
+    adepthood and an availability fault is not.
+    """
+    caplog.set_level(logging.DEBUG)
+    contract_outcome = await _write_with(
+        caplog,
+        CreekVaultContractError(
+            "creek vault rejected the request", code=VaultErrorCode.INVALID_REQUEST
+        ),
+    )
+    contract_reasons = _logged_fields(caplog, "reason")
+    unavailable_outcome = await _write_with(
+        caplog, CreekVaultUnavailableError("creek vault call failed: creek.journal")
+    )
+    unavailable_reasons = _logged_fields(caplog, "reason")
+
+    assert contract_outcome == unavailable_outcome == _DEGRADED_OUTCOME
+    assert contract_reasons == [VaultDegradeReason.CONTRACT.value]
+    assert unavailable_reasons == [VaultDegradeReason.UNAVAILABLE.value]
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_is_logged_as_auth_not_unavailable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rejected credential is its own reason: rotating a key is not restarting a vault."""
+    caplog.set_level(logging.DEBUG)
+    outcome = await _write_with(caplog, CreekVaultAuthError("creek vault rejected the credential"))
+    assert outcome == _DEGRADED_OUTCOME
+    assert _logged_fields(caplog, "reason") == [VaultDegradeReason.AUTH.value]
+
+
+@pytest.mark.parametrize(
+    ("ingest", "expected"),
+    [
+        pytest.param(
+            CreekCapabilityUnsupportedError("creek vault capability unsupported: creek.journal"),
+            VaultDegradeReason.UNSUPPORTED_CAPABILITY,
+            id="unsupported_capability",
+        ),
+        pytest.param(
+            VaultIngestResult(stored=False, vault_ref=None),
+            VaultDegradeReason.NOT_STORED,
+            id="not_stored",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsupported_capability_and_not_stored_log_their_own_reasons(
+    ingest: VaultIngestResult | Exception,
+    expected: VaultDegradeReason,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A refused capability and a vault that simply did not store are separately countable."""
+    caplog.set_level(logging.DEBUG)
+    outcome = await _write_with(caplog, ingest)
+    assert outcome == _DEGRADED_OUTCOME
+    assert _logged_fields(caplog, "reason") == [expected.value]
+
+
+@pytest.mark.asyncio
+async def test_successful_ingest_logs_the_action(caplog: pytest.LogCaptureFixture) -> None:
+    """A durable write records which action the vault took, so edits stay visible."""
+    caplog.set_level(logging.DEBUG)
+    outcome = await _write_with(
+        caplog,
+        VaultIngestResult(stored=True, vault_ref="ref-a", action=VaultIngestAction.UPDATED),
+    )
+    assert outcome == VaultWriteOutcome(
+        status=VaultWriteStatus.INGESTED, vault_ref="ref-a", tags=()
+    )
+    assert _logged_fields(caplog, "action") == [VaultIngestAction.UPDATED.value]
+
+
+@pytest.mark.parametrize(
+    "ingest",
+    [
+        pytest.param(
+            CreekVaultContractError(_SENTINEL_ERROR_TEXT, code=VaultErrorCode.INVALID_REQUEST),
+            id="contract",
+        ),
+        pytest.param(CreekVaultAuthError(_SENTINEL_ERROR_TEXT), id="auth"),
+        pytest.param(CreekVaultUnavailableError(_SENTINEL_ERROR_TEXT), id="unavailable"),
+        pytest.param(CreekCapabilityUnsupportedError(_SENTINEL_ERROR_TEXT), id="unsupported"),
+        pytest.param(VaultIngestResult(stored=False, vault_ref=None), id="not_stored"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_degrade_logs_never_carry_the_entry_body_or_a_raw_vault_code(
+    ingest: VaultIngestResult | Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every degrade log is a static message plus content-free fields -- no body, no vault prose."""
+    caplog.set_level(logging.DEBUG)
+    await _write_with(caplog, ingest, body=_SENTINEL_BODY)
+
+    assert caplog.records
+    for sentinel in (_SENTINEL_BODY, _SENTINEL_ERROR_TEXT):
+        assert sentinel not in caplog.text
+        for record in caplog.records:
+            assert sentinel not in record.getMessage()
+            assert sentinel not in str(record.__dict__)
+    for code in _logged_fields(caplog, "code"):
+        assert code in {member.value for member in VaultErrorCode}
+
+
+def test_vault_degrade_reason_wire_values_are_stable() -> None:
+    """The degrade reasons carry the exact strings telemetry will count."""
+    assert [reason.value for reason in VaultDegradeReason] == [
+        "contract",
+        "auth",
+        "unavailable",
+        "unsupported_capability",
+        "not_stored",
+    ]

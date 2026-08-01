@@ -1,19 +1,22 @@
 """Tests for the HTTP/JSON Creek Vault adapter in services.creek_vault_client.
 
 Every case drives the adapter through an ``httpx.MockTransport`` handler, so no
-test touches a network or waits on real time. The capability payload asserted
-here is the only response shape adepthood can know today -- the one it already
-parses. Nothing beyond it is invented, because Creek's ratified ``/v1`` document
-has not shipped.
+test touches a network or waits on real time. Two response shapes are asserted
+here: the capability document the handshake already parses, and the journal
+ingest exchange -- the one capability whose ``/v1`` shape Creek has ratified.
+Nothing beyond those two is invented.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from http import HTTPStatus
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -26,8 +29,14 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
     CreekVaultClient,
+    CreekVaultContractError,
+    CreekVaultError,
+    CreekVaultUnavailableError,
     HandshakeResult,
+    VaultErrorCode,
+    VaultIngestAction,
     VaultIngestRequest,
     VaultTierCeiling,
 )
@@ -70,7 +79,26 @@ _PATH_VAULT_URL = f"{_VAULT_URL}/vault/"
 
 _ENTRY_BODY = "a floor-level journal entry"
 
+# A body distinct enough to spot anywhere it must never appear: an exception
+# message, a repr, or a log record.
+_SENTINEL_BODY = "SENTINEL_ENTRY_BODY_DO_NOT_LEAK"
+
 _CREATED_AT = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
+
+# The stable external id the vault keys the stored fragment off, and the URL a
+# PUT for it must land on.
+_ENTRY_ID = 7
+
+_JOURNAL_ENTRY_URL = f"{_VAULT_URL}/v1/journal-entries/{_ENTRY_ID}"
+
+_FRAGMENT_ID = "frag-7"
+
+# A hostile ``code`` a compromised or buggy vault could answer with: an
+# unrecognized value carrying CRLF (log-injection) plus a token that must never
+# be echoed. The adapter may parse only its own enum values, so this whole
+# string has to be dropped rather than stored, formatted, or logged.
+_HOSTILE_CODE_SENTINEL = "HOSTILE_VAULT_CODE_SENTINEL"
+_HOSTILE_VAULT_CODE = f"not_a_real_code\r\n{_HOSTILE_CODE_SENTINEL}"
 
 _POOL_ATTR = "services.creek_vault_client._VAULT_HTTP_POOL"
 
@@ -186,15 +214,34 @@ def _payload_without_contract_version() -> dict[str, object]:
     return payload
 
 
-def _ingest_request() -> VaultIngestRequest:
-    """Build a minimal ingest request for the refusal paths."""
+def _ingest_request(
+    tier: VaultTierCeiling = VaultTierCeiling.OPEN, body: str = _ENTRY_BODY
+) -> VaultIngestRequest:
+    """Build an ingest request at ``tier`` carrying ``body``.
+
+    An entry's own tier and its write ceiling are always the same value on the
+    journal path, so one argument sets both.
+    """
     return VaultIngestRequest(
-        entry_id=7,
-        body=_ENTRY_BODY,
-        tier=VaultTierCeiling.OPEN,
-        tier_ceiling=VaultTierCeiling.OPEN,
+        entry_id=_ENTRY_ID,
+        body=body,
+        tier=tier,
+        tier_ceiling=tier,
         created_at=_CREATED_AT,
     )
+
+
+def _ingest_payload(
+    fragment_id: object = _FRAGMENT_ID,
+    action: str = VaultIngestAction.CREATED.value,
+) -> dict[str, object]:
+    """Build a vault ingest response body carrying ``action`` and ``fragment_id``."""
+    return {"action": action, "fragment_id": fragment_id}
+
+
+def _error_payload(code: str) -> dict[str, object]:
+    """Build a vault error body carrying a machine-readable ``code``."""
+    return {"code": code, "detail": "the vault refused this request"}
 
 
 class _RecordingHandler:
@@ -209,6 +256,102 @@ class _RecordingHandler:
         """Record the request and answer 200 with the stored payload."""
         self.requests.append(request)
         return httpx.Response(200, json=self._payload)
+
+
+@dataclass(frozen=True)
+class _IngestReply:
+    """One scripted answer to a journal-entry PUT: a status plus a JSON or text body."""
+
+    status: int = HTTPStatus.OK
+    payload: object = None
+    text: str | None = None
+
+    def to_response(self) -> httpx.Response:
+        """Build the httpx response this reply describes."""
+        if self.text is not None:
+            return httpx.Response(self.status, text=self.text)
+        return httpx.Response(self.status, json=self.payload)
+
+
+_CREATED_REPLY = _IngestReply(payload=_ingest_payload())
+
+
+class _VaultRouteHandler:
+    """Route-aware handler: a healthy capability GET plus scripted journal PUTs.
+
+    The handshake and the ingest have different shapes and different failure
+    modes, so a test needs to script them independently while still seeing every
+    request that crossed the transport. Replies are consumed in order and the
+    last one repeats, so a two-call test scripts exactly two.
+    """
+
+    def __init__(
+        self,
+        replies: Sequence[_IngestReply] = (),
+        *,
+        capabilities: Sequence[str] = (CreekCapability.JOURNAL.value,),
+        ingest_error: Exception | None = None,
+    ) -> None:
+        """Store the advertised capabilities, the PUT script, and any PUT failure."""
+        self._capabilities = list(capabilities)
+        self._replies = list(replies) or [_CREATED_REPLY]
+        self._ingest_error = ingest_error
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def ingest_requests(self) -> list[httpx.Request]:
+        """Return only the journal-entry PUTs this handler has served."""
+        return [request for request in self.requests if request.method == "PUT"]
+
+    def _next_reply(self) -> _IngestReply:
+        """Return this PUT's scripted reply, repeating the last once the script runs out."""
+        return self._replies[min(len(self.ingest_requests) - 1, len(self._replies) - 1)]
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, then answer the capability GET or the scripted PUT."""
+        self.requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(HTTPStatus.OK, json=_handshake_payload(self._capabilities))
+        if self._ingest_error is not None:
+            raise self._ingest_error
+        return self._next_reply().to_response()
+
+
+class _SlowIngestHandler:
+    """Handler that handshakes healthily and then trickles forever on the journal PUT."""
+
+    def __init__(self) -> None:
+        """Start an empty request log."""
+        self.requests: list[httpx.Request] = []
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Answer the capability GET at once; never finish the PUT within any deadline."""
+        self.requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                HTTPStatus.OK, json=_handshake_payload([CreekCapability.JOURNAL.value])
+            )
+        await asyncio.sleep(_SLOW_HANDLER_SLEEP_SECONDS)
+        return httpx.Response(HTTPStatus.OK, json=_ingest_payload())
+
+
+async def _handshaken_client(
+    handler: Handler | AsyncHandler,
+    http_clients: ClientFactory,
+    api_key: str = _API_KEY,
+) -> HttpCreekVaultClient:
+    """Build a client over ``handler`` and complete its handshake before returning it."""
+    client = HttpCreekVaultClient(_VAULT_URL, api_key, http_client=http_clients(handler))
+    await client.handshake()
+    return client
+
+
+def _sent_ingest_body(handler: _VaultRouteHandler) -> dict[str, object]:
+    """Return the decoded JSON body of the single journal PUT the handler served."""
+    assert len(handler.ingest_requests) == 1
+    decoded = json.loads(handler.ingest_requests[0].content)
+    assert isinstance(decoded, dict)
+    return decoded
 
 
 class _CountingClientBuild:
@@ -263,8 +406,6 @@ async def http_clients() -> AsyncGenerator[ClientFactory, None]:
 
 async def _call_capability(client: HttpCreekVaultClient, capability: CreekCapability) -> object:
     """Invoke the client method that implements ``capability``."""
-    if capability is CreekCapability.JOURNAL:
-        return await client.ingest(_ingest_request())
     if capability is CreekCapability.CLASSIFY:
         return await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
     if capability is CreekCapability.REFLECT:
@@ -711,7 +852,6 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
 @pytest.mark.parametrize(
     "capability",
     [
-        CreekCapability.JOURNAL,
         CreekCapability.CLASSIFY,
         CreekCapability.REFLECT,
         CreekCapability.WHEEL,
@@ -722,7 +862,12 @@ async def test_advertised_capabilities_are_still_refused(
     capability: CreekCapability,
     http_clients: ClientFactory,
 ) -> None:
-    """Even an advertised capability is refused, since its payload shape is unratified."""
+    """Journal is the one ratified capability; every other one is refused even when advertised.
+
+    Their ``/v1`` payload shapes have not shipped, so an advertised
+    classify/reflect/wheel still degrades the caller onto its local pipeline
+    rather than guessing a wire format.
+    """
     advertised = [
         CreekCapability.JOURNAL.value,
         CreekCapability.CLASSIFY.value,
@@ -743,15 +888,19 @@ async def test_advertised_capabilities_are_still_refused(
 async def test_write_path_degrades_instead_of_losing_an_entry(
     http_clients: ClientFactory,
 ) -> None:
-    """A refused ingest degrades the write path rather than raising or dropping the entry."""
-    client = HttpCreekVaultClient(
-        _VAULT_URL,
-        _API_KEY,
-        http_client=http_clients(_healthy_handler([CreekCapability.JOURNAL.value])),
+    """A vault that answers the PUT with a fault degrades the write instead of dropping it.
+
+    The vault handshakes healthily and then rejects the ingest itself, so the
+    degrade comes from a real failed write rather than from an unwired
+    capability.
+    """
+    handler = _VaultRouteHandler(
+        [_IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"})]
     )
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
     outcome = await store_and_classify(
         client,
-        entry_id=7,
+        entry_id=_ENTRY_ID,
         body=_ENTRY_BODY,
         classification="public",
         created_at=_CREATED_AT,
@@ -759,6 +908,7 @@ async def test_write_path_degrades_instead_of_losing_an_entry(
     assert outcome.status is VaultWriteStatus.DEGRADED
     assert outcome.vault_ref is None
     assert outcome.tags == ()
+    assert len(handler.ingest_requests) == 1
 
 
 @pytest.mark.asyncio
@@ -771,7 +921,16 @@ async def test_api_key_never_leaks_into_logs_repr_or_errors(
     healthy = HttpCreekVaultClient(
         _VAULT_URL,
         _SENTINEL_KEY,
-        http_client=http_clients(_healthy_handler([CreekCapability.JOURNAL.value])),
+        http_client=http_clients(
+            _VaultRouteHandler(
+                [
+                    _IngestReply(
+                        status=HTTPStatus.BAD_REQUEST,
+                        payload=_error_payload(VaultErrorCode.INVALID_REQUEST.value),
+                    )
+                ]
+            )
+        ),
     )
     hung = HttpCreekVaultClient(
         _VAULT_URL,
@@ -785,7 +944,7 @@ async def test_api_key_never_leaks_into_logs_repr_or_errors(
     )
     for client in (healthy, hung, failing):
         await client.handshake()
-    with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
+    with pytest.raises(CreekVaultContractError) as exc_info:
         await healthy.ingest(_ingest_request())
 
     assert _SENTINEL_KEY not in caplog.text
@@ -798,3 +957,394 @@ async def test_api_key_never_leaks_into_logs_repr_or_errors(
     assert _SENTINEL_KEY not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
+
+
+@pytest.mark.asyncio
+async def test_ingest_puts_v1_journal_entries_with_bearer_and_exact_body(
+    http_clients: ClientFactory,
+) -> None:
+    """One ingest is one PUT of the entry's own URL, carrying exactly three body fields."""
+    handler = _VaultRouteHandler()
+    client = await _handshaken_client(handler, http_clients)
+    await client.ingest(_ingest_request())
+
+    put = handler.ingest_requests[0]
+    assert put.method == "PUT"
+    assert str(put.url) == _JOURNAL_ENTRY_URL
+    assert put.headers["Authorization"] == f"Bearer {_API_KEY}"
+    body = _sent_ingest_body(handler)
+    assert set(body) == {"content", "timestamp", "tier"}
+    assert body["content"] == _ENTRY_BODY
+    assert body["timestamp"] == _CREATED_AT.isoformat()
+    assert body["tier"] == VaultTierCeiling.OPEN.value
+
+
+@pytest.mark.parametrize(
+    "tier",
+    [VaultTierCeiling.OPEN, VaultTierCeiling.PERSONAL],
+    ids=["open", "personal"],
+)
+@pytest.mark.asyncio
+async def test_ingest_sends_the_entrys_own_tier_never_a_lower_ceiling(
+    tier: VaultTierCeiling,
+    http_clients: ClientFactory,
+) -> None:
+    """The stored tier is the writer's own, so the vault never files an entry too widely."""
+    handler = _VaultRouteHandler()
+    client = await _handshaken_client(handler, http_clients)
+    await client.ingest(_ingest_request(tier))
+    assert _sent_ingest_body(handler)["tier"] == tier.value
+
+
+@pytest.mark.parametrize(
+    "action",
+    list(VaultIngestAction),
+    ids=[action.value for action in VaultIngestAction],
+)
+@pytest.mark.asyncio
+async def test_ingest_success_projects_action_and_fragment_id(
+    action: VaultIngestAction,
+    http_clients: ClientFactory,
+) -> None:
+    """Every known action is a durable write whose ref is the vault's own fragment id."""
+    handler = _VaultRouteHandler([_IngestReply(payload=_ingest_payload(action=action.value))])
+    client = await _handshaken_client(handler, http_clients)
+    result = await client.ingest(_ingest_request())
+    assert result.stored is True
+    assert result.vault_ref == _FRAGMENT_ID
+    assert result.action is action
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(_IngestReply(payload=_ingest_payload("")), id="blank_fragment_id"),
+        pytest.param(
+            _IngestReply(payload={"action": VaultIngestAction.CREATED.value}),
+            id="missing_fragment_id",
+        ),
+        pytest.param(_IngestReply(payload=_ingest_payload(_ENTRY_ID)), id="non_string_fragment_id"),
+        pytest.param(
+            _IngestReply(payload=_ingest_payload(action="teleported")), id="unknown_action"
+        ),
+        pytest.param(_IngestReply(payload=[_FRAGMENT_ID]), id="json_is_not_an_object"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ingest_without_a_usable_fragment_id_parses_to_not_stored(
+    reply: _IngestReply,
+    http_clients: ClientFactory,
+) -> None:
+    """A 2xx adepthood cannot read is not-stored: a ref is never fabricated."""
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    result = await client.ingest(_ingest_request())
+    assert result.stored is False
+    assert result.vault_ref is None
+    assert result.action is None
+
+
+@pytest.mark.asyncio
+async def test_resending_the_same_entry_id_reports_unchanged_with_the_same_fragment(
+    http_clients: ClientFactory,
+) -> None:
+    """Re-sending an entry edits its one fragment in place rather than creating a second."""
+    handler = _VaultRouteHandler(
+        [
+            _CREATED_REPLY,
+            _IngestReply(payload=_ingest_payload(action=VaultIngestAction.UNCHANGED.value)),
+        ]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    first = await client.ingest(_ingest_request())
+    second = await client.ingest(_ingest_request())
+
+    assert [str(request.url) for request in handler.ingest_requests] == [
+        _JOURNAL_ENTRY_URL,
+        _JOURNAL_ENTRY_URL,
+    ]
+    assert first.action is VaultIngestAction.CREATED
+    assert second.action is VaultIngestAction.UNCHANGED
+    assert second.vault_ref == first.vault_ref == _FRAGMENT_ID
+
+
+@pytest.mark.asyncio
+async def test_ingest_400_invalid_request_raises_a_contract_error(
+    http_clients: ClientFactory,
+) -> None:
+    """A rejected payload is our bug, not the vault's absence, and carries its own code."""
+    handler = _VaultRouteHandler(
+        [
+            _IngestReply(
+                status=HTTPStatus.BAD_REQUEST,
+                payload=_error_payload(VaultErrorCode.INVALID_REQUEST.value),
+            )
+        ]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultContractError) as exc_info:
+        await client.ingest(_ingest_request())
+    assert exc_info.value.code is VaultErrorCode.INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    "status",
+    [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN],
+    ids=["unauthorized", "forbidden"],
+)
+@pytest.mark.asyncio
+async def test_ingest_401_raises_an_auth_error(
+    status: HTTPStatus,
+    http_clients: ClientFactory,
+) -> None:
+    """A rejected credential is a configuration fault, never reported as a missing vault."""
+    handler = _VaultRouteHandler([_IngestReply(status=status, payload={"detail": "denied"})])
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultAuthError) as exc_info:
+        await client.ingest(_ingest_request())
+    assert not isinstance(exc_info.value, CreekVaultUnavailableError)
+    assert isinstance(exc_info.value, CreekVaultError)
+
+
+@pytest.mark.asyncio
+async def test_ingest_temporarily_unavailable_code_raises_unavailable(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault naming itself temporarily unavailable is an availability fault, not a contract."""
+    handler = _VaultRouteHandler(
+        [
+            _IngestReply(
+                status=HTTPStatus.SERVICE_UNAVAILABLE,
+                payload=_error_payload(VaultErrorCode.TEMPORARILY_UNAVAILABLE.value),
+            )
+        ]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+async def test_ingest_connect_failure_raises_unavailable(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that handshook and then went unreachable degrades rather than crashing."""
+    handler = _VaultRouteHandler(ingest_error=httpx.ConnectError("refused"))
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        pytest.param(
+            _IngestReply(status=HTTPStatus.BAD_REQUEST, payload={"detail": "nope"}),
+            CreekVaultContractError,
+            id="uncoded_400",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.NOT_FOUND, payload={"detail": "nope"}),
+            CreekVaultContractError,
+            id="uncoded_404",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.CONFLICT, payload={"detail": "nope"}),
+            CreekVaultContractError,
+            id="uncoded_409",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.BAD_REQUEST, text="<html>Bad Request</html>"),
+            CreekVaultContractError,
+            id="non_json_4xx",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}),
+            CreekVaultUnavailableError,
+            id="uncoded_500",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.BAD_GATEWAY, payload={"detail": "boom"}),
+            CreekVaultUnavailableError,
+            id="uncoded_502",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ingest_classifies_an_uncoded_status_by_class(
+    reply: _IngestReply,
+    expected: type[CreekVaultError],
+    http_clients: ClientFactory,
+) -> None:
+    """Without a recognized code, 4xx is our contract fault and 5xx is the vault's."""
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(expected) as exc_info:
+        await client.ingest(_ingest_request())
+    assert type(exc_info.value) is expected
+    assert getattr(exc_info.value, "code", None) is None
+
+
+@pytest.mark.asyncio
+async def test_contract_and_unavailable_ingest_failures_are_distinguishable(
+    http_clients: ClientFactory,
+) -> None:
+    """A bad payload and an unreachable vault raise two types, neither a subclass of the other."""
+    contract_client = await _handshaken_client(
+        _VaultRouteHandler(
+            [
+                _IngestReply(
+                    status=HTTPStatus.BAD_REQUEST,
+                    payload=_error_payload(VaultErrorCode.INVALID_REQUEST.value),
+                )
+            ]
+        ),
+        http_clients,
+    )
+    offline_client = await _handshaken_client(
+        _VaultRouteHandler(ingest_error=httpx.ConnectError("refused")), http_clients
+    )
+    with pytest.raises(CreekVaultError) as contract_info:
+        await contract_client.ingest(_ingest_request())
+    with pytest.raises(CreekVaultError) as offline_info:
+        await offline_client.ingest(_ingest_request())
+
+    contract_error = contract_info.value
+    offline_error = offline_info.value
+    assert type(contract_error) is not type(offline_error)
+    assert not isinstance(contract_error, type(offline_error))
+    assert not isinstance(offline_error, type(contract_error))
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognized_error_code_never_reaches_a_message_or_a_log(
+    caplog: pytest.LogCaptureFixture,
+    http_clients: ClientFactory,
+) -> None:
+    """A vault-supplied code is never parsed, stored, or echoed -- CRLF and all."""
+    caplog.set_level(logging.DEBUG)
+    handler = _VaultRouteHandler(
+        [_IngestReply(status=HTTPStatus.BAD_REQUEST, payload=_error_payload(_HOSTILE_VAULT_CODE))]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultContractError) as exc_info:
+        await client.ingest(_ingest_request())
+
+    assert exc_info.value.code is None
+    for rendered in (str(exc_info.value), repr(exc_info.value), caplog.text):
+        assert _HOSTILE_CODE_SENTINEL not in rendered
+        assert "\r\n" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_ingest_is_bounded_by_the_whole_request_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    http_clients: ClientFactory,
+) -> None:
+    """An ingest that outlives the deadline degrades to unavailable rather than hanging."""
+    monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
+    client = await _handshaken_client(_SlowIngestHandler(), http_clients)
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+async def test_ingest_refuses_when_journal_was_not_advertised(
+    http_clients: ClientFactory,
+) -> None:
+    """An unadvertised journal capability refuses locally: no entry body ever leaves."""
+    handler = _VaultRouteHandler(capabilities=[CreekCapability.REFLECT.value])
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.ingest(_ingest_request())
+    assert handler.ingest_requests == []
+
+
+@pytest.mark.asyncio
+async def test_entry_body_and_api_key_never_leak_from_any_ingest_failure(
+    caplog: pytest.LogCaptureFixture,
+    http_clients: ClientFactory,
+) -> None:
+    """No ingest path -- contract, auth, unavailable, or success -- echoes the body or the key."""
+    caplog.set_level(logging.DEBUG)
+    replies = {
+        "contract": _IngestReply(
+            status=HTTPStatus.BAD_REQUEST,
+            payload=_error_payload(VaultErrorCode.INVALID_REQUEST.value),
+        ),
+        "auth": _IngestReply(status=HTTPStatus.UNAUTHORIZED, payload={"detail": "denied"}),
+        "unavailable": _IngestReply(
+            status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}
+        ),
+    }
+    raised: list[CreekVaultError] = []
+    for reply in replies.values():
+        client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients, _SENTINEL_KEY)
+        with pytest.raises(CreekVaultError) as exc_info:
+            await client.ingest(_ingest_request(body=_SENTINEL_BODY))
+        raised.append(exc_info.value)
+    stored = await _handshaken_client(_VaultRouteHandler(), http_clients, _SENTINEL_KEY)
+    assert (await stored.ingest(_ingest_request(body=_SENTINEL_BODY))).stored is True
+
+    assert len(raised) == len(replies)
+    for error in raised:
+        for rendered in (str(error), repr(error)):
+            assert _SENTINEL_BODY not in rendered
+            assert _SENTINEL_KEY not in rendered
+        assert error.__cause__ is None
+        assert error.__suppress_context__ is True
+    assert _SENTINEL_BODY not in caplog.text
+    assert _SENTINEL_KEY not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_intimate_entry_issues_zero_http_requests(
+    http_clients: ClientFactory,
+) -> None:
+    """An intimate entry never reaches the wire -- the transport spy sees nothing at all."""
+    handler = _VaultRouteHandler()
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_SENTINEL_BODY,
+        classification="intimate",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.SKIPPED_INTIMATE
+    assert handler.requests == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_classification_sends_nothing_over_http(
+    http_clients: ClientFactory,
+) -> None:
+    """An unrecognized classification fails closed before a single byte is sent."""
+    handler = _VaultRouteHandler()
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    with pytest.raises(ValueError, match="bogus"):
+        await store_and_classify(
+            client,
+            entry_id=_ENTRY_ID,
+            body=_SENTINEL_BODY,
+            classification="bogus",
+            created_at=_CREATED_AT,
+        )
+    assert handler.requests == []
+
+
+@pytest.mark.asyncio
+async def test_write_path_ingests_over_http_end_to_end(
+    http_clients: ClientFactory,
+) -> None:
+    """A healthy vault plus a successful PUT carries the write all the way to INGESTED."""
+    handler = _VaultRouteHandler()
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_ENTRY_BODY,
+        classification="public",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.INGESTED
+    assert outcome.vault_ref == _FRAGMENT_ID
+    assert _sent_ingest_body(handler)["tier"] == VaultTierCeiling.OPEN.value
