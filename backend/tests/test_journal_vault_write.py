@@ -1,9 +1,11 @@
 """Integration tests wiring the journal router to the Creek Vault write path.
 
-RED: the create/update journal endpoints do not yet call
-``services.creek_vault_write.store_and_classify`` and ``JournalEntry`` does not
-yet carry ``vault_ref`` / ``vault_tags`` columns, so every test here fails
-until both are implemented.
+These drive the real create/update endpoints against a scripted vault client to
+pin the guarantee the router owes the writer: the entry lands in Postgres and
+comes back to the user whatever the vault does, and the ``vault_ref`` /
+``vault_tags`` columns are reconciled to the write outcome -- written on a
+durable ingest, cleared when an entry turns intimate, and left alone on a
+transient failure so a passing blip never drops a good reference.
 """
 
 from __future__ import annotations

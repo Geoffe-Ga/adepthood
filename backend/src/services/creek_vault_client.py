@@ -692,6 +692,16 @@ _CREDENTIAL_REJECTED_STATUSES: frozenset[int] = frozenset(
     {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}
 )
 
+# The two 4xx statuses that are *not* a statement about the request we sent.
+# The rest of the 4xx range faults our payload, but 408 says the vault's own
+# clock ran out waiting and 429 says it is shedding load: both are "come back
+# later" -- an availability story identical to a 5xx, and both are cured by
+# waiting rather than by changing anything in adepthood. Classifying them as
+# contract defects would send an operator hunting a bug that is not there.
+_RETRYABLE_CLIENT_STATUSES: frozenset[int] = frozenset(
+    {HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS}
+)
+
 # Vault error codes that mean adepthood got the call wrong -- a bad payload, a
 # capability we should not have claimed, or a version we should not have pinned.
 # Every one of them is fixed by changing adepthood, so they map to a contract
@@ -890,6 +900,17 @@ def _coerce_error_code(raw: object) -> VaultErrorCode | None:
         return None
 
 
+def _faults_our_request(response: httpx.Response) -> bool:
+    """Return whether an uncoded status blames the request adepthood sent.
+
+    True for the 4xx range, minus :data:`_RETRYABLE_CLIENT_STATUSES` -- a
+    throttled or timed-out call says nothing about the payload, so treating it
+    as a contract defect would be a false accusation an operator then has to
+    disprove.
+    """
+    return response.is_client_error and response.status_code not in _RETRYABLE_CLIENT_STATUSES
+
+
 def _ingest_failure(response: httpx.Response) -> CreekVaultError:
     """Classify a non-2xx ingest response into the failure it actually is.
 
@@ -901,16 +922,19 @@ def _ingest_failure(response: httpx.Response) -> CreekVaultError:
     2. A code we recognize is authoritative over the status class; the vault
        naming itself temporarily unavailable is the one such code that is *not*
        our defect.
-    3. With no readable code, the status class decides: 4xx means the vault
+    3. With no readable code, the status class decides: a 4xx means the vault
        faulted the request we sent (ours to fix), and everything else -- 5xx, a
        redirect we refuse to follow -- means the call did not land (not ours).
+       :data:`_RETRYABLE_CLIENT_STATUSES` is the documented exception to that
+       rule: two 4xx statuses describe the vault's own state rather than our
+       request, so they answer to the availability story instead.
     """
     if response.status_code in _CREDENTIAL_REJECTED_STATUSES:
         return CreekVaultAuthError(_CREDENTIAL_REJECTED_MESSAGE)
     code = _vault_error_code(response)
     if code in _CONTRACT_ERROR_CODES:
         return CreekVaultContractError(_INGEST_REJECTED_MESSAGE, code=code)
-    if code is None and response.is_client_error:
+    if code is None and _faults_our_request(response):
         return CreekVaultContractError(_INGEST_REJECTED_MESSAGE)
     return CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE)
 

@@ -1250,6 +1250,16 @@ async def test_ingest_connect_failure_raises_unavailable(
             id="non_json_4xx",
         ),
         pytest.param(
+            _IngestReply(status=HTTPStatus.REQUEST_TIMEOUT, payload={"detail": "too slow"}),
+            CreekVaultUnavailableError,
+            id="uncoded_408_is_the_vaults_clock",
+        ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "slow down"}),
+            CreekVaultUnavailableError,
+            id="uncoded_429_is_throttling",
+        ),
+        pytest.param(
             _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}),
             CreekVaultUnavailableError,
             id="uncoded_500",
@@ -1259,6 +1269,11 @@ async def test_ingest_connect_failure_raises_unavailable(
             CreekVaultUnavailableError,
             id="uncoded_502",
         ),
+        pytest.param(
+            _IngestReply(status=HTTPStatus.FOUND, payload={"detail": "elsewhere"}),
+            CreekVaultUnavailableError,
+            id="redirect_we_refuse_to_follow",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -1267,7 +1282,7 @@ async def test_ingest_classifies_an_uncoded_status_by_class(
     expected: type[CreekVaultError],
     http_clients: ClientFactory,
 ) -> None:
-    """Without a recognized code, 4xx is our contract fault and 5xx is the vault's."""
+    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault."""
     client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
     with pytest.raises(expected) as exc_info:
         await client.ingest(_ingest_request())
