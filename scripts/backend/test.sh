@@ -10,7 +10,15 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../backend" && pwd)"
 
 TEST_TYPE="unit"
 COVERAGE=false
+COVERAGE_DATA=false
 VERBOSE=false
+
+# Whole-suite runs are distributed across cores with pytest-xdist. Measured on
+# a 4-core box: 15m58s serial -> 4m07s at -n auto, identical coverage (#2076).
+# ``--dist loadfile`` keeps every test in a file on one worker, which is what
+# the module-scoped async DB fixtures in backend/conftest.py assume.
+# Overridable so a constrained runner can pin a smaller number.
+PYTEST_WORKERS="${PYTEST_WORKERS:-auto}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -35,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             COVERAGE=true
             shift
             ;;
+        --coverage-data)
+            COVERAGE_DATA=true
+            shift
+            ;;
         --verbose)
             VERBOSE=true
             shift
@@ -50,9 +62,17 @@ OPTIONS:
     --integration   Run integration tests only
     --e2e           Run end-to-end tests only
     --all           Run all test types
-    --coverage      Generate coverage report
+    --coverage      Generate coverage report (term + html + xml) and enforce
+                    the 90% threshold here
+    --coverage-data Collect coverage data only - no report, no threshold. For
+                    callers that report and gate separately (check-all.sh runs
+                    the suite once under this flag, then coverage.sh
+                    --report-only applies the threshold to the data on disk).
     --verbose       Show detailed output
     --help          Display this help message
+
+ENVIRONMENT:
+    PYTEST_WORKERS  xdist worker count for whole-suite runs (default: auto)
 
 EXIT CODES:
     0               All tests passed
@@ -81,7 +101,7 @@ if $VERBOSE; then
 fi
 
 # Build pytest arguments
-PYTEST_ARGS=(-v)
+PYTEST_ARGS=(-v -n "$PYTEST_WORKERS" --dist loadfile)
 
 case "$TEST_TYPE" in
     unit)
@@ -101,16 +121,32 @@ case "$TEST_TYPE" in
         ;;
 esac
 
-# Add coverage if requested
+# Add coverage if requested.
+#
+# Both modes pass a bare ``--cov`` so the measured set comes from the single
+# declaration in [tool.coverage.run] source (= {src, scripts}) rather than
+# being restated here. Naming a source explicitly (``--cov=src``) would
+# OVERRIDE that config and silently drop scripts/ from the measurement that
+# backend-ci.yml's branch-coverage step asserts over {src, scripts}.
 if $COVERAGE; then
     echo "Coverage enabled"
     PYTEST_ARGS+=(
-        --cov=src
+        --cov
         --cov-branch
         --cov-report=term-missing
         --cov-report=html
         --cov-report=xml
         --cov-fail-under=90
+    )
+elif $COVERAGE_DATA; then
+    # Data only: ``--cov-report=`` disables every report, and no threshold is
+    # applied, because the caller gates on the data afterwards. Reporting here
+    # too would render the same numbers twice per check-all run.
+    echo "Coverage data collection enabled (no report, no threshold)"
+    PYTEST_ARGS+=(
+        --cov
+        --cov-branch
+        --cov-report=
     )
 fi
 

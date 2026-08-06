@@ -108,7 +108,16 @@ mypy_path = ["backend/src", "backend", "src", "."]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-q --strict-markers --strict-config --cov=src --cov=scripts --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
+# Coverage is deliberately NOT in addopts. It used to be, and that made every
+# targeted run during Red→Green — `pytest tests/test_foo.py` — instrument all
+# 10,910 statements, write coverage.xml, and then FAIL the run against a
+# whole-repo 90% gate the single file could never satisfy. A green file exited
+# 1 (#2075). The gate itself is unchanged and still enforced, by the three
+# invocations that actually gate: `scripts/backend/check-all.sh` (via
+# coverage.sh --report-only), the `backend-tests-coverage` pre-push hook, and
+# backend-ci.yml. The measured file set stays {src, scripts}, declared once in
+# [tool.coverage.run] source below rather than restated per invocation.
+addopts = "-q --strict-markers --strict-config"
 testpaths = ["tests"]
 pythonpath = ["."]
 xfail_strict = true

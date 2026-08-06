@@ -17,7 +17,7 @@ alembic==1.18.5
 asyncpg==0.31.0
 aiosqlite==0.22.1
 bcrypt==5.0.0
-cryptography==49.0.0
+cryptography==50.0.0
 PyJWT==2.13.0
 # Moving-window counters for the invalid-license signup throttle
 # (rate_limit.py). Already a transitive slowapi dependency; pinned here
