@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import cast
 
 import httpx
@@ -23,20 +23,23 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekVaultCareEscalationError,
+    CreekVaultPayloadError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflection,
+    VaultReflectionNote,
+    VaultReflectionStatus,
     VaultTierCeiling,
     VaultWheelAspect,
     VaultWheelBalance,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from services.creek_vault_client import (
-    _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
-    _MAX_REFLECT_NOTES,
     _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _MCP_SSE_READ_TIMEOUT_SECONDS,
     _MCP_TOOL_ERROR_CODE,
@@ -44,6 +47,7 @@ from services.creek_vault_client import (
     _WHEEL_FREQUENCY_CODES,
     _WHEEL_OK_STATUS,
     _WHEEL_TIER_CEILING,
+    HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
     _build_mcp_http_client,
@@ -52,14 +56,20 @@ from services.creek_vault_client import (
     _ingest_params,
     _McpStreamableHttpTransport,
     _parse_ingest_result,
-    _parse_reflection,
     _parse_wheel,
     _reflect_params,
     _wheel_params,
     build_creek_vault_client,
 )
+from services.creek_vault_payload import _MARGINALIA_KIND_BY_CREEK_KIND, _MAX_REFLECT_NOTES
 
 _VAULT_URL = "https://vault.example.test"
+
+# The bearer the HTTP adapter is handed when this suite drives it, and the one
+# path its handshake lands on. Both live here only so the two transports can be
+# asked the same question and compared.
+_API_KEY = "creek-vault-client-key"  # pragma: allowlist secret
+_CAPABILITIES_PATH = "/v1/capabilities"
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
@@ -592,48 +602,87 @@ async def test_classify_missing_tags_returns_empty_classification() -> None:
     assert result == VaultClassification(tags=())
 
 
-@pytest.mark.asyncio
-async def test_reflect_renders_creek_notes_as_the_marginalia_contract() -> None:
-    """reflect() turns creek's own note shape into the strict marginalia JSON contract."""
+async def _reflected(
+    payload: Mapping[str, object], ceiling: VaultTierCeiling = VaultTierCeiling.OPEN
+) -> VaultReflection:
+    """Drive one creek.reflect payload through the MCP adapter and return its value.
+
+    Driven through the public seam rather than the parser directly, so "one shared
+    parser" stays a claim about behaviour: :func:`_http_reflected` drives the same
+    payloads through the other transport and must answer identically.
+    """
     transport = ScriptedTransport(
         responses={
             CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.REFLECT.value]),
-            CreekCapability.REFLECT.value: _reflect_payload(
-                [
-                    _creek_note("pattern", _REFLECT_QUOTE, _REFLECT_NOTE),
-                    _creek_note("fear", "I stalled again", "The stall gets named plainly here."),
-                ]
-            ),
+            CreekCapability.REFLECT.value: payload,
         }
     )
     client = McpCreekVaultClient(transport=transport)
     await client.handshake()
-    result = await client.reflect("body text", VaultTierCeiling.OPEN)
-    assert json.loads(result) == {
-        "notes": [
-            {"kind": "connection", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE},
-            {
-                "kind": "theme",
-                "quote": "I stalled again",
-                "note": "The stall gets named plainly here.",
-            },
-        ]
-    }
+    return await client.reflect("body text", ceiling)
+
+
+async def _http_reflected(
+    payload: Mapping[str, object], ceiling: VaultTierCeiling = VaultTierCeiling.OPEN
+) -> VaultReflection:
+    """Drive the same creek.reflect payload through the HTTP adapter, over memory."""
+
+    def _handle(request: httpx.Request) -> httpx.Response:
+        """Answer the capability probe, then the reflection post, with no network."""
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(
+                HTTPStatus.OK, json=_handshake_payload([CreekCapability.REFLECT.value])
+            )
+        return httpx.Response(HTTPStatus.OK, json=dict(payload))
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_handle))
+    try:
+        client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+        await client.handshake()
+        return await client.reflect("body text", ceiling)
+    finally:
+        await http.aclose()
 
 
 @pytest.mark.asyncio
-async def test_reflect_legacy_reflection_shaped_payload_yields_no_reflection() -> None:
-    """A payload carrying only the old reflection key has no ok status, so the caller falls back."""
-    transport = ScriptedTransport(
-        responses={
-            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.REFLECT.value]),
-            CreekCapability.REFLECT.value: {"reflection": "a warm note"},
-        }
+async def test_reflect_projects_creek_notes_onto_the_structured_value() -> None:
+    """reflect() answers with a domain value carrying creek's notes in adepthood's vocabulary.
+
+    The projection is the adapter's job and the serialization is not: the strict
+    marginalia JSON belongs to the ``ResonanceLLM`` seam that contracts for it, so
+    what crosses here is a value the domain can read.
+    """
+    reflection = await _reflected(
+        _reflect_payload(
+            [
+                _creek_note("pattern", _REFLECT_QUOTE, _REFLECT_NOTE),
+                _creek_note("fear", "I stalled again", "The stall gets named plainly here."),
+            ]
+        )
     )
-    client = McpCreekVaultClient(transport=transport)
-    await client.handshake()
-    result = await client.reflect("body text", VaultTierCeiling.OPEN)
-    assert result == ""
+
+    assert reflection.status is VaultReflectionStatus.OK
+    assert reflection.notes == (
+        VaultReflectionNote(kind="connection", quote=_REFLECT_QUOTE, note=_REFLECT_NOTE),
+        VaultReflectionNote(
+            kind="theme", quote="I stalled again", note="The stall gets named plainly here."
+        ),
+    )
+    assert reflection.essay is None
+    assert reflection.essay_grounded is False
+    assert reflection.routed_tier is VaultTierCeiling.OPEN
+
+
+@pytest.mark.asyncio
+async def test_reflect_legacy_reflection_shaped_payload_is_a_payload_error() -> None:
+    """The old single-string reflection shape is not the ratified document, so it is refused.
+
+    It carries none of the five published required fields, and completing them
+    with defaults would invent a status, a tier and a grounding claim the vault
+    never made.
+    """
+    with pytest.raises(CreekVaultPayloadError):
+        await _reflected({"reflection": "a warm note"})
 
 
 def test_reflect_params_sends_only_content_and_privacy_tier_ceiling() -> None:
@@ -655,12 +704,59 @@ def test_reflect_params_sends_only_content_and_privacy_tier_ceiling() -> None:
         pytest.param("gift", "theme", id="gift"),
     ],
 )
-def test_parse_reflection_maps_each_creek_kind(creek_kind: str, marginalia_kind: str) -> None:
+@pytest.mark.asyncio
+async def test_reflect_maps_each_creek_kind(creek_kind: str, marginalia_kind: str) -> None:
     """Each of creek's seven note kinds renders as its ratified marginalia kind."""
-    payload = _reflect_payload([_creek_note(creek_kind, _REFLECT_QUOTE, _REFLECT_NOTE)])
-    assert json.loads(_parse_reflection(payload)) == {
-        "notes": [{"kind": marginalia_kind, "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
+    reflection = await _reflected(
+        _reflect_payload([_creek_note(creek_kind, _REFLECT_QUOTE, _REFLECT_NOTE)])
+    )
+    assert reflection.notes == (
+        VaultReflectionNote(kind=marginalia_kind, quote=_REFLECT_QUOTE, note=_REFLECT_NOTE),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reflect_empty_status_is_an_answer_not_a_failure() -> None:
+    """An empty reflection is the vault answering successfully with nothing to say."""
+    reflection = await _reflected(
+        {
+            "status": "empty",
+            "tier_ceiling": VaultTierCeiling.OPEN.value,
+            "routed_tier": VaultTierCeiling.OPEN.value,
+            "notes": [],
+            "essay_grounded": False,
+        }
+    )
+
+    assert reflection.status is VaultReflectionStatus.EMPTY
+    assert reflection.notes == ()
+
+
+@pytest.mark.asyncio
+async def test_mcp_reflect_escalate_raises_instead_of_deferring() -> None:
+    """Over MCP too, an escalation raises rather than silently deferring to the cloud.
+
+    The status semantics belong to the contract, not to a transport: deferring
+    here would answer a person in acute distress with the very model prose creek's
+    care guard refused, and which transport the refusal arrived over changes
+    nothing about that.
+    """
+    escalation: Mapping[str, object] = {
+        "status": "escalate",
+        "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+        "reason": "acute_distress",
+        "care_signal": {
+            "kind": "acute_distress",
+            "message": "reach a human",
+            "resources": [{"name": "a helpline", "contact": "call it"}],
+        },
     }
+
+    with pytest.raises(CreekVaultCareEscalationError) as exc_info:
+        await _reflected(escalation, VaultTierCeiling.PERSONAL)
+
+    assert not isinstance(exc_info.value, CreekVaultUnavailableError)
+    assert "reach a human" not in repr(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -668,74 +764,88 @@ def test_parse_reflection_maps_each_creek_kind(creek_kind: str, marginalia_kind:
     [
         pytest.param(
             {
-                "status": "empty",
-                "tool": CreekCapability.REFLECT.value,
+                "status": "refused",
                 "tier_ceiling": VaultTierCeiling.OPEN.value,
                 "routed_tier": VaultTierCeiling.OPEN.value,
                 "notes": [],
                 "essay_grounded": False,
             },
-            id="empty",
+            id="status_refused",
         ),
         pytest.param(
-            {
-                "status": "escalate",
-                "tool": CreekCapability.REFLECT.value,
-                "tier_ceiling": VaultTierCeiling.PERSONAL.value,
-                "reason": "care signal detected in the submitted content",
-                "care_signal": {"severity": "high", "category": "self_harm"},
-            },
-            id="escalate",
-        ),
-        pytest.param(
-            {
-                "status": "refused",
-                "tool": CreekCapability.REFLECT.value,
-                "tier_ceiling": VaultTierCeiling.OPEN.value,
-                "reason": "requested content exceeds the configured tier ceiling",
-            },
-            id="refused",
-        ),
-        pytest.param(
-            {"notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
-            id="status_missing",
-        ),
-        pytest.param(
-            {"status": "partial", "notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
+            {**_reflect_payload([]), "status": "partial"},
             id="status_unknown_future",
         ),
-        pytest.param(
-            {"status": 123, "notes": [_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]},
-            id="status_wrong_typed",
-        ),
+        pytest.param({**_reflect_payload([]), "status": 123}, id="status_wrong_typed"),
     ],
 )
-def test_parse_reflection_non_ok_status_yields_no_reflection(payload: Mapping[str, object]) -> None:
-    """Any status other than the literal ok yields no reflection, even carrying usable notes."""
-    assert _parse_reflection(payload) == ""
+@pytest.mark.asyncio
+async def test_reflect_unreadable_statuses_are_payload_errors(
+    payload: Mapping[str, object],
+) -> None:
+    """A status outside the published pair is an answer this client cannot read.
+
+    Deferring silently is what made every one of the six outcomes look identical;
+    refusing makes a vault that invented a status a reportable bug rather than an
+    invisible one.
+    """
+    with pytest.raises(CreekVaultPayloadError):
+        await _reflected(payload)
 
 
 @pytest.mark.parametrize(
     "notes",
     [
         pytest.param([], id="empty_list"),
-        pytest.param("not-a-list", id="string"),
-        pytest.param({}, id="mapping"),
         pytest.param(
             ["not-a-mapping", _creek_note("prophecy", _REFLECT_QUOTE, _REFLECT_NOTE), 7],
             id="every_item_malformed",
         ),
     ],
 )
-def test_parse_reflection_ok_without_usable_notes_yields_no_reflection(notes: object) -> None:
-    """An ok status with nothing usable yields no reflection rather than an empty notes list."""
-    assert _parse_reflection(_reflect_payload(notes)) == ""
+@pytest.mark.asyncio
+async def test_reflect_ok_without_usable_notes_is_an_empty_note_tuple(notes: object) -> None:
+    """A well-formed ok answer nothing survived is still a well-formed answer.
+
+    The consumer, not the adapter, decides that zero renderable notes means
+    deferring to the cloud -- the adapter's job is to report what the vault said.
+    """
+    reflection = await _reflected(_reflect_payload(notes))
+
+    assert reflection.status is VaultReflectionStatus.OK
+    assert reflection.notes == ()
 
 
-def test_parse_reflection_ok_without_a_notes_key_yields_no_reflection() -> None:
-    """An ok payload with no notes key at all yields no reflection, never a bare notes list."""
-    payload = {"status": "ok", "tool": CreekCapability.REFLECT.value}
-    assert _parse_reflection(payload) == ""
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param("not-a-list", id="string"),
+        pytest.param({}, id="mapping"),
+        pytest.param(7, id="number"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reflect_notes_that_are_not_a_list_are_payload_errors(notes: object) -> None:
+    """``notes`` is a published array, so a non-array is a shape violation, not zero notes.
+
+    Reading it as an empty list would make a malformed document indistinguishable
+    from a vault that legitimately found nothing.
+    """
+    with pytest.raises(CreekVaultPayloadError):
+        await _reflected(_reflect_payload(notes))
+
+
+@pytest.mark.asyncio
+async def test_reflect_without_a_notes_key_is_a_payload_error() -> None:
+    """``notes`` is published as required, so an absent one is not an empty one."""
+    payload = {
+        "status": "ok",
+        "tier_ceiling": VaultTierCeiling.OPEN.value,
+        "routed_tier": VaultTierCeiling.OPEN.value,
+        "essay_grounded": False,
+    }
+    with pytest.raises(CreekVaultPayloadError):
+        await _reflected(payload)
 
 
 @pytest.mark.parametrize(
@@ -760,60 +870,105 @@ def test_parse_reflection_ok_without_a_notes_key_yields_no_reflection() -> None:
         ),
     ],
 )
-def test_parse_reflection_drops_a_malformed_note_keeping_its_sibling(bad_note: object) -> None:
+@pytest.mark.asyncio
+async def test_reflect_drops_a_malformed_note_keeping_its_sibling(bad_note: object) -> None:
     """A malformed note is dropped item by item, never taking its well-formed sibling with it."""
-    payload = _reflect_payload([bad_note, _creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)])
-    assert json.loads(_parse_reflection(payload)) == {
-        "notes": [{"kind": "theme", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
-    }
+    reflection = await _reflected(
+        _reflect_payload([bad_note, _creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)])
+    )
+    assert reflection.notes == (
+        VaultReflectionNote(kind="theme", quote=_REFLECT_QUOTE, note=_REFLECT_NOTE),
+    )
 
 
-def test_parse_reflection_keeps_notes_at_the_exact_length_boundaries() -> None:
+@pytest.mark.asyncio
+async def test_reflect_keeps_notes_at_the_exact_length_boundaries() -> None:
     """A quote of exactly ANCHOR_TEXT_MAX and a note of exactly NOTE_MAX both survive."""
     quote = "q" * ANCHOR_TEXT_MAX
     note = "n" * NOTE_MAX
-    payload = _reflect_payload([_creek_note("value", quote, note)])
-    assert json.loads(_parse_reflection(payload)) == {
-        "notes": [{"kind": "theme", "quote": quote, "note": note}]
-    }
+    reflection = await _reflected(_reflect_payload([_creek_note("value", quote, note)]))
+    assert reflection.notes == (VaultReflectionNote(kind="theme", quote=quote, note=note),)
 
 
-def test_parse_reflection_passes_the_quote_through_verbatim() -> None:
+@pytest.mark.asyncio
+async def test_reflect_passes_the_quote_through_verbatim() -> None:
     """A quote keeps its exact surrounding whitespace, since adepthood anchors it verbatim."""
     quote = f"  {_REFLECT_QUOTE}  "
-    payload = _reflect_payload([_creek_note("pattern", quote, _REFLECT_NOTE)])
-    assert json.loads(_parse_reflection(payload)) == {
-        "notes": [{"kind": "connection", "quote": quote, "note": _REFLECT_NOTE}]
-    }
+    reflection = await _reflected(_reflect_payload([_creek_note("pattern", quote, _REFLECT_NOTE)]))
+    assert reflection.notes == (
+        VaultReflectionNote(kind="connection", quote=quote, note=_REFLECT_NOTE),
+    )
 
 
-def test_parse_reflection_caps_the_note_count_keeping_the_leading_prefix() -> None:
-    """Only the first _MAX_REFLECT_NOTES notes are rendered, in the order the vault sent them."""
+@pytest.mark.asyncio
+async def test_reflect_caps_the_note_count_keeping_the_leading_prefix() -> None:
+    """Only the first _MAX_REFLECT_NOTES notes are carried, in the order the vault sent them."""
     over_cap = [
         _creek_note("gift", _REFLECT_QUOTE, f"note number {index}")
         for index in range(_MAX_REFLECT_NOTES + 3)
     ]
-    rendered = json.loads(_parse_reflection(_reflect_payload(over_cap)))
-    assert [note["note"] for note in rendered["notes"]] == [
+    reflection = await _reflected(_reflect_payload(over_cap))
+    assert [note.note for note in reflection.notes] == [
         f"note number {index}" for index in range(_MAX_REFLECT_NOTES)
     ]
 
 
-def test_parse_reflection_ignores_additive_response_fields() -> None:
-    """Essay and relation fields creek may add do not change the rendered marginalia."""
-    notes = [_creek_note("longing", _REFLECT_QUOTE, _REFLECT_NOTE)]
-    bare: Mapping[str, object] = {"status": "ok", "notes": notes}
-    enriched: Mapping[str, object] = {
-        **_reflect_payload(notes),
-        "essay": "a grounded essay the strict marginalia contract has no room for",
+@pytest.mark.asyncio
+async def test_reflect_carries_the_essay_without_letting_it_into_the_notes() -> None:
+    """Additive fields are ignored and the essay rides on the value, never among the notes.
+
+    It is free model prose rather than the user's own words, so it is carried
+    where a caller can see it exists and nowhere it could be rendered as a note.
+    """
+    essay = "free prose the strict marginalia contract has no room for"
+    reflection = await _reflected(
+        {
+            **_reflect_payload([_creek_note("longing", _REFLECT_QUOTE, _REFLECT_NOTE)]),
+            "essay": essay,
+            "related_praxis": ["morning-sit"],
+            "related_eddies": [{"id": "eddy-1"}],
+        }
+    )
+
+    assert reflection.essay == essay
+    assert reflection.essay_grounded is False
+    assert reflection.notes == (
+        VaultReflectionNote(kind="theme", quote=_REFLECT_QUOTE, note=_REFLECT_NOTE),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reflect_rejects_a_grounded_essay_claim_over_mcp() -> None:
+    """``essay_grounded`` true is outside contract 0.2, whichever transport carries it."""
+    payload = {
+        **_reflect_payload([_creek_note("gift", _REFLECT_QUOTE, _REFLECT_NOTE)]),
+        "essay": "a claim of grounding this contract does not admit",
         "essay_grounded": True,
-        "related_praxis": ["morning-sit"],
-        "related_eddies": [{"id": "eddy-1"}],
     }
-    assert json.loads(_parse_reflection(enriched)) == json.loads(_parse_reflection(bare))
-    assert json.loads(_parse_reflection(enriched)) == {
-        "notes": [{"kind": "theme", "quote": _REFLECT_QUOTE, "note": _REFLECT_NOTE}]
-    }
+    with pytest.raises(CreekVaultPayloadError):
+        await _reflected(payload)
+
+
+@pytest.mark.asyncio
+async def test_mcp_and_http_adapters_agree_on_one_canonical_payload() -> None:
+    """Both transports read one canonical document into one identical domain value.
+
+    This is what "one shared parser" means operationally. Two parsers for one wire
+    shape is how two readings of the same reflection come to disagree, and the
+    disagreement would show up as marginalia that differ by transport.
+    """
+    payload = _reflect_payload(
+        [
+            _creek_note("pattern", _REFLECT_QUOTE, _REFLECT_NOTE),
+            _creek_note("gift", "I stalled again", "The stall gets named plainly here."),
+        ]
+    )
+
+    over_mcp = await _reflected(payload)
+    over_http = await _http_reflected(payload)
+
+    assert over_mcp == over_http
+    assert over_mcp.notes != ()
 
 
 def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:

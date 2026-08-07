@@ -14,11 +14,15 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     TIER_CEILING_BY_CLASSIFICATION,
     CreekCapability,
+    CreekVaultCareEscalationError,
     CreekVaultPayloadError,
     HandshakeResult,
     VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
+    VaultReflection,
+    VaultReflectionNote,
+    VaultReflectionStatus,
     VaultTierCeiling,
     tier_ceiling_for,
 )
@@ -31,6 +35,16 @@ from scripts.creek_contract_drift import BUNDLE_ROOT
 _ERROR_ENVELOPE_SCHEMA = "schemas/ErrorEnvelope.schema.json"
 _PUBLISHED_ERROR_CODE_COUNT = 9
 
+# Creek's reflection response, whose ``status`` enum publishes the two outcomes a
+# 200 may carry. An escalation is a different published document at the same
+# status, so it is deliberately not a member of this enum.
+_REFLECTION_RESPONSE_SCHEMA = "schemas/ReflectionResponse.schema.json"
+
+# The published fields the domain value object carries across the seam. Both the
+# vault's own answer and the routing it applied: five, and never a sixth built
+# from Creek's own prose.
+_REFLECTION_FIELDS = ("status", "notes", "essay", "essay_grounded", "routed_tier")
+
 
 def _published_error_codes() -> frozenset[str]:
     """Return the wire error codes Creek publishes, read from the vendored schema."""
@@ -39,6 +53,15 @@ def _published_error_codes() -> frozenset[str]:
     published = schema["$defs"]["ErrorCode"]["enum"]
     assert isinstance(published, list)
     return frozenset(str(code) for code in published)
+
+
+def _published_reflection_statuses() -> frozenset[str]:
+    """Return the statuses Creek's reflection response publishes, read from the schema."""
+    schema = json.loads((BUNDLE_ROOT / _REFLECTION_RESPONSE_SCHEMA).read_bytes())
+    assert isinstance(schema, dict)
+    published = schema["properties"]["status"]["enum"]
+    assert isinstance(published, list)
+    return frozenset(str(status) for status in published)
 
 
 class TestTierCeilingMapping:
@@ -236,6 +259,60 @@ def test_payload_error_is_a_vault_error_distinct_from_unavailable_and_contract()
     assert not issubclass(creek_vault.CreekVaultContractError, CreekVaultPayloadError)
     with pytest.raises(creek_vault.CreekVaultError):
         raise CreekVaultPayloadError("creek vault returned an unreadable response")
+
+
+def test_care_escalation_is_not_a_vault_error() -> None:
+    """An escalation must escape the hierarchy every read path degrades on, and carry nothing.
+
+    ``VaultResonanceLLM.complete`` catches ``CreekVaultError`` and answers from
+    the cloud instead. If an escalation were caught there, Creek's care guard
+    would be overridden by exactly the model prose it refused to produce, so the
+    escape has to be structural rather than a matter of ordering an ``except``.
+    Content-free for the second half of the same reason: Creek's ``reason``, its
+    ``care_signal`` message, and its resources are Creek's own copy, and
+    adepthood renders only the care surface it reviewed itself.
+    """
+    assert not issubclass(CreekVaultCareEscalationError, creek_vault.CreekVaultError)
+    assert issubclass(CreekVaultCareEscalationError, Exception)
+
+    escalation = CreekVaultCareEscalationError()
+    assert not isinstance(escalation, creek_vault.CreekVaultError)
+    assert escalation.args == ()
+    assert str(escalation) == ""
+    assert not vars(escalation)
+
+
+def test_vault_reflection_is_a_frozen_value_with_the_published_fields() -> None:
+    """The seam's reflection value is immutable and carries exactly the published shape.
+
+    ``VaultReflectionStatus`` is pinned against Creek's own ``status`` enum read
+    from the vendored schema rather than a copy of it, because the whole point of
+    a structured return is that the six reflection outcomes stop collapsing into
+    one blank string: a status member adepthood invented would never match a wire
+    value and would silently defer every answer it was meant to carry.
+    """
+    assert {status.value for status in VaultReflectionStatus} == _published_reflection_statuses()
+    assert VaultReflectionStatus.OK.value == "ok"
+    assert VaultReflectionStatus.EMPTY.value == "empty"
+
+    note = VaultReflectionNote(kind="connection", quote="the river kept moving", note="You return.")
+    reflection = VaultReflection(
+        status=VaultReflectionStatus.OK,
+        notes=(note,),
+        essay=None,
+        essay_grounded=False,
+        routed_tier=VaultTierCeiling.PERSONAL,
+    )
+
+    assert tuple(reflection.__dataclass_fields__) == _REFLECTION_FIELDS
+    assert reflection.notes == (note,)
+    assert reflection.essay is None
+    assert reflection.essay_grounded is False
+    assert reflection.routed_tier is VaultTierCeiling.PERSONAL
+    with pytest.raises(FrozenInstanceError):
+        reflection.essay = "an essay this app never renders"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        note.quote = "a quote the user never wrote"  # type: ignore[misc]
 
 
 def test_vault_error_code_covers_the_published_codes_we_classify() -> None:

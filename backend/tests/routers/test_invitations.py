@@ -18,6 +18,7 @@ from domain.creek_vault import (
     VaultClassification,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflection,
     VaultTierCeiling,
     VaultWheelAspect,
     VaultWheelBalance,
@@ -589,7 +590,7 @@ class _ThemeVaultClient:
         """Unused on the wheel path; raises if a test calls it by mistake."""
         raise NotImplementedError((body, tier_ceiling))
 
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Unused on the wheel path; raises if a test calls it by mistake."""
         raise NotImplementedError((body, tier_ceiling))
 

@@ -255,10 +255,10 @@ capability is still used for the others it supports:
   sole system of record for that content either way.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path (`backend/src/services/creek_vault_reflect.py:108-123`).
-  The same fallback fires for a response whose `status` is anything
-  other than `ok` — Creek's `empty`, its `escalate` care-signal
-  envelope, and its `refused` envelope all yield no vault reflection,
-  exactly as an absent capability does. An `ok` response none of whose
+  The same fallback fires for Creek's `empty` status, which yields no
+  vault reflection exactly as an absent capability does — but not for
+  its `escalate` care handoff, which is not a fallback at all (see the
+  next bullet). An `ok` response none of whose
   notes survive the marginalia-kind translation above also falls
   back, rather than rendering an empty note set. A vault response is
   untrusted input: the number of notes adepthood will accept from one
@@ -268,6 +268,16 @@ capability is still used for the others it supports:
   related-praxis or related-eddies fields — are ignored rather than
   erroring. Content already flagged by the care gate never calls the
   vault for a reflection at all, regardless of vault availability.
+- **REFLECT over `/v1`** — the ratified request carries no declarable
+  tier ceiling (`ReflectionRequest` is `additionalProperties: false`
+  and publishes none), so adepthood verifies the `tier_ceiling` and
+  `routed_tier` the vault echoes back instead of declaring one. A care
+  escalation is a **200, not an error**: it leaves the seam as
+  `CreekVaultCareEscalationError` — deliberately outside the
+  `CreekVaultError` hierarchy the read path degrades on — and the
+  resonance handler answers it with adepthood's own reviewed care
+  resources and no reflection, never with a cloud fallback and never
+  with Creek's own copy.
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
   (`backend/src/services/creek_vault_wheel.py:119-138`). A malformed or

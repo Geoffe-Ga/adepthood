@@ -18,11 +18,12 @@ Three implementations of :class:`~domain.creek_vault.CreekVaultClient` live here
   handshaking with a single ``GET /v1/capabilities``. It degrades the same way,
   and additionally records *which* failure mode degraded it
   (:class:`HandshakeDegradeReason`) so contract-version skew stays countable
-  apart from a vault that is merely unreachable. Journal ingest and the wheel
-  read are the capabilities whose ``/v1`` shapes Creek has ratified, so they are
-  wired up -- a ``PUT`` of the entry's own URL, and a parameterless ``GET`` of
-  the whole-corpus aggregate; classify and reflect still refuse, because guessing
-  an unratified wire format is worse than staying local. A failed ingest is
+  apart from a vault that is merely unreachable. Journal ingest, the wheel read,
+  and the reflection are the capabilities whose ``/v1`` shapes Creek has
+  ratified, so they are wired up -- a ``PUT`` of the entry's own URL, a
+  parameterless ``GET`` of the whole-corpus aggregate, and a ``POST`` of the
+  reflections collection; classify alone still refuses, because guessing an
+  unratified wire format is worse than staying local. A failed ingest is
   *dropped*, not queued -- there is no retry and no backlog today, and the local
   Postgres row stays the system of record either way.
 * :class:`LocalFallbackCreekVaultClient` -- the no-vault path. Handshake reports
@@ -95,11 +96,23 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflection,
     VaultTierCeiling,
     VaultWheelAspect,
     VaultWheelBalance,
 )
-from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
+from services.creek_vault_payload import (
+    _CALL_FAILED,
+    _CREDENTIAL_REJECTED,
+    _REFLECT_UNREADABLE_MESSAGE,
+    _REQUEST_REJECTED,
+    _RESPONSE_UNREADABLE,
+    _bounded_text,
+    _capability_message,
+    _ceiling_admissible,
+    _parse_reflection_result,
+    _reflection_request_body,
+)
 
 # Timeout (seconds) for a single HTTP call to the vault. Bounds how long a slow
 # or hung vault can block a request before adepthood degrades to local.
@@ -227,43 +240,6 @@ _JOURNAL_OK_STATUS = "ok"
 # the operator's database by as much as it cares to answer with.
 _MAX_FRAGMENT_ID_LENGTH = 256
 
-# The status a ``creek.reflect`` response reports when it actually produced
-# notes. Deliberately its own constant rather than a reuse of
-# :data:`_JOURNAL_OK_STATUS`: the two capabilities merely happen to spell their
-# success the same way today, and coupling them would let either one's future
-# rename silently change how the other is parsed.
-_REFLECT_OK_STATUS = "ok"
-
-# How many notes of a reflect response adepthood will even look at. Double
-# Creek's own shipped cap of six, so a vault that modestly raises its cap still
-# lands whole, while a buggy or hostile one is bounded to roughly twelve times
-# (:data:`~domain.resonance.ANCHOR_TEXT_MAX` + :data:`~domain.resonance.NOTE_MAX`)
-# plus JSON overhead -- about 12 KB serialized -- instead of however much it
-# cares to answer with. This is a bound on *untrusted vault output before
-# serialization*, independent of the separate anchoring cap
-# :mod:`domain.resonance` applies to how many of these notes survive onto the
-# entry; neither one substitutes for the other.
-_MAX_REFLECT_NOTES = 12
-
-# How Creek's seven published note kinds render in adepthood's marginalia
-# vocabulary. ``pattern`` is the one that speaks across entries -- Creek grounds
-# its notes in the surrounding corpus, so a recurrence note is exactly what
-# adepthood calls a ``connection`` -- while the other six each observe something
-# about this one entry and so render as a ``theme``. Adepthood's third kind,
-# ``symbol``, is deliberately unused: nothing in Creek's vocabulary denotes an
-# image standing for something else, and forcing a non-symbol onto it would
-# render the note as something it is not. A kind absent from this table is
-# dropped, never coerced onto a nearest neighbor.
-_MARGINALIA_KIND_BY_CREEK_KIND: Mapping[str, str] = {
-    "pattern": "connection",
-    "reframe": "theme",
-    "fear": "theme",
-    "longing": "theme",
-    "value": "theme",
-    "tension": "theme",
-    "gift": "theme",
-}
-
 # The privacy ceiling adepthood presents when it asks for a wheel. Only
 # aggregate per-Frequency counts and shares cross this seam -- never fragment
 # content -- so the ceiling governs what the vault *counts*, not what it hands
@@ -284,10 +260,9 @@ _WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
 
 # The status a ``creek.wheel`` response reports when it actually computed a
 # wheel. Its own constant rather than a reuse of :data:`_JOURNAL_OK_STATUS` or
-# :data:`_REFLECT_OK_STATUS`, for the reason those two are already kept apart:
-# the capabilities merely happen to spell their success the same way today, and
-# coupling them would let one capability's future rename silently change how
-# another is parsed.
+# of :attr:`~domain.creek_vault.VaultReflectionStatus.OK`: the capabilities
+# merely happen to spell their success the same way today, and coupling them
+# would let one capability's future rename silently change how another is parsed.
 _WHEEL_OK_STATUS = "ok"
 
 # The Frequency keys adepthood will read out of the vault's wheel map, in
@@ -605,94 +580,6 @@ def _parse_classification(payload: Mapping[str, object]) -> VaultClassification:
     return VaultClassification(tags=tuple(item for item in raw if isinstance(item, str)))
 
 
-def _bounded_text(raw: object, limit: int) -> str | None:
-    """Return a vault-supplied string when it is usable text within ``limit``, else ``None``.
-
-    Three conditions, each of which a note cannot do without: it is a string at
-    all (a number or a nested object is not text), it carries something other
-    than whitespace (a blank quote anchors to nothing and a blank note says
-    nothing), and it fits the marginalia field it is bound for, so no vault can
-    answer with an unbounded string. The value is returned **verbatim** rather
-    than stripped, because adepthood anchors a quote by matching it
-    character-for-character against the entry body -- trimming here would
-    silently break the very anchor this check exists to protect.
-    """
-    if not isinstance(raw, str) or not raw.strip() or len(raw) > limit:
-        return None
-    return raw
-
-
-def _marginalia_kind(raw: object) -> str | None:
-    """Map one Creek note kind onto adepthood's, or ``None`` when we do not know it.
-
-    Mirrors :func:`_coerce_capability` and :func:`_coerce_ingest_action`: an
-    unknown or wrong-typed kind is dropped rather than raising or being coerced
-    onto a neighbor, so a vault that invents a kind loses that one note instead
-    of having it rendered as something the user never wrote.
-    """
-    if not isinstance(raw, str):
-        return None
-    return _MARGINALIA_KIND_BY_CREEK_KIND.get(raw)
-
-
-def _reflection_note(item: object) -> dict[str, str] | None:
-    """Project one Creek note onto the marginalia contract, or drop it whole.
-
-    This is the boundary where an untrusted vault's output becomes something
-    adepthood renders back to the user, so every field has to survive on its own
-    terms: a mappable kind, a quote within
-    :data:`~domain.resonance.ANCHOR_TEXT_MAX`, a note within
-    :data:`~domain.resonance.NOTE_MAX`. A partial note is dropped rather than
-    completed with a default, which would put words in the user's Higher Self
-    that neither they nor the vault ever wrote.
-    """
-    if not isinstance(item, Mapping):
-        return None
-    kind = _marginalia_kind(item.get("kind"))
-    quote = _bounded_text(item.get("quote"), ANCHOR_TEXT_MAX)
-    note = _bounded_text(item.get("note"), NOTE_MAX)
-    if kind is None or quote is None or note is None:
-        return None
-    return {"kind": kind, "quote": quote, "note": note}
-
-
-def _reflection_notes(raw: object) -> list[dict[str, str]]:
-    """Narrow a vault's note list to the ones adepthood can actually render.
-
-    Answers with an empty list -- never raises -- for anything that is not a
-    list, since a malformed reflection must defer to the cloud rather than break
-    the resonance pass. Only the leading :data:`_MAX_REFLECT_NOTES` items are
-    considered, order preserved, so an over-eager or hostile vault cannot grow
-    this work (or the JSON it feeds) without bound; inside that prefix each item
-    stands or falls alone, so one malformed note never costs its siblings.
-    """
-    if not isinstance(raw, list):
-        return []
-    return [
-        note for item in raw[:_MAX_REFLECT_NOTES] if (note := _reflection_note(item)) is not None
-    ]
-
-
-def _parse_reflection(payload: Mapping[str, object]) -> str:
-    """Render a ``creek.reflect`` response as the strict marginalia JSON contract.
-
-    Answers with the empty string -- which the caller reads as "no vault
-    reflection", deferring to the cloud -- in every case but one: a literal
-    ``ok`` status carrying at least one renderable note. The strict equality is
-    what makes ``empty``, ``escalate`` (Creek's care handoff), ``refused``, and
-    any status a future Creek adds all defer rather than be mined for notes.
-    Zero surviving notes defers too, deliberately: rendering ``{"notes": []}``
-    would suppress the fallback and leave the user with a Higher Self that said
-    nothing at all, which is worse than a cloud answer.
-    """
-    if payload.get("status") != _REFLECT_OK_STATUS:
-        return ""
-    notes = _reflection_notes(payload.get("notes"))
-    if not notes:
-        return ""
-    return json.dumps({"notes": notes})
-
-
 def _reflect_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
     """Map a reflection request onto the ``creek.reflect`` wire fields.
 
@@ -929,16 +816,19 @@ class McpCreekVaultClient:
         payload = await self._invoke(CreekCapability.CLASSIFY, _content_params(body, tier_ceiling))
         return _parse_classification(payload)
 
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Produce a Higher Self reflection over the corpus, requiring REFLECT.
 
-        Returns the vault's own notes translated into the marginalia JSON
-        contract the resonance pass anchors against (:func:`_parse_reflection`),
-        or the empty string when the vault declined, escalated, or answered with
-        nothing renderable -- which the caller reads as "defer to the cloud".
+        The tool result and the ratified ``/v1`` body are the same canonical
+        document, so it is read by the same :func:`_parse_reflection_result` the
+        HTTP adapter runs on -- including the care escalation, whose semantics
+        belong to the contract rather than to a transport: deferring here would
+        answer a person in acute distress with the very model prose Creek's care
+        guard refused, and which transport carried the refusal changes nothing
+        about that.
         """
         payload = await self._invoke(CreekCapability.REFLECT, _reflect_params(body, tier_ceiling))
-        return _parse_reflection(payload)
+        return _parse_reflection_result(payload, tier_ceiling)
 
     async def wheel(self) -> VaultWheelBalance:
         """Return a vault-computed Wheel-of-Wholeness read, requiring WHEEL.
@@ -1002,6 +892,12 @@ _JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
 # surface, no parameter of any kind either.
 _WHEEL_PATH = "/v1/wheel"
 
+# Where a reflection is asked for, relative to the configured base URL. A
+# reflection is requested rather than addressed: adepthood posts an ad-hoc body
+# to the collection instead of naming a fragment the vault already stores, so
+# there is no per-resource URL to ``PUT`` the way a journal entry has.
+_REFLECTIONS_PATH = "/v1/reflections"
+
 # The published top-level fields of ``WheelResponse``, in the order Creek's
 # schema declares them ``required``. Presence is checked before anything is
 # projected, so a body missing one is refused rather than completed with a
@@ -1017,16 +913,6 @@ _WHEEL_RESPONSE_REQUIRED_FIELDS = (
     "unclassified",
     "wheel",
 )
-
-# Tier ceilings ranked by how much material they admit; each rank includes
-# everything below it, so a larger rank is a wider ceiling. Used to compare an
-# echoed ceiling against one we were willing to accept, which is a comparison a
-# plain enum cannot make.
-_TIER_CEILING_RANK: Mapping[VaultTierCeiling, int] = {
-    VaultTierCeiling.OPEN: 0,
-    VaultTierCeiling.PERSONAL: 1,
-    VaultTierCeiling.INTIMATE: 2,
-}
 
 # The percent-encoded form of ``.``, used to neutralize a dot segment in an
 # entry id (see :func:`_entry_path_segment`). Uppercase because RFC 3986 names
@@ -1075,25 +961,15 @@ _CONTRACT_ERROR_CODES: frozenset[VaultErrorCode] = frozenset(
     }
 )
 
-# The static, capability-named messages the ingest and wheel paths may raise
-# with. Built from the capability enum rather than written as literals so they
-# cannot drift from the wire name, and content-free by construction: no branch
-# may interpolate the entry body, the API key, or a vault-supplied string into
-# an exception that will reach a log or a traceback.
-_INGEST_FAILED_MESSAGE = f"creek vault call failed: {CreekCapability.JOURNAL.value}"
-_INGEST_REJECTED_MESSAGE = f"creek vault rejected the request: {CreekCapability.JOURNAL.value}"
-_CREDENTIAL_REJECTED_MESSAGE = (
-    f"creek vault rejected the credential: {CreekCapability.JOURNAL.value}"
-)
-_WHEEL_FAILED_MESSAGE = f"creek vault call failed: {CreekCapability.WHEEL.value}"
-_WHEEL_REJECTED_MESSAGE = f"creek vault rejected the request: {CreekCapability.WHEEL.value}"
-_WHEEL_CREDENTIAL_REJECTED_MESSAGE = (
-    f"creek vault rejected the credential: {CreekCapability.WHEEL.value}"
-)
-_WHEEL_UNREADABLE_MESSAGE = (
-    f"creek vault returned an unreadable response: {CreekCapability.WHEEL.value}"
-)
 
+# The static, capability-named messages the ingest, wheel, and reflection paths
+# may raise with, interned so each is value-identical wherever it is used.
+_INGEST_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.JOURNAL)
+_INGEST_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.JOURNAL)
+_CREDENTIAL_REJECTED_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.JOURNAL)
+_WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
+_WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.WHEEL)
+_REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 # The one not-stored result every unreadable 2xx collapses to. Interned because
 # it is value-identical on each of those paths, and named so no branch is
 # tempted to invent a ``vault_ref`` the vault never issued.
@@ -1307,8 +1183,8 @@ def _ingest_failure(response: httpx.Response) -> CreekVaultError:
     return CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE)
 
 
-def _coded_wheel_failure(code: VaultErrorCode) -> CreekVaultError:
-    """Classify a wheel error from the code the vault itself named.
+def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> CreekVaultError:
+    """Classify a read error from the code the vault itself named.
 
     Total by construction: :data:`_CONTRACT_ERROR_CODES` names the codes that
     fault adepthood's own call, and everything else falls through to the
@@ -1322,12 +1198,14 @@ def _coded_wheel_failure(code: VaultErrorCode) -> CreekVaultError:
     members by the time it gets here.
     """
     if code in _CONTRACT_ERROR_CODES:
-        return CreekVaultContractError(_WHEEL_REJECTED_MESSAGE, code=code)
-    return CreekVaultUnavailableError(_WHEEL_FAILED_MESSAGE, code=code)
+        return CreekVaultContractError(
+            _capability_message(_REQUEST_REJECTED, capability), code=code
+        )
+    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability), code=code)
 
 
-def _uncoded_wheel_failure(response: httpx.Response) -> CreekVaultError:
-    """Classify a wheel error from its status class, having read no usable code.
+def _uncoded_read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
+    """Classify a read error from its status class, having read no usable code.
 
     A refused credential is still a credential to rotate; a 4xx that is not one
     of :data:`_RETRYABLE_CLIENT_STATUSES` still faults the request adepthood
@@ -1335,14 +1213,19 @@ def _uncoded_wheel_failure(response: httpx.Response) -> CreekVaultError:
     call did not land.
     """
     if response.status_code in _CREDENTIAL_REJECTED_STATUSES:
-        return CreekVaultAuthError(_WHEEL_CREDENTIAL_REJECTED_MESSAGE)
+        return CreekVaultAuthError(_capability_message(_CREDENTIAL_REJECTED, capability))
     if _faults_our_request(response):
-        return CreekVaultContractError(_WHEEL_REJECTED_MESSAGE)
-    return CreekVaultUnavailableError(_WHEEL_FAILED_MESSAGE)
+        return CreekVaultContractError(_capability_message(_REQUEST_REJECTED, capability))
+    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability))
 
 
-def _wheel_failure(response: httpx.Response) -> CreekVaultError:
-    """Classify a non-2xx wheel response into the failure it actually is.
+def _read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
+    """Classify a non-2xx response on any ``/v1`` read into the failure it actually is.
+
+    One classifier parameterized by capability rather than one per read: the rule
+    below is a property of Creek's error envelope, which every read answers in,
+    so a per-capability copy would only be a second place for it to drift. The
+    capability enters solely through the static message each branch names.
 
     Sibling to :func:`_ingest_failure`, with a deliberately different order: the
     error **code** is consulted first and the status class only after. Creek
@@ -1356,45 +1239,12 @@ def _wheel_failure(response: httpx.Response) -> CreekVaultError:
     The ingest path's status-first order is deliberately left alone rather than
     aligned here. Its own conformance cell records that misreport as known and
     names it, and changing the classification of a *write* failure is a separate
-    decision from teaching a new read path to classify correctly.
+    decision from teaching the read paths to classify correctly.
     """
     code = _vault_error_code(response)
     if code is not None:
-        return _coded_wheel_failure(code)
-    return _uncoded_wheel_failure(response)
-
-
-def _ceiling_admissible(echoed: object, accepted: VaultTierCeiling) -> bool:
-    """Return whether a vault's echoed tier ceiling is one we were willing to accept.
-
-    Verification stands in for declaration here, because the ratified ``/v1``
-    surface gives adepthood no way to declare a ceiling at all: ``ReflectionRequest``
-    is ``additionalProperties: false`` with no such field, and ``GET /v1/wheel``
-    publishes no parameter. Inventing an undocumented query parameter or header
-    would be guessing at a contract -- the same reason
-    :func:`_journal_entry_body` sends only the three ratified fields and no
-    fourth. So the server applies its own published default (``open``, the most
-    restrictive of the two a remote caller may reach, which fails closed) and
-    adepthood checks the ceiling it says it applied.
-
-    That check is not a formality. An answer echoing a ceiling *above* the one
-    adepthood was willing to accept says the vault counted over material this app
-    never authorized it to read, and a tally computed over unauthorized material
-    is not a wheel this app may render -- so the whole payload is rejected. An
-    echo that will not parse as a tier at all is equally inadmissible: an
-    unreadable claim is not a claim, and accepting one would make the check
-    passable by answering with nonsense. A wrong-typed echo is narrowed out
-    first, mirroring :func:`_coerce_capability` and :func:`_coerce_error_code`:
-    every value this module reads out of a vault body is proved to be a string
-    before it is looked up.
-    """
-    if not isinstance(echoed, str):
-        return False
-    try:
-        reported = VaultTierCeiling(echoed)
-    except ValueError:
-        return False
-    return _TIER_CEILING_RANK[reported] <= _TIER_CEILING_RANK[accepted]
+        return _coded_read_failure(capability, code)
+    return _uncoded_read_failure(capability, response)
 
 
 def _decoded_object(response: httpx.Response) -> Mapping[str, object] | None:
@@ -1466,13 +1316,22 @@ class HttpCreekVaultClient:
     projected balance or one of four failure types (payload, contract, auth,
     unavailable) an operator can act on differently.
 
-    :meth:`classify` and :meth:`reflect` still refuse with
+    So is the reflection, so :meth:`reflect` is wired up: a ``POST`` of the
+    ratified two-field request to the reflections collection, gated on the
+    handshake first for the same reason -- and here that gate matters most, since
+    a whole journal entry rides on the request. It answers a structured
+    :class:`~domain.creek_vault.VaultReflection`, or raises the same four failure
+    types, or -- for Creek's 200 care handoff -- raises
+    :class:`~domain.creek_vault.CreekVaultCareEscalationError`, which sits
+    outside that hierarchy so no caller can degrade an escalation into cloud
+    prose.
+
+    :meth:`classify` alone still refuses with
     :class:`CreekCapabilityUnsupportedError`, *including* when the vault
-    advertises them. Their shapes have not shipped upstream, and this adapter
-    will not guess a wire format: a refusal degrades the caller onto its local
-    pipeline, whereas a wrong guess would send real journal content into a
-    surface nobody has agreed on. Wiring them up is follow-on work, gated on
-    that document.
+    advertises it. Its shape has not shipped upstream, and this adapter will not
+    guess a wire format: a refusal degrades the caller onto its local pipeline,
+    whereas a wrong guess would send real journal content into a surface nobody
+    has agreed on. Wiring it up is follow-on work, gated on that document.
 
     A plain class on purpose -- no dataclass, no custom ``__repr__`` -- so the
     default object repr can never render the bearer credential this instance
@@ -1656,9 +1515,58 @@ class HttpCreekVaultClient:
         """Refuse classification: its ``/v1`` request/response shape is unratified."""
         _refuse_unratified(CreekCapability.CLASSIFY)
 
-    async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> str:
-        """Refuse reflection: its ``/v1`` request/response shape is unratified."""
-        _refuse_unratified(CreekCapability.REFLECT)
+    async def _post_reflection(self, body: str) -> httpx.Response:
+        """Ask the collection for a reflection, normalizing any transport failure.
+
+        One ``POST`` of the ratified two-field request and nothing else: no
+        ``entry_ref``, since adepthood reflects on an ad-hoc body rather than on a
+        fragment the vault already stores, and no tier-ceiling field under any
+        spelling, since the published request is ``additionalProperties: false``
+        and names none -- inventing one would be guessing at a contract, and the
+        ceiling is verified on the way back instead
+        (:func:`_admissible_ceiling`).
+
+        Every transport failure (connection refused, a socket error, the
+        whole-request deadline expiring, a URL httpx will not build a request
+        for) becomes :class:`CreekVaultUnavailableError` with ``from None``: the
+        original exception's text can carry the URL or the entry body, and
+        neither its message nor its traceback context may ride along.
+        """
+        try:
+            return await self._authorized_request(
+                "POST", f"{self._url}{_REFLECTIONS_PATH}", _reflection_request_body(body)
+            )
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_REFLECT_FAILED_MESSAGE) from None
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
+        """Ask the vault to reflect on ``body``, requiring the REFLECT capability.
+
+        Gated on the cached handshake first, exactly as :meth:`ingest` and
+        :meth:`wheel` are, and here that gate carries the most: a vault that did
+        not advertise REFLECT is refused *locally*, so a whole journal entry is
+        never put on a wire toward a capability nobody claimed to serve.
+
+        The answer splits four ways. A transport failure is an absent vault. A
+        non-2xx is classified by :func:`_read_failure`, which reads the vault's
+        own code before the status class. A 2xx that will not decode as a JSON
+        object, or that :func:`_parse_reflection_result` cannot read as the
+        published shape, is a :class:`CreekVaultPayloadError` -- a vault that
+        answered, unreadably, which is a different fault from a vault that was
+        not there. Only the remainder is a reflection, and that same parse turns
+        Creek's 200 care handoff into
+        :class:`~domain.creek_vault.CreekVaultCareEscalationError`, which is
+        outside the degrade hierarchy on purpose.
+        """
+        if not self.supports(CreekCapability.REFLECT):
+            raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
+        response = await self._post_reflection(body)
+        if not response.is_success:
+            raise _read_failure(CreekCapability.REFLECT, response) from None
+        payload = _decoded_object(response)
+        if payload is None:
+            raise CreekVaultPayloadError(_REFLECT_UNREADABLE_MESSAGE)
+        return _parse_reflection_result(payload, tier_ceiling)
 
     async def _get_wheel(self) -> httpx.Response:
         """Read the whole-corpus wheel, normalizing any transport failure.
@@ -1708,7 +1616,7 @@ class HttpCreekVaultClient:
             raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
         response = await self._get_wheel()
         if not response.is_success:
-            raise _wheel_failure(response) from None
+            raise _read_failure(CreekCapability.WHEEL, response) from None
         balance = _http_wheel_balance(response)
         if balance is None:
             raise CreekVaultPayloadError(_WHEEL_UNREADABLE_MESSAGE)
@@ -1747,7 +1655,7 @@ class LocalFallbackCreekVaultClient:
         """Raise: classification has no local vault to serve it."""
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.CLASSIFY))
 
-    async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> str:
+    async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Raise: reflection has no local vault to serve it."""
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
 
