@@ -120,9 +120,13 @@ merge a pending/failing PR). The helper keys CI off the `gh pr checks` **exit
 code** (`0`=green, `8`=pending, else=failed) and only honours an LGTM verdict
 posted **after** the PR's HEAD commit (stale-verdict guard). It also proves
 freshness against `main` with the compare API rather than trusting
-`mergeStateStatus`, and honours the `do-not-auto-merge` human hold. Capture the
-exit code alongside the token — the helper exits non-zero when it cannot classify
-a lane, and an unchecked `$STATUS` would just come back empty:
+`mergeStateStatus`, and honours the `do-not-auto-merge` human hold — reaching a
+Dependabot PR's bridge issue through the `<!-- dependabot-pr:<N> -->` marker on
+that issue when the bot has regenerated its PR body and taken the `Closes #N`
+link with it. Capture the exit code alongside the token — the helper exits
+non-zero when it cannot classify a lane (including when a bot PR about to merge
+has a hold it can neither find nor rule out), and an unchecked `$STATUS` would
+just come back empty:
 ```bash
 STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | pending | ci-failed | changes-requested | awaiting-review | optout
 ```
@@ -157,8 +161,11 @@ Then act on `$STATUS`:
   before merging anything.
   What replaces Gate 4 here is green CI **verified against current `main`**
   (`behind_by == 0`, so the green is today's `main`, not a stale base) plus the
-  `do-not-auto-merge` hold, which is checked first and would have printed
-  `optout`. That substitution is only honest when CI actually ran, so the helper
+  `do-not-auto-merge` hold, which is checked first — before any CI probe, on
+  every route including the bridge issue's marker — and would have printed
+  `optout`. A hold this token's own PR class can neither find nor rule out is
+  likewise never merged: the helper exits non-zero with no token at all rather
+  than reading that silence as consent. That substitution is only honest when CI actually ran, so the helper
   also requires a real non-review check to have SUCCEEDED: every test workflow is
   `paths:`-filtered to its own sources, so a `github-actions` ecosystem bump
   touches only `.github/workflows/*.yml`, matches none of them, and would
@@ -204,7 +211,9 @@ Then act on `$STATUS`:
   conflict (`fleet.sh sync` → conflict-fix worker → push); the post-resolution
   push triggers the PR's real CI + review.
 - **`ci-failed`** — a check failed. Advance it via Step 2 (`ci-debugging`).
-- **`optout`** — the PR, or the issue it closes, carries `do-not-auto-merge`.
+- **`optout`** — the PR, the issue it closes, or (on a Dependabot PR whose body
+  links no issue) the bridge issue whose `<!-- dependabot-pr:<N> -->` marker names
+  it, carries `do-not-auto-merge`.
   **Leave it entirely alone**: do not merge it, do not sync it, do not dispatch a
   `ci-debugging` or `address-feedback` worker at it. A human owns this PR. Do not
   `assign`/`adopt` a worktree for it either, and skip it when refilling in Step 4.

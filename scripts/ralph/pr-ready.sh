@@ -17,14 +17,34 @@
 #                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
 #                    (address-feedback): Gate 4 has spoken and wants changes
 #   awaiting-review  no verdict yet, or only a stale one (predates HEAD) → wait
-#   optout           `do-not-auto-merge` on the PR or on the issue it closes → the
+#   optout           `do-not-auto-merge` on the PR, on the issue its body closes,
+#                    or on the bridge issue whose marker names this PR → the
 #                    loop does not act on this PR AT ALL (no merge, no sync, no
 #                    ci-debugging worker); a human owns it. Checked first, and an
 #                    unreadable label answer exits 2 rather than assuming no hold.
 #
-# An UNDETERMINABLE opt-out (the label or body lookup failed) is deliberately one of
-# those tooling errors: reading a failed lookup as "unlabelled" would let a rate limit
-# or an expired token silently defeat the one control a human retains over this loop.
+# An UNDETERMINABLE opt-out (the label, body, or marker lookup failed) is deliberately
+# one of those tooling errors: reading a failed lookup as "unlabelled" would let a rate
+# limit or an expired token silently defeat the one control a human retains over this
+# loop. So is an UNPROVABLE one on a bot PR about to be merged (see below).
+#
+# WHY THE MARKER FALLBACK EXISTS: the body-link route to the hold vanishes on exactly
+# the PRs the hold exists for. Dependabot regenerates its PR body from its own template
+# on every rebase and group recomputation, taking the bridge's appended `Closes #N` with
+# it — so `linked_issue` comes back empty and "no link" would be read as "no hold", a
+# fail-OPEN on the one PR class this loop merges with no review verdict. The bridge also
+# stamps `<!-- dependabot-pr:<N> -->` into the ISSUE body, which that rewrite cannot
+# reach because it lives on another object; that is the durable route. It is scanned only
+# on a Dependabot-authored PR whose body links nothing (human PRs routinely link nothing
+# and must classify normally, and an empty author reads as human), so in steady state the
+# extra `gh issue list` costs no lane anything. A scan that matches NOTHING is silence,
+# not proof: it is filtered by the `dependencies` label, which this repo has watched fail
+# to stick — hence `ensure-issue-label.sh`. Such a lane therefore classifies normally and
+# is refused only at the point of merge, so `behind` still prints `behind` (a sync is
+# always safe, and re-linking the body is often what makes the hold provable again).
+#
+# An unresolvable hold on a bot PR that would otherwise merge is likewise one of those
+# exit-2 tooling errors: no token, and the next wake retries.
 #
 # WHY THIS EXISTS: the previous all-lanes Monitor grepped `gh pr checks` output
 # for ': pending'. That output is TAB-delimited (name<TAB>pending<TAB>...), so the
@@ -102,6 +122,12 @@ readonly OPTOUT_LABEL="do-not-auto-merge"
 # The issue-link vocabulary the rest of the loop uses (pick-next.sh's in-flight
 # scan, the Dependabot bridge). Case-insensitive via `grep -i`.
 readonly ISSUE_LINK_RE='(closes|fixes|resolves)[[:space:]]+#[0-9]+'
+
+# The only label the Dependabot bridge puts on the issues it files, and the page
+# size it scans them with. Both mirror the bridge's own query so the two sides
+# see the same set; the label is what keeps the fallback scan cheap.
+readonly BRIDGE_ISSUE_LABEL="dependencies"
+readonly BRIDGE_SCAN_LIMIT=200
 
 # Placeholder slug `gh` substitutes from the current repo when no --repo is given.
 readonly CURRENT_REPO_SLUG='{owner}/{repo}'
@@ -184,6 +210,40 @@ linked_issue() {
   { printf '%s' "$body" | grep -oiE "$ISSUE_LINK_RE" || true; } | tail -n 1 | tr -dc '0-9'
 }
 
+# The bridge's durable link, in the one shape both sides agree on — copied
+# verbatim from `dependabot-to-ralph-issue.yml`, which writes it. Inventing a
+# second linking convention here would be a second thing to drift silently, and
+# a drift restores the fail-open with nothing anywhere to report it.
+marker_for() { printf '<!-- dependabot-pr:%s -->' "$1"; }
+PR_MARKER="$(marker_for "$pr")"
+readonly PR_MARKER
+
+# Every open bridge issue whose body carries THIS PR's marker, one number per
+# line; empty when none does. Non-zero on API failure, like `labels_of`, so the
+# caller refuses to classify rather than inferring "no hold". The match is on the
+# whole marker including its closing `-->`: a bare number is a substring of every
+# longer one, so a looser test would inherit an unrelated bump's hold. Splicing
+# $pr into the jq string is safe because arg parsing already proved it matches
+# ^[0-9]+$ — nothing else here reaches the query.
+bridge_issues_for_pr() {
+  gh issue list ${repo_args[@]+"${repo_args[@]}"} \
+    --label "$BRIDGE_ISSUE_LABEL" --state open --limit "$BRIDGE_SCAN_LIMIT" \
+    --json number,body \
+    --jq ".[] | select((.body // \"\") | contains(\"$PR_MARKER\")) | .number"
+}
+
+# Stops the WHOLE script when one candidate issue carries the hold, so a hold
+# found on any route wins outright. A failed lookup stops it too: "unreadable"
+# must never collapse into "no hold". Safe to `exit` from because every caller
+# below invokes it directly, never in a pipeline or a command substitution.
+exit_if_issue_holds() { # exit_if_issue_holds <issue number> <how it links this PR>
+  local labels
+  labels="$(labels_of issue "$1")" ||
+    die "could not read labels of issue #$1 ($2 PR #$pr); refusing to guess whether $OPTOUT_LABEL is set"
+  has_optout_label "$labels" || return 0
+  echo "optout"; exit 0
+}
+
 # An undeterminable hold is a TOOLING error, never "no hold". Reading a failed
 # lookup as unlabelled would let a rate limit, a 5xx, or an expired token
 # silently defeat the one control a human has over this loop and auto-merge the
@@ -196,14 +256,40 @@ if has_optout_label "$pr_labels"; then
   echo "optout"; exit 0
 fi
 
-pr_body="$(gh pr view "${gh_args[@]}" --json body --jq '.body')" ||
-  die "could not read the body of PR #$pr; refusing to guess whether a linked issue carries $OPTOUT_LABEL"
+# The author rides along on the body call rather than costing a round trip of its
+# own; it gates the marker fallback below. Author FIRST because a login cannot
+# contain `|` and a body freely can, so the split has to be on the first
+# separator — and by parameter expansion, never `read`, which would truncate a
+# multi-line body at its first newline.
+body_line="$(gh pr view "${gh_args[@]}" --json body,author \
+  --jq '(.author.login // "") + "|" + (.body // "")')" ||
+  die "could not read the body and author of PR #$pr; refusing to guess whether a linked issue carries $OPTOUT_LABEL"
+pr_author="${body_line%%|*}"
+pr_body="${body_line#*|}"
+
+# Set when a bot lane's hold could be neither found nor ruled out. It is NOT
+# "no hold" — the scan is label-filtered — so it defers rather than decides: the
+# lane classifies normally and is refused only where it would otherwise merge.
+hold_unproven=""
+
 issue_n="$(linked_issue "$pr_body")"
 if [[ -n "$issue_n" ]]; then
-  issue_labels="$(labels_of issue "$issue_n")" ||
-    die "could not read labels of issue #$issue_n (linked by PR #$pr); refusing to guess whether $OPTOUT_LABEL is set"
-  if has_optout_label "$issue_labels"; then
-    echo "optout"; exit 0
+  exit_if_issue_holds "$issue_n" "linked by"
+elif [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
+  # Only Dependabot rewrites its own body, so only Dependabot can have lost the
+  # link. An empty author reads as human here, which is safe: the sole
+  # merge-without-review path re-verifies the author itself and fails closed on
+  # empty. A failed scan dies at once — unlike a matchless one, no later answer
+  # can arrive to settle it.
+  bridge_issues="$(bridge_issues_for_pr)" ||
+    die "could not scan for the bridge issue of PR #$pr; refusing to guess whether $OPTOUT_LABEL is set"
+  if [[ -z "$bridge_issues" ]]; then
+    hold_unproven="yes"
+  else
+    while IFS= read -r bridge_n; do
+      [[ -n "$bridge_n" ]] || continue
+      exit_if_issue_holds "$bridge_n" "marker-linked to"
+    done <<<"$bridge_issues"
   fi
 fi
 
@@ -334,6 +420,12 @@ branch_is_current() {
 # DIRTY/CONFLICTING/BLOCKED/DRAFT/UNKNOWN, and short-circuiting on it keeps the
 # probe off every lane that is not already one step from merging.
 if [[ "$merge_state" == "CLEAN" ]] && branch_is_current; then
+  # The deferred refusal sits HERE, at the only point where an unprovable hold
+  # could do harm: every token above is a wait or a remedy no human reserving the
+  # PR would object to, while these two merge it. Refusing earlier would wedge
+  # lanes that were never about to merge.
+  [[ -z "$hold_unproven" ]] ||
+    die "PR #$pr is Dependabot's, its body links no issue, and no open $BRIDGE_ISSUE_LABEL issue carries $PR_MARKER, so $OPTOUT_LABEL can be neither found nor ruled out; re-run the Dependabot-to-Ralph bridge reconciler (gh workflow run dependabot-to-ralph-issue.yml) to re-link the PR body, then retry"
   echo "$ready_token"
 else
   echo "behind"
