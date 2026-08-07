@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -9,11 +10,11 @@ from datetime import UTC, datetime
 from typing import cast
 
 import httpx
+import httpx2
 import pytest
-from mcp import ClientSession
-from mcp.server.fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client, MCPError
+from mcp.client.client import InMemoryTransport
+from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, ImageContent, TextContent
 from pydantic import BaseModel, ValidationError
 
@@ -36,8 +37,12 @@ from services.creek_vault_client import (
     _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
     _MAX_REFLECT_NOTES,
+    _MCP_SSE_READ_TIMEOUT_SECONDS,
+    _MCP_TOOL_ERROR_CODE,
+    _VAULT_TIMEOUT_SECONDS,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
+    _build_mcp_http_client,
     _extract_tool_payload,
     _handshake_params,
     _ingest_params,
@@ -51,6 +56,17 @@ from services.creek_vault_client import (
 _VAULT_URL = "https://vault.example.test"
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+
+# Where the whole-call ceiling lives, so a test can shorten it in place. Read at
+# call time rather than captured, exactly as the HTTP transport's deadline is.
+_DEADLINE_ATTR = "services.creek_vault_client._VAULT_TOTAL_DEADLINE_SECONDS"
+
+# A whole-call deadline short enough to expire during a test, paired with a tool
+# that sleeps two orders of magnitude longer so the deadline -- never the sleep
+# -- is what ends the call. The sleep is cancelled the moment the deadline
+# fires, so the test costs milliseconds, not seconds.
+_TINY_DEADLINE_SECONDS = 0.02
+_HUNG_TOOL_SLEEP_SECONDS = 5.0
 
 # One well-formed creek note's quote and note text, reused so the hygiene matrix
 # can pair exactly one malformed item against a known-good sibling.
@@ -953,23 +969,29 @@ async def test_unavailable_error_never_leaks_body_or_api_key(
 
 # --- Real MCP streamable-HTTP transport driven against an in-memory vault ---
 # These tests exercise _McpStreamableHttpTransport end to end by injecting an
-# in-memory FastMCP server through its connect seam, so the real MCP lifecycle
-# (initialize -> tools/call -> result) runs with no network.
+# in-memory MCP server through its connect seam, so the real MCP lifecycle
+# (handshake -> tools/call -> result) runs with no network.
 
 
 class _IngestOut(BaseModel):
-    """Typed ingest result used to exercise the structuredContent branch."""
+    """Typed ingest result used to exercise the structured-content branch."""
 
     status: str
     fragment_id: str
     action: str
 
 
-def _mem_connect(server: FastMCP) -> Callable[[], AbstractAsyncContextManager[ClientSession]]:
-    """Return a connect factory yielding an in-memory session bound to ``server``."""
+def _mem_connect(server: MCPServer) -> Callable[[], AbstractAsyncContextManager[Client]]:
+    """Return a connect factory yielding an in-memory client bound to ``server``.
 
-    def _factory() -> AbstractAsyncContextManager[ClientSession]:
-        return create_connected_server_and_client_session(server)
+    The server is wrapped in an :class:`InMemoryTransport` rather than handed to
+    :class:`Client` directly so the client drives the same JSON-RPC framing and
+    negotiated handshake the production streamable-HTTP transport does; passing
+    the server itself would take the SDK's in-process shortcut and skip both.
+    """
+
+    def _factory() -> AbstractAsyncContextManager[Client]:
+        return Client(InMemoryTransport(server))
 
     return _factory
 
@@ -981,8 +1003,8 @@ class _RaisingConnect:
         """Store the exception raised on context entry."""
         self._exc = exc
 
-    async def __aenter__(self) -> ClientSession:
-        """Raise the stored exception instead of yielding a session."""
+    async def __aenter__(self) -> Client:
+        """Raise the stored exception instead of yielding a client."""
         raise self._exc
 
     async def __aexit__(self, *_exc_info: object) -> bool:
@@ -990,7 +1012,7 @@ class _RaisingConnect:
         return False
 
 
-def _serve_handshake(server: FastMCP, capabilities: Sequence[str]) -> None:
+def _serve_handshake(server: MCPServer, capabilities: Sequence[str]) -> None:
     """Register a creek.handshake tool advertising ``capabilities`` on ``server``."""
     advertised = list(capabilities)
 
@@ -1004,7 +1026,7 @@ def _serve_handshake(server: FastMCP, capabilities: Sequence[str]) -> None:
 @pytest.mark.asyncio
 async def test_real_transport_handshake_populates_result() -> None:
     """The real MCP transport completes a handshake against an in-memory server."""
-    server = FastMCP("fake-creek-vault")
+    server = MCPServer("fake-creek-vault")
     _serve_handshake(server, [CreekCapability.JOURNAL.value])
     transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
     client = McpCreekVaultClient(transport=transport)
@@ -1017,7 +1039,7 @@ async def test_real_transport_handshake_populates_result() -> None:
 async def test_real_transport_handshake_sends_privacy_tier_ceiling() -> None:
     """The real transport passes only privacy_tier_ceiling to the handshake tool."""
     received: dict[str, object] = {}
-    server = FastMCP("fake-creek-vault")
+    server = MCPServer("fake-creek-vault")
 
     @server.tool(name=CreekCapability.HANDSHAKE.value)
     def _handshake(privacy_tier_ceiling: str = "sentinel") -> dict[str, object]:
@@ -1045,16 +1067,145 @@ async def test_real_transport_degrades_on_connection_exception_group() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_http_client_refuses_redirects_and_carries_the_vault_budget() -> None:
+    """The MCP transport's own HTTP client refuses redirects and bounds every phase.
+
+    Refusing is the security property: the journal entry body rides these
+    requests, so a hijacked vault answering a redirect must not be able to aim
+    that body at a host the operator never configured. The SDK's own client
+    factory hard-codes redirect-following with no override, which is why this
+    module builds the client itself.
+    """
+    client = _build_mcp_http_client("api-key")
+    try:
+        assert client.follow_redirects is False
+        assert client.timeout.connect == _VAULT_TIMEOUT_SECONDS
+        assert client.timeout.write == _VAULT_TIMEOUT_SECONDS
+        assert client.timeout.pool == _VAULT_TIMEOUT_SECONDS
+        assert client.timeout.read == _MCP_SSE_READ_TIMEOUT_SECONDS
+        assert client.headers["Authorization"] == "Bearer api-key"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_real_transport_bounds_a_hung_vault_with_the_whole_call_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vault that accepts the session and then goes quiet is ended, not waited on.
+
+    The per-phase budgets cannot do this on their own: the read budget restarts
+    on every socket read, so a vault that answers the MCP handshake and then
+    trickles stays inside all four indefinitely while holding a worker. Only the
+    whole-call ceiling ends it, and it degrades like any other timeout because
+    ``TimeoutError`` is an ``OSError``.
+    """
+    monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
+    server = MCPServer("fake-creek-vault")
+
+    @server.tool(name=CreekCapability.HANDSHAKE.value)
+    async def _hang(privacy_tier_ceiling: str = VaultTierCeiling.OPEN.value) -> dict[str, object]:
+        """Never answer, so the whole-call deadline is what ends the call."""
+        del privacy_tier_ceiling
+        await asyncio.sleep(_HUNG_TOOL_SLEEP_SECONDS)
+        return _handshake_payload([CreekCapability.JOURNAL.value])
+
+    transport = _McpStreamableHttpTransport(_VAULT_URL, "api-key", connect=_mem_connect(server))
+    client = McpCreekVaultClient(transport=transport)
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx2.ConnectError("unreachable"), id="connect-error"),
+        pytest.param(httpx2.ReadTimeout("timed out"), id="read-timeout"),
+        pytest.param(httpx2.InvalidURL("unbuildable"), id="invalid-url"),
+    ],
+)
+async def test_real_transport_degrades_on_unwrapped_mcp_http_error(
+    failure: Exception,
+) -> None:
+    """An MCP transport failure raised bare -- not inside a group -- still degrades.
+
+    The MCP SDK speaks ``httpx2``, whose exceptions share no base class with the
+    ``httpx`` ones :class:`HttpCreekVaultClient` raises and are not ``OSError``
+    either, so nothing but an explicit entry in the degrade set catches them.
+    Without one an unreachable vault would raise on the caller's request path
+    instead of degrading -- the exact failure this module exists to prevent --
+    and ``InvalidURL`` needs naming twice over, since it sits outside its own
+    library's ``HTTPError`` hierarchy.
+    """
+    transport = _McpStreamableHttpTransport(
+        _VAULT_URL, "api-key", connect=lambda: _RaisingConnect(failure)
+    )
+    client = McpCreekVaultClient(transport=transport)
+    result = await client.handshake()
+    assert result == HandshakeResult.unavailable()
+
+
+class _ConnectThenFail:
+    """Connect factory that serves one live session, then fails every later attempt.
+
+    Lets a test advertise a capability through a real handshake and then land the
+    transport failure on the gated capability call itself, which is the branch
+    that has to stay content-free.
+    """
+
+    def __init__(self, server: MCPServer, exc: Exception) -> None:
+        """Store the server to serve once and the exception to raise thereafter."""
+        self._server = server
+        self._exc = exc
+        self._served = False
+
+    def __call__(self) -> AbstractAsyncContextManager[Client]:
+        """Return a live in-memory client the first time, a raising one after."""
+        if self._served:
+            return _RaisingConnect(self._exc)
+        self._served = True
+        return Client(InMemoryTransport(self._server))
+
+
+@pytest.mark.asyncio
+async def test_real_transport_capability_call_degrades_on_mcp_http_error() -> None:
+    """A per-capability MCP call degrades without leaking the body or the API key."""
+    body_sentinel = "SENTINEL_BODY_MCP_HTTP_ERROR_DO_NOT_LEAK"
+    key_sentinel = "SENTINEL_KEY_MCP_HTTP_ERROR_DO_NOT_LEAK"
+    server = MCPServer("fake-creek-vault")
+    _serve_handshake(server, [CreekCapability.JOURNAL.value])
+    connect = _ConnectThenFail(server, httpx2.ConnectError(f"{body_sentinel} {key_sentinel}"))
+    transport = _McpStreamableHttpTransport(_VAULT_URL, key_sentinel, connect=connect)
+    client = McpCreekVaultClient(transport=transport)
+    await client.handshake()
+    request = VaultIngestRequest(
+        entry_id=7,
+        body=body_sentinel,
+        tier=VaultTierCeiling.OPEN,
+        tier_ceiling=VaultTierCeiling.OPEN,
+        created_at=_CREATED_AT,
+    )
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.ingest(request)
+    message = str(exc_info.value)
+    assert body_sentinel not in message
+    assert key_sentinel not in message
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True
+
+
+@pytest.mark.asyncio
 async def test_real_transport_reads_structured_content() -> None:
-    """A tool with a typed result is read from structuredContent."""
-    server = FastMCP("fake-creek-vault")
+    """A tool with a typed result is read from structured content."""
+    server = MCPServer("fake-creek-vault")
     _serve_handshake(server, [CreekCapability.JOURNAL.value])
 
     @server.tool(name=CreekCapability.JOURNAL.value)
     def _ingest(
         content: str, external_id: str, timestamp: str, tier: str, privacy_tier_ceiling: str
     ) -> _IngestOut:
-        """Return a typed ingest result so structuredContent is populated."""
+        """Return a typed ingest result so structured content is populated."""
         del content, external_id, timestamp, tier, privacy_tier_ceiling
         return _IngestOut(status="ok", fragment_id="vault-ref-structured", action="created")
 
@@ -1066,7 +1217,7 @@ async def test_real_transport_reads_structured_content() -> None:
 
 
 def test_extract_tool_payload_reads_content_text() -> None:
-    """A result with no structuredContent is JSON-decoded from its content text."""
+    """A result with no structured content is JSON-decoded from its content text."""
     result = CallToolResult(
         content=[TextContent(type="text", text='{"stored": true, "vault_ref": "vault-ref-text"}')]
     )
@@ -1093,19 +1244,20 @@ def test_extract_tool_payload_skips_non_text_block_before_text() -> None:
 
 
 def test_extract_tool_payload_error_result_raises_without_reading_content() -> None:
-    """An isError result raises rather than surfacing its (possibly sensitive) content text."""
+    """An is_error result raises rather than surfacing its (possibly sensitive) content text."""
     leak = "SENTINEL_ERROR_CONTENT_DO_NOT_LEAK"
-    result = CallToolResult(content=[TextContent(type="text", text=leak)], isError=True)
-    with pytest.raises(McpError) as exc_info:
+    result = CallToolResult(content=[TextContent(type="text", text=leak)], is_error=True)
+    with pytest.raises(MCPError) as exc_info:
         _extract_tool_payload(result)
     assert leak not in str(exc_info.value)
+    assert exc_info.value.code == _MCP_TOOL_ERROR_CODE
 
 
 @pytest.mark.asyncio
 async def test_real_transport_tool_error_degrades_without_leaking_body() -> None:
     """A tool that raises degrades to CreekVaultUnavailableError without leaking the body."""
     body_sentinel = "SENTINEL_BODY_REAL_TRANSPORT_DO_NOT_LEAK"
-    server = FastMCP("fake-creek-vault")
+    server = MCPServer("fake-creek-vault")
     _serve_handshake(server, [CreekCapability.JOURNAL.value])
 
     @server.tool(name=CreekCapability.JOURNAL.value)

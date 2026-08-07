@@ -71,10 +71,10 @@ from typing import NoReturn, Protocol
 from urllib.parse import SplitResult, quote, urlsplit
 
 import httpx
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
-from mcp.types import CallToolResult, ErrorData
+import httpx2
+from mcp import Client, MCPError
+from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CallToolResult
 
 from domain.creek_vault import (
     CONSUMER_ID,
@@ -131,6 +131,19 @@ _VAULT_DEADLINE_PHASE_BUDGETS = 3
 # worker -- and the journal write path handshakes on every write.
 _VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TIMEOUT_SECONDS * _VAULT_DEADLINE_PHASE_BUDGETS
 
+# Read budget (seconds) for the MCP session's long-lived server-sent-event
+# stream, which is held open for the life of the session and so cannot share the
+# ten-second budget the request phases use -- a short read timeout would tear the
+# session down while it is merely idle. Mirrors the MCP SDK's own default for
+# that stream, restated here as a named constant because this module builds the
+# transport's HTTP client itself.
+_MCP_SSE_READ_TIMEOUT_SECONDS = 300.0
+
+# The per-phase budget the MCP transport's HTTP client runs under: the same
+# ten-second bound as every other vault call for connect, write, and pool
+# acquisition, and the SSE budget for reads.
+_MCP_HTTP_TIMEOUT = httpx2.Timeout(_VAULT_TIMEOUT_SECONDS, read=_MCP_SSE_READ_TIMEOUT_SECONDS)
+
 # How a "MAJOR.MINOR.PATCH" version string decomposes, and how many of its
 # leading components must match for two contract versions to interoperate. ADR
 # 0004 Decision 4: while the contract is pre-1.0 a minor bump *is* the breaking
@@ -159,28 +172,43 @@ _HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
     httpx.InvalidURL,
 )
 
+# Every way the MCP session's own HTTP layer can fail to land. A separate set
+# from :data:`_HTTP_CALL_FAILED_ERRORS` because the MCP SDK speaks ``httpx2``
+# while :class:`HttpCreekVaultClient` speaks ``httpx``, and the two libraries'
+# exception hierarchies are unrelated -- an ``httpx2.ConnectError`` is not an
+# ``httpx.HTTPError`` and is not an ``OSError``, so without naming it here a
+# vault that is merely unreachable over MCP would raise on the caller's request
+# path instead of degrading. ``InvalidURL`` is named separately for the same
+# reason it is on the httpx side: it sits outside that library's ``HTTPError``
+# hierarchy.
+_MCP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
+    httpx2.HTTPError,
+    httpx2.InvalidURL,
+)
+
 # Transport-layer failures we normalize to a degraded state.
-# :data:`_HTTP_CALL_FAILED_ERRORS` covers the httpx layer underneath the MCP
-# session, ``McpError`` covers an MCP protocol failure or a tool call that
-# returned ``isError`` (raised by :func:`_extract_tool_payload` with a static,
-# content-free message), ``ExceptionGroup`` covers a streamable-HTTP connection
-# failure (anyio task groups wrap the underlying ``httpx.ConnectError`` in a
-# builtins ``ExceptionGroup``; catching the ``Exception``-only group -- never
-# ``BaseExceptionGroup`` -- stays safe under cancellation), and
-# ``json.JSONDecodeError`` covers a content-text block whose body is not JSON.
-# All of these normalize the per-capability path to unavailable exactly as the
-# handshake path already does, keeping one coherent degrade-set
-# (``json.JSONDecodeError`` is a ``ValueError`` subclass, so it is already
-# covered by the handshake's parse-error set).
+# :data:`_HTTP_CALL_FAILED_ERRORS` and :data:`_MCP_CALL_FAILED_ERRORS` cover the
+# httpx layer underneath each transport, ``MCPError`` covers an MCP protocol
+# failure or a tool call that returned ``is_error`` (raised by
+# :func:`_extract_tool_payload` with a static, content-free message),
+# ``ExceptionGroup`` covers a streamable-HTTP connection failure (anyio task
+# groups wrap the underlying connect error in a builtins ``ExceptionGroup``;
+# catching the ``Exception``-only group -- never ``BaseExceptionGroup`` -- stays
+# safe under cancellation), and ``json.JSONDecodeError`` covers a content-text
+# block whose body is not JSON. All of these normalize the per-capability path
+# to unavailable exactly as the handshake path already does, keeping one
+# coherent degrade-set (``json.JSONDecodeError`` is a ``ValueError`` subclass,
+# so it is already covered by the handshake's parse-error set).
 _TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
     *_HTTP_CALL_FAILED_ERRORS,
-    McpError,
+    *_MCP_CALL_FAILED_ERRORS,
+    MCPError,
     ExceptionGroup,
     json.JSONDecodeError,
 )
 
 # JSON-RPC application-defined server-error code (the -32000..-32099 range) used
-# when a vault tool call reports ``isError``; the paired message is static so it
+# when a vault tool call reports ``is_error``; the paired message is static so it
 # can never echo the entry body or the API key.
 _MCP_TOOL_ERROR_CODE = -32000
 
@@ -1358,22 +1386,43 @@ def _first_text_payload(content: Iterable[object]) -> Mapping[str, object]:
     return {}
 
 
+def _build_mcp_http_client(api_key: str) -> httpx2.AsyncClient:
+    """Build the HTTP client one MCP session runs over: credentialed, bounded, redirect-refusing.
+
+    Built here rather than by the SDK's own ``create_mcp_http_client`` for one
+    reason: that helper hard-codes ``follow_redirects=True`` and exposes no
+    override, and not following a redirect is a security property of this seam
+    rather than a preference -- the same property :func:`_build_pooled_vault_client`
+    pins for the plain-HTTP transport. The journal entry body rides these
+    requests, so a hijacked or compromised vault answering with a redirect could
+    otherwise aim that body at a host the operator never configured. Refusing
+    turns the redirect into a non-2xx, which degrades. Building the client
+    ourselves costs nothing else: the SDK helper only ever set redirects, the
+    timeout, and the headers this function sets explicitly.
+
+    The bearer credential lives on this short-lived, per-call client and never on
+    a shared pool, so it is released with the session that used it.
+    """
+    return httpx2.AsyncClient(
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=_MCP_HTTP_TIMEOUT,
+        follow_redirects=False,
+    )
+
+
 def _extract_tool_payload(result: CallToolResult) -> Mapping[str, object]:
     """Extract the response mapping from an MCP tool-call result.
 
-    A result flagged ``isError`` raises :class:`McpError` with a **static**
+    A result flagged ``is_error`` raises :class:`MCPError` with a **static**
     message -- the error content is deliberately never read, because a vault's
     error text can echo the entry body. Otherwise structured content wins when
     present; a plain-dict tool result rides the content-text channel and is
     JSON-decoded via :func:`_first_text_payload`; anything else yields the
     empty mapping.
     """
-    if result.isError:
-        error_data = ErrorData(
-            code=_MCP_TOOL_ERROR_CODE, message="creek vault tool call returned an error"
-        )
-        raise McpError(error_data)
-    structured = result.structuredContent
+    if result.is_error:
+        raise MCPError(_MCP_TOOL_ERROR_CODE, "creek vault tool call returned an error")
+    structured = result.structured_content
     if isinstance(structured, Mapping):
         return structured
     return _first_text_payload(result.content)
@@ -1383,18 +1432,18 @@ class _McpStreamableHttpTransport:
     """An MCP streamable-HTTP :class:`VaultTransport` for a configured vault.
 
     Each ``call`` opens an MCP session (streamable-HTTP framing with a bearer
-    ``Authorization`` header sourced from ``CREEK_VAULT_API_KEY``), initializes
-    it, invokes the method as an MCP tool, and extracts the response mapping
-    via :func:`_extract_tool_payload`. The key is used only to build that
-    header and is never logged or placed into any exception message (privacy
-    invariant). Construction refuses a plaintext ``http://`` URL to a
+    ``Authorization`` header sourced from ``CREEK_VAULT_API_KEY``), which
+    handshakes on entry, invokes the method as an MCP tool, and extracts the
+    response mapping via :func:`_extract_tool_payload`. The key is used only to
+    build that header and is never logged or placed into any exception message
+    (privacy invariant). Construction refuses a plaintext ``http://`` URL to a
     non-loopback host so the key is never bound to a transport that would send
     it in cleartext.
 
     Every failure branch lands in :data:`_TRANSPORT_ERROR_TYPES`: a connection
-    failure surfaces as an ``ExceptionGroup`` (anyio-wrapped
-    ``httpx.ConnectError``), a protocol failure or ``isError`` tool result as
-    :class:`McpError`, and a non-JSON content-text body as
+    failure surfaces either as an ``httpx2`` error or, when anyio wraps it, as
+    an ``ExceptionGroup``; a protocol failure or ``is_error`` tool result as
+    :class:`MCPError`; and a non-JSON content-text body as
     ``json.JSONDecodeError`` -- so the caller normalizes them to the degraded
     path rather than crashing. The injectable ``connect`` factory lets tests
     drive the full MCP lifecycle against an in-memory server with no network.
@@ -1405,49 +1454,61 @@ class _McpStreamableHttpTransport:
         url: str,
         api_key: str,
         *,
-        connect: Callable[[], AbstractAsyncContextManager[ClientSession]] | None = None,
+        connect: Callable[[], AbstractAsyncContextManager[Client]] | None = None,
     ) -> None:
         """Store the vault URL, bearer key, and connect factory, refusing an insecure URL.
 
         Delegates to :func:`_require_secure_vault_url`, which raises for a
         plaintext ``http://`` URL to a non-loopback host before the key is
         bound. The optional ``connect`` factory defaults to the production
-        streamable-HTTP connection and is supplied as an in-memory session
+        streamable-HTTP connection and is supplied as an in-memory client
         factory under test.
         """
         _require_secure_vault_url(url)
         self._url = url
         self._api_key = api_key
-        self._connect: Callable[[], AbstractAsyncContextManager[ClientSession]] = (
+        self._connect: Callable[[], AbstractAsyncContextManager[Client]] = (
             connect if connect is not None else self._connect_streamable_http
         )
 
     @asynccontextmanager
-    async def _connect_streamable_http(self) -> AsyncIterator[ClientSession]:
+    async def _connect_streamable_http(self) -> AsyncIterator[Client]:
         """Open the production streamable-HTTP MCP session to the vault.
 
         The one untestable-without-a-network seam, kept as small as possible:
-        authenticate with the bearer header, open the streamable-HTTP channel
-        (which yields a read stream, a write stream, and a session-id getter),
-        and wrap the streams in a :class:`ClientSession`.
+        build the HTTP client that carries the bearer header, this module's
+        timeout budget, and its refusal to follow redirects
+        (:func:`_build_mcp_http_client`); open the streamable-HTTP channel over
+        it; and drive that channel with an MCP :class:`Client`. The HTTP client
+        is entered here because the SDK only manages the lifecycle of a client it
+        built itself, so an injected one would otherwise leak its connection
+        pool.
         """
-        headers = {"Authorization": f"Bearer {self._api_key}"}
         async with (
-            streamablehttp_client(self._url, headers=headers, timeout=_VAULT_TIMEOUT_SECONDS) as (
-                read,
-                write,
-                _get_session_id,
-            ),
-            ClientSession(read, write) as session,
+            _build_mcp_http_client(self._api_key) as http_client,
+            Client(streamable_http_client(self._url, http_client=http_client)) as client,
         ):
-            yield session
+            yield client
 
     async def call(self, method: str, params: Mapping[str, object], /) -> Mapping[str, object]:
-        """Run one MCP tool call over a fresh session and return its payload mapping."""
-        async with self._connect() as session:
-            await session.initialize()
-            result = await session.call_tool(method, dict(params))
-        return _extract_tool_payload(result)
+        """Run one MCP tool call over a fresh session, under the whole-call deadline.
+
+        The deadline covers the session as a whole -- connect, MCP handshake, and
+        ``tools/call`` -- for the same reason :meth:`HttpCreekVaultClient._authorized_request`
+        carries one: the per-phase budgets are not a request deadline, since the
+        read budget restarts on every socket read. Without it a vault that
+        accepts the session and then trickles would hold this coroutine and its
+        connection open indefinitely, and the journal write path handshakes on
+        every write. Expiry raises ``TimeoutError``, an ``OSError`` subclass, so
+        it lands in the caller's existing transport branch and degrades. The
+        module constant is read at call time rather than captured, so a
+        redeployment (or a test) can move the ceiling without rebuilding the
+        transport.
+        """
+        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
+            async with self._connect() as client:
+                result = await client.call_tool(method, dict(params))
+            return _extract_tool_payload(result)
 
 
 def build_creek_vault_client(transport: VaultTransport | None = None) -> CreekVaultClient:

@@ -1,7 +1,7 @@
 # Dev/CI-only tooling. Exact (==) pins matching CI's resolved set so lint,
 # type, and quality gates run identically on every machine. Dependabot's pip
 # ecosystem entry proposes upgrades.
-uvicorn==0.51.0
+uvicorn==0.52.1
 bandit==1.9.4
 interrogate==1.7.0
 isort==8.0.1
@@ -17,7 +17,7 @@ pytest-xdist==3.8.0
 # Type stubs for the runtime jsonschema dependency (issues #389/#390).
 types-jsonschema==4.26.0.20260518
 radon==6.0.1
-ruff==0.16.0
+ruff==0.16.1
 vulture==2.16
 xenon==0.9.3
 pydantic==2.13.4

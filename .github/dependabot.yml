@@ -108,6 +108,34 @@ updates:
       # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
       - dependency-name: "expo-keep-awake"
         versions: [">=15.0.0"]
+      # Expo SDK 52 pins expo-web-browser to ~14.0.2; 15.x targets SDK 53+, and
+      # because Expo renumbered its packages to track the SDK number the bot
+      # proposes a jump straight to the 57.x (SDK 57) line. Installing SDK-57
+      # packages against an SDK-52 runtime breaks the native layer. Same
+      # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-web-browser"
+        versions: [">=15.0.0"]
+      # Expo SDK 52 pins expo-image-manipulator to ~13.0.6; 14.x targets SDK 53+
+      # and the bot proposes the renumbered 57.x line. Expo packages move
+      # together with the SDK via `expo install`, not piecemeal — unpin at the
+      # SDK 53 upgrade (#885).
+      - dependency-name: "expo-image-manipulator"
+        versions: [">=14.0.0"]
+      # Expo SDK 52 pins expo-apple-authentication to ~7.1.3; 8.x targets
+      # SDK 53+ and the bot proposes the renumbered 57.x line. Same SDK-managed
+      # rule — unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-apple-authentication"
+        versions: [">=8.0.0"]
+      # Expo SDK 52 pins expo-auth-session to ~6.0.3; 7.x targets SDK 53+ and
+      # the bot proposes the renumbered 57.x line. Same SDK-managed rule —
+      # unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-auth-session"
+        versions: [">=7.0.0"]
+      # Expo SDK 52 pins expo-file-system to ~18.0.12; 19.x targets SDK 53+ and
+      # the bot proposes the renumbered 57.x line. Same SDK-managed rule —
+      # unpin at the SDK 53 upgrade (#885).
+      - dependency-name: "expo-file-system"
+        versions: [">=19.0.0"]
       # react-native-chart-kit 7.x peer-requires react >=19.1 and
       # react-native >=0.81 — an Expo-SDK-scale pairing, not adaptable in
       # isolation. Same SDK-managed rule — unpin at the SDK upgrade (#885).
