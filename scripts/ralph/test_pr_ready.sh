@@ -20,6 +20,13 @@
 # HEAD (a force-push must not re-clear our commits), and both `gh` answers are
 # parsed by field count so a stray `|` fails closed.
 #
+# A fifth dimension guards the hold itself against the bot erasing it: Dependabot
+# regenerates its PR body from its own template on rebase, taking the bridge's
+# appended `Closes #N` with it, so the body-link route vanishes on exactly the PRs
+# the hold exists for. The bridge's `<!-- dependabot-pr:<N> -->` marker lives on
+# the ISSUE, which that rewrite cannot reach, so it is the durable route — and a
+# bot lane where NEITHER route resolves may still classify, but may never merge.
+#
 # Run:  bash scripts/ralph/test_pr_ready.sh
 set -euo pipefail
 
@@ -67,7 +74,18 @@ mkdir -p "$BIN"
 #                   every other issue reads as unlabelled, so a test can pin
 #                   WHICH of several linked issues the hold lookup resolved
 #   ISSUE_LABELS_EC — exit code that same call returns (non-0 = API failure)
-#   PR_BODY       — the body `pr view --json body` returns
+#   ISSUE_LIST_JSON — raw `--json number,body` payload for the `issue list` scan
+#                   that finds the bridge issue by its durable marker; when the
+#                   caller passes `--jq` the stub runs the REAL jq against it, so a
+#                   containment match loose enough to hit a longer PR number is
+#                   caught here rather than masked by a scalar stub. An empty list
+#                   by default, so unrelated cases stay deterministic
+#   ISSUE_LIST_EC — exit code that same call returns (non-0 = API failure)
+#   ISSUE_LIST_SENTINEL — file the stub touches when the issue-list endpoint is hit,
+#                   so a test can prove that scan stays off human lanes entirely
+#   PR_BODY       — the body `pr view --json body,author` returns, emitted AFTER
+#                   PR_AUTHOR as "<author>|<body>": the author leads because a login
+#                   can never contain `|` and a multi-line body can
 #   PR_BODY_EC    — exit code that same call returns (non-0 = API failure)
 #   BASE_REF / HEAD_OID — the "<baseRefName>|<headRefOid>" compare inputs
 #   BEHIND_BY     — `.behind_by` from `gh api .../compare/<base>...<head>`; set it
@@ -75,9 +93,10 @@ mkdir -p "$BIN"
 #   COMPARE_EC    — exit code that same compare call returns (non-0 = API failure)
 #   COMPARE_SENTINEL — file the stub touches when the compare endpoint is hit, so
 #                   a test can prove the freshness probe stayed lazy
-#   PR_AUTHOR     — `.author.login` for `pr view --json author,statusCheckRollup`;
-#                   `app/dependabot` is the one value that can clear the review
-#                   gate, and the empty default fails closed to awaiting-review
+#   PR_AUTHOR     — `.author.login`, answered on BOTH the early body call and
+#                   `pr view --json author,statusCheckRollup`; `app/dependabot` is
+#                   the one value that can clear the review gate or reach the marker
+#                   fallback, and the empty default reads as a human on both
 #   REVIEW_CONCLUSIONS — comma-joined `claude-review` conclusions from that same
 #                   rollup (the real shape repeats one entry per triggering
 #                   event, e.g. `SKIPPED,SKIPPED`); empty = no such check
@@ -116,8 +135,20 @@ case "$args" in
       printf '%s' "${ISSUE_LABELS:-}" | tr ',' '\n'
     fi
     exit "${ISSUE_LABELS_EC:-0}" ;;
+  *"issue list"*)
+    [[ -n "${ISSUE_LIST_SENTINEL:-}" ]] && : > "$ISSUE_LIST_SENTINEL"
+    expr="" prev=""
+    for a in "$@"; do [[ "$prev" == "--jq" ]] && expr="$a"; prev="$a"; done
+    # Real jq when the caller filters server-side, raw payload when it filters its
+    # own — either way the containment match is exercised, never simulated.
+    if [[ -n "$expr" ]]; then
+      printf '%s' "${ISSUE_LIST_JSON:-[]}" | jq -rc "$expr"
+    else
+      printf '%s\n' "${ISSUE_LIST_JSON:-[]}"
+    fi
+    exit "${ISSUE_LIST_EC:-0}" ;;
   *"pr view"*"--json body"*)
-    printf '%s\n' "${PR_BODY:-}"
+    printf '%s|%s\n' "${PR_AUTHOR:-}" "${PR_BODY:-}"
     exit "${PR_BODY_EC:-0}" ;;
   *"pr view"*"--json baseRefName"*) printf '%s|%s\n' "${BASE_REF:-main}" "${HEAD_OID:-c0ffee1}" ;;
   *"pr view"*"--json author"*)
@@ -416,20 +447,27 @@ DEPENDABOT_COMMIT="dependabot[bot]"
 SKIPPED="SKIPPED"
 NO_VERDICT="|false"
 
+# A bot PR whose body carries no issue link reaches its hold only through the
+# bridge issue's durable marker, so every bot lane below that expects a MERGE token
+# has to be given a resolvable, hold-free bridge issue — that is the realistic
+# rewritten-body world. Without it these are the fail-closed case pinned at the end
+# of this file, not the token they are here to test. Do not drop it.
+BRIDGED='[{"number":1982,"body":"<!-- dependabot-pr:100 -->"}]'
+
 check "reviewless dependabot bump + green + CLEAN + behind_by 0 → ready-unreviewed" "ready-unreviewed" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
 
 # The rollup carries one entry per triggering event (push + pull_request), so a
 # repeated SKIPPED is the ordinary live shape, not an anomaly.
 check "duplicate SKIPPED rollup entries → ready-unreviewed" "ready-unreviewed" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED,$SKIPPED" BEHIND_BY=0 run 100)"
 
 # `ready` keeps its full four-part meaning: a reviewed PR is never downgraded to
 # the token that asks the orchestrator to decide.
 check "reviewless setup but WITH a fresh LGTM → plain ready" "ready" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
 
 # With the review gate gone the freshness guard carries the whole safety burden,
@@ -482,7 +520,7 @@ check "reviewless bump where NO non-review check succeeded → awaiting-review" 
 # The positive twin: one non-review check that actually passed is the whole claim
 # behind the token, so the guard discriminates rather than refusing every bump.
 check "same bump with one non-review SUCCESS → ready-unreviewed" "ready-unreviewed" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" NON_REVIEW_SUCCESSES=1 \
      BEHIND_BY=0 run 100)"
 
@@ -550,6 +588,7 @@ check "opt-out on a would-be ready-unreviewed PR → optout" "optout" \
 S_GATE_LGTM="$WORK/gate-fresh-lgtm"
 check "fresh LGTM still classifies as ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" REVIEW_SENTINEL="$S_GATE_LGTM" run 100)"
 probed "a fresh verdict never probes the review gate" "no" "$S_GATE_LGTM"
 
@@ -584,9 +623,142 @@ probed "opt-out lane never probes the review gate" "no" "$S_GATE_OPTOUT"
 S_GATE_NONE="$WORK/gate-no-verdict"
 check "no-verdict lane classifies as ready-unreviewed" "ready-unreviewed" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" BEHIND_BY=0 \
+     ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" \
      REVIEW_SENTINEL="$S_GATE_NONE" run 100)"
 probed "no-verdict lane does probe the review gate" "yes" "$S_GATE_NONE"
+
+# --- the hold must outlive Dependabot rewriting its own PR body -------------
+# A rebase or group recomputation regenerates that body from the bot's template,
+# taking the bridge's appended `Closes #N` with it — so on exactly the bot PRs a
+# human reserves, the body-link route to the hold silently disappears and reading
+# "no link" as "no hold" fails OPEN. The bridge also stamps a marker into the
+# ISSUE body, which the PR rewrite cannot reach because it lives on another
+# object; that is the durable route. A rewritten body still carries the upstream
+# changelog's bare "Fixes" headings, so detection has to key on the reference
+# form, never the keyword alone.
+REWRITTEN_BODY="Bumps ruff from 0.15.0 to 0.16.0.
+
+<h3>Bug fixes</h3>
+<h3>Fixes</h3>
+Dependabot will resolve any conflicts with this PR."
+
+check "hold reached through the issue marker when the body link is gone → optout" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON="$BRIDGED" \
+     ISSUE_LABELS_FOR=1982 ISSUE_LABELS="dependencies,$OPTOUT" run 100)"
+
+# The marker route is checked as EARLY as the body route, so the hold outranks
+# every other token. Lazier placement would let a held bot PR still be synced or
+# handed a ci-debugging worker that pushes commits onto a branch a human owns.
+check "the marker hold short-circuits pending CI" "optout" \
+  "$(CHECKS_EC=8 PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" \
+     ISSUE_LIST_JSON="$BRIDGED" ISSUE_LABELS_FOR=1982 \
+     ISSUE_LABELS="dependencies,$OPTOUT" run 100)"
+
+# Marker matching is on the WHOLE marker: a bare `100` also occurs inside `1002`,
+# so a loose containment test would inherit a hold from an unrelated bump.
+NEAR_MISS='[{"number":1002,"body":"<!-- dependabot-pr:1002 -->"},{"number":1982,"body":"<!-- dependabot-pr:100 -->"}]'
+
+check "a hold on a longer PR number is not this PR's hold" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON="$NEAR_MISS" \
+     ISSUE_LABELS_FOR=1002 ISSUE_LABELS="dependencies,$OPTOUT" run 100)"
+
+# The twin: with only the longer number present nothing matches, which is silence
+# about a hold, not proof of none — so the merge is refused, not granted.
+NEAR_MISS_ONLY='[{"number":1002,"body":"<!-- dependabot-pr:1002 -->"}]'
+
+rc=0
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+   PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON="$NEAR_MISS_ONLY" run 100)" || rc=$?
+check "a near-miss marker leaves the hold unproven and exits 2" "2" "$rc"
+check "a near-miss marker prints no verdict" "" "$out"
+
+# The bridge can leave more than one issue pointing at a bump (a re-run, a manual
+# duplicate), and a hold on ANY of them is still a human saying no.
+TWO_BRIDGES='[{"number":1982,"body":"<!-- dependabot-pr:100 -->"},{"number":1990,"body":"superseded\n<!-- dependabot-pr:100 -->"}]'
+
+check "a hold on the second marker match still wins → optout" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON="$TWO_BRIDGES" \
+     ISSUE_LABELS_FOR=1990 ISSUE_LABELS="dependencies,$OPTOUT" run 100)"
+
+# Neither route resolving does not mean there is no hold: the scan is filtered by
+# the `dependencies` label, which this repo has watched fail to stick (hence
+# ensure-issue-label.sh). Merging on that silence is the fail-open being fixed.
+rc=0
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" BEHIND_BY=0 \
+   PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" REVIEW_CONCLUSIONS="$SKIPPED" \
+   ISSUE_LIST_JSON='[]' run 100)" || rc=$?
+check "an unprovable hold blocks ready-unreviewed with exit 2" "2" "$rc"
+check "an unprovable hold prints no ready-unreviewed verdict" "" "$out"
+
+rc=0
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+   PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON='[]' run 100)" || rc=$?
+check "an unprovable hold blocks ready with exit 2" "2" "$rc"
+check "an unprovable hold prints no ready verdict" "" "$out"
+
+# A failed scan is a tooling error like every other lookup here, and dies at once
+# rather than deferring: there is nothing to defer, no answer can arrive later.
+rc=0
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+   PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_EC=1 run 100)" || rc=$?
+check "marker scan failure exits 2" "2" "$rc"
+check "marker scan failure prints no verdict" "" "$out"
+
+# --- the fallback stays off every lane that cannot need it ------------------
+# Only Dependabot rewrites its own bodies, so a human PR without a link must not
+# pay an API call for it — and must never be held by a scan that cannot apply.
+S_ISSUE_HUMAN="$WORK/issue-list-human"
+check "a human PR with no issue link still classifies as ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     ISSUE_LIST_SENTINEL="$S_ISSUE_HUMAN" run 100)"
+probed "a human PR never scans for a marker" "no" "$S_ISSUE_HUMAN"
+
+S_ISSUE_LINKED="$WORK/issue-list-linked"
+check "a bot PR whose body still links an issue classifies from the link" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="dependencies" \
+     ISSUE_LIST_SENTINEL="$S_ISSUE_LINKED" run 100)"
+probed "an intact body link never scans for a marker" "no" "$S_ISSUE_LINKED"
+
+# The knowing cost of checking the hold FIRST, pinned rather than hidden: an
+# unlinked bot lane pays for the scan even while CI is still running. That is the
+# price of a hold that outranks every other token, and it is worth it.
+S_ISSUE_PENDING="$WORK/issue-list-pending"
+check "an unlinked bot lane with pending CI still classifies as pending" "pending" \
+  "$(CHECKS_EC=8 PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" \
+     ISSUE_LIST_SENTINEL="$S_ISSUE_PENDING" run 100)"
+probed "an unlinked bot lane scans for a marker before CI settles" "yes" "$S_ISSUE_PENDING"
+
+# An unproven hold refuses only the MERGE. Wedging a lane that is not about to
+# merge would strand it: `behind`'s remedy (a sync) is safe and, by re-linking the
+# body or re-labelling the issue, is often what makes the hold provable again.
+rc=0
+out="$(CHECKS_EC=1 PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" \
+   ISSUE_LIST_JSON='[]' run 100)" || rc=$?
+check "an unprovable hold still reports ci-failed" "ci-failed" "$out"
+check "an unprovable hold does not fail a red lane" "0" "$rc"
+
+rc=0
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=17 \
+   PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON='[]' run 100)" || rc=$?
+check "an unprovable hold still reports behind" "behind" "$out"
+check "an unprovable hold does not fail a stale lane" "0" "$rc"
+
+# --- cross-file coupling: the bridge marker ---------------------------------
+# The marker shape exists twice — the bridge writes it, pr-ready.sh reads it — and
+# a silent drift between the two copies restores the exact fail-open being fixed,
+# with nothing anywhere to report that the hold stopped being found.
+MARKER_PREFIX='<!-- dependabot-pr:'
+BRIDGE_WORKFLOW="$(cd "$(dirname "$0")/../.." && pwd)/.github/workflows/dependabot-to-ralph-issue.yml"
+
+check "the bridge still stamps the marker onto the issue" "yes" \
+  "$(grep -qF "$MARKER_PREFIX" "$BRIDGE_WORKFLOW" 2>/dev/null && echo yes || echo no)"
+check "pr-ready.sh still looks for that same marker" "yes" \
+  "$(grep -qF "$MARKER_PREFIX" "$READY" 2>/dev/null && echo yes || echo no)"
 
 # --- cross-file coupling: the review check's NAME ---------------------------
 # pr-ready.sh matches the review check by the literal string `claude-review`, which

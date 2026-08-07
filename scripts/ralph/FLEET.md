@@ -155,7 +155,7 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
 | `changes-requested` | a fresh verdict (posted after HEAD) that is not `LGTM` — `CHANGES_REQUESTED` or `COMMENTS`. Gate 4 failed. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
 | `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
-| `optout` | `do-not-auto-merge` on the PR or on the issue it closes. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
+| `optout` | `do-not-auto-merge` on the PR, on the issue its body closes, or — when a Dependabot PR's body links nothing — on the bridge issue carrying that PR's `<!-- dependabot-pr:<N> -->` marker. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
 | *non-zero exit* | could not classify (API failure, expired token). | Leave the lane alone this wake; the next wake retries. |
 
 **Gate 4 on a bot PR.** `claude-code-review.yml` skips runs whose `github.actor`
@@ -185,8 +185,19 @@ current `main`**, and `pr-ready.sh` pins each word of that:
 explicit OK — is *replaced* by that evidence, not silently dropped. The per-PR
 human hold is the `do-not-auto-merge` label on the PR or on its bridge issue: its
 **absence** is what lets a lane merge, and its presence stops the loop dead
-(`optout`). An *undeterminable* hold (the label lookup failed) is a tooling error
-that stalls the lane, never a silent "no hold". The label must exist in the repo
+(`optout`). Two routes reach that bridge issue, because Dependabot regenerates
+its PR body from its own template on every rebase and group recomputation and
+takes the bridge's appended `Closes #N` with it: the body link, and — only on a
+Dependabot PR whose body links nothing — the `<!-- dependabot-pr:<N> -->` marker
+the bridge stamped into the ISSUE body, which the PR rewrite cannot reach. An
+*undeterminable* hold (the label lookup failed) is a tooling error that stalls
+the lane, never a silent "no hold"; so is an *unprovable* one, where neither
+route resolves — that scan is filtered by the `dependencies` label, which has
+been watched to fail to stick (hence `ensure-issue-label.sh`), so a matchless
+scan is silence, not proof. Such a lane still classifies normally and is refused
+(exit 2, no token) only where it would otherwise print `ready`/`ready-unreviewed`
+— `behind` still prints `behind`, since a sync is always safe and often re-links
+the body. The label must exist in the repo
 for a human to apply it — `scripts/setup-scan-labels.sh` creates it idempotently,
 run via `.github/workflows/labels-bootstrap.yml` (`workflow_dispatch`).
 
@@ -255,8 +266,11 @@ Seven offline suites cover the fleet — six shell, one Python — all run in CI
 - `scripts/ralph/test_pr_ready.sh` stubs `gh` and pins every status token: CI
   classification from the **exit code** (8 ⇒ `pending`, never `ready`), the
   stale-verdict guard, the `do-not-auto-merge` hold — including that it resolves
-  the *last* issue link in the body and that an unreadable label answer fails
-  closed (exit 2, not "no hold") — the freshness guard (`CLEAN` is not proof of
+  the *last* issue link in the body, that it falls back to the bridge issue's
+  `<!-- dependabot-pr:<N> -->` marker (whole-marker match, every match checked,
+  bot lanes only) when Dependabot has rewritten that link away, and that an
+  unreadable label answer or an unprovable hold fails closed (exit 2, not "no
+  hold") — the freshness guard (`CLEAN` is not proof of
   being current) and its laziness (only a would-be-`ready` lane pays for the
   compare probe), the `ready-unreviewed` path, and the `changes-requested`
   split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting).
