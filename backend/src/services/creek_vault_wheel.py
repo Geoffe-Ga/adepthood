@@ -32,6 +32,7 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from domain.wheel import WheelItem, aspect_labels_by_stage, compute_wheel_balance
+from services.creek_vault_read import log_read_degraded
 
 # The wheel carries exactly one aspect per curriculum stage; a payload of any
 # other length is rejected outright.
@@ -103,16 +104,24 @@ def _usable_items(balance: VaultWheelBalance | None) -> list[WheelItem] | None:
 
 
 async def _read_balance(client: CreekVaultClient) -> VaultWheelBalance | None:
-    """Call the vault's wheel, mapping any seam error to ``None``.
+    """Call the vault's wheel, mapping any seam error to ``None`` and recording why.
 
     :class:`~domain.creek_vault.CreekVaultError` is the only thing the seam can
     raise: the adapter normalizes a malformed or refused payload into it exactly
     as it does an unreachable or unadvertised vault, so one ``except`` covers
     every way the call can fail to produce a wheel.
+
+    The caller-visible answer is unchanged -- still ``None``, still a silent
+    fallback to the local balance -- but the failure is now logged on the way
+    out, because this is the last point at which anything knows a vault read
+    failed at all. Only the ``except`` path logs: a vault that answered honestly
+    with an empty wheel has failed at nothing, and recording that as a degrade
+    would train an operator to ignore the one signal that means something.
     """
     try:
         return await client.wheel()
-    except CreekVaultError:
+    except CreekVaultError as error:
+        log_read_degraded(CreekCapability.WHEEL, error)
         return None
 
 

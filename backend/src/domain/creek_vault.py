@@ -106,19 +106,32 @@ def tier_ceiling_for(classification: str) -> VaultTierCeiling:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Deliberately closed: these four are the codes Creek has ratified, and they
+    Seven of the nine codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
     rendered, so a vault can never choose what text appears in adepthood's
-    exceptions or telemetry. Values are the wire strings, so they are contract
-    and must not be reworded casually.
+    exceptions or telemetry. That drop-unknown-strings property is exactly as it
+    was when the vocabulary was smaller; widening the set widens what we can
+    classify, never what a vault may put in front of an operator.
+
+    The two published codes deliberately absent are ``unauthenticated`` and
+    ``internal_error``. Neither adds anything a member would be read for: a
+    refused credential already classifies from its status class alone, and so
+    does a server fault, so parsing either code would only give two spellings of
+    a decision already made.
+
+    Values are the wire strings, so they are contract and must not be reworded
+    casually, and the member order is pinned by a test.
     """
 
     INVALID_REQUEST = "invalid_request"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     INCOMPATIBLE_VERSION = "incompatible_version"
     TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
+    PRIVACY_REFUSED = "privacy_refused"
+    NOT_FOUND = "not_found"
+    UNAVAILABLE = "unavailable"
 
 
 class CreekVaultError(RuntimeError):
@@ -137,7 +150,19 @@ class CreekVaultUnavailableError(CreekVaultError):
     exception. Its message is deliberately static and capability-named -- it
     must never interpolate the entry body or an API key, since exception
     strings surface in logs and tracebacks (privacy invariant).
+
+    ``code`` carries the vault's own reason when it named one we recognize, and
+    it lives on *this* type rather than on :class:`CreekVaultContractError`
+    because the codes it can hold (``unavailable``, ``temporarily_unavailable``)
+    are the vault reporting on **itself** rather than faulting the call we made.
+    It defaults to ``None``, which is what every purely transport-level failure
+    leaves it as: nothing answered, so nothing named a reason.
     """
+
+    def __init__(self, message: str, *, code: VaultErrorCode | None = None) -> None:
+        """Store the static message and, when the vault named one we know, its code."""
+        super().__init__(message)
+        self.code = code
 
 
 class CreekVaultContractError(CreekVaultError):
@@ -163,6 +188,29 @@ class CreekVaultContractError(CreekVaultError):
         """Store the static message and, when the vault named one we know, its code."""
         super().__init__(message)
         self.code = code
+
+
+class CreekVaultPayloadError(CreekVaultError):
+    """The vault answered, and its answer could not be read as the published shape.
+
+    The third of three sibling stories, and it exists because the other two were
+    being made to tell it. :class:`CreekVaultUnavailableError` means the vault
+    was not there; :class:`CreekVaultContractError` means a reachable vault
+    refused the call we made. This one means a reachable vault accepted the call,
+    answered successfully, and sent something adepthood cannot parse as the shape
+    Creek publishes -- a body that will not decode, a missing required field, or a
+    declared ceiling wider than the one we were willing to accept.
+
+    Keeping it apart is what makes a schema failure *observable* apart from vault
+    absence. Folded into unavailability -- as it was -- a vault bug worth
+    reporting upstream is indistinguishable from infrastructure worth restoring,
+    and only one of those two is anybody's to fix.
+
+    Same privacy discipline as the rest of the hierarchy: the message is static
+    and capability-named, and never interpolates the entry body, the credential,
+    or any vault-supplied string. The unreadable payload is precisely the input
+    least safe to quote.
+    """
 
 
 class CreekVaultAuthError(CreekVaultError):
@@ -352,8 +400,11 @@ class CreekVaultClient(Protocol):
         """Return a Wheel-of-Wholeness balance read from the vault's corpus.
 
         Degrades exactly like every other capability: a malformed, refused, or
-        otherwise unreadable payload is normalized to
-        :class:`CreekVaultUnavailableError` rather than surfacing a parse error.
+        otherwise unreadable payload is normalized into this module's error
+        hierarchy rather than surfacing a parse error -- an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, so the three stay countable apart.
         Domain-range validation of a well-formed balance belongs to the
         read/compute path that consumes it. The wheel is an optional read, never
         a write, so a caller that cannot obtain it falls back to computing the

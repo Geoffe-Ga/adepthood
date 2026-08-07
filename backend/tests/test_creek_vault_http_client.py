@@ -1,10 +1,11 @@
 """Tests for the HTTP/JSON Creek Vault adapter in services.creek_vault_client.
 
 Every case drives the adapter through an ``httpx.MockTransport`` handler, so no
-test touches a network or waits on real time. Two response shapes are asserted
-here: the capability document the handshake already parses, and the journal
-ingest exchange -- the one capability whose ``/v1`` shape Creek has ratified.
-Nothing beyond those two is invented.
+test touches a network or waits on real time. Three response shapes are asserted
+here: the capability document the handshake already parses, the journal ingest
+exchange, and the wheel read -- the capabilities whose ``/v1`` shapes Creek has
+ratified. Nothing beyond those is invented, and every wheel body is read from the
+vendored contract bundle rather than written out here.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from conftest import test_engine
+from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -34,6 +36,7 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
+    CreekVaultPayloadError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultErrorCode,
@@ -42,6 +45,7 @@ from domain.creek_vault import (
     VaultTierCeiling,
 )
 from main import app, lifespan
+from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
     _MAX_FRAGMENT_ID_LENGTH,
     _VAULT_HTTP_TIMEOUT,
@@ -62,7 +66,15 @@ from services.creek_vault_write import VaultWriteStatus, store_and_classify
 
 _VAULT_URL = "https://vault.example.test"
 
-_CAPABILITIES_URL = f"{_VAULT_URL}/v1/capabilities"
+_CAPABILITIES_PATH = "/v1/capabilities"
+
+_CAPABILITIES_URL = f"{_VAULT_URL}{_CAPABILITIES_PATH}"
+
+# The wheel is a whole-corpus aggregate rather than a resource, so it is read
+# from one collection-level URL carrying no parameters at all.
+_WHEEL_PATH = "/v1/wheel"
+
+_WHEEL_URL = f"{_VAULT_URL}{_WHEEL_PATH}"
 
 _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
@@ -358,6 +370,112 @@ class _SlowIngestHandler:
         return httpx.Response(HTTPStatus.OK, json=_ingest_payload())
 
 
+def _wheel_example(state: str) -> dict[str, object]:
+    """Return one vendored wheel example body, decoded fresh on every call.
+
+    Fresh because the callers below build malformed variants by editing what
+    they get back: the vendored file is read-only ground truth, and a shared
+    decoded object would let one test's mutation reach another's.
+    """
+    decoded = json.loads((BUNDLE_ROOT / f"examples/wheel/{state}.json").read_bytes())
+    assert isinstance(decoded, dict), state
+    return decoded
+
+
+def _wheel_frequencies(payload: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+    """Return the ten published Frequency entries of a wheel body."""
+    frequencies = payload["wheel"]
+    assert isinstance(frequencies, dict)
+    return {code: entry for code, entry in frequencies.items() if isinstance(entry, Mapping)}
+
+
+def _wheel_required_keys() -> tuple[str, ...]:
+    """Return the top-level fields Creek's wheel schema declares required."""
+    schema = json.loads((BUNDLE_ROOT / "schemas/WheelResponse.schema.json").read_bytes())
+    assert isinstance(schema, dict)
+    required = schema["required"]
+    assert isinstance(required, list)
+    return tuple(str(key) for key in required)
+
+
+def _wheel_with_ceiling(ceiling: str) -> dict[str, object]:
+    """Return the success example with only its echoed tier ceiling replaced."""
+    body = _wheel_example("success")
+    body["tier_ceiling"] = ceiling
+    return body
+
+
+def _wheel_without_key(key: str) -> dict[str, object]:
+    """Return the success example with one published required field removed."""
+    body = _wheel_example("success")
+    del body[key]
+    return body
+
+
+def _wheel_without_frequency(code: str) -> dict[str, object]:
+    """Return the success example with one Frequency deleted from a copy of its wheel."""
+    body = _wheel_example("success")
+    frequencies = _wheel_frequencies(body)
+    del frequencies[code]
+    body["wheel"] = frequencies
+    return body
+
+
+def _wheel_with_share(code: str, share: object) -> dict[str, object]:
+    """Return the success example with one Frequency's share replaced."""
+    body = _wheel_example("success")
+    frequencies = {name: dict(entry) for name, entry in _wheel_frequencies(body).items()}
+    frequencies[code]["share"] = share
+    body["wheel"] = frequencies
+    return body
+
+
+class _WheelRouteHandler:
+    """Route-aware handler: a healthy capability GET plus one scripted wheel GET.
+
+    Kept apart from :class:`_VaultRouteHandler` because the wheel is a different
+    route with a different failure vocabulary; sharing one handler would have
+    meant a method-and-path branch tree neither exchange needs.
+    """
+
+    def __init__(
+        self,
+        payload: object = None,
+        status: int = HTTPStatus.OK,
+        *,
+        text: str | None = None,
+        capabilities: Sequence[str] = (CreekCapability.WHEEL.value,),
+        wheel_error: Exception | None = None,
+    ) -> None:
+        """Store the advertised capabilities and the one scripted wheel answer."""
+        self._payload = payload
+        self._status = status
+        self._text = text
+        self._capabilities = list(capabilities)
+        self._wheel_error = wheel_error
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def wheel_requests(self) -> list[httpx.Request]:
+        """Return only the wheel reads this handler has served."""
+        return [request for request in self.requests if request.url.path == _WHEEL_PATH]
+
+    def _wheel_response(self) -> httpx.Response:
+        """Answer the scripted wheel body, raising the scripted transport failure instead."""
+        if self._wheel_error is not None:
+            raise self._wheel_error
+        if self._text is not None:
+            return httpx.Response(self._status, text=self._text)
+        return httpx.Response(self._status, json=self._payload)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, then answer the capability GET or the scripted wheel GET."""
+        self.requests.append(request)
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(HTTPStatus.OK, json=_handshake_payload(self._capabilities))
+        return self._wheel_response()
+
+
 async def _handshaken_client(
     handler: Handler | AsyncHandler,
     http_clients: ClientFactory,
@@ -428,12 +546,10 @@ async def http_clients() -> AsyncGenerator[ClientFactory, None]:
 
 
 async def _call_capability(client: HttpCreekVaultClient, capability: CreekCapability) -> object:
-    """Invoke the client method that implements ``capability``."""
+    """Invoke the client method that implements one of the still-unratified capabilities."""
     if capability is CreekCapability.CLASSIFY:
         return await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
-    if capability is CreekCapability.REFLECT:
-        return await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
-    return await client.wheel()
+    return await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
 
 
 @pytest.mark.asyncio
@@ -883,7 +999,6 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
     [
         CreekCapability.CLASSIFY,
         CreekCapability.REFLECT,
-        CreekCapability.WHEEL,
     ],
 )
 @pytest.mark.asyncio
@@ -891,11 +1006,11 @@ async def test_advertised_capabilities_are_still_refused(
     capability: CreekCapability,
     http_clients: ClientFactory,
 ) -> None:
-    """Journal is the one ratified capability; every other one is refused even when advertised.
+    """Journal and wheel are the ratified capabilities; the other two refuse when advertised.
 
     Their ``/v1`` payload shapes have not shipped, so an advertised
-    classify/reflect/wheel still degrades the caller onto its local pipeline
-    rather than guessing a wire format.
+    classify/reflect still degrades the caller onto its local pipeline rather
+    than guessing a wire format.
     """
     advertised = [
         CreekCapability.JOURNAL.value,
@@ -1176,6 +1291,32 @@ async def test_ingest_400_invalid_request_raises_a_contract_error(
     with pytest.raises(CreekVaultContractError) as exc_info:
         await client.ingest(_ingest_request())
     assert exc_info.value.code is VaultErrorCode.INVALID_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_ingest_not_found_code_stays_a_contract_fault(
+    http_clients: ClientFactory,
+) -> None:
+    """A routing code is adepthood's own bug, and learning to read it must not move it.
+
+    Creek publishes ``not_found`` for a path this server does not serve, which is
+    exactly the fault an uncoded 404 already reports. Teaching the error
+    vocabulary that code must therefore leave the ingest answer where it was: a
+    recognized code that fell into no contract set would silently reclassify a
+    wrong URL as an absent vault.
+    """
+    handler = _VaultRouteHandler(
+        [
+            _IngestReply(
+                status=HTTPStatus.NOT_FOUND,
+                payload=_error_payload(VaultErrorCode.NOT_FOUND.value),
+            )
+        ]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultContractError) as exc_info:
+        await client.ingest(_ingest_request())
+    assert exc_info.value.code is VaultErrorCode.NOT_FOUND
 
 
 @pytest.mark.parametrize(
@@ -1495,3 +1636,270 @@ async def test_write_path_ingests_over_http_end_to_end(
     assert outcome.status is VaultWriteStatus.INGESTED
     assert outcome.vault_ref == _FRAGMENT_ID
     assert _sent_ingest_body(handler)["tier"] == VaultTierCeiling.OPEN.value
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_success_projects_the_ratified_frequencies(
+    http_clients: ClientFactory,
+) -> None:
+    """Creek's published wheel body reads back as ten aspects carrying its own numbers.
+
+    ``F{n}`` is adepthood's stage ``n`` and the share is the fullness verbatim:
+    the adapter projects, it does not rescale, and a rounding step here would be
+    invisible in every rendered wheel afterwards.
+    """
+    published = _wheel_example("success")
+    frequencies = _wheel_frequencies(published)
+    handler = _WheelRouteHandler(published)
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    assert [aspect.stage_number for aspect in balance.aspects] == list(range(1, TOTAL_STAGES + 1))
+    for aspect in balance.aspects:
+        entry = frequencies[f"F{aspect.stage_number}"]
+        assert aspect.fullness == entry["share"]
+        assert aspect.aspect == entry["name"]
+
+    assert len(handler.wheel_requests) == 1
+    read = handler.wheel_requests[0]
+    assert read.method == "GET"
+    assert str(read.url) == _WHEEL_URL
+    assert read.url.query == b""
+    assert read.content == b""
+    assert read.headers["Authorization"] == f"Bearer {_API_KEY}"
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_requires_the_advertised_capability_without_egress(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that never advertised the wheel is refused locally, before any request."""
+    handler = _WheelRouteHandler(_wheel_example("success"))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+
+    with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
+        await client.wheel()
+
+    assert CreekCapability.WHEEL.value in str(exc_info.value)
+    assert handler.requests == []
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [VaultTierCeiling.INTIMATE.value, "not-a-tier"],
+    ids=["above_our_ceiling", "unrecognized_ceiling"],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_rejects_a_payload_whose_tier_echo_exceeds_our_ceiling(
+    ceiling: str,
+    http_clients: ClientFactory,
+) -> None:
+    """The echoed ceiling is verified, not trusted: a wider one discards the whole read.
+
+    The ratified surface publishes no way to declare a ceiling, so the only
+    control left is to check the one the vault says it applied. A tally counted
+    above the tier adepthood may ever see is not a wheel this app can render.
+    """
+    handler = _WheelRouteHandler(_wheel_with_ceiling(ceiling))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [VaultTierCeiling.OPEN.value, VaultTierCeiling.PERSONAL.value],
+    ids=["open", "personal"],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_accepts_both_admissible_tier_echoes(
+    ceiling: str,
+    http_clients: ClientFactory,
+) -> None:
+    """Both ceilings a remote caller may reach are admissible echoes, not just the default."""
+    assert _wheel_example("success")["tier_ceiling"] == VaultTierCeiling.OPEN.value
+    handler = _WheelRouteHandler(_wheel_with_ceiling(ceiling))
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    assert len(balance.aspects) == TOTAL_STAGES
+
+
+@pytest.mark.parametrize(
+    ("state", "status", "expected", "code"),
+    [
+        pytest.param(
+            "refusal",
+            HTTPStatus.FORBIDDEN,
+            CreekVaultContractError,
+            VaultErrorCode.PRIVACY_REFUSED,
+            id="refusal_403_is_a_privacy_refusal",
+        ),
+        pytest.param(
+            "malformed-input",
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            CreekVaultContractError,
+            VaultErrorCode.INVALID_REQUEST,
+            id="malformed_input_422",
+        ),
+        pytest.param(
+            "incompatible-version",
+            HTTPStatus.CONFLICT,
+            CreekVaultContractError,
+            VaultErrorCode.INCOMPATIBLE_VERSION,
+            id="incompatible_version_409",
+        ),
+        pytest.param(
+            "unavailable-service",
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            CreekVaultUnavailableError,
+            VaultErrorCode.UNAVAILABLE,
+            id="unavailable_service_503",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_error_states_are_classified_from_the_published_code(
+    state: str,
+    status: HTTPStatus,
+    expected: type[CreekVaultError],
+    code: VaultErrorCode,
+    http_clients: ClientFactory,
+) -> None:
+    """Every published wheel error cell is classified from its code, never from its status.
+
+    The 403 is the whole reason for that order. Creek publishes
+    ``privacy_refused`` there, and deciding on the status alone would report a
+    refusal as a rejected credential -- sending an operator to rotate a key that
+    was never refused.
+    """
+    handler = _WheelRouteHandler(_wheel_example(state), status)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(expected) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is expected
+    assert getattr(exc_info.value, "code", None) is code
+    assert not isinstance(exc_info.value, CreekVaultAuthError)
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_uncoded_credential_rejection_is_an_auth_error(
+    http_clients: ClientFactory,
+) -> None:
+    """With no readable code, a refused credential is still a credential to rotate."""
+    handler = _WheelRouteHandler({"detail": "denied"}, HTTPStatus.UNAUTHORIZED)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultAuthError) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is CreekVaultAuthError
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(
+            _WheelRouteHandler(text="<html><body>Bad Gateway</body></html>"),
+            id="body_is_not_json",
+        ),
+        pytest.param(_WheelRouteHandler([1, 2, 3]), id="json_is_not_an_object"),
+        pytest.param(
+            _WheelRouteHandler(_wheel_without_frequency("F7")),
+            id="nine_frequencies_instead_of_ten",
+        ),
+        pytest.param(_WheelRouteHandler(_wheel_with_share("F3", "0.1")), id="share_is_a_string"),
+        *[
+            pytest.param(_WheelRouteHandler(_wheel_without_key(key)), id=f"missing_{key}")
+            for key in _wheel_required_keys()
+        ],
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_malformed_success_bodies_are_payload_errors(
+    handler: _WheelRouteHandler,
+    http_clients: ClientFactory,
+) -> None:
+    """A 200 adepthood cannot read is a payload fault, all-or-nothing.
+
+    One unusable Frequency rejects the whole read rather than yielding a ring
+    with a hole in it, and a missing published field is not completed with a
+    default the vault never sent.
+    """
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_transport_failure_is_unavailable_not_payload(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that was not there is not a vault that answered badly.
+
+    This is the pair that makes the new payload type worth having: schema failure
+    and vault absence must stay separately countable, since one is a vault bug to
+    report upstream and the other is infrastructure to restore.
+    """
+    handler = _WheelRouteHandler(wheel_error=httpx.ConnectError("refused"))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is CreekVaultUnavailableError
+    assert not isinstance(exc_info.value, CreekVaultPayloadError)
+
+
+@pytest.mark.parametrize(
+    ("handler", "expected"),
+    [
+        pytest.param(
+            _WheelRouteHandler({"status": _HOSTILE_VAULT_CODE}),
+            CreekVaultPayloadError,
+            id="payload",
+        ),
+        pytest.param(
+            _WheelRouteHandler(
+                _error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNPROCESSABLE_ENTITY
+            ),
+            CreekVaultContractError,
+            id="contract",
+        ),
+        pytest.param(
+            _WheelRouteHandler(_error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNAUTHORIZED),
+            CreekVaultAuthError,
+            id="auth",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_failures_never_carry_vault_text_or_the_credential(
+    handler: _WheelRouteHandler,
+    expected: type[CreekVaultError],
+    http_clients: ClientFactory,
+) -> None:
+    """No wheel failure echoes the credential or a string the vault chose.
+
+    An unrecognized code is dropped rather than stored, and nothing rides along
+    as a cause or a context: an exception raised inside a parse ``except`` would
+    carry the vault's own decoder text into every traceback that renders it.
+    """
+    client = await _handshaken_client(handler, http_clients, _SENTINEL_KEY)
+
+    with pytest.raises(expected) as exc_info:
+        await client.wheel()
+
+    error = exc_info.value
+    for rendered in (str(error), repr(error)):
+        assert _SENTINEL_KEY not in rendered
+        assert _HOSTILE_CODE_SENTINEL not in rendered
+        assert "\r\n" not in rendered
+    assert error.__cause__ is None
+    assert error.__context__ is None

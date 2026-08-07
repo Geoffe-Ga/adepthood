@@ -1,10 +1,21 @@
-"""Unit tests for the Creek Vault wheel-of-wholeness seam."""
+"""Unit tests for the Creek Vault wheel-of-wholeness seam.
+
+The cases that need a real wire body read it from the vendored Creek contract
+bundle rather than writing one out, so a wheel this suite claims the read path
+accepts is a wheel Creek actually publishes.
+"""
 
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import AsyncGenerator, Callable
 from datetime import date
+from http import HTTPStatus
 
+import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.constants import TOTAL_STAGES
@@ -12,9 +23,13 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
+    CreekVaultPayloadError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
     VaultTierCeiling,
@@ -27,6 +42,14 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.user import User
+from observability import trace_id_var
+from scripts.creek_contract_drift import BUNDLE_ROOT
+from services.creek_vault_client import (
+    HttpCreekVaultClient,
+    LocalFallbackCreekVaultClient,
+    _wheel_aspects,
+)
+from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
 from services.creek_vault_wheel import (
     VAULT_WHEEL_EXPECTED_ASPECTS,
     VAULT_WHEEL_FULLNESS_MAX,
@@ -48,6 +71,24 @@ _CANONICAL_ASPECTS = [
     "Nondual",
     "Nondual",
 ]
+
+_VAULT_URL = "https://vault.example.test"
+_API_KEY = "creek-vault-wheel-key"  # pragma: allowlist secret
+_CAPABILITIES_PATH = "/v1/capabilities"
+_ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
+
+# A vault error message distinct enough to spot in any formatted log record. A
+# real one is static and content-free, but this seam must hold even for a
+# transport that someday builds its message from what the vault said.
+_SENTINEL_VAULT_TEXT = "SENTINEL_VAULT_ERROR_TEXT_DO_NOT_LEAK"
+
+# Everything ``logging`` puts on a record itself, the two a formatter adds when
+# the capture handler renders one, and the correlation id the app's own filter
+# stamps on every record once ``main`` has been imported. Whatever is left is
+# exactly what the read path chose to attach.
+_STANDARD_RECORD_FIELDS = frozenset(
+    logging.LogRecord("n", logging.WARNING, "p", 0, "m", None, None).__dict__
+) | {"message", "asctime", trace_id_var.name}
 
 
 class RecordingWheelVaultClient:
@@ -254,6 +295,77 @@ async def _seed_habit_with_completion(
     await session.refresh(goal)
     session.add(GoalCompletion(goal_id=goal.id, user_id=user_id, completed_units=1))
     await session.commit()
+
+
+def _wheel_example(state: str) -> dict[str, object]:
+    """Return one vendored wheel example body, decoded fresh on every call."""
+    decoded = json.loads((BUNDLE_ROOT / f"examples/wheel/{state}.json").read_bytes())
+    assert isinstance(decoded, dict), state
+    return decoded
+
+
+def _wheel_frequencies(payload: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Return the ten published Frequency entries of a wheel body."""
+    frequencies = payload["wheel"]
+    assert isinstance(frequencies, dict)
+    return {code: entry for code, entry in frequencies.items() if isinstance(entry, dict)}
+
+
+def _published_shares(payload: dict[str, object]) -> list[object]:
+    """Return a wheel body's ten shares in canonical stage order."""
+    frequencies = _wheel_frequencies(payload)
+    return [frequencies[f"F{n}"]["share"] for n in range(1, TOTAL_STAGES + 1)]
+
+
+def _capability_document() -> dict[str, object]:
+    """Build the handshake document a vault advertising only the wheel would serve."""
+    return {
+        "available": True,
+        "capabilities": [CreekCapability.WHEEL.value],
+        "contract_version": CONTRACT_VERSION,
+        "ontology_version": _ONTOLOGY_VERSION,
+        "attestation": None,
+    }
+
+
+def _wheel_handler(payload: object) -> Callable[[httpx.Request], httpx.Response]:
+    """Return a handler answering the capability probe, then one wheel body."""
+
+    def _handle(request: httpx.Request) -> httpx.Response:
+        """Answer the capability GET with a wheel-advertising document, else the wheel."""
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(HTTPStatus.OK, json=_capability_document())
+        return httpx.Response(HTTPStatus.OK, json=payload)
+
+    return _handle
+
+
+@pytest_asyncio.fixture
+async def wheel_clients() -> AsyncGenerator[Callable[[object], HttpCreekVaultClient], None]:
+    """Yield a factory for MockTransport-backed vault clients serving one wheel body."""
+    created: list[httpx.AsyncClient] = []
+
+    def _build(payload: object) -> HttpCreekVaultClient:
+        """Build one in-memory client whose vault answers ``payload`` for the wheel."""
+        http = httpx.AsyncClient(transport=httpx.MockTransport(_wheel_handler(payload)))
+        created.append(http)
+        return HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+
+    yield _build
+    for http in created:
+        await http.aclose()
+
+
+def _degrade_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return every captured record carrying the read path's static degrade event."""
+    return [record for record in caplog.records if record.getMessage() == _DEGRADED_EVENT]
+
+
+def _structured_fields(record: logging.LogRecord) -> dict[str, object]:
+    """Return only the fields a record carries beyond a bare LogRecord's own."""
+    return {
+        key: value for key, value in record.__dict__.items() if key not in _STANDARD_RECORD_FIELDS
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -524,3 +636,158 @@ async def test_select_wheel_balance_falls_back_on_an_all_zero_vault_wheel(
     assert any(item["fullness"] > VAULT_WHEEL_FULLNESS_MIN for item in expected)
     assert result == expected
     assert client.wheel_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Read-path observability, and the vendored wire body end to end
+# ---------------------------------------------------------------------------
+
+
+def test_vault_read_degrade_reason_wire_values_are_stable() -> None:
+    """The read path's degrade reasons carry the exact strings telemetry will count."""
+    assert [reason.value for reason in VaultReadDegradeReason] == [
+        "payload",
+        "contract",
+        "auth",
+        "unsupported_capability",
+        "unavailable",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "reason", "code"),
+    [
+        pytest.param(
+            CreekVaultPayloadError(_SENTINEL_VAULT_TEXT),
+            VaultReadDegradeReason.PAYLOAD,
+            None,
+            id="payload",
+        ),
+        pytest.param(
+            CreekVaultContractError(_SENTINEL_VAULT_TEXT, code=VaultErrorCode.PRIVACY_REFUSED),
+            VaultReadDegradeReason.CONTRACT,
+            VaultErrorCode.PRIVACY_REFUSED,
+            id="contract",
+        ),
+        pytest.param(
+            CreekVaultAuthError(_SENTINEL_VAULT_TEXT),
+            VaultReadDegradeReason.AUTH,
+            None,
+            id="auth",
+        ),
+        pytest.param(
+            CreekVaultUnavailableError(_SENTINEL_VAULT_TEXT),
+            VaultReadDegradeReason.UNAVAILABLE,
+            None,
+            id="unavailable",
+        ),
+        pytest.param(
+            CreekCapabilityUnsupportedError(_SENTINEL_VAULT_TEXT),
+            VaultReadDegradeReason.UNSUPPORTED_CAPABILITY,
+            None,
+            id="unsupported_capability",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_vault_read_degrade_is_logged_with_a_reason_and_no_content(
+    error: Exception,
+    reason: VaultReadDegradeReason,
+    code: VaultErrorCode | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each way a wheel read fails logs one static WARNING naming a reason and nothing else.
+
+    The user sees one silent fallback either way -- that is the point of
+    degrading -- so the reasons exist purely to keep the failures countable
+    apart. A payload fault is a vault bug to report upstream and an unavailable
+    vault is infrastructure to restore, and a single shared reason would make
+    those two indistinguishable in the only place anyone can see them.
+    """
+    caplog.set_level(logging.DEBUG)
+    client = RecordingWheelVaultClient(wheel_error=error)
+
+    assert await fetch_vault_wheel(client) is None
+
+    records = _degrade_records(caplog)
+    assert len(records) == 1
+    expected: dict[str, object] = {
+        "capability": CreekCapability.WHEEL.value,
+        "reason": reason.value,
+    }
+    if code is not None:
+        expected["code"] = code.value
+    assert records[0].levelno == logging.WARNING
+    assert _structured_fields(records[0]) == expected
+    assert _SENTINEL_VAULT_TEXT not in caplog.text
+    assert _SENTINEL_VAULT_TEXT not in str(records[0].__dict__)
+
+
+@pytest.mark.asyncio
+async def test_empty_corpus_wheel_falls_back_to_local_without_a_degrade_log(
+    caplog: pytest.LogCaptureFixture,
+    wheel_clients: Callable[[object], HttpCreekVaultClient],
+) -> None:
+    """A freshly-initialised vault is a legitimate answer, so it is not a degrade at all.
+
+    Creek's empty corpus is an all-zero wheel served at 200. The read path still
+    falls back -- an all-zero ring would blank a Map the local balance can fill
+    -- but nothing failed, and recording a degrade here would train an operator
+    to ignore the one signal that means something.
+    """
+    caplog.set_level(logging.DEBUG)
+    published = _wheel_example("empty")
+    assert set(_published_shares(published)) == {VAULT_WHEEL_FULLNESS_MIN}
+
+    assert await fetch_vault_wheel(wheel_clients(published)) is None
+
+    assert _degrade_records(caplog) == []
+
+
+def test_frequency_to_stage_projection_is_the_named_mapping() -> None:
+    """The projection is a named function mapping F{n} onto stage n, verbatim.
+
+    Separately testable on purpose: the whole vault wheel rests on this one
+    correspondence between Creek's Frequency keys and adepthood's stage numbers,
+    and a projection reachable only through a transport is a projection nobody
+    checks directly.
+    """
+    frequencies = _wheel_frequencies(_wheel_example("success"))
+
+    aspects = _wheel_aspects(frequencies)
+
+    assert [aspect.stage_number for aspect in aspects] == list(range(1, TOTAL_STAGES + 1))
+    for aspect in aspects:
+        entry = frequencies[f"F{aspect.stage_number}"]
+        assert aspect.aspect == entry["name"]
+        assert aspect.fullness == entry["share"]
+
+
+@pytest.mark.asyncio
+async def test_vault_wheel_and_local_wheel_are_not_conflated(
+    db_session: AsyncSession,
+    wheel_clients: Callable[[object], HttpCreekVaultClient],
+) -> None:
+    """The two wheels are different concepts, not two spellings of one.
+
+    They share adepthood's Aspect vocabulary and nothing else: Creek's Frequency
+    names never survive to a rendered wheel, the two fullness vectors disagree,
+    and neither result mixes a number from the other source.
+    """
+    await _seed_all_stages(db_session)
+    user_id = await _make_user(db_session)
+    await _seed_habit_with_completion(db_session, user_id, stage_number=4)
+    published = _wheel_example("success")
+    shares = _published_shares(published)
+
+    from_vault = await select_wheel_balance(wheel_clients(published), db_session, user_id)
+    from_local = await select_wheel_balance(LocalFallbackCreekVaultClient(), db_session, user_id)
+
+    curriculum = set(_CANONICAL_ASPECTS)
+    creek_names = {str(entry["name"]) for entry in _wheel_frequencies(published).values()}
+    assert {item["aspect"] for item in from_vault} <= curriculum
+    assert {item["aspect"] for item in from_local} <= curriculum
+    assert curriculum.isdisjoint(creek_names)
+    assert [item["fullness"] for item in from_vault] == shares
+    assert [item["fullness"] for item in from_local] != shares
+    assert any(item["fullness"] > VAULT_WHEEL_FULLNESS_MIN for item in from_local)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     TIER_CEILING_BY_CLASSIFICATION,
     CreekCapability,
+    CreekVaultPayloadError,
     HandshakeResult,
     VaultErrorCode,
     VaultIngestAction,
@@ -21,6 +23,22 @@ from domain.creek_vault import (
     tier_ceiling_for,
 )
 from models.journal_entry import JournalClassification
+from scripts.creek_contract_drift import BUNDLE_ROOT
+
+# Creek's error vocabulary, closed at contract 0.2 and published as an enum in
+# the vendored envelope schema. Read at runtime rather than restated, so a code
+# adepthood invents is caught against the bundle instead of against a copy.
+_ERROR_ENVELOPE_SCHEMA = "schemas/ErrorEnvelope.schema.json"
+_PUBLISHED_ERROR_CODE_COUNT = 9
+
+
+def _published_error_codes() -> frozenset[str]:
+    """Return the wire error codes Creek publishes, read from the vendored schema."""
+    schema = json.loads((BUNDLE_ROOT / _ERROR_ENVELOPE_SCHEMA).read_bytes())
+    assert isinstance(schema, dict)
+    published = schema["$defs"]["ErrorCode"]["enum"]
+    assert isinstance(published, list)
+    return frozenset(str(code) for code in published)
 
 
 class TestTierCeilingMapping:
@@ -115,13 +133,16 @@ class TestRatifiedWireVocabularies:
     every write rather than failing loudly, so the members are pinned in order.
     """
 
-    def test_error_codes_are_the_four_ratified_strings(self) -> None:
-        """The error vocabulary is exactly the four codes Creek ratified, in order."""
+    def test_error_codes_are_the_published_strings_adepthood_parses(self) -> None:
+        """The error vocabulary is exactly the published codes adepthood reads, in order."""
         assert [code.value for code in VaultErrorCode] == [
             "invalid_request",
             "unsupported_capability",
             "incompatible_version",
             "temporarily_unavailable",
+            "privacy_refused",
+            "not_found",
+            "unavailable",
         ]
 
     def test_ingest_actions_are_the_three_upsert_outcomes(self) -> None:
@@ -198,6 +219,49 @@ class TestErrorHierarchy:
     def test_capability_unsupported_error_is_creek_vault_error(self) -> None:
         """CreekCapabilityUnsupportedError subclasses CreekVaultError."""
         assert issubclass(creek_vault.CreekCapabilityUnsupportedError, creek_vault.CreekVaultError)
+
+
+def test_payload_error_is_a_vault_error_distinct_from_unavailable_and_contract() -> None:
+    """An unreadable answer is its own fault: the vault was there, and spoke nonsense.
+
+    It must stay outside both neighbouring types in both directions -- "the vault
+    was not there" and "the vault refused our call" send an operator somewhere
+    else entirely -- while still being caught by the one hierarchy every read
+    service degrades on.
+    """
+    assert issubclass(CreekVaultPayloadError, creek_vault.CreekVaultError)
+    assert not issubclass(CreekVaultPayloadError, creek_vault.CreekVaultUnavailableError)
+    assert not issubclass(CreekVaultPayloadError, creek_vault.CreekVaultContractError)
+    assert not issubclass(creek_vault.CreekVaultUnavailableError, CreekVaultPayloadError)
+    assert not issubclass(creek_vault.CreekVaultContractError, CreekVaultPayloadError)
+    with pytest.raises(creek_vault.CreekVaultError):
+        raise CreekVaultPayloadError("creek vault returned an unreadable response")
+
+
+def test_vault_error_code_covers_the_published_codes_we_classify() -> None:
+    """The codes the read path classifies on are Creek's own, spelled Creek's way.
+
+    The subset assertion is the load-bearing half: a member adepthood invented
+    would never match a wire string, so it would silently drop every response it
+    was meant to classify.
+    """
+    assert VaultErrorCode.PRIVACY_REFUSED.value == "privacy_refused"
+    assert VaultErrorCode.NOT_FOUND.value == "not_found"
+    assert VaultErrorCode.UNAVAILABLE.value == "unavailable"
+
+    published = _published_error_codes()
+    assert len(published) == _PUBLISHED_ERROR_CODE_COUNT
+    assert {code.value for code in VaultErrorCode} <= published
+
+
+def test_unavailable_error_carries_an_optional_code() -> None:
+    """An absent vault may name its own reason, and defaults to naming none."""
+    uncoded = creek_vault.CreekVaultUnavailableError("creek vault call failed: creek.wheel")
+    coded = creek_vault.CreekVaultUnavailableError(
+        "creek vault call failed: creek.wheel", code=VaultErrorCode.UNAVAILABLE
+    )
+    assert uncoded.code is None
+    assert coded.code is VaultErrorCode.UNAVAILABLE
 
 
 def test_vault_ingest_request_round_trips_entry_id_and_tier() -> None:

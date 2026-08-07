@@ -287,6 +287,15 @@ capability is still used for the others it supports:
   (`_carries_signal`, `creek_vault_wheel.py:84-94`). Any of these causes
   `select_wheel_balance` to fall back to computing the balance locally
   (`creek_vault_wheel.py:161-174`).
+- **WHEEL over `/v1`** — the ratified HTTP surface publishes no way to
+  declare a tier ceiling at all (no field, no parameter), so the read
+  runs at the server's own `open` default rather than the `personal`
+  the MCP path asks for. Adepthood verifies the ceiling the vault
+  echoes back instead, and refuses a payload claiming a wider one. The
+  documented consequence of `open` therefore applies: a young or
+  wholly-unclassified corpus reads back as an all-zero wheel, which is
+  a valid answer rather than a failure, and falls back to the
+  locally-computed balance by the same `_carries_signal` rule above.
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.
