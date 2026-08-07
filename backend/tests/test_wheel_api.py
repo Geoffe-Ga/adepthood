@@ -342,7 +342,7 @@ async def test_wheel_endpoint_uses_vault_values_when_connected(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A connected, valid vault's fullness values win over local math."""
+    """A connected vault's fullness wins over local math, under adepthood's own labels."""
     await _seed_all_stages(db_session)
     headers, user_id = await _signup(async_client, "wheel_vault_connected")
     # Local computation would give stage 1 fullness == 0.0 (no engagement); the
@@ -360,9 +360,11 @@ async def test_wheel_endpoint_uses_vault_values_when_connected(
     assert resp.status_code == HTTPStatus.OK
     aspects = resp.json()["aspects"]
     assert len(aspects) == _TOTAL_STAGES
+    vault_labels = {aspect.aspect for aspect in vault_aspects}
     for item in aspects:
         assert item["fullness"] == 0.42
-        assert item["aspect"] == f"VaultAspect-{item['stage_number']}"
+        assert item["aspect"] == _CANONICAL_ASPECTS[item["stage_number"] - 1]
+    assert vault_labels.isdisjoint({item["aspect"] for item in aspects})
 
 
 @pytest.mark.asyncio

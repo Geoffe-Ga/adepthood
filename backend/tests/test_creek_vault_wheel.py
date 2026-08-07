@@ -1,16 +1,10 @@
-"""Unit tests for the Creek Vault wheel-of-wholeness seam.
-
-RED: ``services.creek_vault_wheel`` does not exist yet, so every test here
-fails at collection with a ``ModuleNotFoundError`` until ``fetch_vault_wheel``
-and ``select_wheel_balance`` are implemented.
-"""
+"""Unit tests for the Creek Vault wheel-of-wholeness seam."""
 
 from __future__ import annotations
 
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.constants import TOTAL_STAGES
@@ -33,7 +27,6 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.user import User
-from schemas.wheel import WheelAspect
 from services.creek_vault_wheel import (
     VAULT_WHEEL_EXPECTED_ASPECTS,
     VAULT_WHEEL_FULLNESS_MAX,
@@ -147,15 +140,12 @@ def _override_field(
     return tuple(base)
 
 
-def _malformed_validation_error() -> ValidationError:
-    """Obtain a real pydantic.ValidationError from the wheel adapter's response schema."""
-    try:
-        WheelAspect.model_validate(
-            {"stage_number": "not-a-number", "aspect": "Body", "fullness": 0.5}
-        )
-    except ValidationError as exc:
-        return exc
-    raise AssertionError("expected a ValidationError from a malformed payload")
+def _zero_fullness_aspects() -> tuple[VaultWheelAspect, ...]:
+    """Ten valid aspects whose fullness is zero everywhere, as an unclassified corpus reads."""
+    return tuple(
+        VaultWheelAspect(stage_number=n, aspect=f"Aspect-{n}", fullness=VAULT_WHEEL_FULLNESS_MIN)
+        for n in range(1, VAULT_WHEEL_EXPECTED_ASPECTS + 1)
+    )
 
 
 _INVALID_PAYLOADS: list[tuple[str, tuple[VaultWheelAspect, ...]]] = [
@@ -202,6 +192,24 @@ async def _seed_all_stages(session: AsyncSession) -> None:
     """Insert all ten CourseStage rows."""
     for n in range(1, TOTAL_STAGES + 1):
         session.add(CourseStage(**_stage_data(n)))
+    await session.commit()
+
+
+async def _seed_stages_except(session: AsyncSession, skipped: int) -> None:
+    """Insert every CourseStage row but the one for ``skipped``."""
+    for n in range(1, TOTAL_STAGES + 1):
+        if n != skipped:
+            session.add(CourseStage(**_stage_data(n)))
+    await session.commit()
+
+
+async def _seed_stages_with_blank_aspect(session: AsyncSession, blank_stage: int) -> None:
+    """Insert all ten CourseStage rows, labelling ``blank_stage`` with whitespace only."""
+    for n in range(1, TOTAL_STAGES + 1):
+        data = _stage_data(n)
+        if n == blank_stage:
+            data["aspect"] = "   "
+        session.add(CourseStage(**data))
     await session.commit()
 
 
@@ -324,12 +332,11 @@ async def test_fetch_vault_wheel_returns_none_when_wheel_unsupported() -> None:
     [
         CreekVaultUnavailableError("creek vault call failed: creek.wheel"),
         CreekCapabilityUnsupportedError("capability not advertised: creek.wheel"),
-        _malformed_validation_error(),
     ],
-    ids=["unavailable_error", "capability_unsupported_error", "field_validation_error"],
+    ids=["unavailable_error", "capability_unsupported_error"],
 )
 async def test_fetch_vault_wheel_returns_none_on_wheel_call_error(error: Exception) -> None:
-    """A CreekVaultError or a pydantic ValidationError from wheel() both fall back to None."""
+    """Every CreekVaultError the seam can raise from wheel() falls back to None."""
     client = RecordingWheelVaultClient(wheel_error=error)
 
     result = await fetch_vault_wheel(client)
@@ -356,6 +363,45 @@ async def test_fetch_vault_wheel_returns_none_on_invalid_payload(
     result = await fetch_vault_wheel(client)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_vault_wheel_returns_none_when_no_aspect_is_positive() -> None:
+    """An all-zero wheel is well-formed but carries no signal, so the read path falls back."""
+    client = RecordingWheelVaultClient(
+        wheel_result=VaultWheelBalance(aspects=_zero_fullness_aspects())
+    )
+
+    result = await fetch_vault_wheel(client)
+
+    assert result is None
+    assert client.wheel_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_vault_wheel_accepts_a_single_positive_aspect_among_zeros() -> None:
+    """One positive fullness among nine zeros is signal enough to keep the vault's wheel."""
+    positive_stage = 3
+    positive_fullness = 0.4
+    aspects = tuple(
+        VaultWheelAspect(
+            stage_number=aspect.stage_number,
+            aspect=aspect.aspect,
+            fullness=positive_fullness
+            if aspect.stage_number == positive_stage
+            else VAULT_WHEEL_FULLNESS_MIN,
+        )
+        for aspect in _zero_fullness_aspects()
+    )
+    client = RecordingWheelVaultClient(wheel_result=VaultWheelBalance(aspects=aspects))
+
+    result = await fetch_vault_wheel(client)
+
+    assert result is not None
+    assert [item["fullness"] for item in result] == [
+        positive_fullness if n == positive_stage else VAULT_WHEEL_FULLNESS_MIN
+        for n in range(1, TOTAL_STAGES + 1)
+    ]
 
 
 @pytest.mark.asyncio
@@ -404,10 +450,10 @@ async def test_select_wheel_balance_falls_back_to_local_when_vault_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_select_wheel_balance_returns_vault_items_when_valid(
+async def test_select_wheel_balance_relabels_vault_items_with_course_stage_aspects(
     db_session: AsyncSession,
 ) -> None:
-    """A valid vault payload wins over the local computation."""
+    """A valid vault wheel keeps its fullness but is relabelled with adepthood's own aspects."""
     await _seed_all_stages(db_session)
     user_id = await _make_user(db_session)
     aspects = _valid_aspects()
@@ -416,7 +462,65 @@ async def test_select_wheel_balance_returns_vault_items_when_valid(
     result = await select_wheel_balance(client, db_session, user_id)
 
     assert result == [
-        {"stage_number": a.stage_number, "aspect": a.aspect, "fullness": a.fullness}
+        {
+            "stage_number": a.stage_number,
+            "aspect": _CANONICAL_ASPECTS[a.stage_number - 1],
+            "fullness": a.fullness,
+        }
         for a in aspects
     ]
+    rendered_labels = {item["aspect"] for item in result}
+    assert rendered_labels.isdisjoint({a.aspect for a in aspects})
+    assert client.wheel_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_select_wheel_balance_falls_back_when_a_course_stage_row_is_missing(
+    db_session: AsyncSession,
+) -> None:
+    """No local label for one stage discards the whole vault wheel, never half of it."""
+    await _seed_stages_except(db_session, skipped=6)
+    user_id = await _make_user(db_session)
+    client = RecordingWheelVaultClient(wheel_result=VaultWheelBalance(aspects=_valid_aspects()))
+
+    expected = await compute_wheel_balance(db_session, user_id)
+    result = await select_wheel_balance(client, db_session, user_id)
+
+    assert result == expected
+    assert client.wheel_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_select_wheel_balance_falls_back_when_a_course_stage_label_is_blank(
+    db_session: AsyncSession,
+) -> None:
+    """A whitespace-only local label discards the whole vault wheel, never half of it."""
+    await _seed_stages_with_blank_aspect(db_session, blank_stage=6)
+    user_id = await _make_user(db_session)
+    client = RecordingWheelVaultClient(wheel_result=VaultWheelBalance(aspects=_valid_aspects()))
+
+    expected = await compute_wheel_balance(db_session, user_id)
+    result = await select_wheel_balance(client, db_session, user_id)
+
+    assert result == expected
+    assert client.wheel_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_select_wheel_balance_falls_back_on_an_all_zero_vault_wheel(
+    db_session: AsyncSession,
+) -> None:
+    """An all-zero vault wheel is fetched, then discarded for the local computation."""
+    await _seed_all_stages(db_session)
+    user_id = await _make_user(db_session)
+    await _seed_habit_with_completion(db_session, user_id, stage_number=4)
+    client = RecordingWheelVaultClient(
+        wheel_result=VaultWheelBalance(aspects=_zero_fullness_aspects())
+    )
+
+    expected = await compute_wheel_balance(db_session, user_id)
+    result = await select_wheel_balance(client, db_session, user_id)
+
+    assert any(item["fullness"] > VAULT_WHEEL_FULLNESS_MIN for item in expected)
+    assert result == expected
     assert client.wheel_calls == 1
