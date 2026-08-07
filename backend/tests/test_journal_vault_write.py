@@ -29,6 +29,8 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflection,
+    VaultReflectionStatus,
     VaultTierCeiling,
     VaultWheelBalance,
 )
@@ -54,6 +56,21 @@ async def _entry_row(db_session: AsyncSession, entry_id: int) -> JournalEntry:
     """Fetch the persisted JournalEntry row by id."""
     result = await db_session.execute(select(JournalEntry).where(col(JournalEntry.id) == entry_id))
     return result.scalar_one()
+
+
+def _empty_reflection() -> VaultReflection:
+    """Return the reflection an unexercised reflect path answers with.
+
+    The vault said nothing, successfully -- which is a different fact from an
+    unreachable one, and this path asserts neither.
+    """
+    return VaultReflection(
+        status=VaultReflectionStatus.EMPTY,
+        notes=(),
+        essay=None,
+        essay_grounded=False,
+        routed_tier=VaultTierCeiling.OPEN,
+    )
 
 
 class SequencedVaultClient:
@@ -101,9 +118,9 @@ class SequencedVaultClient:
         """Return a fixed classification tag set."""
         return VaultClassification(tags=("courage",))
 
-    async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> str:
+    async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Return an empty reflection (unused by the write path)."""
-        return ""
+        return _empty_reflection()
 
     async def wheel(self) -> VaultWheelBalance:
         """Return an empty wheel balance (unused by the write path)."""

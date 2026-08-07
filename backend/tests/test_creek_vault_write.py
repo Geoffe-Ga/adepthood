@@ -26,6 +26,8 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflection,
+    VaultReflectionStatus,
     VaultTierCeiling,
     VaultWheelBalance,
 )
@@ -50,6 +52,21 @@ _SENTINEL_BODY = "SENTINEL_JOURNAL_BODY_DO_NOT_LOG"
 _SENTINEL_ERROR_TEXT = "SENTINEL_VAULT_ERROR_TEXT_DO_NOT_LOG"
 
 _DEGRADED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
+
+
+def _empty_reflection() -> VaultReflection:
+    """Return the reflection an unexercised reflect path answers with.
+
+    The vault said nothing, successfully -- which is a different fact from an
+    unreachable one, and this path asserts neither.
+    """
+    return VaultReflection(
+        status=VaultReflectionStatus.EMPTY,
+        notes=(),
+        essay=None,
+        essay_grounded=False,
+        routed_tier=VaultTierCeiling.OPEN,
+    )
 
 
 class RecordingVaultClient:
@@ -107,10 +124,10 @@ class RecordingVaultClient:
             raise self._classify
         return self._classify
 
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
-        """Record the reflect call and return an empty string (unused here)."""
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
+        """Record the reflect call and answer with an empty reflection (unused here)."""
         self.calls.append(("reflect", (body, tier_ceiling)))
-        return ""
+        return _empty_reflection()
 
     async def wheel(self) -> VaultWheelBalance:
         """Record the wheel call and return an empty balance (unused here)."""

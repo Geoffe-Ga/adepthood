@@ -29,12 +29,11 @@ Re-vendoring the bundle
 The strict-xfail tripwire
 -------------------------
 
-Three divergences separate today's client from Creek's ratified documents. The
-client reads a top-level ``available`` where Creek nests ``vault.available``. It
-maps advertised capability names through ``CreekCapability``, whose ``creek.*``
-values share no member with Creek's published names. And its error vocabulary
-has no ``privacy_refused`` and no ``unavailable``, so it drops both. Fixing any
-of them belongs to the client, not to this suite.
+Two divergences separate today's client from Creek's ratified documents, and
+both live in the handshake. The client reads a top-level ``available`` where
+Creek nests ``vault.available``, and it maps advertised capability names through
+``CreekCapability``, whose ``creek.*`` values share no member with Creek's
+published names. Fixing either belongs to the client, not to this suite.
 
 Until they are fixed, the ratified outcome is asserted under
 ``@pytest.mark.xfail(strict=True)``. Repo-wide ``xfail_strict`` means that
@@ -66,11 +65,15 @@ from domain.creek_vault import (
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
+    CreekVaultCareEscalationError,
     CreekVaultContractError,
+    CreekVaultError,
     CreekVaultUnavailableError,
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultReflectionNote,
+    VaultReflectionStatus,
     VaultTierCeiling,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
@@ -97,6 +100,18 @@ REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "creek-vault-conformance-key"  # pragma: allowlist secret
 _CAPABILITIES_PATH = "/v1/capabilities"
+_WHEEL_PATH = "/v1/wheel"
+_REFLECTIONS_PATH = "/v1/reflections"
+
+# The ceiling every reflections cell is driven at. Creek's own reflection
+# examples echo ``personal`` in both tier fields, so accepting less would reject
+# the ratified documents on a rule about adepthood rather than about them.
+_REFLECT_CEILING = VaultTierCeiling.PERSONAL
+
+# The marginalia kind Creek's ``pattern`` renders as. Written out rather than
+# read back through the projection under test, which would accept whatever the
+# table happened to say.
+_PATTERN_MARGINALIA_KIND = "connection"
 
 _ENTRY_ID = 7
 _ENTRY_BODY = "a floor-level journal entry"
@@ -270,13 +285,18 @@ def _client_readable_capabilities() -> dict[str, object]:
 class _Recorder:
     """A route-aware ``MockTransport`` handler that records every request it sees.
 
-    The capability path answers the derived handshake document; every other path
-    answers the journal exchange. Recording is load-bearing for the
-    read-capability tests, which assert that no request left the process at all.
+    The capability path answers the derived handshake document, the wheel path
+    its own vendored body, and every other path the journal exchange. Recording
+    is load-bearing for the read-capability tests, which assert that no request
+    left the process at all.
     """
 
     journal_payload: object = None
     journal_status: int = HTTPStatus.OK
+    wheel_payload: object = None
+    wheel_status: int = HTTPStatus.OK
+    reflect_payload: object = None
+    reflect_status: int = HTTPStatus.OK
     calls: list[str] = field(default_factory=list)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -284,6 +304,10 @@ class _Recorder:
         self.calls.append(f"{request.method} {request.url.path}")
         if request.url.path == _CAPABILITIES_PATH:
             return httpx.Response(HTTPStatus.OK, json=_client_readable_capabilities())
+        if request.url.path == _WHEEL_PATH:
+            return httpx.Response(self.wheel_status, json=self.wheel_payload)
+        if request.url.path == _REFLECTIONS_PATH:
+            return httpx.Response(self.reflect_status, json=self.reflect_payload)
         return httpx.Response(self.journal_status, json=self.journal_payload)
 
 
@@ -324,11 +348,13 @@ async def vault_clients() -> AsyncGenerator[ClientFactory, None]:
         await http.aclose()
 
 
-async def _call_read_capability(client: HttpCreekVaultClient, capability: str) -> object:
-    """Invoke the client method implementing one of the unratified read capabilities."""
-    if capability == "reflections":
-        return await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
-    return await client.wheel()
+def _published_frequency_codes() -> tuple[str, ...]:
+    """Return the Frequency keys the wheel schema declares required, in published order."""
+    defs = _read_json("schemas/WheelResponse.schema.json")["$defs"]
+    assert isinstance(defs, dict)
+    required = defs["WheelFrequencies"]["required"]
+    assert isinstance(required, list)
+    return tuple(str(code) for code in required)
 
 
 async def _handshaken(clients: ClientFactory, recorder: _Recorder) -> HttpCreekVaultClient:
@@ -666,13 +692,14 @@ async def test_journal_upsert_empty_is_an_unchanged_write(vault_clients: ClientF
 async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
     vault_clients: ClientFactory,
 ) -> None:
-    """Creek ratifies this cell as a privacy refusal; the client has no such error.
+    """Creek ratifies this cell as a privacy refusal; the write path reports a bad key.
 
     ``examples/journal-upsert/refusal.json`` carries ``privacy_refused`` at 403.
-    ``VaultErrorCode`` has no ``privacy_refused`` member, and 403 is in the
-    credential-rejected status set, so the refusal is classified on status alone
-    and surfaces as an auth failure. An operator reading that would go and rotate
-    a credential that was never refused.
+    The ingest path decides a credential-rejected status *before* it reads any
+    code, so the refusal is classified on status alone and surfaces as an auth
+    failure. An operator reading that would go and rotate a credential that was
+    never refused. The read path resolved this by consulting the code first; the
+    write path has not, and this cell records that it has not.
     """
     recorder = _Recorder(
         journal_payload=_read_json("examples/journal-upsert/refusal.json"),
@@ -700,8 +727,9 @@ async def test_journal_upsert_error_states_raise_their_classified_failure(
 ) -> None:
     """Each ratified error body is classified into a failure an operator can act on.
 
-    ``unavailable`` is not a ``VaultErrorCode`` member, so the 503 cell is
-    classified from its status class rather than from the code Creek published.
+    ``unavailable`` is the vault reporting on itself rather than faulting our
+    request, so the 503 cell lands on the availability story whether the code is
+    read or the status class decides.
     """
     recorder = _Recorder(
         journal_payload=_read_json(f"examples/journal-upsert/{state}.json"),
@@ -714,23 +742,176 @@ async def test_journal_upsert_error_states_raise_their_classified_failure(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("capability", ["reflections", "wheel"])
-async def test_read_capabilities_are_refused_without_any_egress(
-    capability: str,
+async def test_reflections_refuse_without_egress_when_unadvertised(
     vault_clients: ClientFactory,
 ) -> None:
-    """The unratified read capabilities refuse locally, so no request leaves at all.
+    """A reflection the handshake never advertised is refused locally, whatever the wire says.
 
-    The no-egress half is the load-bearing one: refusing after sending would have
-    already put a body on a wire toward a shape nobody has agreed on.
+    This is the permanent half of the refusal reflections used to answer with
+    unconditionally: the shape is ratified now, but a vault that did not offer the
+    capability still gets no request. The no-egress assertion is the load-bearing
+    one -- refusing after sending would already have put a whole journal entry on a
+    wire toward a surface nobody claimed to serve.
     """
-    recorder = _Recorder()
+    recorder = _Recorder(reflect_payload=_read_json("examples/reflections/success.json"))
     client = vault_clients(recorder)
 
     with pytest.raises(CreekCapabilityUnsupportedError):
-        await _call_read_capability(client, capability)
+        await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
 
     assert recorder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_reflections_success_cell_projects_to_a_domain_reflection(
+    vault_clients: ClientFactory,
+) -> None:
+    """Creek's ratified reflection body reads back as its own note, in adepthood's vocabulary.
+
+    Quote and note survive verbatim -- a quote is anchored character-for-character
+    against the entry, so a trim would silently break it -- while the kind is
+    projected, because ``pattern`` is Creek's word for a recurrence and
+    ``connection`` is adepthood's.
+    """
+    published = _read_json("examples/reflections/success.json")
+    notes = published["notes"]
+    assert isinstance(notes, list)
+    note = notes[0]
+    assert isinstance(note, dict)
+    recorder = _Recorder(reflect_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    reflection = await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+    assert note["kind"] == "pattern"
+    assert reflection.status is VaultReflectionStatus.OK
+    assert reflection.notes == (
+        VaultReflectionNote(
+            kind=_PATTERN_MARGINALIA_KIND, quote=str(note["quote"]), note=str(note["note"])
+        ),
+    )
+    assert reflection.essay_grounded is False
+
+
+@pytest.mark.asyncio
+async def test_reflections_empty_cell_is_a_status_rather_than_a_failure(
+    vault_clients: ClientFactory,
+) -> None:
+    """Creek's empty reflection is a successful answer with nothing to say, not an error."""
+    published = _read_json("examples/reflections/empty.json")
+    assert published["notes"] == []
+    recorder = _Recorder(reflect_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    reflection = await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+    assert reflection.status is VaultReflectionStatus.EMPTY
+    assert reflection.notes == ()
+
+
+@pytest.mark.asyncio
+async def test_reflections_care_escalation_cell_raises_out_of_the_seam(
+    vault_clients: ClientFactory,
+) -> None:
+    """Creek's 200 care handoff leaves the seam as an escalation carrying none of its copy.
+
+    It is deliberately not in the error hierarchy the read path degrades on:
+    caught there, it would be answered with the cloud prose Creek's care guard
+    declined to produce. And it carries nothing, because the message and resources
+    below are Creek's own writing.
+    """
+    published = _read_json("examples/reflections/care-escalation.json")
+    signal = published["care_signal"]
+    assert isinstance(signal, dict)
+    recorder = _Recorder(
+        reflect_payload=published, reflect_status=_STATUS_BY_STATE["care-escalation"]
+    )
+    client = await _handshaken(vault_clients, recorder)
+
+    with pytest.raises(CreekVaultCareEscalationError) as exc_info:
+        await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+    assert not isinstance(exc_info.value, CreekVaultError)
+    assert str(signal["message"]) not in repr(exc_info.value)
+    assert str(published["reason"]) not in repr(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("refusal", CreekVaultContractError),
+        ("malformed-input", CreekVaultContractError),
+        ("incompatible-version", CreekVaultContractError),
+        ("unavailable-service", CreekVaultUnavailableError),
+    ],
+)
+async def test_reflections_error_states_raise_their_classified_failure(
+    state: str,
+    expected: type[Exception],
+    vault_clients: ClientFactory,
+) -> None:
+    """Each ratified reflection error is classified from the code Creek published on it.
+
+    The refusal cell is the one that separates this path from the write path's:
+    ``privacy_refused`` arrives at 403, and reading the status first would report
+    it as a rejected credential.
+    """
+    recorder = _Recorder(
+        reflect_payload=_read_json(f"examples/reflections/{state}.json"),
+        reflect_status=_STATUS_BY_STATE[state],
+    )
+    client = await _handshaken(vault_clients, recorder)
+
+    with pytest.raises(expected):
+        await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+
+@pytest.mark.asyncio
+async def test_wheel_refuses_without_egress_when_unadvertised(
+    vault_clients: ClientFactory,
+) -> None:
+    """A wheel the handshake never advertised is refused locally, whatever the wire says.
+
+    This is the permanent half of the refusal the wheel used to answer with
+    unconditionally: the shape is ratified now, but a vault that did not offer
+    the capability still gets no request, and the caller still degrades onto its
+    local balance.
+    """
+    recorder = _Recorder(wheel_payload=_read_json("examples/wheel/success.json"))
+    client = vault_clients(recorder)
+
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.wheel()
+
+    assert recorder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_wheel_success_cell_projects_to_a_domain_balance(
+    vault_clients: ClientFactory,
+) -> None:
+    """Creek's ratified wheel body reads back as its ten Frequencies, in canonical order.
+
+    The Frequency keys come from the published schema's own ``required`` list, so
+    the ``F{n}`` to stage-``n`` projection is asserted against the contract rather
+    than against a list restated here.
+    """
+    published = _read_json("examples/wheel/success.json")
+    frequencies = published["wheel"]
+    assert isinstance(frequencies, dict)
+    recorder = _Recorder(wheel_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    balance = await client.wheel()
+
+    assert [f"F{aspect.stage_number}" for aspect in balance.aspects] == list(
+        _published_frequency_codes()
+    )
+    for aspect in balance.aspects:
+        entry = frequencies[f"F{aspect.stage_number}"]
+        assert aspect.aspect == entry["name"]
+        assert aspect.fullness == entry["share"]
 
 
 def test_reflections_refusal_is_a_privacy_refusal_envelope() -> None:

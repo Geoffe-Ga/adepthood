@@ -106,19 +106,32 @@ def tier_ceiling_for(classification: str) -> VaultTierCeiling:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Deliberately closed: these four are the codes Creek has ratified, and they
+    Seven of the nine codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
     rendered, so a vault can never choose what text appears in adepthood's
-    exceptions or telemetry. Values are the wire strings, so they are contract
-    and must not be reworded casually.
+    exceptions or telemetry. That drop-unknown-strings property is exactly as it
+    was when the vocabulary was smaller; widening the set widens what we can
+    classify, never what a vault may put in front of an operator.
+
+    The two published codes deliberately absent are ``unauthenticated`` and
+    ``internal_error``. Neither adds anything a member would be read for: a
+    refused credential already classifies from its status class alone, and so
+    does a server fault, so parsing either code would only give two spellings of
+    a decision already made.
+
+    Values are the wire strings, so they are contract and must not be reworded
+    casually, and the member order is pinned by a test.
     """
 
     INVALID_REQUEST = "invalid_request"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     INCOMPATIBLE_VERSION = "incompatible_version"
     TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
+    PRIVACY_REFUSED = "privacy_refused"
+    NOT_FOUND = "not_found"
+    UNAVAILABLE = "unavailable"
 
 
 class CreekVaultError(RuntimeError):
@@ -137,7 +150,19 @@ class CreekVaultUnavailableError(CreekVaultError):
     exception. Its message is deliberately static and capability-named -- it
     must never interpolate the entry body or an API key, since exception
     strings surface in logs and tracebacks (privacy invariant).
+
+    ``code`` carries the vault's own reason when it named one we recognize, and
+    it lives on *this* type rather than on :class:`CreekVaultContractError`
+    because the codes it can hold (``unavailable``, ``temporarily_unavailable``)
+    are the vault reporting on **itself** rather than faulting the call we made.
+    It defaults to ``None``, which is what every purely transport-level failure
+    leaves it as: nothing answered, so nothing named a reason.
     """
+
+    def __init__(self, message: str, *, code: VaultErrorCode | None = None) -> None:
+        """Store the static message and, when the vault named one we know, its code."""
+        super().__init__(message)
+        self.code = code
 
 
 class CreekVaultContractError(CreekVaultError):
@@ -165,6 +190,29 @@ class CreekVaultContractError(CreekVaultError):
         self.code = code
 
 
+class CreekVaultPayloadError(CreekVaultError):
+    """The vault answered, and its answer could not be read as the published shape.
+
+    The third of three sibling stories, and it exists because the other two were
+    being made to tell it. :class:`CreekVaultUnavailableError` means the vault
+    was not there; :class:`CreekVaultContractError` means a reachable vault
+    refused the call we made. This one means a reachable vault accepted the call,
+    answered successfully, and sent something adepthood cannot parse as the shape
+    Creek publishes -- a body that will not decode, a missing required field, or a
+    declared ceiling wider than the one we were willing to accept.
+
+    Keeping it apart is what makes a schema failure *observable* apart from vault
+    absence. Folded into unavailability -- as it was -- a vault bug worth
+    reporting upstream is indistinguishable from infrastructure worth restoring,
+    and only one of those two is anybody's to fix.
+
+    Same privacy discipline as the rest of the hierarchy: the message is static
+    and capability-named, and never interpolates the entry body, the credential,
+    or any vault-supplied string. The unreadable payload is precisely the input
+    least safe to quote.
+    """
+
+
 class CreekVaultAuthError(CreekVaultError):
     """A reachable vault rejected our credential.
 
@@ -174,6 +222,32 @@ class CreekVaultAuthError(CreekVaultError):
     a broken deployment behind the same silence as a deliberately vault-less
     one. Its message is static and capability-named for the same privacy reason
     as the rest of the hierarchy.
+    """
+
+
+class CreekVaultCareEscalationError(Exception):
+    """A vault answered a reflection request with its care handoff instead of notes.
+
+    **Deliberately not a** :class:`CreekVaultError`, and that is the whole point
+    of the type. :class:`~services.creek_vault_reflect.VaultResonanceLLM` catches
+    :class:`CreekVaultError` and answers from the cloud instead; an escalation
+    caught there would override the vault's care guard with exactly the model
+    prose it refused to produce, for exactly the person it refused it for. Living
+    outside that hierarchy makes the escape structural rather than a matter of
+    ordering an ``except``.
+
+    **Content-free by construction.** Creek's ``reason``, its ``care_signal``
+    message, and its resource list are Creek's own copy, and they are dropped at
+    the adapter rather than carried here: adepthood renders only the care surface
+    it has reviewed itself, so a vault may never choose the words a distressed
+    person reads. Nothing is stored on the instance and nothing is passed to
+    ``super().__init__``.
+
+    The name ends in ``Error`` to satisfy the exception-naming rule every other
+    type in this module follows, but an escalation is **not a failure**: it is a
+    successful, published 200 answer whose content is a routing decision. It is
+    raised rather than returned so it cannot be mistaken for a reflection by a
+    caller that forgot to check.
     """
 
 
@@ -288,6 +362,71 @@ class VaultClassification:
     tags: tuple[str, ...]
 
 
+class VaultReflectionStatus(enum.StrEnum):
+    """The two statuses a successful reflection response may carry.
+
+    Exactly the pair Creek's ``ReflectionResponse`` publishes, spelled Creek's
+    way, because these are wire strings a payload is matched against: a member
+    adepthood invented would never match anything a vault sent. ``escalate`` is
+    deliberately **not** a member -- it arrives as a different published document
+    at the same status and leaves this seam as
+    :class:`CreekVaultCareEscalationError`, so it can never be read as a
+    reflection that merely had nothing to say.
+    """
+
+    OK = "ok"
+    EMPTY = "empty"
+
+
+@dataclass(frozen=True)
+class VaultReflectionNote:
+    """One margin note a vault produced, already in adepthood's own vocabulary.
+
+    ``kind`` is the *projected* marginalia kind, not Creek's: the adapter maps
+    Creek's seven note kinds onto adepthood's before building this value, so
+    nothing downstream has to know Creek's ontology or risk rendering a note as
+    something the user never wrote. ``quote`` is carried verbatim, because the
+    resonance pass anchors it character-for-character against the entry body.
+    """
+
+    kind: str
+    quote: str
+    note: str
+
+
+@dataclass(frozen=True)
+class VaultReflection:
+    """A vault's whole answer to one reflection request, structured rather than flattened.
+
+    The seam returns this instead of a string so the outcomes stay
+    distinguishable: an ``EMPTY`` answer is a vault saying it has nothing to add,
+    an ``OK`` answer with zero surviving notes is a vault that answered with
+    nothing adepthood can render, and neither is a failure -- while an unreadable
+    payload raises and an escalation raises something else again. Collapsing all
+    of those onto one blank string is what made a vault bug, a legitimate silence,
+    and a care handoff indistinguishable at the call site.
+
+    ``essay`` is free model prose the vault may attach, and ``essay_grounded`` is
+    the published claim about it. The essay is **not the user's own words**, so it
+    must never be rendered, anchored, logged, or interpolated into an exception --
+    it is carried only so the seam is honest about what the vault answered, and
+    the consumer is where that restraint is enforced. ``essay_grounded`` is
+    required by the published contract and only ``False`` is admissible at
+    contract 0.2, so a payload claiming a grounded essay is rejected whole rather
+    than read past.
+
+    ``routed_tier`` is the tier the vault says it actually keyed the call with,
+    verified against the ceiling the caller was willing to accept before this
+    value is ever built.
+    """
+
+    status: VaultReflectionStatus
+    notes: tuple[VaultReflectionNote, ...]
+    essay: str | None
+    essay_grounded: bool
+    routed_tier: VaultTierCeiling
+
+
 @dataclass(frozen=True)
 class VaultWheelAspect:
     """One Aspect's fullness at a stage, in a vault-computed wheel read.
@@ -345,15 +484,38 @@ class CreekVaultClient(Protocol):
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Request Frequency/Wavelength-phase tags for ``body``."""
 
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> str:
-        """Produce a Higher Self reflection grounded in the user's own corpus."""
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
+        """Produce a Higher Self reflection grounded in the user's own corpus.
+
+        Answers with a structured :class:`VaultReflection` so the vault's real
+        outcome survives the seam. A vault that had nothing to say answers
+        :attr:`VaultReflectionStatus.EMPTY`, and one whose notes did not survive
+        projection answers :attr:`VaultReflectionStatus.OK` with an empty note
+        tuple: both are the vault answering successfully, and it is the consumer
+        that decides such an answer means deferring to the cloud.
+
+        Failures normalize into this module's hierarchy exactly as
+        :meth:`wheel`'s do -- an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError` -- so the three stay countable apart.
+
+        A care escalation is none of those. It raises
+        :class:`CreekVaultCareEscalationError`, which is outside that hierarchy
+        on purpose so a caller degrading on :class:`CreekVaultError` cannot
+        answer a person in acute distress with the cloud prose the vault's care
+        guard just refused to produce.
+        """
 
     async def wheel(self) -> VaultWheelBalance:
         """Return a Wheel-of-Wholeness balance read from the vault's corpus.
 
         Degrades exactly like every other capability: a malformed, refused, or
-        otherwise unreadable payload is normalized to
-        :class:`CreekVaultUnavailableError` rather than surfacing a parse error.
+        otherwise unreadable payload is normalized into this module's error
+        hierarchy rather than surfacing a parse error -- an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, so the three stay countable apart.
         Domain-range validation of a well-formed balance belongs to the
         read/compute path that consumes it. The wheel is an optional read, never
         a write, so a caller that cannot obtain it falls back to computing the

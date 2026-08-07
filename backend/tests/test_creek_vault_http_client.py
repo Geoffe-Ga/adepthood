@@ -1,10 +1,12 @@
 """Tests for the HTTP/JSON Creek Vault adapter in services.creek_vault_client.
 
 Every case drives the adapter through an ``httpx.MockTransport`` handler, so no
-test touches a network or waits on real time. Two response shapes are asserted
-here: the capability document the handshake already parses, and the journal
-ingest exchange -- the one capability whose ``/v1`` shape Creek has ratified.
-Nothing beyond those two is invented.
+test touches a network or waits on real time. Four response shapes are asserted
+here: the capability document the handshake already parses, the journal ingest
+exchange, the wheel read, and the reflection exchange -- the capabilities whose
+``/v1`` shapes Creek has ratified. Nothing beyond those is invented, and every
+wheel and reflection body is read from the vendored contract bundle rather than
+written out here.
 """
 
 from __future__ import annotations
@@ -26,22 +28,28 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from conftest import test_engine
+from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
+    CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
+    CreekVaultPayloadError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
+    VaultReflectionNote,
+    VaultReflectionStatus,
     VaultTierCeiling,
 )
 from main import app, lifespan
+from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
     _MAX_FRAGMENT_ID_LENGTH,
     _VAULT_HTTP_TIMEOUT,
@@ -62,7 +70,21 @@ from services.creek_vault_write import VaultWriteStatus, store_and_classify
 
 _VAULT_URL = "https://vault.example.test"
 
-_CAPABILITIES_URL = f"{_VAULT_URL}/v1/capabilities"
+_CAPABILITIES_PATH = "/v1/capabilities"
+
+_CAPABILITIES_URL = f"{_VAULT_URL}{_CAPABILITIES_PATH}"
+
+# The wheel is a whole-corpus aggregate rather than a resource, so it is read
+# from one collection-level URL carrying no parameters at all.
+_WHEEL_PATH = "/v1/wheel"
+
+_WHEEL_URL = f"{_VAULT_URL}{_WHEEL_PATH}"
+
+# A reflection is asked for, not addressed: adepthood posts an ad-hoc body to the
+# collection rather than naming a fragment the vault already stores.
+_REFLECTIONS_PATH = "/v1/reflections"
+
+_REFLECTIONS_URL = f"{_VAULT_URL}{_REFLECTIONS_PATH}"
 
 _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
@@ -137,6 +159,26 @@ _SLOW_HANDLER_SLEEP_SECONDS = 5.0
 # The redirect status a hijacked or misconfigured vault would answer with; it
 # must degrade rather than forward the bearer to the Location host.
 _REDIRECT_STATUS_FOUND = 302
+
+# The marginalia kind Creek's ``pattern`` renders as. Written out rather than
+# read back through the mapping under test: a projection asserted against itself
+# would accept whatever the table happened to say.
+_PATTERN_MARGINALIA_KIND = "connection"
+
+# An essay a compromised or over-eager vault could attach to an otherwise
+# well-formed answer. It is free model prose rather than the user's own words, so
+# it may reach no note, no message, and no log.
+_SENTINEL_ESSAY = "SENTINEL_VAULT_ESSAY_DO_NOT_RENDER"
+
+# A synthetic correlation id for the two published error codes the bundle has no
+# example cell for. Opaque and caller-independent, exactly as the envelope's own
+# field description requires.
+_SYNTHETIC_REQUEST_ID = "req-synthetic-not-published"
+
+# Every spelling a declared tier ceiling could plausibly travel under. The
+# ratified reflection request publishes none of them, so a request carrying any
+# one would be an undocumented parameter this client invented.
+_TIER_FIELD_NAMES = ("tier", "tier_ceiling", "privacy_tier_ceiling", "routed_tier")
 
 _PROTOCOL_MEMBERS = (
     "handshake",
@@ -358,6 +400,279 @@ class _SlowIngestHandler:
         return httpx.Response(HTTPStatus.OK, json=_ingest_payload())
 
 
+def _wheel_example(state: str) -> dict[str, object]:
+    """Return one vendored wheel example body, decoded fresh on every call.
+
+    Fresh because the callers below build malformed variants by editing what
+    they get back: the vendored file is read-only ground truth, and a shared
+    decoded object would let one test's mutation reach another's.
+    """
+    decoded = json.loads((BUNDLE_ROOT / f"examples/wheel/{state}.json").read_bytes())
+    assert isinstance(decoded, dict), state
+    return decoded
+
+
+def _wheel_frequencies(payload: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+    """Return the ten published Frequency entries of a wheel body."""
+    frequencies = payload["wheel"]
+    assert isinstance(frequencies, dict)
+    return {code: entry for code, entry in frequencies.items() if isinstance(entry, Mapping)}
+
+
+def _wheel_required_keys() -> tuple[str, ...]:
+    """Return the top-level fields Creek's wheel schema declares required."""
+    schema = json.loads((BUNDLE_ROOT / "schemas/WheelResponse.schema.json").read_bytes())
+    assert isinstance(schema, dict)
+    required = schema["required"]
+    assert isinstance(required, list)
+    return tuple(str(key) for key in required)
+
+
+def _wheel_with_ceiling(ceiling: object) -> dict[str, object]:
+    """Return the success example with only its echoed tier ceiling replaced.
+
+    ``ceiling`` is deliberately typed ``object``: a hostile vault can echo a
+    number or a null where a tier string belongs, and an echo that is not even a
+    string is as inadmissible as one that names a wider tier.
+    """
+    body = _wheel_example("success")
+    body["tier_ceiling"] = ceiling
+    return body
+
+
+def _wheel_without_key(key: str) -> dict[str, object]:
+    """Return the success example with one published required field removed."""
+    body = _wheel_example("success")
+    del body[key]
+    return body
+
+
+def _wheel_without_frequency(code: str) -> dict[str, object]:
+    """Return the success example with one Frequency deleted from a copy of its wheel."""
+    body = _wheel_example("success")
+    frequencies = _wheel_frequencies(body)
+    del frequencies[code]
+    body["wheel"] = frequencies
+    return body
+
+
+def _wheel_with_share(code: str, share: object) -> dict[str, object]:
+    """Return the success example with one Frequency's share replaced."""
+    body = _wheel_example("success")
+    frequencies = {name: dict(entry) for name, entry in _wheel_frequencies(body).items()}
+    frequencies[code]["share"] = share
+    body["wheel"] = frequencies
+    return body
+
+
+class _WheelRouteHandler:
+    """Route-aware handler: a healthy capability GET plus one scripted wheel GET.
+
+    Kept apart from :class:`_VaultRouteHandler` because the wheel is a different
+    route with a different failure vocabulary; sharing one handler would have
+    meant a method-and-path branch tree neither exchange needs.
+    """
+
+    def __init__(
+        self,
+        payload: object = None,
+        status: int = HTTPStatus.OK,
+        *,
+        text: str | None = None,
+        capabilities: Sequence[str] = (CreekCapability.WHEEL.value,),
+        wheel_error: Exception | None = None,
+    ) -> None:
+        """Store the advertised capabilities and the one scripted wheel answer."""
+        self._payload = payload
+        self._status = status
+        self._text = text
+        self._capabilities = list(capabilities)
+        self._wheel_error = wheel_error
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def wheel_requests(self) -> list[httpx.Request]:
+        """Return only the wheel reads this handler has served."""
+        return [request for request in self.requests if request.url.path == _WHEEL_PATH]
+
+    def _wheel_response(self) -> httpx.Response:
+        """Answer the scripted wheel body, raising the scripted transport failure instead."""
+        if self._wheel_error is not None:
+            raise self._wheel_error
+        if self._text is not None:
+            return httpx.Response(self._status, text=self._text)
+        return httpx.Response(self._status, json=self._payload)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, then answer the capability GET or the scripted wheel GET."""
+        self.requests.append(request)
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(HTTPStatus.OK, json=_handshake_payload(self._capabilities))
+        return self._wheel_response()
+
+
+def _bundle_schema(name: str) -> dict[str, object]:
+    """Return one vendored contract schema decoded as an object."""
+    decoded = json.loads((BUNDLE_ROOT / f"schemas/{name}.schema.json").read_bytes())
+    assert isinstance(decoded, dict), name
+    return decoded
+
+
+def _schema_properties(name: str) -> dict[str, object]:
+    """Return the ``properties`` map one vendored schema publishes."""
+    properties = _bundle_schema(name)["properties"]
+    assert isinstance(properties, dict), name
+    return properties
+
+
+def _schema_required(name: str) -> tuple[str, ...]:
+    """Return the top-level fields one vendored schema declares required."""
+    required = _bundle_schema(name)["required"]
+    assert isinstance(required, list), name
+    return tuple(str(key) for key in required)
+
+
+def _max_notes_bounds() -> tuple[int, int]:
+    """Return the inclusive ``max_notes`` bounds Creek's request schema publishes."""
+    field = _schema_properties("ReflectionRequest")["max_notes"]
+    assert isinstance(field, dict)
+    minimum = field["minimum"]
+    maximum = field["maximum"]
+    assert isinstance(minimum, int)
+    assert isinstance(maximum, int)
+    return minimum, maximum
+
+
+def _reflection_example(state: str) -> dict[str, object]:
+    """Return one vendored reflection example body, decoded fresh on every call.
+
+    Fresh for the same reason the wheel examples are: the callers below build
+    malformed variants by editing what they get back, and a shared decoded object
+    would let one test's mutation reach another's.
+    """
+    decoded = json.loads((BUNDLE_ROOT / f"examples/reflections/{state}.json").read_bytes())
+    assert isinstance(decoded, dict), state
+    return decoded
+
+
+def _published_note(state: str = "success") -> Mapping[str, object]:
+    """Return the single margin note one vendored reflection example publishes."""
+    notes = _reflection_example(state)["notes"]
+    assert isinstance(notes, list)
+    note = notes[0]
+    assert isinstance(note, Mapping)
+    return note
+
+
+def _reflection_at_ceiling(ceiling: str) -> dict[str, object]:
+    """Return the success example with both of its tier echoes set to ``ceiling``.
+
+    Both, because the two are separate claims: ``tier_ceiling`` is what the vault
+    says it was asked for and ``routed_tier`` is what it says it actually keyed
+    the call with, and either exceeding what adepthood accepted means the answer
+    was computed over material this app never authorized.
+    """
+    body = _reflection_example("success")
+    body["tier_ceiling"] = ceiling
+    body["routed_tier"] = ceiling
+    return body
+
+
+def _reflection_with(field: str, value: object) -> dict[str, object]:
+    """Return the success example, pinned to open, with one field replaced."""
+    body = _reflection_at_ceiling(VaultTierCeiling.OPEN.value)
+    body[field] = value
+    return body
+
+
+def _reflection_without(field: str) -> dict[str, object]:
+    """Return the success example with one published required field removed."""
+    body = _reflection_example("success")
+    del body[field]
+    return body
+
+
+def _error_envelope(code: str) -> dict[str, object]:
+    """Build a synthetic error envelope for a published code with no example cell.
+
+    Validated against the vendored envelope schema rather than merely shaped like
+    it: the code must be a member of Creek's published enum, and the body must
+    carry exactly the three fields the schema declares required -- the envelope is
+    ``additionalProperties: false`` and echoes nothing, so a fourth field would be
+    a document Creek does not publish.
+    """
+    defs = _bundle_schema("ErrorEnvelope")["$defs"]
+    assert isinstance(defs, dict)
+    error_code = defs["ErrorCode"]
+    assert isinstance(error_code, dict)
+    codes = error_code["enum"]
+    assert isinstance(codes, list)
+    assert code in codes, code
+    envelope: dict[str, object] = {
+        "code": code,
+        "message": "a constant message from the published table",
+        "request_id": _SYNTHETIC_REQUEST_ID,
+    }
+    assert set(envelope) == set(_schema_required("ErrorEnvelope"))
+    return envelope
+
+
+class _ReflectRouteHandler:
+    """Route-aware handler: a healthy capability GET plus one scripted reflection POST.
+
+    Its own handler rather than a branch added to the wheel's, for the reason the
+    wheel got one: a reflection is a different route with a different request
+    shape and a third failure vocabulary (an escalation is a 200), and folding
+    three exchanges into one handler would mean a method-and-path branch tree none
+    of them needs.
+    """
+
+    def __init__(
+        self,
+        payload: object = None,
+        status: int = HTTPStatus.OK,
+        *,
+        text: str | None = None,
+        capabilities: Sequence[str] = (CreekCapability.REFLECT.value,),
+        reflect_error: Exception | None = None,
+    ) -> None:
+        """Store the advertised capabilities and the one scripted reflection answer."""
+        self._payload = payload
+        self._status = status
+        self._text = text
+        self._capabilities = list(capabilities)
+        self._reflect_error = reflect_error
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def reflect_requests(self) -> list[httpx.Request]:
+        """Return only the reflection posts this handler has served."""
+        return [request for request in self.requests if request.url.path == _REFLECTIONS_PATH]
+
+    def _reflect_response(self) -> httpx.Response:
+        """Answer the scripted reflection body, raising the scripted failure instead."""
+        if self._reflect_error is not None:
+            raise self._reflect_error
+        if self._text is not None:
+            return httpx.Response(self._status, text=self._text)
+        return httpx.Response(self._status, json=self._payload)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, then answer the capability GET or the scripted POST."""
+        self.requests.append(request)
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(HTTPStatus.OK, json=_handshake_payload(self._capabilities))
+        return self._reflect_response()
+
+
+def _sent_reflect_body(handler: _ReflectRouteHandler) -> dict[str, object]:
+    """Return the decoded JSON body of the single reflection post the handler served."""
+    assert len(handler.reflect_requests) == 1
+    decoded = json.loads(handler.reflect_requests[0].content)
+    assert isinstance(decoded, dict)
+    return decoded
+
+
 async def _handshaken_client(
     handler: Handler | AsyncHandler,
     http_clients: ClientFactory,
@@ -425,15 +740,6 @@ async def http_clients() -> AsyncGenerator[ClientFactory, None]:
     yield _build
     for client in created:
         await client.aclose()
-
-
-async def _call_capability(client: HttpCreekVaultClient, capability: CreekCapability) -> object:
-    """Invoke the client method that implements ``capability``."""
-    if capability is CreekCapability.CLASSIFY:
-        return await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
-    if capability is CreekCapability.REFLECT:
-        return await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
-    return await client.wheel()
 
 
 @pytest.mark.asyncio
@@ -878,24 +1184,15 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
     assert str(handler.requests[0].url) == f"{_VAULT_URL}/vault/v1/capabilities"
 
 
-@pytest.mark.parametrize(
-    "capability",
-    [
-        CreekCapability.CLASSIFY,
-        CreekCapability.REFLECT,
-        CreekCapability.WHEEL,
-    ],
-)
 @pytest.mark.asyncio
-async def test_advertised_capabilities_are_still_refused(
-    capability: CreekCapability,
+async def test_classify_is_still_refused_when_advertised(
     http_clients: ClientFactory,
 ) -> None:
-    """Journal is the one ratified capability; every other one is refused even when advertised.
+    """Classify is the one capability left unratified, so it refuses even when advertised.
 
-    Their ``/v1`` payload shapes have not shipped, so an advertised
-    classify/reflect/wheel still degrades the caller onto its local pipeline
-    rather than guessing a wire format.
+    Its ``/v1`` payload shape has not shipped, so an advertised classify still
+    degrades the caller onto its local pipeline rather than guessing a wire
+    format.
     """
     advertised = [
         CreekCapability.JOURNAL.value,
@@ -907,10 +1204,10 @@ async def test_advertised_capabilities_are_still_refused(
         _VAULT_URL, _API_KEY, http_client=http_clients(_healthy_handler(advertised))
     )
     await client.handshake()
-    assert client.supports(capability) is True
+    assert client.supports(CreekCapability.CLASSIFY) is True
     with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
-        await _call_capability(client, capability)
-    assert capability.value in str(exc_info.value)
+        await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
+    assert CreekCapability.CLASSIFY.value in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -1176,6 +1473,32 @@ async def test_ingest_400_invalid_request_raises_a_contract_error(
     with pytest.raises(CreekVaultContractError) as exc_info:
         await client.ingest(_ingest_request())
     assert exc_info.value.code is VaultErrorCode.INVALID_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_ingest_not_found_code_stays_a_contract_fault(
+    http_clients: ClientFactory,
+) -> None:
+    """A routing code is adepthood's own bug, and learning to read it must not move it.
+
+    Creek publishes ``not_found`` for a path this server does not serve, which is
+    exactly the fault an uncoded 404 already reports. Teaching the error
+    vocabulary that code must therefore leave the ingest answer where it was: a
+    recognized code that fell into no contract set would silently reclassify a
+    wrong URL as an absent vault.
+    """
+    handler = _VaultRouteHandler(
+        [
+            _IngestReply(
+                status=HTTPStatus.NOT_FOUND,
+                payload=_error_payload(VaultErrorCode.NOT_FOUND.value),
+            )
+        ]
+    )
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultContractError) as exc_info:
+        await client.ingest(_ingest_request())
+    assert exc_info.value.code is VaultErrorCode.NOT_FOUND
 
 
 @pytest.mark.parametrize(
@@ -1495,3 +1818,703 @@ async def test_write_path_ingests_over_http_end_to_end(
     assert outcome.status is VaultWriteStatus.INGESTED
     assert outcome.vault_ref == _FRAGMENT_ID
     assert _sent_ingest_body(handler)["tier"] == VaultTierCeiling.OPEN.value
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_success_projects_the_ratified_frequencies(
+    http_clients: ClientFactory,
+) -> None:
+    """Creek's published wheel body reads back as ten aspects carrying its own numbers.
+
+    ``F{n}`` is adepthood's stage ``n`` and the share is the fullness verbatim:
+    the adapter projects, it does not rescale, and a rounding step here would be
+    invisible in every rendered wheel afterwards.
+    """
+    published = _wheel_example("success")
+    frequencies = _wheel_frequencies(published)
+    handler = _WheelRouteHandler(published)
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    assert [aspect.stage_number for aspect in balance.aspects] == list(range(1, TOTAL_STAGES + 1))
+    for aspect in balance.aspects:
+        entry = frequencies[f"F{aspect.stage_number}"]
+        assert aspect.fullness == entry["share"]
+        assert aspect.aspect == entry["name"]
+
+    assert len(handler.wheel_requests) == 1
+    read = handler.wheel_requests[0]
+    assert read.method == "GET"
+    assert str(read.url) == _WHEEL_URL
+    assert read.url.query == b""
+    assert read.content == b""
+    assert read.headers["Authorization"] == f"Bearer {_API_KEY}"
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_requires_the_advertised_capability_without_egress(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that never advertised the wheel is refused locally, before any request."""
+    handler = _WheelRouteHandler(_wheel_example("success"))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+
+    with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
+        await client.wheel()
+
+    assert CreekCapability.WHEEL.value in str(exc_info.value)
+    assert handler.requests == []
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [VaultTierCeiling.INTIMATE.value, "not-a-tier"],
+    ids=["above_our_ceiling", "unrecognized_ceiling"],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_rejects_a_payload_whose_tier_echo_exceeds_our_ceiling(
+    ceiling: str,
+    http_clients: ClientFactory,
+) -> None:
+    """The echoed ceiling is verified, not trusted: a wider one discards the whole read.
+
+    The ratified surface publishes no way to declare a ceiling, so the only
+    control left is to check the one the vault says it applied. A tally counted
+    above the tier adepthood may ever see is not a wheel this app can render.
+    """
+    handler = _WheelRouteHandler(_wheel_with_ceiling(ceiling))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [VaultTierCeiling.OPEN.value, VaultTierCeiling.PERSONAL.value],
+    ids=["open", "personal"],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_accepts_both_admissible_tier_echoes(
+    ceiling: str,
+    http_clients: ClientFactory,
+) -> None:
+    """Both ceilings a remote caller may reach are admissible echoes, not just the default."""
+    assert _wheel_example("success")["tier_ceiling"] == VaultTierCeiling.OPEN.value
+    handler = _WheelRouteHandler(_wheel_with_ceiling(ceiling))
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    assert len(balance.aspects) == TOTAL_STAGES
+
+
+@pytest.mark.parametrize(
+    ("state", "status", "expected", "code"),
+    [
+        pytest.param(
+            "refusal",
+            HTTPStatus.FORBIDDEN,
+            CreekVaultContractError,
+            VaultErrorCode.PRIVACY_REFUSED,
+            id="refusal_403_is_a_privacy_refusal",
+        ),
+        pytest.param(
+            "malformed-input",
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            CreekVaultContractError,
+            VaultErrorCode.INVALID_REQUEST,
+            id="malformed_input_422",
+        ),
+        pytest.param(
+            "incompatible-version",
+            HTTPStatus.CONFLICT,
+            CreekVaultContractError,
+            VaultErrorCode.INCOMPATIBLE_VERSION,
+            id="incompatible_version_409",
+        ),
+        pytest.param(
+            "unavailable-service",
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            CreekVaultUnavailableError,
+            VaultErrorCode.UNAVAILABLE,
+            id="unavailable_service_503",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_error_states_are_classified_from_the_published_code(
+    state: str,
+    status: HTTPStatus,
+    expected: type[CreekVaultError],
+    code: VaultErrorCode,
+    http_clients: ClientFactory,
+) -> None:
+    """Every published wheel error cell is classified from its code, never from its status.
+
+    The 403 is the whole reason for that order. Creek publishes
+    ``privacy_refused`` there, and deciding on the status alone would report a
+    refusal as a rejected credential -- sending an operator to rotate a key that
+    was never refused.
+    """
+    handler = _WheelRouteHandler(_wheel_example(state), status)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(expected) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is expected
+    assert getattr(exc_info.value, "code", None) is code
+    assert not isinstance(exc_info.value, CreekVaultAuthError)
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_uncoded_credential_rejection_is_an_auth_error(
+    http_clients: ClientFactory,
+) -> None:
+    """With no readable code, a refused credential is still a credential to rotate."""
+    handler = _WheelRouteHandler({"detail": "denied"}, HTTPStatus.UNAUTHORIZED)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultAuthError) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is CreekVaultAuthError
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(
+            _WheelRouteHandler(text="<html><body>Bad Gateway</body></html>"),
+            id="body_is_not_json",
+        ),
+        pytest.param(_WheelRouteHandler([1, 2, 3]), id="json_is_not_an_object"),
+        pytest.param(
+            _WheelRouteHandler(_wheel_without_frequency("F7")),
+            id="nine_frequencies_instead_of_ten",
+        ),
+        pytest.param(_WheelRouteHandler(_wheel_with_share("F3", "0.1")), id="share_is_a_string"),
+        *[
+            pytest.param(_WheelRouteHandler(_wheel_without_key(key)), id=f"missing_{key}")
+            for key in _wheel_required_keys()
+        ],
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_malformed_success_bodies_are_payload_errors(
+    handler: _WheelRouteHandler,
+    http_clients: ClientFactory,
+) -> None:
+    """A 200 adepthood cannot read is a payload fault, all-or-nothing.
+
+    One unusable Frequency rejects the whole read rather than yielding a ring
+    with a hole in it, and a missing published field is not completed with a
+    default the vault never sent.
+    """
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_transport_failure_is_unavailable_not_payload(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that was not there is not a vault that answered badly.
+
+    This is the pair that makes the new payload type worth having: schema failure
+    and vault absence must stay separately countable, since one is a vault bug to
+    report upstream and the other is infrastructure to restore.
+    """
+    handler = _WheelRouteHandler(wheel_error=httpx.ConnectError("refused"))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is CreekVaultUnavailableError
+    assert not isinstance(exc_info.value, CreekVaultPayloadError)
+
+
+@pytest.mark.parametrize(
+    ("handler", "expected"),
+    [
+        pytest.param(
+            _WheelRouteHandler({"status": _HOSTILE_VAULT_CODE}),
+            CreekVaultPayloadError,
+            id="payload",
+        ),
+        pytest.param(
+            _WheelRouteHandler(
+                _error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNPROCESSABLE_ENTITY
+            ),
+            CreekVaultContractError,
+            id="contract",
+        ),
+        pytest.param(
+            _WheelRouteHandler(_error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNAUTHORIZED),
+            CreekVaultAuthError,
+            id="auth",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_failures_never_carry_vault_text_or_the_credential(
+    handler: _WheelRouteHandler,
+    expected: type[CreekVaultError],
+    http_clients: ClientFactory,
+) -> None:
+    """No wheel failure echoes the credential or a string the vault chose.
+
+    An unrecognized code is dropped rather than stored, and nothing rides along
+    as a cause or a context: an exception raised inside a parse ``except`` would
+    carry the vault's own decoder text into every traceback that renders it.
+    """
+    client = await _handshaken_client(handler, http_clients, _SENTINEL_KEY)
+
+    with pytest.raises(expected) as exc_info:
+        await client.wheel()
+
+    error = exc_info.value
+    for rendered in (str(error), repr(error)):
+        assert _SENTINEL_KEY not in rendered
+        assert _HOSTILE_CODE_SENTINEL not in rendered
+        assert "\r\n" not in rendered
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_uncoded_non_client_status_is_unavailable(
+    http_clients: ClientFactory,
+) -> None:
+    """A proxy error page at 502 is a call that did not land, not a request we got wrong.
+
+    It carries no readable code and it is not a 4xx, so neither the code branch
+    nor the request-fault branch decides it -- which is exactly the fall-through
+    that says the vault was not reached.
+    """
+    handler = _WheelRouteHandler(
+        text="<html><body>502 Bad Gateway</body></html>", status=HTTPStatus.BAD_GATEWAY
+    )
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.wheel()
+
+    assert type(exc_info.value) is CreekVaultUnavailableError
+    assert exc_info.value.code is None
+
+
+@pytest.mark.parametrize(
+    "ceiling",
+    [pytest.param(7, id="number"), pytest.param(None, id="null")],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_rejects_a_tier_echo_that_is_not_even_a_string(
+    ceiling: object,
+    http_clients: ClientFactory,
+) -> None:
+    """An echo that is not a string is not a claim, so it cannot satisfy the ceiling check.
+
+    Narrowing the type before the lookup is what stops the check being passable
+    by answering with something unreadable rather than with a tier.
+    """
+    handler = _WheelRouteHandler(_wheel_with_ceiling(ceiling))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_sends_exactly_the_ratified_request(
+    http_clients: ClientFactory,
+) -> None:
+    """One reflection is one POST of the collection, carrying exactly two ratified fields.
+
+    No ``entry_ref``, because adepthood reflects on an ad-hoc body rather than on
+    a fragment the vault has already stored, and -- the property this test exists
+    for -- no tier-ceiling field and no query string of any kind. The ratified
+    request schema is ``additionalProperties: false`` and publishes no such field,
+    so inventing one would be guessing at a contract rather than declaring
+    anything.
+    """
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = await _handshaken_client(handler, http_clients)
+
+    await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    post = handler.reflect_requests[0]
+    assert post.method == "POST"
+    assert str(post.url) == _REFLECTIONS_URL
+    assert post.url.query == b""
+    assert post.headers["Authorization"] == f"Bearer {_API_KEY}"
+
+    body = _sent_reflect_body(handler)
+    published = _schema_properties("ReflectionRequest")
+    minimum, maximum = _max_notes_bounds()
+    assert set(body) == {"content", "max_notes"}
+    assert set(body) <= set(published)
+    assert body["content"] == _ENTRY_BODY
+    assert body["max_notes"] == maximum
+    assert minimum <= maximum
+    assert "entry_ref" not in body
+    for name in _TIER_FIELD_NAMES:
+        assert name not in body
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_ok_projects_the_ratified_notes(
+    http_clients: ClientFactory,
+) -> None:
+    """Creek's published reflection reads back as a structured value carrying its own note.
+
+    The quote and the note survive verbatim -- adepthood anchors a quote
+    character-for-character against the entry body, so a trim here would silently
+    break the anchor -- and the kind is projected onto adepthood's marginalia
+    vocabulary rather than passed through in Creek's.
+    """
+    published = _published_note()
+    assert published["kind"] == "pattern"
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert reflection.status is VaultReflectionStatus.OK
+    assert reflection.notes == (
+        VaultReflectionNote(
+            kind=_PATTERN_MARGINALIA_KIND,
+            quote=str(published["quote"]),
+            note=str(published["note"]),
+        ),
+    )
+    assert reflection.essay is None
+    assert reflection.essay_grounded is False
+    assert reflection.routed_tier is VaultTierCeiling.PERSONAL
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_empty_is_a_status_not_a_failure(
+    http_clients: ClientFactory,
+) -> None:
+    """Creek's empty state is a legitimate answer: a status the caller reads, not an error.
+
+    A vault with nothing to say about this entry has said so successfully, which
+    is a different fact from a vault that could not be reached -- and folding the
+    two together is what made all six reflection outcomes one blank string.
+    """
+    published = _reflection_example("empty")
+    assert published["notes"] == []
+    handler = _ReflectRouteHandler(published)
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert reflection.status is VaultReflectionStatus.EMPTY
+    assert reflection.notes == ()
+    assert reflection.essay is None
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_escalation_raises_a_care_escalation(
+    http_clients: ClientFactory,
+) -> None:
+    """A 200 escalation raises out of the seam, and none of Creek's copy rides with it.
+
+    It must not be a ``CreekVaultError``, because the consumer catches that type
+    and answers from the cloud -- which would override Creek's care guard with
+    exactly the model prose it refused to produce. And it must carry nothing:
+    Creek's reason, its message and its resource names are Creek's own copy, and
+    adepthood renders only the care surface it reviewed itself.
+    """
+    published = _reflection_example("care-escalation")
+    signal = published["care_signal"]
+    assert isinstance(signal, dict)
+    resources = signal["resources"]
+    assert isinstance(resources, list)
+    creek_copy = [str(signal["message"]), str(published["reason"]), str(signal["kind"])]
+    creek_copy += [str(resource["name"]) for resource in resources if isinstance(resource, Mapping)]
+    handler = _ReflectRouteHandler(published, HTTPStatus.OK)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultCareEscalationError) as exc_info:
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    error = exc_info.value
+    assert not isinstance(error, CreekVaultError)
+    for rendered in (str(error), repr(error)):
+        for text in creek_copy:
+            assert text not in rendered
+
+
+@pytest.mark.parametrize(
+    ("payload", "status", "expected", "code"),
+    [
+        pytest.param(
+            _reflection_example("refusal"),
+            HTTPStatus.FORBIDDEN,
+            CreekVaultContractError,
+            VaultErrorCode.PRIVACY_REFUSED,
+            id="refusal_403_is_a_privacy_refusal",
+        ),
+        pytest.param(
+            _reflection_example("malformed-input"),
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            CreekVaultContractError,
+            VaultErrorCode.INVALID_REQUEST,
+            id="malformed_input_422",
+        ),
+        pytest.param(
+            _reflection_example("incompatible-version"),
+            HTTPStatus.CONFLICT,
+            CreekVaultContractError,
+            VaultErrorCode.INCOMPATIBLE_VERSION,
+            id="incompatible_version_409",
+        ),
+        pytest.param(
+            _reflection_example("unavailable-service"),
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            CreekVaultUnavailableError,
+            VaultErrorCode.UNAVAILABLE,
+            id="unavailable_service_503",
+        ),
+        pytest.param(
+            _error_envelope(VaultErrorCode.NOT_FOUND.value),
+            HTTPStatus.NOT_FOUND,
+            CreekVaultContractError,
+            VaultErrorCode.NOT_FOUND,
+            id="synthetic_not_found_404",
+        ),
+        pytest.param(
+            _error_envelope(VaultErrorCode.TEMPORARILY_UNAVAILABLE.value),
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            CreekVaultUnavailableError,
+            VaultErrorCode.TEMPORARILY_UNAVAILABLE,
+            id="synthetic_temporarily_unavailable_503",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_error_states_are_classified_from_the_published_code(
+    payload: Mapping[str, object],
+    status: HTTPStatus,
+    expected: type[CreekVaultError],
+    code: VaultErrorCode,
+    http_clients: ClientFactory,
+) -> None:
+    """Every reflection error is classified from its code, never from its status class.
+
+    The 403 is the whole reason for that order: Creek publishes
+    ``privacy_refused`` there, and deciding on the status alone would report a
+    refusal as a rejected credential, sending an operator to rotate a key that was
+    never refused while the real remedy goes unmentioned. The two codes with no
+    published example cell are constructed against the envelope schema instead, so
+    the classifier is exercised over Creek's whole error vocabulary rather than
+    only the part with fixtures.
+    """
+    handler = _ReflectRouteHandler(payload, status)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(expected) as exc_info:
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert type(exc_info.value) is expected
+    assert getattr(exc_info.value, "code", None) is code
+    assert not isinstance(exc_info.value, CreekVaultAuthError)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {**_reflection_example("success"), "essay": _SENTINEL_ESSAY, "essay_grounded": True},
+            id="claims_a_grounded_essay",
+        ),
+        pytest.param(_reflection_without("essay_grounded"), id="essay_grounded_absent"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_rejects_a_grounded_essay_claim(
+    payload: Mapping[str, object],
+    http_clients: ClientFactory,
+) -> None:
+    """Only a literally false, literally present ``essay_grounded`` is admissible at 0.2.
+
+    The field is a ``const false`` in the published schema, so a payload claiming
+    a grounded essay describes a contract this client does not speak, and one
+    omitting the claim makes no statement at all. Either way the answer is
+    rejected whole rather than read past.
+    """
+    handler = _ReflectRouteHandler(payload)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError) as exc_info:
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert _SENTINEL_ESSAY not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            _reflection_with("routed_tier", VaultTierCeiling.PERSONAL.value),
+            id="routed_above_our_ceiling",
+        ),
+        pytest.param(
+            _reflection_with("tier_ceiling", VaultTierCeiling.PERSONAL.value),
+            id="ceiling_above_our_ceiling",
+        ),
+        pytest.param(_reflection_with("routed_tier", "not-a-tier"), id="unrecognized_ceiling"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_rejects_a_tier_echo_above_the_declared_ceiling(
+    payload: Mapping[str, object],
+    http_clients: ClientFactory,
+) -> None:
+    """Both tier echoes are verified against what the caller accepted, not trusted.
+
+    The ratified surface publishes no way to declare a ceiling, so the only
+    control left is checking the one the vault says it applied. An answer routed
+    above what adepthood was willing to accept was drawn from material this app
+    never authorized, and an echo that will not parse as a tier is not a claim at
+    all -- accepting one would make the check passable by answering with nonsense.
+    """
+    handler = _ReflectRouteHandler(payload)
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_accepts_an_echo_at_the_ceiling_the_caller_allowed(
+    http_clients: ClientFactory,
+) -> None:
+    """The ceiling check refuses only what exceeds it, so an equal echo still answers.
+
+    Without this the rejection cases above would pass just as well against a
+    client that refused every reflection, which is what the capability did
+    before it was wired.
+    """
+    handler = _ReflectRouteHandler(_reflection_at_ceiling(VaultTierCeiling.OPEN.value))
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+    assert reflection.status is VaultReflectionStatus.OK
+    assert reflection.routed_tier is VaultTierCeiling.OPEN
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(
+            _ReflectRouteHandler(text="<html><body>Bad Gateway</body></html>"),
+            id="body_is_not_json",
+        ),
+        pytest.param(_ReflectRouteHandler([1, 2, 3]), id="json_is_an_array"),
+        pytest.param(
+            _ReflectRouteHandler(_reflection_with("notes", {"kind": "pattern"})),
+            id="notes_is_not_a_list",
+        ),
+        *[
+            pytest.param(_ReflectRouteHandler(_reflection_without(key)), id=f"missing_{key}")
+            for key in _schema_required("ReflectionResponse")
+        ],
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_malformed_bodies_are_payload_errors(
+    handler: _ReflectRouteHandler,
+    http_clients: ClientFactory,
+) -> None:
+    """A 200 adepthood cannot read as the published shape is a payload fault, not a fallback.
+
+    A missing published field is not completed with a default the vault never
+    sent, and the required-field cases are generated from the schema's own
+    ``required`` list so a field Creek adds later is covered without this test
+    being edited.
+    """
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_requires_the_advertised_capability_without_egress(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that never advertised reflections is refused locally, before any request.
+
+    The no-egress half is the load-bearing one: refusing after sending would have
+    already put the entry body on a wire toward a capability nobody claimed to
+    serve.
+    """
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+
+    with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
+        await client.reflect(_SENTINEL_BODY, VaultTierCeiling.PERSONAL)
+
+    assert CreekCapability.REFLECT.value in str(exc_info.value)
+    assert handler.requests == []
+    assert _SENTINEL_BODY not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("handler", "expected"),
+    [
+        pytest.param(
+            _ReflectRouteHandler({"status": _HOSTILE_VAULT_CODE}),
+            CreekVaultPayloadError,
+            id="payload",
+        ),
+        pytest.param(
+            _ReflectRouteHandler(
+                _error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNPROCESSABLE_ENTITY
+            ),
+            CreekVaultContractError,
+            id="contract",
+        ),
+        pytest.param(
+            _ReflectRouteHandler(_error_payload(_HOSTILE_VAULT_CODE), HTTPStatus.UNAUTHORIZED),
+            CreekVaultAuthError,
+            id="auth",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_failures_never_carry_vault_text_the_body_or_the_credential(
+    handler: _ReflectRouteHandler,
+    expected: type[CreekVaultError],
+    http_clients: ClientFactory,
+) -> None:
+    """No reflection failure echoes the entry, the credential, or a string the vault chose.
+
+    The reflection path is the one that carries a whole journal entry outward, so
+    its failures are the ones an entry could ride back out on. An unrecognized
+    code is dropped rather than stored, and nothing rides along as a cause or a
+    context: an exception raised inside a parse ``except`` would carry the vault's
+    own decoder text -- which quotes its bytes -- into every traceback.
+    """
+    client = await _handshaken_client(handler, http_clients, _SENTINEL_KEY)
+
+    with pytest.raises(expected) as exc_info:
+        await client.reflect(_SENTINEL_BODY, VaultTierCeiling.PERSONAL)
+
+    error = exc_info.value
+    for rendered in (str(error), repr(error)):
+        assert _SENTINEL_KEY not in rendered
+        assert _SENTINEL_BODY not in rendered
+        assert _HOSTILE_CODE_SENTINEL not in rendered
+        assert "\r\n" not in rendered
+    assert error.__cause__ is None
+    assert error.__context__ is None
