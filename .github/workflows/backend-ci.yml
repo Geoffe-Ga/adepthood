@@ -1,7 +1,12 @@
 name: Backend CI
 
 on:
+  # ``push`` is scoped to main. Without the branch filter it also fired on
+  # every push to a PR branch, so each push started TWO identical ~18-minute
+  # runs — one ``push``, one ``pull_request``, seconds apart (#2077). The main
+  # entry is kept so merges still get a post-merge run.
   push:
+    branches: [main]
     paths:
       - "backend/**"
       - ".pre-commit-config.yaml"
@@ -11,6 +16,16 @@ on:
       - "backend/**"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
+
+# One in-flight run per PR. A Ralph lane pushing a fix while CI is still
+# grinding on the previous commit used to leave the stale run to burn to
+# completion against a dead SHA. Cancellation is limited to pull_request:
+# every push to main is a distinct merge whose run should stand on its own.
+# Cancelled runs conclude as ``cancelled``, not ``success``, so
+# iteration-trigger.yml's success gate cannot mis-fire on one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend-quality:
@@ -133,7 +148,7 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: pytest -q --no-cov
+        run: pytest -q --no-cov -n auto --dist loadfile
 
   migration-drift:
     # BUG-INFRA-023: guard against models diverging from migrations.
