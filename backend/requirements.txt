@@ -2,13 +2,13 @@
 # All entries carry exact (==) pins matching CI's resolved set (see
 # requirements-lock.txt) so local dev, the compat matrix, and pip-audit all
 # install one identical set. Dependabot's pip ecosystem entry proposes upgrades.
-cachetools==7.1.6
+cachetools==7.1.7
 # Validates backend/content/manifest.json against the frozen contract at
 # startup (issues #389/#390); the >=4.0 floor (JSON Schema draft 2020-12) is
 # preserved by this pin, which is >= 4.0.
 jsonschema==4.26.0
-fastapi==0.140.0
-uvicorn==0.51.0
+fastapi==0.141.1
+uvicorn==0.52.1
 pydantic==2.13.4
 email-validator==2.3.0
 sqlalchemy==2.0.51
@@ -33,5 +33,5 @@ httpx==0.28.1
 mcp==1.28.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
-openai==2.48.0
-anthropic==0.120.0
+openai==2.53.0
+anthropic==0.120.2
