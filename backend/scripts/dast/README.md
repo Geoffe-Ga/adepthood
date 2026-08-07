@@ -154,3 +154,20 @@ class needs, at minimum: seeding at least one object as the intruder
 identity, templating replay bodies the way create payloads already are, a
 registry describing which body fields carry object references, a matching
 `Cell` variant, and new assertions in `test_registry_covers_real_app.py`.
+
+`POST /journal/` is a second, independent instance of the same class, found
+by hand rather than by the harness. It is even further outside the matrix's
+reach than `goals` was: its path is `/journal/`, with no id in it at all, so
+`is_object_scoped` in `discovery.py` never puts it in the object-scoped set
+to begin with, and `classify_routes` in `policy.py` leaves a route with no
+path parameters out of the count entirely rather than probing or excusing
+it -- there was no cross-user cell to run, clean or otherwise. The two
+foreign-object references, `user_practice_id` and `practice_session_id`,
+were both carried in the request body and are now checked in-app by
+`resolve_owned_user_practice` and `resolve_owned_practice_session` in
+`backend/src/dependencies/ownership.py`. Two instances of this class, found
+by hand in two different routes the matrix has run green on, is what makes
+the gap systemic rather than a one-off in `goals`: a clean matrix report is
+still not a claim that no other route has an unguarded body reference.
+Issue #2124 tracks closing the body-parameter gap described above; nothing
+in this change closes it.

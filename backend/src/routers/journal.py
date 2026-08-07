@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from dependencies.ownership import require_owned_journal_entry
+from dependencies.ownership import (
+    require_owned_journal_entry,
+    resolve_owned_practice_session,
+    resolve_owned_user_practice,
+)
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
@@ -249,6 +253,25 @@ async def _record_vault_outcome(
     await session.refresh(entry)
 
 
+async def _authorize_practice_links(
+    session: AsyncSession, payload: JournalMessageCreate, current_user: int
+) -> None:
+    """Verify the caller owns every practice row the new entry links to.
+
+    Both ids arrive in the request *body*, and FastAPI's DI cannot extract
+    body fields into sub-dependencies, so the path-parameter ownership
+    dependencies never see them; the rule has to be invoked by hand here.
+    Each non-null id is checked unconditionally -- there is no "unchanged, so
+    skip" shortcut, because that is precisely the reasoning that lets a forged
+    link through.  Raises 404 for an id that exists for nobody and 403 for one
+    belonging to another user, matching the canonical order elsewhere.
+    """
+    if payload.user_practice_id is not None:
+        await resolve_owned_user_practice(session, payload.user_practice_id, current_user)
+    if payload.practice_session_id is not None:
+        await resolve_owned_practice_session(session, payload.practice_session_id, current_user)
+
+
 @router.post("/", response_model=JournalMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_journal_entry(
     payload: JournalMessageCreate,
@@ -263,7 +286,13 @@ async def create_journal_entry(
     characters, zero-width, or bidi-override codepoints — defense
     against stored-XSS payloads in journal renderers and Trojan-Source
     smuggling in log viewers.
+
+    ``user_practice_id`` and ``practice_session_id`` are authorized before the
+    row is constructed: an id that exists for nobody is a 404, another user's
+    id is a 403, and neither can reach the session, so no forged link is ever
+    persisted.
     """
+    await _authorize_practice_links(session, payload, current_user)
     data = payload.model_dump()
     # ``entry_date`` is not a column: resolve it to a stored ``timestamp`` (or,
     # when absent, leave it out so the model's default_factory stamps "now").

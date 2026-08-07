@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from cryptography.fernet import Fernet
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.practice import Practice
+from models.practice_session import PracticeSession
+from models.user_practice import UserPractice
 from services import journal_encryption
+
+# Anchor date for directly-seeded practice rows; the journal assertions never
+# depend on the calendar, only on the ids these rows hand back.
+_SEED_START_DATE = date(2025, 1, 1)
+_SEED_DURATION_MINUTES = 10.0
 
 
 def _message_payload(**overrides: object) -> dict[str, object]:
@@ -33,8 +42,10 @@ def _parse_utc(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
-    """Create a user and return auth headers."""
+async def _signup_with_id(
+    client: AsyncClient, username: str = "alice"
+) -> tuple[dict[str, str], int]:
+    """Create a user and return (auth headers, user id)."""
     resp = await client.post(
         "/auth/signup",
         json={
@@ -43,8 +54,55 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
         },
     )
     assert resp.status_code == HTTPStatus.OK
-    token = resp.json()["token"]
-    return {"Authorization": f"Bearer {token}"}
+    body = resp.json()
+    return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
+async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
+    """Create a user and return auth headers."""
+    headers, _ = await _signup_with_id(client, username)
+    return headers
+
+
+async def _seed_user_practice(session: AsyncSession, user_id: int) -> int:
+    """Insert a Practice plus a UserPractice owned by ``user_id``; return its id."""
+    practice = Practice(
+        stage_number=1,
+        name="Sit",
+        description="A sit.",
+        instructions="Sit and breathe.",
+        default_duration_minutes=_SEED_DURATION_MINUTES,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=1,
+        start_date=_SEED_START_DATE,
+    )
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+    assert user_practice.id is not None
+    return user_practice.id
+
+
+async def _seed_practice_session(session: AsyncSession, user_id: int, user_practice_id: int) -> int:
+    """Insert a PracticeSession owned by ``user_id``; return its id."""
+    practice_session = PracticeSession(
+        user_id=user_id,
+        user_practice_id=user_practice_id,
+        duration_minutes=_SEED_DURATION_MINUTES,
+    )
+    session.add(practice_session)
+    await session.commit()
+    await session.refresh(practice_session)
+    assert practice_session.id is not None
+    return practice_session.id
 
 
 # ── Unauthenticated access ──────────────────────────────────────────────
@@ -127,17 +185,26 @@ async def test_create_journal_entry_invalid_tag_returns_422(async_client: AsyncC
 
 
 @pytest.mark.asyncio
-async def test_create_journal_entry_with_practice_session(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
+async def test_create_journal_entry_with_practice_session(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Body FKs the caller owns are accepted and echoed back on the created entry."""
+    headers, user_id = await _signup_with_id(async_client)
+    user_practice_id = await _seed_user_practice(db_session, user_id)
+    practice_session_id = await _seed_practice_session(db_session, user_id, user_practice_id)
+
     resp = await async_client.post(
         "/journal/",
-        json=_message_payload(practice_session_id=42, user_practice_id=7),
+        json=_message_payload(
+            practice_session_id=practice_session_id,
+            user_practice_id=user_practice_id,
+        ),
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
-    assert data["practice_session_id"] == 42
-    assert data["user_practice_id"] == 7
+    assert data["practice_session_id"] == practice_session_id
+    assert data["user_practice_id"] == user_practice_id
 
 
 # ── List & Pagination ───────────────────────────────────────────────────
@@ -457,21 +524,37 @@ async def test_filter_by_invalid_tag_returns_422(async_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_filter_by_practice_session_id(async_client: AsyncClient) -> None:
-    headers = await _signup(async_client)
-    await async_client.post(
+async def test_filter_by_practice_session_id(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Only entries linked to the queried session come back.
+
+    The creating POST is asserted explicitly so a future rejection of the body
+    FK surfaces here instead of silently degrading the filter to ``total == 0``.
+    """
+    headers, user_id = await _signup_with_id(async_client)
+    user_practice_id = await _seed_user_practice(db_session, user_id)
+    practice_session_id = await _seed_practice_session(db_session, user_id, user_practice_id)
+
+    linked = await async_client.post(
         "/journal/",
-        json=_message_payload(message="Session reflection", practice_session_id=10),
+        json=_message_payload(
+            message="Session reflection",
+            practice_session_id=practice_session_id,
+        ),
         headers=headers,
     )
+    assert linked.status_code == HTTPStatus.CREATED
     await async_client.post(
         "/journal/", json=_message_payload(message="Unrelated"), headers=headers
     )
 
-    resp = await async_client.get("/journal/?practice_session_id=10", headers=headers)
+    resp = await async_client.get(
+        f"/journal/?practice_session_id={practice_session_id}", headers=headers
+    )
     data = resp.json()
     assert data["total"] == 1
-    assert data["items"][0]["practice_session_id"] == 10
+    assert data["items"][0]["practice_session_id"] == practice_session_id
 
 
 # ── User isolation ───────────────────────────────────────────────────────
