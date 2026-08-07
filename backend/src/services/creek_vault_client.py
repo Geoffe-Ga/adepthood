@@ -1593,7 +1593,7 @@ class HttpCreekVaultClient:
         leaves this process toward a capability nobody claimed to serve.
 
         The answer splits four ways. A transport failure is an absent vault. A
-        non-2xx is classified by :func:`_wheel_failure`, which reads the vault's
+        non-2xx is classified by :func:`_read_failure`, which reads the vault's
         own code before the status class. A 2xx that will not decode, is missing
         a published required field, echoes a tier ceiling wider than the one
         adepthood was willing to accept, or carries a Frequency
