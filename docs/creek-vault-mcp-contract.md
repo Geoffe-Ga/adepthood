@@ -30,19 +30,41 @@ Do not restate Creek's request/response shapes here — that mirroring
 is what let this document and Creek's real server drift apart, which
 ADR 0004's Context section documents in detail. Instead:
 
-- Creek's ratified, canonical `/v1` contract is tracked in
-  creek-vault#1072. As of this writing that issue is **open and has
-  shipped nothing** — treat any `/v1` shape as **PENDING
-  creek-vault#1072** until it ships.
-- Until `/v1` ships, Creek's own published reference is
-  `docs/decisions/2026-06-30-adepthood-creek-mcp-contract.md` in the
-  `Geoffe-Ga/creek-vault` repository. Read that document, and Creek's
-  actual server code (`creek-tools/creek_mcp/contract.py`,
-  `server.py`, `tools/reflect.py`, `tools/wheel.py`), for the
-  authoritative shapes — not this file.
-- The version this document pins against is Creek's currently
-  published `CONTRACT_VERSION` constant (`creek-tools/creek_mcp/contract.py:18`),
-  not a guess at what `/v1` will eventually say.
+- Creek's ratified, canonical `/v1` contract **has shipped**
+  (creek-vault#1072, closed). It is published as a generated bundle at
+  `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
+  repository: 16 JSON Schemas, a `retry-policy.json` disposition
+  table, a four-capability by seven-state example matrix, and a
+  `manifest.json` recording a sha256 per generated file. Creek's ADR
+  `docs/decisions/2026-07-31-adepthood-http-application-api.md` is the
+  decision behind it. That bundle — not this file, and no longer
+  Creek's server code read by hand — is the authoritative source for
+  every `/v1` request and response shape.
+- Adepthood **vendors** that bundle byte-for-byte at a pinned upstream
+  commit, under `backend/tests/fixtures/creek_v1/`, alongside a
+  `vendor.json` sidecar recording the source repository, commit, path,
+  contract version, ontology version, and a sha256 per vendored file.
+  Copy-and-pin is upstream's own prescribed integration, and it is
+  what lets adepthood's tests assert against Creek's real bytes
+  instead of against a second, independently-editable mirror — the
+  mirroring that produced the divergences ADR 0004's Context section
+  documents.
+- Two checks keep the copy honest, and both fail loudly rather than
+  quietly: an offline test asserts every vendored file still hashes to
+  its recorded digest and that the vendored set is exactly the
+  recorded set, and a scheduled workflow re-fetches the bundle from
+  upstream and fails when it no longer matches, naming the capability
+  that moved. Neither is allowed to report success for a run that
+  compared nothing. The re-vendor procedure lives in the module
+  docstring of `backend/tests/test_creek_contract_conformance.py`.
+- The MCP surface is unaffected: Creek's `creek-tools/creek_mcp/`
+  server remains the agent-facing adapter and remains what adepthood's
+  shipped MCP client talks to. The bundle describes `/v1` only.
+- The version this document pins against is Creek's published
+  `CONTRACT_VERSION`, which the vendored bundle's `manifest.json`
+  restates and which
+  `backend/tests/test_creek_contract_conformance.py` asserts equal to
+  `domain/creek_vault.py`'s constant.
 
 ## Shared ontology and tier mapping (adepthood-owned)
 

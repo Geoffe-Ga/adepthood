@@ -5,7 +5,9 @@
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
 - **Pinned contract version:** 0.2.0 (tracks Creek's published
-  constant; /v1 PENDING creek-vault#1072)
+  constant; see the 2026-07-31 note at the end of this document — the
+  `/v1` bundle creek-vault#1072 tracked has since shipped and is now
+  vendored, and it publishes this same 0.2.0)
 
 ## Context
 
@@ -336,3 +338,58 @@ change without the other two.
 - No confidential-compute work is unblocked, advanced, or implied by
   this ADR (Decision 6); #958 and creek-vault#757 remain exactly where
   they were.
+
+## Note, 2026-07-31 — creek-vault#1072 shipped; the bundle is vendored
+
+This ADR was written while creek-vault#1072 was open and had published
+nothing, which is why every `/v1` shape above is marked **PENDING
+creek-vault#1072**. That issue has since closed. Creek now publishes a
+generated, byte-deterministic contract bundle at
+`docs/contracts/adepthood-v1/` — 16 JSON Schemas, a
+`retry-policy.json` disposition table over nine error codes, a
+four-capability by seven-state example matrix, and a `manifest.json`
+recording a sha256 per generated file — behind its own ADR,
+`docs/decisions/2026-07-31-adepthood-http-application-api.md`.
+
+Three facts this ADR asserted are therefore now out of date, and are
+recorded here rather than edited in place so the reasoning above stays
+readable as what was known at the time:
+
+1. "creek-vault#1072 is open and has shipped nothing" (Context) is no
+   longer true, and neither is Decision 5's forward-looking phrasing
+   about the ratified document arriving later. It has arrived.
+2. The published bundle advertises `contract_version` **0.2.0** — the
+   same value Decision 3 pins, and the same value
+   `domain/creek_vault.py` carries. The pin needs no change. Decision
+   3's refusal to guess a number is vindicated rather than overtaken.
+3. Every "PENDING creek-vault#1072" resolution in the divergence table
+   now has a real ratified shape to resolve against. Replacing those
+   cells is deliberately **not** done in this note: the owning issues
+   named in that table's last column own both the shape and the client
+   change, and a resolution written here ahead of the code would be
+   the same mirroring this ADR exists to end.
+
+The bundle is vendored byte-for-byte at a pinned upstream commit under
+`backend/tests/fixtures/creek_v1/`, with a `vendor.json` sidecar
+recording the source repository, commit, path, versions and a sha256
+per file. An offline test asserts the vendored bytes still hash to
+their recorded digests and that the vendored set is exactly the
+recorded set; a scheduled workflow re-fetches the bundle and fails when
+upstream no longer matches, naming the capability that moved. Neither
+check may report success for a run that compared nothing.
+
+Vendoring the bundle does **not** by itself close any divergence. The
+conformance suite that reads it records, as executable assertions, that
+today's HTTP client cannot complete a handshake against Creek's own
+ratified capability document at all: it reads a top-level `available`
+where Creek nests `vault.available`, and it maps advertised capability
+names through an enum whose `creek.*` values share no member with
+Creek's published `capabilities`/`journal-upsert`/`reflections`/`wheel`.
+A third divergence sits in the error vocabulary — Creek's
+`privacy_refused` is not a `VaultErrorCode` member, so a privacy
+refusal served at 403 is classified on status alone and surfaces as a
+rejected credential. Fixing all three belongs to the issues named in
+the divergence table.
+
+Nothing in Decision 6 changes. This note is a factual correction and a
+pointer to the vendored bundle; it revises no decision.
