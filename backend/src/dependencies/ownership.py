@@ -18,6 +18,7 @@ from models.goal_group import GoalGroup
 from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 
@@ -157,19 +158,55 @@ async def require_owned_journal_entry(
     return entry
 
 
+async def resolve_owned_user_practice(
+    session: AsyncSession, user_practice_id: int, user_id: int
+) -> UserPractice:
+    """Resolve ``user_practice_id`` for write access -- owner only -- and audit denials.
+
+    Callers that receive a user-practice id in a request *body* (rather than
+    the path) reuse this directly, so the ownership rule lives in exactly one
+    place regardless of where the id arrived from.
+    """
+    user_practice = await session.get(UserPractice, user_practice_id)
+    if user_practice is None:
+        raise not_found("user_practice")
+    if user_practice.user_id != user_id:
+        log_ownership_denied("user_practice", user_practice_id, user_id)
+        raise forbidden("forbidden")
+    return user_practice
+
+
 async def require_owned_user_practice(
     user_practice_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
-    """Resolve ``user_practice_id`` and verify the caller owns it."""
-    user_practice = await session.get(UserPractice, user_practice_id)
-    if user_practice is None:
-        raise not_found("user_practice")
-    if user_practice.user_id != current_user:
-        log_ownership_denied("user_practice", user_practice_id, current_user)
+    """Resolve ``user_practice_id`` and verify the caller owns it.
+
+    Delegates to :func:`resolve_owned_user_practice`, which owns the rule and
+    emits the ``resource_access_denied`` audit row on a cross-tenant probe,
+    matching :func:`require_owned_goal_group`.
+    """
+    return await resolve_owned_user_practice(session, user_practice_id, current_user)
+
+
+async def resolve_owned_practice_session(
+    session: AsyncSession, practice_session_id: int, user_id: int
+) -> PracticeSession:
+    """Resolve ``practice_session_id`` for write access -- owner only -- and audit denials.
+
+    Sessions carry ``user_id`` directly, so ownership is a single comparison.
+    There is deliberately no ``require_``-style dependency wrapper: no route
+    takes ``practice_session_id`` as a path parameter, so a wrapper would be
+    dead code.  Body-carried ids call this directly.
+    """
+    practice_session = await session.get(PracticeSession, practice_session_id)
+    if practice_session is None:
+        raise not_found("practice_session")
+    if practice_session.user_id != user_id:
+        log_ownership_denied("practice_session", practice_session_id, user_id)
         raise forbidden("forbidden")
-    return user_practice
+    return practice_session
 
 
 async def require_visible_goal_group(

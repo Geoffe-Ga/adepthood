@@ -30,11 +30,13 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from models.course_stage import CourseStage
 from models.goal import Goal
+from models.journal_entry import JournalEntry
 from models.practice import Practice
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
@@ -42,6 +44,8 @@ from models.stage_progress import StageProgress
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
 _DEFINITELY_MISSING_ID = 999_999
+
+_JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
 
 _HABIT_PAYLOAD: dict[str, object] = {
     "name": "Drink Water",
@@ -114,9 +118,16 @@ async def _create_user_practice(
     db_session: AsyncSession,
     headers: dict[str, str],
     user_id: int,
+    *,
+    practice_name: str | None = None,
 ) -> int:
-    """Seed a practice the user owns (via UserPractice) and return its id."""
-    practice = await _seed_practice(db_session)
+    """Seed a practice the user owns (via UserPractice) and return its id.
+
+    ``practice_name`` must be supplied when one test seeds two of these: the
+    preset catalog is uniquely indexed on (stage_number, normalized name).
+    """
+    overrides: dict[str, object] = {} if practice_name is None else {"name": practice_name}
+    practice = await _seed_practice(db_session, **overrides)
     # Make sure the user is unlocked for stage 1 -- a fresh signup is.
     db_session.add(
         StageProgress(
@@ -150,6 +161,33 @@ def _session_window_payload(user_practice_id: int) -> dict[str, object]:
         "started_at": started.isoformat(),
         "ended_at": ended.isoformat(),
     }
+
+
+def _journal_payload(**foreign_keys: int) -> dict[str, object]:
+    """Build an otherwise-valid ``POST /journal/`` body carrying the given body FKs.
+
+    Everything except the injected id is benign, so a rejection can only be
+    about the id -- never about a malformed message or a missing field.
+    """
+    return {"message": _JOURNAL_PROBE_MESSAGE, **foreign_keys}
+
+
+def _denial_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return the ``resource_access_denied`` audit records captured so far."""
+    return [record for record in caplog.records if record.message == "resource_access_denied"]
+
+
+async def _entries_where(
+    db_session: AsyncSession, condition: ColumnElement[bool]
+) -> list[JournalEntry]:
+    """Return every persisted journal entry matching ``condition``.
+
+    Expires the shared test session first so the assertion reads committed
+    state rather than the identity map the request left behind.
+    """
+    db_session.expire_all()
+    result = await db_session.execute(select(JournalEntry).where(condition))
+    return list(result.scalars().all())
 
 
 async def _create_practice_session(
@@ -459,6 +497,117 @@ async def test_idor_practice_session_create_returns_403(
 
 
 @pytest.mark.asyncio
+async def test_idor_journal_create_user_practice_returns_403(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot bind a new journal entry to Alice's user-practice.
+
+    ``POST /journal/`` takes ``user_practice_id`` from the request body, so the
+    path-parameter ownership dependencies never see it.  An unguarded write
+    would let an attacker graft rows onto a victim's practice history -- rows
+    that then surface in the victim's practice-scoped views and aggregates.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_j_up_post")
+    bob_headers, bob_id = await _signup(async_client, "bob_j_up_post")
+
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id, practice_name="Alice Sit"
+    )
+    bob_practice_id = await _create_user_practice(
+        async_client, db_session, bob_headers, bob_id, practice_name="Bob Sit"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.post(
+            "/journal/",
+            json=_journal_payload(user_practice_id=alice_practice_id),
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    # The identical payload against Bob's own practice is accepted, so the 403
+    # above can only be about ownership -- not a missing row or a bad body.
+    baseline = await async_client.post(
+        "/journal/",
+        json=_journal_payload(user_practice_id=bob_practice_id),
+        headers=bob_headers,
+    )
+    assert baseline.status_code == HTTPStatus.CREATED
+    assert baseline.json()["user_practice_id"] == bob_practice_id
+
+    smuggled = await _entries_where(
+        db_session, col(JournalEntry.user_practice_id) == alice_practice_id
+    )
+    assert smuggled == [], "cross-user journal entry persisted against the victim's user-practice"
+
+    denials = _denial_records(caplog)
+    assert denials, "expected a resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "user_practice"
+    assert getattr(denials[0], "resource_id", None) == alice_practice_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_idor_journal_create_practice_session_returns_403(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot bind a new journal entry to Alice's practice session.
+
+    ``practice_session_id`` is the second unguarded body FK on ``POST
+    /journal/``; ``GET /journal/?practice_session_id=`` filters on it, so a
+    forged link is an attacker-controlled write into the victim's session view.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_j_ps_post")
+    bob_headers, bob_id = await _signup(async_client, "bob_j_ps_post")
+
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id, practice_name="Alice Sit"
+    )
+    bob_practice_id = await _create_user_practice(
+        async_client, db_session, bob_headers, bob_id, practice_name="Bob Sit"
+    )
+    alice_session_id = await _create_practice_session(
+        async_client, alice_headers, alice_practice_id
+    )
+    bob_session_id = await _create_practice_session(async_client, bob_headers, bob_practice_id)
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.post(
+            "/journal/",
+            json=_journal_payload(practice_session_id=alice_session_id),
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    baseline = await async_client.post(
+        "/journal/",
+        json=_journal_payload(practice_session_id=bob_session_id),
+        headers=bob_headers,
+    )
+    assert baseline.status_code == HTTPStatus.CREATED
+    assert baseline.json()["practice_session_id"] == bob_session_id
+
+    smuggled = await _entries_where(
+        db_session, col(JournalEntry.practice_session_id) == alice_session_id
+    )
+    assert smuggled == [], "cross-user journal entry persisted against the victim's session"
+
+    denials = _denial_records(caplog)
+    assert denials, "expected a resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "practice_session"
+    assert getattr(denials[0], "resource_id", None) == alice_session_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
 async def test_idor_practice_session_list_returns_403(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -552,6 +701,35 @@ async def test_missing_row_returns_404(async_client: AsyncClient, method: str, u
     assert resp.status_code == HTTPStatus.NOT_FOUND, (
         f"missing-row regression: {method} {url} must 404, got {resp.status_code}"
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "detail"),
+    [
+        ("user_practice_id", "user_practice_not_found"),
+        ("practice_session_id", "practice_session_not_found"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_journal_create_missing_body_fk_returns_404(
+    async_client: AsyncClient, field: str, detail: str
+) -> None:
+    """A ``POST /journal/`` body FK that exists for nobody 404s, never 403.
+
+    Pins the canonical ordering the IDOR matrix relies on: existence is
+    checked before ownership, so a nonexistent id cannot be mistaken for
+    someone else's.
+    """
+    headers, _ = await _signup(async_client, f"journal_missing_{field}")
+
+    resp = await async_client.post(
+        "/journal/",
+        json=_journal_payload(**{field: _DEFINITELY_MISSING_ID}),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == detail
 
 
 # ── BUG-COURSE-004: locked course content masks as 404 ──────────────────
