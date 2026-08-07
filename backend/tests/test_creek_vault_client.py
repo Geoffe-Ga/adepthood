@@ -16,7 +16,7 @@ from mcp import Client, MCPError
 from mcp.client.client import InMemoryTransport
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, ImageContent, TextContent
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
@@ -37,9 +37,13 @@ from services.creek_vault_client import (
     _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
     _MAX_REFLECT_NOTES,
+    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _MCP_SSE_READ_TIMEOUT_SECONDS,
     _MCP_TOOL_ERROR_CODE,
     _VAULT_TIMEOUT_SECONDS,
+    _WHEEL_FREQUENCY_CODES,
+    _WHEEL_OK_STATUS,
+    _WHEEL_TIER_CEILING,
     LocalFallbackCreekVaultClient,
     McpCreekVaultClient,
     _build_mcp_http_client,
@@ -49,7 +53,9 @@ from services.creek_vault_client import (
     _McpStreamableHttpTransport,
     _parse_ingest_result,
     _parse_reflection,
+    _parse_wheel,
     _reflect_params,
+    _wheel_params,
     build_creek_vault_client,
 )
 
@@ -113,6 +119,83 @@ def _reflect_payload(notes: object) -> dict[str, object]:
         "notes": notes,
         "essay_grounded": False,
     }
+
+
+# Creek's own Frequency names, in F-code order. Restated as a literal on purpose:
+# these strings arrive from the vault and must survive the parse verbatim, so
+# deriving them from anything adepthood owns would hide a relabelling bug.
+_WHEEL_ASPECT_NAMES = (
+    "Agency",
+    "Receptivity",
+    "Discernment",
+    "Devotion",
+    "Integrity",
+    "Play",
+    "Service",
+    "Sovereignty",
+    "Communion",
+    "Emptiness",
+)
+
+# A JSON integer whose magnitude no float can hold. Every integer literal is
+# valid JSON and Python decodes one to an arbitrary-precision ``int``, so a
+# hostile or buggy vault can put this in a ``share``; ``float()`` on it raises
+# ``OverflowError``, an ``ArithmeticError`` that sits in neither the client's
+# transport degrade set nor the read path's ``CreekVaultError`` catch. The
+# exponent is a decade past the ~1.8e308 float ceiling and far inside CPython's
+# 4300-digit integer-parsing limit, so it is a value that really does arrive.
+_FLOAT_OVERFLOWING_SHARE = 10**400
+
+
+def _wheel_entry(name: object, share: object) -> dict[str, object]:
+    """Build one creek.wheel Frequency entry, allowing deliberately malformed field types."""
+    return {"name": name, "share": share}
+
+
+def _creek_wheel_map() -> dict[str, object]:
+    """Build a well-formed creek wheel map: all ten F-codes with distinct shares."""
+    return {
+        f"F{n}": _wheel_entry(_WHEEL_ASPECT_NAMES[n - 1], round(n / 10, 2))
+        for n in range(1, TOTAL_STAGES + 1)
+    }
+
+
+def _wheel_map_with(code: str, entry: object) -> dict[str, object]:
+    """Build the ten-code wheel map with ``code``'s entry replaced by ``entry``."""
+    wheel = _creek_wheel_map()
+    wheel[code] = entry
+    return wheel
+
+
+def _wheel_map_without(code: str) -> dict[str, object]:
+    """Build the ten-code wheel map with ``code`` dropped entirely."""
+    wheel = _creek_wheel_map()
+    del wheel[code]
+    return wheel
+
+
+def _wheel_payload(wheel: object) -> dict[str, object]:
+    """Build a well-formed creek.wheel ok-status response carrying ``wheel``."""
+    return {
+        "status": "ok",
+        "tool": CreekCapability.WHEEL.value,
+        "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+        "total_classified": 20,
+        "unclassified": 3,
+        "wheel": wheel,
+    }
+
+
+def _expected_balance() -> VaultWheelBalance:
+    """Build the domain balance a well-formed creek wheel map projects onto."""
+    return VaultWheelBalance(
+        aspects=tuple(
+            VaultWheelAspect(
+                stage_number=n, aspect=_WHEEL_ASPECT_NAMES[n - 1], fullness=round(n / 10, 2)
+            )
+            for n in range(1, TOTAL_STAGES + 1)
+        )
+    )
 
 
 class ScriptedTransport:
@@ -743,63 +826,227 @@ def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
     assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
 
 
+def _wheel_client(payload: Mapping[str, object]) -> McpCreekVaultClient:
+    """Build a client whose transport advertises WHEEL and answers it with ``payload``."""
+    transport = ScriptedTransport(
+        responses={
+            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
+            CreekCapability.WHEEL.value: payload,
+        }
+    )
+    return McpCreekVaultClient(transport=transport)
+
+
+def test_wheel_params_sends_only_the_privacy_tier_ceiling() -> None:
+    """Wheel params carry exactly the one creek.wheel wire field, with no consumer key."""
+    params = _wheel_params()
+    assert params == {"privacy_tier_ceiling": VaultTierCeiling.PERSONAL.value}
+    assert {"consumer", "tier_ceiling"}.isdisjoint(params)
+    assert _WHEEL_TIER_CEILING is VaultTierCeiling.PERSONAL
+
+
+def test_wheel_frequency_codes_cover_every_stage_in_ascending_order() -> None:
+    """The wheel's Frequency codes are F1..F10, one per curriculum stage, in order."""
+    expected_codes = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
+    assert expected_codes == _WHEEL_FREQUENCY_CODES
+
+
+def test_wheel_wire_constants_match_creeks_published_contract() -> None:
+    """The wheel's success status and its aspect-name ceiling hold their pinned values."""
+    assert _WHEEL_OK_STATUS == "ok"
+    assert _MAX_WHEEL_ASPECT_NAME_LENGTH == 128
+
+
+def test_parse_wheel_projects_a_creek_payload_onto_the_domain_balance() -> None:
+    """_parse_wheel maps each F-code onto its stage number, its name, and its share."""
+    assert _parse_wheel(_wheel_payload(_creek_wheel_map())) == _expected_balance()
+
+
+def test_parse_wheel_returns_none_for_an_unusable_payload() -> None:
+    """_parse_wheel answers None rather than raising, leaving the degrade to its caller."""
+    refusal = {
+        "status": "refused",
+        "tool": CreekCapability.WHEEL.value,
+        "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+        "reason": "requested content exceeds the configured tier ceiling",
+    }
+    assert _parse_wheel(refusal) is None
+
+
 @pytest.mark.asyncio
 async def test_wheel_success_projects_onto_vault_wheel_balance() -> None:
-    """wheel() projects a vault-computed wheel payload onto VaultWheelBalance."""
-    transport = ScriptedTransport(
-        responses={
-            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
-            CreekCapability.WHEEL.value: {
-                "aspects": [
-                    {"stage_number": 1, "aspect": "courage", "fullness": 0.5},
-                    {"stage_number": 2, "aspect": "shadow", "fullness": 0.75},
-                ]
-            },
-        }
-    )
-    client = McpCreekVaultClient(transport=transport)
+    """wheel() projects creek's F-code wheel map onto ascending VaultWheelBalance aspects."""
+    client = _wheel_client(_wheel_payload(_creek_wheel_map()))
     await client.handshake()
     result = await client.wheel()
-    assert result == VaultWheelBalance(
-        aspects=(
-            VaultWheelAspect(stage_number=1, aspect="courage", fullness=0.5),
-            VaultWheelAspect(stage_number=2, aspect="shadow", fullness=0.75),
-        )
-    )
+    assert result == _expected_balance()
+    assert [aspect.stage_number for aspect in result.aspects] == list(range(1, TOTAL_STAGES + 1))
 
 
 @pytest.mark.asyncio
-async def test_wheel_malformed_fields_raise_validation_error() -> None:
-    """wheel() does not normalize a bad-fields payload; the parse error surfaces."""
-    transport = ScriptedTransport(
-        responses={
-            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
-            CreekCapability.WHEEL.value: {"aspects": [{"stage_number": "not-an-int"}]},
-        }
-    )
-    client = McpCreekVaultClient(transport=transport)
+async def test_wheel_empty_corpus_parses_as_ten_zero_fullness_aspects() -> None:
+    """An all-zero wheel parses successfully; whether to defer is the read path's call."""
+    wheel = {
+        f"F{n}": _wheel_entry(_WHEEL_ASPECT_NAMES[n - 1], 0.0) for n in range(1, TOTAL_STAGES + 1)
+    }
+    payload = {**_wheel_payload(wheel), "total_classified": 0, "unclassified": 0}
+    client = _wheel_client(payload)
     await client.handshake()
-    with pytest.raises(ValidationError):
+    result = await client.wheel()
+    assert [aspect.stage_number for aspect in result.aspects] == list(range(1, TOTAL_STAGES + 1))
+    assert [aspect.fullness for aspect in result.aspects] == [0.0] * TOTAL_STAGES
+
+
+@pytest.mark.asyncio
+async def test_wheel_ignores_unknown_envelope_and_wheel_keys() -> None:
+    """Envelope fields and wheel codes creek may add are ignored, leaving exactly ten aspects."""
+    wheel = {
+        **_creek_wheel_map(),
+        "F11": _wheel_entry("A Frequency Nobody Has Published Yet", 0.5),
+        "junk": "not an entry at all",
+    }
+    payload = {
+        **_wheel_payload(wheel),
+        "essay": "a grounded essay the wheel contract has no room for",
+        "related": ["eddy-1"],
+    }
+    client = _wheel_client(payload)
+    await client.handshake()
+    result = await client.wheel()
+    assert result == _expected_balance()
+    assert len(result.aspects) == TOTAL_STAGES
+
+
+@pytest.mark.asyncio
+async def test_wheel_accepts_an_integer_share() -> None:
+    """A whole-number share serialized as an int lands as a float fullness."""
+    whole = _wheel_map_with("F4", _wheel_entry(_WHEEL_ASPECT_NAMES[3], 1))
+    client = _wheel_client(_wheel_payload(whole))
+    await client.handshake()
+    result = await client.wheel()
+    stage_four = next(aspect for aspect in result.aspects if aspect.stage_number == 4)
+    assert stage_four.fullness == 1.0
+    assert isinstance(stage_four.fullness, float)
+
+
+_UNUSABLE_WHEEL_PAYLOADS: list[tuple[str, Mapping[str, object]]] = [
+    (
+        "status_refused",
+        {
+            "status": "refused",
+            "tool": CreekCapability.WHEEL.value,
+            "tier_ceiling": VaultTierCeiling.PERSONAL.value,
+            "reason": "requested content exceeds the configured tier ceiling",
+        },
+    ),
+    ("status_missing", {"tool": CreekCapability.WHEEL.value, "wheel": _creek_wheel_map()}),
+    ("status_unknown_future", {**_wheel_payload(_creek_wheel_map()), "status": "empty"}),
+    ("status_wrong_typed", {**_wheel_payload(_creek_wheel_map()), "status": 1}),
+    (
+        "wheel_missing",
+        {key: value for key, value in _wheel_payload(_creek_wheel_map()).items() if key != "wheel"},
+    ),
+    ("wheel_not_a_mapping", _wheel_payload([_creek_wheel_map()])),
+    ("frequency_code_missing", _wheel_payload(_wheel_map_without("F7"))),
+    ("entry_not_a_mapping", _wheel_payload(_wheel_map_with("F3", "nope"))),
+    ("share_missing", _wheel_payload(_wheel_map_with("F2", {"name": _WHEEL_ASPECT_NAMES[1]}))),
+    (
+        "share_a_string",
+        _wheel_payload(_wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], "0.4"))),
+    ),
+    (
+        "share_a_bool",
+        _wheel_payload(_wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], True))),
+    ),
+    (
+        "share_null",
+        _wheel_payload(_wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], None))),
+    ),
+    (
+        "share_an_int_no_float_can_hold",
+        _wheel_payload(
+            _wheel_map_with("F2", _wheel_entry(_WHEEL_ASPECT_NAMES[1], _FLOAT_OVERFLOWING_SHARE))
+        ),
+    ),
+    ("name_missing", _wheel_payload(_wheel_map_with("F5", {"share": 0.5}))),
+    ("name_blank", _wheel_payload(_wheel_map_with("F5", _wheel_entry("", 0.5)))),
+    ("name_whitespace_only", _wheel_payload(_wheel_map_with("F5", _wheel_entry("   ", 0.5)))),
+    ("name_wrong_typed", _wheel_payload(_wheel_map_with("F5", _wheel_entry(42, 0.5)))),
+    (
+        "name_over_length_cap",
+        _wheel_payload(
+            _wheel_map_with("F5", _wheel_entry("x" * (_MAX_WHEEL_ASPECT_NAME_LENGTH + 1), 0.5))
+        ),
+    ),
+    (
+        "name_carrying_a_newline",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\nWARN root: pay up", 0.5))),
+    ),
+    (
+        "name_carrying_an_ansi_escape",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\x1b[31m", 0.5))),
+    ),
+    (
+        "name_carrying_a_bidi_override",
+        _wheel_payload(_wheel_map_with("F5", _wheel_entry("Agency\u202e", 0.5))),
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [case[1] for case in _UNUSABLE_WHEEL_PAYLOADS],
+    ids=[case[0] for case in _UNUSABLE_WHEEL_PAYLOADS],
+)
+async def test_wheel_degrades_to_unavailable_on_unusable_payload(
+    payload: Mapping[str, object],
+) -> None:
+    """Any unusable wheel response degrades to CreekVaultUnavailableError, never a parse error."""
+    client = _wheel_client(payload)
+    await client.handshake()
+    with pytest.raises(CreekVaultUnavailableError):
         await client.wheel()
 
 
 @pytest.mark.asyncio
-async def test_wheel_over_cap_aspect_count_raises_validation_error() -> None:
-    """wheel() rejects an aspect list larger than the schema ceiling."""
-    over_cap = [
-        {"stage_number": n, "aspect": f"Aspect-{n}", "fullness": 0.5}
-        for n in range(1, TOTAL_STAGES + 2)
-    ]
-    transport = ScriptedTransport(
-        responses={
-            CreekCapability.HANDSHAKE.value: _handshake_payload([CreekCapability.WHEEL.value]),
-            CreekCapability.WHEEL.value: {"aspects": over_cap},
-        }
-    )
-    client = McpCreekVaultClient(transport=transport)
+async def test_wheel_keeps_a_name_at_the_exact_length_boundary() -> None:
+    """A name of exactly _MAX_WHEEL_ASPECT_NAME_LENGTH characters survives verbatim."""
+    name = "x" * _MAX_WHEEL_ASPECT_NAME_LENGTH
+    client = _wheel_client(_wheel_payload(_wheel_map_with("F5", _wheel_entry(name, 0.5))))
     await client.handshake()
-    with pytest.raises(ValidationError):
+    result = await client.wheel()
+    stage_five = next(aspect for aspect in result.aspects if aspect.stage_number == 5)
+    assert stage_five.aspect == name
+
+
+@pytest.mark.asyncio
+async def test_wheel_adepthood_shaped_payload_degrades_to_unavailable() -> None:
+    """Adepthood's own aspects-list shape is not creek's wire shape, so it degrades."""
+    payload = {
+        "aspects": [
+            {"stage_number": n, "aspect": f"Aspect-{n}", "fullness": 0.5}
+            for n in range(1, TOTAL_STAGES + 1)
+        ]
+    }
+    client = _wheel_client(payload)
+    await client.handshake()
+    with pytest.raises(CreekVaultUnavailableError):
         await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_wheel_unavailable_error_never_leaks_payload_content() -> None:
+    """The wheel degrade names only the capability, never a string the vault chose."""
+    leak = "SENTINEL-LEAK"
+    oversized = leak + "x" * _MAX_WHEEL_ASPECT_NAME_LENGTH
+    client = _wheel_client(_wheel_payload(_wheel_map_with("F5", _wheel_entry(oversized, 0.5))))
+    await client.handshake()
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.wheel()
+    message = str(exc_info.value)
+    assert leak not in message
+    assert CreekCapability.WHEEL.value in message
 
 
 @pytest.mark.asyncio

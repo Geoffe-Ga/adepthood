@@ -65,15 +65,107 @@ into the vault; it is not something Creek Vault is expected to infer.
 
 Creek's `creek.wheel` computes and owns the Frequency-wheel counts and
 shares — ten buckets, `F1` through `F10`
-(`creek-tools/creek_mcp/tools/wheel.py:95-110`). Adepthood's
-`WheelBalanceResponse` (`backend/src/schemas/wheel.py`) is a *ten-stage
-aspect-fullness* projection, and the projection from one onto the
+(`creek-tools/creek_mcp/tools/wheel.py`, `creek-tools/creek_mcp/server.py`).
+Adepthood's `WheelBalanceResponse` (`backend/src/schemas/wheel.py`) is a
+*ten-stage aspect-fullness* projection, and the projection from one onto the
 other is Adepthood's to own — Creek must not invent our stage/aspect
 vocabulary on our behalf. The fact that both land on ten buckets is a
 numeric coincidence, **not a semantic identity**: `F1..F10` are
 Creek's frequency classification of corpus content, while adepthood's
-ten stages are `CourseStage` rows tied to the APTITUDE program. The
-concrete field-by-field projection is owned by adepthood #1937.
+ten stages are `CourseStage` rows tied to the APTITUDE program.
+
+### The request
+
+`creek.wheel` takes exactly one caller-supplied parameter,
+`privacy_tier_ceiling`; unlike `creek.classify` there is no `consumer`
+parameter — the vault fills that in from its own MCP session
+(`_wheel_params`, `backend/src/services/creek_vault_client.py:658-666`).
+Adepthood always sends `personal`
+(`_WHEEL_TIER_CEILING`, `creek_vault_client.py:237-246`), because only
+aggregate per-Frequency counts and shares cross this seam — never
+fragment content — so the ceiling governs what the vault *counts*, not
+what it hands back. `personal` is the honest maximum here: intimate
+content never reaches the vault from adepthood at all (see
+"Intimate-tier content: pointer only" below), and creek independently
+caps a network consumer below intimate regardless of what adepthood
+asks for. Sending `open` would be worse than useless rather than safer,
+because creek ranks unclassified content with `personal`: an `open`
+ceiling silently excludes every not-yet-classified fragment from the
+count, so a young corpus — most of whose entries have no Frequency yet
+— reads back as an all-zero wheel even though it plainly isn't empty.
+
+### The response projection
+
+The adapter walks a whitelist of the ten `F1..F10` codes rather than
+whatever keys the vault's `wheel` map happens to contain
+(`_wheel_aspects`, `creek_vault_client.py:720-731`), and projects each
+surviving entry as follows:
+
+| Creek `wheel["F<n>"]` field | Adepthood field | Notes |
+| --- | --- | --- |
+| the `F<n>` key itself | `stage_number` = `n` | Canonical order comes from the whitelist, not the map's iteration order |
+| `share` | `fullness` | Read as a float; a boolean is rejected before the numeric test (`_wheel_fullness`, `creek_vault_client.py:669-692`) |
+| `count` | *(not used)* | Adepthood renders proportions, not raw counts |
+| `name` | *(carried, never rendered)* | Validated at the seam but relabelled before it reaches the read path — see below |
+
+The envelope's `total_classified`, `unclassified`, `tool`, and
+`tier_ceiling` fields are read by nothing on adepthood's side. Unknown
+keys — extra envelope fields, and any Frequency code outside
+`F1..F10` — are ignored rather than erroring, the same
+drop-don't-coerce discipline the marginalia mapping below already
+describes for unrecognized kinds.
+
+### The vocabulary decision
+
+Creek's canonical Frequency names are `Agency`, `Receptivity`,
+`Self-Love / Power`, `Community Love / Conformity`, `Achievism`,
+`Pluralism`, `Integration`, `True Self / Transcendence`, `Unity`, and
+`Emptiness`. Adepthood's seeded `CourseStage.aspect` labels for stages
+1–10 (`backend/src/curriculum/archetypal_wavelength.json`) are `Agency`,
+`Receptivity`, `Self-Love`, `Community Love`, `Intellectual
+Understanding`, `Embodied Understanding`, `Systems Wisdom`, `True Self
+Connection`, `Unity`, and `Emptiness`. Same APTITUDE ontology, different
+wording for stages 5 through 8 — Creek's "Achievism" and "Pluralism"
+where adepthood says "Intellectual Understanding" and "Embodied
+Understanding", for instance.
+
+Because of that mismatch, the vault's `name` is validated and carried
+as the faithful wire value at the seam (bounded, non-blank, and
+printable — `_wheel_aspect`, `creek_vault_client.py:695-717`), but it
+is never what the user reads. The read path relabels every item from
+adepthood's own `CourseStage` rows before rendering
+(`_relabelled_items`, `backend/src/services/creek_vault_wheel.py:141-158`,
+calling the now-public `aspect_labels_by_stage`,
+`backend/src/domain/wheel.py:54-69`). A wheel that cannot be relabelled
+in full — a missing or blank `CourseStage` row for any of the ten
+stages — is discarded whole rather than rendered as a hybrid of vault
+words and adepthood words
+(`select_wheel_balance`, `creek_vault_wheel.py:161-174`). This is what
+"Creek must not invent our stage/aspect vocabulary on our behalf" means
+concretely: creek's `name` never reaches a screen.
+
+### Bounds on untrusted input
+
+A wheel payload is untrusted input like any other vault response, and
+is bounded accordingly before anything is built from it
+(`creek_vault_client.py:669-731`):
+
+- `name` is length-bounded (`_MAX_WHEEL_ASPECT_NAME_LENGTH`, 128
+  characters), must be non-blank, and must be printable. A Frequency
+  name is short label text, so a control character in one is never
+  legitimate, and CR/LF, an ANSI escape, or a bidirectional override is
+  exactly the payload that forges a log line or misrenders a label —
+  the same rule the seam already applies to a vault-issued fragment id.
+- `share` must be a real number; a boolean is explicitly rejected
+  rather than silently read as a fully-full Frequency, and an integer
+  too large for a float to hold is treated as unreadable rather than
+  raising an `OverflowError` past the seam's degrade set. JSON has no
+  integer ceiling, so that literal really can arrive.
+- A Frequency entry that fails either check drops the *entire* wheel
+  (`_parse_wheel`, `creek_vault_client.py:734-753`) rather than yielding
+  a ring with one bucket missing.
+- Adepthood reads at most the ten whitelisted `F1..F10` codes no matter
+  how large a map the vault sends.
 
 ## Marginalia mapping (adepthood-owned)
 
@@ -154,11 +246,25 @@ capability is still used for the others it supports:
   related-praxis or related-eddies fields — are ignored rather than
   erroring. Content already flagged by the care gate never calls the
   vault for a reflection at all, regardless of vault availability.
-- **WHEEL** — if absent, or if the returned payload fails
-  field-level validation, `fetch_vault_wheel` returns `None`
-  (`backend/src/services/creek_vault_wheel.py:97-113`), and
-  `select_wheel_balance` then falls back to computing the balance
-  locally (`creek_vault_wheel.py:115-120`).
+- **WHEEL** — if absent, or if the vault does not advertise it,
+  `fetch_vault_wheel` returns `None` before any call is made
+  (`backend/src/services/creek_vault_wheel.py:119-138`). A malformed or
+  refused payload degrades exactly like every other capability: the seam
+  adapter now normalizes it to `CreekVaultUnavailableError`
+  (`backend/src/services/creek_vault_client.py:893-913`) rather than
+  surfacing a raw `pydantic.ValidationError` as it once did — the one
+  deliberately un-normalized error path this client used to have — and
+  the read path catches only that error hierarchy
+  (`_read_balance`, `creek_vault_wheel.py:105-116`). A well-formed
+  balance then still has to clear domain-range validation (stage numbers
+  in range, fullness in `0.0..1.0`, all ten stages present with no
+  duplicates) or `fetch_vault_wheel` returns `None` all the same. So does
+  a *valid* all-zero wheel — creek's documented answer for an empty or
+  wholly-unclassified corpus — because it carries no information and
+  would blank a Map the local computation can fill
+  (`_carries_signal`, `creek_vault_wheel.py:84-94`). Any of these causes
+  `select_wheel_balance` to fall back to computing the balance locally
+  (`creek_vault_wheel.py:161-174`).
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.
