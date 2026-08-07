@@ -24,14 +24,17 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from models.course_stage import CourseStage
+from models.goal import Goal
 from models.practice import Practice
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
@@ -78,6 +81,22 @@ async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], i
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
+def _goal_put_payload(goal: dict[str, object]) -> dict[str, object]:
+    """Rebuild the full-replace ``PUT /goals/{id}`` body from an API-returned goal."""
+    return {
+        field: goal[field]
+        for field in (
+            "title",
+            "tier",
+            "target",
+            "target_unit",
+            "frequency",
+            "frequency_unit",
+            "is_additive",
+        )
+    }
 
 
 async def _seed_practice(db_session: AsyncSession, **overrides: object) -> Practice:
@@ -330,6 +349,78 @@ async def test_idor_shared_template_get_is_visible(async_client: AsyncClient) ->
     resp = await async_client.get(f"/goal-groups/{group_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["name"] == "Community Yoga"
+
+
+@pytest.mark.asyncio
+async def test_idor_goal_update_cannot_write_into_another_users_group(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Alice cannot smuggle her goal into Bob's private group via ``PUT /goals/{id}``.
+
+    ``require_owned_goal`` authorises the goal but not the ``goal_group_id``
+    in the body, so an unguarded full-replace write would publish Alice's
+    goal (title, target, units, parent habit) into Bob's group, which Bob
+    then reads through ``GET /goal-groups/{id}``.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_goal_xgroup")
+    bob_headers, _bob_id = await _signup(async_client, "bob_goal_xgroup")
+
+    habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    assert habit.status_code == HTTPStatus.OK
+    alice_goals = habit.json()["goals"]
+    assert alice_goals, "habit creation must embed its default tier goals"
+    goal_id = alice_goals[0]["id"]
+    payload = _goal_put_payload(alice_goals[0])
+
+    create_group = await async_client.post(
+        "/goal-groups/", json={"name": "Bob Private"}, headers=bob_headers
+    )
+    assert create_group.status_code == HTTPStatus.CREATED
+    bob_group_id = create_group.json()["id"]
+
+    # The victim group really exists and its owner can read it, so a 403 below
+    # cannot be an artefact of a missing target row.
+    owner_read = await async_client.get(f"/goal-groups/{bob_group_id}", headers=bob_headers)
+    assert owner_read.status_code == HTTPStatus.OK
+    assert owner_read.json()["name"] == "Bob Private"
+
+    # The identical payload with a benign group is accepted, so a 403 below
+    # cannot be an artefact of an unrelated validation failure.
+    baseline = await async_client.put(
+        f"/goals/{goal_id}",
+        json={**payload, "goal_group_id": None},
+        headers=alice_headers,
+    )
+    assert baseline.status_code == HTTPStatus.OK
+    assert baseline.json()["goal_group_id"] is None
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.put(
+            f"/goals/{goal_id}",
+            json={**payload, "goal_group_id": bob_group_id},
+            headers=alice_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    db_session.expire_all()
+    stored = (await db_session.execute(select(Goal).where(Goal.id == goal_id))).scalars().one()
+    assert stored.goal_group_id is None, (
+        "cross-user goal-group write persisted; the goal moved into the victim's group"
+    )
+
+    victim_view = await async_client.get(f"/goal-groups/{bob_group_id}", headers=bob_headers)
+    assert victim_view.status_code == HTTPStatus.OK
+    assert victim_view.json()["goals"] == [], "attacker's goal surfaced inside the victim's group"
+
+    denials = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert denials, "expected a resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "goal_group"
+    assert getattr(denials[0], "resource_id", None) == bob_group_id
+    assert getattr(denials[0], "user_id", None) == alice_id
 
 
 @pytest.mark.asyncio

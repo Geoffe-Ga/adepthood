@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.ownership import require_owned_goal
+from dependencies.ownership import require_owned_goal, resolve_owned_goal_group
 from models.goal import Goal
 from routers.auth import get_current_user
 from schemas.goal import Goal as GoalSchema
@@ -39,7 +39,17 @@ async def update_goal(
     ``habit_id`` is intentionally not part of ``GoalUpdate`` so the parent
     habit cannot be swapped via this endpoint -- a goal is bound to its
     habit for life.
+
+    ``goal_group_id`` *is* editable, and it names a second object that
+    ``require_owned_goal`` says nothing about: that dependency authorises the
+    goal in the path, not the group in the body.  Without its own object-level
+    check, a caller could file their goal under someone else's group and have
+    the owner read it back.  So every non-null group is authorised here as a
+    write target.  Shared templates are rejected too -- they are ownerless and
+    world-readable, so a goal parked in one is published to every user.
     """
+    if payload.goal_group_id is not None:
+        await resolve_owned_goal_group(session, payload.goal_group_id, current_user)
     for key, value in payload.model_dump().items():
         setattr(goal, key, value)
     session.add(goal)
