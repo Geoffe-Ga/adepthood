@@ -155,7 +155,11 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90'
+        # Bare ``--cov`` (not ``--cov=.``) so the measured set is the single
+        # declaration in [tool.coverage.run] source (= {src, scripts}), the
+        # same set backend-ci.yml's branch-coverage step asserts over.
+        # ``-n auto`` distributes the suite: 15m58s -> 4m07s on 4 cores (#2076).
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest -n auto --dist loadfile --cov --cov-report=term-missing --cov-fail-under=90'
         pass_filenames: false
         files: ^backend/
         stages: [pre-push]

@@ -9,6 +9,11 @@ mypy==2.3.0
 pre-commit==4.6.1
 pytest==9.1.1
 pytest-cov==7.1.0
+# Distributes the ~3k-test suite across cores. Measured on 4 cores: 15m58s
+# serial -> 4m07s, identical coverage (#2076). Gate 2 re-runs the whole suite
+# on every drop-back, so this is the difference between a 16-minute and a
+# 4-minute retry.
+pytest-xdist==3.8.0
 # Type stubs for the runtime jsonschema dependency (issues #389/#390).
 types-jsonschema==4.26.0.20260518
 radon==6.0.1

@@ -16,7 +16,8 @@ scripts/
 │   ├── lint.sh        # ruff
 │   ├── format.sh      # ruff format
 │   ├── typecheck.sh   # mypy
-│   ├── test.sh        # pytest (--unit / --integration / --e2e / --all)
+│   ├── test.sh        # pytest, xdist-distributed (--unit / --integration / --e2e / --all;
+│   │                  #   --coverage to report+gate, --coverage-data to collect only)
 │   ├── coverage.sh    # pytest with coverage (≥90%); --report-only reports on existing data
 │   ├── security.sh    # bandit + pip-audit
 │   ├── complexity.sh  # radon + xenon; gates at xenon A grade and MI rank ≥ B

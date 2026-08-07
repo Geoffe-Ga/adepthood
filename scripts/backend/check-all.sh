@@ -120,7 +120,7 @@ run_check "Complexity analysis" "complexity.sh"
 # described this run.
 rm -f .coverage .coverage.* coverage.xml
 
-run_check "Unit tests" "test.sh" --unit
+run_check "Unit tests" "test.sh" --unit --coverage-data
 run_check "Coverage report" "coverage.sh" --report-only --xml
 
 echo "=== Quality Checks Summary ==="
