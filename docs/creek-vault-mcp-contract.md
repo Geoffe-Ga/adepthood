@@ -254,7 +254,8 @@ capability is still used for the others it supports:
   once and forgotten, and the operator's own Postgres remains the
   sole system of record for that content either way.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
-  LLM reflection path (`backend/src/services/creek_vault_reflect.py:67-90`).
+  LLM reflection path
+  (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
   The same fallback fires for Creek's `empty` status, which yields no
   vault reflection exactly as an absent capability does — but not for
   its `escalate` care handoff, which is not a fallback at all (see the
