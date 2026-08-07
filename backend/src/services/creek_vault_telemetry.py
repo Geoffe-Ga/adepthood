@@ -32,6 +32,12 @@ there is nothing here to remember to scrub. The one static
 itself -- everything variable travels in the structured fields, each of which is
 one of ours.
 
+Content-free fields are not the whole of privacy, though, and one outcome needed
+a second decision: for a care escalation, the sensitive thing is not what the
+record says but *that there is a record*. See :data:`_SEVERITY_BY_OUTCOME` for
+why that one is tiered to DEBUG and stripped of trace correlation while its tally
+is kept intact.
+
 Shaped after the observability block in :mod:`services.creek_vault_read` rather
 than shared with it, for the reason that module already gives about the write
 path: a degrade *reason* answers "why did this one read fall back", while an
@@ -58,6 +64,7 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     VaultErrorCode,
 )
+from observability import SUPPRESS_TRACE_CORRELATION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -149,14 +156,39 @@ _OUTCOME_BY_ERROR_TYPE: tuple[tuple[type[BaseException], VaultTelemetryOutcome],
 
 # The severities that are deliberately *not* WARNING. A deployment that never had
 # a vault is a choice rather than a fault, so it stays at DEBUG and never fills an
-# operator's warning stream with a fact they already chose; a healthy answer and a
-# care handoff are each news worth one INFO line. Everything else is a fault
-# somebody may need to act on.
+# operator's warning stream with a fact they already chose; a healthy answer is
+# news worth one INFO line. Everything else is a fault somebody may need to act
+# on.
+#
+# ``ESCALATED`` is the one entry here that is tiered for privacy rather than for
+# noise, and it is a deliberate product decision rather than an oversight. Its
+# fields are as content-free as every other outcome's -- but *that this line was
+# written at all* says a particular person's writing tripped Creek's care guard,
+# which is a special-category inference about their mental health. It would not
+# have stayed abstract: every log record in the same request carries a trace id,
+# and the journal router's own records carry a ``user_id``, so an escalation at
+# INFO would be trivially joinable to a named user in ordinary production logs.
+# For a journaling product whose whole promise is a private place to write the
+# worst of it down, quietly accumulating a log-joinable record of who reached
+# that state is the wrong trade -- so the event drops to DEBUG (absent from
+# ordinary logs entirely) and additionally suppresses correlation below (see
+# :data:`_CORRELATION_SUPPRESSED_OUTCOMES`) for the case where DEBUG is on. The
+# operational signal an on-call actually needs -- how often the care guard fires
+# -- is unharmed: it lives in the counters, which are per-capability aggregates
+# with nobody's identity anywhere in them.
 _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.FALLBACK_UNCONFIGURED: logging.DEBUG,
     VaultTelemetryOutcome.SUCCESS: logging.INFO,
-    VaultTelemetryOutcome.ESCALATED: logging.INFO,
+    VaultTelemetryOutcome.ESCALATED: logging.DEBUG,
 }
+
+# Outcomes whose record must not carry the request's trace id, because the event
+# itself is the sensitive fact. A set rather than a flag on the one member, so the
+# property is stated once and a future outcome of the same character joins it by
+# a line rather than by rediscovering the reasoning. Kept as narrow as it reads:
+# an uncorrelatable record is a record an operator cannot follow, which is a real
+# cost worth paying only where correlation would build a dossier.
+_CORRELATION_SUPPRESSED_OUTCOMES = frozenset({VaultTelemetryOutcome.ESCALATED})
 
 # Where an outcome the table above does not name is logged. A default rather than
 # an exhaustive table on purpose: an outcome nobody has tiered yet is better read
@@ -279,11 +311,16 @@ def _outcome_fields(
 
     ``code`` is omitted entirely rather than written as ``None`` when the vault
     named no reason: an absent field says "nobody claimed anything", while a null
-    one invites a reader to treat the absence as a value.
+    one invites a reader to treat the absence as a value. The correlation-
+    suppression marker is omitted on the same principle for every outcome that
+    does not need it, so the flag reads as a deliberate mark on the few records
+    that carry it rather than as a field with two settings.
     """
     fields: dict[str, object] = {"outcome": outcome.value, "capability": capability.value}
     if code is not None:
         fields["code"] = code.value
+    if outcome in _CORRELATION_SUPPRESSED_OUTCOMES:
+        fields[SUPPRESS_TRACE_CORRELATION] = True
     return fields
 
 
@@ -301,6 +338,10 @@ def record_vault_outcome(
     neither formatted into the message nor passed as ``exc_info``: its text can
     quote the entry body or a vault's own prose, and this record is the one place
     either would otherwise escape.
+
+    The increment happens whatever the severity, so an outcome quieted for
+    privacy still reaches the tally: the aggregate carries no identity, and it is
+    what an operator reads a rate off anyway.
     """
     _VAULT_OUTCOME_COUNTERS.increment((outcome, capability))
     _LOGGER.log(

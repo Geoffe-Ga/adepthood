@@ -418,11 +418,15 @@ inflicted on precisely the deployments that followed our own
 documentation. So a retired selector degrades to
 `LocalFallbackCreekVaultClient` and logs one WARNING naming the remedy:
 the entry still lands in Postgres, and only the optional replication is
-skipped. Any *other* unrecognized value still raises, because for a
-selector adepthood never supported there is no knowable intent to
-honour. **Operators should unset `CREEK_VAULT_PROTOCOL` or set it to
-`http`**; until they do, a configured vault is silently unused and the
-warning is how they find out.
+skipped. Any *other* unrecognized value — a typo, or a transport nobody
+implemented — degrades the same way, with its own WARNING saying it was
+not recognized rather than that it was retired. Adepthood knows less
+about what such a value meant, but knowing less argues for more caution,
+not for a harsher failure: whatever the operator intended, they did not
+intend to lose every journal entry until someone read a traceback. What
+neither case ever does is guess `http`. **Operators should unset
+`CREEK_VAULT_PROTOCOL` or set it to `http`**; until they do, a configured
+vault is silently unused and the warning is how they find out.
 
 Decision 2's "adapter swap, not a rewrite" held through the cutover, not
 just through the client's introduction. Everything the domain seam
@@ -475,6 +479,42 @@ new telemetry module, `services/creek_vault_telemetry.py`, gives
 countable apart from an absent one too, via `HandshakeDegradeReason.TIMED_OUT`).
 The gap the Consequences section above flagged as "tracked rather than
 silently accepted" is closed.
+
+**One outcome is tiered for privacy rather than for noise, and that is a
+product decision, not a logging preference.** The telemetry module's
+fields are content-free by construction — every value is a member of one
+of adepthood's own closed enums, so no journal text, note, fragment id,
+or credential can reach a record. For a care escalation that is not
+sufficient, because the sensitive fact is not what the record *says* but
+that there is a record at all: `vault_escalated` means a particular
+person's writing tripped Creek's care guard, which is a
+special-category inference about their mental health. It would not have
+stayed abstract either — `TraceIdLogFilter` stamps every record with the
+request's trace id, and the journal router's own records carry a
+`user_id`, so an escalation logged at INFO would be trivially joinable
+to a named user in ordinary production logs. Accumulating a
+log-joinable record of who reached that state is the wrong trade for a
+product whose whole promise is a private place to write the worst of it
+down. So `vault_escalated` logs at DEBUG (absent from ordinary logs
+entirely) and additionally carries `SUPPRESS_TRACE_CORRELATION`, a new
+opt-in marker `TraceIdLogFilter` honours by stamping `NO_TRACE` instead
+of the live trace id — a second layer for the case where an operator has
+DEBUG on for something else. Nothing operational is lost: the counters
+still tally every escalation, per capability, with nobody's identity in
+them, and a rate is what an on-call actually reads. Tests pin both
+halves so a future edit to the severity table cannot silently re-promote
+the event.
+
+Stated precisely, because a privacy claim that overstates itself is
+worse than none: this removes the *trivial* join, not every join. With
+DEBUG enabled, the request-logging middleware still writes its own
+`request_completed` record for the same request at the same instant, so
+timestamp adjacency plus a database lookup could still re-identify an
+escalation. Closing that would mean reasoning about the whole logging
+surface rather than this one record, which is a larger piece of work
+than this issue; what is claimed here is that the event no longer falls
+out of a generic severity table into ordinary logs already stamped with
+the user's id.
 
 One wart, left in on purpose rather than missed: `backend/requirements.txt`
 still pins `mcp==2.0.0` and `httpx2==2.9.1`. Nothing imports either

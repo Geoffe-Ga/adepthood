@@ -310,10 +310,31 @@ _RETIRED_PROTOCOL_EVENT = (
     "creek vault protocol selector is retired; using the local fallback -- "
     "unset CREEK_VAULT_PROTOCOL or set it to http"
 )
-_RETIRED_PROTOCOL_FIELDS: Mapping[str, str] = {
-    "protocol": _PROTOCOL_RETIRED_MCP,
-    "supported_protocol": _PROTOCOL_HTTP,
-}
+# The same shape for a selector adepthood never supported. A second message
+# rather than one shared with the retired value, because the two are different
+# news: "the transport you asked for is gone" tells an operator their deployment
+# has drifted, while "nobody has heard of this" almost always means a typo, and a
+# record that conflated them would send half its readers looking for the wrong
+# thing. The offending value travels as a structured field rather than in the
+# message so the message stays the static, greppable constant every record in
+# this seam is -- the value is the operator's own configuration, never a
+# credential and never anything a user or a vault chose.
+_UNKNOWN_PROTOCOL_EVENT = (
+    "creek vault protocol selector is not recognized; using the local fallback -- "
+    "unset CREEK_VAULT_PROTOCOL or set it to http"
+)
+
+
+def _protocol_fields(protocol: str) -> Mapping[str, str]:
+    """Build the structured fields both unhonoured-selector records carry.
+
+    One builder rather than two literals so the two branches cannot drift apart
+    on a key name: a dashboard filtering on ``protocol`` should find the retired
+    selector and the unrecognized one in the same query, since to an operator
+    they are the same question ("what did my deployment ask for, and what will it
+    actually do?") asked of two different answers.
+    """
+    return {"protocol": protocol, "supported_protocol": _PROTOCOL_HTTP}
 
 
 # URL components a configured vault URL must not carry, in the order their
@@ -327,29 +348,53 @@ _RETIRED_PROTOCOL_FIELDS: Mapping[str, str] = {
 # endpoint the operator never configured.
 _FORBIDDEN_URL_PARTS = ("userinfo", "query", "fragment")
 
+# The delimiters that *introduce* a query and a fragment. Presence is tested on
+# the raw configured string rather than on the parsed component, and that is the
+# whole point: ``urlsplit`` reports both as ``""`` when they are absent *and*
+# when they are present but empty, so ``https://vault.example/`` and
+# ``https://vault.example/?`` are indistinguishable once parsed. The second is
+# the dangerous one -- the capability path is appended to the configured string,
+# so a trailing ``?`` would build ``https://vault.example/?/v1/journal-entries/5``
+# and send every path as a query string against ``/``, aiming the bearer
+# credential at an endpoint nobody configured. Per RFC 3986 these two characters
+# can only ever be those delimiters in a URL (a literal one inside a path or a
+# credential must be percent-encoded), so their presence *is* the component's
+# presence. Reconstructing a normalized URL from the parsed parts would also
+# close the hole, but by editing an operator's configuration into something they
+# did not write; refusing it and saying so is the honest half of that trade.
+_QUERY_DELIMITER = "?"
+_FRAGMENT_DELIMITER = "#"
 
-def _forbidden_url_parts(parsed: SplitResult) -> tuple[str, ...]:
-    """Return the names of the disallowed components ``parsed`` carries.
+
+def _forbidden_url_parts(url: str, parsed: SplitResult) -> tuple[str, ...]:
+    """Return the names of the disallowed components ``url`` carries.
 
     Userinfo counts as present whenever either half is set, so a degenerate
     ``https://user@host`` (empty password) is caught alongside the full form.
+    Query and fragment count as present whenever their delimiter appears at all,
+    empty component included -- see :data:`_QUERY_DELIMITER`. The query
+    delimiter is looked for only *before* any fragment delimiter, since a ``?``
+    after a ``#`` is part of the fragment rather than a query of its own, and
+    naming both components for one mistake would send an operator hunting a
+    second problem they do not have.
     """
+    before_fragment, _, _ = url.partition(_FRAGMENT_DELIMITER)
     carried = (
         parsed.username is not None or parsed.password is not None,
-        bool(parsed.query),
-        bool(parsed.fragment),
+        _QUERY_DELIMITER in before_fragment,
+        _FRAGMENT_DELIMITER in url,
     )
     return tuple(name for name, found in zip(_FORBIDDEN_URL_PARTS, carried, strict=True) if found)
 
 
-def _require_bare_vault_url(parsed: SplitResult) -> None:
+def _require_bare_vault_url(url: str, parsed: SplitResult) -> None:
     """Reject a vault URL carrying userinfo, a query, or a fragment.
 
     The message names only the offending *component names*: it reaches logs,
     and one of the components it can name -- userinfo -- is a credential, so
     echoing any value here would be the very leak this check exists to prevent.
     """
-    parts = _forbidden_url_parts(parsed)
+    parts = _forbidden_url_parts(url, parsed)
     if parts:
         raise ValueError(f"CREEK_VAULT_URL must not carry these URL components: {', '.join(parts)}")
 
@@ -369,9 +414,14 @@ def _require_secure_vault_url(url: str) -> None:
     raises here rather than silently leaking, before the key is bound to
     anything. The message names only component names, the scheme, and the host
     -- never the API key.
+
+    Both the raw string and its parsed form are needed: the string is what a
+    capability URL is built from and the only place an empty-but-present query
+    or fragment survives, while the parse is what answers for the scheme, the
+    host, and the userinfo halves.
     """
     parsed = urlsplit(url)
-    _require_bare_vault_url(parsed)
+    _require_bare_vault_url(url, parsed)
     if parsed.scheme == "https":
         return
     if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
@@ -1324,20 +1374,29 @@ class HttpCreekVaultClient:
         its own -- and it is the attempt most worth counting, since the write
         path handshakes on every write and a deployment whose vault has drifted
         out of contract shows up here long before any capability call does.
+
+        Guarded by :class:`_CountingOutcome` like every capability call, and for
+        the same structural reason rather than for a failure anyone has seen:
+        :meth:`_probe` turns every failure it knows about into a degrade reason,
+        so nothing vault-shaped should reach the wrapper. "Should" is the word
+        that makes the guard worth its line -- with it, "one attempt, one
+        outcome" holds because of how the method is built rather than because of
+        which exceptions the probe happens to catch today.
         """
-        self._last_handshake, self._degrade_reason = await self._probe()
-        # Looked up with a default rather than subscripted, for the reason
-        # :mod:`services.creek_vault_telemetry` gives for its own severity table:
-        # the mapping is total today, but a degrade reason added later without
-        # updating it in lockstep would raise a ``KeyError`` from a telemetry call
-        # and turn an observability gap into a failure on a user's request path.
-        # An unclassified degrade reads as unavailable, which is what a degraded
-        # handshake means whatever attributed it.
-        outcome = _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON.get(
-            self._degrade_reason, VaultTelemetryOutcome.UNAVAILABLE
-        )
-        record_vault_outcome(outcome, CreekCapability.HANDSHAKE)
-        return self._last_handshake
+        with _CountingOutcome(CreekCapability.HANDSHAKE):
+            self._last_handshake, self._degrade_reason = await self._probe()
+            # Looked up with a default rather than subscripted, for the reason
+            # :mod:`services.creek_vault_telemetry` gives for its own severity
+            # table: the mapping is total today, but a degrade reason added later
+            # without updating it in lockstep would raise a ``KeyError`` from a
+            # telemetry call and turn an observability gap into a failure on a
+            # user's request path. An unclassified degrade reads as unavailable,
+            # which is what a degraded handshake means whatever attributed it.
+            outcome = _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON.get(
+                self._degrade_reason, VaultTelemetryOutcome.UNAVAILABLE
+            )
+            record_vault_outcome(outcome, CreekCapability.HANDSHAKE)
+            return self._last_handshake
 
     @property
     def last_degrade_reason(self) -> HandshakeDegradeReason | None:
@@ -1671,12 +1730,19 @@ def build_creek_vault_client() -> CreekVaultClient:
     500 and lose the writer's entry, which is precisely the loss the whole seam
     promises can never happen for a vault's sake.
 
-    Any other unrecognized value still raises. For a selector adepthood never
-    supported there is no knowable intent -- it is as likely a typo for ``http``
-    as a transport nobody implemented -- and refusing a configuration nobody can
-    interpret is the only honest answer. The message names the offending value and
-    the supported one and nothing else: it reaches logs, so neither the URL nor
-    the bearer credential may travel with it.
+    Any other unrecognized value degrades the same way, for the same reason.
+    Adepthood knows less about it -- a value nobody ever supported is as likely a
+    typo for ``http`` as a transport nobody implemented -- but knowing less is an
+    argument for *more* caution, not for a harsher failure: whatever the operator
+    meant, they did not mean "lose every journal entry until someone reads a
+    traceback". So the honest answer is the same as for the retired value, skip
+    the optional half and say so loudly, and the difference between the two shows
+    up where it belongs, in what the WARNING says. What neither does is
+    reinterpret an uninterpretable selector as ``http``: that would send a
+    deployment's vault traffic over a transport nobody chose, which is the one
+    guess this seam exists to refuse. Both records name the offending value and
+    the supported one and nothing else -- they reach logs, so neither the URL nor
+    the bearer credential may travel with them.
     """
     # ``CREEK_VAULT_URL`` being unset or empty is the signal that no vault is
     # configured; the bearer credential is read only to build the adapter's
@@ -1686,12 +1752,9 @@ def build_creek_vault_client() -> CreekVaultClient:
         return LocalFallbackCreekVaultClient()
     protocol = os.getenv(_PROTOCOL_ENV_VAR, _PROTOCOL_HTTP).strip().lower()
     if protocol == _PROTOCOL_RETIRED_MCP:
-        _LOGGER.warning(_RETIRED_PROTOCOL_EVENT, extra=_RETIRED_PROTOCOL_FIELDS)
+        _LOGGER.warning(_RETIRED_PROTOCOL_EVENT, extra=_protocol_fields(_PROTOCOL_RETIRED_MCP))
         return LocalFallbackCreekVaultClient()
     if protocol != _PROTOCOL_HTTP:
-        raise ValueError(
-            f"unsupported {_PROTOCOL_ENV_VAR} value: {protocol!r} -- "
-            f"{_PROTOCOL_HTTP!r} is the only supported transport, since adepthood's "
-            f"MCP application transport was retired"
-        )
+        _LOGGER.warning(_UNKNOWN_PROTOCOL_EVENT, extra=_protocol_fields(protocol))
+        return LocalFallbackCreekVaultClient()
     return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""))

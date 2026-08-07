@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from main import app
 from observability import (
     NO_TRACE,
+    SUPPRESS_TRACE_CORRELATION,
     TRACE_ID_HEADER,
     TraceIdLogFilter,
     _normalise_trace_id,
@@ -60,6 +61,44 @@ def test_log_filter_injects_trace_id() -> None:
     finally:
         trace_id_var.reset(token)
     assert record.trace_id == "trace-xyz"  # type: ignore[attr-defined]
+
+
+def _bare_record() -> logging.LogRecord:
+    """Build one plain INFO record with no correlation attributes of its own."""
+    return logging.LogRecord(
+        name="t", level=logging.INFO, pathname="", lineno=0, msg="hello", args=(), exc_info=None
+    )
+
+
+def test_log_filter_withholds_the_trace_id_from_a_correlation_suppressed_record() -> None:
+    """A record flagged for suppression is stamped :data:`NO_TRACE`, never the live ID.
+
+    The flag exists for the narrow case of an event whose *occurrence* is itself
+    an inference about one person: stamping the request's trace ID onto it would
+    let any reader join it to the other records of that request, which already
+    carry the user id. Withholding the value rather than dropping the attribute
+    keeps every ``%(trace_id)s`` formatter working.
+    """
+    record = _bare_record()
+    record.__dict__[SUPPRESS_TRACE_CORRELATION] = True
+    token = trace_id_var.set("trace-xyz")
+    try:
+        assert TraceIdLogFilter().filter(record) is True
+    finally:
+        trace_id_var.reset(token)
+    assert record.__dict__["trace_id"] == NO_TRACE
+
+
+def test_log_filter_stamps_the_trace_id_when_suppression_is_explicitly_off() -> None:
+    """The flag suppresses only when true, so a falsy value logs the trace ID as usual."""
+    record = _bare_record()
+    record.__dict__[SUPPRESS_TRACE_CORRELATION] = False
+    token = trace_id_var.set("trace-abc")
+    try:
+        TraceIdLogFilter().filter(record)
+    finally:
+        trace_id_var.reset(token)
+    assert record.__dict__["trace_id"] == "trace-abc"
 
 
 def test_install_trace_id_logging_is_idempotent() -> None:

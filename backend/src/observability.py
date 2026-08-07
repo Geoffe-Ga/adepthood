@@ -56,6 +56,24 @@ NO_TRACE = "-"
 
 trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default=NO_TRACE)
 
+# Record attribute a caller sets (via ``extra=``) to keep one record out of trace
+# correlation: :class:`TraceIdLogFilter` stamps :data:`NO_TRACE` on it instead of
+# the live trace ID.
+#
+# The narrow case it exists for is an event whose *occurrence* is itself an
+# inference about a person, where the fields are content-free but the fact that
+# the line was written is not. Correlation is what makes that fact personal: the
+# other records of the same request carry a ``user_id``, so a shared trace ID
+# joins the sensitive event straight to a named user. Withholding the value
+# rather than deleting the attribute keeps every ``%(trace_id)s`` formatter
+# working, and :data:`NO_TRACE` is already the value records outside a request
+# carry, so no downstream consumer needs to learn a new one.
+#
+# Deliberately opt-in and deliberately rare: a record that suppresses correlation
+# is a record an operator cannot follow, which is a real cost to pay only where
+# the alternative is building a log-joinable dossier of something private.
+SUPPRESS_TRACE_CORRELATION = "suppress_trace_correlation"
+
 
 def get_trace_id() -> str:
     """Return the current request's trace ID, or :data:`NO_TRACE` if none is set."""
@@ -88,10 +106,18 @@ class TraceIdLogFilter(logging.Filter):
     ``trace_id`` attribute without having to be reconfigured individually.
     Use ``%(trace_id)s`` in the formatter to emit the value, or read it
     directly from a structured-log handler.
+
+    A record carrying :data:`SUPPRESS_TRACE_CORRELATION` is stamped
+    :data:`NO_TRACE` instead — the one honoured exception, for events whose
+    mere occurrence must not be joinable to the request that produced it.
+    Enforced here rather than at each call site because this filter runs on the
+    *handler*, after any logger-level filter, and would otherwise overwrite
+    whatever an emitter had set.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.trace_id = get_trace_id()
+        suppressed = bool(getattr(record, SUPPRESS_TRACE_CORRELATION, False))
+        record.trace_id = NO_TRACE if suppressed else get_trace_id()
         return True
 
 

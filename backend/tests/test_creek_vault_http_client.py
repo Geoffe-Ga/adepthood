@@ -1220,16 +1220,54 @@ def test_factory_returns_http_client_when_protocol_is_http(
     assert isinstance(build_creek_vault_client(), HttpCreekVaultClient)
 
 
-def test_factory_rejects_an_unknown_protocol_naming_only_the_bad_value(
+@pytest.mark.parametrize(
+    ("protocol", "reported"),
+    [
+        pytest.param("grpc", "grpc", id="a_transport_nobody_implemented"),
+        pytest.param("htp", "htp", id="a_typo_for_http"),
+        pytest.param("HTTPS", "https", id="a_scheme_mistaken_for_a_selector"),
+        pytest.param("  GrPc\t", "grpc", id="padded_and_mixed_case"),
+    ],
+)
+def test_factory_degrades_an_unrecognized_protocol_to_the_local_fallback(
+    protocol: str,
+    reported: str,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An unrecognized protocol fails loudly and names the offending value, not the key."""
+    """An unrecognized selector skips the optional replication rather than losing the entry.
+
+    The factory runs inside a per-request dependency, so raising here means the
+    journal handler's body never runs: a typo in one environment variable would
+    turn every save into a 500 and the writer's entry would exist nowhere. The
+    vault is optional and Postgres is the system of record, so the honest answer
+    to a selector nobody can interpret is to skip the optional half and say so
+    loudly. What it must never do is *guess* http -- that would send a
+    deployment's vault traffic over a transport nobody chose.
+
+    ``reported`` is spelled out per case rather than re-derived from ``protocol``
+    with the same normalization the factory applies, so a bug in that
+    normalization cannot satisfy both sides of the assertion at once.
+    """
     monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
     monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
-    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "grpc")
-    with pytest.raises(ValueError, match="grpc") as exc_info:
-        build_creek_vault_client()
-    assert _SENTINEL_KEY not in str(exc_info.value)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", protocol)
+    caplog.set_level(logging.WARNING)
+
+    client = build_creek_vault_client()
+
+    assert isinstance(client, LocalFallbackCreekVaultClient)
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert "CREEK_VAULT_PROTOCOL" in message
+    assert "http" in message
+    assert record.__dict__["protocol"] == reported
+    assert record.__dict__["supported_protocol"] == "http"
+    for rendered in [message, *[str(value) for value in record.__dict__.values()]]:
+        assert _VAULT_URL not in rendered
+        assert _SENTINEL_KEY not in rendered
 
 
 def test_http_factory_rejects_a_plaintext_remote_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1257,17 +1295,44 @@ def test_http_factory_accepts_a_plaintext_loopback_url(monkeypatch: pytest.Monke
     ("url", "part"),
     [
         pytest.param(_USERINFO_VAULT_URL, "userinfo", id="userinfo"),
+        pytest.param("https://opuser@vault.example.test", "userinfo", id="userinfo_no_password"),
         pytest.param(f"{_VAULT_URL}/api?tenant=1", "query", id="query"),
         pytest.param(f"{_VAULT_URL}#frag", "fragment", id="fragment"),
+        pytest.param(f"{_VAULT_URL}?", "query", id="empty_query"),
+        pytest.param(f"{_VAULT_URL}/api?", "query", id="empty_query_after_path"),
+        pytest.param(f"{_VAULT_URL}#", "fragment", id="empty_fragment"),
     ],
 )
 def test_http_client_rejects_a_url_carrying_userinfo_query_or_fragment(url: str, part: str) -> None:
-    """Userinfo (a credential, and a silent Basic-auth downgrade), query, and fragment refuse."""
+    """Userinfo (a credential, and a silent Basic-auth downgrade), query, and fragment refuse.
+
+    The empty-but-present cases are the ones a truthiness test misses: a URL
+    ending in a bare ``?`` parses to an empty query string, which is falsy, yet
+    the delimiter is still there in the string the capability path is appended
+    to. Accepting it would build ``https://host?/v1/journal-entries/5`` and send
+    every capability path as a query string against ``/`` -- aiming the bearer
+    credential at an endpoint the operator never configured, which is precisely
+    what this check exists to prevent.
+    """
     with pytest.raises(ValueError, match=part) as exc_info:
         HttpCreekVaultClient(url, _SENTINEL_KEY)
     message = str(exc_info.value)
     assert _URL_PASSWORD not in message
     assert _SENTINEL_KEY not in message
+
+
+def test_a_question_mark_inside_a_fragment_is_reported_as_the_fragment_alone() -> None:
+    """One mistake is named once: a ``?`` after a ``#`` is fragment, not a second component.
+
+    The refusal is never in doubt here -- either name rejects the URL. What is at
+    stake is what the operator is told: reporting ``query`` as well would send
+    them looking for a second problem they do not have, in a message that is
+    deliberately the only thing they get (values never travel with it, since one
+    of the components it can name is a credential).
+    """
+    with pytest.raises(ValueError, match="fragment") as exc_info:
+        HttpCreekVaultClient(f"{_VAULT_URL}/api#anchor?tenant=1", _SENTINEL_KEY)
+    assert "query" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio

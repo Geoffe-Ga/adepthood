@@ -44,12 +44,19 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultTierCeiling,
 )
+from observability import NO_TRACE, SUPPRESS_TRACE_CORRELATION, TraceIdLogFilter, trace_id_var
 from scripts.creek_contract_drift import BUNDLE_ROOT
-from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
+from services.creek_vault_client import (
+    _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON,
+    HandshakeDegradeReason,
+    HttpCreekVaultClient,
+    LocalFallbackCreekVaultClient,
+)
 from services.creek_vault_telemetry import (
     VAULT_OUTCOME_EVENT,
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
+    code_for_error,
     outcome_for_error,
     record_vault_outcome,
     reset_vault_telemetry_for_tests,
@@ -199,6 +206,37 @@ class _ScriptedVault:
             return httpx.Response(HTTPStatus.OK, json=self._capability_document())
         return self._reply.to_response()
 
+
+class _ScriptedHandshake:
+    """Handler answering the capability probe *itself* with one scripted reply.
+
+    The sibling above always serves a healthy capability document and scripts
+    only the capability calls that follow, which is what the outcome suites want.
+    These tests want the opposite: the probe is the attempt under test, so its
+    answer is the thing that has to be scriptable.
+    """
+
+    def __init__(self, reply: _Reply) -> None:
+        """Store the one answer every route -- the probe included -- receives."""
+        self._reply = reply
+
+    def __call__(self, _request: httpx.Request) -> httpx.Response:
+        """Answer the scripted reply, or raise the transport failure it describes."""
+        return self._reply.to_response()
+
+
+# A capability document from a vault that parses perfectly and reports itself out
+# of service -- not a failure to reach it, but an honest answer that it cannot
+# serve. It is the one degrade reason with no error behind it at all.
+_VAULT_REPORTED_UNAVAILABLE_REPLY = _Reply(
+    payload={
+        "available": False,
+        "capabilities": list(_RATIFIED_CAPABILITIES),
+        "contract_version": CONTRACT_VERSION,
+        "ontology_version": _ONTOLOGY_VERSION,
+        "attestation": None,
+    }
+)
 
 _STORED_REPLY = _Reply(
     payload={"action": VaultIngestAction.CREATED.value, "fragment_id": _SENTINEL_FRAGMENT}
@@ -448,13 +486,14 @@ def test_the_code_field_carries_the_vaults_own_reason_when_it_named_one(
 
 
 # The severity each outcome is expected to log at. A deployment that never had a
-# vault is a choice rather than a fault, so it stays at DEBUG; a healthy answer
-# and a care handoff are both news worth one INFO line; everything else is a
+# vault is a choice rather than a fault, so it stays at DEBUG; a healthy answer is
+# news worth one INFO line; a care escalation is deliberately DEBUG for privacy
+# rather than for noise (see the escalation tests below); everything else is a
 # fault an operator may need to act on.
 _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.FALLBACK_UNCONFIGURED: logging.DEBUG,
     VaultTelemetryOutcome.SUCCESS: logging.INFO,
-    VaultTelemetryOutcome.ESCALATED: logging.INFO,
+    VaultTelemetryOutcome.ESCALATED: logging.DEBUG,
     VaultTelemetryOutcome.UNAVAILABLE: logging.WARNING,
     VaultTelemetryOutcome.TIMEOUT: logging.WARNING,
     VaultTelemetryOutcome.AUTH_FAILED: logging.WARNING,
@@ -489,6 +528,116 @@ def test_each_outcome_is_logged_at_its_own_severity(
 def test_every_outcome_has_a_declared_severity() -> None:
     """The severity table above covers the whole enum, so no outcome logs by accident."""
     assert set(_SEVERITY_BY_OUTCOME) == set(VaultTelemetryOutcome)
+
+
+def test_a_care_escalation_is_absent_from_ordinary_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """At the default INFO threshold an escalation writes no record at all.
+
+    Deliberate, and a privacy decision rather than a noise one. Every other
+    record in the same request already carries a ``user_id``, and the trace id
+    stitches a request's records together, so an escalation record at INFO would
+    be a durable, joinable "this person's writing tripped the care guard" signal
+    -- a special-category inference about someone using a product whose whole
+    promise is a private place to write. The operational signal survives in the
+    counters, which are per-capability aggregates with nobody's identity in them.
+    """
+    caplog.set_level(logging.INFO)
+    record_vault_outcome(VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT)
+    assert caplog.records == []
+
+
+def test_a_care_escalation_is_still_counted(caplog: pytest.LogCaptureFixture) -> None:
+    """Quieting the record must not cost the tally: the aggregate is the operator's signal."""
+    caplog.set_level(logging.INFO)
+    record_vault_outcome(VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT)
+    assert vault_outcome_counts() == {
+        (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT): 1,
+    }
+
+
+def test_a_care_escalation_record_cannot_be_joined_to_its_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Even with DEBUG logging on, the escalation record carries no trace id.
+
+    Belt and braces for the decision above: DEBUG keeps the record out of
+    ordinary logs, and the correlation flag keeps it unjoinable in the one
+    situation where it *is* emitted -- an operator who turned DEBUG on to
+    investigate something else entirely. Asserted through the real filter rather
+    than on the flag alone, so a flag nobody honours would fail here.
+    """
+    caplog.set_level(logging.DEBUG)
+    record_vault_outcome(VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT)
+
+    record = caplog.records[0]
+    token = trace_id_var.set("trace-of-the-request-that-escalated")
+    try:
+        TraceIdLogFilter().filter(record)
+    finally:
+        trace_id_var.reset(token)
+    assert record.__dict__["trace_id"] == NO_TRACE
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        pytest.param(outcome, id=outcome.value)
+        for outcome in VaultTelemetryOutcome
+        if outcome is not VaultTelemetryOutcome.ESCALATED
+    ],
+)
+def test_only_a_care_escalation_asks_for_correlation_suppression(
+    outcome: VaultTelemetryOutcome, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No other outcome is withheld from correlation, so operators keep every ordinary trace."""
+    caplog.set_level(logging.DEBUG)
+    record_vault_outcome(outcome, CreekCapability.JOURNAL)
+    assert SUPPRESS_TRACE_CORRELATION not in caplog.records[0].__dict__
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        pytest.param(
+            CreekVaultContractError("refused", code=VaultErrorCode.PRIVACY_REFUSED),
+            VaultErrorCode.PRIVACY_REFUSED,
+            id="contract_error_with_a_code",
+        ),
+        pytest.param(
+            CreekVaultContractError("refused"),
+            None,
+            id="contract_error_without_a_code",
+        ),
+        pytest.param(
+            CreekVaultUnavailableError("down", code=VaultErrorCode.TEMPORARILY_UNAVAILABLE),
+            VaultErrorCode.TEMPORARILY_UNAVAILABLE,
+            id="unavailable_with_a_code",
+        ),
+        pytest.param(
+            VaultCallTimedOutError("timed out"),
+            None,
+            id="timed_out_carries_no_code",
+        ),
+        pytest.param(CreekVaultAuthError("denied"), None, id="auth_error_carries_no_code"),
+        pytest.param(
+            CreekVaultPayloadError("unreadable"), None, id="payload_error_carries_no_code"
+        ),
+        pytest.param(CreekVaultCareEscalationError(), None, id="escalation_carries_no_code"),
+        pytest.param(RuntimeError("not a vault error"), None, id="unrelated_error"),
+    ],
+)
+def test_code_for_error_reports_a_code_only_when_the_error_type_carries_one(
+    error: BaseException, expected: VaultErrorCode | None
+) -> None:
+    """Only the two coded error types can report a reason, and only ever an enum member.
+
+    The other types have no ``code`` attribute at all, so an implementation that
+    reached for one blindly would raise from a telemetry call on a user's request
+    path -- which is why the type test is the whole function.
+    """
+    assert code_for_error(error) is expected
 
 
 async def _drive_ingest_paths(http_clients: ClientFactory) -> list[BaseException]:
@@ -683,3 +832,136 @@ async def test_exactly_one_outcome_is_recorded_per_attempt(
     await attempt(client)
 
     assert sum(vault_outcome_counts().values()) == 1
+
+
+# One scripted probe per way a handshake can end, with the outcome each is
+# counted as. Keyed by degrade reason so the totality test below can prove the
+# keys cover the whole vocabulary: a reason added without a case here fails that
+# assertion rather than silently landing on the client's lookup default.
+_HANDSHAKE_DEGRADE_CASES: Mapping[
+    HandshakeDegradeReason | None, tuple[Handler, VaultTelemetryOutcome]
+] = {
+    None: (_ScriptedVault(), VaultTelemetryOutcome.SUCCESS),
+    HandshakeDegradeReason.TIMED_OUT: (
+        _ScriptedHandshake(_TIMEOUT_REPLY),
+        VaultTelemetryOutcome.TIMEOUT,
+    ),
+    HandshakeDegradeReason.UNREACHABLE: (
+        _ScriptedHandshake(_SERVER_ERROR_REPLY),
+        VaultTelemetryOutcome.UNAVAILABLE,
+    ),
+    HandshakeDegradeReason.MALFORMED_PAYLOAD: (
+        _ScriptedHandshake(_GARBAGE_REPLY),
+        VaultTelemetryOutcome.SCHEMA_FAILURE,
+    ),
+    HandshakeDegradeReason.INCOMPATIBLE_VERSION: (
+        _ScriptedVault(contract_version=_SKEWED_CONTRACT_VERSION),
+        VaultTelemetryOutcome.INCOMPATIBLE_VERSION,
+    ),
+    HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE: (
+        _ScriptedHandshake(_VAULT_REPORTED_UNAVAILABLE_REPLY),
+        VaultTelemetryOutcome.UNAVAILABLE,
+    ),
+}
+
+
+def test_every_handshake_degrade_reason_has_a_pinned_outcome() -> None:
+    """Totality: no way a handshake can end may reach telemetry unclassified.
+
+    Asserted on the *production* mapping, not just on the case table below, and
+    that distinction is the whole value of this test. The client looks its
+    outcome up with a default so a reason nobody tiered can never raise from a
+    telemetry call on a user's request path -- but that safety net also silently
+    absorbs a missing entry: the two reasons that map to ``UNAVAILABLE`` map to
+    the same value the default returns, so deleting them from the table changes
+    no observable behaviour and no counter assertion anywhere would notice.
+    Checking the keys directly is what makes a new reason -- or a deleted one --
+    fail here instead of quietly reading as "unavailable".
+    """
+    assert set(_HANDSHAKE_OUTCOME_BY_DEGRADE_REASON) == {None, *HandshakeDegradeReason}
+    assert set(_HANDSHAKE_DEGRADE_CASES) == {None, *HandshakeDegradeReason}
+
+
+@pytest.mark.parametrize(
+    ("reason", "handler", "expected"),
+    [
+        pytest.param(reason, handler, expected, id=reason.value if reason else "healthy")
+        for reason, (handler, expected) in _HANDSHAKE_DEGRADE_CASES.items()
+    ],
+)
+@pytest.mark.asyncio
+async def test_each_handshake_ending_counts_its_own_outcome(
+    reason: HandshakeDegradeReason | None,
+    handler: Handler,
+    expected: VaultTelemetryOutcome,
+    http_clients: ClientFactory,
+) -> None:
+    """Every probe records exactly one handshake outcome, and the right one.
+
+    Three assertions, each closing a hole the other two leave. The degrade reason
+    proves the scripted vault produced the ending this case claims to exercise;
+    the mapping is subscripted rather than looked up with a default, so an entry
+    whose outcome happens to equal the default cannot pass by falling through it;
+    and the counter proves the value the mapping holds is the value that actually
+    reached telemetry.
+    """
+    client = HttpCreekVaultClient(_VAULT_URL, _SENTINEL_TOKEN, http_client=http_clients(handler))
+
+    await client.handshake()
+
+    assert client.last_degrade_reason is reason
+    assert _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON[reason] is expected
+    assert vault_outcome_counts() == {(expected, CreekCapability.HANDSHAKE): 1}
+
+
+@pytest.mark.asyncio
+async def test_a_vault_error_escaping_the_probe_is_still_counted_once(
+    http_clients: ClientFactory,
+) -> None:
+    """A handshake that raises a vault failure outright still counts one attempt.
+
+    Every degrade clause in the probe turns its failure into a reason, so nothing
+    should escape it today -- which is exactly why this is asserted rather than
+    assumed. "One attempt, one outcome" is a property of the structure, so the
+    handshake is guarded like every capability call and a vault failure taking
+    the exception path is counted on the way out instead of vanishing.
+    """
+    client = HttpCreekVaultClient(
+        _VAULT_URL,
+        _SENTINEL_TOKEN,
+        http_client=http_clients(
+            _ScriptedHandshake(_Reply(error=CreekVaultUnavailableError("probe failed")))
+        ),
+    )
+
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.handshake()
+
+    assert vault_outcome_counts() == {
+        (VaultTelemetryOutcome.UNAVAILABLE, CreekCapability.HANDSHAKE): 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_real_refusal_carries_the_vaults_own_code_onto_the_record(
+    caplog: pytest.LogCaptureFixture,
+    http_clients: ClientFactory,
+) -> None:
+    """The ``code`` field survives the whole path from wire body to log record.
+
+    Asserted end to end rather than by calling the classifier directly, because
+    the field only earns its place if it actually arrives: an implementation that
+    reported no code at all would still satisfy every unit-level assertion about
+    what a code *is*, and would quietly cost operators the one field that tells a
+    privacy refusal apart from every other thing a vault says no to.
+    """
+    client = await _handshaken(_ScriptedVault(_PRIVACY_REFUSED_REPLY), http_clients)
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+
+    await _raised(client.reflect(_SENTINEL_BODY, VaultTierCeiling.PERSONAL))
+
+    outcomes = [record for record in caplog.records if record.getMessage() == VAULT_OUTCOME_EVENT]
+    assert len(outcomes) == 1
+    assert outcomes[0].__dict__["outcome"] == VaultTelemetryOutcome.REFUSED.value
+    assert outcomes[0].__dict__["code"] == VaultErrorCode.PRIVACY_REFUSED.value
