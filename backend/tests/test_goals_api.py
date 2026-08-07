@@ -20,6 +20,9 @@ from sqlmodel import select
 from models.goal import Goal
 from models.habit import Habit
 
+# Sentinel well above any seeded row, matching the security suite's probe id.
+_DEFINITELY_MISSING_ID = 999_999
+
 
 async def _signup(client: AsyncClient, username: str = "goaluser") -> tuple[dict[str, str], int]:
     """Create a user and return ``(auth headers, user_id)``."""
@@ -68,6 +71,30 @@ async def _seed_goal(
     await db_session.commit()
     await db_session.refresh(goal)
     return goal
+
+
+async def _create_goal_group(
+    client: AsyncClient,
+    headers: dict[str, str],
+    name: str,
+    *,
+    shared_template: bool = False,
+) -> int:
+    """Create a goal group through the API and return its id."""
+    body: dict[str, object] = {"name": name}
+    if shared_template:
+        body["shared_template"] = True
+        body["source"] = "community"
+    resp = await client.post("/goal-groups/", json=body, headers=headers)
+    assert resp.status_code == HTTPStatus.CREATED
+    return int(resp.json()["id"])
+
+
+async def _stored_goal_group_id(db_session: AsyncSession, goal_id: int | None) -> int | None:
+    """Re-read ``goal_id`` from the DB, bypassing the session identity map."""
+    db_session.expire_all()
+    result = await db_session.execute(select(Goal).where(Goal.id == goal_id))
+    return result.scalars().one().goal_group_id
 
 
 def _update_payload(**overrides: object) -> dict[str, object]:
@@ -264,6 +291,131 @@ async def test_update_goal_rejects_forged_habit_id(
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── goal_group_id assignment ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_update_goal_assigns_own_goal_group(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The caller's own group is a valid assignment target."""
+    headers, user_id = await _signup(async_client, "groupowner")
+    goal = await _seed_goal(db_session, user_id)
+    group_id = await _create_goal_group(async_client, headers, "My Group")
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(goal_group_id=group_id),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["goal_group_id"] == group_id
+    assert await _stored_goal_group_id(db_session, goal.id) == group_id
+
+
+@pytest.mark.asyncio
+async def test_update_goal_clears_goal_group_when_null(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An explicit null unassigns a goal from the caller's own group."""
+    headers, user_id = await _signup(async_client, "groupclearer")
+    goal = await _seed_goal(db_session, user_id)
+    group_id = await _create_goal_group(async_client, headers, "Temporary Group")
+
+    assigned = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(goal_group_id=group_id),
+        headers=headers,
+    )
+    assert assigned.status_code == HTTPStatus.OK
+    assert assigned.json()["goal_group_id"] == group_id
+
+    cleared = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(goal_group_id=None),
+        headers=headers,
+    )
+
+    assert cleared.status_code == HTTPStatus.OK
+    assert cleared.json()["goal_group_id"] is None
+    assert await _stored_goal_group_id(db_session, goal.id) is None
+
+
+@pytest.mark.asyncio
+async def test_update_goal_omitting_goal_group_id_leaves_it_null(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Full-replace PUT semantics hold: an omitted goal_group_id is not an error."""
+    headers, user_id = await _signup(async_client, "groupomitter")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["goal_group_id"] is None
+    assert await _stored_goal_group_id(db_session, goal.id) is None
+
+
+@pytest.mark.asyncio
+async def test_update_goal_404_when_goal_group_missing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A non-existent target group 404s with a detail distinct from a missing goal."""
+    headers, user_id = await _signup(async_client, "groupghost")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(goal_group_id=_DEFINITELY_MISSING_ID),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "goal_group_not_found"
+    assert await _stored_goal_group_id(db_session, goal.id) is None
+
+
+@pytest.mark.asyncio
+async def test_update_goal_rejects_shared_template_group(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A shared template is not an assignment target, so a goal cannot be published.
+
+    Templates are ownerless and every authenticated user reads them with
+    their goals eagerly embedded, so parking a goal in one would broadcast
+    its author's title and description to the entire user base — a wider
+    leak than the cross-user write this guard exists to stop.
+    """
+    headers, user_id = await _signup(async_client, "templateconsumer")
+    author_headers, _author_id = await _signup(async_client, "templateauthor")
+    goal = await _seed_goal(db_session, user_id)
+    template_id = await _create_goal_group(
+        async_client, author_headers, "Community Meditation", shared_template=True
+    )
+
+    # The template is readable by the caller, so the rejection below is the
+    # write guard rather than an artefact of an unreachable row.
+    visible = await async_client.get(f"/goal-groups/{template_id}", headers=headers)
+    assert visible.status_code == HTTPStatus.OK
+
+    resp = await async_client.put(
+        f"/goals/{goal.id}",
+        json=_update_payload(goal_group_id=template_id),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "forbidden"
+    assert await _stored_goal_group_id(db_session, goal.id) is None
+    published = await async_client.get(f"/goal-groups/{template_id}", headers=author_headers)
+    assert published.json()["goals"] == []
 
 
 # ── Batch unit update (issue #289) ──────────────────────────────────────

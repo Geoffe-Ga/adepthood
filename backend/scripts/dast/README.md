@@ -129,3 +129,28 @@ fails that test until somebody decides whether it is seedable or excused.
 Object references in the **path** only. Ids carried in query parameters or
 request bodies are not covered, so a green run must never be read as "no BOLA
 anywhere". The report prints that note on every run for the same reason.
+
+## Known coverage gap
+
+The path-only scope above is structural, not an oversight in the registry.
+`RouteSpec` and `is_object_scoped` in `discovery.py` derive object-scoping
+purely from templated path-parameter names, so a body field is invisible to
+the matrix from the start. `replay_body()` in `seeds.py` then returns the
+configured `REPLAY_BODIES` entry verbatim -- only *create* payloads are run
+through `render_payload`, so a replay body is never rewritten to reference an
+id the harness seeded. Seeding itself always runs as the owner identity
+(every create in `runner.py` sends `session.owner.token`), so there is no
+object seeded as the intruder for a forged body to point at. And denial
+grading is global rather than per-route -- `_ACCEPTABLE_DENIALS` in
+`verdict.py` accepts both 403 and 404 for every route alike -- so no
+per-endpoint expectation exists to get wrong either.
+
+`PUT /goals/{goal_id}` shows the gap without any registry bug: it is
+registered, seeded, and probed like every other route, and its cross-user
+cell against `goal_id` in the path is a clean denial. The leak was in
+`goal_group_id`, a field of the replay *body*, which the matrix has no
+mechanism to vary per credential or point at a foreign object. Closing this
+class needs, at minimum: seeding at least one object as the intruder
+identity, templating replay bodies the way create payloads already are, a
+registry describing which body fields carry object references, a matching
+`Cell` variant, and new assertions in `test_registry_covers_real_app.py`.

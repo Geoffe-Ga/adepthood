@@ -188,18 +188,37 @@ async def require_visible_goal_group(
     return group
 
 
+async def resolve_owned_goal_group(session: AsyncSession, group_id: int, user_id: int) -> GoalGroup:
+    """Resolve ``group_id`` for write access -- owner only -- and audit denials.
+
+    Shared templates need no branch of their own: the CHECK constraint on
+    ``goalgroup`` keeps them ownerless (``user_id IS NULL``), so they fail
+    the ownership comparison and land on the same 403 as another user's
+    private group.  Callers that receive a group id in a request *body*
+    (rather than the path) reuse this directly, so the write rule lives in
+    exactly one place.
+    """
+    group = await session.get(GoalGroup, group_id)
+    if group is None:
+        raise not_found("goal_group")
+    if group.user_id != user_id:
+        log_ownership_denied("goal_group", group_id, user_id)
+        raise forbidden("forbidden")
+    return group
+
+
 async def require_owned_goal_group(
     group_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
-    """Resolve ``group_id`` for write access -- owner only."""
-    group = await session.get(GoalGroup, group_id)
-    if group is None:
-        raise not_found("goal_group")
-    if group.user_id != current_user:
-        raise forbidden("forbidden")
-    return group
+    """Resolve ``group_id`` for write access -- owner only.
+
+    Delegates to :func:`resolve_owned_goal_group`, which owns the rule and
+    emits the ``resource_access_denied`` audit row on a cross-tenant probe,
+    matching :func:`require_owned_habit` and :func:`require_owned_user_practice`.
+    """
+    return await resolve_owned_goal_group(session, group_id, current_user)
 
 
 async def require_visible_practice(
