@@ -256,6 +256,72 @@ jobs:
           # pg_advisory_xact_lock branch that SQLite cannot.
           python -m pytest tests/test_pg_advisory_lock.py -q --no-cov
 
+  backend-integration:
+    # The default suite runs entirely on in-memory SQLite, where
+    # ``backend/conftest.py`` rewrites Postgres ``ARRAY`` columns to ``JSON``
+    # and hand-mirrors the functional / partial unique indexes under
+    # ``..._test`` names. This lane runs the same FastAPI app against a real
+    # Postgres whose schema comes from ``alembic upgrade head``, so array
+    # semantics and index definitions are exercised as production has them
+    # rather than as the fixture approximates them.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      # Deliberately no job-level DATABASE_URL, unlike migration-drift: the
+      # lane's fixture creates a per-worker database, points alembic at it for
+      # the duration of the upgrade, and restores the variable afterwards. A
+      # job-level value would migrate the service's default database instead.
+      TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      # Turns "the service container never became healthy" from a green run
+      # full of skips into a job failure.
+      INTEGRATION_LANE_REQUIRE_POSTGRES: "1"
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          # Cache uv's download/build cache, keyed on the requirements files so
+          # a dependency change busts it (audit-ci-05).
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+
+      - name: Run the Postgres integration lane
+        working-directory: backend
+        run: |
+          # Serial on purpose. The lane is a couple of dozen tests and each
+          # extra worker pays for its own database creation plus a full
+          # ``alembic upgrade head``, which costs more than the parallelism
+          # buys back.
+          #
+          # --no-cov: the repo-wide 90% coverage gate belongs to the
+          # backend-quality job, which measures the whole suite.
+          python -m pytest tests/integration -m integration -q --no-cov
+
   content-drift:
     # Issue #397: the vendored backend/content/ must match its pinned
     # CONTENT_VERSION (no silent drift, no hand edits) and the manifest
