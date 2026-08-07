@@ -58,8 +58,18 @@ ADR 0004's Context section documents in detail. Instead:
   compared nothing. The re-vendor procedure lives in the module
   docstring of `backend/tests/test_creek_contract_conformance.py`.
 - The MCP surface is unaffected: Creek's `creek-tools/creek_mcp/`
-  server remains the agent-facing adapter and remains what adepthood's
-  shipped MCP client talks to. The bundle describes `/v1` only.
+  server remains the agent-facing adapter for CrawDad, Claude Code, and
+  Hermes. Adepthood's own MCP client is retired (ADR 0004's 2026-08-07
+  note) — nothing in this repository calls Creek over MCP any more, and
+  nothing about Creek's MCP surface changed to make that so. The bundle
+  describes `/v1` only.
+- This document is titled "MCP contract" for the link-stability reasons
+  ADR 0004's Decision 5 gives, not because MCP is a live application
+  transport here — it is not, as of the note above. Every `creek.*`
+  capability name below (`CreekCapability` in `domain/creek_vault.py`)
+  is adepthood's own vocabulary and telemetry key, chosen because it
+  was minted that way originally; it is not a claim about how the call
+  reaches Creek.
 - The version this document pins against is Creek's published
   `CONTRACT_VERSION`, which the vendored bundle's `manifest.json`
   restates and which
@@ -98,35 +108,41 @@ ten stages are `CourseStage` rows tied to the APTITUDE program.
 
 ### The request
 
-`creek.wheel` takes exactly one caller-supplied parameter,
-`privacy_tier_ceiling`; unlike `creek.classify` there is no `consumer`
-parameter — the vault fills that in from its own MCP session
-(`_wheel_params`, `backend/src/services/creek_vault_client.py:595-603`).
-Adepthood always sends `personal`
-(`_WHEEL_TIER_CEILING`, `creek_vault_client.py:243-259`), because only
-aggregate per-Frequency counts and shares cross this seam — never
-fragment content — so the ceiling governs what the vault *counts*, not
-what it hands back. `personal` is the honest maximum here: intimate
-content never reaches the vault from adepthood at all (see
-"Intimate-tier content: pointer only" below), and creek independently
-caps a network consumer below intimate regardless of what adepthood
-asks for. Sending `open` would be worse than useless rather than safer,
-because creek ranks unclassified content with `personal`: an `open`
-ceiling silently excludes every not-yet-classified fragment from the
-count, so a young corpus — most of whose entries have no Frequency yet
-— reads back as an all-zero wheel even though it plainly isn't empty.
+`/v1/wheel` is a bare `GET` with no query parameters and no body — the
+ratified surface publishes neither for this capability, and sending an
+undocumented one would be guessing at a contract
+(`_get_wheel`, `backend/src/services/creek_vault_client.py:1522-1541`).
+There is therefore no ceiling adepthood can *declare* on this call; the
+`personal` value in `_WHEEL_TIER_CEILING`
+(`creek_vault_client.py:230`) instead names the widest ceiling
+adepthood is willing to *accept* on the way back, and `_admissible_wheel`
+refuses a response that echoes anything wider
+(`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
+here, on either reading: only aggregate per-Frequency counts and
+shares cross this seam — never fragment content — intimate content
+never reaches the vault from adepthood at all (see "Intimate-tier
+content: pointer only" below), and creek independently caps a network
+consumer below intimate regardless of what adepthood would ask for. The
+server instead applies its own published `open` default to what it
+*counts*, and `open` ranks unclassified content below `personal`: a
+not-yet-classified fragment is silently excluded from the count, so a
+young corpus — most of whose entries have no Frequency yet — reads back
+as an all-zero wheel even though it plainly isn't empty. That case, and
+how adepthood treats an all-zero answer as legitimate rather than a
+failure, is covered in "WHEEL over `/v1`" under "Per-capability
+fallback rules" below.
 
 ### The response projection
 
 The adapter walks a whitelist of the ten `F1..F10` codes rather than
 whatever keys the vault's `wheel` map happens to contain
-(`_wheel_aspects`, `creek_vault_client.py:657-668`), and projects each
+(`_wheel_aspects`, `creek_vault_client.py:571-582`), and projects each
 surviving entry as follows:
 
 | Creek `wheel["F<n>"]` field | Adepthood field | Notes |
 | --- | --- | --- |
 | the `F<n>` key itself | `stage_number` = `n` | Canonical order comes from the whitelist, not the map's iteration order |
-| `share` | `fullness` | Read as a float; a boolean is rejected before the numeric test (`_wheel_fullness`, `creek_vault_client.py:606-629`) |
+| `share` | `fullness` | Read as a float; a boolean is rejected before the numeric test (`_wheel_fullness`, `creek_vault_client.py:520-543`) |
 | `count` | *(not used)* | Adepthood renders proportions, not raw counts |
 | `name` | *(carried, never rendered)* | Validated at the seam but relabelled before it reaches the read path — see below |
 
@@ -153,7 +169,7 @@ Understanding", for instance.
 
 Because of that mismatch, the vault's `name` is validated and carried
 as the faithful wire value at the seam (bounded, non-blank, and
-printable — `_wheel_aspect`, `creek_vault_client.py:632-654`), but it
+printable — `_wheel_aspect`, `creek_vault_client.py:546-568`), but it
 is never what the user reads. The read path relabels every item from
 adepthood's own `CourseStage` rows before rendering
 (`_relabelled_items`, `backend/src/services/creek_vault_wheel.py:150-167`,
@@ -170,7 +186,7 @@ concretely: creek's `name` never reaches a screen.
 
 A wheel payload is untrusted input like any other vault response, and
 is bounded accordingly before anything is built from it
-(`creek_vault_client.py:606-668`):
+(`creek_vault_client.py:520-582`):
 
 - `name` is length-bounded (`_MAX_WHEEL_ASPECT_NAME_LENGTH`, 128
   characters), must be non-blank, and must be printable. A Frequency
@@ -184,7 +200,7 @@ is bounded accordingly before anything is built from it
   raising an `OverflowError` past the seam's degrade set. JSON has no
   integer ceiling, so that literal really can arrive.
 - A Frequency entry that fails either check drops the *entire* wheel
-  (`_parse_wheel`, `creek_vault_client.py:671-690`) rather than yielding
+  (`_parse_wheel`, `creek_vault_client.py:585-604`) rather than yielding
   a ring with one bucket missing.
 - Adepthood reads at most the ten whitelisted `F1..F10` codes no matter
   how large a map the vault sends.
@@ -228,31 +244,35 @@ from adepthood's own cloud reflection path.
 Every capability degrades independently; a vault missing one
 capability is still used for the others it supports:
 
-- **JOURNAL** — the one capability with a ratified `/v1` shape, so it
-  is wired up on both transports adepthood can select via
-  `CREEK_VAULT_PROTOCOL` (default `mcp`, unchanged): the MCP client
-  calls the vault's ingest tool directly, and the HTTP client
-  (`CREEK_VAULT_PROTOCOL=http`) gates on the handshake having
-  advertised `creek.journal` — an unadvertised capability is refused
-  locally, with no request sent — before issuing a `PUT` to the
-  entry's own `/v1/journal-entries/{entry_id}` URL
-  (`backend/src/services/creek_vault_client.py:1465-1512`). Either
-  way, if the vault is absent or otherwise unavailable at handshake
-  time, the write path reports `UNAVAILABLE`
+- **JOURNAL** — the one capability with a ratified `/v1` shape.
+  `CREEK_VAULT_PROTOCOL` now admits exactly one value, `http` (its own
+  default), so there is a single wire path: the client gates on the
+  handshake having advertised `creek.journal` — an unadvertised
+  capability is refused locally, with no request sent
+  (`_ingest`, `backend/src/services/creek_vault_client.py:1394-1417`)
+  — before issuing a `PUT` to the entry's own
+  `/v1/journal-entries/{entry_id}` URL
+  (`_put_journal_entry`, `creek_vault_client.py:1355-1381`). If the
+  vault is absent or otherwise unavailable at handshake time, the write
+  path reports `UNAVAILABLE`
   (`backend/src/services/creek_vault_write.py:266-267`); if the
   handshake succeeds but the ingest call itself fails — or answers
   with a payload the client cannot verify as a durably stored write —
-  it reports `DEGRADED` (`creek_vault_write.py:276-277`). Under HTTP,
-  a failed ingest is further classified into one of three kinds an
-  operator can act on differently — a contract violation (bad
-  payload, an unclaimed capability, or a version mismatch), a
-  rejected credential (401/403), or a plain unavailable vault
-  (timeout, 5xx, an unreadable success body) — each logged with its
-  own `VaultDegradeReason` in content-free structured fields
-  (`creek_vault_write.py:77-95`). **A failed replication is dropped,
-  not queued: there is no retry and no backlog.** The write is logged
-  once and forgotten, and the operator's own Postgres remains the
-  sole system of record for that content either way.
+  it reports `DEGRADED` (`creek_vault_write.py:276-277`). A failed
+  ingest is further classified into one of three kinds an operator can
+  act on differently — a contract violation (bad payload, an unclaimed
+  capability, or a version mismatch), a rejected credential (401/403),
+  or a plain unavailable vault (timeout, 5xx, an unreadable success
+  body) — each logged with its own `VaultDegradeReason` in
+  content-free structured fields (`creek_vault_write.py:77-95`).
+  **A failed replication is dropped, not queued: there is no retry
+  and no backlog.** The write is logged once and forgotten, and the
+  operator's own Postgres remains the sole system of record for that
+  content either way. Adepthood once also spoke MCP for this
+  capability, through a client of its own; that client is retired
+  (ADR 0004's 2026-08-07 note) — Creek's own MCP server is untouched
+  and remains what agents like CrawDad, Claude Code, and Hermes talk
+  to, but nothing in this repository calls it any more.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -282,12 +302,16 @@ capability is still used for the others it supports:
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
   (`backend/src/services/creek_vault_wheel.py:128-147`). A malformed or
-  refused payload degrades exactly like every other capability: the seam
-  adapter now normalizes it to `CreekVaultUnavailableError`
-  (`backend/src/services/creek_vault_client.py:833-853`) rather than
-  surfacing a raw `pydantic.ValidationError` as it once did — the one
-  deliberately un-normalized error path this client used to have — and
-  the read path catches only that error hierarchy
+  refused payload degrades exactly like every other capability: a
+  non-2xx response is classified into the `CreekVaultError` hierarchy by
+  `_read_failure`
+  (`backend/src/services/creek_vault_client.py:1065-1090`), and a 2xx
+  that will not decode, is missing a required field, or echoes a ceiling
+  wider than adepthood accepts becomes `CreekVaultPayloadError`
+  (`_wheel`, `creek_vault_client.py:1552-1588`) — rather than surfacing
+  a raw `pydantic.ValidationError` as an earlier version of this client
+  once did, the one deliberately un-normalized error path it used to
+  have. The read path catches only that error hierarchy
   (`_read_balance`, `creek_vault_wheel.py:106-125`). A well-formed
   balance then still has to clear domain-range validation (stage numbers
   in range, fullness in `0.0..1.0`, all ten stages present with no
@@ -301,8 +325,9 @@ capability is still used for the others it supports:
 - **WHEEL over `/v1`** — the ratified HTTP surface publishes no way to
   declare a tier ceiling at all (no field, no parameter), so the read
   runs at the server's own `open` default rather than the `personal`
-  the MCP path asks for. Adepthood verifies the ceiling the vault
-  echoes back instead, and refuses a payload claiming a wider one. The
+  ceiling adepthood would ask for if it could. Adepthood verifies the
+  ceiling the vault echoes back instead, and refuses a payload claiming
+  a wider one. The
   documented consequence of `open` therefore applies: a young or
   wholly-unclassified corpus reads back as an all-zero wheel, which is
   a valid answer rather than a failure, and falls back to the

@@ -260,6 +260,35 @@ async def test_create_with_default_provider_and_no_vault_configured_behaves_as_t
 
 
 @pytest.mark.asyncio
+async def test_create_with_a_stale_retired_protocol_still_saves_the_entry(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retired CREEK_VAULT_PROTOCOL costs the replication, never the writing.
+
+    The vault client is built by a per-request dependency, so a factory that
+    raised on a stale selector would mean this handler's body never ran at all:
+    the writer would get a 500 and the entry would exist nowhere. ``mcp`` is
+    precisely the value this repository's own env template prescribed until the
+    transport was retired, so this is the configuration a real deployment drifts
+    into -- and it must degrade exactly like a deployment that never had a vault.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", "https://vault.example.test")
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "mcp")
+    headers = await _signup(async_client, "vault_stale_protocol")
+
+    resp = await async_client.post(
+        "/journal/",
+        json={"message": "Written while the protocol was stale.", "classification": "personal"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+    row = await _entry_row(db_session, int(resp.json()["id"]))
+    assert row.message == "Written while the protocol was stale."
+    assert row.vault_ref is None
+
+
+@pytest.mark.asyncio
 async def test_patch_message_edit_reingests_and_updates_vault_ref(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
