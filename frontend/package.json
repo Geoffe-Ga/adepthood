@@ -83,6 +83,7 @@
     "web": "expo start --web",
     "web:build": "expo export --platform web",
     "test": "jest --passWithNoTests",
+    "test:e2e": "jest --config jest.e2e.config.js",
     "complexity": "eslint . --format json | node -e \"const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const msgs=r.flatMap(f=>f.messages.filter(m=>['complexity','sonarjs/cognitive-complexity'].includes(m.ruleId)).map(m=>({file:f.filePath,line:m.line,rule:m.ruleId,msg:m.message})));console.table(msgs);console.log('Total complexity warnings:',msgs.length)\""
   },
   "version": "1.0.0",

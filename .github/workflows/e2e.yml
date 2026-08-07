@@ -1,0 +1,93 @@
+name: E2E
+
+# The one job in this repository where the frontend and the backend meet. Both
+# suites are exhaustive in isolation and neither can tell whether the wire
+# between them is connected, so this lane drives the production API client --
+# unmocked, over a real socket -- against the real app on a real Postgres.
+#
+# It watches both halves: a route renamed in the backend and a path edited in
+# the client are equally capable of severing the seam, so either tree triggers
+# the run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - ".github/workflows/e2e.yml"
+
+# One in-flight run per PR, mirroring the sibling workflows.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-journeys:
+    runs-on: ubuntu-latest
+    # A slow gate gets skipped and a skipped gate is worse than none, so the
+    # budget is explicit: the lane boots a server, migrates a schema and runs
+    # three journeys in well under a minute of work.
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      # The lane creates and drops its own database beside this one; it never
+      # writes to the database named here. An unset value is a hard failure in
+      # globalSetup rather than a skip -- a lane that silently tests nothing is
+      # the defect this whole job exists to remove.
+      TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend runtime deps
+        # Runtime only: the launcher boots the app and runs alembic, neither of
+        # which needs the dev toolchain.
+        run: uv pip install --system -r backend/requirements-lock.txt
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run the journeys against a live backend
+        working-directory: frontend
+        env:
+          E2E_PYTHON: python
+        run: npm run test:e2e

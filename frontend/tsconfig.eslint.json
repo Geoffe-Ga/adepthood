@@ -10,9 +10,11 @@
     "src/**/*.js",
     "__tests__/**/*.ts",
     "__tests__/**/*.tsx",
+    "e2e/**/*.ts",
     "@types/**/*.d.ts",
     "eslint.config.cjs",
     "jest.config.js",
+    "jest.e2e.config.js",
     "jest.setup.js"
   ]
 }

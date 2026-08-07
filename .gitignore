@@ -154,3 +154,7 @@ scripts/ralph/state.json
 
 # Knowledge-graph build artifacts (rebuilt locally / via release; see scripts/graph/)
 graphify-out/
+
+# Coordinates of the server one e2e run booted — a dead port from a previous run
+# would be worse than no file at all, so it is never shared and never committed.
+frontend/e2e/.e2e-state.json
