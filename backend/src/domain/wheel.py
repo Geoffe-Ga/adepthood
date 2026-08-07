@@ -51,10 +51,16 @@ class WheelItem(TypedDict):
     fullness: float
 
 
-async def _aspect_labels_by_stage(
-    session: AsyncSession, stage_numbers: list[int]
-) -> dict[int, str]:
-    """Return ``{stage_number: aspect}`` for the given stages in one query."""
+async def aspect_labels_by_stage(session: AsyncSession, stage_numbers: list[int]) -> dict[int, str]:
+    """Return ``{stage_number: aspect}`` for the given stages in one query.
+
+    Public because the Aspect vocabulary is adepthood's own: any producer of a
+    wheel -- this module's local computation, or a vault-sourced read that
+    carries only counts -- labels its stages from these rows, so the words the
+    user reads have exactly one source. A stage with no ``CourseStage`` row is
+    simply absent from the mapping; deciding what an absent label means belongs
+    to the caller.
+    """
     result = await session.execute(
         select(CourseStage.stage_number, CourseStage.aspect).where(
             col(CourseStage.stage_number).in_(stage_numbers)
@@ -125,7 +131,7 @@ async def compute_wheel_balance(session: AsyncSession, user_id: int) -> list[Whe
     """
     stage_numbers = list(range(1, TOTAL_STAGES + 1))
     batch = await compute_stage_progress_batch(session, user_id, stage_numbers)
-    aspects = await _aspect_labels_by_stage(session, stage_numbers)
+    aspects = await aspect_labels_by_stage(session, stage_numbers)
     weighted_counts = await _chord_tag_weighted_counts(session, user_id)
     return [
         {
