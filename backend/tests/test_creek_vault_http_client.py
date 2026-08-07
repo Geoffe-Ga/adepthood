@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,27 +44,41 @@ from domain.creek_vault import (
     VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
+    VaultIngestResult,
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultWheelAspect,
+    VaultWheelBalance,
 )
+from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from main import app, lifespan
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
     _MAX_FRAGMENT_ID_LENGTH,
+    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
     _VAULT_TOTAL_DEADLINE_SECONDS,
+    _WHEEL_FREQUENCY_CODES,
+    _WHEEL_OK_STATUS,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
-    McpCreekVaultClient,
     _build_pooled_vault_client,
     _contract_version_compatible,
     _entry_path_segment,
+    _parse_wheel,
     _VaultHttpPool,
     build_creek_vault_client,
     close_creek_vault_http_pool,
+)
+from services.creek_vault_payload import _MARGINALIA_KIND_BY_CREEK_KIND, _MAX_REFLECT_NOTES
+from services.creek_vault_telemetry import (
+    VaultCallTimedOutError,
+    VaultTelemetryOutcome,
+    reset_vault_telemetry_for_tests,
+    vault_outcome_counts,
 )
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 
@@ -179,6 +193,10 @@ _SYNTHETIC_REQUEST_ID = "req-synthetic-not-published"
 # ratified reflection request publishes none of them, so a request carrying any
 # one would be an undocumented parameter this client invented.
 _TIER_FIELD_NAMES = ("tier", "tier_ceiling", "privacy_tier_ceiling", "routed_tier")
+
+# A contract version one pre-1.0 minor bump away from the pin, which is exactly
+# the breaking change the compatibility rule refuses to interoperate across.
+_SKEWED_CONTRACT_VERSION = "0.3.0"
 
 _PROTOCOL_MEMBERS = (
     "handshake",
@@ -724,6 +742,18 @@ async def _closed_vault_pool() -> AsyncGenerator[None, None]:
     await close_creek_vault_http_pool()
 
 
+@pytest.fixture(autouse=True)
+def _reset_vault_telemetry() -> Iterator[None]:
+    """Empty the process-wide outcome counters around every test in this module.
+
+    The counters are process-wide by design, so without this a test that asserts
+    a count would observe whatever its neighbours happened to record first.
+    """
+    reset_vault_telemetry_for_tests()
+    yield
+    reset_vault_telemetry_for_tests()
+
+
 @pytest_asyncio.fixture
 async def http_clients() -> AsyncGenerator[ClientFactory, None]:
     """Yield a factory for MockTransport-backed clients, closing each afterwards."""
@@ -930,24 +960,29 @@ async def test_a_trickling_vault_is_bounded_by_the_whole_request_deadline(
     monkeypatch: pytest.MonkeyPatch,
     http_clients: ClientFactory,
 ) -> None:
-    """A call that outlives the deadline degrades to unreachable rather than hanging."""
+    """A call that outlives the deadline degrades as timed out rather than hanging.
+
+    A deadline expiry is its own degrade reason: an operator reading
+    ``unreachable`` goes looking for a network that is, in fact, up and merely
+    slow, which is a different problem with a different remedy.
+    """
     monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(_slow_handler))
     result = await client.handshake()
     assert result == HandshakeResult.unavailable()
-    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+    assert client.last_degrade_reason is HandshakeDegradeReason.TIMED_OUT
 
 
 @pytest.mark.asyncio
 async def test_hung_vault_degrades_within_the_timeout_budget(
     http_clients: ClientFactory,
 ) -> None:
-    """A read timeout degrades to unavailable and is reported as unreachable, never raised."""
+    """A read timeout degrades to unavailable and is reported as timed out, never raised."""
     handler = _raising_handler(httpx.ReadTimeout("vault never answered"))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
     result = await client.handshake()
     assert result == HandshakeResult.unavailable()
-    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+    assert client.last_degrade_reason is HandshakeDegradeReason.TIMED_OUT
 
 
 @pytest.mark.parametrize(
@@ -1046,6 +1081,7 @@ def test_degrade_reason_wire_values_are_stable() -> None:
         "malformed_payload",
         "incompatible_version",
         "vault_reported_unavailable",
+        "timed_out",
     ]
 
 
@@ -1087,18 +1123,91 @@ def test_factory_returns_local_fallback_when_no_url_under_every_protocol(
     assert isinstance(build_creek_vault_client(), LocalFallbackCreekVaultClient)
 
 
-@pytest.mark.parametrize("protocol", [None, "mcp", "MCP "], ids=["unset", "mcp", "padded_upper"])
-def test_factory_keeps_mcp_as_the_default_protocol(
+@pytest.mark.parametrize("protocol", [None, "http", "HTTP "], ids=["unset", "http", "padded_upper"])
+def test_factory_defaults_to_the_http_protocol(
     protocol: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An unset, lowercase, or whitespace-padded mcp selector still yields the MCP adapter."""
+    """An unset, lowercase, or whitespace-padded http selector yields the HTTP adapter.
+
+    The default is HTTP because HTTP is the only application transport adepthood
+    still speaks: a deployment that names no protocol gets the one surface Creek
+    has ratified rather than having to opt into it.
+    """
     monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
     monkeypatch.setenv("CREEK_VAULT_API_KEY", _API_KEY)
     if protocol is None:
         monkeypatch.delenv("CREEK_VAULT_PROTOCOL", raising=False)
     else:
         monkeypatch.setenv("CREEK_VAULT_PROTOCOL", protocol)
-    assert isinstance(build_creek_vault_client(), McpCreekVaultClient)
+    assert isinstance(build_creek_vault_client(), HttpCreekVaultClient)
+
+
+def test_factory_degrades_the_retired_mcp_protocol_to_the_local_fallback(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A stale ``mcp`` selector skips the optional replication instead of failing.
+
+    ``mcp`` is the one value this repository's own env template prescribed until
+    the transport was retired, so it is the one stale selector whose intent is
+    known -- and the client is built on the request path, where raising would
+    mean the journal handler never runs and the writer's entry is lost. Skipping
+    the optional half is the honest answer; the WARNING is how the operator finds
+    out, so it names the remedy and carries neither the URL nor the credential.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "mcp")
+    caplog.set_level(logging.WARNING)
+
+    client = build_creek_vault_client()
+
+    assert isinstance(client, LocalFallbackCreekVaultClient)
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert "CREEK_VAULT_PROTOCOL" in message
+    assert "http" in message
+    assert record.__dict__["protocol"] == "mcp"
+    assert record.__dict__["supported_protocol"] == "http"
+    for rendered in [message, *[str(value) for value in record.__dict__.values()]]:
+        assert _VAULT_URL not in rendered
+        assert _SENTINEL_KEY not in rendered
+
+
+@pytest.mark.parametrize("protocol", [None, "http", "mcp"], ids=["unset", "http", "retired_mcp"])
+@pytest.mark.asyncio
+async def test_local_fallback_still_serves_every_feature_without_a_url(
+    protocol: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unconfigured deployment keeps working locally, whatever the protocol says.
+
+    The URL check runs before the protocol is validated, so even a stale ``mcp``
+    selector cannot turn a deployment that never had a vault into a startup
+    failure -- and the client it gets back honours the whole seam contract:
+    unavailable, supporting nothing, a silent not-stored ingest, and a refusal on
+    every read.
+    """
+    monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _API_KEY)
+    if protocol is None:
+        monkeypatch.delenv("CREEK_VAULT_PROTOCOL", raising=False)
+    else:
+        monkeypatch.setenv("CREEK_VAULT_PROTOCOL", protocol)
+
+    client = build_creek_vault_client()
+    assert isinstance(client, LocalFallbackCreekVaultClient)
+    assert await client.handshake() == HandshakeResult.unavailable()
+    assert client.is_available() is False
+    for capability in CreekCapability:
+        assert client.supports(capability) is False
+    assert await client.ingest(_ingest_request()) == VaultIngestResult(stored=False, vault_ref=None)
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.wheel()
 
 
 def test_factory_returns_http_client_when_protocol_is_http(
@@ -1111,16 +1220,54 @@ def test_factory_returns_http_client_when_protocol_is_http(
     assert isinstance(build_creek_vault_client(), HttpCreekVaultClient)
 
 
-def test_factory_rejects_an_unknown_protocol_naming_only_the_bad_value(
+@pytest.mark.parametrize(
+    ("protocol", "reported"),
+    [
+        pytest.param("grpc", "grpc", id="a_transport_nobody_implemented"),
+        pytest.param("htp", "htp", id="a_typo_for_http"),
+        pytest.param("HTTPS", "https", id="a_scheme_mistaken_for_a_selector"),
+        pytest.param("  GrPc\t", "grpc", id="padded_and_mixed_case"),
+    ],
+)
+def test_factory_degrades_an_unrecognized_protocol_to_the_local_fallback(
+    protocol: str,
+    reported: str,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An unrecognized protocol fails loudly and names the offending value, not the key."""
+    """An unrecognized selector skips the optional replication rather than losing the entry.
+
+    The factory runs inside a per-request dependency, so raising here means the
+    journal handler's body never runs: a typo in one environment variable would
+    turn every save into a 500 and the writer's entry would exist nowhere. The
+    vault is optional and Postgres is the system of record, so the honest answer
+    to a selector nobody can interpret is to skip the optional half and say so
+    loudly. What it must never do is *guess* http -- that would send a
+    deployment's vault traffic over a transport nobody chose.
+
+    ``reported`` is spelled out per case rather than re-derived from ``protocol``
+    with the same normalization the factory applies, so a bug in that
+    normalization cannot satisfy both sides of the assertion at once.
+    """
     monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
     monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
-    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "grpc")
-    with pytest.raises(ValueError, match="grpc") as exc_info:
-        build_creek_vault_client()
-    assert _SENTINEL_KEY not in str(exc_info.value)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", protocol)
+    caplog.set_level(logging.WARNING)
+
+    client = build_creek_vault_client()
+
+    assert isinstance(client, LocalFallbackCreekVaultClient)
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert "CREEK_VAULT_PROTOCOL" in message
+    assert "http" in message
+    assert record.__dict__["protocol"] == reported
+    assert record.__dict__["supported_protocol"] == "http"
+    for rendered in [message, *[str(value) for value in record.__dict__.values()]]:
+        assert _VAULT_URL not in rendered
+        assert _SENTINEL_KEY not in rendered
 
 
 def test_http_factory_rejects_a_plaintext_remote_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1148,12 +1295,25 @@ def test_http_factory_accepts_a_plaintext_loopback_url(monkeypatch: pytest.Monke
     ("url", "part"),
     [
         pytest.param(_USERINFO_VAULT_URL, "userinfo", id="userinfo"),
+        pytest.param("https://opuser@vault.example.test", "userinfo", id="userinfo_no_password"),
         pytest.param(f"{_VAULT_URL}/api?tenant=1", "query", id="query"),
         pytest.param(f"{_VAULT_URL}#frag", "fragment", id="fragment"),
+        pytest.param(f"{_VAULT_URL}?", "query", id="empty_query"),
+        pytest.param(f"{_VAULT_URL}/api?", "query", id="empty_query_after_path"),
+        pytest.param(f"{_VAULT_URL}#", "fragment", id="empty_fragment"),
     ],
 )
 def test_http_client_rejects_a_url_carrying_userinfo_query_or_fragment(url: str, part: str) -> None:
-    """Userinfo (a credential, and a silent Basic-auth downgrade), query, and fragment refuse."""
+    """Userinfo (a credential, and a silent Basic-auth downgrade), query, and fragment refuse.
+
+    The empty-but-present cases are the ones a truthiness test misses: a URL
+    ending in a bare ``?`` parses to an empty query string, which is falsy, yet
+    the delimiter is still there in the string the capability path is appended
+    to. Accepting it would build ``https://host?/v1/journal-entries/5`` and send
+    every capability path as a query string against ``/`` -- aiming the bearer
+    credential at an endpoint the operator never configured, which is precisely
+    what this check exists to prevent.
+    """
     with pytest.raises(ValueError, match=part) as exc_info:
         HttpCreekVaultClient(url, _SENTINEL_KEY)
     message = str(exc_info.value)
@@ -1161,16 +1321,18 @@ def test_http_client_rejects_a_url_carrying_userinfo_query_or_fragment(url: str,
     assert _SENTINEL_KEY not in message
 
 
-def test_mcp_transport_rejects_a_url_carrying_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The MCP transport shares the validator, so it refuses the same URL shapes."""
-    monkeypatch.setenv("CREEK_VAULT_URL", _USERINFO_VAULT_URL)
-    monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
-    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "mcp")
-    with pytest.raises(ValueError, match="userinfo") as exc_info:
-        build_creek_vault_client()
-    message = str(exc_info.value)
-    assert _URL_PASSWORD not in message
-    assert _SENTINEL_KEY not in message
+def test_a_question_mark_inside_a_fragment_is_reported_as_the_fragment_alone() -> None:
+    """One mistake is named once: a ``?`` after a ``#`` is fragment, not a second component.
+
+    The refusal is never in doubt here -- either name rejects the URL. What is at
+    stake is what the operator is told: reporting ``query`` as well would send
+    them looking for a second problem they do not have, in a message that is
+    deliberately the only thing they get (values never travel with it, since one
+    of the components it can name is a credential).
+    """
+    with pytest.raises(ValueError, match="fragment") as exc_info:
+        HttpCreekVaultClient(f"{_VAULT_URL}/api#anchor?tenant=1", _SENTINEL_KEY)
+    assert "query" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -2518,3 +2680,836 @@ async def test_http_reflect_failures_never_carry_vault_text_the_body_or_the_cred
         assert "\r\n" not in rendered
     assert error.__cause__ is None
     assert error.__context__ is None
+
+
+OutcomeDriver = Callable[[ClientFactory, pytest.MonkeyPatch], Coroutine[None, None, None]]
+
+
+async def _drive_ingest_success(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive one durable journal write over a real HTTP exchange."""
+    client = await _handshaken_client(_VaultRouteHandler(), http_clients)
+    assert (await client.ingest(_ingest_request())).stored is True
+
+
+async def _drive_ingest_not_stored(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a 2xx whose body does not mean what the published schema promises."""
+    reply = _IngestReply(payload={"action": VaultIngestAction.CREATED.value})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    assert (await client.ingest(_ingest_request())).stored is False
+
+
+async def _drive_ingest_unavailable(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a vault-side fault, which is a call that did not land."""
+    reply = _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+async def _drive_ingest_auth_failed(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a refused credential, which is a configuration fault of its own."""
+    reply = _IngestReply(status=HTTPStatus.UNAUTHORIZED, payload={"detail": "denied"})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultAuthError):
+        await client.ingest(_ingest_request())
+
+
+async def _drive_ingest_contract_failure(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a payload the vault rejected, which is adepthood's own defect."""
+    reply = _IngestReply(
+        status=HTTPStatus.BAD_REQUEST,
+        payload=_error_payload(VaultErrorCode.INVALID_REQUEST.value),
+    )
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultContractError):
+        await client.ingest(_ingest_request())
+
+
+async def _drive_ingest_timeout(
+    http_clients: ClientFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a vault that accepted the write and then never finished it.
+
+    The deadline is shortened only after the handshake, so the probe is not
+    racing it and the one call under a tiny budget is the ingest.
+    """
+    client = await _handshaken_client(_SlowIngestHandler(), http_clients)
+    monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
+    with pytest.raises(CreekVaultUnavailableError):
+        await client.ingest(_ingest_request())
+
+
+async def _drive_reflect_refused(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive Creek's published privacy refusal, which is not a rejected credential."""
+    handler = _ReflectRouteHandler(_reflection_example("refusal"), HTTPStatus.FORBIDDEN)
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultContractError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+
+async def _drive_reflect_escalated(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive Creek's 200 care handoff, which is a routing decision rather than a failure."""
+    handler = _ReflectRouteHandler(_reflection_example("care-escalation"))
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultCareEscalationError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+
+async def _drive_classify_unsupported(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive the one capability this adapter still refuses to guess a wire format for."""
+    client = await _handshaken_client(_VaultRouteHandler(), http_clients)
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+
+async def _drive_handshake_incompatible_version(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a vault advertising a contract this client will not interoperate with."""
+    handler = _json_handler(
+        _handshake_payload([CreekCapability.JOURNAL.value], _SKEWED_CONTRACT_VERSION)
+    )
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    assert (await client.handshake()).available is False
+
+
+async def _drive_fallback_unconfigured(
+    _http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive the no-vault path, whose silent no-op is still an outcome worth counting."""
+    assert (await LocalFallbackCreekVaultClient().ingest(_ingest_request())).stored is False
+
+
+_OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDriver], ...] = (
+    (VaultTelemetryOutcome.SUCCESS, CreekCapability.JOURNAL, _drive_ingest_success),
+    (VaultTelemetryOutcome.SCHEMA_FAILURE, CreekCapability.JOURNAL, _drive_ingest_not_stored),
+    (VaultTelemetryOutcome.UNAVAILABLE, CreekCapability.JOURNAL, _drive_ingest_unavailable),
+    (VaultTelemetryOutcome.AUTH_FAILED, CreekCapability.JOURNAL, _drive_ingest_auth_failed),
+    (
+        VaultTelemetryOutcome.CONTRACT_FAILURE,
+        CreekCapability.JOURNAL,
+        _drive_ingest_contract_failure,
+    ),
+    (VaultTelemetryOutcome.TIMEOUT, CreekCapability.JOURNAL, _drive_ingest_timeout),
+    (VaultTelemetryOutcome.REFUSED, CreekCapability.REFLECT, _drive_reflect_refused),
+    (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT, _drive_reflect_escalated),
+    (
+        VaultTelemetryOutcome.CAPABILITY_UNSUPPORTED,
+        CreekCapability.CLASSIFY,
+        _drive_classify_unsupported,
+    ),
+    (
+        VaultTelemetryOutcome.INCOMPATIBLE_VERSION,
+        CreekCapability.HANDSHAKE,
+        _drive_handshake_incompatible_version,
+    ),
+    (
+        VaultTelemetryOutcome.FALLBACK_UNCONFIGURED,
+        CreekCapability.JOURNAL,
+        _drive_fallback_unconfigured,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "capability", "drive"),
+    [
+        pytest.param(outcome, capability, drive, id=outcome.value)
+        for outcome, capability, drive in _OUTCOME_DRIVERS
+    ],
+)
+@pytest.mark.asyncio
+async def test_each_outcome_lands_on_its_own_counter_through_a_real_path(
+    outcome: VaultTelemetryOutcome,
+    capability: CreekCapability,
+    drive: OutcomeDriver,
+    http_clients: ClientFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every outcome is reached by driving a real exchange, and lands on one key of its own.
+
+    The second assertion is the load-bearing one: nothing else was counted for
+    that capability, so an implementation that recorded two outcomes for one
+    attempt -- or the wrong one alongside the right one -- fails here.
+    """
+    await drive(http_clients, monkeypatch)
+
+    counts = vault_outcome_counts()
+    assert counts[(outcome, capability)] == 1
+    assert {key for key in counts if key[1] is capability} == {(outcome, capability)}
+
+
+def test_every_telemetry_outcome_has_a_real_driven_path() -> None:
+    """The drivers above cover the whole outcome vocabulary, so none is countable only in theory."""
+    assert {outcome for outcome, _capability, _drive in _OUTCOME_DRIVERS} == set(
+        VaultTelemetryOutcome
+    )
+    assert len(_OUTCOME_DRIVERS) == len(VaultTelemetryOutcome)
+
+
+@pytest.mark.asyncio
+async def test_a_contract_failure_and_an_unreachable_vault_count_apart(
+    http_clients: ClientFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected payload and a vault that did not answer land on two different keys.
+
+    This is the pair the whole counter exists for: one is adepthood's bug to fix
+    and the other is infrastructure to restore, and a single ``vault_failure``
+    tally would have made an operator guess which.
+    """
+    await _drive_ingest_contract_failure(http_clients, monkeypatch)
+    contract_counts = vault_outcome_counts()
+    reset_vault_telemetry_for_tests()
+    await _drive_ingest_unavailable(http_clients, monkeypatch)
+    unavailable_counts = vault_outcome_counts()
+
+    contract_key = (VaultTelemetryOutcome.CONTRACT_FAILURE, CreekCapability.JOURNAL)
+    unavailable_key = (VaultTelemetryOutcome.UNAVAILABLE, CreekCapability.JOURNAL)
+    assert contract_key != unavailable_key
+    assert contract_counts[contract_key] == 1
+    assert unavailable_counts[unavailable_key] == 1
+    assert unavailable_key not in contract_counts
+    assert contract_key not in unavailable_counts
+
+
+@pytest.mark.asyncio
+async def test_incompatible_contract_version_counts_without_raising(
+    http_clients: ClientFactory,
+) -> None:
+    """Contract skew is counted on its own key while the probe still degrades quietly.
+
+    Skew has a specific remedy -- align the two pins -- which is invisible if it
+    is tallied with every other reason a vault was not usable, and a handshake
+    that raised would break the one caller-visible contract this seam has.
+    """
+    handler = _json_handler(
+        _handshake_payload([CreekCapability.JOURNAL.value], _SKEWED_CONTRACT_VERSION)
+    )
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+
+    result = await client.handshake()
+
+    assert result.available is False
+    assert client.last_degrade_reason is HandshakeDegradeReason.INCOMPATIBLE_VERSION
+    assert vault_outcome_counts() == {
+        (VaultTelemetryOutcome.INCOMPATIBLE_VERSION, CreekCapability.HANDSHAKE): 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_call_counts_as_timeout_and_still_degrades_the_old_way(
+    http_clients: ClientFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout is counted apart from absence while staying an unavailability to callers.
+
+    Both halves matter. A vault that is up but too slow is a capacity problem, so
+    it must not be tallied as an absent one -- and the error it raises must stay a
+    :class:`CreekVaultUnavailableError` so every caller written before this
+    distinction existed degrades exactly as it always did.
+    """
+    client = await _handshaken_client(_SlowIngestHandler(), http_clients)
+    monkeypatch.setattr(_DEADLINE_ATTR, _TINY_DEADLINE_SECONDS)
+
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.ingest(_ingest_request())
+
+    assert isinstance(exc_info.value, VaultCallTimedOutError)
+    assert CreekCapability.JOURNAL.value in str(exc_info.value)
+    counts = vault_outcome_counts()
+    assert counts[(VaultTelemetryOutcome.TIMEOUT, CreekCapability.JOURNAL)] == 1
+    assert (VaultTelemetryOutcome.UNAVAILABLE, CreekCapability.JOURNAL) not in counts
+
+
+async def _fallback_handshake(client: LocalFallbackCreekVaultClient) -> None:
+    """Probe the local fallback, which reports no usable vault."""
+    assert (await client.handshake()).available is False
+
+
+async def _fallback_ingest(client: LocalFallbackCreekVaultClient) -> None:
+    """Write to the local fallback, whose ingest is a silent no-op."""
+    assert (await client.ingest(_ingest_request())).stored is False
+
+
+async def _fallback_classify(client: LocalFallbackCreekVaultClient) -> None:
+    """Ask the local fallback to classify, which it has nothing to serve."""
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+
+async def _fallback_reflect(client: LocalFallbackCreekVaultClient) -> None:
+    """Ask the local fallback to reflect, which it has nothing to serve."""
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+
+async def _fallback_wheel(client: LocalFallbackCreekVaultClient) -> None:
+    """Ask the local fallback for a wheel, which it has nothing to serve."""
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.wheel()
+
+
+FallbackCall = Callable[[LocalFallbackCreekVaultClient], Coroutine[None, None, None]]
+
+_FALLBACK_CALLS: tuple[tuple[CreekCapability, FallbackCall], ...] = (
+    (CreekCapability.HANDSHAKE, _fallback_handshake),
+    (CreekCapability.JOURNAL, _fallback_ingest),
+    (CreekCapability.CLASSIFY, _fallback_classify),
+    (CreekCapability.REFLECT, _fallback_reflect),
+    (CreekCapability.WHEEL, _fallback_wheel),
+)
+
+
+@pytest.mark.parametrize(
+    ("capability", "call"),
+    [pytest.param(capability, call, id=capability.value) for capability, call in _FALLBACK_CALLS],
+)
+@pytest.mark.asyncio
+async def test_local_fallback_labels_each_capability_with_its_own_name(
+    capability: CreekCapability, call: FallbackCall
+) -> None:
+    """The no-vault path counts per capability, so "never configured" stays legible.
+
+    A single unlabelled tally would say a deployment has no vault without saying
+    what it kept asking for, which is the whole reason the fallback is countable
+    at all.
+    """
+    await call(LocalFallbackCreekVaultClient())
+
+    assert vault_outcome_counts() == {
+        (VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, capability): 1,
+    }
+
+
+def test_local_fallback_synchronous_reads_record_nothing() -> None:
+    """``supports`` and ``is_available`` are cache reads, not attempts, so they count nothing."""
+    client = LocalFallbackCreekVaultClient()
+
+    assert client.is_available() is False
+    assert client.supports(CreekCapability.JOURNAL) is False
+
+    assert vault_outcome_counts() == {}
+
+
+# --- Capability-document narrowing, driven through the real handshake ---------
+# Relocated from the retired MCP suite, which was the only place these branches
+# were reached. The rules belong to the shared parser rather than to a transport,
+# so they are driven here through the one adapter that still exists.
+
+# Creek's seven published note kinds, restated here on purpose: this literal is
+# the pin against the vocabulary drifting out from under the mapping table.
+_CREEK_NOTE_KINDS = frozenset(
+    {"reframe", "fear", "longing", "value", "pattern", "tension", "gift"},
+)
+
+# One well-formed margin note's quote and note text, reused so the hygiene matrix
+# below can pair exactly one malformed item against a known-good sibling.
+_MARGIN_QUOTE = "the river kept moving"
+_MARGIN_NOTE = "You keep reaching for motion when you write about rest."
+
+# A JSON integer whose magnitude no float can hold. Every integer literal is
+# valid JSON and Python decodes one to an arbitrary-precision ``int``, so a
+# hostile or buggy vault can put this in a ``share``; ``float()`` on it raises
+# ``OverflowError``, an ``ArithmeticError`` that sits in neither the client's
+# transport degrade set nor the read path's ``CreekVaultError`` catch. The
+# exponent is a decade past the ~1.8e308 float ceiling and far inside CPython's
+# 4300-digit integer-parsing limit, so it is a value that really does arrive.
+_FLOAT_OVERFLOWING_SHARE = 10**400
+
+# An attestation document a vault may carry on a healthy handshake. Its contents
+# are the vault's own, so the parser must hand the mapping back untouched rather
+# than narrow it to fields adepthood happens to know.
+_ATTESTATION = {"quote": "sentinel-attestation"}
+
+
+def _margin_note(kind: object, quote: object, note: object) -> dict[str, object]:
+    """Build one published margin note, allowing deliberately malformed field types."""
+    return {"kind": kind, "quote": quote, "note": note}
+
+
+def _wheel_with(key: str, value: object) -> dict[str, object]:
+    """Return the success wheel example with one top-level field replaced."""
+    body = _wheel_example("success")
+    body[key] = value
+    return body
+
+
+def _wheel_with_name(code: str, name: object) -> dict[str, object]:
+    """Return the success example with one Frequency's name replaced."""
+    body = _wheel_example("success")
+    frequencies = {label: dict(entry) for label, entry in _wheel_frequencies(body).items()}
+    frequencies[code]["name"] = name
+    body["wheel"] = frequencies
+    return body
+
+
+def _published_balance() -> VaultWheelBalance:
+    """Build the domain balance the vendored success wheel projects onto."""
+    frequencies = _wheel_frequencies(_wheel_example("success"))
+    return VaultWheelBalance(
+        aspects=tuple(
+            VaultWheelAspect(
+                stage_number=stage,
+                aspect=str(frequencies[f"F{stage}"]["name"]),
+                fullness=float(cast("float", frequencies[f"F{stage}"]["share"])),
+            )
+            for stage in range(1, TOTAL_STAGES + 1)
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {**_handshake_payload([CreekCapability.JOURNAL.value]), "contract_version": 123},
+            id="contract_version_is_not_a_string",
+        ),
+        pytest.param(
+            {**_handshake_payload([]), "capabilities": "not-a-list"},
+            id="capabilities_is_not_a_list",
+        ),
+        pytest.param(
+            {**_handshake_payload([CreekCapability.JOURNAL.value]), "attestation": "not-a-mapping"},
+            id="attestation_is_neither_mapping_nor_null",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_handshake_degrades_on_a_wrong_typed_capability_document(
+    payload: Mapping[str, object],
+    http_clients: ClientFactory,
+) -> None:
+    """A field of the wrong type is a malformed document, not a field to coerce.
+
+    Every one of these is a vault answering in a shape adepthood does not
+    understand, and reading past it -- casting the version to text, treating a
+    string as a one-element capability list -- would let a client negotiate
+    against a contract nobody published.
+    """
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))
+    )
+
+    result = await client.handshake()
+
+    assert result == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.MALFORMED_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_handshake_drops_a_non_string_capability_beside_the_valid_ones(
+    http_clients: ClientFactory,
+) -> None:
+    """A capability entry that is not even a string is dropped, never fatal.
+
+    Forward compatibility runs item by item: a vault may advertise things this
+    client has not heard of, so one unusable entry costs that entry and nothing
+    else.
+    """
+    payload = {
+        **_handshake_payload([]),
+        "capabilities": [CreekCapability.JOURNAL.value, 42, CreekCapability.WHEEL.value],
+    }
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))
+    )
+
+    result = await client.handshake()
+
+    assert result.available is True
+    assert result.capabilities == frozenset({CreekCapability.JOURNAL, CreekCapability.WHEEL})
+
+
+@pytest.mark.asyncio
+async def test_handshake_carries_a_vaults_attestation_through_untouched(
+    http_clients: ClientFactory,
+) -> None:
+    """An attestation mapping reaches the result verbatim, because its contents are the vault's.
+
+    Adepthood does not interpret this document, so narrowing it to the fields
+    this client happens to know would quietly discard the part a future check
+    needs.
+    """
+    payload = _handshake_payload([CreekCapability.JOURNAL.value], attestation=_ATTESTATION)
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))
+    )
+
+    result = await client.handshake()
+
+    assert result.available is True
+    assert result.attestation == _ATTESTATION
+
+
+# --- The shared wheel projection, as a helper and through the adapter ---------
+
+
+def test_wheel_frequency_codes_cover_every_stage_in_ascending_order() -> None:
+    """The wheel's Frequency codes are F1..F10, one per curriculum stage, in order."""
+    expected_codes = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
+    assert expected_codes == _WHEEL_FREQUENCY_CODES
+
+
+def test_wheel_wire_constants_match_creeks_published_contract() -> None:
+    """The wheel's success status and its aspect-name ceiling hold their pinned values."""
+    assert _WHEEL_OK_STATUS == "ok"
+    assert _MAX_WHEEL_ASPECT_NAME_LENGTH == 128
+
+
+def test_parse_wheel_projects_a_published_payload_onto_the_domain_balance() -> None:
+    """``_parse_wheel`` maps each F-code onto its stage number, its name, and its share.
+
+    Asserted against the vendored example rather than a hand-written map, so the
+    projection is checked against the wire shape Creek actually publishes.
+    """
+    assert _parse_wheel(_wheel_example("success")) == _published_balance()
+
+
+def test_parse_wheel_returns_none_for_an_unusable_payload() -> None:
+    """``_parse_wheel`` answers None rather than raising, leaving the degrade to its caller.
+
+    That division of labour is the reason the helper is safe to share: a parser
+    that raised would make every caller responsible for a degrade set it does not
+    own.
+    """
+    assert _parse_wheel(_wheel_with("status", "refused")) is None
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(
+            _WheelRouteHandler(_wheel_with_share("F2", _FLOAT_OVERFLOWING_SHARE)),
+            id="share_no_float_can_hold",
+        ),
+        pytest.param(_WheelRouteHandler(_wheel_with_share("F2", True)), id="share_is_a_bool"),
+        pytest.param(_WheelRouteHandler(_wheel_with("status", "refused")), id="status_is_refused"),
+        pytest.param(
+            _WheelRouteHandler(
+                _wheel_with("wheel", [_wheel_frequencies(_wheel_example("success"))])
+            ),
+            id="wheel_is_not_a_mapping",
+        ),
+        pytest.param(
+            _WheelRouteHandler(_wheel_with_name("F5", "x" * (_MAX_WHEEL_ASPECT_NAME_LENGTH + 1))),
+            id="name_over_the_length_cap",
+        ),
+        pytest.param(
+            _WheelRouteHandler(_wheel_with_name("F5", "Agency\nWARN root: pay up")),
+            id="name_carrying_a_newline",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_wheel_refuses_an_unusable_frequency_or_envelope(
+    handler: _WheelRouteHandler,
+    http_clients: ClientFactory,
+) -> None:
+    """Each way one Frequency can be unusable rejects the whole read, never a partial ring.
+
+    Three of these are why the checks are written the way they are. A boolean
+    would read as a completely full Frequency under a bare numeric test, since
+    ``isinstance(True, int)`` is true. An integer past the float range decodes to
+    an arbitrary-precision ``int`` whose ``float()`` raises ``OverflowError`` --
+    an ``ArithmeticError`` in nobody's degrade set -- so it would escape the seam
+    as a crash rather than a fallback. And a name carrying a newline is the
+    payload that forges a log line, which is why a Frequency name has to be
+    printable and bounded even though it is relabelled away before rendering.
+    """
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(CreekVaultPayloadError):
+        await client.wheel()
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_keeps_a_name_at_the_exact_length_boundary(
+    http_clients: ClientFactory,
+) -> None:
+    """A name of exactly ``_MAX_WHEEL_ASPECT_NAME_LENGTH`` characters survives verbatim.
+
+    The bound is asserted at its edge rather than merely somewhere beyond it, so
+    an off-by-one that silently discarded the longest legitimate name would fail
+    here rather than in a wheel that quietly stopped rendering.
+    """
+    name = "x" * _MAX_WHEEL_ASPECT_NAME_LENGTH
+    handler = _WheelRouteHandler(_wheel_with_name("F5", name))
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    stage_five = next(aspect for aspect in balance.aspects if aspect.stage_number == 5)
+    assert stage_five.aspect == name
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_accepts_a_share_serialized_as_a_plain_integer(
+    http_clients: ClientFactory,
+) -> None:
+    """A share of ``1`` is a whole Frequency, not an unreadable one.
+
+    JSON has no float type distinct from its integer one, so a vault that
+    computed a share of exactly one or exactly zero may serialize it as ``1``
+    rather than ``1.0`` -- entirely legitimately. Every other share case here
+    asserts a rejection, so without this one a numeric check narrowed to ``float``
+    alone would pass the whole suite while blanking any wheel a vault happened to
+    round off, collapsing the read to a payload fault.
+    """
+    handler = _WheelRouteHandler(_wheel_with_share("F2", 1))
+    client = await _handshaken_client(handler, http_clients)
+
+    balance = await client.wheel()
+
+    stage_two = next(aspect for aspect in balance.aspects if aspect.stage_number == 2)
+    assert stage_two.fullness == 1.0
+
+
+# --- The shared marginalia projection, driven through the reflection exchange --
+
+
+def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:
+    """Every mapped kind is one ``domain.resonance`` will actually anchor."""
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND.values()) <= VALID_KINDS
+
+
+def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
+    """The mapping's keys are exactly Creek's seven published note kinds."""
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
+
+
+async def _reflected_notes(
+    notes: object, http_clients: ClientFactory
+) -> tuple[VaultReflectionNote, ...]:
+    """Drive one published reflection carrying ``notes`` and return what survived projection."""
+    handler = _ReflectRouteHandler(_reflection_with("notes", notes))
+    client = await _handshaken_client(handler, http_clients)
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+    return reflection.notes
+
+
+@pytest.mark.parametrize(
+    ("creek_kind", "marginalia_kind"),
+    [
+        pytest.param("pattern", "connection", id="pattern"),
+        pytest.param("reframe", "theme", id="reframe"),
+        pytest.param("fear", "theme", id="fear"),
+        pytest.param("longing", "theme", id="longing"),
+        pytest.param("value", "theme", id="value"),
+        pytest.param("tension", "theme", id="tension"),
+        pytest.param("gift", "theme", id="gift"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reflect_maps_each_published_note_kind(
+    creek_kind: str,
+    marginalia_kind: str,
+    http_clients: ClientFactory,
+) -> None:
+    """Each of Creek's seven note kinds renders as its ratified marginalia kind."""
+    notes = await _reflected_notes(
+        [_margin_note(creek_kind, _MARGIN_QUOTE, _MARGIN_NOTE)], http_clients
+    )
+    assert notes == (
+        VaultReflectionNote(kind=marginalia_kind, quote=_MARGIN_QUOTE, note=_MARGIN_NOTE),
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_note",
+    [
+        pytest.param("not-a-mapping", id="non_mapping_item"),
+        pytest.param(_margin_note("prophecy", _MARGIN_QUOTE, _MARGIN_NOTE), id="unknown_kind"),
+        pytest.param(_margin_note(7, _MARGIN_QUOTE, _MARGIN_NOTE), id="non_string_kind"),
+        pytest.param({"kind": "gift", "note": _MARGIN_NOTE}, id="missing_quote"),
+        pytest.param({"kind": "gift", "quote": _MARGIN_QUOTE}, id="missing_note"),
+        pytest.param(_margin_note("gift", 7, _MARGIN_NOTE), id="non_string_quote"),
+        pytest.param(_margin_note("gift", _MARGIN_QUOTE, 7), id="non_string_note"),
+        pytest.param(_margin_note("gift", "", _MARGIN_NOTE), id="empty_quote"),
+        pytest.param(_margin_note("gift", " \n\t ", _MARGIN_NOTE), id="whitespace_quote"),
+        pytest.param(_margin_note("gift", _MARGIN_QUOTE, ""), id="empty_note"),
+        pytest.param(_margin_note("gift", _MARGIN_QUOTE, " \n\t "), id="whitespace_note"),
+        pytest.param(
+            _margin_note("gift", "q" * (ANCHOR_TEXT_MAX + 1), _MARGIN_NOTE), id="oversized_quote"
+        ),
+        pytest.param(
+            _margin_note("gift", _MARGIN_QUOTE, "n" * (NOTE_MAX + 1)), id="oversized_note"
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reflect_drops_a_malformed_note_keeping_its_sibling(
+    bad_note: object,
+    http_clients: ClientFactory,
+) -> None:
+    """A malformed note is dropped item by item, never taking its well-formed sibling with it.
+
+    Every field has to survive on its own terms because this is the boundary
+    where an untrusted vault's output becomes something adepthood renders back to
+    the user: completing a partial note with a default would put words in the
+    user's Higher Self that neither they nor the vault ever wrote.
+    """
+    notes = await _reflected_notes(
+        [bad_note, _margin_note("gift", _MARGIN_QUOTE, _MARGIN_NOTE)], http_clients
+    )
+    assert notes == (VaultReflectionNote(kind="theme", quote=_MARGIN_QUOTE, note=_MARGIN_NOTE),)
+
+
+@pytest.mark.asyncio
+async def test_reflect_keeps_notes_at_the_exact_length_boundaries(
+    http_clients: ClientFactory,
+) -> None:
+    """A quote of exactly ANCHOR_TEXT_MAX and a note of exactly NOTE_MAX both survive."""
+    quote = "q" * ANCHOR_TEXT_MAX
+    note = "n" * NOTE_MAX
+    notes = await _reflected_notes([_margin_note("value", quote, note)], http_clients)
+    assert notes == (VaultReflectionNote(kind="theme", quote=quote, note=note),)
+
+
+@pytest.mark.asyncio
+async def test_reflect_passes_the_quote_through_verbatim(http_clients: ClientFactory) -> None:
+    """A quote keeps its exact surrounding whitespace, since adepthood anchors it verbatim.
+
+    Trimming here would silently break the character-for-character match the
+    anchor depends on, and the note would then never render at all.
+    """
+    quote = f"  {_MARGIN_QUOTE}  "
+    notes = await _reflected_notes([_margin_note("pattern", quote, _MARGIN_NOTE)], http_clients)
+    assert notes == (VaultReflectionNote(kind="connection", quote=quote, note=_MARGIN_NOTE),)
+
+
+@pytest.mark.asyncio
+async def test_reflect_caps_the_note_count_keeping_the_leading_prefix(
+    http_clients: ClientFactory,
+) -> None:
+    """Only the first ``_MAX_REFLECT_NOTES`` notes are carried, in the order the vault sent them.
+
+    The cap bounds untrusted vault output before adepthood does any work on it,
+    so an over-eager or hostile vault cannot grow this pass without limit; taking
+    the leading prefix rather than a sample keeps the vault's own ordering, which
+    is the only ranking there is.
+    """
+    over_cap = [
+        _margin_note("gift", _MARGIN_QUOTE, f"note number {index}")
+        for index in range(_MAX_REFLECT_NOTES + 3)
+    ]
+    notes = await _reflected_notes(over_cap, http_clients)
+    assert [note.note for note in notes] == [
+        f"note number {index}" for index in range(_MAX_REFLECT_NOTES)
+    ]
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param([], id="empty_list"),
+        pytest.param(
+            ["not-a-mapping", _margin_note("prophecy", _MARGIN_QUOTE, _MARGIN_NOTE), 7],
+            id="every_item_malformed",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reflect_ok_without_usable_notes_is_still_a_well_formed_answer(
+    notes: object,
+    http_clients: ClientFactory,
+) -> None:
+    """A well-formed ok answer nothing survived is still a well-formed answer.
+
+    The consumer, not the adapter, decides that zero renderable notes means
+    deferring to the cloud -- the adapter's job is to report what the vault said.
+    """
+    assert await _reflected_notes(notes, http_clients) == ()
+
+
+@pytest.mark.asyncio
+async def test_reflect_carries_the_essay_without_letting_it_into_the_notes(
+    http_clients: ClientFactory,
+) -> None:
+    """Free prose rides on the value where a caller can see it, and nowhere it could render.
+
+    An essay is the model's own words rather than the user's, so it is carried so
+    the seam can report what the vault answered and kept out of the notes, which
+    are the only thing anchored back onto the entry.
+    """
+    handler = _ReflectRouteHandler(_reflection_with("essay", _SENTINEL_ESSAY))
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.OPEN)
+
+    assert reflection.essay == _SENTINEL_ESSAY
+    assert reflection.essay_grounded is False
+    assert all(_SENTINEL_ESSAY not in note.note for note in reflection.notes)
+
+
+# --- Transport failure on the two read exchanges ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_timeout"),
+    [
+        pytest.param(httpx.ConnectError("refused"), False, id="connection_refused"),
+        pytest.param(httpx.ReadTimeout("vault never answered"), True, id="read_timeout"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_transport_failure_degrades_without_carrying_the_entry(
+    failure: Exception,
+    expected_timeout: bool,
+    http_clients: ClientFactory,
+) -> None:
+    """A reflection that never landed is an absent vault, and a slow one is countably distinct.
+
+    The reflection request carries a whole journal entry, so its transport
+    failures are the ones the entry could ride back out on: the message stays
+    static and capability-named, and ``from None`` severs the chain so no
+    traceback printer surfaces the httpx exception -- whose text can carry the
+    URL -- as a cause or a context. A timeout raises the unavailable *subclass*,
+    so every caller degrades exactly as before while the counters can still tell
+    "not there" from "too slow".
+    """
+    handler = _ReflectRouteHandler(reflect_error=failure)
+    client = await _handshaken_client(handler, http_clients, _SENTINEL_KEY)
+
+    with pytest.raises(CreekVaultUnavailableError) as exc_info:
+        await client.reflect(_SENTINEL_BODY, VaultTierCeiling.PERSONAL)
+
+    error = exc_info.value
+    assert isinstance(error, VaultCallTimedOutError) is expected_timeout
+    assert CreekCapability.REFLECT.value in str(error)
+    assert _SENTINEL_BODY not in str(error)
+    assert _SENTINEL_KEY not in str(error)
+    assert error.__cause__ is None
+    assert error.__suppress_context__ is True
+
+
+@pytest.mark.asyncio
+async def test_http_wheel_read_timeout_is_a_timeout_not_a_bare_unavailability(
+    http_clients: ClientFactory,
+) -> None:
+    """A wheel read that ran out of time counts as a timeout while degrading unchanged."""
+    handler = _WheelRouteHandler(wheel_error=httpx.ReadTimeout("vault never answered"))
+    client = await _handshaken_client(handler, http_clients)
+
+    with pytest.raises(VaultCallTimedOutError) as exc_info:
+        await client.wheel()
+
+    assert CreekCapability.WHEEL.value in str(exc_info.value)
+    assert vault_outcome_counts()[(VaultTelemetryOutcome.TIMEOUT, CreekCapability.WHEEL)] == 1

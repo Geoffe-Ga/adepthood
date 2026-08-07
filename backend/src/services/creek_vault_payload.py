@@ -18,10 +18,12 @@ same sentence "this answer is safe to use":
   privacy ceiling, so :func:`_admissible_ceiling` verifies the one a vault says
   it applied. An answer computed above the ceiling adepthood was willing to
   accept was drawn from material this app never authorized, and is refused whole.
-* **The reflection document.** :func:`_parse_reflection_result` is the single
-  parser both transports run on -- the ``/v1`` body and the MCP tool result are
-  the same canonical shape, and a second reading of one shape is how two readings
-  of the same reflection come to disagree.
+* **The reflection document.** :func:`_parse_reflection_result` is the one place
+  the ratified ``/v1`` reflection body is read. It was written to be the single
+  parser two transports shared; only the HTTP one remains, so it is now simply
+  the only reading of that shape there is -- which is the same guarantee arrived
+  at from the other side, since a second reading is how two readings of one
+  reflection come to disagree.
 
 Every message this module can raise with is built by :func:`_capability_message`
 from a closed set of our own prefixes plus a
@@ -387,10 +389,13 @@ def _parse_reflection_result(
 ) -> VaultReflection:
     """Project one reflection response onto the seam's value, or refuse it whole.
 
-    The single parser both transports run on: the ratified ``/v1`` body and the
-    MCP tool result are the same canonical document, and a second reading of one
-    wire shape is how two readings of the same reflection come to disagree --
-    which would surface as marginalia that differ by transport.
+    The one place the ratified ``/v1`` reflection body is read. It was written to
+    be the single parser two transports shared, back when the MCP tool result and
+    the ``/v1`` body were the same canonical document; the MCP client has since
+    been retired, so this is now the only reading of that shape in the app. The
+    reason for keeping it that way outlives the transport that motivated it: a
+    second reading of one wire shape is how two readings of the same reflection
+    come to disagree.
 
     Three outcomes. A literal ``escalate`` status raises
     :class:`~domain.creek_vault.CreekVaultCareEscalationError` before any other

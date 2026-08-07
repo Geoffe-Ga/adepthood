@@ -393,3 +393,155 @@ the divergence table.
 
 Nothing in Decision 6 changes. This note is a factual correction and a
 pointer to the vendored bundle; it revises no decision.
+
+## Note, 2026-08-07 — the HTTP cutover shipped; adepthood's MCP client is retired
+
+Issue #2049, the capstone of epic #2043, landed. `CREEK_VAULT_PROTOCOL`
+now defaults to `http`, and `http` is the only transport it selects.
+`McpCreekVaultClient`, the `VaultTransport` protocol, and every
+MCP-only helper underneath them are deleted from
+`services/creek_vault_client.py`, along with the `mcp` and `httpx2`
+imports. `build_creek_vault_client` lost its `transport` parameter —
+there is exactly one transport to choose now, not a choice between two.
+
+**Operator migration, and the one place this decision had teeth.** A
+stale `CREEK_VAULT_PROTOCOL=mcp` — the value this repository's own
+`backend/.env.example` prescribed until this commit — is never
+reinterpreted as `http`; reading it that way would send vault traffic
+over a transport the operator did not choose, which is the guess this
+whole epic exists to end. But it does not raise, either. The factory
+runs inside a per-request FastAPI dependency, so a raise there means
+the handler body never runs: every journal save would 500 and the
+writer's entry would exist nowhere. That is exactly the loss the seam
+promises can never happen for a vault's sake, and it would have been
+inflicted on precisely the deployments that followed our own
+documentation. So a retired selector degrades to
+`LocalFallbackCreekVaultClient` and logs one WARNING naming the remedy:
+the entry still lands in Postgres, and only the optional replication is
+skipped. Any *other* unrecognized value — a typo, or a transport nobody
+implemented — degrades the same way, with its own WARNING saying it was
+not recognized rather than that it was retired. Adepthood knows less
+about what such a value meant, but knowing less argues for more caution,
+not for a harsher failure: whatever the operator intended, they did not
+intend to lose every journal entry until someone read a traceback. What
+neither case ever does is guess `http`. **Operators should unset
+`CREEK_VAULT_PROTOCOL` or set it to `http`**; until they do, a configured
+vault is silently unused and the warning is how they find out.
+
+Decision 2's "adapter swap, not a rewrite" held through the cutover, not
+just through the client's introduction. Everything the domain seam
+promised stays exactly as it was: the `CreekVaultClient` protocol,
+every value object (`VaultIngestRequest`, `VaultClassification`,
+`VaultWheelBalance`, `HandshakeResult`, …), the fail-closed
+`tier_ceiling_for`, the whole `CreekVaultError` hierarchy, and
+`LocalFallbackCreekVaultClient` are untouched. Every graceful-degradation
+guarantee this ADR and its callers depend on — an unconfigured
+deployment gets the local fallback before the protocol is even read, a
+version mismatch degrades rather than crashes, a failed write is
+dropped rather than queued — still holds, because none of it lived in
+the transport that was retired.
+
+**Creek's MCP surface is unaffected.** Nothing in the `creek-vault`
+repository changed for this issue, and nothing in Creek's
+`creek-tools/creek_mcp/` server was touched. CrawDad, Claude Code, and
+Hermes keep talking to Creek over MCP exactly as they did before this
+note. What retired is *adepthood's own client* of that surface — the
+half of Decision 1 this ADR always scoped to "adepthood's backend is a
+deterministic consumer with no agent needs of its own." A reader who
+takes the issue title ("retire the MCP transport") to mean MCP itself
+was retired has misread it.
+
+Rollout criteria, recorded honestly rather than rounded up. Met, and
+machine-verified: the HTTP verticals this ADR's divergence table
+tracked have landed (the HTTP adapter #2045, journal replication
+#2046, `/v1` reflections and `/v1/wheel` #2047); the vendored `/v1`
+conformance and drift
+suites (`backend/tests/test_creek_contract_conformance.py`,
+`backend/tests/scripts/test_creek_contract_drift.py`) are green with
+the strict-xfail tripwire `test_ratified_capability_documents_are_understood`
+still XFAILing; and the full backend suite is green. **Not met, and not
+claimed as met:** nobody has run this client end-to-end against a real
+local Creek `/v1` server. That manual run — start a local Creek,
+configure `CREEK_VAULT_URL` against it, exercise all four capabilities,
+and confirm success counters for each and zero schema failures in the
+telemetry this issue also shipped — is outstanding. It is recorded here
+as a criterion the operator must run before, or immediately upon, the
+first real deployment with a vault configured. The vendored conformance
+suite proves adepthood's client agrees with Creek's *published* shapes;
+it does not prove a live vault answers them the same way over an actual
+network.
+
+Decision 4's requirement — a version mismatch must be countable apart
+from an unreachable vault, not folded into it — is now satisfied. The
+new telemetry module, `services/creek_vault_telemetry.py`, gives
+`vault_incompatible_version` its own counter key, distinct from
+`vault_unavailable` and the new `vault_timeout` (a slow vault is now
+countable apart from an absent one too, via `HandshakeDegradeReason.TIMED_OUT`).
+The gap the Consequences section above flagged as "tracked rather than
+silently accepted" is closed.
+
+**One outcome is tiered for privacy rather than for noise, and that is a
+product decision, not a logging preference.** The telemetry module's
+fields are content-free by construction — every value is a member of one
+of adepthood's own closed enums, so no journal text, note, fragment id,
+or credential can reach a record. For a care escalation that is not
+sufficient, because the sensitive fact is not what the record *says* but
+that there is a record at all: `vault_escalated` means a particular
+person's writing tripped Creek's care guard, which is a
+special-category inference about their mental health. It would not have
+stayed abstract either — `TraceIdLogFilter` stamps every record with the
+request's trace id, and the journal router's own records carry a
+`user_id`, so an escalation logged at INFO would be trivially joinable
+to a named user in ordinary production logs. Accumulating a
+log-joinable record of who reached that state is the wrong trade for a
+product whose whole promise is a private place to write the worst of it
+down. So `vault_escalated` logs at DEBUG (absent from ordinary logs
+entirely) and additionally carries `SUPPRESS_TRACE_CORRELATION`, a new
+opt-in marker `TraceIdLogFilter` honours by stamping `NO_TRACE` instead
+of the live trace id — a second layer for the case where an operator has
+DEBUG on for something else. Nothing operational is lost: the counters
+still tally every escalation, per capability, with nobody's identity in
+them, and a rate is what an on-call actually reads. Tests pin both
+halves so a future edit to the severity table cannot silently re-promote
+the event.
+
+Stated precisely, because a privacy claim that overstates itself is
+worse than none: this removes the *trivial* join, not every join. With
+DEBUG enabled, the request-logging middleware still writes its own
+`request_completed` record for the same request at the same instant, so
+timestamp adjacency plus a database lookup could still re-identify an
+escalation. Closing that would mean reasoning about the whole logging
+surface rather than this one record, which is a larger piece of work
+than this issue; what is claimed here is that the event no longer falls
+out of a generic severity table into ordinary logs already stamped with
+the user's id.
+
+One wart, left in on purpose rather than missed: `backend/requirements.txt`
+still pins `mcp==2.0.0` and `httpx2==2.9.1`. Nothing imports either
+package any more. They stay for this change because removing a
+dependency is a separate, independently-reviewable diff from retiring
+the code that used it — not because anyone forgot they are now dead
+weight. A follow-up dependency change owns dropping them.
+
+Decision 5's two reasons for keeping the filename
+`docs/creek-vault-mcp-contract.md` are now down to one. Link stability
+still holds — the inbound references it named have not moved. But "the
+shipped transport genuinely is still MCP until the HTTP cutover in
+Decision 1 lands" has expired: the cutover landed with this issue. The
+filename survives on link stability alone now, which is a thinner
+justification than the two together, though not yet a thin enough one
+to force a rename that would break those same references.
+
+Finally, a reading note about this document rather than about the
+code. Every `backend/src/services/creek_vault_client.py` citation in
+the Context section and the divergence table above — `_content_params`
+at `:277-279`, `_CONTRACT_MAJOR` at `:79,242`, the scalar
+`payload.get("reflection")` read at `:406-407`, the `wheel` params at
+`:426` — describes the **pre-cutover MCP client**, and none of those
+symbols or line numbers resolves to anything today: the code they
+point at was deleted by this issue. They are left exactly as written,
+per this ADR's append-only convention, because the argument they
+support is an argument about what was true when the decision was made,
+and rewriting the evidence under a decision is how a decision record
+stops being a record. Read them as archaeology, not as a map of the
+current file.

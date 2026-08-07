@@ -5,56 +5,66 @@ seam, following the same domain-protocol -> service-adapter pattern as
 :mod:`services.marginalia` and the env-var config / error-normalization pattern
 as :mod:`services.botmason`.
 
-Three implementations of :class:`~domain.creek_vault.CreekVaultClient` live here:
+Two implementations of :class:`~domain.creek_vault.CreekVaultClient` live here:
 
-* :class:`McpCreekVaultClient` -- talks to a real vault over an injected
-  :class:`VaultTransport`. It is written to **degrade, never crash**:
-  :meth:`~McpCreekVaultClient.handshake` swallows every transport, parsing, and
-  version-mismatch failure into :meth:`HandshakeResult.unavailable`, and every
-  per-capability call normalizes any transport exception to
-  :class:`CreekVaultUnavailableError` with a **static, capability-named message**
-  that never echoes the entry body or the API key.
 * :class:`HttpCreekVaultClient` -- talks to a real vault over plain HTTP/JSON,
-  handshaking with a single ``GET /v1/capabilities``. It degrades the same way,
-  and additionally records *which* failure mode degraded it
+  handshaking with a single ``GET /v1/capabilities``. It is written to
+  **degrade, never crash**: :meth:`~HttpCreekVaultClient.handshake` swallows
+  every transport, parsing, and version-mismatch failure into
+  :meth:`HandshakeResult.unavailable`, and every per-capability call normalizes
+  any transport exception to :class:`CreekVaultUnavailableError` with a
+  **static, capability-named message** that never echoes the entry body or the
+  API key. It additionally records *which* failure mode degraded it
   (:class:`HandshakeDegradeReason`) so contract-version skew stays countable
-  apart from a vault that is merely unreachable. Journal ingest, the wheel read,
-  and the reflection are the capabilities whose ``/v1`` shapes Creek has
-  ratified, so they are wired up -- a ``PUT`` of the entry's own URL, a
-  parameterless ``GET`` of the whole-corpus aggregate, and a ``POST`` of the
-  reflections collection; classify alone still refuses, because guessing an
-  unratified wire format is worse than staying local. A failed ingest is
-  *dropped*, not queued -- there is no retry and no backlog today, and the local
-  Postgres row stays the system of record either way.
+  apart from a vault that is merely unreachable, or one that is merely slow.
+  Journal ingest, the wheel read, and the reflection are the capabilities whose
+  ``/v1`` shapes Creek has ratified, so they are wired up -- a ``PUT`` of the
+  entry's own URL, a parameterless ``GET`` of the whole-corpus aggregate, and a
+  ``POST`` of the reflections collection; classify alone still refuses, because
+  guessing an unratified wire format is worse than staying local. A failed
+  ingest is *dropped*, not queued -- there is no retry and no backlog today, and
+  the local Postgres row stays the system of record either way.
 * :class:`LocalFallbackCreekVaultClient` -- the no-vault path. Handshake reports
   unavailable, nothing is supported, ingest is a silent no-op (operator Postgres
   stays the system of record), and the read/compute capabilities raise
   :class:`CreekCapabilityUnsupportedError`.
 
-:func:`build_creek_vault_client` chooses between them from ``CREEK_VAULT_URL``
-(unset means the local fallback, so an unconfigured deployment transparently
-degrades) and ``CREEK_VAULT_PROTOCOL`` (which transport a configured vault is
-reached over, defaulting to MCP so an existing deployment keeps its behavior
-until it opts in).
+HTTP/JSON over ``/v1`` is the whole application boundary, per Decision 1 of
+``docs/adr/0004-creek-vault-http-application-boundary.md``. Adepthood once
+reached a vault over an MCP client of its own as well; that client is retired,
+and MCP remains what the ADR says it is -- Creek's adapter for *agents*, served
+by Creek and called by nothing in this repository.
 
-Transport security: both configured transports refuse a plaintext ``http://``
-URL to any non-loopback host, because every request carries the
-``CREEK_VAULT_API_KEY`` bearer credential (and, over MCP, each call's tier
-metadata) that must never cross a network in cleartext -- TLS misconfiguration
-fails closed at construction, before the key is bound to anything. Both also
-refuse a URL carrying userinfo, a query, or a fragment: userinfo is itself a
-credential that httpx would log unmasked and turn into a Basic-auth downgrade
-of our bearer, and a query or fragment would silently redirect the credential
-away from the endpoint the operator configured.
-:class:`_McpStreamableHttpTransport` speaks MCP streamable-HTTP framing
-(initialize, then ``tools/call``); :class:`HttpCreekVaultClient` speaks
-request/response JSON over a shared, credential-free pooled connection
-(:class:`_VaultHttpPool`), building its authorization header per call so the
-pooled connection never holds the key. This seam does not itself encrypt the entry
-*body*: the end-to-end, ciphertext-only intimate-transit rule of Decision 6
-in ``docs/adr/0004-creek-vault-http-application-boundary.md`` (a user-held
-key the operator cannot decrypt) is enforced where the body is assembled, in
-the write path built on this seam -- out of scope here, not forgotten.
+:func:`build_creek_vault_client` chooses between the two from
+``CREEK_VAULT_URL`` (unset means the local fallback, so an unconfigured
+deployment transparently degrades) and ``CREEK_VAULT_PROTOCOL``, which now
+admits exactly one value. Neither stale selector is ever guessed at, since
+guessing a transport would send vault traffic somewhere the operator did not
+choose -- but the retired ``mcp`` selector degrades to the local fallback with a
+warning rather than raising, because this factory runs per request and a raise
+there would cost the writer their entry, while an unrecognized selector still
+raises, having no knowable intent to honour.
+
+Transport security: the configured transport refuses a plaintext ``http://`` URL
+to any non-loopback host, because every request carries the
+``CREEK_VAULT_API_KEY`` bearer credential that must never cross a network in
+cleartext -- TLS misconfiguration fails closed at construction, before the key is
+bound to anything. It also refuses a URL carrying userinfo, a query, or a
+fragment: userinfo is itself a credential that httpx would log unmasked and turn
+into a Basic-auth downgrade of our bearer, and a query or fragment would
+silently redirect the credential away from the endpoint the operator configured.
+:class:`HttpCreekVaultClient` speaks request/response JSON over a shared,
+credential-free pooled connection (:class:`_VaultHttpPool`), building its
+authorization header per call so the pooled connection never holds the key. This
+seam does not itself encrypt the entry *body*: the end-to-end, ciphertext-only
+intimate-transit rule of Decision 6 in
+``docs/adr/0004-creek-vault-http-application-boundary.md`` (a user-held key the
+operator cannot decrypt) is enforced where the body is assembled, in the write
+path built on this seam -- out of scope here, not forgotten.
+
+Every attempt made through either adapter is counted exactly once by
+:mod:`services.creek_vault_telemetry`, which is the only place an operator can
+see a seam that degrades in silence.
 
 Cross-references ``docs/creek-vault-mcp-contract.md`` for the shipped
 per-capability fallback rules; Creek's published contract owns the wire shapes.
@@ -64,27 +74,23 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import json
+import logging
 import os
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
-from typing import NoReturn, Protocol
+from types import TracebackType
+from typing import NoReturn
 from urllib.parse import SplitResult, quote, urlsplit
 
 import httpx
-import httpx2
-from mcp import Client, MCPError
-from mcp.client.streamable_http import streamable_http_client
-from mcp.types import CallToolResult
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
-    CONSUMER_ID,
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
+    CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
@@ -113,6 +119,15 @@ from services.creek_vault_payload import (
     _parse_reflection_result,
     _reflection_request_body,
 )
+from services.creek_vault_telemetry import (
+    VaultCallTimedOutError,
+    VaultTelemetryOutcome,
+    code_for_error,
+    outcome_for_error,
+    record_vault_outcome,
+)
+
+_LOGGER = logging.getLogger(__name__)
 
 # Timeout (seconds) for a single HTTP call to the vault. Bounds how long a slow
 # or hung vault can block a request before adepthood degrades to local.
@@ -146,19 +161,6 @@ _VAULT_DEADLINE_PHASE_BUDGETS = 3
 # worker -- and the journal write path handshakes on every write.
 _VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TIMEOUT_SECONDS * _VAULT_DEADLINE_PHASE_BUDGETS
 
-# Read budget (seconds) for the MCP session's long-lived server-sent-event
-# stream, which is held open for the life of the session and so cannot share the
-# ten-second budget the request phases use -- a short read timeout would tear the
-# session down while it is merely idle. Mirrors the MCP SDK's own default for
-# that stream, restated here as a named constant because this module builds the
-# transport's HTTP client itself.
-_MCP_SSE_READ_TIMEOUT_SECONDS = 300.0
-
-# The per-phase budget the MCP transport's HTTP client runs under: the same
-# ten-second bound as every other vault call for connect, write, and pool
-# acquisition, and the SSE budget for reads.
-_MCP_HTTP_TIMEOUT = httpx2.Timeout(_VAULT_TIMEOUT_SECONDS, read=_MCP_SSE_READ_TIMEOUT_SECONDS)
-
 # How a "MAJOR.MINOR.PATCH" version string decomposes, and how many of its
 # leading components must match for two contract versions to interoperate. ADR
 # 0004 Decision 4: while the contract is pre-1.0 a minor bump *is* the breaking
@@ -187,49 +189,18 @@ _HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
     httpx.InvalidURL,
 )
 
-# Every way the MCP session's own HTTP layer can fail to land. A separate set
-# from :data:`_HTTP_CALL_FAILED_ERRORS` because the MCP SDK speaks ``httpx2``
-# while :class:`HttpCreekVaultClient` speaks ``httpx``, and the two libraries'
-# exception hierarchies are unrelated -- an ``httpx2.ConnectError`` is not an
-# ``httpx.HTTPError`` and is not an ``OSError``, so without naming it here a
-# vault that is merely unreachable over MCP would raise on the caller's request
-# path instead of degrading. ``InvalidURL`` is named separately for the same
-# reason it is on the httpx side: it sits outside that library's ``HTTPError``
-# hierarchy.
-_MCP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
-    httpx2.HTTPError,
-    httpx2.InvalidURL,
+# The two ways a call can end because it ran out of time rather than because it
+# failed to land. Both are already inside :data:`_HTTP_CALL_FAILED_ERRORS` --
+# ``TimeoutError`` is an ``OSError`` and ``httpx.TimeoutException`` is an
+# ``httpx.HTTPError`` -- so every ``except`` that wants to tell a slow vault from
+# an absent one has to name this set *first* or the wider one silently swallows
+# it. The distinction is worth the ordering: an operator reading "unreachable"
+# goes looking for a network that is up, while a timeout says the vault answered
+# and could not finish, whose remedy is capacity rather than connectivity.
+_HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
+    TimeoutError,
+    httpx.TimeoutException,
 )
-
-# Transport-layer failures we normalize to a degraded state.
-# :data:`_HTTP_CALL_FAILED_ERRORS` and :data:`_MCP_CALL_FAILED_ERRORS` cover the
-# httpx layer underneath each transport, ``MCPError`` covers an MCP protocol
-# failure or a tool call that returned ``is_error`` (raised by
-# :func:`_extract_tool_payload` with a static, content-free message),
-# ``ExceptionGroup`` covers a streamable-HTTP connection failure (anyio task
-# groups wrap the underlying connect error in a builtins ``ExceptionGroup``;
-# catching the ``Exception``-only group -- never ``BaseExceptionGroup`` -- stays
-# safe under cancellation), and ``json.JSONDecodeError`` covers a content-text
-# block whose body is not JSON. All of these normalize the per-capability path
-# to unavailable exactly as the handshake path already does, keeping one
-# coherent degrade-set (``json.JSONDecodeError`` is a ``ValueError`` subclass,
-# so it is already covered by the handshake's parse-error set).
-_TRANSPORT_ERROR_TYPES: tuple[type[Exception], ...] = (
-    *_HTTP_CALL_FAILED_ERRORS,
-    *_MCP_CALL_FAILED_ERRORS,
-    MCPError,
-    ExceptionGroup,
-    json.JSONDecodeError,
-)
-
-# JSON-RPC application-defined server-error code (the -32000..-32099 range) used
-# when a vault tool call reports ``is_error``; the paired message is static so it
-# can never echo the entry body or the API key.
-_MCP_TOOL_ERROR_CODE = -32000
-
-# The status value a ``creek.journal`` response reports on a durable write. Any
-# other status -- or a missing one -- parses conservatively to "not stored".
-_JOURNAL_OK_STATUS = "ok"
 
 # Longest vault-issued fragment id adepthood will keep as an entry's durable
 # reference. Opaque handles are short by nature -- a UUID is 36 characters -- so
@@ -259,10 +230,10 @@ _MAX_FRAGMENT_ID_LENGTH = 256
 _WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
 
 # The status a ``creek.wheel`` response reports when it actually computed a
-# wheel. Its own constant rather than a reuse of :data:`_JOURNAL_OK_STATUS` or
-# of :attr:`~domain.creek_vault.VaultReflectionStatus.OK`: the capabilities
-# merely happen to spell their success the same way today, and coupling them
-# would let one capability's future rename silently change how another is parsed.
+# wheel. Its own constant rather than a reuse of
+# :attr:`~domain.creek_vault.VaultReflectionStatus.OK`: the capabilities merely
+# happen to spell their success the same way today, and coupling them would let
+# one capability's future rename silently change how another is parsed.
 _WHEEL_OK_STATUS = "ok"
 
 # The Frequency keys adepthood will read out of the vault's wheel map, in
@@ -309,28 +280,61 @@ class _IncompatibleContractVersionError(Exception):
     """
 
 
-# Everything a handshake probe swallows into an "unavailable" result: transport
-# failures (the vault is unreachable), parsing failures (its payload is
-# malformed), and contract-version skew. Combining them keeps the MCP
-# degradation path a single ``except``; the HTTP client splits them back out to
-# record which one it hit, without changing what any caller sees.
-_HANDSHAKE_DEGRADE_ERRORS: tuple[type[Exception], ...] = (
-    *_TRANSPORT_ERROR_TYPES,
-    *_PARSE_ERROR_TYPES,
-    _IncompatibleContractVersionError,
-)
-
 # Hosts for which a plaintext ``http://`` vault URL is tolerated: a developer
 # running the vault on the same machine. Every other host must use TLS so the
-# bearer credential and tier metadata never cross a network in cleartext.
+# bearer credential never crosses a network in cleartext.
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
-# Which transport a *configured* vault is reached over. MCP stays the default so
-# an existing deployment keeps its current behavior until it opts into HTTP; an
-# unrecognized value is a configuration error, never a silent fallback.
+# Which transport a *configured* vault is reached over, and the one value that
+# selector still admits. It survives as a selector at all so a stale setting left
+# in a deployment's environment is never silently reinterpreted as the transport
+# it is not: whatever else adepthood does about one, it does not guess.
 _PROTOCOL_ENV_VAR = "CREEK_VAULT_PROTOCOL"
-_PROTOCOL_MCP = "mcp"
 _PROTOCOL_HTTP = "http"
+
+# The one selector adepthood used to honour and no longer does. Named as its own
+# constant because it is the one stale value whose *intent* is knowable -- this
+# repository's own env template prescribed it until the MCP application transport
+# was retired -- which is what lets :func:`build_creek_vault_client` treat it
+# differently from a value it never supported.
+_PROTOCOL_RETIRED_MCP = "mcp"
+
+# The one static log event this module emits, and the fields that travel with it.
+# Static for the same reason every record in this seam is: a message assembled
+# from configuration is a message that can carry the vault URL or the bearer
+# credential into a log. Both field values are this module's own constants rather
+# than anything read from the environment, so there is nothing here to scrub. The
+# message carries the remedy because a record naming only the fault would leave an
+# operator to rediscover which selector is still honoured.
+_RETIRED_PROTOCOL_EVENT = (
+    "creek vault protocol selector is retired; using the local fallback -- "
+    "unset CREEK_VAULT_PROTOCOL or set it to http"
+)
+# The same shape for a selector adepthood never supported. A second message
+# rather than one shared with the retired value, because the two are different
+# news: "the transport you asked for is gone" tells an operator their deployment
+# has drifted, while "nobody has heard of this" almost always means a typo, and a
+# record that conflated them would send half its readers looking for the wrong
+# thing. The offending value travels as a structured field rather than in the
+# message so the message stays the static, greppable constant every record in
+# this seam is -- the value is the operator's own configuration, never a
+# credential and never anything a user or a vault chose.
+_UNKNOWN_PROTOCOL_EVENT = (
+    "creek vault protocol selector is not recognized; using the local fallback -- "
+    "unset CREEK_VAULT_PROTOCOL or set it to http"
+)
+
+
+def _protocol_fields(protocol: str) -> Mapping[str, str]:
+    """Build the structured fields both unhonoured-selector records carry.
+
+    One builder rather than two literals so the two branches cannot drift apart
+    on a key name: a dashboard filtering on ``protocol`` should find the retired
+    selector and the unrecognized one in the same query, since to an operator
+    they are the same question ("what did my deployment ask for, and what will it
+    actually do?") asked of two different answers.
+    """
+    return {"protocol": protocol, "supported_protocol": _PROTOCOL_HTTP}
 
 
 # URL components a configured vault URL must not carry, in the order their
@@ -344,29 +348,53 @@ _PROTOCOL_HTTP = "http"
 # endpoint the operator never configured.
 _FORBIDDEN_URL_PARTS = ("userinfo", "query", "fragment")
 
+# The delimiters that *introduce* a query and a fragment. Presence is tested on
+# the raw configured string rather than on the parsed component, and that is the
+# whole point: ``urlsplit`` reports both as ``""`` when they are absent *and*
+# when they are present but empty, so ``https://vault.example/`` and
+# ``https://vault.example/?`` are indistinguishable once parsed. The second is
+# the dangerous one -- the capability path is appended to the configured string,
+# so a trailing ``?`` would build ``https://vault.example/?/v1/journal-entries/5``
+# and send every path as a query string against ``/``, aiming the bearer
+# credential at an endpoint nobody configured. Per RFC 3986 these two characters
+# can only ever be those delimiters in a URL (a literal one inside a path or a
+# credential must be percent-encoded), so their presence *is* the component's
+# presence. Reconstructing a normalized URL from the parsed parts would also
+# close the hole, but by editing an operator's configuration into something they
+# did not write; refusing it and saying so is the honest half of that trade.
+_QUERY_DELIMITER = "?"
+_FRAGMENT_DELIMITER = "#"
 
-def _forbidden_url_parts(parsed: SplitResult) -> tuple[str, ...]:
-    """Return the names of the disallowed components ``parsed`` carries.
+
+def _forbidden_url_parts(url: str, parsed: SplitResult) -> tuple[str, ...]:
+    """Return the names of the disallowed components ``url`` carries.
 
     Userinfo counts as present whenever either half is set, so a degenerate
     ``https://user@host`` (empty password) is caught alongside the full form.
+    Query and fragment count as present whenever their delimiter appears at all,
+    empty component included -- see :data:`_QUERY_DELIMITER`. The query
+    delimiter is looked for only *before* any fragment delimiter, since a ``?``
+    after a ``#`` is part of the fragment rather than a query of its own, and
+    naming both components for one mistake would send an operator hunting a
+    second problem they do not have.
     """
+    before_fragment, _, _ = url.partition(_FRAGMENT_DELIMITER)
     carried = (
         parsed.username is not None or parsed.password is not None,
-        bool(parsed.query),
-        bool(parsed.fragment),
+        _QUERY_DELIMITER in before_fragment,
+        _FRAGMENT_DELIMITER in url,
     )
     return tuple(name for name, found in zip(_FORBIDDEN_URL_PARTS, carried, strict=True) if found)
 
 
-def _require_bare_vault_url(parsed: SplitResult) -> None:
+def _require_bare_vault_url(url: str, parsed: SplitResult) -> None:
     """Reject a vault URL carrying userinfo, a query, or a fragment.
 
     The message names only the offending *component names*: it reaches logs,
     and one of the components it can name -- userinfo -- is a credential, so
     echoing any value here would be the very leak this check exists to prevent.
     """
-    parts = _forbidden_url_parts(parsed)
+    parts = _forbidden_url_parts(url, parsed)
     if parts:
         raise ValueError(f"CREEK_VAULT_URL must not carry these URL components: {', '.join(parts)}")
 
@@ -374,10 +402,11 @@ def _require_bare_vault_url(parsed: SplitResult) -> None:
 def _require_secure_vault_url(url: str) -> None:
     """Reject a vault URL that is unsafe to bind a credential to, failing closed.
 
-    Guards both configured transports -- :class:`_McpStreamableHttpTransport`
-    and :class:`HttpCreekVaultClient` -- each of which sends the
-    ``CREEK_VAULT_API_KEY`` bearer credential (and, over MCP, each call's tier
-    metadata) over the wire, so any future transport must keep calling it too.
+    Guards the configured transport, :class:`HttpCreekVaultClient`, which sends
+    the ``CREEK_VAULT_API_KEY`` bearer credential over the wire on every request
+    -- so any future transport must keep calling it too. It is a free function
+    rather than a method for exactly that reason: the rule belongs to the
+    credential, not to whichever adapter happens to be carrying it today.
     Two rules: the URL must carry no userinfo, query, or fragment
     (:func:`_require_bare_vault_url`, applied to every scheme), and a plaintext
     ``http://`` URL is allowed only to a loopback host, since cleartext to a
@@ -385,9 +414,14 @@ def _require_secure_vault_url(url: str) -> None:
     raises here rather than silently leaking, before the key is bound to
     anything. The message names only component names, the scheme, and the host
     -- never the API key.
+
+    Both the raw string and its parsed form are needed: the string is what a
+    capability URL is built from and the only place an empty-but-present query
+    or fragment survives, while the parse is what answers for the scheme, the
+    host, and the userinfo halves.
     """
     parsed = urlsplit(url)
-    _require_bare_vault_url(parsed)
+    _require_bare_vault_url(url, parsed)
     if parsed.scheme == "https":
         return
     if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
@@ -396,30 +430,6 @@ def _require_secure_vault_url(url: str) -> None:
         f"CREEK_VAULT_URL must use https for a non-loopback host "
         f"(scheme {parsed.scheme!r}, host {parsed.hostname!r})"
     )
-
-
-class VaultTransport(Protocol):
-    """The minimal request/response seam a vault client calls over.
-
-    One async method: send an MCP ``method`` with ``params`` and return the
-    decoded response mapping. Keeping the client's transport behind this
-    protocol lets tests inject scripted fakes and lets the concrete HTTP
-    transport be swapped without touching client logic. Parameters are
-    positional-only so implementations may name them freely.
-    """
-
-    async def call(self, method: str, params: Mapping[str, object], /) -> Mapping[str, object]:
-        """Send ``method`` with ``params`` and return the decoded response."""
-
-
-def _handshake_params() -> Mapping[str, object]:
-    """Build the privacy-floor params adepthood presents at handshake.
-
-    The handshake carries only the privacy tier ceiling this deployment is
-    willing to expose -- never a consumer identity or contract version, which
-    the vault learns from the MCP session itself.
-    """
-    return {"privacy_tier_ceiling": VaultTierCeiling.OPEN.value}
 
 
 def _require_str(payload: Mapping[str, object], key: str) -> str:
@@ -507,7 +517,7 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     reachable server is not necessarily an available vault, so anything other
     than a literal ``True`` (including a missing field) degrades to
     unavailable. Any missing key or wrong-typed field raises out of the helpers
-    and is caught by :meth:`McpCreekVaultClient.handshake`.
+    and is caught by :meth:`HttpCreekVaultClient._probe`.
     """
     contract_version = _require_str(payload, "contract_version")
     if not _contract_version_compatible(contract_version):
@@ -549,58 +559,12 @@ def _usable_fragment_id(payload: Mapping[str, object]) -> str | None:
 
     A missing, blank, non-string, oversized, or unprintable id is unusable as a
     durable reference (see :func:`_is_storable_ref`), and coercing one
-    (``str(7)``) would fabricate a ref the vault never issued. Shared by both
-    transports: an MCP vault gets no wider a channel into the ``vault_ref``
-    column than an HTTP one.
+    (``str(7)``) would fabricate a ref the vault never issued.
     """
     fragment_id = payload.get("fragment_id")
     if isinstance(fragment_id, str) and _is_storable_ref(fragment_id):
         return fragment_id
     return None
-
-
-def _parse_ingest_result(payload: Mapping[str, object]) -> VaultIngestResult:
-    """Parse a ``creek.journal`` response, defaulting missing/odd fields conservatively.
-
-    Only an ``"ok"`` status paired with a storable ``fragment_id`` counts as
-    durably stored; a missing, empty, wrong-typed, oversized, or unprintable
-    field parses to a not-stored result rather than fabricating a vault ref.
-    """
-    fragment_id = _usable_fragment_id(payload)
-    if payload.get("status") == _JOURNAL_OK_STATUS and fragment_id is not None:
-        return VaultIngestResult(stored=True, vault_ref=fragment_id)
-    return VaultIngestResult(stored=False, vault_ref=None)
-
-
-def _parse_classification(payload: Mapping[str, object]) -> VaultClassification:
-    """Parse a classify response into a tuple of string tags (dropping non-strings)."""
-    raw = payload.get("tags")
-    if not isinstance(raw, list):
-        return VaultClassification(tags=())
-    return VaultClassification(tags=tuple(item for item in raw if isinstance(item, str)))
-
-
-def _reflect_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
-    """Map a reflection request onto the ``creek.reflect`` wire fields.
-
-    Exactly two: the body to reflect on, and the privacy ceiling the vault's
-    router enforces. No ``consumer`` key -- the vault learns the caller from the
-    MCP session itself, as it already does for ingest -- and no ``entry_ref``,
-    since adepthood reflects on an ad-hoc body rather than on a fragment the
-    vault has already stored.
-    """
-    return {"content": body, "privacy_tier_ceiling": tier_ceiling.value}
-
-
-def _wheel_params() -> Mapping[str, object]:
-    """Map a wheel request onto the ``creek.wheel`` wire fields.
-
-    Exactly one: the privacy ceiling the vault's router enforces while it counts.
-    There is no ``consumer`` key -- the vault learns the caller from the MCP
-    session itself, exactly as it already does for ingest and reflect -- and no
-    other caller-supplied parameter exists on this tool.
-    """
-    return {"privacy_tier_ceiling": _WHEEL_TIER_CEILING.value}
 
 
 def _wheel_fullness(raw: object) -> float | None:
@@ -669,7 +633,7 @@ def _wheel_aspects(wheel: Mapping[str, object]) -> tuple[VaultWheelAspect, ...]:
 
 
 def _parse_wheel(payload: Mapping[str, object]) -> VaultWheelBalance | None:
-    """Project a ``creek.wheel`` response onto a domain balance, or ``None`` if unusable.
+    """Project a wheel response onto a domain balance, or ``None`` if unusable.
 
     Answers ``None`` -- never raises -- so the caller owns the degrade. Three
     conditions: a literal :data:`_WHEEL_OK_STATUS`, which is the strict equality
@@ -690,34 +654,11 @@ def _parse_wheel(payload: Mapping[str, object]) -> VaultWheelBalance | None:
     return VaultWheelBalance(aspects=aspects)
 
 
-def _content_params(body: str, tier_ceiling: VaultTierCeiling) -> Mapping[str, object]:
-    """Build the params for a ``creek.classify`` call, whose wire shape is unverified."""
-    return {"consumer": CONSUMER_ID, "body": body, "tier_ceiling": tier_ceiling.value}
-
-
-def _ingest_params(request: VaultIngestRequest) -> Mapping[str, object]:
-    """Map an ingest request onto the ``creek.journal`` wire fields.
-
-    ``external_id`` carries the entry's stable id so a re-send is idempotent
-    (Creek edits the stored fragment in place); ``tier`` is the entry's own
-    privacy tier and ``privacy_tier_ceiling`` the write ceiling the vault's
-    router enforces. No ``consumer`` key: the vault learns the caller from the
-    MCP session itself.
-    """
-    return {
-        "content": request.body,
-        "external_id": str(request.entry_id),
-        "timestamp": request.created_at.isoformat(),
-        "tier": request.tier.value,
-        "privacy_tier_ceiling": request.tier_ceiling.value,
-    }
-
-
 def _unsupported_message(capability: CreekCapability) -> str:
     """Build the body/key-free message for an unsupported-capability error.
 
-    Kept here so both the reachable-but-unadvertised path in
-    :meth:`McpCreekVaultClient._invoke` and the no-vault-configured path in
+    Kept here so both the reachable-but-unadvertised paths in
+    :class:`HttpCreekVaultClient` and the no-vault-configured paths in
     :class:`LocalFallbackCreekVaultClient` derive the wire name from
     :class:`~domain.creek_vault.CreekCapability` rather than duplicating it as a
     literal that could silently drift from the enum.
@@ -725,132 +666,56 @@ def _unsupported_message(capability: CreekCapability) -> str:
     return f"creek vault capability unsupported: {capability.value}"
 
 
-class McpCreekVaultClient:
-    """A :class:`CreekVaultClient` backed by an injected MCP transport.
+class _CountingOutcome:
+    """Count whatever vault failure escapes this block, then let it go on its way.
 
-    Caches the last handshake so :meth:`is_available` and :meth:`supports` are
-    cheap, synchronous reads. Re-handshaking re-probes the vault and refreshes
-    that cache, so a vault that gains (or loses) a capability is picked up on the
-    next handshake with no other client-side change.
+    The failure half of "one attempt, one outcome". Every wired capability wraps
+    its real body in one of these and the body records its *own* success on the
+    way out, so exactly one outcome is counted whichever way the call ends: the
+    wrapper only ever fires on the exception path and the body only ever on the
+    return path. That is a property of the structure rather than of each branch
+    remembering to do it.
+
+    A plain synchronous context manager even though every block it guards is
+    ``await``-ing. It needs nothing from the event loop -- it looks at an
+    exception on the way out and nothing else -- and staying synchronous keeps it
+    non-generic, so the four capabilities' four different return types travel
+    through it unchanged and untyped-around.
+
+    Three things it deliberately does not do. It never matches bare ``Exception``
+    or ``BaseException``: a cancellation must pass through untouched, and an
+    unrelated internal bug must stay the loud defect it is rather than being
+    relabelled a vault fault. It returns ``None`` from :meth:`__exit__`, so
+    nothing is ever swallowed -- the caller sees precisely the exception it would
+    have seen before telemetry existed. And it holds no state beyond the
+    capability label, so nesting or reusing one is meaningless rather than
+    dangerous.
+
+    :class:`~domain.creek_vault.CreekVaultCareEscalationError` is matched
+    alongside the error hierarchy precisely because it sits deliberately outside
+    it: it is a successful, published answer that happens to arrive as an
+    exception, and an escalation nobody counted is an escalation nobody knows
+    happened.
     """
 
-    def __init__(self, transport: VaultTransport) -> None:
-        """Store the transport and seed the cache with an unavailable handshake.
+    def __init__(self, capability: CreekCapability) -> None:
+        """Store the capability every outcome counted here is labelled with."""
+        self._capability = capability
 
-        Before any handshake runs the client reports unavailable and supports
-        nothing, so callers that skip the handshake still fail safe.
-        """
-        self._transport = transport
-        self._last_handshake = HandshakeResult.unavailable()
+    def __enter__(self) -> None:
+        """Enter the guarded block; there is nothing to set up."""
 
-    async def handshake(self) -> HandshakeResult:
-        """Probe the vault, cache the result, and return it -- never raising.
-
-        Every failure mode -- a raising transport, a malformed or wrong-typed
-        payload, or a contract major-version mismatch -- collapses to
-        :meth:`HandshakeResult.unavailable`. This is the crux of graceful
-        degradation: callers get one branchable result and never a surprise
-        exception from probing an optional dependency.
-        """
-        self._last_handshake = await self._probe()
-        return self._last_handshake
-
-    async def _probe(self) -> HandshakeResult:
-        """Perform the handshake call and parse it, degrading on any failure."""
-        try:
-            payload = await self._transport.call(
-                CreekCapability.HANDSHAKE.value, _handshake_params()
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        error: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        """Count a vault failure on the way out, and never suppress it."""
+        if isinstance(error, CreekVaultError | CreekVaultCareEscalationError):
+            record_vault_outcome(
+                outcome_for_error(error), self._capability, code=code_for_error(error)
             )
-            result = _parse_handshake(payload)
-        except _HANDSHAKE_DEGRADE_ERRORS:
-            return HandshakeResult.unavailable()
-        return result
-
-    def is_available(self) -> bool:
-        """Return whether the cached handshake found a usable vault."""
-        return self._last_handshake.available
-
-    def supports(self, capability: CreekCapability, /) -> bool:
-        """Return whether the cached handshake advertised ``capability``."""
-        return capability in self._last_handshake.capabilities
-
-    async def _invoke(
-        self, capability: CreekCapability, params: Mapping[str, object]
-    ) -> Mapping[str, object]:
-        """Call a capability, gating on support and normalizing failures.
-
-        Raises :class:`CreekCapabilityUnsupportedError` when the capability was
-        not advertised. On any transport failure it raises
-        :class:`CreekVaultUnavailableError` with a *static, capability-named*
-        message and ``from None`` -- the original exception (whose text may
-        contain the entry body or the API key) is deliberately not chained, so
-        neither the message nor the traceback context can leak it. Transport
-        failure here includes a non-JSON body (:class:`json.JSONDecodeError`,
-        raised inside the transport's ``response.json()``), so a proxy error
-        page or empty 200 degrades rather than crashing. A response that decodes
-        but is not a mapping (a malformed or hostile payload) is normalized to
-        the same error, so a per-capability call degrades rather than crashing
-        on garbage -- the same fail-safe the handshake path already applies.
-        """
-        if not self.supports(capability):
-            raise CreekCapabilityUnsupportedError(_unsupported_message(capability))
-        try:
-            payload = await self._transport.call(capability.value, params)
-        except _TRANSPORT_ERROR_TYPES:
-            raise CreekVaultUnavailableError(
-                f"creek vault call failed: {capability.value}"
-            ) from None
-        if not isinstance(payload, Mapping):
-            raise CreekVaultUnavailableError(
-                f"creek vault returned a malformed response: {capability.value}"
-            )
-        return payload
-
-    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
-        """Store ``request`` in the vault, requiring the JOURNAL capability."""
-        payload = await self._invoke(CreekCapability.JOURNAL, _ingest_params(request))
-        return _parse_ingest_result(payload)
-
-    async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
-        """Request Frequency/Wavelength tags for ``body``, requiring CLASSIFY."""
-        payload = await self._invoke(CreekCapability.CLASSIFY, _content_params(body, tier_ceiling))
-        return _parse_classification(payload)
-
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
-        """Produce a Higher Self reflection over the corpus, requiring REFLECT.
-
-        The tool result and the ratified ``/v1`` body are the same canonical
-        document, so it is read by the same :func:`_parse_reflection_result` the
-        HTTP adapter runs on -- including the care escalation, whose semantics
-        belong to the contract rather than to a transport: deferring here would
-        answer a person in acute distress with the very model prose Creek's care
-        guard refused, and which transport carried the refusal changes nothing
-        about that.
-        """
-        payload = await self._invoke(CreekCapability.REFLECT, _reflect_params(body, tier_ceiling))
-        return _parse_reflection_result(payload, tier_ceiling)
-
-    async def wheel(self) -> VaultWheelBalance:
-        """Return a vault-computed Wheel-of-Wholeness read, requiring WHEEL.
-
-        Creek answers with a per-Frequency map keyed ``F1``..``F10``, which
-        :func:`_parse_wheel` projects onto the pure-domain
-        :class:`VaultWheelBalance` the seam contract returns -- so the domain
-        module carries no wire dependency.
-
-        A malformed or refused wheel degrades exactly like every other
-        capability, to :class:`CreekVaultUnavailableError` carrying the same
-        static, capability-named message, so no payload content can reach a log
-        or a traceback. The wheel is an optional read, never a write, and a
-        caller that cannot obtain it falls back to computing the balance locally.
-        """
-        payload = await self._invoke(CreekCapability.WHEEL, _wheel_params())
-        balance = _parse_wheel(payload)
-        if balance is None:
-            raise CreekVaultUnavailableError(
-                f"creek vault returned a malformed response: {CreekCapability.WHEEL.value}"
-            )
-        return balance
 
 
 class HandshakeDegradeReason(enum.StrEnum):
@@ -863,18 +728,47 @@ class HandshakeDegradeReason(enum.StrEnum):
     payload is a vault bug. Values are the wire strings telemetry counts by, so
     they are part of this module's contract and must not be reworded casually.
 
-    ``UNREACHABLE`` is the widest of the four and its name slightly overstates
+    ``UNREACHABLE`` is the widest of the five and its name slightly overstates
     it: every non-2xx status lands there too, so it also absorbs a 401 (a bad
     credential -- a configuration problem) and a 500 (a vault-side fault).
     Telemetry should read it as "the call did not complete", not strictly as
     "the network is down".
+
+    ``TIMED_OUT`` is carved out of exactly that width, and is last because these
+    values are appended rather than reordered. A refused connection and a probe
+    that ran out of time are both "no usable vault" to a caller, but they are not
+    the same problem: a refusal says nothing answered, while a timeout says
+    something did answer and then could not finish, so one remedy is to restore
+    the vault and the other is to give it capacity. Collapsed together, the
+    second reads as the first and sends an operator hunting a network that is
+    perfectly fine.
     """
 
     UNREACHABLE = "unreachable"
     MALFORMED_PAYLOAD = "malformed_payload"
     INCOMPATIBLE_VERSION = "incompatible_version"
     VAULT_REPORTED_UNAVAILABLE = "vault_reported_unavailable"
+    TIMED_OUT = "timed_out"
 
+
+# Which outcome each handshake result is counted as. A table rather than a branch
+# tree, so attributing a probe costs a lookup and adding a degrade reason costs a
+# line: the ``None`` key is the successful probe, and the two availability
+# reasons deliberately share :attr:`~VaultTelemetryOutcome.UNAVAILABLE` because a
+# vault that reported itself unavailable and one that could not be reached are
+# the same story to whoever is on call. The distinction they *do* keep lives in
+# :attr:`HttpCreekVaultClient.last_degrade_reason`, which is a finer instrument
+# for a narrower question.
+_HANDSHAKE_OUTCOME_BY_DEGRADE_REASON: Mapping[
+    HandshakeDegradeReason | None, VaultTelemetryOutcome
+] = {
+    None: VaultTelemetryOutcome.SUCCESS,
+    HandshakeDegradeReason.TIMED_OUT: VaultTelemetryOutcome.TIMEOUT,
+    HandshakeDegradeReason.UNREACHABLE: VaultTelemetryOutcome.UNAVAILABLE,
+    HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE: VaultTelemetryOutcome.UNAVAILABLE,
+    HandshakeDegradeReason.MALFORMED_PAYLOAD: VaultTelemetryOutcome.SCHEMA_FAILURE,
+    HandshakeDegradeReason.INCOMPATIBLE_VERSION: VaultTelemetryOutcome.INCOMPATIBLE_VERSION,
+}
 
 # The vault's capability document, relative to the configured base URL.
 _CAPABILITIES_PATH = "/v1/capabilities"
@@ -1069,10 +963,9 @@ def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
     """Map an ingest request onto the ratified ``/v1`` journal-entry fields.
 
     Exactly three fields, and no more: the entry id travels in the URL (it is
-    the resource), and the tier ceiling the MCP shape carries as a separate
-    ``privacy_tier_ceiling`` is redundant here, since a journal write always
-    stores at the writer's own tier. Sending a field the ratified shape does not
-    name would be guessing.
+    the resource), and a separately declared write ceiling would be redundant
+    here anyway, since a journal write always stores at the writer's own tier.
+    Sending a field the ratified shape does not name would be guessing.
     """
     return {
         "content": request.body,
@@ -1283,9 +1176,8 @@ def _http_wheel_balance(response: httpx.Response) -> VaultWheelBalance | None:
     """Project an admissible 2xx wheel body onto a domain balance, or ``None``.
 
     Reuses :func:`_parse_wheel` -- the one canonical Frequency-to-stage
-    projection, shared with the MCP transport -- rather than repeating it. A
-    second parser for one wire shape is how two readings of the same wheel come
-    to disagree.
+    projection -- rather than repeating it. A second parser for one wire shape is
+    how two readings of the same wheel come to disagree.
     """
     payload = _admissible_wheel(response)
     return None if payload is None else _parse_wheel(payload)
@@ -1297,18 +1189,18 @@ class HttpCreekVaultClient:
     Handshakes with a single ``GET /v1/capabilities`` carrying a bearer
     ``Authorization`` header, caches the result so :meth:`is_available` and
     :meth:`supports` stay cheap synchronous reads, and records
-    :attr:`last_degrade_reason` when the probe fails. Like the MCP client it
-    **degrades, never crashes**: :meth:`handshake` collapses every transport,
-    parsing, and version failure into :meth:`HandshakeResult.unavailable`.
+    :attr:`last_degrade_reason` when the probe fails. It **degrades, never
+    crashes**: :meth:`handshake` collapses every transport, parsing, and version
+    failure into :meth:`HandshakeResult.unavailable`.
 
     Journal ingest is the one capability whose ``/v1`` request/response shape
-    Creek has ratified, so :meth:`ingest` is wired up: it gates on the
-    handshake exactly as the MCP client does, sends a ``PUT`` to the entry's own
-    URL, and splits the answer into a durable write, a not-stored write, or one of
-    three failure types (contract, auth, unavailable) an operator can act on
-    differently. A failed ingest is **dropped, not queued** -- there is no retry
-    and no backlog today, and it does not need one, because the local Postgres
-    row is the system of record and the user's save already succeeded.
+    Creek ratified first, so :meth:`ingest` is wired up: it gates on the
+    handshake, sends a ``PUT`` to the entry's own URL, and splits the answer into
+    a durable write, a not-stored write, or one of three failure types (contract,
+    auth, unavailable) an operator can act on differently. A failed ingest is
+    **dropped, not queued** -- there is no retry and no backlog today, and it
+    does not need one, because the local Postgres row is the system of record and
+    the user's save already succeeded.
 
     The wheel read is ratified too, so :meth:`wheel` is wired up: a parameterless
     ``GET`` of the whole-corpus aggregate, gated on the handshake first so an
@@ -1332,6 +1224,14 @@ class HttpCreekVaultClient:
     guess a wire format: a refusal degrades the caller onto its local pipeline,
     whereas a wrong guess would send real journal content into a surface nobody
     has agreed on. Wiring it up is follow-on work, gated on that document.
+
+    Every public capability is a thin wrapper that hands its real body to
+    :class:`_CountingOutcome`, which records whatever the body raised while the
+    body records its own return-path outcome. That split is what makes "one
+    attempt, one outcome" hold by construction rather than by every branch
+    remembering: the wrapper only ever fires on the exception path, and the body
+    only ever on the return path, so neither double-counts and neither can be
+    forgotten.
 
     A plain class on purpose -- no dataclass, no custom ``__repr__`` -- so the
     default object repr can never render the bearer credential this instance
@@ -1420,34 +1320,83 @@ class HttpCreekVaultClient:
             raise TypeError("creek vault capability payload must be a JSON object")
         return payload
 
-    async def _probe(self) -> tuple[HandshakeResult, HandshakeDegradeReason | None]:
-        """Run one capability probe, mapping each failure mode to its own reason.
+    async def _fetch_handshake(self) -> HandshakeResult | HandshakeDegradeReason:
+        """Parse the capability document, or answer with the reason the probe degraded.
 
-        The ``except`` clauses are split (where the MCP client uses one combined
-        set) purely to attribute the degradation: every branch returns the same
-        canonical unavailable result. :data:`_HTTP_CALL_FAILED_ERRORS` covers
-        connection failures, timeouts, every non-2xx status raised by
-        ``raise_for_status``, a socket-level failure escaping httpx's hierarchy,
-        and a URL httpx will not build a request for. A payload that parsed but
-        whose vault reported itself unavailable is not an error at all -- it is
-        the vault answering honestly -- and is recorded as such.
+        A union of two disjoint types rather than a result-plus-reason pair,
+        because a failed probe has no result and a successful one has no reason:
+        a pair would have to spell both of those as ``None`` and leave a
+        ``(None, None)`` nobody can produce sitting in the type.
+
+        The ``except`` clauses are split purely to attribute the degradation --
+        every one of them means the same thing to a caller.
+        :data:`_HTTP_CALL_TIMED_OUT_ERRORS` comes **first** and that ordering is
+        load-bearing rather than stylistic: ``TimeoutError`` is an ``OSError``
+        and ``httpx.TimeoutException`` is an ``httpx.HTTPError``, so the wider
+        clause below would otherwise swallow both and report a slow vault as an
+        unreachable one. :data:`_HTTP_CALL_FAILED_ERRORS` then covers connection
+        failures, every non-2xx status raised by ``raise_for_status``, a
+        socket-level failure escaping httpx's hierarchy, and a URL httpx will not
+        build a request for.
         """
         try:
-            result = _parse_handshake(await self._fetch_capabilities())
+            return _parse_handshake(await self._fetch_capabilities())
         except _IncompatibleContractVersionError:
-            return HandshakeResult.unavailable(), HandshakeDegradeReason.INCOMPATIBLE_VERSION
+            return HandshakeDegradeReason.INCOMPATIBLE_VERSION
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            return HandshakeDegradeReason.TIMED_OUT
         except _HTTP_CALL_FAILED_ERRORS:
-            return HandshakeResult.unavailable(), HandshakeDegradeReason.UNREACHABLE
+            return HandshakeDegradeReason.UNREACHABLE
         except _PARSE_ERROR_TYPES:
-            return HandshakeResult.unavailable(), HandshakeDegradeReason.MALFORMED_PAYLOAD
-        if not result.available:
-            return result, HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
-        return result, None
+            return HandshakeDegradeReason.MALFORMED_PAYLOAD
+
+    async def _probe(self) -> tuple[HandshakeResult, HandshakeDegradeReason | None]:
+        """Run one capability probe, collapsing every failure to one canonical result.
+
+        Whatever :meth:`_fetch_handshake` attributed the failure to, the caller
+        gets the same :meth:`HandshakeResult.unavailable` -- that collapse is the
+        whole point of the degraded result, and the reason travels alongside it
+        for the operator rather than for the caller. A payload that parsed but
+        whose vault reported itself unavailable is not an error at all -- it is
+        the vault answering honestly -- and is recorded as its own reason.
+        """
+        parsed = await self._fetch_handshake()
+        if isinstance(parsed, HandshakeDegradeReason):
+            return HandshakeResult.unavailable(), parsed
+        if not parsed.available:
+            return parsed, HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
+        return parsed, None
 
     async def handshake(self) -> HandshakeResult:
-        """Probe the vault, cache the result and its degrade reason, and return it."""
-        self._last_handshake, self._degrade_reason = await self._probe()
-        return self._last_handshake
+        """Probe the vault, cache the result and its degrade reason, and count it.
+
+        The handshake is an attempt like any other, so it records one outcome of
+        its own -- and it is the attempt most worth counting, since the write
+        path handshakes on every write and a deployment whose vault has drifted
+        out of contract shows up here long before any capability call does.
+
+        Guarded by :class:`_CountingOutcome` like every capability call, and for
+        the same structural reason rather than for a failure anyone has seen:
+        :meth:`_probe` turns every failure it knows about into a degrade reason,
+        so nothing vault-shaped should reach the wrapper. "Should" is the word
+        that makes the guard worth its line -- with it, "one attempt, one
+        outcome" holds because of how the method is built rather than because of
+        which exceptions the probe happens to catch today.
+        """
+        with _CountingOutcome(CreekCapability.HANDSHAKE):
+            self._last_handshake, self._degrade_reason = await self._probe()
+            # Looked up with a default rather than subscripted, for the reason
+            # :mod:`services.creek_vault_telemetry` gives for its own severity
+            # table: the mapping is total today, but a degrade reason added later
+            # without updating it in lockstep would raise a ``KeyError`` from a
+            # telemetry call and turn an observability gap into a failure on a
+            # user's request path. An unclassified degrade reads as unavailable,
+            # which is what a degraded handshake means whatever attributed it.
+            outcome = _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON.get(
+                self._degrade_reason, VaultTelemetryOutcome.UNAVAILABLE
+            )
+            record_vault_outcome(outcome, CreekCapability.HANDSHAKE)
+            return self._last_handshake
 
     @property
     def last_degrade_reason(self) -> HandshakeDegradeReason | None:
@@ -1471,25 +1420,42 @@ class HttpCreekVaultClient:
         would otherwise smuggle in a path traversal, and the entry body is what
         rides on this request.
 
-        Every transport failure (connection refused, a socket error, the
-        whole-request deadline expiring, a URL httpx will not build a request
-        for) becomes :class:`CreekVaultUnavailableError` with ``from None``: the
-        original exception's text can carry the URL or the entry body, and
-        neither its message nor its traceback context may ride along.
+        Every transport failure (connection refused, a socket error, a URL httpx
+        will not build a request for) becomes
+        :class:`CreekVaultUnavailableError` with ``from None``: the original
+        exception's text can carry the URL or the entry body, and neither its
+        message nor its traceback context may ride along. A call that ran out of
+        time raises the :class:`VaultCallTimedOutError` *subclass* of that same
+        type, carrying the same static message -- so every caller degrades
+        exactly as it always did while telemetry can still tell a slow vault from
+        an absent one. Its clause is ordered first because both timeout types are
+        already inside :data:`_HTTP_CALL_FAILED_ERRORS`.
         """
         entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{_entry_path_segment(request.entry_id)}"
         try:
             return await self._authorized_request("PUT", entry_url, _journal_entry_body(request))
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_INGEST_FAILED_MESSAGE) from None
         except _HTTP_CALL_FAILED_ERRORS:
             raise CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE) from None
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Upsert ``request`` into the vault, requiring the JOURNAL capability.
 
-        Gated on the cached handshake first, exactly as
-        :meth:`McpCreekVaultClient._invoke` gates: a vault that did not
-        advertise JOURNAL is refused *locally*, so no entry body is ever put on
-        the wire toward a surface that never claimed to accept it.
+        A thin wrapper over :meth:`_ingest` so the attempt is counted exactly
+        once: :class:`_CountingOutcome` records whatever the body raised, and
+        the body records its own return-path outcome, so neither path can produce
+        two records or none.
+        """
+        with _CountingOutcome(CreekCapability.JOURNAL):
+            return await self._ingest(request)
+
+    async def _ingest(self, request: VaultIngestRequest) -> VaultIngestResult:
+        """Perform the journal upsert and report how it ended.
+
+        Gated on the cached handshake first: a vault that did not advertise
+        JOURNAL is refused *locally*, so no entry body is ever put on the wire
+        toward a surface that never claimed to accept it.
 
         The answer splits three ways. A 2xx is projected by
         :func:`_parse_http_ingest_result`, which reports not-stored rather than
@@ -1499,6 +1465,12 @@ class HttpCreekVaultClient:
         non-2xx is classified by :func:`_ingest_failure` into the fault it
         represents. Every raise uses ``from None`` so no vault-supplied text
         reaches a traceback.
+
+        A 2xx the parser could not read as a durable write is counted as a schema
+        failure rather than a success, because that is what it is: the vault
+        answered 200 and did not say -- in the shape it publishes -- that
+        anything was stored. Reporting it as a success would put the one number
+        an operator trusts in front of a write that may not exist.
         """
         if not self.supports(CreekCapability.JOURNAL):
             raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.JOURNAL))
@@ -1509,10 +1481,30 @@ class HttpCreekVaultClient:
             payload = response.json()
         except ValueError:
             raise CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE) from None
-        return _parse_http_ingest_result(payload)
+        result = _parse_http_ingest_result(payload)
+        record_vault_outcome(
+            VaultTelemetryOutcome.SUCCESS
+            if result.stored
+            else VaultTelemetryOutcome.SCHEMA_FAILURE,
+            CreekCapability.JOURNAL,
+        )
+        return result
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
-        """Refuse classification: its ``/v1`` request/response shape is unratified."""
+        """Refuse classification: its ``/v1`` request/response shape is unratified.
+
+        Guarded by :class:`_CountingOutcome` like every other capability
+        rather than counted inline, so the refusal is labelled from the error it
+        actually raises. A refusal is worth counting precisely because it is
+        invisible: the caller degrades onto its local pipeline and nothing
+        surfaces, so this tally is where a deployment repeatedly asking for an
+        unwired capability becomes legible.
+        """
+        with _CountingOutcome(CreekCapability.CLASSIFY):
+            return await self._classify()
+
+    async def _classify(self) -> VaultClassification:
+        """Refuse classification, naming the capability and nothing else."""
         _refuse_unratified(CreekCapability.CLASSIFY)
 
     async def _post_reflection(self, body: str) -> httpx.Response:
@@ -1526,24 +1518,40 @@ class HttpCreekVaultClient:
         ceiling is verified on the way back instead
         (:func:`_admissible_ceiling`).
 
-        Every transport failure (connection refused, a socket error, the
-        whole-request deadline expiring, a URL httpx will not build a request
-        for) becomes :class:`CreekVaultUnavailableError` with ``from None``: the
-        original exception's text can carry the URL or the entry body, and
-        neither its message nor its traceback context may ride along.
+        Every transport failure (connection refused, a socket error, a URL httpx
+        will not build a request for) becomes
+        :class:`CreekVaultUnavailableError` with ``from None``, and a call that
+        ran out of time becomes the :class:`VaultCallTimedOutError` subclass of
+        it -- same static message, same degrade for every caller, one more thing
+        telemetry can tell apart. Its clause is ordered first for the reason
+        :meth:`_put_journal_entry` gives.
         """
         try:
             return await self._authorized_request(
                 "POST", f"{self._url}{_REFLECTIONS_PATH}", _reflection_request_body(body)
             )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
         except _HTTP_CALL_FAILED_ERRORS:
             raise CreekVaultUnavailableError(_REFLECT_FAILED_MESSAGE) from None
 
     async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Ask the vault to reflect on ``body``, requiring the REFLECT capability.
 
-        Gated on the cached handshake first, exactly as :meth:`ingest` and
-        :meth:`wheel` are, and here that gate carries the most: a vault that did
+        A thin wrapper over :meth:`_reflect`, counted exactly once the way
+        :meth:`ingest` is -- and the escalation path is why that matters here:
+        Creek's care handoff leaves this method as an exception, so without the
+        wrapper the one outcome nobody may miss would be the one outcome nobody
+        counted.
+        """
+        with _CountingOutcome(CreekCapability.REFLECT):
+            return await self._reflect(body, tier_ceiling)
+
+    async def _reflect(self, body: str, tier_ceiling: VaultTierCeiling) -> VaultReflection:
+        """Ask the vault for a reflection and report how the exchange ended.
+
+        Gated on the cached handshake first, exactly as :meth:`_ingest` and
+        :meth:`_wheel` are, and here that gate carries the most: a vault that did
         not advertise REFLECT is refused *locally*, so a whole journal entry is
         never put on a wire toward a capability nobody claimed to serve.
 
@@ -1566,7 +1574,9 @@ class HttpCreekVaultClient:
         payload = _decoded_object(response)
         if payload is None:
             raise CreekVaultPayloadError(_REFLECT_UNREADABLE_MESSAGE)
-        return _parse_reflection_result(payload, tier_ceiling)
+        reflection = _parse_reflection_result(payload, tier_ceiling)
+        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.REFLECT)
+        return reflection
 
     async def _get_wheel(self) -> httpx.Response:
         """Read the whole-corpus wheel, normalizing any transport failure.
@@ -1575,20 +1585,33 @@ class HttpCreekVaultClient:
         because the ratified surface publishes neither for this capability, and
         sending an undocumented one would be guessing at a contract.
 
-        Every transport failure (connection refused, a socket error, the
-        whole-request deadline expiring, a URL httpx will not build a request
-        for) becomes :class:`CreekVaultUnavailableError` with ``from None``, so
-        the original exception's text neither rides along nor is chained.
+        Every transport failure (connection refused, a socket error, a URL httpx
+        will not build a request for) becomes
+        :class:`CreekVaultUnavailableError` with ``from None``, so the original
+        exception's text neither rides along nor is chained; a call that ran out
+        of time becomes the :class:`VaultCallTimedOutError` subclass of it, whose
+        clause is ordered first for the reason :meth:`_put_journal_entry` gives.
         """
         try:
             return await self._authorized_request("GET", f"{self._url}{_WHEEL_PATH}")
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_WHEEL_FAILED_MESSAGE) from None
         except _HTTP_CALL_FAILED_ERRORS:
             raise CreekVaultUnavailableError(_WHEEL_FAILED_MESSAGE) from None
 
     async def wheel(self) -> VaultWheelBalance:
         """Read a Wheel-of-Wholeness balance from the vault, requiring the WHEEL capability.
 
-        Gated on the cached handshake first, exactly as :meth:`ingest` is: a
+        A thin wrapper over :meth:`_wheel`, counted exactly once the way
+        :meth:`ingest` is.
+        """
+        with _CountingOutcome(CreekCapability.WHEEL):
+            return await self._wheel()
+
+    async def _wheel(self) -> VaultWheelBalance:
+        """Read the whole-corpus wheel and report how the exchange ended.
+
+        Gated on the cached handshake first, exactly as :meth:`_ingest` is: a
         vault that did not advertise WHEEL is refused *locally*, so no request
         leaves this process toward a capability nobody claimed to serve.
 
@@ -1620,6 +1643,7 @@ class HttpCreekVaultClient:
         balance = _http_wheel_balance(response)
         if balance is None:
             raise CreekVaultPayloadError(_WHEEL_UNREADABLE_MESSAGE)
+        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.WHEEL)
         return balance
 
 
@@ -1633,10 +1657,20 @@ class LocalFallbackCreekVaultClient:
     :class:`CreekCapabilityUnsupportedError` since there is nothing to serve
     them. Unused parameters are underscore-prefixed to match the protocol
     positionally without pretending to consume them.
+
+    Every capability records :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED`
+    under its own name before answering. It is not a fault -- it is a deployment
+    exercising its choice not to have a vault, which is why it is the one outcome
+    logged at DEBUG -- but it is still worth counting per capability, because a
+    single unlabelled tally would say a deployment has no vault without saying
+    what it kept asking one for. :meth:`is_available` and :meth:`supports` record
+    nothing: they are cache reads rather than attempts, and counting them would
+    inflate the tallies with questions no vault was ever asked.
     """
 
     async def handshake(self) -> HandshakeResult:
         """Report no usable vault."""
+        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.HANDSHAKE)
         return HandshakeResult.unavailable()
 
     def is_available(self) -> bool:
@@ -1649,189 +1683,78 @@ class LocalFallbackCreekVaultClient:
 
     async def ingest(self, _request: VaultIngestRequest, /) -> VaultIngestResult:
         """No-op ingest: report not stored without raising (Postgres is authoritative)."""
+        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.JOURNAL)
         return VaultIngestResult(stored=False, vault_ref=None)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""
+        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.CLASSIFY)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.CLASSIFY))
 
     async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Raise: reflection has no local vault to serve it."""
+        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.REFLECT)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
 
     async def wheel(self) -> VaultWheelBalance:
         """Raise: a vault wheel read has no local vault to serve it."""
+        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 
 
-def _first_text_payload(content: Iterable[object]) -> Mapping[str, object]:
-    """Decode the first text content block of a tool result into a mapping.
-
-    Iterates rather than indexing so an empty content list falls through to the
-    empty-mapping default instead of raising (``IndexError`` is not in the
-    degrade set). A block whose text is not JSON raises
-    ``json.JSONDecodeError``, which :data:`_TRANSPORT_ERROR_TYPES` degrades; a
-    decoded value that is not a mapping yields the empty mapping.
-    """
-    for block in content:
-        text = getattr(block, "text", None)
-        if isinstance(text, str):
-            decoded = json.loads(text)
-            return decoded if isinstance(decoded, Mapping) else {}
-    return {}
-
-
-def _build_mcp_http_client(api_key: str) -> httpx2.AsyncClient:
-    """Build the HTTP client one MCP session runs over: credentialed, bounded, redirect-refusing.
-
-    Built here rather than by the SDK's own ``create_mcp_http_client`` for one
-    reason: that helper hard-codes ``follow_redirects=True`` and exposes no
-    override, and not following a redirect is a security property of this seam
-    rather than a preference -- the same property :func:`_build_pooled_vault_client`
-    pins for the plain-HTTP transport. The journal entry body rides these
-    requests, so a hijacked or compromised vault answering with a redirect could
-    otherwise aim that body at a host the operator never configured. Refusing
-    turns the redirect into a non-2xx, which degrades. Building the client
-    ourselves costs nothing else: the SDK helper only ever set redirects, the
-    timeout, and the headers this function sets explicitly.
-
-    The bearer credential lives on this short-lived, per-call client and never on
-    a shared pool, so it is released with the session that used it.
-    """
-    return httpx2.AsyncClient(
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=_MCP_HTTP_TIMEOUT,
-        follow_redirects=False,
-    )
-
-
-def _extract_tool_payload(result: CallToolResult) -> Mapping[str, object]:
-    """Extract the response mapping from an MCP tool-call result.
-
-    A result flagged ``is_error`` raises :class:`MCPError` with a **static**
-    message -- the error content is deliberately never read, because a vault's
-    error text can echo the entry body. Otherwise structured content wins when
-    present; a plain-dict tool result rides the content-text channel and is
-    JSON-decoded via :func:`_first_text_payload`; anything else yields the
-    empty mapping.
-    """
-    if result.is_error:
-        raise MCPError(_MCP_TOOL_ERROR_CODE, "creek vault tool call returned an error")
-    structured = result.structured_content
-    if isinstance(structured, Mapping):
-        return structured
-    return _first_text_payload(result.content)
-
-
-class _McpStreamableHttpTransport:
-    """An MCP streamable-HTTP :class:`VaultTransport` for a configured vault.
-
-    Each ``call`` opens an MCP session (streamable-HTTP framing with a bearer
-    ``Authorization`` header sourced from ``CREEK_VAULT_API_KEY``), which
-    handshakes on entry, invokes the method as an MCP tool, and extracts the
-    response mapping via :func:`_extract_tool_payload`. The key is used only to
-    build that header and is never logged or placed into any exception message
-    (privacy invariant). Construction refuses a plaintext ``http://`` URL to a
-    non-loopback host so the key is never bound to a transport that would send
-    it in cleartext.
-
-    Every failure branch lands in :data:`_TRANSPORT_ERROR_TYPES`: a connection
-    failure surfaces either as an ``httpx2`` error or, when anyio wraps it, as
-    an ``ExceptionGroup``; a protocol failure or ``is_error`` tool result as
-    :class:`MCPError`; and a non-JSON content-text body as
-    ``json.JSONDecodeError`` -- so the caller normalizes them to the degraded
-    path rather than crashing. The injectable ``connect`` factory lets tests
-    drive the full MCP lifecycle against an in-memory server with no network.
-    """
-
-    def __init__(
-        self,
-        url: str,
-        api_key: str,
-        *,
-        connect: Callable[[], AbstractAsyncContextManager[Client]] | None = None,
-    ) -> None:
-        """Store the vault URL, bearer key, and connect factory, refusing an insecure URL.
-
-        Delegates to :func:`_require_secure_vault_url`, which raises for a
-        plaintext ``http://`` URL to a non-loopback host before the key is
-        bound. The optional ``connect`` factory defaults to the production
-        streamable-HTTP connection and is supplied as an in-memory client
-        factory under test.
-        """
-        _require_secure_vault_url(url)
-        self._url = url
-        self._api_key = api_key
-        self._connect: Callable[[], AbstractAsyncContextManager[Client]] = (
-            connect if connect is not None else self._connect_streamable_http
-        )
-
-    @asynccontextmanager
-    async def _connect_streamable_http(self) -> AsyncIterator[Client]:
-        """Open the production streamable-HTTP MCP session to the vault.
-
-        The one untestable-without-a-network seam, kept as small as possible:
-        build the HTTP client that carries the bearer header, this module's
-        timeout budget, and its refusal to follow redirects
-        (:func:`_build_mcp_http_client`); open the streamable-HTTP channel over
-        it; and drive that channel with an MCP :class:`Client`. The HTTP client
-        is entered here because the SDK only manages the lifecycle of a client it
-        built itself, so an injected one would otherwise leak its connection
-        pool.
-        """
-        async with (
-            _build_mcp_http_client(self._api_key) as http_client,
-            Client(streamable_http_client(self._url, http_client=http_client)) as client,
-        ):
-            yield client
-
-    async def call(self, method: str, params: Mapping[str, object], /) -> Mapping[str, object]:
-        """Run one MCP tool call over a fresh session, under the whole-call deadline.
-
-        The deadline covers the session as a whole -- connect, MCP handshake, and
-        ``tools/call`` -- for the same reason :meth:`HttpCreekVaultClient._authorized_request`
-        carries one: the per-phase budgets are not a request deadline, since the
-        read budget restarts on every socket read. Without it a vault that
-        accepts the session and then trickles would hold this coroutine and its
-        connection open indefinitely, and the journal write path handshakes on
-        every write. Expiry raises ``TimeoutError``, an ``OSError`` subclass, so
-        it lands in the caller's existing transport branch and degrades. The
-        module constant is read at call time rather than captured, so a
-        redeployment (or a test) can move the ceiling without rebuilding the
-        transport.
-        """
-        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
-            async with self._connect() as client:
-                result = await client.call_tool(method, dict(params))
-            return _extract_tool_payload(result)
-
-
-def build_creek_vault_client(transport: VaultTransport | None = None) -> CreekVaultClient:
+def build_creek_vault_client() -> CreekVaultClient:
     """Return the vault client appropriate for the current configuration.
 
     When ``CREEK_VAULT_URL`` is unset or empty, no vault is configured and a
     :class:`LocalFallbackCreekVaultClient` is returned so the app runs fully on
-    its local pipeline -- checked first, so it holds whatever the protocol
-    selector says. Otherwise :data:`_PROTOCOL_ENV_VAR` picks the transport: an
-    :class:`HttpCreekVaultClient` for ``http``, or (by default) an
-    :class:`McpCreekVaultClient` over the injected ``transport`` (tests supply a
-    fake) or a freshly built :class:`_McpStreamableHttpTransport` bound to the
-    configured URL and API key. An unrecognized selector raises rather than
-    silently falling back, since guessing a transport would send vault traffic
-    somewhere the operator did not choose.
+    its local pipeline. That check comes **first**, before the protocol selector
+    is so much as read, and the ordering is deliberate: a deployment that never
+    had a vault must keep working even if a stale ``CREEK_VAULT_PROTOCOL`` is
+    still sitting in its environment, since turning "no vault" into a startup
+    failure would break the one configuration this seam exists to support.
+
+    With a URL configured, :data:`_PROTOCOL_ENV_VAR` still gates the choice even
+    though ``http`` is now the only transport, and defaults to it. Neither stale
+    selector is reinterpreted as HTTP -- that would send an operator's vault
+    traffic over a transport they did not choose, which is the guess this seam
+    exists to refuse -- but the two are answered differently, because adepthood
+    knows different things about them.
+
+    :data:`_PROTOCOL_RETIRED_MCP` is the one value adepthood *did* honour and then
+    retired, so its intent is not in doubt: the operator asked for the optional
+    replication over a transport that no longer exists. The safe answer to "I can
+    no longer do the optional thing you asked for" is to skip the optional thing,
+    so it degrades to :class:`LocalFallbackCreekVaultClient` and warns. This
+    factory runs inside a per-request dependency, where raising means the handler
+    body never runs at all: a stale selector would turn every journal save into a
+    500 and lose the writer's entry, which is precisely the loss the whole seam
+    promises can never happen for a vault's sake.
+
+    Any other unrecognized value degrades the same way, for the same reason.
+    Adepthood knows less about it -- a value nobody ever supported is as likely a
+    typo for ``http`` as a transport nobody implemented -- but knowing less is an
+    argument for *more* caution, not for a harsher failure: whatever the operator
+    meant, they did not mean "lose every journal entry until someone reads a
+    traceback". So the honest answer is the same as for the retired value, skip
+    the optional half and say so loudly, and the difference between the two shows
+    up where it belongs, in what the WARNING says. What neither does is
+    reinterpret an uninterpretable selector as ``http``: that would send a
+    deployment's vault traffic over a transport nobody chose, which is the one
+    guess this seam exists to refuse. Both records name the offending value and
+    the supported one and nothing else -- they reach logs, so neither the URL nor
+    the bearer credential may travel with them.
     """
     # ``CREEK_VAULT_URL`` being unset or empty is the signal that no vault is
-    # configured; the bearer credential is read only to build the transport's
+    # configured; the bearer credential is read only to build the adapter's
     # auth header and is never logged or placed in any exception message.
     url = os.getenv("CREEK_VAULT_URL", "")
     if not url:
         return LocalFallbackCreekVaultClient()
-    api_key = os.getenv("CREEK_VAULT_API_KEY", "")
-    protocol = os.getenv(_PROTOCOL_ENV_VAR, _PROTOCOL_MCP).strip().lower()
-    if protocol == _PROTOCOL_HTTP:
-        return HttpCreekVaultClient(url, api_key)
-    if protocol == _PROTOCOL_MCP:
-        return McpCreekVaultClient(transport=transport or _McpStreamableHttpTransport(url, api_key))
-    # Names only the offending value: the message reaches logs, and the URL and
-    # the bearer credential must never travel with it.
-    raise ValueError(f"unsupported {_PROTOCOL_ENV_VAR} value: {protocol!r}")
+    protocol = os.getenv(_PROTOCOL_ENV_VAR, _PROTOCOL_HTTP).strip().lower()
+    if protocol == _PROTOCOL_RETIRED_MCP:
+        _LOGGER.warning(_RETIRED_PROTOCOL_EVENT, extra=_protocol_fields(_PROTOCOL_RETIRED_MCP))
+        return LocalFallbackCreekVaultClient()
+    if protocol != _PROTOCOL_HTTP:
+        _LOGGER.warning(_UNKNOWN_PROTOCOL_EVENT, extra=_protocol_fields(protocol))
+        return LocalFallbackCreekVaultClient()
+    return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""))

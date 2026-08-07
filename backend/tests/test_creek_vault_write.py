@@ -9,6 +9,7 @@ tests assume.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
@@ -32,6 +33,10 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_telemetry import (
+    reset_vault_telemetry_for_tests,
+    vault_outcome_counts,
+)
 from services.creek_vault_write import (
     VaultDegradeReason,
     VaultWriteOutcome,
@@ -133,6 +138,18 @@ class RecordingVaultClient:
         """Record the wheel call and return an empty balance (unused here)."""
         self.calls.append(("wheel", None))
         return VaultWheelBalance(aspects=())
+
+
+@pytest.fixture(autouse=True)
+def _reset_vault_telemetry() -> Iterator[None]:
+    """Empty the process-wide outcome counters around every test in this module.
+
+    The counters are process-wide by design, so without this the pin below would
+    observe whatever its neighbours happened to record first.
+    """
+    reset_vault_telemetry_for_tests()
+    yield
+    reset_vault_telemetry_for_tests()
 
 
 def _call_names(client: RecordingVaultClient) -> list[str]:
@@ -476,3 +493,25 @@ def test_vault_degrade_reason_wire_values_are_stable() -> None:
         "unsupported_capability",
         "not_stored",
     ]
+
+
+@pytest.mark.asyncio
+async def test_intimate_entry_records_no_telemetry_outcome() -> None:
+    """An intimate entry is counted nowhere: the short-circuit precedes telemetry too.
+
+    Driven through the real local-fallback client, which records an outcome for
+    every capability it is asked for -- so an empty counter can only mean the
+    write path never reached it, rather than that nothing here records anything.
+    """
+    reset_vault_telemetry_for_tests()
+
+    outcome = await store_and_classify(
+        LocalFallbackCreekVaultClient(),
+        body=_SENTINEL_BODY,
+        classification="intimate",
+        created_at=_CREATED_AT,
+        entry_id=_ENTRY_ID,
+    )
+
+    assert outcome.status is VaultWriteStatus.SKIPPED_INTIMATE
+    assert vault_outcome_counts() == {}

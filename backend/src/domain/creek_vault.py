@@ -1,4 +1,4 @@
-"""Pure domain seam for the Creek Vault MCP client.
+"""Pure domain seam for the Creek Vault client.
 
 This module holds the vocabulary and value types adepthood uses to talk to an
 optional Creek Vault confidential-compute enclave, and *nothing else*: no
@@ -47,11 +47,14 @@ CONSUMER_ID = "CREEK_MCP_CONSUMER"
 
 
 class CreekCapability(enum.StrEnum):
-    """The MCP capabilities adepthood may call, keyed by their wire names.
+    """The vault capabilities adepthood may call, keyed by their wire names.
 
-    A vault advertises the subset it supports in its ``creek.handshake``
-    response; adepthood must never assume a capability exists without first
-    seeing it there. Values are the exact method strings sent over the wire.
+    A vault advertises the subset it supports in its capability document;
+    adepthood must never assume a capability exists without first seeing it
+    there. Values are the ``creek.``-prefixed names the vocabulary was minted
+    with, and they stay that way because they are what adepthood's own telemetry
+    and error messages are keyed by -- they are this app's name for each
+    capability rather than a claim about how it is reached.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -345,9 +348,9 @@ class VaultIngestResult:
     rather than an error.
 
     ``action`` is what the vault did with the fragment, when it says so. It
-    defaults to ``None`` for the transports that do not report one (the MCP
-    path) and for every not-stored result, so "the vault did not tell us" stays
-    distinguishable from any of the three real outcomes.
+    defaults to ``None`` for the local-fallback path, which has no vault to
+    report one, and for every not-stored result, so "the vault did not tell us"
+    stays distinguishable from any of the three real outcomes.
     """
 
     stored: bool
@@ -457,7 +460,7 @@ class VaultWheelBalance:
 class CreekVaultClient(Protocol):
     """The seam adepthood calls into for all vault interaction.
 
-    Both the MCP-backed adapter and the local-fallback no-op implement this
+    Both the HTTP-backed adapter and the local-fallback no-op implement this
     protocol, so callers depend only on this surface and never on whether a
     vault is actually present. Parameters are positional-only so concrete
     implementations may name (or underscore-ignore) them freely while remaining
