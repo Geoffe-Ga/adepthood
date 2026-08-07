@@ -91,12 +91,12 @@
     "tar": "7.5.20",
     "markdown-it": "14.2.0",
     "linkify-it": "5.0.2",
-    "fast-uri": "3.1.4",
-    "brace-expansion@1": "1.1.16",
-    "brace-expansion@2": "2.1.2",
-    "brace-expansion@5": "5.0.7",
-    "js-yaml@3": "3.15.0",
-    "js-yaml@4": "4.3.0",
+    "fast-uri": "3.1.5",
+    "brace-expansion@1": "1.1.18",
+    "brace-expansion@2": "2.1.4",
+    "brace-expansion@5": "5.0.9",
+    "js-yaml@3": "3.15.1",
+    "js-yaml@4": "4.3.1",
     "postcss": "^8.5.23"
   }
 }

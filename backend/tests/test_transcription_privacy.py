@@ -271,7 +271,21 @@ _BASELINE_LOG_RECORD_KEYS = (
     frozenset(logging.makeLogRecord({}).__dict__) | _STANDARD_LATE_LOG_RECORD_KEYS
 )
 _ALLOWED_ACCESS_LOG_EXTRA_KEYS = frozenset(
-    {"http_method", "http_path", "http_status", "elapsed_ms"}
+    # ``trace_id`` is not a caller-supplied ``extra=`` key: the framework-wide
+    # filter from ``observability.install_trace_id_logging`` stamps it on every
+    # record by design (see ``middleware/logging.py`` -- the access line is
+    # documented as always carrying it). Whether it is present here depends on
+    # whether some earlier test in the same process already booted the app and
+    # installed that filter, so leaving it out made this assertion depend on
+    # test ordering -- latent under a serial run, and surfaced the moment the
+    # suite was distributed across xdist workers (#2076).
+    #
+    # It is listed here rather than folded into ``_BASELINE_LOG_RECORD_KEYS``
+    # deliberately: that would drop it from ``extra_keys`` and exempt it from
+    # the no-leaked-bytes assertion below. Allow-listing keeps it under that
+    # check. The value is normalised and log-injection-safe
+    # (``observability._normalise_trace_id``), so it cannot carry image bytes.
+    {"http_method", "http_path", "http_status", "elapsed_ms", "trace_id"}
 )
 
 

@@ -3,6 +3,15 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize]
+
+# A full agent review is the most expensive thing this repo runs. Without a
+# concurrency group, every ``synchronize`` started another one and left the
+# previous review grinding against a superseded SHA — then posted its verdict
+# on the PR, where address-feedback could act on a comment describing code
+# that no longer exists (#2077). Newest push wins.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"

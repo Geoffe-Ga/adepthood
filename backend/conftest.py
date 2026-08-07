@@ -54,6 +54,20 @@ _STUB_LICENSE_SALE_PREFIX = "stub-sale-"
 # ---------------------------------------------------------------------------
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
+# SQLite serialises writers behind a lock and fails the statement outright once
+# its busy timeout expires, rather than queueing. The concurrency fixtures below
+# deliberately drive several simultaneous writers against one file, so on a
+# loaded machine — every xdist worker running its own share of the suite
+# (#2076) — the default 5 s ceiling is reached and the write raises
+# "database is locked" instead of waiting its turn.
+#
+# Raising the ceiling cannot mask a real defect: these tests assert an *outcome*
+# invariant (exactly one token pack credited, exactly one audit row), never a
+# latency bound. A genuine double-credit still fails the assertions no matter
+# how long a writer waits. All this buys is that the test stops failing for want
+# of CPU.
+_CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS = 30
+
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -287,7 +301,11 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
     engine.
     """
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}"
-    concurrent_engine = create_async_engine(db_url, echo=False)
+    concurrent_engine = create_async_engine(
+        db_url,
+        echo=False,
+        connect_args={"timeout": _CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS},
+    )
     concurrent_factory = async_sessionmaker(
         concurrent_engine, class_=AsyncSession, expire_on_commit=False
     )

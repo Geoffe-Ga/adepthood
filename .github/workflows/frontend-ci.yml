@@ -1,7 +1,10 @@
 name: Frontend CI
 
 on:
+  # Scoped to main for the same reason as backend-ci.yml: an unscoped ``push``
+  # duplicated every PR run (#2077). Merges still get a post-merge run.
   push:
+    branches: [main]
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
@@ -11,6 +14,11 @@ on:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
       - ".pre-commit-config.yaml"
+
+# One in-flight run per PR; see backend-ci.yml for the rationale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   frontend-quality:

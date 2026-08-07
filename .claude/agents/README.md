@@ -118,6 +118,34 @@ primarily as a reviewer; their occasional edits are narrow and plan-guided).
 `dependency-review-specialist` (pins/lockfile/license checks need no deep
 reasoning — spend the cheaper tier).
 
+### The dimension this policy does not price: invocations per tick
+
+The policy above ranks roles by *leverage per call*. It does not rank them by
+*calls per tick*, and those two orderings are close to inverted:
+
+| Role | Tier | Invocations per tick |
+| --- | --- | --- |
+| `chief-architect` | Fable | **1** — one plan, then done |
+| `test-specialist` | Opus | **many** — Gate 1 RED, plus once per drop-back |
+| `implementation-specialist` | Opus | **many** — GREEN, refactor, plus once per drop-back |
+
+Drop-backs are not rare: `scripts/ralph/PROMPT.md` routes a Gate 2, Gate 2.5,
+Gate 3 (CI), or Gate 4 (review) failure *back to Gate 1*, and each return
+re-invokes the code-writing specialists. So tier choice on those two roles is
+multiplied by the tick's failure count, while tier choice on `chief-architect`
+is not.
+
+This matters because PR throughput fell from a 27-minute to a 78-minute median
+inter-merge gap in the window that began when #1968 moved `test-specialist` and
+`implementation-specialist` from Fable to Opus and `chief-architect` the other
+way. The measurement is in #2073; the open decision is #2074.
+
+**Nothing here overrides the policy** — it is an owner call about output
+quality, and the measurement says only that the change is temporally
+correlated with the regression, not that the resulting code was worse or
+better. The point is that a future tier change on a hot-loop role should be
+made knowing it is multiplied by the drop-back count, and re-measured after.
+
 ## Gate → agent invocation matrix
 
 | Stage | Conductor action | Agent(s) |
