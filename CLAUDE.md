@@ -132,7 +132,9 @@ once:
    backend; ~8s when it reuses a receipt for an unchanged tree).
 3. **Git hooks** (automatic): `git commit` runs the pre-commit-stage hooks on
    your staged files; `git push` runs the pre-push-stage hooks (full suite +
-   coverage + complexity).
+   coverage + complexity) — but only where the `pre-push` hook type is
+   installed, which `scripts/dev-setup.sh` does not do today. CI runs that
+   stage regardless; a silent push is not a pass.
 4. **CI**: all of the above plus cross-version compat (3.11/3.12/3.13),
    docstring coverage, branch coverage, security audit.
 
