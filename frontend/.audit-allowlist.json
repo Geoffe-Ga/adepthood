@@ -2,10 +2,25 @@
   "$comment": [
     "Advisories deliberately not failing the high+ audit gate, each scoped to one",
     "GHSA id and each with a hard expiry the gate ENFORCES. An expired entry fails",
-    "the build exactly like an unallowlisted advisory would — the time box is real,",
+    "the build exactly like an unallowlisted advisory would \u2014 the time box is real,",
     "not a comment. Adding an entry here is an owner-level policy decision, not an",
     "engineering convenience: everything else, including anything newly introduced,",
     "still fails the gate. See scripts/frontend/audit-gate.mjs."
   ],
-  "allow": []
+  "allow": [
+    {
+      "id": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "expires": "2026-11-08",
+      "issue": 2159,
+      "reason": "No patched release exists: first_patched_version is null and the vulnerable range (<= 2.0.2) covers every published version, so there is nothing to override to. Reached only through Metro, the build-time bundler reading local project assets, not a runtime path parsing untrusted images. The SDK ladder does not remove it - metro declares image-size ^1.0.2 in every published version (0.82-0.87), and a resolved SDK 57 tree still yields image-size@1.2.1 in prod via metro@0.84.4 and community-cli-plugin's nested metro@0.83.7. npm audit's only proposed remedy is react-native@0.72.17 (isSemVerMajor), a major downgrade of the whole stack. Removal tracked in #2159."
+    },
+    {
+      "id": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "expires": "2026-11-08",
+      "issue": 2159,
+      "reason": "Same package, same unfixable posture as GHSA-w3rx-r6r6-pgpr - JXL and HEIF parsers rather than ICNS. See that entry for the full evidence. Removal tracked in #2159."
+    }
+  ]
 }
