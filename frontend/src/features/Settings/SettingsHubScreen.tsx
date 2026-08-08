@@ -7,6 +7,7 @@ import {
   LifeBuoy,
   LogOut,
   ShieldCheck,
+  Vault,
   type LucideIcon,
 } from 'lucide-react-native';
 import React, { useCallback } from 'react';
@@ -18,6 +19,7 @@ import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
 import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
+import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
@@ -103,12 +105,14 @@ const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JS
 );
 
 /**
- * Privacy group: a non-interactive, informational statement surfacing the
- * entry-visibility tiers and the Intimate/AI guarantee as a first-class feature
- * rather than a buried setting. Kept non-navigational — it makes a promise, it
- * is not a destination.
+ * Privacy group: an informational statement surfacing the entry-visibility
+ * tiers and the Intimate/AI guarantee as a first-class feature rather than a
+ * buried setting. The statement block itself stays non-interactive — it makes a
+ * promise, it is not a destination — while the group also hosts the private
+ * vault destination, because where a copy of your journal may go is part of the
+ * same privacy story.
  */
-const PrivacySection = (): React.JSX.Element => {
+const PrivacySection = ({ onVault }: { onVault: () => void }): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   return (
@@ -125,6 +129,13 @@ const PrivacySection = (): React.JSX.Element => {
           <Text style={[t.caption, styles.privacyLineSoft]}>{PRIVACY_INTIMATE_LINE}</Text>
         </View>
       </View>
+      <SettingsRow
+        icon={Vault}
+        label={VAULT_ROW_LABEL}
+        description={VAULT_ROW_DESCRIPTION}
+        onPress={onVault}
+        testID="settings-row-vault"
+      />
     </EditorialSection>
   );
 };
@@ -163,6 +174,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
+  const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -173,7 +185,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
-      <PrivacySection />
+      <PrivacySection onVault={openVault} />
       <ChooseDepthsSection />
       <SessionSection onLogout={onLogout} />
       <SupportSection onSupportCare={openSupportCare} />
