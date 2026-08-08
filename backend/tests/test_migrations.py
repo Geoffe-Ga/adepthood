@@ -2969,3 +2969,359 @@ def test_habit_carryover_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _HABIT_CARRYOVER_REVISION)
     assert "is_carryover" in _columns_of(db_url, "habit")
     assert bool(_habit_row(db_url, habit_id=1)["is_carryover"]) is False
+
+
+# -- cross-tenant reference quarantine + detach -----------------------------
+#
+# Two body-parameter authorisation holes (``PUT /goals/{id}`` accepting a
+# ``goal_group_id`` it never authorised, and ``POST /journal/`` accepting an
+# unauthorised ``user_practice_id`` / ``practice_session_id``) let a caller
+# file their own row against another tenant's object.  Both write paths are
+# now guarded, but rows forged before the guards landed are still in the
+# database.  This migration finds them, records them, and detaches them --
+# it never deletes a user's row.
+
+# The base is the current single head; the second anchor is the revision ID
+# of the remediation migration the implementer authors.
+_CROSS_TENANT_BASE_REVISION = "b0c1d2e3f4a5"  # pragma: allowlist secret
+_CROSS_TENANT_REVISION = "c1d2e3f4a5b7"  # pragma: allowlist secret
+
+# Forensic side-table: one row per reference the migration detaches, so every
+# nulled link stays reconstructible by hand afterwards.
+_QUARANTINE_TABLE = "_quarantine_cross_tenant_reference"
+
+# ``detected_at`` is deliberately absent from the projection -- it is a
+# wall-clock stamp no assertion can pin -- but naming the other seven columns
+# in declaration order pins both their names and their order.
+_QUARANTINE_PROJECTION = (
+    "SELECT source_table, source_row_id, source_column, planted_value,"
+    " owner_user_id, referenced_owner_user_id, reason"
+    " FROM _quarantine_cross_tenant_reference"
+)
+
+_QUARANTINE_COLUMNS = {
+    "source_table",
+    "source_row_id",
+    "source_column",
+    "planted_value",
+    "owner_user_id",
+    "referenced_owner_user_id",
+    "reason",
+    "detected_at",
+}
+
+# An id no seeded row uses, so the reference genuinely resolves to nothing.
+# The seed statements below spell it literally rather than interpolating it,
+# because building SQL by string formatting is exactly the pattern the lint
+# rules (rightly) refuse; keep the two in step by hand.
+_MISSING_REFERENCE_ID = 999_999
+
+# Every planted reference, as ``(source_table, source_row_id, source_column,
+# planted_value, owner_user_id, referenced_owner_user_id, reason)``.  Owner
+# ids come from the *referencing* row's owner (habit.user_id for a goal,
+# journalentry.user_id for an entry); ``referenced_owner_user_id`` is NULL
+# when the target is ownerless or absent.
+_EXPECTED_QUARANTINE_ROWS: list[tuple[Any, ...]] = [
+    ("goal", 3, "goal_group_id", 2, 1, 2, "foreign_owner"),
+    ("goal", 4, "goal_group_id", 3, 2, None, "shared_template"),
+    ("goal", 5, "goal_group_id", _MISSING_REFERENCE_ID, 1, None, "dangling"),
+    ("journalentry", 2, "user_practice_id", 2, 1, 2, "foreign_owner"),
+    ("journalentry", 3, "practice_session_id", 2, 1, 2, "foreign_owner"),
+    ("journalentry", 4, "user_practice_id", _MISSING_REFERENCE_ID, 1, None, "dangling"),
+]
+
+# Post-remediation link state.  Goal 1 and journal entry 1 are the legitimate
+# controls: their references point at objects their own owner owns, so they
+# must survive untouched while every neighbouring forged link goes NULL.
+_EXPECTED_GOAL_LINKS: list[tuple[Any, ...]] = [
+    (1, 1),
+    (2, None),
+    (3, None),
+    (4, None),
+    (5, None),
+]
+_EXPECTED_JOURNAL_LINKS: list[tuple[Any, ...]] = [
+    (1, 1, 1),
+    (2, None, None),
+    (3, None, None),
+    (4, None, None),
+    (5, None, None),
+]
+
+
+def _bootstrap_cross_tenant_tables(sync_url: str) -> None:
+    """Pre-create the minimal tables the cross-tenant remediation touches.
+
+    Only the columns the migration reads or writes are declared.  The
+    foreign keys are omitted on purpose: SQLite would not enforce them here
+    anyway, and their absence is what lets the fixture seed a genuinely
+    dangling reference for the ``dangling`` classification branch.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text('CREATE TABLE "user" ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)')
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE habit ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " name VARCHAR(255) NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE goalgroup ("
+                " id INTEGER PRIMARY KEY,"
+                " name VARCHAR(255) NOT NULL,"
+                " user_id INTEGER,"
+                " shared_template BOOLEAN NOT NULL DEFAULT 0)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE goal ("
+                " id INTEGER PRIMARY KEY,"
+                " habit_id INTEGER NOT NULL,"
+                " title VARCHAR(255) NOT NULL,"
+                " goal_group_id INTEGER)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE userpractice ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " practice_id INTEGER NOT NULL,"
+                " stage_number INTEGER NOT NULL,"
+                " start_date DATE NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE practicesession ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " user_practice_id INTEGER NOT NULL,"
+                " duration_minutes FLOAT NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " user_practice_id INTEGER,"
+                " practice_session_id INTEGER)"
+            )
+        )
+    engine.dispose()
+
+
+def _seed_cross_tenant_fixtures(sync_url: str) -> None:
+    """Seed every violation shape alongside a legitimate control for each.
+
+    User 1 is the attacker in the goal/journal cases and the victim in the
+    goal-group case; user 2 owns the objects that were written into.  Goals 1
+    and 2 and journal entries 1 and 5 are the controls -- same-owner or NULL
+    references that must come through the migration unchanged.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                'INSERT INTO "user" (id, email) VALUES'
+                " (1, 'owner@example.com'), (2, 'other@example.com')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO habit (id, user_id, name) VALUES"
+                " (1, 1, 'Owner Habit'), (2, 2, 'Other Habit')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goalgroup (id, name, user_id, shared_template) VALUES"
+                " (1, 'Owner Group', 1, 0),"
+                " (2, 'Other Private Group', 2, 0),"
+                " (3, 'Community Template', NULL, 1)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO goal (id, habit_id, title, goal_group_id) VALUES"
+                " (1, 1, 'Filed under its own owner group', 1),"
+                " (2, 1, 'Filed under no group at all', NULL),"
+                " (3, 1, 'Planted into the other tenant private group', 2),"
+                " (4, 2, 'Parked in an ownerless shared template', 3),"
+                " (5, 1, 'Points at a group that does not exist', 999999)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO userpractice"
+                " (id, user_id, practice_id, stage_number, start_date) VALUES"
+                " (1, 1, 1, 1, '2024-01-01'), (2, 2, 1, 1, '2024-01-01')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes) VALUES"
+                " (1, 1, 1, 10.0), (2, 2, 2, 10.0)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry"
+                " (id, user_id, sender, message, user_practice_id, practice_session_id) VALUES"
+                " (1, 1, 'user', 'Own practice and own session.', 1, 1),"
+                " (2, 1, 'user', 'Planted onto the other tenant practice.', 2, NULL),"
+                " (3, 1, 'user', 'Planted onto the other tenant session.', NULL, 2),"
+                " (4, 1, 'user', 'Points at a practice that does not exist.', 999999, NULL),"
+                " (5, 1, 'user', 'Carries no practice link at all.', NULL, NULL)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_cross_tenant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config seeded with forged cross-tenant references."""
+    db_path = tmp_path / "cross_tenant_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_cross_tenant_tables(sync_url)
+    _seed_cross_tenant_fixtures(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CROSS_TENANT_BASE_REVISION)
+    return cfg
+
+
+def _quarantine_rows(db_url: str) -> list[tuple[Any, ...]]:
+    """Return every quarantine row in declaration order, sorted deterministically.
+
+    ``(source_table, source_row_id, source_column)`` identifies a quarantined
+    reference uniquely, so sorting on it never has to compare the nullable
+    owner columns.
+    """
+    return sorted(
+        _rows(db_url, _QUARANTINE_PROJECTION),
+        key=lambda row: (str(row[0]), int(row[1]), str(row[2])),
+    )
+
+
+def _goal_group_links(db_url: str) -> list[tuple[Any, ...]]:
+    """Return ``(id, goal_group_id)`` for every goal, ordered by id."""
+    return _rows(db_url, "SELECT id, goal_group_id FROM goal ORDER BY id")
+
+
+def _journal_practice_links(db_url: str) -> list[tuple[Any, ...]]:
+    """Return ``(id, user_practice_id, practice_session_id)`` per entry, ordered by id."""
+    return _rows(
+        db_url,
+        "SELECT id, user_practice_id, practice_session_id FROM journalentry ORDER BY id",
+    )
+
+
+def test_cross_tenant_quarantine_migration_detaches_and_records_on_sqlite(
+    alembic_sqlite_config_cross_tenant: Config,
+) -> None:
+    """Upgrade detaches every forged reference and records it, deleting nothing.
+
+    Each planted reference is nulled in place, each legitimate reference is
+    left alone, no ``goal`` or ``journalentry`` row disappears, and the
+    quarantine table holds exactly one correctly-classified row per detached
+    reference -- ``dangling`` when the target is absent, ``shared_template``
+    when it is ownerless, ``foreign_owner`` when it belongs to someone else.
+    """
+    cfg = alembic_sqlite_config_cross_tenant
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _CROSS_TENANT_REVISION)
+
+    assert _goal_group_links(db_url) == _EXPECTED_GOAL_LINKS
+    assert _journal_practice_links(db_url) == _EXPECTED_JOURNAL_LINKS
+
+    # Remediation is detach-only: not one row is deleted.
+    assert _ids_from_query(db_url, "SELECT id FROM goal ORDER BY id") == [1, 2, 3, 4, 5]
+    assert _ids_from_query(db_url, "SELECT id FROM journalentry ORDER BY id") == [1, 2, 3, 4, 5]
+
+    assert _table_exists(db_url, _QUARANTINE_TABLE)
+    assert _columns_of(db_url, _QUARANTINE_TABLE) == _QUARANTINE_COLUMNS
+    assert _quarantine_rows(db_url) == _EXPECTED_QUARANTINE_ROWS
+
+
+def test_cross_tenant_quarantine_migration_leaves_same_owner_references_intact_on_sqlite(
+    alembic_sqlite_config_cross_tenant: Config,
+) -> None:
+    """A reference to an object its own owner owns is never quarantined.
+
+    The migration runs over a table that also holds forged references, so
+    this pins that the predicate discriminates by owner rather than sweeping
+    every non-null reference in the table.
+    """
+    cfg = alembic_sqlite_config_cross_tenant
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _CROSS_TENANT_REVISION)
+
+    assert _rows(db_url, "SELECT goal_group_id FROM goal WHERE id = 1") == [(1,)]
+    assert _rows(
+        db_url,
+        "SELECT user_practice_id, practice_session_id FROM journalentry WHERE id = 1",
+    ) == [(1, 1)]
+
+    quarantined = {(row[0], row[1]) for row in _quarantine_rows(db_url)}
+    assert ("goal", 1) not in quarantined
+    assert ("journalentry", 1) not in quarantined
+    assert ("goal", 2) not in quarantined, "a NULL reference is not a cross-tenant reference"
+    assert ("journalentry", 5) not in quarantined
+
+
+def test_cross_tenant_quarantine_migration_is_idempotent_on_sqlite(
+    alembic_sqlite_config_cross_tenant: Config,
+) -> None:
+    """Downgrade is deliberately one-way and re-upgrade adds no duplicate rows.
+
+    Phase 1 upgrades and snapshots the quarantine.  Phase 2 downgrades to the
+    base revision: the forensic record and the detached NULLs both survive,
+    because re-planting a reference into another tenant's object would
+    re-open the very hole the migration closed.  Phase 3 re-upgrades onto the
+    already-clean database and finds nothing new to quarantine.
+    """
+    cfg = alembic_sqlite_config_cross_tenant
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _CROSS_TENANT_REVISION)
+    snapshot = _quarantine_rows(db_url)
+    assert snapshot == _EXPECTED_QUARANTINE_ROWS
+
+    # Phase 2: the downgrade neither drops the evidence nor re-plants a link.
+    command.downgrade(cfg, _CROSS_TENANT_BASE_REVISION)
+    assert _table_exists(db_url, _QUARANTINE_TABLE)
+    assert _quarantine_rows(db_url) == snapshot
+    assert _goal_group_links(db_url) == _EXPECTED_GOAL_LINKS
+    assert _journal_practice_links(db_url) == _EXPECTED_JOURNAL_LINKS
+
+    # Phase 3: re-upgrade is a no-op -- nothing violates the invariant now.
+    command.upgrade(cfg, _CROSS_TENANT_REVISION)
+    assert _quarantine_rows(db_url) == snapshot
+    assert _goal_group_links(db_url) == _EXPECTED_GOAL_LINKS
+    assert _journal_practice_links(db_url) == _EXPECTED_JOURNAL_LINKS
