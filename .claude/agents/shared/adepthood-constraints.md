@@ -56,6 +56,14 @@ Q&A only — never user data or secrets.
 "Drop to Gate 1" means: fix the **root cause** with a failing-test-first cycle,
 re-clear Gate 2 locally, push, climb again. **Never weaken a gate to pass it.**
 
+Gates 1-2 are a ladder, cheapest first, each rung run once: targeted tests
+(`./scripts/backend/test.sh <paths>`) every Red→Green cycle, then
+`check-all.sh` once when Gate 1 is green — detail and costs in
+`scripts/ralph/PROMPT.md` step 7 and the `stay-green` skill. A whole-suite
+test run takes an exclusive per-worktree lock and refuses a concurrent second
+run in the same worktree with exit 3, naming the holder at
+`.gate-state/locks/backend-suite.lock`; wait for it, do not route around it.
+
 ## Quality thresholds (non-negotiable — from `CLAUDE.md`)
 
 - **Backend:** ≥90% line / ≥80% branch coverage (pytest-cov), ≥85% docstring

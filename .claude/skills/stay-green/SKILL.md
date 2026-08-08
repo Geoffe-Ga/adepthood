@@ -1,19 +1,23 @@
 ---
 name: stay-green
 description: >-
-  2-gate TDD development workflow: Gate 1 is Red-Green-Refactor testing,
-  Gate 2 is pre-commit quality checks. Use when implementing features,
-  fixing bugs, or doing any development work. Ensures code is never
-  committed without passing tests and quality checks.
+  Local TDD + quality-gate workflow: Gate 1 is Red-Green-Refactor testing,
+  Gate 2 is `./scripts/<side>/check-all.sh` exiting 0. Use when implementing
+  features, fixing bugs, or doing any development work. Ensures code is never
+  pushed without passing tests and quality checks. Gates 3 (CI) and 4 (Claude
+  review) are covered by `ci-debugging` and `address-feedback`.
   Do NOT use for bug-specific debugging (use bug-squashing-methodology).
 metadata:
   author: Geoff
-  version: 1.0.0
+  version: 2.0.0
 ---
 
 # Stay Green
 
 Write tests first, then code. Never declare work finished until all checks pass.
+This skill covers Gates 1-2 of the four-gate model in
+`.claude/agents/shared/adepthood-constraints.md`; Gates 3 (CI) and 4 (Claude
+review) live in `ci-debugging` and `address-feedback`.
 
 ## Instructions
 
@@ -21,34 +25,73 @@ Write tests first, then code. Never declare work finished until all checks pass.
 
 1. **Red** - Write a failing test describing the behavior you want
    ```bash
-   ./scripts/test.sh --all  # Should fail
+   ./scripts/backend/test.sh <path/to/test_file.py>  # Should fail
    ```
 
 2. **Green** - Write just enough code to make the test pass
    ```bash
-   ./scripts/test.sh --all  # Should pass
+   ./scripts/backend/test.sh <path/to/test_file.py>  # Should pass
    ```
 
 3. **Refactor** - Clean up while keeping tests green
    ```bash
-   ./scripts/test.sh --all  # Should still pass
+   ./scripts/backend/test.sh <path/to/test_file.py>  # Should still pass
    ```
 
-Repeat for each small piece of functionality. Write tests incrementally, not all at once.
+Repeat for each small piece of functionality. Write tests incrementally, not
+all at once. A positional path runs unsharded, without coverage, and never
+touches the whole-suite lock, so it is cheap enough to run every cycle.
 
-### Gate 2: Pre-Commit Quality Checks
+### Gate 2: `check-all.sh`, once, when Gate 1 is green
+
+The gate ladder runs each rung once — running one on top of another buys
+nothing and doubles the wait:
+
+| Rung | Runs | Cost |
+| --- | --- | --- |
+| `./scripts/backend/test.sh <paths>` (targeted) | every Red-Green cycle | seconds |
+| `./scripts/<side>/check-all.sh` | once, when Gate 1 is green | ~4m23s cold backend; ~8s on a receipt hit |
+| `git commit` hooks (staged files only) | automatic | seconds to ~1 min |
+| `git push` hooks (full suite + coverage) | automatic *if installed* | ~5 min |
+
+The push rung fires only where the `pre-push` hook type is installed
+(`pre-commit install --hook-type pre-push`); `scripts/dev-setup.sh` does not
+install it today, so on most dev boxes `git push` runs nothing. Backend CI runs
+that stage regardless, so nothing is skipped outright -- it just surfaces ~18
+minutes later instead of ~5. A silent push is not a pass.
 
 ```bash
-pre-commit run --all-files
+./scripts/backend/check-all.sh    # drift preflight, lint, format, mypy,
+                                  # security, complexity, tests, coverage
 ```
 
 When checks fail: read errors, fix issues, run again. Repeat until all green.
+`./scripts/<side>/fix-all.sh` auto-fixes lint/format; never hand-patch what
+the formatter owns.
 
-Quality checks include: formatting (Black + isort), linting (Ruff), type checking (MyPy), complexity (xenon A grade, <=5 per block), security (Bandit), tests with coverage (>=90%), file hygiene.
+Quality checks include: formatting (ruff-format), linting (ruff), type
+checking (mypy), complexity (xenon A grade, radon MI >= B), security
+(bandit + pip-audit), tests with coverage (>=90%), file hygiene.
+
+Do not also hand-run `pre-commit run --all-files` before every commit --
+`git commit` already re-runs lint/format/type checks on your staged diff
+seconds later, and `check-all.sh` already swept the whole tree, so the ritual
+whole-tree pass earns nothing those two didn't already cover. Reserve it for
+what staged-file hooks cannot see: a wide rename, a suspected cross-file type
+error, or a change to the hook configuration itself.
+
+A whole-suite `test.sh` run (no positional path) takes an exclusive
+per-worktree lock at `.gate-state/locks/backend-suite.lock`. A second
+whole-suite run racing against itself in the same worktree exits 3, naming the
+holding PID, rather than corrupting the shared coverage file and fixture
+databases both runs would otherwise write. On exit 3: wait for the in-flight
+run, do not route around the lock. A failure observed while another
+whole-suite run was concurrently in flight is unproven until it is re-run
+alone.
 
 ### Work is DONE when:
 1. All tests pass (Gate 1 complete)
-2. All pre-commit checks pass (Gate 2 complete)
+2. `check-all.sh` exits 0 (Gate 2 complete)
 
 No exceptions.
 
@@ -71,19 +114,20 @@ def calculate_cost(impressions: int, cpm: float) -> float:
     return impressions * (cpm / 1000)
 
 # Gate 1 - Refactor: (already clean, move on)
-# Gate 2: pre-commit run --all-files -> All passed!
+# Gate 2: ./scripts/backend/check-all.sh -> All passed!
 ```
 
 ### Example 2: Fixing a Formatting Failure
 
 ```bash
 # Gate 2 fails on formatting
-$ pre-commit run --all-files
-black....Failed
+$ ./scripts/backend/check-all.sh
+Running: Formatting
+...failed
 
 # Auto-fix and re-run
-$ ./scripts/format.sh --fix
-$ pre-commit run --all-files
+$ ./scripts/backend/fix-all.sh
+$ ./scripts/backend/check-all.sh
 # All passed!
 ```
 
@@ -91,20 +135,20 @@ $ pre-commit run --all-files
 
 ### Error: Coverage below 90%
 ```bash
-./scripts/test.sh --all --coverage  # See what's not covered
-# Add tests for uncovered lines, then re-run pre-commit
+./scripts/backend/coverage.sh  # See what's not covered
+# Add tests for uncovered lines, then re-run ./scripts/backend/check-all.sh
 ```
 
 ### Error: Complexity worse than A grade (cyclomatic 5, maintainability rank B)
 ```bash
 ./scripts/backend/complexity.sh  # Find complex functions
 # Extract helper functions, simplify branching
-# Then verify: ./scripts/backend/complexity.sh && pre-commit run --all-files
+# Then verify: ./scripts/backend/complexity.sh && ./scripts/backend/check-all.sh
 ```
 
 ### Error: Type errors from MyPy
 ```bash
-./scripts/typecheck.sh  # See specific errors
+./scripts/backend/typecheck.sh  # See specific errors
 # Add/fix type annotations
-# Then verify: ./scripts/typecheck.sh && pre-commit run --all-files
+# Then verify: ./scripts/backend/typecheck.sh && ./scripts/backend/check-all.sh
 ```

@@ -106,9 +106,41 @@ behind-main rebases across parallel lanes.
    `shared/adepthood-constraints.md`): backend ≥90% line / ≥80% branch (pytest-cov),
    ≥85% docstring (interrogate), xenon A, radon MI ≥ B, mypy strict, ruff
    `select = ["ALL"]`; frontend ≥90% jest, ESLint zero-warning, `tsc --noEmit`.
-7. **Gate 2 → Gate 2.5.** Run the relevant `./scripts/<side>/check-all.sh` until
-   exit 0 (`scripts/backend/check-all.sh` and/or `scripts/frontend/check-all.sh`;
-   `./scripts/<side>/fix-all.sh` for autofixable lint/format — never bypass).
+7. **Gate 2 → Gate 2.5.** The gate ladder runs each rung once — stacking one on
+   top of another buys nothing and doubles the wait:
+
+   | Rung | Runs | Cost |
+   | --- | --- | --- |
+   | `./scripts/backend/test.sh <paths>` (targeted) | every Red→Green cycle | seconds |
+   | `./scripts/<side>/check-all.sh` | once, when Gate 1 is green | ~4m23s cold backend; ~8s on a receipt hit |
+   | `git commit` hooks (staged files only) | automatic | seconds to ~1 min |
+   | `git push` hooks (full suite + coverage) | automatic *if installed* | ~5 min |
+
+   The push rung fires only where the `pre-push` hook type is installed
+   (`pre-commit install --hook-type pre-push`); `scripts/dev-setup.sh` does not
+   install it today, so on most dev boxes `git push` runs nothing. Backend CI
+   runs that stage regardless, so the checks are never skipped outright — they
+   just land ~18 minutes later instead of ~5. Do not treat a silent push as a
+   pass.
+
+   Run `check-all.sh` until exit 0 (`scripts/backend/check-all.sh` and/or
+   `scripts/frontend/check-all.sh`; `./scripts/<side>/fix-all.sh` for
+   autofixable lint/format — never bypass). Do not also hand-run `pre-commit
+   run --all-files` before committing: the commit hooks already re-run
+   lint/format/type checks on your staged diff seconds later, and
+   `check-all.sh` already swept the whole tree, so the ritual whole-tree pass
+   earns nothing those two didn't already cover. Reserve it for what
+   staged-file hooks cannot see — a wide rename, a suspected cross-file type
+   error, or a change to the hook configuration itself.
+
+   A whole-suite `test.sh` run (no positional path) takes an exclusive
+   per-worktree lock at `.gate-state/locks/backend-suite.lock`; a second one
+   racing against itself in the same worktree exits 3, naming the holding PID,
+   rather than corrupting a shared coverage file and fixture databases. On
+   exit 3: wait for the in-flight run, do not route around the lock. A failure
+   observed while another whole-suite run was concurrently in flight is
+   unproven until it is re-run alone.
+
    Then dispatch **`Agent(code-review-orchestrator)`** over the diff and fix every
    blocking finding (drop to Gate 1 via the owning specialist) until `CLEAN`.
 8. **Stay scoped.** Implement exactly the issue. Found an unrelated bug?

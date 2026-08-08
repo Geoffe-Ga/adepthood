@@ -1,0 +1,504 @@
+#!/usr/bin/env bash
+# scripts/quality/verified.sh - gate receipts: proof that a green run is still true
+# Usage: ./scripts/quality/verified.sh {fingerprint|record|check} <gate> [--explain]
+#
+# A gate that takes seven minutes gets skipped by hand, and a gate that is
+# skipped protects nothing. This primitive lets a gate reuse the verdict it
+# already earned when - and only when - nothing that verdict depended on has
+# moved. The claim is keyed on a content hash of the declared inputs plus the
+# environment they were measured in: never a timestamp, never a commit SHA,
+# never a flag a caller sets about itself, because each of those would produce
+# a receipt that says "verified" about a tree nobody verified.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The tree root is derived from this script's own location, never from
+# `git rev-parse --show-toplevel`: inside a linked worktree, or when the caller
+# stands in a directory nested under an unrelated checkout, rev-parse names a
+# tree this script was not copied into and the receipt would describe somebody
+# else's files.
+TREE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Bumping this retires every receipt in existence. It is the only safe response
+# to a change in what the fingerprint measures, or in how it combines it.
+# Bumped to 2 when the paths component gained each file's executable bit and
+# stopped letting .gitattributes normalise line endings out of the content.
+readonly SCHEMA_VERSION="2"
+
+readonly RECEIPTS_DIR="$TREE_ROOT/.gate-state/receipts"
+readonly RECEIPT_SUFFIX=".receipt"
+readonly TEMP_RECEIPT_PREFIX=".tmp-"
+
+# The gate name is the only caller-supplied value that reaches a path, so the
+# set of legal names excludes separators and traversal segments entirely.
+readonly GATE_NAME_PATTERN='^[a-z0-9-]+$'
+
+# A gate whose declared paths match almost nothing hashes the empty input into
+# a perfectly stable fingerprint - one that matches in every tree on earth.
+# That is exactly what a typo'd path or a misplaced script looks like, so too
+# few files is an error rather than a hit.
+readonly MINIMUM_DECLARED_FILES=50
+
+# How a file's executable bit is spelled in the hashed listing. One character,
+# so folding the mode in costs the digest a byte per file rather than a process.
+readonly EXECUTABLE_MODE_FLAG="x"
+readonly REGULAR_MODE_FLAG="-"
+
+# Only EXIT_HIT may ever license reuse of a verdict. EXIT_MISS means "not
+# verified, run the gate"; EXIT_CANNOT_EVALUATE means "no honest answer is
+# available". Neither failure is permission to skip.
+readonly EXIT_HIT=0
+readonly EXIT_MISS=1
+readonly EXIT_CANNOT_EVALUATE=2
+
+readonly FIELD_SCHEMA_VERSION="schema_version"
+readonly FIELD_GATE="gate"
+readonly FIELD_FINGERPRINT="fingerprint"
+readonly FIELD_RECORDED_AT="recorded_at"
+readonly FIELD_COMPONENT_PREFIX="component_"
+
+readonly TIMESTAMP_FORMAT="+%Y-%m-%dT%H:%M:%SZ"
+
+readonly COMMAND_FINGERPRINT="fingerprint"
+readonly COMMAND_RECORD="record"
+readonly COMMAND_CHECK="check"
+readonly FLAG_EXPLAIN="--explain"
+readonly FLAG_HELP="--help"
+
+# The fingerprint components, in the vocabulary --explain reports. Each is
+# digested separately so a refusal can name the single input that moved; an
+# operator who cannot tell a dependency upgrade from a code edit learns to
+# distrust the cache, and the documented response to a cache nobody
+# understands is to disable it.
+COMPONENT_NAMES=(paths interpreter packages venv host env)
+COMPONENT_DIGESTS=()
+
+EXPLAIN=false
+
+usage() {
+    cat << EOF
+Usage: $(basename "$0") {$COMMAND_FINGERPRINT|$COMMAND_RECORD|$COMMAND_CHECK} <gate> [$FLAG_EXPLAIN]
+
+Prove that a previously green gate run still describes this tree.
+
+COMMANDS:
+    $COMMAND_FINGERPRINT <gate>   Print the gate's current fingerprint (sha256 hex)
+    $COMMAND_RECORD <gate>        Write the gate's receipt for the current fingerprint
+    $COMMAND_CHECK <gate>         Ask whether the recorded verdict still holds
+
+OPTIONS:
+    $FLAG_EXPLAIN       On a refusal, name the first component that differs:
+                    ${COMPONENT_NAMES[*]}
+    $FLAG_HELP          Display this help message
+
+GATES:
+    backend       backend/ + scripts/ + .pre-commit-config.yaml
+
+EXIT CODES:
+    $EXIT_HIT             The recorded verdict still describes this tree
+    $EXIT_MISS             Not verified - run the gate
+    $EXIT_CANNOT_EVALUATE             Cannot evaluate - unknown gate, degenerate input, or no repository
+
+Only exit $EXIT_HIT may be read as permission to reuse a verdict.
+EOF
+}
+
+# Gate registry. One line per gate: the paths whose working-tree content the
+# gate's verdict is a function of. Registering a second gate is one more line.
+declared_paths_for_gate() {
+    case "$1" in
+        backend) printf '%s' "backend scripts .pre-commit-config.yaml" ;;
+        *) return 1 ;;
+    esac
+}
+
+sha256_hex() {
+    # Reads stdin, prints the bare digest. The two platforms this repo runs on
+    # spell the tool differently.
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum | cut -d ' ' -f 1
+    else
+        shasum -a 256 | cut -d ' ' -f 1
+    fi
+}
+
+sha256_of() {
+    printf '%s' "$1" | sha256_hex
+}
+
+print_lines() {
+    # Prints a captured multi-line string as lines, and prints nothing at all
+    # when it is empty: `printf '%s\n' ""` would emit a phantom blank line and
+    # make an empty listing look like one file.
+    [ -n "$1" ] || return 0
+    printf '%s\n' "$1"
+}
+
+require_git_repository() {
+    # Without git there is no file listing, and falling back to an empty one
+    # would produce the same everywhere-matching fingerprint the degenerate
+    # guard exists to reject.
+    if git -C "$TREE_ROOT" rev-parse --git-dir > /dev/null 2>&1; then
+        return 0
+    fi
+    printf 'Error: %s is not a git repository, so the declared paths cannot be listed.\n' \
+        "$TREE_ROOT" >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+count_lines() {
+    # Counts a captured multi-line string, reading the empty string as zero
+    # rather than as the one phantom line a bare `printf '%s\n' ""` produces.
+    print_lines "$1" | wc -l | tr -d '[:space:]'
+}
+
+refuse_unlistable_paths() {
+    printf 'Error: git could not list the declared paths (%s) under %s.\n' \
+        "$*" "$TREE_ROOT" >&2
+    printf 'A listing that failed partway through is not evidence about this tree, and\n' >&2
+    printf 'an empty one fingerprints identically in every tree on earth.\n' >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+refuse_unhashable_paths() {
+    printf 'Error: git could not hash every declared path under %s.\n' "$TREE_ROOT" >&2
+    printf 'hash-object stops at the first path it cannot open - a broken symlink, an\n' >&2
+    printf 'unreadable file, a stale index lock - so every path after it would\n' >&2
+    printf 'contribute nothing, and would do so again on the next run: a degraded\n' >&2
+    printf 'fingerprint that matches itself and certifies whatever changed behind it.\n' >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+declared_files() {
+    # Every file the gate measures: tracked plus untracked-and-unignored, minus
+    # the ones deleted from the working tree. Work in progress counts, because
+    # the gate would have collected it; a still-cached deletion does not,
+    # because the tree no longer contains it.
+    #
+    # Every step's status is checked by hand. This function is reached only
+    # through command substitutions, inside which bash does not apply errexit,
+    # and the caller's `|| exit $?` suppresses it for the whole call tree
+    # besides - so a failure that went unchecked here would quietly contribute
+    # a short listing to a fingerprint that then matches itself.
+    local listed deleted
+    if ! listed="$(git -C "$TREE_ROOT" ls-files --cached --others --exclude-standard \
+        -- "$@" | LC_ALL=C sort -u)"; then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! deleted="$(git -C "$TREE_ROOT" ls-files --deleted -- "$@" | LC_ALL=C sort -u)"; then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! LC_ALL=C comm -23 <(print_lines "$listed") <(print_lines "$deleted"); then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+}
+
+path_mode_lines() {
+    # Reads the file listing on stdin and emits "<path> <mode flag>".
+    #
+    # `git hash-object` hashes blob content only, so `chmod +x` moves none of
+    # the bytes it reads. That is not cosmetic here: check-all.sh execs
+    # scripts/backend/*.sh by path, so the mode decides whether a stage can run
+    # at all. The bit is read from the WORKING TREE rather than from the index,
+    # because an untracked file has no index entry and a tracked one carries
+    # the mode of its last `git add` instead of the one on disk.
+    #
+    # One builtin test per file, in a single shell: the whole fingerprint is
+    # taken up to three times per check-all run over roughly nine hundred
+    # files, which is no place to spawn a process each.
+    local file
+    while IFS= read -r file; do
+        if [ -x "$TREE_ROOT/$file" ]; then
+            printf '%s %s\n' "$file" "$EXECUTABLE_MODE_FLAG"
+        else
+            printf '%s %s\n' "$file" "$REGULAR_MODE_FLAG"
+        fi
+    done
+}
+
+paths_digest() {
+    # Each path is hashed ALONGSIDE its content and its executable bit.
+    # Combining the content hashes alone would leave a file renamed without an
+    # edit indistinguishable from an untouched tree - a move that changes what
+    # imports resolve, and the quietest possible way for a receipt to be wrong.
+    # One `git hash-object` process reads every path and answers in the order it
+    # was asked, so its output pairs back against the path list line for line.
+    #
+    # `--no-filters` hashes the literal bytes on disk. Without it git applies
+    # .gitattributes, where `* text=auto eol=lf` makes the CRLF and LF spellings
+    # of one file hash identically - the single difference ruff-format would
+    # reject, certified by a fingerprint that could not see it.
+    local files="$1"
+    local hashes paired
+    if ! hashes="$(print_lines "$files" \
+        | git -C "$TREE_ROOT" hash-object --no-filters --stdin-paths)"; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    # Fewer hashes than paths is the signature of the truncation above: git
+    # aborts wholesale, and `paste` would pad the missing pairs with empty
+    # fields rather than complain.
+    if [ "$(count_lines "$hashes")" -ne "$(count_lines "$files")" ]; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! paired="$(paste -d ' ' \
+        <(print_lines "$files" | path_mode_lines) <(print_lines "$hashes"))"; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    print_lines "$paired" | LC_ALL=C sort | sha256_hex
+}
+
+refuse_degenerate_input() {
+    local file_count="$1"
+    shift
+    printf 'Error: the declared paths (%s) match only %s files under %s.\n' \
+        "$*" "$file_count" "$TREE_ROOT" >&2
+    printf 'At least %s are expected; a gate that measures almost nothing produces a\n' \
+        "$MINIMUM_DECLARED_FILES" >&2
+    printf 'stable fingerprint that would match in any tree at all.\n' >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+compute_components() {
+    # Fills COMPONENT_DIGESTS in COMPONENT_NAMES order. Called directly and
+    # never through a command substitution: a non-zero status raised inside
+    # `$(...)` is discarded by the caller, so every refusal that has to reach
+    # the exit code is captured and returned by hand on the way up.
+    local files file_count paths
+    if ! files="$(declared_files "$@")"; then
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    file_count="$(count_lines "$files")"
+    if [ "$file_count" -lt "$MINIMUM_DECLARED_FILES" ]; then
+        refuse_degenerate_input "$file_count" "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    # Taken outside the array literal below: a non-zero status raised inside an
+    # element's `$(...)` would be discarded, which is the whole shape of bug the
+    # explicit checks in paths_digest exist to close.
+    if ! paths="$(paths_digest "$files")"; then
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    COMPONENT_DIGESTS=(
+        "$paths"
+        "$(python3 -VV 2>&1 | sha256_hex)"
+        "$(pip freeze 2> /dev/null | sha256_hex)"
+        "$(sha256_of "${VIRTUAL_ENV-}")"
+        "$(uname -n | sha256_hex)"
+        "$(sha256_of "${TEST_POSTGRES_URL-}|${INTEGRATION_LANE_REQUIRE_POSTGRES-}")"
+    )
+}
+
+component_lines() {
+    local index=0
+    while [ "$index" -lt "${#COMPONENT_NAMES[@]}" ]; do
+        printf '%s=%s\n' "${COMPONENT_NAMES[$index]}" "${COMPONENT_DIGESTS[$index]}"
+        index=$((index + 1))
+    done
+}
+
+combined_fingerprint() {
+    # Combined WITH the schema version, so a change to the algorithm retires
+    # every old receipt instead of silently reinterpreting it.
+    {
+        printf '%s=%s\n' "$FIELD_SCHEMA_VERSION" "$SCHEMA_VERSION"
+        component_lines
+    } | sha256_hex
+}
+
+receipt_path_for() {
+    printf '%s/%s%s' "$RECEIPTS_DIR" "$1" "$RECEIPT_SUFFIX"
+}
+
+receipt_field() {
+    # Reads one key=value field, tolerating a truncated or binary-damaged
+    # receipt: an interrupted run, a full disk or a killed process can each
+    # leave a stub behind, and the only safe reading of one is a refusal said
+    # without a shell traceback that would look like a broken tool.
+    local file="$1"
+    local key="$2"
+    LC_ALL=C tr -d '\000' < "$file" 2> /dev/null \
+        | LC_ALL=C awk -F '=' -v key="$key" \
+            'found != 1 && $1 == key { sub(/^[^=]*=/, ""); print; found = 1 }'
+}
+
+receipt_fields() {
+    local gate="$1"
+    printf '%s=%s\n' "$FIELD_SCHEMA_VERSION" "$SCHEMA_VERSION"
+    printf '%s=%s\n' "$FIELD_GATE" "$gate"
+    printf '%s=%s\n' "$FIELD_FINGERPRINT" "$(combined_fingerprint)"
+    printf '%s=%s\n' "$FIELD_RECORDED_AT" "$(date -u "$TIMESTAMP_FORMAT")"
+    component_lines | sed "s/^/$FIELD_COMPONENT_PREFIX/"
+}
+
+record_receipt() {
+    local gate="$1"
+    local receipt scratch scratch_name
+    receipt="$(receipt_path_for "$gate")"
+    # The scratch name carries this process id because nothing serialises two
+    # check-all runs in one tree - the suite lock guards only the pytest step.
+    # On a name shared by gate alone, the second run truncates and publishes the
+    # file the first still holds open, and the first then writes its tail into
+    # whatever now sits at that path: a published receipt made of one run's head
+    # and another's remainder.
+    scratch_name="$TEMP_RECEIPT_PREFIX$gate-$$"
+    scratch="$RECEIPTS_DIR/$scratch_name$RECEIPT_SUFFIX"
+    mkdir -p "$RECEIPTS_DIR"
+    if ! receipt_fields "$gate" > "$scratch"; then
+        rm -f "$scratch"
+        printf 'Error: the receipt for gate %s could not be written.\n' "$gate" >&2
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    # Publish atomically. A reader must never observe a half-written receipt,
+    # and a scratch file left in the receipts directory is the visible symptom
+    # of a torn write.
+    mv -f "$scratch" "$receipt"
+}
+
+explain_mismatch() {
+    # Names the first component that differs, and only the first: a refusal
+    # that listed every downstream difference would bury the one input the
+    # operator actually changed.
+    local receipt="$1"
+    local index=0
+    local name
+    while [ "$index" -lt "${#COMPONENT_NAMES[@]}" ]; do
+        name="${COMPONENT_NAMES[$index]}"
+        if [ "$(receipt_field "$receipt" "$FIELD_COMPONENT_PREFIX$name")" \
+            != "${COMPONENT_DIGESTS[$index]}" ]; then
+            printf '%s\n' "$name"
+            return 0
+        fi
+        index=$((index + 1))
+    done
+}
+
+receipt_is_addressed_to() {
+    # A receipt is evidence only about the gate it names, under the schema it
+    # was computed with. Without both, a misfiled or superseded receipt is
+    # indistinguishable from a legitimate verdict.
+    local receipt="$1"
+    local gate="$2"
+    [ "$(receipt_field "$receipt" "$FIELD_SCHEMA_VERSION")" = "$SCHEMA_VERSION" ] \
+        && [ "$(receipt_field "$receipt" "$FIELD_GATE")" = "$gate" ]
+}
+
+check_receipt() {
+    local gate="$1"
+    local receipt current recorded
+    receipt="$(receipt_path_for "$gate")"
+    if [ ! -f "$receipt" ]; then
+        printf 'No receipt for gate %s; the gate has to run.\n' "$gate" >&2
+        return "$EXIT_MISS"
+    fi
+    if ! receipt_is_addressed_to "$receipt" "$gate"; then
+        printf 'The receipt for gate %s is damaged or was written under other terms.\n' \
+            "$gate" >&2
+        return "$EXIT_MISS"
+    fi
+    current="$(combined_fingerprint)"
+    recorded="$(receipt_field "$receipt" "$FIELD_FINGERPRINT")"
+    if [ -n "$recorded" ] && [ "$recorded" = "$current" ]; then
+        printf '%s=%s\n' "$FIELD_RECORDED_AT" "$(receipt_field "$receipt" "$FIELD_RECORDED_AT")"
+        return "$EXIT_HIT"
+    fi
+    if [ "$EXPLAIN" = true ]; then
+        explain_mismatch "$receipt"
+    fi
+    printf 'The recorded verdict for gate %s no longer describes this tree.\n' "$gate" >&2
+    return "$EXIT_MISS"
+}
+
+require_known_command() {
+    case "$1" in
+        "$COMMAND_FINGERPRINT" | "$COMMAND_RECORD" | "$COMMAND_CHECK") return 0 ;;
+        *) ;;
+    esac
+    printf 'Error: unknown command: %s\n' "$1" >&2
+    usage >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+require_valid_gate_name() {
+    # Validated before a single file is created or read, so a name carrying a
+    # separator or a traversal segment can never aim a receipt write elsewhere
+    # on disk.
+    if [[ "$1" =~ $GATE_NAME_PATTERN ]]; then
+        return 0
+    fi
+    printf 'Error: %s is not a valid gate name; expected %s.\n' "$1" "$GATE_NAME_PATTERN" >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+parse_trailing_flags() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            "$FLAG_EXPLAIN")
+                EXPLAIN=true
+                shift
+                ;;
+            *)
+                printf 'Error: unknown option: %s\n' "$1" >&2
+                return "$EXIT_CANNOT_EVALUATE"
+                ;;
+        esac
+    done
+}
+
+run_command() {
+    local command="$1"
+    local gate="$2"
+    local status=0
+    case "$command" in
+        "$COMMAND_FINGERPRINT") combined_fingerprint ;;
+        "$COMMAND_RECORD") record_receipt "$gate" ;;
+        "$COMMAND_CHECK") check_receipt "$gate" || status=$? ;;
+        *) status="$EXIT_CANNOT_EVALUATE" ;;
+    esac
+    return "$status"
+}
+
+main() {
+    if [ $# -eq 0 ]; then
+        usage >&2
+        exit "$EXIT_CANNOT_EVALUATE"
+    fi
+    local command="$1"
+    shift
+    if [ "$command" = "$FLAG_HELP" ]; then
+        usage
+        exit "$EXIT_HIT"
+    fi
+    local gate=""
+    if [ $# -gt 0 ]; then
+        gate="$1"
+        shift
+    fi
+
+    require_known_command "$command" || exit $?
+    require_valid_gate_name "$gate" || exit $?
+    parse_trailing_flags "$@" || exit $?
+
+    local paths_spec
+    if ! paths_spec="$(declared_paths_for_gate "$gate")"; then
+        printf 'Error: no gate named %s is registered.\n' "$gate" >&2
+        exit "$EXIT_CANNOT_EVALUATE"
+    fi
+    require_git_repository || exit $?
+
+    local declared=()
+    read -r -a declared <<< "$paths_spec"
+    compute_components "${declared[@]}" || exit $?
+
+    local status=0
+    run_command "$command" "$gate" || status=$?
+    exit "$status"
+}
+
+main "$@"

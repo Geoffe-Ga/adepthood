@@ -67,7 +67,11 @@ pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 # Installs what is missing but never what is stale; scripts/backend/deps.sh fails the gate on drift
 
 # Quality checks
-pre-commit run --all-files          # Run ALL hooks — do this before every commit
+pre-commit run --all-files          # Whole-tree sweep — reserve for a wide
+                                    # rename, a suspected cross-file type
+                                    # error, or a hook-config change; git
+                                    # commit already re-runs the hooks on
+                                    # your staged diff seconds later
 pre-commit run <hook-id> --all-files  # Run a specific hook
 
 # Backend
@@ -89,7 +93,10 @@ cd frontend && npx tsc --noEmit     # Type check
 - Read issue files and acceptance criteria before starting work
 - Follow the dependency graph in `prompts/github-issues/README.md`
 - Use TDD: write the test first, watch it fail, then implement
-- Run `pre-commit run --all-files` before every commit attempt
+- Run `./scripts/<side>/check-all.sh` once Gate 1 is green; reserve a full
+  `pre-commit run --all-files` sweep for a wide rename, a suspected
+  cross-file type error, or a hook-config change — `git commit` already
+  re-runs the hooks on your staged diff
 - Use conventional commit messages (enforced by commitlint)
 - Keep commits small and atomic — one logical change each
 - Respect existing patterns and conventions in the codebase
@@ -116,11 +123,20 @@ cd frontend && npx tsc --noEmit     # Type check
 - **Complexity:** xenon A-grade absolute/modules/average, radon MI ≥ B
 
 ### Stay Green Workflow
-Quality is enforced through a 3-gate process:
-1. **Gate 1 — Pre-commit** (~10s): format + lint + hygiene (28 hooks)
-2. **Gate 2 — Pre-push**: full test suite + coverage + complexity
-3. **Gate 3 — CI**: all of the above + cross-version compat (3.11/3.12/3.13)
-   + docstring coverage + branch coverage + security audit
+Quality is enforced through a graduated ladder, cheapest first, each rung run
+once:
+1. **Targeted tests** (`./scripts/backend/test.sh <paths>`) on every TDD
+   red → green cycle: seconds.
+2. **`./scripts/<side>/check-all.sh`**, once targeted tests are green: lint,
+   format, mypy, security, complexity, full suite, coverage (~4m23s cold
+   backend; ~8s when it reuses a receipt for an unchanged tree).
+3. **Git hooks** (automatic): `git commit` runs the pre-commit-stage hooks on
+   your staged files; `git push` runs the pre-push-stage hooks (full suite +
+   coverage + complexity) — but only where the `pre-push` hook type is
+   installed, which `scripts/dev-setup.sh` does not do today. CI runs that
+   stage regardless; a silent push is not a pass.
+4. **CI**: all of the above plus cross-version compat (3.11/3.12/3.13),
+   docstring coverage, branch coverage, security audit.
 
 Never commit with `--no-verify`. Never push with failing gates. If a gate
 fails, fix the root cause — don't suppress the check.
