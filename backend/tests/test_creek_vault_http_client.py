@@ -74,7 +74,11 @@ from services.creek_vault_client import (
     build_creek_vault_client,
     close_creek_vault_http_pool,
 )
-from services.creek_vault_payload import _MARGINALIA_KIND_BY_CREEK_KIND, _MAX_REFLECT_NOTES
+from services.creek_vault_payload import (
+    _MARGINALIA_KIND_BY_CREEK_KIND,
+    _MAX_REFLECT_NOTES,
+    _bounded_text,
+)
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -3321,6 +3325,93 @@ def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:
 def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
     """The mapping's keys are exactly Creek's seven published note kinds."""
     assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
+
+
+def _strip_spy_text(value: str) -> tuple[str, list[str | None]]:
+    """Build a string that logs every ``strip`` asked of it, and return both.
+
+    ``_bounded_text`` admits a value on ``isinstance(raw, str)``, which a subclass
+    satisfies, so this walks the helper down exactly the path a vault-supplied
+    string walks while leaving a record of which guards were consulted along the
+    way. The log lives in this closure rather than on the instance because a
+    ``str`` subclass may only carry an empty ``__slots__``, and keeping it here
+    rather than on the class also keeps one call's record out of the next one's.
+    The override still delegates, so the value behaves as its own text to anything
+    else that touches it.
+    """
+    strip_calls: list[str | None] = []
+
+    class _StripSpyText(str):
+        """A string that answers as itself while recording each ``strip``."""
+
+        __slots__ = ()
+
+        def strip(self, chars: str | None = None, /) -> str:
+            """Record the consultation, then answer as the underlying string would."""
+            strip_calls.append(chars)
+            return super().strip(chars)
+
+    return _StripSpyText(value), strip_calls
+
+
+def test_bounded_text_rejects_an_over_limit_value_without_consulting_strip() -> None:
+    """An over-limit value is refused on its length alone, before anything copies it.
+
+    A vault answers with untrusted text, and the cheap check on that text is its
+    length: an oversized value is going to be dropped whatever its contents, so
+    asking it to ``strip`` first buys nothing and costs a transient copy of the
+    whole oversized string. The copy is real only for whitespace-padded input --
+    CPython hands back the receiver itself when an exact ``str`` has nothing to
+    remove -- so the value here is padded and exactly one character over, the
+    smallest shape in which the wasted work actually happens.
+
+    Reordering side-effect-free guards behind ``or`` cannot change what the helper
+    returns for any input, so no input/output assertion can pin it. Observing
+    whether ``strip`` was consulted at all is the only way to hold the ordering in
+    place against a later edit that quietly restores the expensive check to the
+    front.
+    """
+    oversized, strip_calls = _strip_spy_text(" " + "x" * ANCHOR_TEXT_MAX)
+
+    assert _bounded_text(oversized, ANCHOR_TEXT_MAX) is None
+    assert strip_calls == []
+
+
+@pytest.mark.parametrize(
+    "accepted",
+    [
+        pytest.param("x" * ANCHOR_TEXT_MAX, id="exactly_at_the_limit"),
+        pytest.param(f"  {_MARGIN_QUOTE}  ", id="whitespace_padded"),
+    ],
+)
+def test_bounded_text_returns_usable_text_verbatim(accepted: str) -> None:
+    """Usable text comes back as the very object that went in, untouched.
+
+    The limit is a ceiling rather than a threshold, so a value of exactly
+    ``ANCHOR_TEXT_MAX`` is still usable text. Identity rather than equality is the
+    assertion that matters: adepthood anchors a quote by matching it
+    character-for-character against the entry body, so a helper that trimmed the
+    padding it checked for would break the anchor it exists to protect.
+    """
+    assert _bounded_text(accepted, ANCHOR_TEXT_MAX) is accepted
+
+
+@pytest.mark.parametrize(
+    "refused",
+    [
+        pytest.param("x" * (ANCHOR_TEXT_MAX + 1), id="one_over_the_limit"),
+        pytest.param(" \n\t ", id="whitespace_only"),
+        pytest.param(7, id="not_a_string"),
+    ],
+)
+def test_bounded_text_refuses_what_cannot_anchor(refused: object) -> None:
+    """Each of the three ways a value fails to be usable text drops it on its own.
+
+    A number is not text, a blank quote anchors to nothing, and a value past the
+    ceiling would let a vault answer with an unbounded string -- so all three are
+    refused rather than repaired, and none of them may be salvaged by another.
+    """
+    assert _bounded_text(refused, ANCHOR_TEXT_MAX) is None
 
 
 async def _reflected_notes(
