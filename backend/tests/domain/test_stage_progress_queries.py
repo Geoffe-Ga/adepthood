@@ -28,7 +28,7 @@ from sqlmodel import SQLModel
 from domain.stage_progress import compute_stage_progress, get_stage_habit_history
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
-from models.goal import Goal
+from models.goal import Goal, GoalTier
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.practice import Practice
@@ -41,6 +41,10 @@ _MAX_QUERIES_FOR_HABIT_HISTORY = 2
 
 # Constants used by the seeded-history assertions, named so the assertions are
 # self-documenting and ruff's PLR2004 stays satisfied.
+# The real tiers the seed cycles through; goal.tier is CHECK-constrained
+# to exactly these, so a placeholder label would be an unstorable row.
+_SEED_TIERS = tuple(t.value for t in GoalTier)
+
 _HABITS_SEEDED = 5
 _GOALS_PER_HABIT = 3
 _COMPLETIONS_PER_GOAL = 4
@@ -130,15 +134,19 @@ async def _seed_habits_with_goals(
     goals = [
         Goal(
             habit_id=h.id,
-            title=f"Goal {tier}",
-            tier=tier,
+            title=f"Goal {n}",
+            # The seed needs `goals_per_habit` *distinct goals*, not distinct
+            # tiers, so it cycles the real ones rather than inventing labels.
+            # `goal.tier` is CHECK-constrained to the GoalTier members, so an
+            # invented value is a row the database would never hold.
+            tier=_SEED_TIERS[n % len(_SEED_TIERS)],
             target=10,
             target_unit="reps",
             frequency=1,
             frequency_unit="per_day",
         )
         for h in habits
-        for tier in [f"tier-{n}" for n in range(goals_per_habit)]
+        for n in range(goals_per_habit)
     ]
     session.add_all(goals)
     await session.commit()
@@ -227,7 +235,9 @@ async def test_habit_history_marks_unachieved_goals_false(
 
     assert len(result) == 1
     assert result[0].total_completions == 0
-    assert result[0].goals_achieved == {"tier-0": False, "tier-1": False}
+    # Keyed by tier, and the seed cycles the real GoalTier members -- so two
+    # goals per habit are the first two of those, not invented labels.
+    assert result[0].goals_achieved == dict.fromkeys(_SEED_TIERS[:2], False)
 
 
 @pytest.mark.asyncio
@@ -328,7 +338,7 @@ async def _seed_habits(
         goal = Goal(
             habit_id=h.id,
             title="g",
-            tier="t",
+            tier="clear",
             target=10,
             target_unit="reps",
             frequency=1,
