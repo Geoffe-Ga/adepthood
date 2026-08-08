@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from dependencies.creek_vault import get_creek_vault_client
 from domain.care import build_care_payload
 from domain.creek_vault import (
     CONTRACT_VERSION,
@@ -45,7 +46,6 @@ from scripts.creek_contract_drift import BUNDLE_ROOT
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.creek_vault_client import HttpCreekVaultClient
-from services.creek_vault_write import get_creek_vault_client
 from services.usage import get_monthly_cap
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret

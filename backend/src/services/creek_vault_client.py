@@ -43,7 +43,10 @@ guessing a transport would send vault traffic somewhere the operator did not
 choose -- but the retired ``mcp`` selector degrades to the local fallback with a
 warning rather than raising, because this factory runs per request and a raise
 there would cost the writer their entry, while an unrecognized selector still
-raises, having no knowable intent to honour.
+raises, having no knowable intent to honour. It answers that question and no
+other: *who* may hold a configured client is settled one layer up, in
+:mod:`dependencies.creek_vault`, because a vault reached under a single
+deployment-wide identity is one shared corpus rather than any user's.
 
 Transport security: the configured transport refuses a plaintext ``http://`` URL
 to any non-loopback host, because every request carries the
@@ -1658,19 +1661,37 @@ class LocalFallbackCreekVaultClient:
     them. Unused parameters are underscore-prefixed to match the protocol
     positionally without pretending to consume them.
 
-    Every capability records :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED`
-    under its own name before answering. It is not a fault -- it is a deployment
-    exercising its choice not to have a vault, which is why it is the one outcome
-    logged at DEBUG -- but it is still worth counting per capability, because a
-    single unlabelled tally would say a deployment has no vault without saying
-    what it kept asking one for. :meth:`is_available` and :meth:`supports` record
-    nothing: they are cache reads rather than attempts, and counting them would
-    inflate the tallies with questions no vault was ever asked.
+    Every capability records an outcome under its own name before answering,
+    defaulting to :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED`. That is
+    not a fault -- it is a deployment exercising its choice not to have a vault,
+    which is why it is one of the outcomes logged at DEBUG -- but it is still
+    worth counting per capability, because a single unlabelled tally would say a
+    deployment has no vault without saying what it kept asking one for.
+    :meth:`is_available` and :meth:`supports` record nothing: they are cache
+    reads rather than attempts, and counting them would inflate the tallies with
+    questions no vault was ever asked.
+
+    The outcome is a constructor argument because "no vault here" is true of more
+    than one situation, and they are not the same news. A deployment with a vault
+    bound to one user serves this same client to everybody else
+    (:mod:`dependencies.creek_vault` passes
+    :attr:`~VaultTelemetryOutcome.FALLBACK_NOT_OWNER` for them), and counting
+    those under the unconfigured name would report a choice nobody made. The
+    behaviour is identical either way -- there is nothing behind this client in
+    any case -- so what varies is only the name the degrade is counted under.
+    The default keeps every existing construction, and every counter read off
+    one, meaning exactly what it did before.
     """
+
+    def __init__(
+        self, outcome: VaultTelemetryOutcome = VaultTelemetryOutcome.FALLBACK_UNCONFIGURED
+    ) -> None:
+        """Bind the outcome every capability of this client will be counted under."""
+        self._outcome = outcome
 
     async def handshake(self) -> HandshakeResult:
         """Report no usable vault."""
-        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.HANDSHAKE)
+        record_vault_outcome(self._outcome, CreekCapability.HANDSHAKE)
         return HandshakeResult.unavailable()
 
     def is_available(self) -> bool:
@@ -1683,27 +1704,38 @@ class LocalFallbackCreekVaultClient:
 
     async def ingest(self, _request: VaultIngestRequest, /) -> VaultIngestResult:
         """No-op ingest: report not stored without raising (Postgres is authoritative)."""
-        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.JOURNAL)
+        record_vault_outcome(self._outcome, CreekCapability.JOURNAL)
         return VaultIngestResult(stored=False, vault_ref=None)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""
-        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.CLASSIFY)
+        record_vault_outcome(self._outcome, CreekCapability.CLASSIFY)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.CLASSIFY))
 
     async def reflect(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Raise: reflection has no local vault to serve it."""
-        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.REFLECT)
+        record_vault_outcome(self._outcome, CreekCapability.REFLECT)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
 
     async def wheel(self) -> VaultWheelBalance:
         """Raise: a vault wheel read has no local vault to serve it."""
-        record_vault_outcome(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED, CreekCapability.WHEEL)
+        record_vault_outcome(self._outcome, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 
 
 def build_creek_vault_client() -> CreekVaultClient:
     """Return the vault client appropriate for the current configuration.
+
+    **Tenancy-unaware by construction, and reached only through
+    :func:`dependencies.creek_vault.get_creek_vault_client`.** This factory
+    answers one question -- what transport, if any, this deployment's
+    configuration describes -- and knows nothing about who is asking. It cannot:
+    adepthood presents a single deployment-wide identity to a vault, and the
+    contract carries no tenant field, so a client built here is a handle on one
+    shared corpus rather than on any user's. Which user may hold that handle is
+    the dependency's decision, and wiring this function into a request path
+    directly would hand the same corpus to everybody -- so if a route needs a
+    vault client, it depends on the dependency, never on this.
 
     When ``CREEK_VAULT_URL`` is unset or empty, no vault is configured and a
     :class:`LocalFallbackCreekVaultClient` is returned so the app runs fully on

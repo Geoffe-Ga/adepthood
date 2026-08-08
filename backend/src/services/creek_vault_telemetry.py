@@ -79,7 +79,7 @@ VAULT_OUTCOME_EVENT = "creek vault outcome"
 class VaultTelemetryOutcome(enum.StrEnum):
     """How one attempt at one vault capability ended.
 
-    Eleven members rather than "worked" and "did not", because the failures have
+    Twelve members rather than "worked" and "did not", because the failures have
     different owners and different remedies: ``UNAVAILABLE`` is infrastructure to
     restore, ``TIMEOUT`` is a vault that is up and too slow, ``AUTH_FAILED`` is a
     credential to rotate, ``INCOMPATIBLE_VERSION`` is two pins to align,
@@ -92,6 +92,18 @@ class VaultTelemetryOutcome(enum.StrEnum):
     person in acute distress, which is a successful outcome that happens to
     arrive as an exception.
 
+    ``FALLBACK_NOT_OWNER`` is the twelfth, and it sits next to
+    ``FALLBACK_UNCONFIGURED`` because it is the other half of the same sentence
+    and emphatically not the same fact. This deployment *has* a vault; it is
+    being asked for by a user it does not belong to. Adepthood reaches a vault
+    with one deployment-wide identity, so one vault is one corpus, and a corpus
+    stays one person's only if exactly one person is served from it -- everyone
+    else is answered locally, and lands here. Folding the two together would
+    report "the operator chose no vault" for a deployment that chose one, hiding
+    both the operational question (is the binding pointed at the right person?)
+    and the ordinary steady state (most users of a bound vault are not its
+    owner), which have nothing to do with each other.
+
     Values are the wire strings a dashboard counts by, so they are this module's
     contract and must not be reworded casually; the member order is pinned by a
     test for the same reason.
@@ -99,6 +111,7 @@ class VaultTelemetryOutcome(enum.StrEnum):
 
     SUCCESS = "vault_success"
     FALLBACK_UNCONFIGURED = "vault_fallback_unconfigured"
+    FALLBACK_NOT_OWNER = "vault_fallback_not_owner"
     UNAVAILABLE = "vault_unavailable"
     TIMEOUT = "vault_timeout"
     AUTH_FAILED = "vault_auth_failed"
@@ -160,6 +173,14 @@ _OUTCOME_BY_ERROR_TYPE: tuple[tuple[type[BaseException], VaultTelemetryOutcome],
 # news worth one INFO line. Everything else is a fault somebody may need to act
 # on.
 #
+# ``FALLBACK_NOT_OWNER`` joins the unconfigured path at DEBUG on that same
+# reasoning: a user who is not the bound owner being served locally is the
+# design working, once per request of theirs forever, so warning on it would bury
+# the real faults under the loudest steady state the seam has. The one genuine
+# misconfiguration in this neighbourhood -- a vault configured with no readable
+# owner, and therefore inert for everybody -- is not this event: it is warned
+# about once, where it is discovered, by :mod:`dependencies.creek_vault`.
+#
 # ``ESCALATED`` is the one entry here that is tiered for privacy rather than for
 # noise, and it is a deliberate product decision rather than an oversight. Its
 # fields are as content-free as every other outcome's -- but *that this line was
@@ -178,6 +199,7 @@ _OUTCOME_BY_ERROR_TYPE: tuple[tuple[type[BaseException], VaultTelemetryOutcome],
 # with nobody's identity anywhere in them.
 _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.FALLBACK_UNCONFIGURED: logging.DEBUG,
+    VaultTelemetryOutcome.FALLBACK_NOT_OWNER: logging.DEBUG,
     VaultTelemetryOutcome.SUCCESS: logging.INFO,
     VaultTelemetryOutcome.ESCALATED: logging.DEBUG,
 }

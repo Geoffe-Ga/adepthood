@@ -18,6 +18,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -37,7 +38,6 @@ from domain.creek_vault import (
 from main import app
 from models.journal_entry import JournalEntry
 from routers.journal import _record_vault_outcome
-from services.creek_vault_write import get_creek_vault_client
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 

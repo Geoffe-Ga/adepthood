@@ -1,6 +1,7 @@
 """Drift guards between the Creek Vault contract in code and the docs that pin it.
 
-Two kinds of restatement rot silently without a guard, and both are covered here.
+Three kinds of restatement rot silently without a guard, and all three are
+covered here.
 
 *Version restatements.* ``CONTRACT_VERSION`` in ``domain.creek_vault`` is the
 single source of truth for the version adepthood advertises at handshake.  The
@@ -13,10 +14,18 @@ pointer to the ADR.
 *Ownership pointers.* The intimate-transit sub-decisions live in the boundary
 ADR's Decision 6; the contract doc explicitly disclaims owning them.  A docstring
 that cites the contract doc as the source of those decisions therefore points at
-a document that denies holding the rule.  The remaining meta-tests pin that
+a document that denies holding the rule.  The next meta-tests pin that
 ownership from both ends: the docs must keep saying where the rule lives, and no
 ``backend/src`` module docstring may cite the contract doc as a decision's owner
 or discuss intimate transit without naming the ADR that owns it.
+
+*Tenancy restatements.* The vault's single-tenant binding is the same shape of
+rule one document further on: Decision 7 of the same ADR owns it, the contract
+doc disclaims it exactly as it disclaims intimate transit, and the operator meets
+it as one environment variable.  That variable is the whole rule as far as a
+deployment is concerned, so an ``.env.example`` that does not mention it is a
+deployment configured to hand a vault to nobody without saying why -- which makes
+documenting it a guard rather than a courtesy.
 """
 
 from __future__ import annotations
@@ -31,6 +40,7 @@ from domain.creek_vault import CONTRACT_VERSION
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADR_DOC = _REPO_ROOT / "docs" / "adr" / "0004-creek-vault-http-application-boundary.md"
 _CONTRACT_DOC = _REPO_ROOT / "docs" / "creek-vault-mcp-contract.md"
+_ENV_EXAMPLE = _REPO_ROOT / "backend" / ".env.example"
 _BACKEND_SRC = _REPO_ROOT / "backend" / "src"
 
 _STRICT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -78,6 +88,24 @@ _CONTRACT_DOC_AS_DECISION_OWNER = re.compile(
 # A module docstring mentioning both of these is discussing the intimate-transit
 # rule and must therefore name the ADR that records it.
 _INTIMATE_TRANSIT_MARKERS = ("intimate", "transit")
+
+# The sentence the contract doc uses to hand the vault-tenancy rule to the ADR,
+# mirroring the intimate-transit disclaimer above and pinned for the same reason:
+# a reworded hand-off leaves the docstrings that cite the ADR resting on a
+# document that no longer says where the rule lives.
+_CONTRACT_DOC_TENANCY_DISCLAIMER = "Decision 7, not in this document"
+
+# The ADR section that owns the single-tenant binding, and its four sub-decisions.
+_TENANCY_DECISION_HEADING = "## Decision 7"
+_TENANCY_SUB_DECISIONS = (
+    "**(a) Identity scope",
+    "**(b) Owner binding",
+    "**(c) Fail-closed default",
+    "**(d) Per-user end-state",
+)
+
+# The one environment variable the tenancy rule reaches an operator through.
+_VAULT_OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
 
 
 def _module_docstrings() -> Iterator[tuple[Path, str]]:
@@ -155,6 +183,37 @@ def test_boundary_adr_owns_the_intimate_transit_sub_decisions() -> None:
     )
     missing = [marker for marker in _INTIMATE_SUB_DECISIONS if marker not in text]
     assert not missing, f"ADR Decision 6 is missing sub-decisions: {missing}."
+
+
+def test_contract_doc_disclaims_the_vault_tenancy_rule() -> None:
+    """The contract doc still hands the single-tenant binding to the ADR by name."""
+    assert _CONTRACT_DOC_TENANCY_DISCLAIMER in _CONTRACT_DOC.read_text(encoding="utf-8"), (
+        f"Contract doc must keep saying the vault-tenancy rule lives in the ADR "
+        f"({_CONTRACT_DOC_TENANCY_DISCLAIMER!r}); source docstrings cite the ADR on that basis."
+    )
+
+
+def test_boundary_adr_owns_the_vault_tenancy_sub_decisions() -> None:
+    """ADR 0004's Decision 7 still carries all four single-tenant sub-decisions."""
+    text = _ADR_DOC.read_text(encoding="utf-8")
+    assert _TENANCY_DECISION_HEADING in text, (
+        f"ADR must keep the {_TENANCY_DECISION_HEADING!r} heading that docstrings cite."
+    )
+    missing = [marker for marker in _TENANCY_SUB_DECISIONS if marker not in text]
+    assert not missing, f"ADR Decision 7 is missing sub-decisions: {missing}."
+
+
+def test_env_example_documents_the_vault_owner_variable() -> None:
+    """The env template names the variable a vault is bound to one user by.
+
+    Undocumented, the fail-closed default reads as a broken vault: replication
+    silently stops for everyone and the only clue is one WARNING an operator has
+    no reason to expect.
+    """
+    assert _VAULT_OWNER_ENV_VAR in _ENV_EXAMPLE.read_text(encoding="utf-8"), (
+        f"{_ENV_EXAMPLE} must document {_VAULT_OWNER_ENV_VAR}: without it, a configured "
+        f"vault belongs to nobody and nothing in the template says why."
+    )
 
 
 def test_no_backend_source_cites_the_contract_doc_as_a_decision_owner() -> None:

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -41,7 +42,6 @@ from services.creek_vault_write import (
     VaultDegradeReason,
     VaultWriteOutcome,
     VaultWriteStatus,
-    get_creek_vault_client,
     store_and_classify,
 )
 
@@ -49,6 +49,10 @@ _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _BODY = "A quiet entry about the week's practice."
 
 _ENTRY_ID = 101
+
+# Any authenticated caller: the paths exercised here have no vault to belong to
+# anyone, so which user asks makes no difference to what they are handed.
+_ANY_USER_ID = 1
 
 # A body and an error text distinctive enough to spot in any log record. The
 # degrade log must be a static message with content-free structured fields, so
@@ -345,9 +349,14 @@ async def test_local_fallback_client_returns_unavailable_for_non_intimate_entry(
 def test_get_creek_vault_client_returns_local_fallback_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With no CREEK_VAULT_URL configured, the FastAPI provider yields the local fallback."""
+    """With no CREEK_VAULT_URL configured, the FastAPI provider yields the local fallback.
+
+    The provider now takes the caller's user id, since a configured vault belongs
+    to exactly one user; with no vault configured there is nobody it could belong
+    to, so the id chosen here is immaterial.
+    """
     monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
-    client = get_creek_vault_client()
+    client = get_creek_vault_client(_ANY_USER_ID)
     assert isinstance(client, LocalFallbackCreekVaultClient)
 
 

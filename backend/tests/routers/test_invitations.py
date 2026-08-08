@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from dependencies.creek_vault import get_creek_vault_client
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
@@ -29,7 +30,6 @@ from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.invitation_signal import InvitationSignal
 from models.user import User
-from services.creek_vault_write import get_creek_vault_client
 
 _LIST_URL = "/invitations"
 _SUSTAINED_STREAK = 21  # mirrors SUSTAINED_HABIT_STREAK_DAYS in the domain

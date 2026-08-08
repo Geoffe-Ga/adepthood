@@ -10,7 +10,6 @@ import pytest
 
 from domain import creek_vault
 from domain.creek_vault import (
-    CONSUMER_ID,
     CONTRACT_VERSION,
     TIER_CEILING_BY_CLASSIFICATION,
     CreekCapability,
@@ -361,8 +360,3 @@ def test_contract_version_constant() -> None:
     It tracks Creek's published contract constant, and the docs restate it.
     """
     assert CONTRACT_VERSION == "0.2.0"
-
-
-def test_consumer_id_constant() -> None:
-    """CONSUMER_ID matches the identifier adepthood presents at handshake."""
-    assert CONSUMER_ID == "CREEK_MCP_CONSUMER"

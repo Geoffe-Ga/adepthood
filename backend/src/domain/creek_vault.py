@@ -31,6 +31,7 @@ published contract, which that document points at, owns the wire shapes.
 from __future__ import annotations
 
 import enum
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,10 +41,6 @@ from typing import Protocol
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
 CONTRACT_VERSION = "0.2.0"
-
-# The identifier adepthood presents to Creek Vault so the vault's router can
-# scope capabilities and attestation to this consumer.
-CONSUMER_ID = "CREEK_MCP_CONSUMER"
 
 
 class CreekCapability(enum.StrEnum):
@@ -104,6 +101,69 @@ def tier_ceiling_for(classification: str) -> VaultTierCeiling:
         return TIER_CEILING_BY_CLASSIFICATION[classification]
     except KeyError:
         raise ValueError(f"unknown journal classification: {classification!r}") from None
+
+
+# The smallest value that can name a person. User ids are assigned from a
+# positive sequence, so anything at or below this floor names nobody -- which is
+# what lets :func:`resolve_vault_owner` refuse ``0`` without special-casing it.
+_LOWEST_USER_ID = 1
+
+# The only spelling of a user id this binding accepts: ASCII digits, nothing
+# else. ``int`` is considerably more generous -- it reads ``1_0`` as ten, ``+7``
+# as seven, and every Unicode decimal digit as its numeric value, so an
+# ARABIC-INDIC or FULLWIDTH seven is just as much a seven to it. None of that is
+# wrong arithmetic; it is the wrong *contract* for a value an operator reads back
+# to confirm. A binding whose rendered text and parsed meaning can disagree is
+# one nobody can audit by looking at it, and this is the setting that decides
+# whose journal a shared corpus accumulates. Narrowing here only ever rejects
+# spellings no operator meant to type. (The confusables themselves are named
+# rather than shown: the lint that forbids them in source is the same instinct
+# this pattern encodes.)
+_ASCII_USER_ID = re.compile(r"\A[0-9]+\Z")
+
+
+def resolve_vault_owner(raw: str | None) -> int | None:
+    """Read the single adepthood user a configured vault belongs to, or nobody.
+
+    Adepthood reaches a vault with one deployment-wide identity, so everything it
+    replicates lands in one corpus and every answer the vault grounds is drawn
+    from that same corpus. The contract carries no tenant of any kind, so the
+    only way that corpus can stay one person's is for the deployment to name the
+    person: this parses that binding, and ``None`` means the vault is nobody's
+    and therefore no one's to write into or read from.
+
+    It fails closed for the same reason :func:`tier_ceiling_for` does, with a
+    higher price for guessing. An unparseable ceiling would widen one entry's
+    tier; an unparseable owner would decide *whose* journal a shared corpus
+    accumulates, so anything that is not plainly a user id resolves to nobody and
+    the whole deployment degrades to its local pipeline.
+
+    ``0`` is refused explicitly rather than by accident. It parses, so a check
+    that only rejected unreadable text would admit it -- and ``0`` is the
+    commonest way an unset numeric variable is spelled, by a default in a
+    template, by an integer cast of an empty string, by an orchestrator filling a
+    blank. Ids are assigned from a positive sequence (:data:`_LOWEST_USER_ID`),
+    so no user is ever ``0`` and admitting it could only ever bind a vault to a
+    person who does not exist -- or, worse, to whoever a future sequence hands
+    that id to. Negatives are refused on the same reasoning.
+
+    The digits themselves are matched before they are converted
+    (:data:`_ASCII_USER_ID`), rather than left to ``int``, whose generosity is
+    the wrong contract here: it would silently read ``1_0`` as ten and any
+    Unicode decimal digit as its value, so a binding could parse as a user
+    nobody would guess from reading it. Surrounding whitespace is still
+    forgiven, since it survives a copy-paste and changes nothing about which id
+    is named.
+    """
+    if raw is None:
+        return None
+    candidate = raw.strip()
+    if not _ASCII_USER_ID.match(candidate):
+        return None
+    owner = int(candidate)
+    if owner < _LOWEST_USER_ID:
+        return None
+    return owner
 
 
 class VaultErrorCode(enum.StrEnum):
