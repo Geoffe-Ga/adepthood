@@ -18,6 +18,8 @@ scripts/
 │   ├── typecheck.sh   # mypy
 │   ├── test.sh        # pytest, xdist-distributed (--unit / --integration / --e2e / --all;
 │   │                  #   --coverage to report+gate, --coverage-data to collect only)
+│   │                  #   Positional paths run just those, unsharded; one whole-suite
+│   │                  #   run at a time per tree (exit 3 if another is in flight)
 │   ├── coverage.sh    # pytest with coverage (≥90%); --report-only reports on existing data
 │   ├── security.sh    # bandit + pip-audit
 │   ├── complexity.sh  # radon + xenon; gates at xenon A grade and MI rank ≥ B
@@ -30,6 +32,9 @@ scripts/
 │   ├── typecheck.sh   # tsc --noEmit
 │   ├── test.sh        # jest
 │   └── pr-status.sh
+├── quality/           # Cross-cutting gate primitives
+│   └── verified.sh    # Gate receipts: fingerprint / record / check that a green
+│                      #   run still describes this tree (only exit 0 licenses reuse)
 ├── dev-setup.sh       # Pre-existing: idempotent dev env bootstrap
 └── pre-deploy-check.sh # Pre-existing: deployment readiness check
 ```

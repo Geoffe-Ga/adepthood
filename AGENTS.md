@@ -28,7 +28,10 @@ Agents working on this project must abide by the following operating principles:
   - Every bug fix must include a failing test that reproduces the bug before it is resolved.
 
 2. **CI is Your Feedback Loop**
-  - Always run `pre-commit run --all-files` before attempting a commit
+  - Run the relevant `./scripts/<side>/check-all.sh` before opening a PR; reserve
+    a full `pre-commit run --all-files` sweep for a wide rename, a suspected
+    cross-file type error, or a hook-config change — `git commit` already
+    re-runs the hooks on your staged diff
 
   - GitHub Actions is the source of truth for project health.
 
