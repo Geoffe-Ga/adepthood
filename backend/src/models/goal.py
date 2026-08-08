@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -19,6 +19,18 @@ class GoalTier(StrEnum):
     STRETCH = "stretch"
 
 
+# The name migration ``c3d4e5f6a7b8`` creates the tier CHECK constraint under.
+# The model must declare it under the same name: a differently-named constraint
+# with identical semantics still reads to Alembic's autogenerate as one dropped
+# and one added.
+TIER_CONSTRAINT_NAME = "ck_goal_tier_valid"
+
+# Rendered from :class:`GoalTier` rather than restated, so adding a tier to the
+# enum cannot leave the constraint silently bounding the old set. The rendered
+# text matches the migration's literal ``tier IN ('low', 'clear', 'stretch')``.
+_TIER_CONSTRAINT_SQL = "tier IN ({})".format(", ".join(f"'{tier.value}'" for tier in GoalTier))
+
+
 class Goal(SQLModel, table=True):
     """Represents a single measurable target for a habit.
 
@@ -34,7 +46,17 @@ class Goal(SQLModel, table=True):
     system (e.g. low, clear, stretch), they should be grouped using
     goal_group_id. This allows the system to evaluate all tiers together based on
     the same logged completions.
+
+    ``tier`` is bounded to the :class:`GoalTier` members by a CHECK constraint
+    declared in ``__table_args__``. The constraint has existed in Postgres since
+    migration ``c3d4e5f6a7b8`` (BUG-GOAL-006); declaring it here is what makes
+    the model an accurate account of the table, which is the thing Alembic's
+    autogenerate compares against. It also means the SQLite test fixture builds
+    the constraint too, so a bad tier fails in tests rather than only in
+    production.
     """
+
+    __table_args__ = (CheckConstraint(_TIER_CONSTRAINT_SQL, name=TIER_CONSTRAINT_NAME),)
 
     id: int | None = Field(default=None, primary_key=True)
     habit_id: int = Field(

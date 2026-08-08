@@ -1,4 +1,4 @@
-graphifyy==0.9.32
+graphifyy==0.9.33
 # Anthropic SDK for the `--backend claude` semantic pass (graph-semantic.yml).
 # graphifyy treats it as an optional extra, so it must be pinned explicitly —
 # without it every semantic chunk fails with "the 'anthropic' package is

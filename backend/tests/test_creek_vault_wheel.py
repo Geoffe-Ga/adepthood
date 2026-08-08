@@ -285,7 +285,7 @@ async def _seed_habit_with_completion(
     goal = Goal(
         habit_id=habit.id,
         title="g",
-        tier="t",
+        tier="clear",
         target=1,
         target_unit="rep",
         frequency=1,
