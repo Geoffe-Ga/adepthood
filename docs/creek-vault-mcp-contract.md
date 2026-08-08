@@ -119,10 +119,11 @@ adepthood is willing to *accept* on the way back, and `_admissible_wheel`
 refuses a response that echoes anything wider
 (`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
 here, on either reading: only aggregate per-Frequency counts and
-shares cross this seam — never fragment content — intimate content
-never reaches the vault from adepthood at all (see "Intimate-tier
-content: pointer only" below), and creek independently caps a network
-consumer below intimate regardless of what adepthood would ask for. The
+shares cross this seam — never fragment content — no intimate *journal
+entry* reaches the vault from adepthood at all (see "Intimate-tier
+content: pointer only" below for the per-surface rule), and creek
+independently caps a network consumer below intimate regardless of what
+adepthood would ask for. The
 server instead applies its own published `open` default to what it
 *counts*, and `open` ranks unclassified content below `personal`: a
 not-yet-classified fragment is silently excluded from the count, so a
@@ -311,8 +312,18 @@ capability is still used for the others it supports:
   Per-fragment classification tags are read from the response when the
   vault supplies them and are otherwise empty, which is the expected
   answer today rather than a failure — adepthood deliberately builds no
-  second, local classifier. Intimate-tier documents are never sent at
-  all; see "Intimate-tier content: pointer only" below.
+  second, local classifier.
+
+  **Intimate documents are forwarded, unlike intimate journal entries.**
+  An `intimate` upload is sent at the `INTIMATE` tier ceiling rather than
+  withheld, per the 2026-08-08 amendment to ADR 0004's Decision 6: the
+  vault is the user's own corpus on operator-held infrastructure, and
+  this path calls no cloud LLM. The vault's router still enforces the
+  ceiling it is handed, so a vault declining to store at `INTIMATE`
+  refuses the write and adepthood degrades honestly rather than
+  downgrading the tier to force a success. Note the asymmetry with
+  JOURNAL, which remains skip-only — see the amendment for why that is
+  deliberate and tracked in issue #2152.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -381,12 +392,26 @@ capability is still used for the others it supports:
 The rule governing whether, and how, intimate content may ever cross
 the adepthood-to-vault seam is recorded in
 [ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
-Decision 6, not in this document. That rule is **entirely unshipped**.
-Today's actual behavior is the skip-only mode from
-[ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
-classification short-circuits before any vault call at all, not even a
-handshake. No intimate journal content is transmitted to any vault
-today, in any form.
+Decision 6, not in this document. **It differs by surface**, and the
+split is deliberate:
+
+- **Journal entries — skip-only, unchanged.** The ciphertext/attested
+  transit topology in Decision 6 (a)–(d) is **entirely unshipped**, so
+  today's behavior remains the skip-only mode from
+  [ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
+  classification short-circuits before any vault call at all, not even
+  a handshake. No intimate journal *entry* is transmitted to any vault
+  today, in any form.
+- **Document uploads — vault-only.** Per the 2026-08-08 amendment to
+  Decision 6, an `intimate` document sent to `POST /journal/upload`
+  **is** forwarded to the vault, at the `INTIMATE` tier ceiling. The
+  amendment's reasoning is that the vault is the user's own corpus on
+  operator-held infrastructure rather than a third-party service, and
+  that this path calls no cloud LLM.
+
+The asymmetry between the two is known and tracked in issue #2152;
+read Decision 6's amendment before treating either half as the general
+rule.
 
 ## Vault tenancy: pointer only
 

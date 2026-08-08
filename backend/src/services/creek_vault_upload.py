@@ -28,16 +28,26 @@ user document bytes outside the vault is a privacy decision nobody has made. A
 failed upload is reported honestly to the person who made it, and they can try
 again.
 
-**Intimate documents are deliberately not sent.** A document classified
-``intimate`` short-circuits to :attr:`VaultUploadStatus.SKIPPED_INTIMATE` before
-any vault call -- not even a handshake -- exactly as an intimate journal entry
-does. Decision 6 of ``docs/adr/0004-creek-vault-http-application-boundary.md``
-records that every intimate-transit sub-decision (ciphertext under a user-held
-key, writes only against an attested enclave) is *entirely unshipped*, so
-today's ratified behavior is skip-only. Forwarding an
-intimate document over this plaintext surface because it happens to be a vault
-rather than a cloud LLM would be exactly the widening that decision refuses, so
-the honest answer is to withhold it and say so.
+**Intimate documents are forwarded to the vault, and to nothing else.** A
+document classified ``intimate`` is uploaded at the ``INTIMATE`` tier ceiling
+like any other, because the vault is the user's *own* private corpus rather than
+a third-party service: the deployment points at one operator-held
+``CREEK_VAULT_URL``, and reaching it is not the cloud disclosure the privacy
+floor exists to prevent. What the floor still forbids -- an intimate document
+reaching a cloud LLM -- this path never does, since it calls no LLM at all.
+
+This was ratified as an amendment to Decision 6 of
+``docs/adr/0004-creek-vault-http-application-boundary.md``; read that decision
+for the transit topology, and the amendment for why the upload surface is
+treated as vault-only rather than skip-only. Note the asymmetry it leaves
+behind: :mod:`services.creek_vault_write` still withholds intimate *journal
+entries*, which is deliberately untouched here and tracked for reconciliation
+in issue #2152 -- widening a shipped write path is not something to do as a side
+effect of adding a new one.
+
+The vault's own router still enforces the ceiling it is handed, so a vault that
+declines to store at ``INTIMATE`` refuses the write and this path degrades
+honestly rather than silently downgrading the tier to make the call succeed.
 """
 
 from __future__ import annotations
@@ -60,7 +70,6 @@ from domain.creek_vault import (
     VaultUploadResult,
     tier_ceiling_for,
 )
-from models.journal_entry import JournalClassification
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,16 +91,15 @@ _IDENTITY_SEPARATOR = "\x00"
 class VaultUploadStatus(enum.StrEnum):
     """The terminal outcome of a :func:`store_upload` attempt.
 
-    Exactly one is always returned, and the four non-accepted values stay apart
-    because each sends the user somewhere different: ``SKIPPED_INTIMATE`` is a
-    promise adepthood is keeping, ``VAULT_UNAVAILABLE`` is "connect or fix your
-    vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot take files yet",
-    and ``DEGRADED`` is "it broke, try again". Values are the wire strings the
-    API answers with, so they are contract and must not be reworded casually.
+    Exactly one is always returned, and the three non-accepted values stay apart
+    because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
+    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot
+    take files yet", and ``DEGRADED`` is "it broke, try again". Values are the
+    wire strings the API answers with, so they are contract and must not be
+    reworded casually.
     """
 
     ACCEPTED = "accepted"
-    SKIPPED_INTIMATE = "skipped_intimate"
     VAULT_UNAVAILABLE = "vault_unavailable"
     CAPABILITY_UNSUPPORTED = "capability_unsupported"
     DEGRADED = "degraded"
@@ -164,11 +172,8 @@ class VaultUploadOutcome:
     tags: tuple[str, ...]
 
 
-# The four non-accepted outcomes are value-identical every time, so they are
+# The three non-accepted outcomes are value-identical every time, so they are
 # interned as module constants rather than rebuilt on each path.
-_SKIPPED_INTIMATE_OUTCOME = VaultUploadOutcome(
-    status=VaultUploadStatus.SKIPPED_INTIMATE, vault_ref=None, tags=()
-)
 _UNAVAILABLE_OUTCOME = VaultUploadOutcome(
     status=VaultUploadStatus.VAULT_UNAVAILABLE, vault_ref=None, tags=()
 )
@@ -304,30 +309,27 @@ async def store_upload(
 
     The order of checks is load-bearing:
 
-    1. An ``intimate`` classification short-circuits to
-       :attr:`VaultUploadStatus.SKIPPED_INTIMATE` *before touching the client* --
-       see the module docstring for why intimate documents are withheld rather
-       than forwarded.
-    2. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier, raising
+    1. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier, raising
        ``ValueError`` (fail closed) for an unknown classification -- this
-       propagates, since an unrecognized tier must never widen to OPEN.
-    3. A handshake probes the vault. An unreachable one degrades to
+       propagates, since an unrecognized tier must never widen to OPEN. Every
+       tier is forwarded, ``intimate`` included; see the module docstring for
+       why the vault is not the disclosure the privacy floor guards against.
+    2. A handshake probes the vault. An unreachable one degrades to
        :attr:`VaultUploadStatus.VAULT_UNAVAILABLE`; a reachable one that never
        advertised ``creek.upload`` degrades to
        :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`. The two are separated
        because they are separate problems with separate fixes.
-    4. The upload runs; a transport failure or a ``stored=False`` result degrades
+    3. The upload runs; a transport failure or a ``stored=False`` result degrades
        to :attr:`VaultUploadStatus.DEGRADED`.
-    5. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
+    4. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
        with the fragment ref and whatever tags the vault's own pipeline assigned.
 
     Both the document's tier and the write ceiling are set to the resolved tier,
-    so the vault stores at exactly the depth the uploader chose. Never raises
+    so the vault stores at exactly the depth the uploader chose -- never widened
+    so a call can succeed, and never narrowed. Never raises
     :class:`~domain.creek_vault.CreekVaultError`: the router answers the user
     from the status alone.
     """
-    if document.classification == JournalClassification.INTIMATE:
-        return _SKIPPED_INTIMATE_OUTCOME
     tier_ceiling = tier_ceiling_for(document.classification)
     await client.handshake()
     if not client.is_available():

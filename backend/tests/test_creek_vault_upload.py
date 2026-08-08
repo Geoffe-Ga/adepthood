@@ -368,30 +368,43 @@ class TestStoreUploadDegradation:
         assert outcome.vault_ref is None
 
 
-class TestStoreUploadIntimateFloor:
-    """An intimate document never crosses the seam, and is never rerouted anywhere.
+class TestStoreUploadIntimateTier:
+    """An intimate document goes to the vault, at the intimate tier, and nowhere else.
 
-    ADR 0004 Decision 6 records that every intimate-transit sub-decision is
-    entirely unshipped, so today's rule is skip-only: an intimate
-    classification short-circuits before any vault call at all, exactly as the
-    journal write path does.
+    The vault is the user's own corpus behind one operator-held
+    ``CREEK_VAULT_URL``, not a third-party service, so reaching it is not the
+    cloud disclosure the privacy floor guards against -- and this path calls no
+    LLM at all. Ratified as an amendment to Decision 6 of
+    ``docs/adr/0004-creek-vault-http-application-boundary.md``.
     """
 
     @pytest.mark.asyncio
-    async def test_intimate_short_circuits_before_any_vault_call(self) -> None:
-        """Not even a handshake: the intimate-transit channel does not exist yet."""
+    async def test_intimate_is_forwarded_to_the_vault(self) -> None:
+        """The document reaches the vault like any other classification."""
         client = RecordingUploadClient()
         outcome = await _store(client, classification="intimate")
-        assert outcome.status is VaultUploadStatus.SKIPPED_INTIMATE
-        assert client.upload_calls == []
-        assert client.handshake_calls == 0
+        assert outcome.status is VaultUploadStatus.ACCEPTED
+        assert len(client.upload_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_intimate_carries_no_vault_ref_or_tags(self) -> None:
-        """Nothing was stored, so there is no handle and no classification to hand back."""
-        outcome = await _store(RecordingUploadClient(), classification="intimate")
-        assert outcome.vault_ref is None
-        assert outcome.tags == ()
+    async def test_intimate_is_labelled_at_the_intimate_tier(self) -> None:
+        """Never widened so a call can succeed: the vault stores at the chosen depth."""
+        client = RecordingUploadClient()
+        await _store(client, classification="intimate")
+        assert client.upload_calls[0].tier is VaultTierCeiling.INTIMATE
+        assert client.upload_calls[0].tier_ceiling is VaultTierCeiling.INTIMATE
+
+    @pytest.mark.asyncio
+    async def test_a_vault_refusing_the_intimate_tier_degrades_honestly(self) -> None:
+        """A refused ceiling must not be retried at a lower one to force a success."""
+        client = RecordingUploadClient(
+            upload_error=CreekVaultContractError(
+                _SENTINEL_ERROR_TEXT, code=VaultErrorCode.PRIVACY_REFUSED
+            )
+        )
+        outcome = await _store(client, classification="intimate")
+        assert outcome.status is VaultUploadStatus.DEGRADED
+        assert len(client.upload_calls) == 1
 
     @pytest.mark.asyncio
     async def test_unknown_classification_fails_closed(self) -> None:

@@ -405,11 +405,6 @@ _UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         VaultUploadStatus.ACCEPTED: (
             "Your document is in your vault. It will show up in reflections from here on."
         ),
-        VaultUploadStatus.SKIPPED_INTIMATE: (
-            "Intimate documents stay on this device for now — the private channel that "
-            "would carry them to your vault isn't built yet, so this one wasn't sent "
-            "anywhere. Re-classify it as personal to upload it."
-        ),
         VaultUploadStatus.VAULT_UNAVAILABLE: (
             "Your vault didn't answer, so the document wasn't sent. Check that your vault "
             "is running and reachable, then upload it again."

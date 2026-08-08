@@ -334,32 +334,32 @@ class TestUploadDegradation:
         assert len(vault.upload_calls) <= 1
 
 
-class TestUploadIntimateFloor:
-    """An intimate document is withheld and said so, never quietly rerouted."""
+class TestUploadIntimateTier:
+    """An intimate document reaches the vault, at its own tier, and nothing else."""
 
     @pytest.mark.asyncio
-    async def test_intimate_is_withheld_from_the_vault(
+    async def test_intimate_is_forwarded_to_the_vault(
         self, async_client: AsyncClient, vault: ScriptedUploadClient
     ) -> None:
-        """ADR 0004 Decision 6: the intimate-transit channel is entirely unshipped."""
+        """The vault is the user's own corpus, not the cloud the privacy floor guards."""
         headers = await _signup(async_client, "uploader-intimate")
         response = await async_client.post(
             _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
         )
-        assert response.json()["status"] == VaultUploadStatus.SKIPPED_INTIMATE.value
-        assert vault.upload_calls == []
+        assert response.json()["status"] == VaultUploadStatus.ACCEPTED.value
+        assert vault.upload_calls[0].tier is VaultTierCeiling.INTIMATE
 
     @pytest.mark.parametrize("vault", [{"available": False}], indirect=True)
     @pytest.mark.asyncio
-    async def test_intimate_is_withheld_even_when_the_vault_is_unreachable(
+    async def test_intimate_is_not_rerouted_when_the_vault_is_unreachable(
         self, async_client: AsyncClient, vault: ScriptedUploadClient
     ) -> None:
-        """An unreachable vault must not become an excuse to route the document elsewhere."""
+        """An unreachable vault is an honest failure, never a reason to send it elsewhere."""
         headers = await _signup(async_client, "uploader-intimate-down")
         response = await async_client.post(
             _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
         )
-        assert response.json()["status"] == VaultUploadStatus.SKIPPED_INTIMATE.value
+        assert response.json()["status"] == VaultUploadStatus.VAULT_UNAVAILABLE.value
         assert vault.upload_calls == []
 
 
