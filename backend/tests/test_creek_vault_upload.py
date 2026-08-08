@@ -21,7 +21,6 @@ The endpoint sitting on top of all three is covered in
 from __future__ import annotations
 
 import base64
-import json
 import logging
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
@@ -547,85 +546,28 @@ def _stored_payload(
     return {"action": action, "fragment_id": _FRAGMENT_ID, **extra}
 
 
-class TestHttpClientUpload:
-    """The HTTP adapter gates on the capability and sends the ratified upload shape."""
+class TestHttpClientUploadRefuses:
+    """There is no ``/v1`` upload surface, so the adapter refuses rather than guessing.
+
+    This class used to drive a ``PUT`` against ``/v1/uploads/{external_id}`` — a
+    route Creek has never served. The ratified ``/v1`` capability vocabulary is a
+    closed enum of exactly four names (``capabilities``, ``journal-upsert``,
+    ``reflections``, ``wheel``) under ``additionalProperties: false``, identical
+    across every supported contract minor. No upload name, no upload schema, no
+    upload route.
+
+    ``creek.upload`` does exist, as an **MCP tool** at contract 0.3.0
+    (Geoffe-Ga/Creek-Vault#1023, closed) — on the transport ADR 0004 retired.
+    Reaching it is a transport decision, not a parsing one, so it is not marked
+    xfail here: an xfail would name a *closed* upstream issue and could never
+    flip green.
+    """
 
     @pytest.mark.asyncio
-    async def test_upload_is_refused_locally_when_capability_absent(
+    async def test_upload_refuses_and_names_the_capability(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """No document bytes reach the wire toward a surface that never claimed them."""
-        seen: list[httpx.Request] = []
-        handler = _routed_handler(_stored_payload(), capabilities=[CreekCapability.JOURNAL.value])
-
-        def _record(request: httpx.Request) -> httpx.Response:
-            """Record the request before answering it."""
-            seen.append(request)
-            return handler(request)
-
-        client = HttpCreekVaultClient(
-            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(_record)
-        )
-        await client.handshake()
-        before = len(seen)
-
-        with pytest.raises(CreekCapabilityUnsupportedError):
-            await client.upload(_upload_request())
-
-        assert len(seen) == before
-
-    @pytest.mark.asyncio
-    async def test_upload_sends_filename_bytes_tier_and_timestamp(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """The vault needs all four to select an ingestor and store at the right tier."""
-        seen: list[httpx.Request] = []
-        handler = _routed_handler(_stored_payload())
-
-        def _record(request: httpx.Request) -> httpx.Response:
-            """Record the request before answering it."""
-            seen.append(request)
-            return handler(request)
-
-        client = HttpCreekVaultClient(
-            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(_record)
-        )
-        await client.handshake()
-        await client.upload(_upload_request())
-
-        body = json.loads(seen[-1].content)
-        assert body["filename"] == _FILENAME
-        assert body["content_base64"] == _CONTENT_B64
-        assert body["tier"] == VaultTierCeiling.PERSONAL.value
-        assert body["timestamp"] == _CREATED_AT.isoformat()
-
-    @pytest.mark.asyncio
-    async def test_upload_addresses_the_fragment_by_external_id(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """Keying off the stable id is what makes a re-send edit in place."""
-        seen: list[httpx.Request] = []
-        handler = _routed_handler(_stored_payload(VaultIngestAction.UPDATED.value))
-
-        def _record(request: httpx.Request) -> httpx.Response:
-            """Record the request before answering it."""
-            seen.append(request)
-            return handler(request)
-
-        client = HttpCreekVaultClient(
-            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(_record)
-        )
-        await client.handshake()
-        request = _upload_request()
-        await client.upload(request)
-
-        assert seen[-1].url.path.endswith(request.external_id)
-
-    @pytest.mark.asyncio
-    async def test_durable_upload_reports_stored_with_the_fragment_id(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """A recognized action plus a usable id is the only shape counted as stored."""
+        """Refusing beats inventing a wire shape, which is this seam's whole discipline."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
@@ -633,136 +575,24 @@ class TestHttpClientUpload:
         )
         await client.handshake()
 
-        result = await client.upload(_upload_request())
-
-        assert result == VaultUploadResult(
-            stored=True, vault_ref=_FRAGMENT_ID, action=VaultIngestAction.CREATED, tags=()
-        )
-
-    @pytest.mark.asyncio
-    async def test_upload_reads_per_fragment_tags_when_the_vault_sends_them(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """The vault classifies in-pipeline; adepthood reads its answer, never re-derives it."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(_stored_payload(tags=["courage", "threshold"]))
-            ),
-        )
-        await client.handshake()
-
-        result = await client.upload(_upload_request())
-
-        assert result.tags == ("courage", "threshold")
-
-    @pytest.mark.asyncio
-    async def test_unreadable_tags_drop_to_empty_rather_than_raising(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """A wrong-typed tag list is dropped on the floor, exactly as capabilities are."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(_stored_payload(tags=[{"not": "a string"}, 7]))
-            ),
-        )
-        await client.handshake()
-
-        result = await client.upload(_upload_request())
-
-        assert result.tags == ()
-
-    @pytest.mark.asyncio
-    async def test_unrecognized_action_reports_not_stored(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """Reporting a write we cannot verify would let a lost document look replicated."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(_routed_handler(_stored_payload("teleported"))),
-        )
-        await client.handshake()
-
-        result = await client.upload(_upload_request())
-
-        assert result.stored is False
-
-    @pytest.mark.asyncio
-    async def test_undecodable_success_body_is_an_unavailable_vault(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """A proxy error page served as 200 is not a successful upload."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(None, upload_text="<html>not json</html>")
-            ),
-        )
-        await client.handshake()
-
-        with pytest.raises(CreekVaultUnavailableError):
+        with pytest.raises(CreekCapabilityUnsupportedError) as caught:
             await client.upload(_upload_request())
 
+        assert CreekCapability.UPLOAD.value in str(caught.value)
+
     @pytest.mark.asyncio
-    async def test_rejected_request_raises_a_contract_error(
+    async def test_upload_is_never_advertised_by_a_conformant_vault(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """A 4xx that is not retryable blames the request adepthood sent."""
+        """Even a vault naming it gets it dropped: it is outside the published enum."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(
-                    {"error": {"code": "invalid_request"}}, upload_status=HTTPStatus.BAD_REQUEST
-                )
-            ),
+            http_client=vault_http_clients(_routed_handler(_stored_payload())),
         )
         await client.handshake()
 
-        with pytest.raises(CreekVaultContractError):
-            await client.upload(_upload_request())
-
-    @pytest.mark.asyncio
-    async def test_refused_credential_raises_an_auth_error(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """A rejected bearer is a configuration fault with its own remedy."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler({}, upload_status=HTTPStatus.UNAUTHORIZED)
-            ),
-        )
-        await client.handshake()
-
-        with pytest.raises(CreekVaultAuthError):
-            await client.upload(_upload_request())
-
-    @pytest.mark.asyncio
-    async def test_transport_failure_raises_unavailable_without_the_payload(
-        self, vault_http_clients: _VaultClientFactory
-    ) -> None:
-        """The original exception's text may quote the URL or the bytes; neither rides along."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(None, upload_error=httpx.ConnectError(_SENTINEL_ERROR_TEXT))
-            ),
-        )
-        await client.handshake()
-
-        with pytest.raises(CreekVaultUnavailableError) as caught:
-            await client.upload(_upload_request())
-
-        assert _SENTINEL_ERROR_TEXT not in str(caught.value)
-        assert caught.value.__cause__ is None
+        assert client.supports(CreekCapability.UPLOAD) is False
 
 
 class TestLocalFallbackUpload:

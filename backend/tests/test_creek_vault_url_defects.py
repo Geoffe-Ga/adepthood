@@ -47,7 +47,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.creek_vault import CONTRACT_VERSION, CreekCapability
+from domain.creek_vault import CONTRACT_VERSION
 from models.journal_entry import JournalEntry
 from services.creek_vault_client import (
     _RETIRED_PROTOCOL_EVENT,
@@ -154,8 +154,10 @@ _ENTRY_BODY = "The willow bent without breaking, and I noticed that I did too."
 # keeps the test's failure the fact that it happened rather than a transport
 # error somewhere downstream of it.
 _CAPABILITY_PAYLOAD: dict[str, object] = {
-    "available": True,
-    "capabilities": [CreekCapability.JOURNAL.value],
+    # Creek's real document shape: availability nested, capabilities by their
+    # published wire names.
+    "vault": {"available": True},
+    "capabilities": ["journal-upsert"],
     "contract_version": CONTRACT_VERSION,
     "ontology_version": "aptitude-wavelength/2026-05-23",
     "attestation": None,
