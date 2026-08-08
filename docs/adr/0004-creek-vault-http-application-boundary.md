@@ -669,6 +669,28 @@ pinning the fail-closed parse (missing, blank, non-integer, `0`, and
 negative all resolve to no owner) and the WARNING behavior — logged
 once per request, naming the variable, never echoing the raw value.
 
+**What this does not reach: a corpus that is already mixed.** The
+binding governs what enters the corpus from the moment it ships. It
+cannot touch what a previous configuration already replicated. Any
+deployment that ran with a vault configured and more than one active
+user before this shipped has a corpus that *already* holds several
+people's writing, and binding an owner does not retroactively
+partition it — every reflection the bound owner is served can still
+ground itself in material that was never theirs. The gate closes the
+inflow; it does not undo the past, and nobody should read a green
+tenancy suite as saying otherwise.
+
+Remediation for that case is operational and sits on Creek's side,
+not adepthood's: the corpus has to be re-scaffolded, or purged of
+everyone but the bound owner, by whoever administers the vault.
+Adepthood cannot do it from here even in principle — the ratified
+`/v1` capability list is exactly `capabilities`, `journal-upsert`,
+`reflections`, `wheel` (`CapabilitiesResponse.schema.json`), and none
+of those removes a fragment; journal writes are upsert-only. An
+operator turning this binding on for a vault that predates it should
+treat the existing corpus as compromised for tenancy purposes and
+decide deliberately whether to keep it.
+
 What is deliberately **not** claimed. Nothing here says anything about
 how Creek partitions, or fails to partition, a corpus on its own side
 — no such guarantee is published, per Decision 7(a), and this ADR has

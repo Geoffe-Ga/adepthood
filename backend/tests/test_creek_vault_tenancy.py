@@ -194,6 +194,35 @@ def test_resolve_vault_owner_admits_only_a_positive_user_id(
     assert resolve_vault_owner(raw) == expected
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1_0",
+        "+7",
+        "\u0667",
+        "\uff17",
+        "7\u200b",
+    ],
+)
+def test_resolve_vault_owner_refuses_every_spelling_int_would_have_widened(raw: str) -> None:
+    """A binding is only a user id if it reads as one; ``int``'s generosity is refused.
+
+    Each of these is something ``int`` accepts and an operator would not
+    recognize as the id they typed: underscore grouping turns ``1_0`` into ten, a
+    leading sign parses away, and every Unicode decimal digit converts to its
+    numeric value, so an ARABIC-INDIC or FULLWIDTH seven is a seven. A
+    zero-width space is the case whitespace-stripping alone would miss. All of
+    them are written here as escapes rather than glyphs so this file cannot
+    itself smuggle a confusable past a reader.
+
+    This is the setting that decides whose journal a shared corpus accumulates,
+    so the value an operator reads back must be the value that binds. Refusing
+    these costs nothing -- no one means to type them -- and each one admitted
+    would be a binding nobody could audit by looking at it.
+    """
+    assert resolve_vault_owner(raw) is None
+
+
 @pytest.mark.usefixtures("configured_vault")
 def test_the_bound_owner_gets_the_vault_and_every_other_user_gets_the_fallback(
     monkeypatch: pytest.MonkeyPatch,
@@ -483,10 +512,15 @@ async def test_reflection_is_never_grounded_in_another_users_corpus(
 
     resonance = await async_client.post(f"/journal/{other_entry}/resonance", headers=other_headers)
     assert resonance.status_code == HTTPStatus.OK
+    # Ordered so a regression fails on the tenancy property itself rather than on a
+    # downstream symptom.  Anchoring drops a note whose quote is absent from the
+    # reader's own entry, so a cross-grounded note tends to arrive as *empty*
+    # marginalia -- a real safety net, but a narrower one than this test is about:
+    # it constrains the quote field only, never the note prose or the wheel.
+    assert shared.reflect_calls == [], "a non-owner's reflection must never consult the corpus"
     notes = resonance.json()["marginalia"]
+    assert _ALPHA_SENTINEL not in json.dumps(notes), "no answer may carry the owner's writing"
     assert notes, "the non-owner still gets a reflection, generated locally"
-    assert shared.reflect_calls == []
-    assert _ALPHA_SENTINEL not in json.dumps(notes)
 
     other_wheel = await async_client.get("/stages/wheel", headers=other_headers)
     assert other_wheel.status_code == HTTPStatus.OK
