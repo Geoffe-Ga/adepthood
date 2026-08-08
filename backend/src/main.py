@@ -74,7 +74,11 @@ from services.content_repository import (
     content_version_info,
     get_content_repository,
 )
-from services.creek_vault_client import close_creek_vault_http_pool
+from services.creek_vault_client import (
+    CREEK_VAULT_URL_ENV_VAR,
+    close_creek_vault_http_pool,
+    unusable_creek_vault_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +364,48 @@ def validate_ipv6_throttle_prefix_config() -> None:
     )
 
 
+def validate_creek_vault_url_config() -> None:
+    """Announce a configured vault URL no transport can be built for.
+
+    ``CREEK_VAULT_URL`` is read by a *per-request* dependency, and a value the
+    transport cannot use degrades that request onto the local fallback.  That
+    path says so, but it says so at request rate and to whoever happens to be
+    reading logs under load.  Boot is the one place the finding can be stated
+    once, before any traffic, which makes this the operator's first and best
+    chance to notice that their vault is configured and inert -- a deployment
+    with a typo here looks perfectly healthy to everything except this record,
+    because the entries keep saving and nothing ever reaches the vault.
+
+    Never raises, on any defect, and not gated on ``ENV`` -- the same two
+    choices ``validate_ipv6_throttle_prefix_config`` makes, for the same kind of
+    setting.  A vault is an optional capability layered over a deployment that
+    works without it, so refusing to boot over a typo in it would be a worse
+    outage than the typo; and a value typed wrong in staging is wrong there too,
+    staging being exactly where it gets typed.  Unset and blank stay silent,
+    since running without a vault is this product's supported floor.
+
+    The record names the variable and the defect, and renders neither the
+    configured value nor any credential: a vault URL sits next to
+    ``CREEK_VAULT_API_KEY`` in every deployment's configuration and can carry
+    userinfo that is a credential in its own right.
+    """
+    finding = unusable_creek_vault_url()
+    if finding is None:
+        return
+    logger.warning(
+        "creek_vault_url_unusable: %s is set to a value the vault transport "
+        "cannot use (%s: %s), so this deployment replicates no journal entry to "
+        "the vault, consults no vault reflection, and reads no vault wheel; "
+        "entries still save to Postgres, which is the system of record. Correct "
+        "the value or unset %s to run without a vault -- backend/.env.example "
+        "documents the format",
+        CREEK_VAULT_URL_ENV_VAR,
+        finding.defect.value,
+        finding.detail,
+        CREEK_VAULT_URL_ENV_VAR,
+    )
+
+
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
@@ -510,6 +556,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # A prefix length that is not a prefix length is discarded silently on every
     # request, so boot is the only place a typo in it can be said out loud.
     validate_ipv6_throttle_prefix_config()
+
+    # A vault URL nothing can be built for degrades every write onto the local
+    # fallback in a per-request warning; said once here, it reaches the operator
+    # before the first entry rather than at request rate.
+    validate_creek_vault_url_config()
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.

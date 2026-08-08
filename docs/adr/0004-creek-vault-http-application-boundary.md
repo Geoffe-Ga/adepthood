@@ -703,3 +703,105 @@ it — Decision 7(a)'s citation of the schemas that carry no tenant
 field, and (d)'s naming of the specific creek-side change (a tenant
 field, or an advertised partitioning guarantee) that would be needed
 before adepthood could ever claim otherwise.
+
+## Note, 2026-08-08 — a malformed or insecure CREEK_VAULT_URL degrades
+
+Issue #2119, filed while reviewing #2117's protocol-selector fix,
+named the asymmetry that fix left standing: `_require_secure_vault_url`
+still raised straight out of `build_creek_vault_client`, which runs
+inside the per-request FastAPI dependency every router resolves its
+vault client through, whenever a configured `CREEK_VAULT_URL` was
+insecure or malformed. Every journal write on such a deployment 500'd,
+and the entry the writer had just typed existed nowhere — the same
+loss #2117 had just finished closing for a stale protocol selector,
+left standing one variable over.
+
+**Insecure and malformed now degrade the same way at the factory, and
+that was a decision, not a convenience.** The two had different
+histories: forbidden components (userinfo, a query, a fragment) and
+insecure transport were already refused inline, while a URL with no
+host at all — `https://` — parsed cleanly under the old scheme-only
+check and was silently accepted, and an unparseable URL escaped every
+check by raising straight out of `urlsplit`. All four now route
+through one classifier, `classify_vault_url`, into a closed
+four-member taxonomy, `VaultUrlDefect`, carried on the WARNING as a
+structured `url_defect` field rather than as four differently-shaped
+outcomes. The argument for failing closed on the insecure case does
+not survive contact with what failing closed actually buys here: in
+both designs — raise, or degrade — no request reaches the suspect URL
+and the bearer credential never leaves the process. Nothing about that
+guarantee changed; `HttpCreekVaultClient.__init__` still fails closed
+on every one of these defects, via the same classifier, because
+reaching its constructor with an unclassified URL is a programming
+error and it does not sit on a request path. What failing closed at
+the *factory* actually cost was never the credential's exposure — it
+was whether the writer's entry survived someone else's typo. Labelling
+the four defects apart, rather than collapsing them into one generic
+"unusable," is what keeps a plaintext URL countable apart from a
+missing host even though both now answer the same way.
+
+**Startup validation and the per-request degrade both shipped — this
+was not a choice between them.** `main.validate_creek_vault_url_config`,
+called from `lifespan` immediately after
+`validate_ipv6_throttle_prefix_config`, states the same finding once,
+before any traffic — an operator's first and best chance to notice a
+vault that is configured and inert, since the request path only ever
+says so at request rate, to whoever happens to be reading logs under
+load at the time. It follows `validate_ipv6_throttle_prefix_config`'s
+own two choices for the same kind of setting: it never raises, on any
+defect, and it is not gated on `ENV`, because refusing to boot over an
+optional capability would be a worse outage than the typo, and a value
+typed wrong in staging is wrong there too — staging is exactly where
+it gets typed. Neither check makes the other redundant. Boot is what
+an operator reads once, at deploy time; the per-request degrade is
+what actually keeps every subsequent entry landing in Postgres.
+
+**The URL is still never normalized.** No trailing `?` is stripped, no
+URL is rebuilt from its parsed components — `classify_vault_url`
+judges the string exactly as configured and refuses it exactly as
+configured, the same discipline #2117 already established for the
+protocol selector. Reconstructing a URL from its parts would close the
+same holes, but by editing configuration nobody wrote; refusing it and
+saying so remains the honest half of that trade.
+
+**A credential leak closed on the way, worth stating plainly rather
+than folding into the rest.** `urlsplit` does not merely fail on a
+netloc it cannot NFKC-normalize — it quotes the whole offending
+netloc, userinfo included, back into its own message. Checked directly
+against this repository's interpreter, a URL whose netloc is
+`user:PASSWORD@` followed by a host carrying a codepoint NFKC
+normalization rewrites raises `ValueError("netloc
+'user:PASSWORD@<host>' contains invalid characters under NFKC
+normalization")` — the password, quoted back verbatim by the standard
+library. Before this issue, `_require_secure_vault_url`
+called `urlsplit` unguarded, so that `ValueError` — the vault password
+included — propagated straight out of the per-request dependency and
+into whatever traceback the unhandled 500 wrote to the logs.
+`classify_vault_url` now catches `ValueError` and discards it,
+reporting only the static, value-free `VaultUrlDefect.UNPARSEABLE`
+finding, and `_require_secure_vault_url` re-raises with `from None` so
+neither `__cause__` nor `__context__` can carry the parser's own
+exception forward. Two live acceptance holes closed alongside it,
+neither previously covered by any check: `https://[::1`, unparseable,
+which used to escape every validator that assumed `urlsplit` had
+already succeeded; and `https://`, which parses cleanly with the right
+scheme and no host at all, and which the old scheme-only check — `if
+parsed.scheme == "https": return` — accepted outright.
+
+**What is not claimed: the degrade is still counted as
+`vault_fallback_unconfigured`.** `LocalFallbackCreekVaultClient`'s
+default outcome is unchanged by this issue, so a deployment whose
+`CREEK_VAULT_URL` is a typo records identically, in
+`VaultTelemetryOutcome`, to one that configured no vault at all — the
+same conflation Decision 7(c) already accepts for an unreadable owner
+binding, and the one #2117 already accepts for a stale or unrecognized
+protocol selector. The two WARNINGs (one at boot, one per request) are
+the only signal that distinguishes "chose no vault" from "meant to
+have one and mistyped it." No new `VaultTelemetryOutcome` member was
+added here: that enum's membership and order are pinned by test as
+contract, and adding one is a separate, independently-reviewable
+change from this issue's scope. This is recorded as a known
+limitation, not a virtue — an operator watching only the fallback-rate
+counter cannot tell a misconfigured vault from an intentionally absent
+one today; the WARNING is what carries that distinction until a future
+issue gives the URL defect its own telemetry.

@@ -1281,17 +1281,50 @@ def test_factory_degrades_an_unrecognized_protocol_to_the_local_fallback(
         assert _SENTINEL_KEY not in rendered
 
 
-def test_http_factory_rejects_a_plaintext_remote_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Plaintext to a remote host fails closed at construction, before the key is bound."""
-    monkeypatch.setenv("CREEK_VAULT_URL", "http://vault.example.test")
-    monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
-    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "http")
+def test_http_client_rejects_a_plaintext_remote_url() -> None:
+    """Plaintext to a remote host fails closed at construction, before the key is bound.
+
+    The refusal belongs to the constructor, which is where the credential would
+    otherwise be bound to a URL nothing approved. Its *caller* is a different
+    question: :func:`build_creek_vault_client` runs per request and degrades
+    instead, since a raise there would cost the writer their entry -- the whole
+    taxonomy of unusable URLs, and what each of them does to a journal save,
+    lives in ``test_creek_vault_url_defects.py``.
+    """
     with pytest.raises(ValueError, match="https") as exc_info:
-        build_creek_vault_client()
+        HttpCreekVaultClient("http://vault.example.test", _SENTINEL_KEY)
     message = str(exc_info.value)
     assert "http" in message
     assert "vault.example.test" in message
     assert _SENTINEL_KEY not in message
+
+
+def test_http_factory_degrades_a_plaintext_remote_url_to_the_local_fallback(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The per-request factory skips the optional replication rather than losing the entry.
+
+    Same reasoning as the retired and unrecognized protocol selectors above: this
+    factory is reached from a dependency, so raising means the journal handler's
+    body never runs. The credential still never reaches the suspect URL -- no
+    HTTP adapter is built at all -- and the WARNING is how the operator finds
+    out.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", "http://vault.example.test")
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _SENTINEL_KEY)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "http")
+    caplog.set_level(logging.WARNING)
+
+    client = build_creek_vault_client()
+
+    assert isinstance(client, LocalFallbackCreekVaultClient)
+    assert len(caplog.records) == 1
+    assert "CREEK_VAULT_URL" in caplog.records[0].getMessage()
+    for rendered in [
+        caplog.records[0].getMessage(),
+        *[str(value) for value in caplog.records[0].__dict__.values()],
+    ]:
+        assert _SENTINEL_KEY not in rendered
 
 
 def test_http_factory_accepts_a_plaintext_loopback_url(monkeypatch: pytest.MonkeyPatch) -> None:
