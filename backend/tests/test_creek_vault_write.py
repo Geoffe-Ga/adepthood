@@ -9,10 +9,13 @@ tests assume.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Callable, Iterator
 from datetime import UTC, datetime
+from http import HTTPStatus
 
+import httpx
 import pytest
+import pytest_asyncio
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
@@ -33,7 +36,7 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultWheelBalance,
 )
-from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
 from services.creek_vault_telemetry import (
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
@@ -44,6 +47,11 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from tests.test_creek_vault_http_client import Handler as _VaultHandler
+from tests.test_creek_vault_http_client import _handshake_payload as _vault_capability_payload
+from tests.test_creek_vault_http_client import _json_handler as _vault_json_handler
+from tests.test_creek_vault_http_client import _raising_handler as _vault_raising_handler
+from tests.test_creek_vault_http_client import _text_handler as _vault_text_handler
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _BODY = "A quiet entry about the week's practice."
@@ -524,3 +532,82 @@ async def test_intimate_entry_records_no_telemetry_outcome() -> None:
 
     assert outcome.status is VaultWriteStatus.SKIPPED_INTIMATE
     assert vault_outcome_counts() == {}
+
+
+# A real vault URL and credential for the handshake pin below: the point of that
+# test is that a *real* adapter, not a fake, is what the write path awaits.
+_VAULT_URL = "https://vault.example.test"
+_VAULT_API_KEY = "creek-vault-write-path-key"  # pragma: allowlist secret
+
+_VaultClientFactory = Callable[[_VaultHandler], httpx.AsyncClient]
+
+# Every way the capability probe can end badly, from a socket that never opened
+# to a vault that answered fluently in a contract version we cannot read.
+_UNUSABLE_VAULT_HANDLERS = [
+    pytest.param(_vault_raising_handler(httpx.ConnectError("refused")), id="connection_refused"),
+    pytest.param(_vault_raising_handler(httpx.InvalidURL("unbuildable")), id="unbuildable_request"),
+    pytest.param(_vault_raising_handler(httpx.ReadTimeout("no answer")), id="timed_out"),
+    pytest.param(
+        _vault_json_handler({"detail": "boom"}, HTTPStatus.INTERNAL_SERVER_ERROR),
+        id="server_error",
+    ),
+    pytest.param(
+        _vault_json_handler({"detail": "unauthorized"}, HTTPStatus.UNAUTHORIZED),
+        id="unauthorized",
+    ),
+    pytest.param(_vault_text_handler("<html><body>Bad Gateway</body></html>"), id="non_json_body"),
+    pytest.param(
+        _vault_json_handler(_vault_capability_payload([CreekCapability.JOURNAL.value], "0.3.0")),
+        id="incompatible_contract_version",
+    ),
+]
+
+
+@pytest_asyncio.fixture
+async def vault_http_clients() -> AsyncGenerator[_VaultClientFactory, None]:
+    """Yield a factory for MockTransport-backed clients, closing each afterwards."""
+    created: list[httpx.AsyncClient] = []
+
+    def _build(handler: _VaultHandler) -> httpx.AsyncClient:
+        """Build one in-memory client and register it for teardown."""
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        created.append(client)
+        return client
+
+    yield _build
+    for client in created:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("handler", _UNUSABLE_VAULT_HANDLERS)
+@pytest.mark.asyncio
+async def test_a_failed_handshake_degrades_the_write_and_never_propagates(
+    handler: _VaultHandler,
+    vault_http_clients: _VaultClientFactory,
+) -> None:
+    """``store_and_classify`` awaits ``handshake()`` unguarded, which only holds if it cannot raise.
+
+    That bare ``await`` is deliberate and stays that way: guarding it would mean
+    catching ``Exception``, which this repository refuses and which the adapter's
+    own counting wrapper argues against -- an unrelated internal bug must stay
+    the loud defect it is. So the invariant it rests on is pinned here instead,
+    at the call site, against a real :class:`HttpCreekVaultClient` rather than a
+    fake that has been told not to raise. Every failure a probe can meet ends the
+    same way: the write reports UNAVAILABLE, the caller persists the entry, and
+    nothing reaches the router.
+    """
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(handler)
+    )
+
+    outcome = await store_and_classify(
+        client,
+        body=_BODY,
+        classification="personal",
+        created_at=_CREATED_AT,
+        entry_id=_ENTRY_ID,
+    )
+
+    assert outcome == VaultWriteOutcome(
+        status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
+    )

@@ -38,24 +38,36 @@ by Creek and called by nothing in this repository.
 :func:`build_creek_vault_client` chooses between the two from
 ``CREEK_VAULT_URL`` (unset means the local fallback, so an unconfigured
 deployment transparently degrades) and ``CREEK_VAULT_PROTOCOL``, which now
-admits exactly one value. Neither stale selector is ever guessed at, since
-guessing a transport would send vault traffic somewhere the operator did not
-choose -- but the retired ``mcp`` selector degrades to the local fallback with a
-warning rather than raising, because this factory runs per request and a raise
-there would cost the writer their entry, while an unrecognized selector still
-raises, having no knowable intent to honour. It answers that question and no
-other: *who* may hold a configured client is settled one layer up, in
-:mod:`dependencies.creek_vault`, because a vault reached under a single
+admits exactly one value. Nothing here is ever guessed at, since guessing a
+transport would send vault traffic somewhere the operator did not choose --
+but every way the configuration can be unusable degrades to the local fallback
+with one WARNING rather than raising: a stale ``mcp`` selector, a selector
+nobody ever supported, and a ``CREEK_VAULT_URL`` no transport can be built for
+alike. This factory runs inside a per-request dependency, so a raise there would
+cost the writer their entry over an optional capability. It answers that
+question and no other: *who* may hold a configured client is settled one layer
+up, in :mod:`dependencies.creek_vault`, because a vault reached under a single
 deployment-wide identity is one shared corpus rather than any user's.
 
-Transport security: the configured transport refuses a plaintext ``http://`` URL
-to any non-loopback host, because every request carries the
-``CREEK_VAULT_API_KEY`` bearer credential that must never cross a network in
-cleartext -- TLS misconfiguration fails closed at construction, before the key is
-bound to anything. It also refuses a URL carrying userinfo, a query, or a
-fragment: userinfo is itself a credential that httpx would log unmasked and turn
-into a Basic-auth downgrade of our bearer, and a query or fragment would
-silently redirect the credential away from the endpoint the operator configured.
+Transport security: a URL is refused outright if it is one this seam cannot
+safely bind the ``CREEK_VAULT_API_KEY`` bearer credential to -- plaintext
+``http://`` to any non-loopback host, because the credential must never cross a
+network in cleartext; userinfo, which is itself a credential that httpx would
+log unmasked and turn into a Basic-auth downgrade of our bearer; a query or
+fragment, either of which would silently redirect the credential away from the
+endpoint the operator configured; and a value that parses to no host, or does
+not parse at all, which no request could ever be built from. Deciding which of
+those a given string is belongs to :mod:`services.creek_vault_url`, a
+stdlib-only leaf that reads no environment and holds no credential; what to *do*
+about the answer is decided here.
+:func:`unusable_creek_vault_url` names which of those a configured value is,
+and the two callers answer it differently *on purpose*.
+:class:`HttpCreekVaultClient` fails closed at construction, before the key is
+bound to anything: reaching its constructor with a URL nobody classified is a
+programming error, and it does not run on a request path, so it stays loud.
+:func:`build_creek_vault_client` does run on one, per request, so it warns and
+returns the local fallback -- the credential still never reaches the suspect
+URL, because no HTTP adapter is built at all.
 :class:`HttpCreekVaultClient` speaks request/response JSON over a shared,
 credential-free pooled connection (:class:`_VaultHttpPool`), building its
 authorization header per call so the pooled connection never holds the key. This
@@ -83,7 +95,7 @@ from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from types import TracebackType
 from typing import NoReturn
-from urllib.parse import SplitResult, quote, urlsplit
+from urllib.parse import quote
 
 import httpx
 
@@ -129,6 +141,7 @@ from services.creek_vault_telemetry import (
     outcome_for_error,
     record_vault_outcome,
 )
+from services.creek_vault_url import VaultUrlDefect, VaultUrlFinding, classify_vault_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -283,10 +296,12 @@ class _IncompatibleContractVersionError(Exception):
     """
 
 
-# Hosts for which a plaintext ``http://`` vault URL is tolerated: a developer
-# running the vault on the same machine. Every other host must use TLS so the
-# bearer credential never crosses a network in cleartext.
-_LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+# Where the vault lives. Public, and the only one of this seam's variable names
+# that is, because :mod:`main` names it in the boot record it emits about it --
+# exactly as ``client_ip`` publishes the throttle-prefix variable name, and for
+# the same reason: one spelling, so a check and the record announcing it can
+# never name different variables.
+CREEK_VAULT_URL_ENV_VAR = "CREEK_VAULT_URL"
 
 # Which transport a *configured* vault is reached over, and the one value that
 # selector still admits. It survives as a selector at all so a stale setting left
@@ -326,6 +341,24 @@ _UNKNOWN_PROTOCOL_EVENT = (
     "creek vault protocol selector is not recognized; using the local fallback -- "
     "unset CREEK_VAULT_PROTOCOL or set it to http"
 )
+# The third way a deployment lands on the local fallback with something wrong in
+# its environment: the selector is honoured, but the URL it points at is one no
+# transport can be built for. A third message rather than a share of either
+# protocol one, because an operator reading a degrade needs to know *which
+# variable* to go and look at, and a record that named the selector for a typo in
+# the URL would send them to the wrong file. Static and value-free like its
+# siblings: what was configured travels as structured fields, and the one field
+# that could carry a value carries a component name instead -- see
+# :func:`~services.creek_vault_url.classify_vault_url`. One message for all four
+# defects, with the defect itself as a field, on the same reasoning
+# :mod:`dependencies.creek_vault`'s
+# ``binding`` field follows: a dashboard should be able to count "the vault URL
+# is unusable" without unioning four filters, and still break it down when it
+# wants to.
+_UNUSABLE_URL_EVENT = (
+    "creek vault URL is unusable; using the local fallback -- "
+    "fix CREEK_VAULT_URL or unset it to run without a vault"
+)
 
 
 def _protocol_fields(protocol: str) -> Mapping[str, str]:
@@ -340,66 +373,43 @@ def _protocol_fields(protocol: str) -> Mapping[str, str]:
     return {"protocol": protocol, "supported_protocol": _PROTOCOL_HTTP}
 
 
-# URL components a configured vault URL must not carry, in the order their
-# names are reported. ``userinfo`` (the ``user:pass@`` prefix) is itself a
-# credential: httpx renders it *unmasked* in ``str(url)`` -- which is what its
-# own INFO request log formats -- and, absent an explicit ``auth=``, derives
-# ``BasicAuth`` from it whose auth flow *assigns* ``Authorization``, silently
-# replacing our bearer with a weaker scheme. ``query`` and ``fragment`` break
-# the capability URL instead: it is built by appending a path to the configured
-# string, so either one swallows that path and aims the credential at an
-# endpoint the operator never configured.
-_FORBIDDEN_URL_PARTS = ("userinfo", "query", "fragment")
-
-# The delimiters that *introduce* a query and a fragment. Presence is tested on
-# the raw configured string rather than on the parsed component, and that is the
-# whole point: ``urlsplit`` reports both as ``""`` when they are absent *and*
-# when they are present but empty, so ``https://vault.example/`` and
-# ``https://vault.example/?`` are indistinguishable once parsed. The second is
-# the dangerous one -- the capability path is appended to the configured string,
-# so a trailing ``?`` would build ``https://vault.example/?/v1/journal-entries/5``
-# and send every path as a query string against ``/``, aiming the bearer
-# credential at an endpoint nobody configured. Per RFC 3986 these two characters
-# can only ever be those delimiters in a URL (a literal one inside a path or a
-# credential must be percent-encoded), so their presence *is* the component's
-# presence. Reconstructing a normalized URL from the parsed parts would also
-# close the hole, but by editing an operator's configuration into something they
-# did not write; refusing it and saying so is the honest half of that trade.
-_QUERY_DELIMITER = "?"
-_FRAGMENT_DELIMITER = "#"
+# What the constructor says about each defect, keyed rather than branched so the
+# refusal is a lookup and the four wordings sit where they can be read together.
+# The environment variable's name is prefixed at the raise site rather than
+# written into each clause, so no future member can be added that forgets to name
+# the variable an operator has to go and fix. The forbidden-components and
+# insecure-transport wordings are the ones this seam has always used and are
+# preserved verbatim: they are in runbooks.
+_REFUSAL_CLAUSES: Mapping[VaultUrlDefect, str] = {
+    VaultUrlDefect.UNPARSEABLE: "is unusable: {detail}",
+    VaultUrlDefect.FORBIDDEN_COMPONENTS: "must not carry these URL components: {detail}",
+    VaultUrlDefect.MALFORMED: "is missing required URL components: {detail}",
+    VaultUrlDefect.INSECURE_TRANSPORT: "must use https for a non-loopback host ({detail})",
+}
 
 
-def _forbidden_url_parts(url: str, parsed: SplitResult) -> tuple[str, ...]:
-    """Return the names of the disallowed components ``url`` carries.
+def unusable_creek_vault_url() -> VaultUrlFinding | None:
+    """Return what the runtime cannot use about the configured vault URL, else ``None``.
 
-    Userinfo counts as present whenever either half is set, so a degenerate
-    ``https://user@host`` (empty password) is caught alongside the full form.
-    Query and fragment count as present whenever their delimiter appears at all,
-    empty component included -- see :data:`_QUERY_DELIMITER`. The query
-    delimiter is looked for only *before* any fragment delimiter, since a ``?``
-    after a ``#`` is part of the fragment rather than a query of its own, and
-    naming both components for one mistake would send an operator hunting a
-    second problem they do not have.
+    Exists so a caller that *can* log once -- boot -- can say what the
+    per-request path would otherwise only ever say at request rate, mirroring
+    :func:`client_ip.unusable_throttle_prefix_config` for the same kind of
+    setting.
+
+    Unset and blank both answer ``None``. ``backend/.env.example`` ships
+    ``CREEK_VAULT_URL`` present and empty, so treating blank as a fault would
+    fire on every stock boot and teach operators to scroll past the finding that
+    matters -- and running with no vault is this product's supported floor, not a
+    misconfiguration. :func:`build_creek_vault_client` asks the same question the
+    same way, deliberately: a variable holding nothing but a stray space would
+    otherwise be unset to this check and configured-but-broken to the factory,
+    which is the worst pairing available -- silence at boot, where an operator is
+    actually looking, and a WARNING on every request, where it costs the most.
     """
-    before_fragment, _, _ = url.partition(_FRAGMENT_DELIMITER)
-    carried = (
-        parsed.username is not None or parsed.password is not None,
-        _QUERY_DELIMITER in before_fragment,
-        _FRAGMENT_DELIMITER in url,
-    )
-    return tuple(name for name, found in zip(_FORBIDDEN_URL_PARTS, carried, strict=True) if found)
-
-
-def _require_bare_vault_url(url: str, parsed: SplitResult) -> None:
-    """Reject a vault URL carrying userinfo, a query, or a fragment.
-
-    The message names only the offending *component names*: it reaches logs,
-    and one of the components it can name -- userinfo -- is a credential, so
-    echoing any value here would be the very leak this check exists to prevent.
-    """
-    parts = _forbidden_url_parts(url, parsed)
-    if parts:
-        raise ValueError(f"CREEK_VAULT_URL must not carry these URL components: {', '.join(parts)}")
+    raw = os.getenv(CREEK_VAULT_URL_ENV_VAR)
+    if raw is None or not raw.strip():
+        return None
+    return classify_vault_url(raw)
 
 
 def _require_secure_vault_url(url: str) -> None:
@@ -410,29 +420,49 @@ def _require_secure_vault_url(url: str) -> None:
     -- so any future transport must keep calling it too. It is a free function
     rather than a method for exactly that reason: the rule belongs to the
     credential, not to whichever adapter happens to be carrying it today.
-    Two rules: the URL must carry no userinfo, query, or fragment
-    (:func:`_require_bare_vault_url`, applied to every scheme), and a plaintext
-    ``http://`` URL is allowed only to a loopback host, since cleartext to a
-    remote host would expose the credential on the network. A misconfiguration
-    raises here rather than silently leaking, before the key is bound to
-    anything. The message names only component names, the scheme, and the host
-    -- never the API key.
 
-    Both the raw string and its parsed form are needed: the string is what a
-    capability URL is built from and the only place an empty-but-present query
-    or fragment survives, while the parse is what answers for the scheme, the
-    host, and the userinfo halves.
+    It raises where :func:`build_creek_vault_client` degrades, and the asymmetry
+    is the design rather than an oversight. The factory sits behind a per-request
+    dependency, so a raise there costs the writer their entry over an optional
+    capability. This constructor does not: a caller reaching it with a URL nobody
+    classified is a programming error, and letting that through would bind the
+    bearer credential to an endpoint no check approved. So it stays loud.
+
+    The message names the variable an operator has to go and fix, repeats the
+    finding's detail, and carries nothing else -- never the API key, never
+    userinfo, never the configured value.
+
+    ``from None`` is not decoration. The classifier
+    (:func:`~services.creek_vault_url.classify_vault_url`) has already
+    discarded the parser's exception, so nothing is being suppressed here today;
+    the clause states the invariant at the boundary that must never regress,
+    because the object it keeps out is the one guaranteed to quote a netloc --
+    userinfo included -- into whatever traceback a 500 handler renders.
+    :func:`_refuse_unratified` cuts its chain for the same reason.
     """
-    parsed = urlsplit(url)
-    _require_bare_vault_url(url, parsed)
-    if parsed.scheme == "https":
+    finding = classify_vault_url(url)
+    if finding is None:
         return
-    if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
-        return
-    raise ValueError(
-        f"CREEK_VAULT_URL must use https for a non-loopback host "
-        f"(scheme {parsed.scheme!r}, host {parsed.hostname!r})"
-    )
+    clause = _REFUSAL_CLAUSES[finding.defect].format(detail=finding.detail)
+    raise ValueError(f"{CREEK_VAULT_URL_ENV_VAR} {clause}") from None
+
+
+def _url_defect_fields(finding: VaultUrlFinding) -> Mapping[str, str]:
+    """Build the structured fields the unusable-URL degrade record carries.
+
+    A builder rather than a literal at the call site, for the reason
+    :func:`_protocol_fields` is one: the key names are what a dashboard groups
+    on, so they belong in one place. Three fields and no fourth -- the variable,
+    the defect, and the defect's value-free detail. What is deliberately absent
+    is the configured URL itself: it is the one setting most likely to have a
+    credential pasted into it, and this record is emitted on the writer's request
+    path, at request rate, into whatever aggregator the deployment ships to.
+    """
+    return {
+        "env_var": CREEK_VAULT_URL_ENV_VAR,
+        "url_defect": finding.defect.value,
+        "url_detail": finding.detail,
+    }
 
 
 def _require_str(payload: Mapping[str, object], key: str) -> str:
@@ -1775,12 +1805,38 @@ def build_creek_vault_client() -> CreekVaultClient:
     guess this seam exists to refuse. Both records name the offending value and
     the supported one and nothing else -- they reach logs, so neither the URL nor
     the bearer credential may travel with them.
+
+    Only with a selector this deployment will actually honour is the URL itself
+    judged, by :func:`~services.creek_vault_url.classify_vault_url`, and a
+    defective one degrades the same way for the same reason. The ordering
+    carries two decisions. A deployment
+    that will not use the URL at all has no business complaining about it, so a
+    selector that already refused the transport short-circuits first and one
+    misconfiguration stays one record. And the URL is judged *before*
+    ``CREEK_VAULT_API_KEY`` is so much as read, because there is no reason to
+    fetch a credential for an endpoint that is about to be refused.
+
+    The refusal itself lives in :func:`_require_secure_vault_url`, which
+    :class:`HttpCreekVaultClient` still calls, and the constructor below is
+    therefore unreachable with a URL that would trip it. That is deliberately an
+    *ordering* guarantee rather than a ``try``: catching the constructor's
+    ``ValueError`` here would turn a genuine bug in it into a silent degrade, and
+    a vault that quietly stopped replicating is the failure this seam is least
+    able to notice.
     """
-    # ``CREEK_VAULT_URL`` being unset or empty is the signal that no vault is
+    # ``CREEK_VAULT_URL`` being unset or blank is the signal that no vault is
     # configured; the bearer credential is read only to build the adapter's
     # auth header and is never logged or placed in any exception message.
-    url = os.getenv("CREEK_VAULT_URL", "")
-    if not url:
+    # ``strip`` is asked only whether anything was configured at all, and the
+    # answer is thrown away -- ``url`` travels on exactly as the operator wrote
+    # it, since normalizing it here is the one thing this seam refuses to do.
+    # Blank has to mean the same thing here as it does to
+    # :func:`unusable_creek_vault_url`, or a stray space in an otherwise empty
+    # variable would go unmentioned at boot and then warn on every request --
+    # silence in the one place an operator is looking, noise in the one place
+    # it costs.
+    url = os.getenv(CREEK_VAULT_URL_ENV_VAR, "")
+    if not url.strip():
         return LocalFallbackCreekVaultClient()
     protocol = os.getenv(_PROTOCOL_ENV_VAR, _PROTOCOL_HTTP).strip().lower()
     if protocol == _PROTOCOL_RETIRED_MCP:
@@ -1789,4 +1845,12 @@ def build_creek_vault_client() -> CreekVaultClient:
     if protocol != _PROTOCOL_HTTP:
         _LOGGER.warning(_UNKNOWN_PROTOCOL_EVENT, extra=_protocol_fields(protocol))
         return LocalFallbackCreekVaultClient()
+    finding = classify_vault_url(url)
+    if finding is not None:
+        _LOGGER.warning(_UNUSABLE_URL_EVENT, extra=_url_defect_fields(finding))
+        return LocalFallbackCreekVaultClient()
+    # Reached only for a URL every check above approved, which is why the
+    # constructor's own refusal is unreachable from here rather than caught: a
+    # ``try`` around it would swallow a genuine bug in it as if it were a
+    # misconfiguration.
     return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""))
