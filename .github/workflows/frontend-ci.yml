@@ -8,12 +8,23 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
-      - ".pre-commit-config.yaml"
   pull_request:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
-      - ".pre-commit-config.yaml"
+
+# ``.pre-commit-config.yaml`` is deliberately NOT a trigger path. It used to be,
+# on the reasoning that the frontend eslint/prettier/jest hooks are defined
+# there -- but the cost outweighed it: a change to that one file pulled the
+# entire frontend pipeline, audit gate included, into PRs containing no frontend
+# code at all. #2156 was a backend tooling change blocked by two image-size
+# advisories in a transitive dev dependency.
+#
+# What is given up: a pre-commit config edit that breaks a frontend hook is no
+# longer caught by this workflow on the PR that makes it. It is still caught --
+# the hooks themselves run on every frontend-touching commit and push, and the
+# post-merge ``push`` run on main covers frontend changes -- just not on a
+# config-only PR. That is the trade #2156 records.
 
 # One in-flight run per PR; see backend-ci.yml for the rationale.
 concurrency:
