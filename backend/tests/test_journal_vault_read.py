@@ -37,6 +37,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from main import app
@@ -186,6 +188,10 @@ class ReflectingVaultClient:
         """Record the request and return an incrementing vault ref (write path)."""
         self.ingest_calls.append(request)
         return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingest_calls)}")
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Return a fixed classification tag set (write path)."""

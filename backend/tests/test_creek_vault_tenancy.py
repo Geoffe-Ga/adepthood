@@ -45,6 +45,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
     resolve_vault_owner,
@@ -376,6 +378,10 @@ class _SharedCorpusVaultClient:
         """Add the body to the one shared corpus and answer with a stored ref."""
         self.ingested_bodies.append(request.body)
         return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingested_bodies)}")
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: adepthood never calls classify, and a fake that answered would hide that."""

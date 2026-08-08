@@ -36,6 +36,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from domain.resonance import ResonanceLLM, generate_marginalia
@@ -125,6 +127,10 @@ class RecordingVaultClient:
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Unused on the reflect path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
         raise NotImplementedError(request)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
