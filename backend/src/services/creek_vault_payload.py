@@ -155,8 +155,18 @@ def _bounded_text(raw: object, limit: int) -> str | None:
     than stripped, because adepthood anchors a quote by matching it
     character-for-character against the entry body -- trimming here would
     silently break the very anchor this check exists to protect.
+
+    The three are asked in cheapest-first order, so an oversized vault-supplied
+    string is refused on its length alone rather than after ``strip`` has
+    allocated a full-size transient copy of it. The waste was real only for
+    whitespace-padded input -- CPython answers with the receiver itself when an
+    exact :class:`str` has nothing to remove, so an oversized value with no
+    surrounding whitespace was never copied -- but a padded one was, and a vault
+    that chooses its own payload chooses the padding too. It is defence in depth
+    on an untrusted response rather than the primary control, which remains the
+    bound itself.
     """
-    if not isinstance(raw, str) or not raw.strip() or len(raw) > limit:
+    if not isinstance(raw, str) or len(raw) > limit or not raw.strip():
         return None
     return raw
 
