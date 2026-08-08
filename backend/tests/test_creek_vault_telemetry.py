@@ -306,6 +306,7 @@ def test_outcome_wire_values_are_stable() -> None:
     assert [outcome.value for outcome in VaultTelemetryOutcome] == [
         "vault_success",
         "vault_fallback_unconfigured",
+        "vault_fallback_not_owner",
         "vault_unavailable",
         "vault_timeout",
         "vault_auth_failed",
@@ -486,12 +487,15 @@ def test_the_code_field_carries_the_vaults_own_reason_when_it_named_one(
 
 
 # The severity each outcome is expected to log at. A deployment that never had a
-# vault is a choice rather than a fault, so it stays at DEBUG; a healthy answer is
-# news worth one INFO line; a care escalation is deliberately DEBUG for privacy
-# rather than for noise (see the escalation tests below); everything else is a
-# fault an operator may need to act on.
+# vault is a choice rather than a fault, so it stays at DEBUG; a user held back
+# from a vault that belongs to someone else stays there with it, being the design
+# working rather than failing; a healthy answer is news worth one INFO line; a
+# care escalation is deliberately DEBUG for privacy rather than for noise (see
+# the escalation tests below); everything else is a fault an operator may need to
+# act on.
 _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.FALLBACK_UNCONFIGURED: logging.DEBUG,
+    VaultTelemetryOutcome.FALLBACK_NOT_OWNER: logging.DEBUG,
     VaultTelemetryOutcome.SUCCESS: logging.INFO,
     VaultTelemetryOutcome.ESCALATED: logging.DEBUG,
     VaultTelemetryOutcome.UNAVAILABLE: logging.WARNING,

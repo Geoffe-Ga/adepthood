@@ -13,6 +13,7 @@ from sqlmodel import col, select
 
 from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
+from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
@@ -47,7 +48,6 @@ from schemas.stage import (
 )
 from schemas.wheel import WheelAspect, WheelBalanceResponse
 from services.creek_vault_wheel import select_wheel_balance
-from services.creek_vault_write import get_creek_vault_client
 
 logger = logging.getLogger(__name__)
 

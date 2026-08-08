@@ -1,11 +1,18 @@
 """Creek Vault write path: store a journal entry durably, degrading safely.
 
 This is the thin orchestration layer the journal router calls after an entry is
-committed. It sits atop the pure :mod:`domain.creek_vault` seam and the concrete
-adapters in :mod:`services.creek_vault_client`, and its whole job is to turn the
-seam's fine-grained handshake/ingest surface into one best-effort call that
-*never raises a vault error* -- so the user's entry is saved regardless of
-whether a vault is present, reachable, or capable.
+committed. It sits atop the pure :mod:`domain.creek_vault` seam, and its whole
+job is to turn the seam's fine-grained handshake/ingest surface into one
+best-effort call that *never raises a vault error* -- so the user's entry is
+saved regardless of whether a vault is present, reachable, or capable.
+
+Every function here takes the client as a parameter and constructs none, which
+is what keeps this module out of the tenancy decision entirely. Choosing whether
+a caller may hold a real vault client at all belongs to
+:func:`dependencies.creek_vault.get_creek_vault_client`, since a vault reached
+under adepthood's one deployment-wide identity is a single shared corpus rather
+than any one user's; a provider living here would be reachable from a router
+without passing that gate.
 
 The governing rule is **graceful degradation**: a missing, unreachable, or
 capability-poor vault collapses to a well-defined :class:`VaultWriteStatus`
@@ -55,7 +62,6 @@ from domain.creek_vault import (
     tier_ceiling_for,
 )
 from models.journal_entry import JournalClassification
-from services.creek_vault_client import build_creek_vault_client
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -276,13 +282,3 @@ async def store_and_classify(
     if vault_ref is None:
         return _DEGRADED_OUTCOME
     return VaultWriteOutcome(status=VaultWriteStatus.INGESTED, vault_ref=vault_ref, tags=())
-
-
-def get_creek_vault_client() -> CreekVaultClient:
-    """Return a per-request Creek Vault client for FastAPI dependency injection.
-
-    A thin wrapper over :func:`~services.creek_vault_client.build_creek_vault_client`
-    with no module-level cache, so a test can override this provider and a
-    reconfigured deployment picks up the change on the next request.
-    """
-    return build_creek_vault_client()

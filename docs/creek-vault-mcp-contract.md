@@ -347,3 +347,13 @@ Today's actual behavior is the skip-only mode from
 classification short-circuits before any vault call at all, not even a
 handshake. No intimate journal content is transmitted to any vault
 today, in any form.
+
+## Vault tenancy: pointer only
+
+Tenancy is not part of Creek's `/v1` wire contract at all — none of
+`ReflectionRequest`, `JournalUpsertRequest`, `/v1/wheel`, or
+`CapabilitiesResponse` carries a tenant field to document here. The
+rule governing how adepthood copes with that absence — binding a
+configured vault to exactly one adepthood user — is recorded in
+[ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
+Decision 7, not in this document.

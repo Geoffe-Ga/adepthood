@@ -285,15 +285,113 @@ stands unchanged in substance** — this ADR relocates where the
 intimate-transit sub-decisions are recorded; it does not revise any of
 them.
 
+## Decision 7 — Creek Vault is bound to exactly one adepthood user per deployment
+
+**(a) Identity scope.** Adepthood reaches a configured vault with a
+single deployment-wide bearer credential, `CREEK_VAULT_API_KEY`, and
+nothing else on the wire says who is asking. Verified directly
+against the vendored `/v1` schemas: `ReflectionRequest.schema.json`
+is `additionalProperties: false` and admits only `content`,
+`entry_ref`, `max_notes`; `JournalUpsertRequest.schema.json` is
+`additionalProperties: false` and admits only `content`, `tier`,
+`timestamp`; `/v1/wheel` is a parameterless `GET`; and
+`CapabilitiesResponse.schema.json` advertises `status`,
+`contract_version`, `contract_minor`,
+`supported_contract_minors`, `ontology_version`, `vault.available`,
+`tier_model`, and `capabilities` — nothing about tenancy or
+partitioning anywhere in that list. No request shape has anywhere to
+carry a tenant, and no response shape says the corpus is split by
+one. Per-user scoping is therefore not a feature adepthood chose to
+skip; it is not buildable from adepthood's side of this contract at
+all. Nor is any creek-side partitioning guarantee assumed in its
+place — none is published, and Decision 6's discipline about not
+inferring a guarantee the wire does not state applies here with equal
+force.
+
+**(b) Owner binding.** `CREEK_VAULT_OWNER_USER_ID` names the one
+adepthood user a configured vault belongs to. It is enforced once, at
+the client-provider seam (`backend/src/dependencies/creek_vault.py`),
+which every router reaches through — journal writes, reflections, and
+the wheel read all resolve their `CreekVaultClient` through this one
+dependency, so the binding covers ingest, reflect, and wheel
+together rather than needing three separate gates that could drift
+apart. Gating only the read path was considered and rejected: if
+every user's entries still reached the corpus, the bound owner's own
+reflections and wheel would be grounded in everyone else's journals —
+the identical leak this ADR exists to close, just pointed at a single
+victim instead of the whole user base. The write side has to be
+gated for the read side's guarantee to mean anything.
+
+**(c) Fail-closed default.** An unset or unreadable
+`CREEK_VAULT_OWNER_USER_ID` — missing, blank, non-integer, `0`, or
+negative — resolves to no owner at all
+(`domain.creek_vault.resolve_vault_owner`), and no user id ever
+equals `None`, so every user, including whoever might have been
+intended as the owner, gets `LocalFallbackCreekVaultClient`. A
+deployment in that state is not broken; it behaves exactly like a
+deployment with no vault configured at all, which is the floor the
+whole seam is already built on. The one difference an operator is
+owed is a signal: a vault that is configured (URL and credential
+both present) but carries no readable owner logs one WARNING per
+request naming the variable to set, and never echoes the raw value —
+the same discipline `build_creek_vault_client` already applies to a
+stale protocol selector. The gate degrades instead of raising for the
+same reason that selector does: it runs inside a per-request FastAPI
+dependency, so a raise there means the handler body never executes —
+every journal save would 500 and the writer's entry would exist
+nowhere. That is exactly the loss this seam promises can never happen
+for a vault's sake, so an unreadable binding costs a user an optional
+capability, never their journal entry.
+
+**(d) Per-user end-state.** This binding is an interim floor, not
+the destination — a deployment with real multi-user vault-backed
+reflections is still future work. Lifting it needs a change on
+Creek's side of the contract, not adepthood's: either a tenant or
+consumer field admitted by `ReflectionRequest` and
+`JournalUpsertRequest`, paired with a `/v1/wheel` scoped to that same
+tenant, or per-consumer credentials backed by a partitioning
+guarantee that is itself *advertised in `CapabilitiesResponse`* so
+adepthood can verify it at handshake time rather than assume it
+holds. A guarantee this ADR cannot observe at handshake is not one it
+may act on — that is the same reasoning (a) applies to the absence of
+any tenancy claim today, run forward to what would have to change for
+the claim to exist. Tracked as adepthood #2134, blocked on
+`Geoffe-Ga/creek-vault` shipping either shape.
+
+What this costs, recorded honestly rather than rounded up: on a
+genuinely multi-user deployment that configures a vault, only the
+one bound user gets vault-backed reflections and a vault-backed
+wheel. Every other user runs the local pipeline — local reflection,
+locally computed wheel — which is not a degraded experience relative
+to some richer default; it is the same floor every vault-less
+deployment already runs on today, for every one of its users.
+
+**Rejected — shipping the leak and calling it a known limitation:**
+the alternative to (b) and (c) above was not "no vault feature" but
+"a vault feature that silently mixes users' journals in the corpus it
+grounds reflections in" — a privacy defect, not a limitation, and one
+this ADR will not document as though it were a tradeoff.
+
+**Rejected — inferring a per-consumer partitioning guarantee from
+Creek's behavior:** even if today's Creek deployment happened to
+partition by credential in practice, nothing in the ratified contract
+promises it, and `CapabilitiesResponse` has a `tier_model` field for
+exactly this kind of standing promise yet says nothing about tenancy
+there. Building on unpublished behavior is the same mistake Decision
+6 already refuses to make for confidential compute, and (d) names the
+one place such a promise would have to appear before adepthood could
+rely on it.
+
 ## Divergence table
 
 | What adepthood ships | What Creek publishes | Resolution | Owning repo / issue |
 | --- | --- | --- | --- |
-| `reflect` params `{consumer, body, tier_ceiling}` (`backend/src/services/creek_vault_client.py:277-279`) | `reflect(content, entry_ref, privacy_tier_ceiling)` (`creek-tools/creek_mcp/server.py:332-346`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #2047 |
-| `wheel` params `{"consumer": CONSUMER_ID}` (`creek_vault_client.py:426`) | `wheel(privacy_tier_ceiling)` only (`server.py:349-358`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #2047 |
+| `reflect` params `{consumer, body, tier_ceiling}` (`backend/src/services/creek_vault_client.py:277-279`) | `reflect(content, entry_ref, privacy_tier_ceiling)` (`creek-tools/creek_mcp/server.py:332-346`) | RESOLVED by the `/v1` cutover (#2047); the client this row describes is retired — archaeology only, per the 2026-08-07 note | adepthood #2047 |
+| `wheel` params `{"consumer": CONSUMER_ID}` (`creek_vault_client.py:426`) | `wheel(privacy_tier_ceiling)` only (`server.py:349-358`) | RESOLVED by the `/v1` cutover (#2047); `CONSUMER_ID` no longer exists in the codebase — archaeology only, per the 2026-08-07 note | adepthood #2047 |
 | `reflect` result read as scalar `payload.get("reflection")` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
 | `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity | adepthood #1937 |
 | Major-only version gate, a no-op pre-1.0 (`_CONTRACT_MAJOR`, `creek_vault_client.py:79,242`) | `CONTRACT_VERSION = "0.2.0"` (`creek-tools/creek_mcp/contract.py:18`) | Exact-minor comparison per Decision 4; pin lives here, comparison code lands in #2045 | both repos |
+| Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning); interim single-tenant binding shipped per Decision 7 | `creek-vault` / adepthood #2134 |
 
 ## Deprecation and change control
 
@@ -539,9 +637,69 @@ at `:277-279`, `_CONTRACT_MAJOR` at `:79,242`, the scalar
 `payload.get("reflection")` read at `:406-407`, the `wheel` params at
 `:426` — describes the **pre-cutover MCP client**, and none of those
 symbols or line numbers resolves to anything today: the code they
-point at was deleted by this issue. They are left exactly as written,
+point at was deleted by this issue. The `CONSUMER_ID` constant those
+citations name is gone too — it carried no tenancy meaning even while
+it existed (Decision 7(a)), and Decision 7's binding replaces it with
+a real one. They are left exactly as written,
 per this ADR's append-only convention, because the argument they
 support is an argument about what was true when the decision was made,
 and rewriting the evidence under a decision is how a decision record
 stops being a record. Read them as archaeology, not as a map of the
 current file.
+
+## Note, 2026-08-07 — the vault-tenancy binding ships
+
+Issue #2072, whose bug report is the one that surfaced Decision 7 in
+the first place: a deployment-wide vault identity meant every user's
+replicated journal material landed in one corpus, so a reflection
+returned to one user could ground itself in another user's writing,
+and `/v1/wheel`'s whole-corpus aggregate was being served to every
+user as though it were theirs. `CREEK_VAULT_OWNER_USER_ID` and its
+enforcement at `backend/src/dependencies/creek_vault.py`, described
+in full in Decision 7 above, are the fix that shipped for it.
+
+What is proven, and how: `backend/tests/test_creek_vault_tenancy.py`
+drives the real app end to end with two registered users and one
+shared fake vault standing in for the single corpus, and asserts the
+leak cannot travel in either direction — the non-owner's journal entry
+never reaches the corpus at all, and nothing the non-owner is answered
+with (reflection or wheel) is drawn from it. A second family in the
+same suite drives the dependency directly against a bare environment,
+pinning the fail-closed parse (missing, blank, non-integer, `0`, and
+negative all resolve to no owner) and the WARNING behavior — logged
+once per request, naming the variable, never echoing the raw value.
+
+**What this does not reach: a corpus that is already mixed.** The
+binding governs what enters the corpus from the moment it ships. It
+cannot touch what a previous configuration already replicated. Any
+deployment that ran with a vault configured and more than one active
+user before this shipped has a corpus that *already* holds several
+people's writing, and binding an owner does not retroactively
+partition it — every reflection the bound owner is served can still
+ground itself in material that was never theirs. The gate closes the
+inflow; it does not undo the past, and nobody should read a green
+tenancy suite as saying otherwise.
+
+Remediation for that case is operational and sits on Creek's side,
+not adepthood's: the corpus has to be re-scaffolded, or purged of
+everyone but the bound owner, by whoever administers the vault.
+Adepthood cannot do it from here even in principle — the ratified
+`/v1` capability list is exactly `capabilities`, `journal-upsert`,
+`reflections`, `wheel` (`CapabilitiesResponse.schema.json`), and none
+of those removes a fragment; journal writes are upsert-only. An
+operator turning this binding on for a vault that predates it should
+treat the existing corpus as compromised for tenancy purposes and
+decide deliberately whether to keep it.
+
+What is deliberately **not** claimed. Nothing here says anything about
+how Creek partitions, or fails to partition, a corpus on its own side
+— no such guarantee is published, per Decision 7(a), and this ADR has
+not gone looking for one. The single-tenant property this deployment
+actually gets holds for exactly one reason: adepthood refuses to put
+a second user's material into a corpus it already knows is shared and
+unpartitioned. That is an adepthood-side refusal, not a Creek-side
+promise, and reads exactly that way at every place this ADR touches
+it — Decision 7(a)'s citation of the schemas that carry no tenant
+field, and (d)'s naming of the specific creek-side change (a tenant
+field, or an advertised partitioning guarantee) that would be needed
+before adepthood could ever claim otherwise.

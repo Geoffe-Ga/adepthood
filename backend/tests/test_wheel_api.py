@@ -9,6 +9,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -26,7 +27,6 @@ from models.course_stage import CourseStage
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
-from services.creek_vault_write import get_creek_vault_client
 
 _TOTAL_STAGES = 10
 

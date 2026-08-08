@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from dependencies.creek_vault import get_creek_vault_client
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -81,7 +82,6 @@ from services.creek_vault_reflect import select_reflection_llm
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
-    get_creek_vault_client,
     store_and_classify,
 )
 from services.llm_usage import record_llm_usage

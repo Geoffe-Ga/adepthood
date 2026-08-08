@@ -28,6 +28,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from conftest import test_engine
+from dependencies import creek_vault as vault_dependency
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
@@ -101,6 +102,12 @@ _REFLECTIONS_PATH = "/v1/reflections"
 _REFLECTIONS_URL = f"{_VAULT_URL}{_REFLECTIONS_PATH}"
 
 _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
+
+# A configured vault's single bound owner, and somebody who is not them. Two ids
+# that are never equal, so "owner" and "everyone else" cannot be satisfied by the
+# same comparison.
+_VAULT_OWNER_ID = 11
+_NON_OWNER_ID = 12
 
 _SENTINEL_KEY = "SENTINEL_VAULT_KEY_DO_NOT_LEAK"
 
@@ -2796,6 +2803,22 @@ async def _drive_fallback_unconfigured(
     assert (await LocalFallbackCreekVaultClient().ingest(_ingest_request())).stored is False
 
 
+async def _drive_fallback_not_owner(
+    _http_clients: ClientFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a user who is not the bound owner of a configured vault.
+
+    Through the real gate rather than by constructing the fallback with the
+    outcome by hand: that gate is the only thing in adepthood that ever chooses
+    this outcome, so driving anything else would count a path production does not
+    have.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
+    monkeypatch.setenv(vault_dependency.OWNER_ENV_VAR, str(_VAULT_OWNER_ID))
+    client = vault_dependency.get_creek_vault_client(_NON_OWNER_ID)
+    assert (await client.ingest(_ingest_request())).stored is False
+
+
 _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDriver], ...] = (
     (VaultTelemetryOutcome.SUCCESS, CreekCapability.JOURNAL, _drive_ingest_success),
     (VaultTelemetryOutcome.SCHEMA_FAILURE, CreekCapability.JOURNAL, _drive_ingest_not_stored),
@@ -2823,6 +2846,11 @@ _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDri
         VaultTelemetryOutcome.FALLBACK_UNCONFIGURED,
         CreekCapability.JOURNAL,
         _drive_fallback_unconfigured,
+    ),
+    (
+        VaultTelemetryOutcome.FALLBACK_NOT_OWNER,
+        CreekCapability.JOURNAL,
+        _drive_fallback_not_owner,
     ),
 )
 
