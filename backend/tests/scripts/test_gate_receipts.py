@@ -29,14 +29,28 @@ run the gate" and exit 2 means "cannot evaluate"; neither one may ever be read
 as permission to skip, which is why the caller tests assert the full run happens
 in both cases.
 
+Three later refusals are quieter still, because in each of them git answers
+without complaining. ``git hash-object`` stops at the first path it cannot open,
+so one broken symlink or one unreadable file truncates the hash stream and every
+path after it contributes nothing -- and because the failure is reproducible,
+the receipt and the check agree on the same degraded value and the gate is
+skipped over files that were free to change. ``git hash-object`` also hashes
+blob content only, so ``chmod +x`` on a stage script is invisible even though
+the caller execs that script by path. And it honours ``.gitattributes``, so a
+file rewritten from LF to CRLF hashes identically while the formatting stage
+that would have rejected it gets skipped. The fixture therefore carries the
+repository's own attributes file, verbatim, or the last of those would pass
+against a tree that never normalised anything.
+
 Every test copies the real script into a miniature checkout under ``tmp_path``,
 initialises it as a git repository, and runs it there. The script derives its
 tree root from ``SCRIPT_DIR/../..`` precisely so it cannot be aimed at the live
 checkout by an unlucky working directory, and one test pins that by running it
-from an unrelated repository. ``pip``, ``python3`` and ``uname`` are shadowed on
-``PATH`` by shims reporting values a test controls, so the environment
-components can be mutated one at a time without touching the machine or the
-shared virtualenv.
+from an unrelated repository. ``pip``, ``python3``, ``uname`` and ``date`` are
+shadowed on ``PATH`` by shims reporting values a test controls, so the
+environment components can be mutated one at a time without touching the machine
+or the shared virtualenv, and so a single ``record`` can be frozen mid-write to
+hold a concurrency window open on purpose rather than by hoping for one.
 """
 
 from __future__ import annotations
@@ -45,6 +59,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +91,10 @@ _CANNOT_EVALUATE_EXIT_CODE = 2
 _GATE_STATE_DIR = Path(".gate-state")
 _RECEIPTS_DIR = _GATE_STATE_DIR / "receipts"
 _RECEIPT_SUFFIX = ".receipt"
+# A receipt is published by renaming a scratch file over it, so the scratch file
+# has to live in the receipts directory: a rename is only atomic within one
+# filesystem. One left behind is the visible symptom of a torn write.
+_TEMP_RECEIPT_GLOB = ".tmp-*"
 
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
 
@@ -120,6 +139,23 @@ _REQUIRE_POSTGRES_ENV = "INTEGRATION_LANE_REQUIRE_POSTGRES"
 _FAKE_PIP_FREEZE_ENV = "ADEPTHOOD_FAKE_PIP_FREEZE"
 _FAKE_PYTHON_VERSION_ENV = "ADEPTHOOD_FAKE_PYTHON_VERSION"
 _FAKE_HOSTNAME_ENV = "ADEPTHOOD_FAKE_HOSTNAME"
+# Names a file the ``date`` shim waits for before answering. ``record`` stamps
+# the receipt with the time after it has opened its scratch file and written the
+# first fields, so freezing ``date`` freezes one run exactly halfway through the
+# write -- which is the interleaving a second run has to survive.
+_DATE_GATE_ENV = "ADEPTHOOD_DATE_GATE"
+
+# Written by the shim once it is actually blocked, so the test waits on an
+# observed state instead of on a duration.
+_BLOCKED_MARKER_SUFFIX = ".blocked"
+_GATE_RELEASE_TEXT = "go\n"
+_GATE_POLL_SECONDS = 0.02
+_GATE_WAIT_TIMEOUT_SECONDS = 30.0
+
+# Deliberately a different length from a real ``%Y-%m-%dT%H:%M:%SZ`` stamp: two
+# runs interleaving on one scratch file would otherwise write byte-identical
+# receipts, and the corruption would be undetectable rather than absent.
+_STUB_TIMESTAMP = "STUB"
 
 _BASELINE_PIP_FREEZE = "example-package==1.0.0"
 _OTHER_PIP_FREEZE = "example-package==2.0.0"
@@ -134,6 +170,8 @@ _OTHER_POSTGRES_URL = "postgresql://gate/two"
 _TRUTHY = "1"
 
 _SHIM_MODE = 0o755
+_EXECUTABLE_FILE_MODE = 0o755
+_EXECUTE_BITS = 0o111
 _SHIM_DIR_NAME = "bin"
 _CHECKOUT_DIR_NAME = "repo"
 _DECOY_DIR_NAME = "decoy"
@@ -149,6 +187,44 @@ _RENAMED_FILE = Path("backend") / "src" / "renamed.py"
 _DELETABLE_FILE = Path("backend") / "src" / "deletable.py"
 _UNTRACKED_FILE = Path("backend") / "src" / "appeared.py"
 _PRE_COMMIT_CONFIG = Path(".pre-commit-config.yaml")
+
+# A stage script of the shape check-all.sh execs by path. Its executable bit is
+# part of whether the gate can run at all, and none of its bytes change when
+# that bit does.
+_STAGE_SCRIPT = Path("scripts") / "backend" / "stage.sh"
+_STAGE_SCRIPT_TEXT = "#!/usr/bin/env bash\necho 'a stage the gate would exec'\n"
+
+# The unhashable-path pair. ``git hash-object`` stops at the first path it
+# cannot open, so the names are chosen -- and the ordering asserted -- to put a
+# real, editable file AFTER the failure under LC_ALL=C ordering, which is the
+# order the paths are fed in.
+_UNHASHABLE_FILE = Path("backend") / "src" / "a_broken_symlink.py"
+_UNHASHABLE_SYMLINK_TARGET = "definitely-not-a-real-target"
+_ORDERED_LAST_FILE = Path("backend") / "src" / "z_real.py"
+# git names the path it could not open; a refusal that says nothing at all
+# leaves an operator with a bare exit code.
+_UNHASHABLE_MESSAGE_MARKERS = (str(_UNHASHABLE_FILE), "hash")
+
+# The repository's own attributes file, copied verbatim into every fixture. The
+# CRLF case is vacuous without it: `* text=auto eol=lf` is precisely what makes
+# `git hash-object` normalise line endings away before hashing.
+_GITATTRIBUTES_FILE = Path(".gitattributes")
+_NORMALISING_ATTRIBUTE = "* text=auto eol=lf"
+_CARRIAGE_RETURN_NEWLINE = "\r\n"
+_NEWLINE = "\n"
+
+# The gate registry lives in the script; mirrored here only to count what the
+# backend gate would list, so the unhashable fixture can be shown to clear the
+# degenerate-input floor rather than trip it.
+_DECLARED_PATHSPECS = ("backend", "scripts", ".pre-commit-config.yaml")
+_MINIMUM_FILES_PATTERN = re.compile(r"MINIMUM_DECLARED_FILES=(?P<floor>[0-9]+)")
+
+# A receipt is a flat key=value file over a closed vocabulary. A line that is
+# neither -- a bare fragment, or a key that is the tail of a real one -- is the
+# residue of two runs writing over each other, and both shapes occur depending
+# on where the second write landed.
+_RECEIPT_LINE_PATTERN = re.compile(r"\A[a-z_]+=\S*\Z")
+_COMPONENT_FIELD_PREFIX = "component_"
 
 # Files outside every declared path. A merge that touches only these is the
 # case the whole receipt mechanism exists to make cheap.
@@ -211,6 +287,21 @@ fi
 exec "{real}" "$@"
 """
 
+# Blocks until the file named by the gate variable appears, announcing that it
+# is blocked first so the test can wait on the state rather than on a duration.
+# Untouched -- a plain delegation to the real command -- whenever the gate
+# variable is unset, which is every test but the concurrency one.
+_DATE_SHIM = """#!/usr/bin/env bash
+gate="${{{gate_env}:-}}"
+if [ -n "$gate" ] && [ ! -f "$gate" ]; then
+    : > "$gate{blocked}"
+    while [ ! -f "$gate" ]; do sleep {poll}; done
+    printf '%s\\n' "{stub}"
+    exit 0
+fi
+exec "{real}" "$@"
+"""
+
 
 def _bash_executable() -> str:
     """Return an absolute path to bash, failing the test if there is none.
@@ -267,6 +358,80 @@ def _require_script(path: Path) -> Path:
     return path
 
 
+def _gitattributes_text() -> str:
+    """Return the repository's attributes file, refusing a fixture without it.
+
+    Read verbatim rather than restated, so the fixture cannot drift into a tree
+    that never normalises line endings -- against which the CRLF refusal would
+    pass while proving nothing.
+
+    Returns:
+        The contents of the repository's own ``.gitattributes``.
+    """
+    source = _REPO_ROOT / _GITATTRIBUTES_FILE
+    if not source.exists():
+        pytest.fail(f"{source} is missing; the line-ending fixture would be vacuous")
+    text = source.read_text()
+    if _NORMALISING_ATTRIBUTE not in text:
+        pytest.fail(
+            f"{source} no longer declares {_NORMALISING_ATTRIBUTE!r}, so a CRLF "
+            "rewrite would not be normalised away and the fixture proves nothing",
+        )
+    return text
+
+
+def _minimum_declared_files() -> int:
+    """Return the degenerate-input floor the script itself enforces.
+
+    Parsed from the script rather than restated, so a change to the floor cannot
+    silently turn the ampleness guard below into a tautology.
+
+    Returns:
+        The minimum number of declared files the gate accepts.
+    """
+    match = _MINIMUM_FILES_PATTERN.search(_require_script(_VERIFIED_SCRIPT).read_text())
+    if match is None:
+        pytest.fail(f"{_VERIFIED_SCRIPT} no longer declares a degenerate-input floor")
+    return int(match.group("floor"))
+
+
+def _declared_listing(root: Path) -> list[str]:
+    """Return the gate's declared files in the order the fingerprint hashes them.
+
+    Args:
+        root: Tree root of the staged checkout.
+
+    Returns:
+        Every tracked-or-untracked-and-unignored path under the declared paths,
+        sorted the way ``LC_ALL=C sort`` sorts them.
+    """
+    listing = _git(
+        root,
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        *_DECLARED_PATHSPECS,
+    )
+    return sorted(line for line in listing.splitlines() if line)
+
+
+def _wait_for(marker: Path, reason: str) -> None:
+    """Block until a shim announces it is blocked, failing rather than hanging.
+
+    Args:
+        marker: File the shim creates once it has reached its blocking point.
+        reason: What the absent marker would mean, for the failure message.
+    """
+    deadline = time.monotonic() + _GATE_WAIT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if marker.exists():
+            return
+        time.sleep(_GATE_POLL_SECONDS)
+    pytest.fail(f"{reason}: {marker} never appeared within {_GATE_WAIT_TIMEOUT_SECONDS}s")
+
+
 def _write(root: Path, relative: Path, text: str) -> None:
     """Write a fixture file into the staged checkout, creating parents.
 
@@ -280,7 +445,7 @@ def _write(root: Path, relative: Path, text: str) -> None:
     destination.write_text(text)
 
 
-def _git(root: Path, *args: str) -> None:
+def _git(root: Path, *args: str) -> str:
     """Run a git command inside the staged checkout, failing the test on error.
 
     The global configuration is detached so an operator's hooks path, commit
@@ -289,6 +454,9 @@ def _git(root: Path, *args: str) -> None:
     Args:
         root: Working directory for the command.
         *args: Arguments following ``git``.
+
+    Returns:
+        Whatever the command printed on stdout, so a listing can be inspected.
     """
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}
     result = subprocess.run(
@@ -302,10 +470,11 @@ def _git(root: Path, *args: str) -> None:
     )
     if result.returncode != 0:
         pytest.fail(f"git {args} failed in {root}: {result.stdout!r} {result.stderr!r}")
+    return result.stdout
 
 
 def _install_shims(shim_dir: Path) -> None:
-    """Write the ``pip``, ``python3`` and ``uname`` stand-ins onto disk.
+    """Write the ``pip``, ``python3``, ``uname`` and ``date`` stand-ins onto disk.
 
     Each shim answers only the one query the fingerprint asks it and delegates
     everything else to the real command, so shadowing them cannot disturb
@@ -315,6 +484,17 @@ def _install_shims(shim_dir: Path) -> None:
         shim_dir: Directory that will be prepended to ``PATH``.
     """
     shim_dir.mkdir(parents=True, exist_ok=True)
+    date = shim_dir / "date"
+    date.write_text(
+        _DATE_SHIM.format(
+            gate_env=_DATE_GATE_ENV,
+            blocked=_BLOCKED_MARKER_SUFFIX,
+            poll=_GATE_POLL_SECONDS,
+            stub=_STUB_TIMESTAMP,
+            real=_real_executable("date"),
+        ),
+    )
+    date.chmod(_SHIM_MODE)
     pip = shim_dir / "pip"
     pip.write_text(
         _PIP_SHIM.format(freeze_env=_FAKE_PIP_FREEZE_ENV, default=_BASELINE_PIP_FREEZE),
@@ -358,6 +538,7 @@ def _shim_env(shim_dir: Path) -> dict[str, str]:
     env[_FAKE_HOSTNAME_ENV] = _BASELINE_HOSTNAME
     env.pop(_POSTGRES_URL_ENV, None)
     env.pop(_REQUIRE_POSTGRES_ENV, None)
+    env.pop(_DATE_GATE_ENV, None)
     return env
 
 
@@ -486,9 +667,21 @@ def _stage_checkout(
     (root / _SCRIPT_RELATIVE_PATH.parent).mkdir(parents=True)
     shutil.copy(_require_script(_VERIFIED_SCRIPT), root / _SCRIPT_RELATIVE_PATH)
 
+    # Verbatim, so the fixture normalises line endings exactly as the real tree
+    # does and the CRLF refusal cannot pass against a repository that never
+    # normalised in the first place.
+    _write(root, _GITATTRIBUTES_FILE, _gitattributes_text())
     _write(root, _PRE_COMMIT_CONFIG, _PRE_COMMIT_TEXT)
     _write(root, _PYPROJECT_FILE, _PYPROJECT_TEXT)
-    for fixture in (_SOURCE_FILE, _TEST_FILE, _RENAMABLE_FILE, _DELETABLE_FILE):
+    _write(root, _STAGE_SCRIPT, _STAGE_SCRIPT_TEXT)
+    (root / _STAGE_SCRIPT).chmod(_EXECUTABLE_FILE_MODE)
+    for fixture in (
+        _SOURCE_FILE,
+        _TEST_FILE,
+        _RENAMABLE_FILE,
+        _DELETABLE_FILE,
+        _ORDERED_LAST_FILE,
+    ):
         _write(root, fixture, _MODULE_TEXT)
     for index in range(tracked_file_count):
         _write(root, Path("backend") / "src" / f"filler_{index:03d}.py", _MODULE_TEXT)
@@ -705,6 +898,147 @@ def _rename_with_identical_content(root: Path) -> None:
     shutil.move(str(root / _RENAMABLE_FILE), str(root / _RENAMED_FILE))
 
 
+def _grant_execute(path: Path) -> None:
+    """Make a file executable, failing if the filesystem cannot express it.
+
+    Args:
+        path: File to mark executable.
+    """
+    path.chmod(path.stat().st_mode | _EXECUTE_BITS)
+    assert os.access(path, os.X_OK), (
+        f"{path} did not become executable, so this filesystem cannot stage the "
+        "change under test and a refusal here would prove nothing"
+    )
+
+
+def _revoke_execute(path: Path) -> None:
+    """Strip a file's executable bits, failing if the filesystem ignores it.
+
+    Args:
+        path: File to mark non-executable.
+    """
+    path.chmod(path.stat().st_mode & ~_EXECUTE_BITS)
+    assert not os.access(path, os.X_OK), (
+        f"{path} is still executable, so this filesystem cannot stage the change "
+        "under test and a refusal here would prove nothing"
+    )
+
+
+def _make_source_executable(root: Path) -> None:
+    """Add the executable bit to a tracked, non-executable source file.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    _grant_execute(root / _SOURCE_FILE)
+
+
+def _make_stage_script_unexecutable(root: Path) -> None:
+    """Strip the executable bit from a tracked stage script.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    _revoke_execute(root / _STAGE_SCRIPT)
+
+
+def _make_untracked_file_executable(root: Path) -> None:
+    """Add the executable bit to an untracked-but-unignored file.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    _grant_execute(root / _UNTRACKED_FILE)
+
+
+def _make_source_executable_and_edited(root: Path) -> None:
+    """Flip a source file's mode and its content in one move.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    _edit_source(root)
+    _grant_execute(root / _SOURCE_FILE)
+
+
+def _rewrite_source_with_crlf(root: Path) -> None:
+    """Rewrite a source file with CRLF endings and no other change.
+
+    Written as bytes so the line endings are exactly what is intended rather
+    than whatever the platform's text mode would translate them into.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    path = root / _SOURCE_FILE
+    original = path.read_bytes()
+    path.write_bytes(_MODULE_TEXT.replace(_NEWLINE, _CARRIAGE_RETURN_NEWLINE).encode())
+    assert path.read_bytes() != original, (
+        "the CRLF rewrite changed nothing on disk, so the refusal would be vacuous"
+    )
+
+
+def _break_hashing(root: Path) -> None:
+    """Plant a declared path that ``git hash-object`` cannot open.
+
+    A broken symlink is the reproducible form of the failure -- an unreadable
+    file or a stale index lock behave the same way -- and reproducibility is
+    what makes it dangerous: the record and the check both degrade identically,
+    so they agree.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    link = root / _UNHASHABLE_FILE
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(_UNHASHABLE_SYMLINK_TARGET)
+    assert not link.exists(), f"{link} resolves to something, so git can hash it after all"
+
+
+def _assert_fixture_is_ample(root: Path) -> None:
+    """Assert the checkout clears the degenerate-input floor.
+
+    Without this, a refusal in one of the unhashable-path tests could be the
+    already-tested "your gate matches almost nothing" guard firing instead of
+    the failure under test.
+
+    Args:
+        root: Tree root of the staged checkout.
+    """
+    listing = _declared_listing(root)
+    floor = _minimum_declared_files()
+    assert len(listing) >= floor, (
+        f"the fixture lists only {len(listing)} declared files, under the "
+        f"degenerate-input floor of {floor}; the refusal under test would be "
+        "indistinguishable from the degenerate-gate refusal"
+    )
+
+
+def _assert_receipt_is_well_formed(text: str) -> None:
+    """Assert a receipt is one run's output rather than two runs interleaved.
+
+    Args:
+        text: Full receipt contents.
+    """
+    lines = [line for line in text.splitlines() if line]
+    for line in lines:
+        assert _RECEIPT_LINE_PATTERN.match(line), (
+            f"the receipt carries {line!r}, which is not a key=value field; a "
+            f"fragment like this is the residue of two runs writing over one "
+            f"another. Full receipt: {text!r}"
+        )
+    keys = [line.split("=", 1)[0] for line in lines]
+    for key in keys:
+        assert key in _RECEIPT_FIELDS or key.startswith(_COMPONENT_FIELD_PREFIX), (
+            f"the receipt carries an unknown field {key!r}; the tail of a real "
+            f"key left behind by a longer write looks exactly like this. Full "
+            f"receipt: {text!r}"
+        )
+    assert len(keys) == len(set(keys)), f"the receipt repeats a field: {keys}"
+    for field in _RECEIPT_FIELDS:
+        assert field in keys, f"the receipt lost {field!r}; got: {text!r}"
+
+
 def test_fingerprint_is_a_stable_sha256_over_repeated_calls(checkout: _Checkout) -> None:
     """Two reads of an untouched tree must agree, byte for byte.
 
@@ -909,6 +1243,96 @@ def test_renaming_a_file_without_changing_it_refuses_the_verdict(
         checkout,
         _rename_with_identical_content,
         "a file renamed with identical content",
+    )
+
+
+def test_gaining_an_executable_bit_refuses_the_verdict(checkout: _Checkout) -> None:
+    """A mode-only change is invisible to a content hash, and it matters.
+
+    ``git hash-object`` hashes bytes, and ``chmod +x`` moves none of them, so a
+    fingerprint built from blob hashes alone cannot see this at all. The gate
+    runner execs ``scripts/backend/*.sh`` by path, which makes the mode part of
+    whether the stage can run rather than a cosmetic detail, and ``--explain``
+    has to call it what it is -- a change under the declared paths -- or the
+    operator goes looking for an edit that does not exist.
+    """
+    assert checkout.record().returncode == _HIT_EXIT_CODE
+    _assert_hit(checkout.check(), "an untouched tree must reuse its verdict")
+
+    _make_source_executable(checkout.root)
+
+    _assert_explains(checkout.check(_EXPLAIN_FLAG), _PATHS_COMPONENT)
+
+
+def test_losing_an_executable_bit_refuses_the_verdict(checkout: _Checkout) -> None:
+    """The direction that actually breaks the gate: a stage script it cannot exec.
+
+    A receipt recorded while ``scripts/backend/stage.sh`` was executable, and
+    honoured after it stopped being executable, skips a stage whose runner can
+    no longer be invoked -- and reports green for it.
+    """
+    _assert_tree_mutation_misses(
+        checkout,
+        _make_stage_script_unexecutable,
+        "a stage script that lost its executable bit",
+    )
+
+
+def test_an_untracked_file_gaining_an_executable_bit_refuses_the_verdict(
+    checkout: _Checkout,
+) -> None:
+    """Mode has to be read from the working tree, not from the index.
+
+    The index records a mode only for tracked paths, and even for those it
+    keeps the mode from the last ``git add`` rather than the one on disk. A
+    fingerprint that consulted index modes would therefore miss this case
+    entirely, while still passing the tracked-file cases above.
+    """
+    _add_untracked_file(checkout.root)
+
+    _assert_tree_mutation_misses(
+        checkout,
+        _make_untracked_file_executable,
+        "an untracked file that became executable",
+    )
+
+
+def test_a_mode_flip_alongside_a_content_edit_refuses_the_verdict(
+    checkout: _Checkout,
+) -> None:
+    """Adding mode to the fingerprint must not displace content from it.
+
+    The obvious wrong fix is to hash the mode listing instead of the content
+    stream. This is the case that catches it: both inputs moved, so a
+    fingerprint that measures either one must refuse.
+    """
+    _assert_tree_mutation_misses(
+        checkout,
+        _make_source_executable_and_edited,
+        "a file that changed in both mode and content",
+    )
+
+
+def test_rewriting_a_file_with_crlf_endings_refuses_the_verdict(
+    checkout: _Checkout,
+) -> None:
+    """Line endings survive the hash only because git is asked to erase them.
+
+    ``.gitattributes`` sets ``* text=auto eol=lf`` and ``git hash-object``
+    honours it, so a file rewritten CRLF hashes to the same blob as its LF
+    spelling. That is the one difference ruff-format would reject and the
+    fingerprint would certify: the receipt skips the formatting stage over a
+    tree that stage was about to fail.
+    """
+    assert _NORMALISING_ATTRIBUTE in (checkout.root / _GITATTRIBUTES_FILE).read_text(), (
+        "the fixture does not normalise line endings, so this test would pass "
+        "against a tree where CRLF was never hidden in the first place"
+    )
+
+    _assert_tree_mutation_misses(
+        checkout,
+        _rewrite_source_with_crlf,
+        "a file rewritten with CRLF line endings",
     )
 
 
@@ -1238,6 +1662,182 @@ def test_explain_names_the_env_component(checkout: _Checkout) -> None:
         ),
         _ENV_COMPONENT,
     )
+
+
+def test_recording_over_a_path_git_cannot_hash_is_refused(checkout: _Checkout) -> None:
+    """A listing git could not finish reading is not evidence about anything.
+
+    ``git hash-object --stdin-paths`` aborts at the first path it cannot open,
+    emitting fewer hashes than it was given paths, and every command in the
+    fingerprint runs inside a command substitution where bash does not apply
+    errexit. So the failure is swallowed, the missing hashes are padded with
+    empty fields, and a receipt gets written about a tree that was never fully
+    read. The only honest answer is to refuse to record at all.
+    """
+    _break_hashing(checkout.root)
+    _assert_fixture_is_ample(checkout.root)
+
+    result = checkout.record()
+
+    assert result.returncode == _CANNOT_EVALUATE_EXIT_CODE, (
+        f"a tree git cannot finish hashing must exit {_CANNOT_EVALUATE_EXIT_CODE}; "
+        f"got exit {result.returncode} with stdout: {result.stdout!r} "
+        f"stderr: {result.stderr!r}"
+    )
+    assert not checkout.receipt_path().exists(), "a refused record must write no receipt"
+    message = f"{result.stdout}{result.stderr}"
+    assert _TRACEBACK_MARKER not in message, (
+        f"the refusal must be reported, not crashed on; got: {message!r}"
+    )
+    assert any(marker in message for marker in _UNHASHABLE_MESSAGE_MARKERS), (
+        f"the refusal must say what could not be hashed (one of "
+        f"{list(_UNHASHABLE_MESSAGE_MARKERS)}); got: {message!r}"
+    )
+
+
+def test_checking_a_tree_git_cannot_hash_never_hits(checkout: _Checkout) -> None:
+    """The read side has to refuse for the same reason the write side does.
+
+    A degraded fingerprint is stable, so a check computed under the same broken
+    condition matches the receipt recorded under it and reports a hit. Refusing
+    to record but still honouring a check would leave the exploit intact
+    wherever a receipt already exists.
+    """
+    _break_hashing(checkout.root)
+    checkout.record()
+
+    result = checkout.check()
+
+    assert result.returncode != _HIT_EXIT_CODE, (
+        "a tree git cannot finish hashing was reported as verified; the "
+        f"fingerprint is degraded identically on both sides. Got stdout: "
+        f"{result.stdout!r} stderr: {result.stderr!r}"
+    )
+
+
+def test_a_swallowed_hash_failure_cannot_certify_a_later_edit(checkout: _Checkout) -> None:
+    """The exploit itself: an edit past the failure point inherits a green run.
+
+    ``git hash-object`` is fed the declared paths in ``LC_ALL=C`` order and
+    stops at the first one it cannot open, so every path after that one is
+    paired with an empty hash. Record while the failure is present, edit a file
+    that sorts after it, and both fingerprints are the same degraded value --
+    the gate skips ruff, mypy, pytest and the coverage threshold over a file it
+    never hashed. The ordering is asserted from git's own listing so a rename of
+    either fixture file cannot quietly make this test vacuous.
+    """
+    _break_hashing(checkout.root)
+    listing = _declared_listing(checkout.root)
+    for member in (str(_UNHASHABLE_FILE), str(_ORDERED_LAST_FILE)):
+        assert member in listing, f"{member} is not a declared file; got: {listing}"
+    assert listing.index(str(_UNHASHABLE_FILE)) < listing.index(str(_ORDERED_LAST_FILE)), (
+        f"{_ORDERED_LAST_FILE} must be hashed after {_UNHASHABLE_FILE} for the "
+        f"truncated hash stream to reach it; got: {listing}"
+    )
+    _assert_fixture_is_ample(checkout.root)
+
+    checkout.record()
+    (checkout.root / _ORDERED_LAST_FILE).write_text(_MODULE_TEXT + _MUTATION_TEXT)
+    result = checkout.check()
+
+    assert result.returncode != _HIT_EXIT_CODE, (
+        f"{_ORDERED_LAST_FILE} was edited after the receipt was recorded and the "
+        "gate still reported verified: the unreadable path truncated the hash "
+        "stream, so neither fingerprint ever contained this file's content. Got "
+        f"stdout: {result.stdout!r} stderr: {result.stderr!r}"
+    )
+
+
+def _assert_a_scratch_file_is_open(subject: _Checkout) -> None:
+    """Assert a record in flight really is writing through a scratch file.
+
+    Without this the concurrency test could pass by accident against an
+    implementation that never had a window to lose.
+
+    Args:
+        subject: The staged checkout, with one ``record`` frozen mid-write.
+    """
+    entries = sorted((subject.root / _RECEIPTS_DIR).iterdir())
+    assert [entry for entry in entries if entry != subject.receipt_path()], (
+        "the frozen record has no scratch file in the receipts directory, so "
+        f"there is no interleaving to test; found: {entries}"
+    )
+
+
+def test_two_concurrent_records_do_not_tear_the_receipt(
+    checkout: _Checkout,
+    tmp_path: Path,
+) -> None:
+    """Two runs recording at once must not write through one another's scratch file.
+
+    Nothing serialises two ``check-all.sh`` runs in one tree -- the suite lock
+    only guards the pytest step -- so both can reach ``record`` together. A
+    scratch file named after the gate alone is the same path for both: the
+    second truncates and publishes the file the first still holds open, and the
+    first then writes its tail into whatever now sits at that inode.
+
+    The window is held open deliberately rather than raced for: the ``date``
+    shim freezes the first run after it has opened its scratch file and written
+    the leading fields, which is exactly the interleaving point, and the second
+    run is released only once the first has announced that it is blocked. A
+    version that started both and hoped would pass on a fast machine and prove
+    nothing on any machine.
+
+    Args:
+        checkout: The staged checkout.
+        tmp_path: Per-test directory holding the shim's gate files.
+    """
+    gate = tmp_path / "date-gate"
+    blocked = Path(f"{gate}{_BLOCKED_MARKER_SUFFIX}")
+    frozen_env = checkout.env_with({_DATE_GATE_ENV: str(gate)})
+
+    with subprocess.Popen(
+        [_bash_executable(), str(checkout.script), _RECORD_COMMAND, _GATE],
+        cwd=checkout.root,
+        env=frozen_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as frozen:
+        try:
+            _wait_for(blocked, "the first record never reached its timestamp field")
+            _assert_a_scratch_file_is_open(checkout)
+            second = checkout.record()
+        finally:
+            gate.write_text(_GATE_RELEASE_TEXT)
+        first_stdout, first_stderr = frozen.communicate(timeout=_SUBPROCESS_TIMEOUT_SECONDS)
+
+    assert frozen.returncode == _HIT_EXIT_CODE, (
+        f"the interleaved record failed; got exit {frozen.returncode} with "
+        f"stdout: {first_stdout!r} stderr: {first_stderr!r}"
+    )
+    assert not first_stderr, (
+        f"the interleaved record reported an error while claiming success, which "
+        f"is what writing through another run's scratch file looks like: "
+        f"{first_stderr!r}"
+    )
+    assert second.returncode == _HIT_EXIT_CODE, second.stderr
+    assert not second.stderr, second.stderr
+
+    _assert_receipt_is_well_formed(checkout.receipt_path().read_text())
+    assert sorted((checkout.root / _RECEIPTS_DIR).iterdir()) == [checkout.receipt_path()], (
+        "a scratch file outlived the run that made it"
+    )
+    _assert_hit(checkout.check(), "a receipt published by two concurrent records")
+
+
+def test_no_scratch_file_survives_a_record(checkout: _Checkout) -> None:
+    """The receipts directory holds receipts, and nothing else, once a run ends.
+
+    A surviving ``.tmp-`` file is the visible symptom of a write that was torn
+    or abandoned rather than published by rename, and a reader that ever picked
+    one up would be reading a half-formed claim.
+    """
+    assert checkout.record().returncode == _HIT_EXIT_CODE
+
+    leftovers = sorted((checkout.root / _RECEIPTS_DIR).glob(_TEMP_RECEIPT_GLOB))
+
+    assert leftovers == [], f"a scratch file outlived the record that made it: {leftovers}"
 
 
 def test_help_documents_the_three_subcommands(checkout: _Checkout) -> None:

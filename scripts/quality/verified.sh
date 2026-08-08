@@ -22,7 +22,9 @@ TREE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Bumping this retires every receipt in existence. It is the only safe response
 # to a change in what the fingerprint measures, or in how it combines it.
-readonly SCHEMA_VERSION="1"
+# Bumped to 2 when the paths component gained each file's executable bit and
+# stopped letting .gitattributes normalise line endings out of the content.
+readonly SCHEMA_VERSION="2"
 
 readonly RECEIPTS_DIR="$TREE_ROOT/.gate-state/receipts"
 readonly RECEIPT_SUFFIX=".receipt"
@@ -37,6 +39,11 @@ readonly GATE_NAME_PATTERN='^[a-z0-9-]+$'
 # That is exactly what a typo'd path or a misplaced script looks like, so too
 # few files is an error rather than a hit.
 readonly MINIMUM_DECLARED_FILES=50
+
+# How a file's executable bit is spelled in the hashed listing. One character,
+# so folding the mode in costs the digest a byte per file rather than a process.
+readonly EXECUTABLE_MODE_FLAG="x"
+readonly REGULAR_MODE_FLAG="-"
 
 # Only EXIT_HIT may ever license reuse of a verdict. EXIT_MISS means "not
 # verified, run the gate"; EXIT_CANNOT_EVALUATE means "no honest answer is
@@ -140,30 +147,111 @@ require_git_repository() {
     return "$EXIT_CANNOT_EVALUATE"
 }
 
+count_lines() {
+    # Counts a captured multi-line string, reading the empty string as zero
+    # rather than as the one phantom line a bare `printf '%s\n' ""` produces.
+    print_lines "$1" | wc -l | tr -d '[:space:]'
+}
+
+refuse_unlistable_paths() {
+    printf 'Error: git could not list the declared paths (%s) under %s.\n' \
+        "$*" "$TREE_ROOT" >&2
+    printf 'A listing that failed partway through is not evidence about this tree, and\n' >&2
+    printf 'an empty one fingerprints identically in every tree on earth.\n' >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
+refuse_unhashable_paths() {
+    printf 'Error: git could not hash every declared path under %s.\n' "$TREE_ROOT" >&2
+    printf 'hash-object stops at the first path it cannot open - a broken symlink, an\n' >&2
+    printf 'unreadable file, a stale index lock - so every path after it would\n' >&2
+    printf 'contribute nothing, and would do so again on the next run: a degraded\n' >&2
+    printf 'fingerprint that matches itself and certifies whatever changed behind it.\n' >&2
+    return "$EXIT_CANNOT_EVALUATE"
+}
+
 declared_files() {
     # Every file the gate measures: tracked plus untracked-and-unignored, minus
     # the ones deleted from the working tree. Work in progress counts, because
     # the gate would have collected it; a still-cached deletion does not,
     # because the tree no longer contains it.
+    #
+    # Every step's status is checked by hand. This function is reached only
+    # through command substitutions, inside which bash does not apply errexit,
+    # and the caller's `|| exit $?` suppresses it for the whole call tree
+    # besides - so a failure that went unchecked here would quietly contribute
+    # a short listing to a fingerprint that then matches itself.
     local listed deleted
-    listed="$(git -C "$TREE_ROOT" ls-files --cached --others --exclude-standard -- "$@")"
-    deleted="$(git -C "$TREE_ROOT" ls-files --deleted -- "$@")"
-    LC_ALL=C comm -23 \
-        <(print_lines "$listed" | LC_ALL=C sort -u) \
-        <(print_lines "$deleted" | LC_ALL=C sort -u)
+    if ! listed="$(git -C "$TREE_ROOT" ls-files --cached --others --exclude-standard \
+        -- "$@" | LC_ALL=C sort -u)"; then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! deleted="$(git -C "$TREE_ROOT" ls-files --deleted -- "$@" | LC_ALL=C sort -u)"; then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! LC_ALL=C comm -23 <(print_lines "$listed") <(print_lines "$deleted"); then
+        refuse_unlistable_paths "$@"
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+}
+
+path_mode_lines() {
+    # Reads the file listing on stdin and emits "<path> <mode flag>".
+    #
+    # `git hash-object` hashes blob content only, so `chmod +x` moves none of
+    # the bytes it reads. That is not cosmetic here: check-all.sh execs
+    # scripts/backend/*.sh by path, so the mode decides whether a stage can run
+    # at all. The bit is read from the WORKING TREE rather than from the index,
+    # because an untracked file has no index entry and a tracked one carries
+    # the mode of its last `git add` instead of the one on disk.
+    #
+    # One builtin test per file, in a single shell: the whole fingerprint is
+    # taken up to three times per check-all run over roughly nine hundred
+    # files, which is no place to spawn a process each.
+    local file
+    while IFS= read -r file; do
+        if [ -x "$TREE_ROOT/$file" ]; then
+            printf '%s %s\n' "$file" "$EXECUTABLE_MODE_FLAG"
+        else
+            printf '%s %s\n' "$file" "$REGULAR_MODE_FLAG"
+        fi
+    done
 }
 
 paths_digest() {
-    # Each path is hashed ALONGSIDE its content. Combining the content hashes
-    # alone would leave a file renamed without an edit indistinguishable from
-    # an untouched tree - a move that changes what imports resolve, and the
-    # quietest possible way for a receipt to be wrong. One `git hash-object`
-    # process reads every path and answers in the order it was asked, so its
-    # output pairs back against the path list line for line.
+    # Each path is hashed ALONGSIDE its content and its executable bit.
+    # Combining the content hashes alone would leave a file renamed without an
+    # edit indistinguishable from an untouched tree - a move that changes what
+    # imports resolve, and the quietest possible way for a receipt to be wrong.
+    # One `git hash-object` process reads every path and answers in the order it
+    # was asked, so its output pairs back against the path list line for line.
+    #
+    # `--no-filters` hashes the literal bytes on disk. Without it git applies
+    # .gitattributes, where `* text=auto eol=lf` makes the CRLF and LF spellings
+    # of one file hash identically - the single difference ruff-format would
+    # reject, certified by a fingerprint that could not see it.
     local files="$1"
-    local hashes
-    hashes="$(print_lines "$files" | git -C "$TREE_ROOT" hash-object --stdin-paths)"
-    paste -d ' ' <(print_lines "$files") <(print_lines "$hashes") | LC_ALL=C sort | sha256_hex
+    local hashes paired
+    if ! hashes="$(print_lines "$files" \
+        | git -C "$TREE_ROOT" hash-object --no-filters --stdin-paths)"; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    # Fewer hashes than paths is the signature of the truncation above: git
+    # aborts wholesale, and `paste` would pad the missing pairs with empty
+    # fields rather than complain.
+    if [ "$(count_lines "$hashes")" -ne "$(count_lines "$files")" ]; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    if ! paired="$(paste -d ' ' \
+        <(print_lines "$files" | path_mode_lines) <(print_lines "$hashes"))"; then
+        refuse_unhashable_paths
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
+    print_lines "$paired" | LC_ALL=C sort | sha256_hex
 }
 
 refuse_degenerate_input() {
@@ -180,20 +268,25 @@ refuse_degenerate_input() {
 compute_components() {
     # Fills COMPONENT_DIGESTS in COMPONENT_NAMES order. Called directly and
     # never through a command substitution: a non-zero status raised inside
-    # `$(...)` is discarded by the caller, and the fail-closed guard below is
-    # the one refusal that has to reach the exit code.
-    local files file_count
-    files="$(declared_files "$@")"
-    file_count=0
-    if [ -n "$files" ]; then
-        file_count="$(print_lines "$files" | wc -l | tr -d '[:space:]')"
+    # `$(...)` is discarded by the caller, so every refusal that has to reach
+    # the exit code is captured and returned by hand on the way up.
+    local files file_count paths
+    if ! files="$(declared_files "$@")"; then
+        return "$EXIT_CANNOT_EVALUATE"
     fi
+    file_count="$(count_lines "$files")"
     if [ "$file_count" -lt "$MINIMUM_DECLARED_FILES" ]; then
         refuse_degenerate_input "$file_count" "$@"
         return "$EXIT_CANNOT_EVALUATE"
     fi
+    # Taken outside the array literal below: a non-zero status raised inside an
+    # element's `$(...)` would be discarded, which is the whole shape of bug the
+    # explicit checks in paths_digest exist to close.
+    if ! paths="$(paths_digest "$files")"; then
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
     COMPONENT_DIGESTS=(
-        "$(paths_digest "$files")"
+        "$paths"
         "$(python3 -VV 2>&1 | sha256_hex)"
         "$(pip freeze 2> /dev/null | sha256_hex)"
         "$(sha256_of "${VIRTUAL_ENV-}")"
@@ -235,23 +328,37 @@ receipt_field() {
             'found != 1 && $1 == key { sub(/^[^=]*=/, ""); print; found = 1 }'
 }
 
+receipt_fields() {
+    local gate="$1"
+    printf '%s=%s\n' "$FIELD_SCHEMA_VERSION" "$SCHEMA_VERSION"
+    printf '%s=%s\n' "$FIELD_GATE" "$gate"
+    printf '%s=%s\n' "$FIELD_FINGERPRINT" "$(combined_fingerprint)"
+    printf '%s=%s\n' "$FIELD_RECORDED_AT" "$(date -u "$TIMESTAMP_FORMAT")"
+    component_lines | sed "s/^/$FIELD_COMPONENT_PREFIX/"
+}
+
 record_receipt() {
     local gate="$1"
-    local receipt temp
+    local receipt scratch scratch_name
     receipt="$(receipt_path_for "$gate")"
-    temp="$RECEIPTS_DIR/$TEMP_RECEIPT_PREFIX$gate$RECEIPT_SUFFIX"
+    # The scratch name carries this process id because nothing serialises two
+    # check-all runs in one tree - the suite lock guards only the pytest step.
+    # On a name shared by gate alone, the second run truncates and publishes the
+    # file the first still holds open, and the first then writes its tail into
+    # whatever now sits at that path: a published receipt made of one run's head
+    # and another's remainder.
+    scratch_name="$TEMP_RECEIPT_PREFIX$gate-$$"
+    scratch="$RECEIPTS_DIR/$scratch_name$RECEIPT_SUFFIX"
     mkdir -p "$RECEIPTS_DIR"
-    {
-        printf '%s=%s\n' "$FIELD_SCHEMA_VERSION" "$SCHEMA_VERSION"
-        printf '%s=%s\n' "$FIELD_GATE" "$gate"
-        printf '%s=%s\n' "$FIELD_FINGERPRINT" "$(combined_fingerprint)"
-        printf '%s=%s\n' "$FIELD_RECORDED_AT" "$(date -u "$TIMESTAMP_FORMAT")"
-        component_lines | sed "s/^/$FIELD_COMPONENT_PREFIX/"
-    } > "$temp"
+    if ! receipt_fields "$gate" > "$scratch"; then
+        rm -f "$scratch"
+        printf 'Error: the receipt for gate %s could not be written.\n' "$gate" >&2
+        return "$EXIT_CANNOT_EVALUATE"
+    fi
     # Publish atomically. A reader must never observe a half-written receipt,
-    # and a temp file left in the receipts directory is the visible symptom of
-    # a torn write.
-    mv -f "$temp" "$receipt"
+    # and a scratch file left in the receipts directory is the visible symptom
+    # of a torn write.
+    mv -f "$scratch" "$receipt"
 }
 
 explain_mismatch() {

@@ -16,19 +16,33 @@ partial run cannot satisfy a whole-repo coverage threshold. So a positional path
 runs exactly that path, unsharded and unfiltered, and asking for coverage
 alongside it is a usage error rather than a confusing failure at the end.
 
+Taking the lock is atomic; recovering from a stale one is the part that is not.
+The recovery reads the holder, decides it is dead, removes the file, and creates
+its own -- four steps, with a whole scheduling quantum available between any two
+of them. Two runs that both looked at the same dead PID can therefore both come
+away owning the suite, the second having deleted the first's brand-new lock on
+the strength of a decision about a file that no longer existed. That is the one
+outcome the lock exists to prevent, so it is tested by holding the window open
+on purpose rather than by racing for it.
+
 Every test copies the real script into a miniature checkout under ``tmp_path``
 and drives it through a fake ``pytest`` on ``PATH`` that records its argv, can
-be told to fail, can report what the lock file held while it ran, and can
-overwrite the lock to impersonate another owner. Invoking the real runner here
-is not merely slow: this file executes inside the very suite the lock guards, so
-a real whole-suite run would take the lock against itself and hang.
+be told to fail, can report what the lock file held while it ran, can overwrite
+the lock to impersonate another owner, and can block until the test releases it.
+A ``head`` shim beside it can freeze a run just after it has read the lock file,
+which is the read half of the read-decide-remove-create sequence. Invoking the
+real runner here is not merely slow: this file executes inside the very suite the
+lock guards, so a real whole-suite run would take the lock against itself and
+hang.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -80,6 +94,23 @@ _LOCK_PROBE_ENV = "ADEPTHOOD_LOCK_PROBE"
 _HIJACK_PID_ENV = "ADEPTHOOD_HIJACK_PID"
 _PATH_ENV = "PATH"
 
+# Each names a file the corresponding shim waits for before returning, so a run
+# can be frozen at a chosen point. ``pytest`` freezes a run that already holds
+# the lock; ``head`` freezes one immediately after it has read the lock file,
+# which is where the stale-lock recovery makes its decision.
+_PYTEST_GATE_ENV = "ADEPTHOOD_PYTEST_GATE"
+_HEAD_GATE_ENV = "ADEPTHOOD_HEAD_GATE"
+
+# Written by a shim once it is actually blocked, so the test waits on an
+# observed state rather than on a duration.
+_BLOCKED_MARKER_SUFFIX = ".blocked"
+_GATE_RELEASE_TEXT = "go\n"
+_GATE_POLL_SECONDS = 0.02
+_GATE_WAIT_TIMEOUT_SECONDS = 30.0
+
+_WINNER_GATE_NAME = "winner-pytest-gate"
+_LOSER_GATE_NAME = "loser-head-gate"
+
 _ARGV_MARKER = "--ARGV--"
 _SHIM_MODE = 0o755
 _SHIM_DIR_NAME = "bin"
@@ -112,7 +143,27 @@ fi
 if [ -n "${@HIJACK@:-}" ]; then
     printf '%s\\n' "${@HIJACK@}" > "@LOCK@"
 fi
+gate="${@PYTEST_GATE@:-}"
+if [ -n "$gate" ] && [ ! -f "$gate" ]; then
+    : > "$gate@BLOCKED@"
+    while [ ! -f "$gate" ]; do sleep @POLL@; done
+fi
 exit "${@EXIT@:-0}"
+"""
+
+# Reads the lock file for real, then -- and only when the gate variable names a
+# file that does not exist yet -- stalls before handing the answer back. That
+# reproduces a run descheduled after the read in the read-decide-remove-create
+# recovery, with the decision already made against the state it saw. Untouched
+# in every other test: with the variable unset it is a plain delegation.
+_HEAD_SHIM = """#!/usr/bin/env bash
+answer="$("@REAL@" "$@")"
+gate="${@HEAD_GATE@:-}"
+if [ -n "$gate" ] && [ ! -f "$gate" ]; then
+    : > "$gate@BLOCKED@"
+    while [ ! -f "$gate" ]; do sleep @POLL@; done
+fi
+printf '%s\\n' "$answer"
 """
 
 
@@ -126,6 +177,66 @@ def _bash_executable() -> str:
     if found is None:
         pytest.fail("bash is required to exercise the shell scripts under test")
     return found
+
+
+def _real_executable(name: str) -> str:
+    """Return the absolute path of a command before a shim shadows it.
+
+    Args:
+        name: Command whose real implementation a shim delegates to.
+
+    Returns:
+        The resolved path to the real command.
+    """
+    found = shutil.which(name)
+    if found is None:
+        pytest.fail(f"{name} is required to build the shim for {name}")
+    return found
+
+
+def _blocked_marker(gate: Path) -> Path:
+    """Return the file a shim creates once it is blocked on this gate.
+
+    Args:
+        gate: Path the shim waits for.
+
+    Returns:
+        The announcement file's path.
+    """
+    return Path(f"{gate}{_BLOCKED_MARKER_SUFFIX}")
+
+
+def _release(gate: Path) -> None:
+    """Let whatever is blocked on this gate proceed; safe to call twice.
+
+    Args:
+        gate: Path the shim waits for.
+    """
+    gate.write_text(_GATE_RELEASE_TEXT)
+
+
+def _wait_until_blocked(
+    gate: Path,
+    process: subprocess.Popen[str],
+    reason: str,
+) -> None:
+    """Block until a run announces it is frozen, failing rather than hanging.
+
+    Args:
+        gate: Path the shim waits for; its marker is what this waits on.
+        process: The run expected to reach the shim, so an early exit is
+            reported as itself instead of as a timeout.
+        reason: What the absent marker would mean, for the failure message.
+    """
+    marker = _blocked_marker(gate)
+    deadline = time.monotonic() + _GATE_WAIT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if marker.exists():
+            return
+        if process.poll() is not None:
+            pytest.fail(f"{reason}: the run exited {process.returncode} instead")
+        time.sleep(_GATE_POLL_SECONDS)
+    pytest.fail(f"{reason}: {marker} never appeared within {_GATE_WAIT_TIMEOUT_SECONDS}s")
 
 
 def _dead_pid() -> int:
@@ -190,6 +301,29 @@ class _Runner:
             text=True,
             check=False,
             timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+
+    def spawn(
+        self,
+        *args: str,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.Popen[str]:
+        """Start the runner without waiting for it, for the concurrency cases.
+
+        Args:
+            *args: Flags and positional paths passed to the script.
+            extra_env: Additional environment entries, such as a shim gate.
+
+        Returns:
+            The running process, to be waited on once the test releases it.
+        """
+        return subprocess.Popen(
+            [_bash_executable(), str(self.script), *args],
+            cwd=self.root,
+            env={**self.env, **(extra_env or {})},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
     def lock_path(self) -> Path:
@@ -265,7 +399,6 @@ def _stage_runner(parent: Path, *, directory_name: str = _CHECKOUT_DIR_NAME) -> 
     shim_dir.mkdir(parents=True)
     log = parent / f"pytest-calls-{directory_name}.log"
     lock = root / _LOCK_RELATIVE_PATH
-    shim = shim_dir / "pytest"
     substitutions = {
         "@MARKER@": _ARGV_MARKER,
         "@LOG@": str(log),
@@ -273,18 +406,31 @@ def _stage_runner(parent: Path, *, directory_name: str = _CHECKOUT_DIR_NAME) -> 
         "@PROBE@": _LOCK_PROBE_ENV,
         "@HIJACK@": _HIJACK_PID_ENV,
         "@EXIT@": _PYTEST_EXIT_ENV,
+        "@PYTEST_GATE@": _PYTEST_GATE_ENV,
+        "@HEAD_GATE@": _HEAD_GATE_ENV,
+        "@BLOCKED@": _BLOCKED_MARKER_SUFFIX,
+        "@POLL@": str(_GATE_POLL_SECONDS),
+        "@REAL@": _real_executable("head"),
     }
-    body = _PYTEST_SHIM
-    for placeholder, value in substitutions.items():
-        body = body.replace(placeholder, value)
-    shim.write_text(body)
-    shim.chmod(_SHIM_MODE)
+    for name, template in (("pytest", _PYTEST_SHIM), ("head", _HEAD_SHIM)):
+        body = template
+        for placeholder, value in substitutions.items():
+            body = body.replace(placeholder, value)
+        shim = shim_dir / name
+        shim.write_text(body)
+        shim.chmod(_SHIM_MODE)
 
     env = dict(os.environ)
     env[_PATH_ENV] = f"{shim_dir}{os.pathsep}{env[_PATH_ENV]}"
     env[_PYTEST_LOG_ENV] = str(log)
     env[_LOCK_FILE_ENV] = str(lock)
-    for knob in (_PYTEST_EXIT_ENV, _LOCK_PROBE_ENV, _HIJACK_PID_ENV):
+    for knob in (
+        _PYTEST_EXIT_ENV,
+        _LOCK_PROBE_ENV,
+        _HIJACK_PID_ENV,
+        _PYTEST_GATE_ENV,
+        _HEAD_GATE_ENV,
+    ):
         env.pop(knob, None)
 
     return _Runner(root=root, script=root / _SCRIPT_RELATIVE_PATH, log=log, env=env)
@@ -352,6 +498,118 @@ def test_a_lock_held_by_a_dead_process_is_stolen(runner: _Runner) -> None:
     )
     assert len(runner.invocations()) == 1, runner.invocations()
     assert not runner.lock_path().exists(), "the stolen lock must be released at the end"
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    """What one of two concurrently started runs came away with."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+    def output(self) -> str:
+        """Return both captured streams, for substring assertions.
+
+        Returns:
+            stdout and stderr concatenated.
+        """
+        return f"{self.stdout}{self.stderr}"
+
+
+def _await(process: subprocess.Popen[str]) -> _Outcome:
+    """Wait for a spawned run and capture what it said.
+
+    Args:
+        process: A run started with :meth:`_Runner.spawn`.
+
+    Returns:
+        Its exit code and both streams.
+    """
+    stdout, stderr = process.communicate(timeout=_SUBPROCESS_TIMEOUT_SECONDS)
+    return _Outcome(returncode=process.returncode, stdout=stdout, stderr=stderr)
+
+
+def _race_two_stealers(runner: _Runner, tmp_path: Path) -> tuple[_Outcome, _Outcome]:
+    """Point two whole-suite runs at one stale lock with the window held open.
+
+    The loser is frozen by its ``head`` shim the instant it has read the stale
+    PID -- decision made, file not yet removed. Only then is the winner started,
+    and it is allowed to complete the whole steal and reach pytest, where its own
+    shim holds it so the lock stays taken. Releasing the loser at that point
+    replays exactly the interleaving a scheduler would produce by chance.
+
+    Args:
+        runner: The staged runner; both runs share its tree and its pytest log.
+        tmp_path: Per-test directory holding the two gate files.
+
+    Returns:
+        The outcome of the run that acquired first, then of the run that was
+        descheduled mid-recovery.
+    """
+    winner_gate = tmp_path / _WINNER_GATE_NAME
+    loser_gate = tmp_path / _LOSER_GATE_NAME
+    runner.hold_lock(_dead_pid())
+
+    with contextlib.ExitStack() as stack:
+        loser = stack.enter_context(runner.spawn(extra_env={_HEAD_GATE_ENV: str(loser_gate)}))
+        stack.callback(_release, loser_gate)
+        _wait_until_blocked(loser_gate, loser, "the second run never read the stale lock")
+
+        winner = stack.enter_context(runner.spawn(extra_env={_PYTEST_GATE_ENV: str(winner_gate)}))
+        stack.callback(_release, winner_gate)
+        _wait_until_blocked(winner_gate, winner, "the first run never reached pytest")
+
+        _release(loser_gate)
+        loser_outcome = _await(loser)
+        _release(winner_gate)
+        winner_outcome = _await(winner)
+
+    return winner_outcome, loser_outcome
+
+
+def test_two_runs_stealing_one_stale_lock_do_not_both_proceed(
+    runner: _Runner,
+    tmp_path: Path,
+) -> None:
+    """Only the fast path is atomic; the stale-lock recovery has to be too.
+
+    Recovering from a dead holder is four steps -- read the PID, judge it dead,
+    remove the file, create a new one -- and nothing binds them together. Two
+    runs that both read the same dead PID can both conclude they may steal; the
+    second then removes the first's brand-new lock on the strength of a decision
+    about a file that no longer exists, and creates its own. Both proceed, which
+    is precisely the concurrent whole-suite run the lock exists to refuse:
+    one coverage data file, one set of fixture databases, and cores that
+    ``-n auto`` handed out twice.
+
+    The assertion is on how many times pytest was started, not on the lock
+    file's contents, because starting the suite twice is the harm. A version of
+    this test that started both runs and hoped they collided would pass on a
+    loaded machine, pass on a fast one, and never once prove the window was
+    closed -- a green that means nothing is worse than no test, because it
+    licenses the next change to the recovery path.
+
+    Args:
+        runner: The staged runner.
+        tmp_path: Per-test directory holding the two shim gates.
+    """
+    winner, loser = _race_two_stealers(runner, tmp_path)
+
+    assert len(runner.invocations()) == 1, (
+        "two whole-suite runs started pytest against the same tree; the second "
+        "stole a lock it had already decided was stale. Invocations: "
+        f"{runner.invocations()}"
+    )
+    assert winner.returncode == _PASSED_EXIT_CODE, (
+        f"the run that acquired the lock must finish normally; got exit "
+        f"{winner.returncode} with stderr: {winner.stderr!r}"
+    )
+    assert loser.returncode == _REFUSED_EXIT_CODE, (
+        f"the run descheduled mid-recovery must be refused with exit "
+        f"{_REFUSED_EXIT_CODE} once it finds the lock taken; got exit "
+        f"{loser.returncode} with output: {loser.output()!r}"
+    )
 
 
 def test_the_lock_is_held_for_the_duration_and_released_afterwards(

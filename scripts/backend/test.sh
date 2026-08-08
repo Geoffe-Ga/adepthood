@@ -15,6 +15,18 @@ TREE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 readonly LOCK_DIR="$TREE_ROOT/.gate-state/locks"
 readonly LOCK_FILE="$LOCK_DIR/backend-suite.lock"
+# Stealing a lock from a dead holder is a read-decide-replace sequence, and
+# nothing about a plain file makes those three steps one. `mkdir` is the
+# portable atomic primitive: exactly one of two racing runs creates the
+# directory, so the steal can be re-verified under it and the loser sees the
+# winner's brand-new lock instead of deleting it.
+readonly STEAL_MUTEX_DIR="$LOCK_DIR/backend-suite.steal"
+readonly STEAL_MUTEX_HOLDER="$STEAL_MUTEX_DIR/holder"
+# The mutex is held only long enough to re-read one small file, so a handful of
+# short attempts is generous. A run that still cannot take it is contending
+# with something that is not going to finish.
+readonly STEAL_MUTEX_ATTEMPTS=5
+readonly STEAL_MUTEX_RETRY_SECONDS=0.05
 
 readonly TEST_FAILURE_EXIT_CODE=1
 readonly USAGE_EXIT_CODE=2
@@ -28,6 +40,7 @@ COVERAGE_DATA=false
 VERBOSE=false
 TARGETS=()
 LOCK_HELD=false
+STEAL_MUTEX_HELD=false
 
 # Whole-suite runs are distributed across cores with pytest-xdist. Measured on
 # a 4-core box: 15m58s serial -> 4m07s at -n auto, identical coverage (#2076).
@@ -165,6 +178,69 @@ take_lock_file() {
     return 1
 }
 
+steal_mutex_holder() {
+    [ -f "$STEAL_MUTEX_HOLDER" ] || return 0
+    head -n 1 "$STEAL_MUTEX_HOLDER" 2> /dev/null | tr -d '[:space:]'
+}
+
+take_steal_mutex() {
+    local attempt=0
+    while [ "$attempt" -lt "$STEAL_MUTEX_ATTEMPTS" ]; do
+        if mkdir "$STEAL_MUTEX_DIR" 2> /dev/null; then
+            STEAL_MUTEX_HELD=true
+            printf '%s\n' "$$" > "$STEAL_MUTEX_HOLDER"
+            return 0
+        fi
+        # The pause comes first so a holder that has only just created the
+        # directory has had its moment to name itself. What is still unnamed,
+        # or named after a process that no longer exists, is residue from a run
+        # that was killed - and leaving it in place would wedge every future
+        # steal exactly as the stale lock it guards would.
+        sleep "$STEAL_MUTEX_RETRY_SECONDS"
+        if ! holder_is_live "$(steal_mutex_holder)"; then
+            rm -rf "$STEAL_MUTEX_DIR"
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
+release_steal_mutex() {
+    # Released on every path out, and by ownership rather than by path, for the
+    # same reason the suite lock is.
+    [ "$STEAL_MUTEX_HELD" = true ] || return 0
+    STEAL_MUTEX_HELD=false
+    if [ "$(steal_mutex_holder)" = "$$" ]; then
+        rm -rf "$STEAL_MUTEX_DIR"
+    fi
+}
+
+steal_stale_lock() {
+    # A lock naming a process that no longer exists is the residue of a run
+    # killed mid-suite. Obeying it would wedge the tree until somebody deleted
+    # a file they have never heard of, and the step after that is a bypass.
+    #
+    # The steal is a compare-and-swap, not a removal: two runs that read the
+    # same dead PID both conclude they may steal, and without the mutex the
+    # second deletes the first's brand-new lock on the strength of a decision
+    # about a file that no longer exists. Both then run pytest against one
+    # coverage data file, one set of fixture databases, and cores that
+    # `-n auto` handed out twice.
+    local observed=$1
+    take_steal_mutex || return 1
+    # The lock is removed only while it still names the dead holder this run
+    # judged. If it names anyone else the world moved under that decision, and
+    # take_lock_file is the honest way to ask again: it succeeds when the lock
+    # was simply released in the meantime, and fails - leaving the new owner's
+    # file untouched - when somebody else got there first.
+    if [ "$(lock_holder)" = "$observed" ]; then
+        rm -f "$LOCK_FILE"
+    fi
+    take_lock_file || true
+    release_steal_mutex
+    [ "$LOCK_HELD" = true ]
+}
+
 acquire_suite_lock() {
     mkdir -p "$LOCK_DIR"
     take_lock_file && return 0
@@ -173,11 +249,7 @@ acquire_suite_lock() {
     if holder_is_live "$holder"; then
         refuse_contended_run "$holder"
     fi
-    # A lock naming a process that no longer exists is the residue of a run
-    # killed mid-suite. Obeying it would wedge the tree until somebody deleted
-    # a file they have never heard of, and the step after that is a bypass.
-    rm -f "$LOCK_FILE"
-    take_lock_file && return 0
+    steal_stale_lock "$holder" && return 0
     refuse_contended_run "$(lock_holder)"
 }
 
@@ -191,6 +263,11 @@ release_suite_lock() {
     fi
 }
 
+release_held_locks() {
+    release_steal_mutex
+    release_suite_lock
+}
+
 warn_if_suite_lock_is_held() {
     # A targeted run neither takes nor waits for the lock, but the machine
     # really is busy, so a surprising result deserves a reason.
@@ -201,7 +278,7 @@ warn_if_suite_lock_is_held() {
     fi
 }
 
-trap release_suite_lock EXIT INT TERM
+trap release_held_locks EXIT INT TERM
 
 if [ ${#TARGETS[@]} -gt 0 ] && { $COVERAGE || $COVERAGE_DATA; }; then
     echo "Error: coverage cannot be combined with a positional path." >&2
