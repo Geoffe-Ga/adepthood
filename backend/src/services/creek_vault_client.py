@@ -94,7 +94,7 @@ import os
 from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from types import TracebackType
-from typing import NoReturn
+from typing import NoReturn, TypeGuard
 from urllib.parse import quote
 
 import httpx
@@ -119,6 +119,8 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
 )
@@ -813,6 +815,13 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 # capability document are the only ``/v1`` shapes Creek has ratified.
 _JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
 
+# Where one uploaded document is addressed, relative to the configured base URL.
+# A separate collection from journal entries because the two are different kinds
+# of object: an entry is text adepthood authored the shape of, while an upload is
+# a file the vault's own ingestor registry parses. Sharing one collection would
+# make the vault infer which it received from the body's fields.
+_UPLOADS_PATH = "/v1/uploads/"
+
 # The whole-corpus frequency aggregate, relative to the configured base URL. Not
 # a resource but a computation over every admitted fragment, so it is read from
 # one collection-level URL that takes no identifier -- and, on the ratified
@@ -897,10 +906,28 @@ _CREDENTIAL_REJECTED_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCa
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
+# The upload path's own triple. Named apart from the journal one rather than
+# shared, because the whole point of the separate capability is that an operator
+# can tell "the vault will not take our files" from "the vault will not take our
+# entries" -- one message for both would erase exactly that distinction.
+_UPLOAD_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.UPLOAD)
+_UPLOAD_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.UPLOAD)
+_UPLOAD_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.UPLOAD)
+
+# How many tags adepthood will read off one upload response, and how long each
+# may be. The vault classifies in its own pipeline and we store what it says, so
+# these bound what a compromised or malfunctioning vault can push into our
+# response on the back of a single upload.
+_MAX_UPLOAD_TAGS = 32
+_MAX_UPLOAD_TAG_LENGTH = 64
 # The one not-stored result every unreadable 2xx collapses to. Interned because
 # it is value-identical on each of those paths, and named so no branch is
 # tempted to invent a ``vault_ref`` the vault never issued.
 _NOT_STORED_RESULT = VaultIngestResult(stored=False, vault_ref=None, action=None)
+
+# The upload path's equivalent: the one not-stored answer every unreadable 2xx
+# on an upload collapses to.
+_NOT_UPLOADED_RESULT = VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
 
 
 def _build_pooled_vault_client() -> httpx.AsyncClient:
@@ -989,7 +1016,88 @@ def _entry_path_segment(entry_id: int) -> str:
     request, and a future identifier type must not be able to redirect it by its
     shape alone.
     """
-    return quote(str(entry_id), safe="").replace(".", _ENCODED_DOT)
+    return _inert_path_segment(str(entry_id))
+
+
+def _inert_path_segment(raw: str) -> str:
+    """Encode ``raw`` into exactly one path segment that cannot climb out of it.
+
+    Factored out of :func:`_entry_path_segment` so the upload path gets the same
+    guarantee from the same code rather than a second implementation that has to
+    remember the dot rule independently -- and an upload's id is a string from
+    the start, which is exactly the case that rule exists for.
+    """
+    return quote(raw, safe="").replace(".", _ENCODED_DOT)
+
+
+def _upload_body(request: VaultUploadRequest) -> Mapping[str, object]:
+    """Map an upload request onto the vault's document fields.
+
+    Four fields: the bytes, the filename the vault reads an extension off to
+    choose an ingestor, when the document entered the corpus, and the tier it is
+    stored at. The external id travels in the URL because it is the resource,
+    exactly as an entry id does.
+
+    Notably absent is any source or content type. The vault owns ingestor
+    selection; adepthood declaring one would override a decision made by the
+    side that actually parses the file.
+    """
+    return {
+        "filename": request.filename,
+        "content_base64": request.content_base64,
+        "timestamp": request.created_at.isoformat(),
+        "tier": request.tier.value,
+    }
+
+
+def _is_usable_tag(item: object) -> TypeGuard[str]:
+    """Return whether one element of a vault tag list is safe to carry onward.
+
+    The same three properties :func:`_is_storable_ref` demands of a fragment id,
+    for the same reason: a tag is vault-chosen text that adepthood puts into its
+    own API response, so it must be a real string, printable (no NUL, no CR/LF
+    to inject into a log, no zero-width or bidi-override codepoints), and
+    bounded in length.
+    """
+    if not isinstance(item, str) or not item.isprintable():
+        return False
+    return 0 < len(item) <= _MAX_UPLOAD_TAG_LENGTH
+
+
+def _upload_tags(raw: object) -> tuple[str, ...]:
+    """Read the vault's per-fragment tags, keeping only what is plainly usable.
+
+    Drop-unknown-items, exactly as :func:`_parse_capabilities` treats an
+    advertised capability list: a non-list, or any element failing
+    :func:`_is_usable_tag`, is discarded rather than raising, so a malformed
+    answer costs the caller its tags and never its upload. The count bound keeps
+    a single upload from carrying an unbounded amount of vault-chosen text back
+    into adepthood's own response.
+    """
+    if not isinstance(raw, list):
+        return ()
+    return tuple(item for item in raw[:_MAX_UPLOAD_TAGS] if _is_usable_tag(item))
+
+
+def _parse_http_upload_result(payload: object) -> VaultUploadResult:
+    """Project a 2xx upload body onto a result, as conservatively as ingest does.
+
+    A durable upload needs both halves -- an action we recognize *and* a storable
+    fragment id -- so anything less parses to not-stored and the caller records a
+    degraded upload. Tags are read only once the write itself is established:
+    tags without a stored document would describe something that is not there.
+    """
+    if isinstance(payload, Mapping):
+        action = _coerce_ingest_action(payload.get("action"))
+        fragment_id = _usable_fragment_id(payload)
+        if action is not None and fragment_id is not None:
+            return VaultUploadResult(
+                stored=True,
+                vault_ref=fragment_id,
+                action=action,
+                tags=_upload_tags(payload.get("tags")),
+            )
+    return _NOT_UPLOADED_RESULT
 
 
 def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
@@ -1081,8 +1189,19 @@ def _faults_our_request(response: httpx.Response) -> bool:
     return response.is_client_error and response.status_code not in _RETRYABLE_CLIENT_STATUSES
 
 
-def _ingest_failure(response: httpx.Response) -> CreekVaultError:
-    """Classify a non-2xx ingest response into the failure it actually is.
+def _write_failure(
+    response: httpx.Response,
+    *,
+    call_failed: str,
+    request_rejected: str,
+    credential_rejected: str,
+) -> CreekVaultError:
+    """Classify a non-2xx write response into the failure it actually is.
+
+    Shared by both write capabilities -- journal ingest and document upload --
+    because the *classification* is a property of the answer rather than of what
+    was being written. Only the three static messages differ, and they are
+    parameters precisely so each capability names itself in what it raises.
 
     The order encodes what each answer tells an operator to do:
 
@@ -1100,13 +1219,33 @@ def _ingest_failure(response: httpx.Response) -> CreekVaultError:
        request, so they answer to the availability story instead.
     """
     if response.status_code in _CREDENTIAL_REJECTED_STATUSES:
-        return CreekVaultAuthError(_CREDENTIAL_REJECTED_MESSAGE)
+        return CreekVaultAuthError(credential_rejected)
     code = _vault_error_code(response)
     if code in _CONTRACT_ERROR_CODES:
-        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE, code=code)
+        return CreekVaultContractError(request_rejected, code=code)
     if code is None and _faults_our_request(response):
-        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE)
-    return CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE)
+        return CreekVaultContractError(request_rejected)
+    return CreekVaultUnavailableError(call_failed)
+
+
+def _ingest_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed journal ingest, naming the JOURNAL capability."""
+    return _write_failure(
+        response,
+        call_failed=_INGEST_FAILED_MESSAGE,
+        request_rejected=_INGEST_REJECTED_MESSAGE,
+        credential_rejected=_CREDENTIAL_REJECTED_MESSAGE,
+    )
+
+
+def _upload_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed document upload, naming the UPLOAD capability."""
+    return _write_failure(
+        response,
+        call_failed=_UPLOAD_FAILED_MESSAGE,
+        request_rejected=_UPLOAD_REJECTED_MESSAGE,
+        credential_rejected=_UPLOAD_CREDENTIAL_MESSAGE,
+    )
 
 
 def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> CreekVaultError:
@@ -1523,6 +1662,68 @@ class HttpCreekVaultClient:
         )
         return result
 
+    async def _put_upload(self, request: VaultUploadRequest) -> httpx.Response:
+        """Upsert one document at its own URL, normalizing any transport failure.
+
+        The same discipline :meth:`_put_journal_entry` follows, and for a
+        sharper reason: an upload's external id is a *string* rather than an
+        integer, so :func:`_inert_path_segment` is load-bearing here rather than
+        merely future-proofing. Every transport failure becomes
+        :class:`CreekVaultUnavailableError` with ``from None``, since the
+        original exception's text can carry the URL or the document bytes and
+        neither may ride along in a message or a traceback.
+        """
+        upload_url = f"{self._url}{_UPLOADS_PATH}{_inert_path_segment(request.external_id)}"
+        try:
+            return await self._authorized_request("PUT", upload_url, _upload_body(request))
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_UPLOAD_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_UPLOAD_FAILED_MESSAGE) from None
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Upsert ``request`` into the vault, requiring the UPLOAD capability.
+
+        A thin wrapper over :meth:`_upload` so the attempt is counted exactly
+        once, exactly as :meth:`ingest` wraps :meth:`_ingest`.
+        """
+        with _CountingOutcome(CreekCapability.UPLOAD):
+            return await self._upload(request)
+
+    async def _upload(self, request: VaultUploadRequest) -> VaultUploadResult:
+        """Perform the document upsert and report how it ended.
+
+        Gated on the cached handshake first, and this gate matters more than
+        journal ingest's: a vault may well advertise ``creek.journal`` without
+        ``creek.upload``, so refusing *locally* is what keeps a user's document
+        off the wire toward a surface that never claimed it could take one.
+
+        The answer splits the same three ways ingest's does -- a readable 2xx
+        projected by :func:`_parse_http_upload_result`, an undecodable 2xx read
+        as an unavailable vault rather than a successful write, and a non-2xx
+        classified by :func:`_upload_failure`. A 2xx that does not describe a
+        durable write is counted as a schema failure, because reporting it as a
+        success would tell a user their document is in the vault when the vault
+        never said so.
+        """
+        if not self.supports(CreekCapability.UPLOAD):
+            raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.UPLOAD))
+        response = await self._put_upload(request)
+        if not response.is_success:
+            raise _upload_failure(response) from None
+        try:
+            payload = response.json()
+        except ValueError:
+            raise CreekVaultUnavailableError(_UPLOAD_FAILED_MESSAGE) from None
+        result = _parse_http_upload_result(payload)
+        record_vault_outcome(
+            VaultTelemetryOutcome.SUCCESS
+            if result.stored
+            else VaultTelemetryOutcome.SCHEMA_FAILURE,
+            CreekCapability.UPLOAD,
+        )
+        return result
+
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: its ``/v1`` request/response shape is unratified.
 
@@ -1736,6 +1937,17 @@ class LocalFallbackCreekVaultClient:
         """No-op ingest: report not stored without raising (Postgres is authoritative)."""
         record_vault_outcome(self._outcome, CreekCapability.JOURNAL)
         return VaultIngestResult(stored=False, vault_ref=None)
+
+    async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
+        """No-op upload: report not stored without raising, exactly as ingest does.
+
+        Not a raise, because an absent vault is not an error the uploader caused
+        -- the write service turns this into an honest "no vault to keep it in"
+        outcome, and a document nobody could store is the same non-event a
+        journal entry's unreplicated copy is.
+        """
+        record_vault_outcome(self._outcome, CreekCapability.UPLOAD)
+        return VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""

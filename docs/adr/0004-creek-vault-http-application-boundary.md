@@ -234,13 +234,38 @@ authoritative source, one pointer, is the fix.
 
 ## Decision 6 — The intimate-transit rule is carried forward, and is entirely unshipped
 
+> **Amended 2026-08-08 (owner ruling, issue #1924 / PR #2149) — the
+> document-upload surface is vault-only, not skip-only.** Sub-decisions
+> (a)–(d) below are unchanged and still describe the *journal-entry*
+> write path. They do **not** govern `POST /journal/upload`, which
+> forwards an `intimate` document to the vault at the `INTIMATE` tier
+> ceiling, in plaintext, over the configured `CREEK_VAULT_URL`.
+>
+> The ruling rests on who the far end is. A Creek Vault is the user's
+> **own** corpus on operator-held infrastructure, not a third-party
+> service, so reaching it is not the cloud disclosure the privacy floor
+> was built to prevent. What that floor forbids — intimate content
+> reaching a cloud LLM — the upload path never does, because it calls no
+> LLM at all. This is a narrower claim than (a)'s ciphertext topology,
+> and it does not weaken (a): a deployment whose vault is *not*
+> operator-held is outside the assumption this amendment rests on, and
+> nothing here confers a confidential-compute guarantee.
+>
+> **Known asymmetry, deliberately left standing.** The journal-entry
+> write path still withholds intimate entries (skip-only, as below)
+> while the upload path forwards them. That is not an oversight and not
+> a contradiction to resolve silently: widening a shipped write path is
+> its own change, with its own tests and its own review, and it is
+> tracked in issue #2152. Until that lands, read (a)–(d) as governing
+> journal entries only.
+
 The four intimate-transit sub-decisions ratified via #927/#950 move
 into this ADR in condensed form. **Every one of them is entirely
 unshipped**; the owning issues are #958 (frontend vault key setup) and
 creek-vault#757 (Creek's confidential-compute epic). Today's shipped
-behavior remains ADR 0002 / #895's skip-only mode: an `intimate`
-classification short-circuits before any vault call at all, not even a
-handshake (`services/creek_vault_write.py:17-24`).
+behavior for journal entries remains ADR 0002 / #895's skip-only mode:
+an `intimate` classification short-circuits before any vault call at
+all, not even a handshake (`services/creek_vault_write.py:17-24`).
 
 - **(a) Transit topology — ciphertext only.** Intimate content may
   cross the seam through the operator's backend, but only as

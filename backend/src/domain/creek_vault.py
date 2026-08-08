@@ -33,7 +33,7 @@ from __future__ import annotations
 import enum
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
@@ -56,6 +56,7 @@ class CreekCapability(enum.StrEnum):
 
     HANDSHAKE = "creek.handshake"
     JOURNAL = "creek.journal"
+    UPLOAD = "creek.upload"
     SAVE = "creek.save"
     CLASSIFY = "creek.classify"
     REFLECT = "creek.reflect"
@@ -418,6 +419,76 @@ class VaultIngestResult:
     action: VaultIngestAction | None = None
 
 
+class VaultUploadStatus(enum.StrEnum):
+    """The terminal outcome of a :func:`store_upload` attempt.
+
+    Exactly one is always returned, and the three non-accepted values stay apart
+    because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
+    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot
+    take files yet", and ``DEGRADED`` is "it broke, try again". Values are the
+    wire strings the API answers with, so they are contract and must not be
+    reworded casually.
+    """
+
+    ACCEPTED = "accepted"
+    VAULT_UNAVAILABLE = "vault_unavailable"
+    CAPABILITY_UNSUPPORTED = "capability_unsupported"
+    DEGRADED = "degraded"
+
+
+@dataclass(frozen=True)
+class VaultUploadRequest:
+    """One user-supplied document handed to the vault for its own ingestors to parse.
+
+    The sibling of :class:`VaultIngestRequest` rather than a widening of it: a
+    journal entry is text adepthood already holds, while an upload is a *file*
+    -- bytes plus the filename the vault reads an extension off to choose an
+    ingestor. Adepthood never parses the document itself and never names a
+    source type; guessing one here would override a decision the vault is
+    better placed to make.
+
+    ``external_id`` is the stable identity the vault keys the stored fragment
+    off, so re-sending the same document edits that fragment in place instead of
+    accumulating duplicates -- the same idempotence a journal entry gets from its
+    entry id. ``tier`` and ``tier_ceiling`` are both the uploader's own tier, so
+    the vault stores at exactly the depth the user chose and refuses any
+    widening.
+
+    ``content_base64`` is excluded from ``repr()``: this dataclass is the one
+    object carrying a user's document through the seam, and a frozen dataclass's
+    generated ``repr`` is exactly what a logging call or a traceback would
+    otherwise render in full.
+    """
+
+    external_id: str
+    filename: str
+    content_base64: str = field(repr=False)
+    tier: VaultTierCeiling
+    tier_ceiling: VaultTierCeiling
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class VaultUploadResult:
+    """Outcome of an upload attempt, mirroring :class:`VaultIngestResult`.
+
+    ``stored`` is ``False`` (with ``vault_ref`` ``None``) whenever the document
+    was not durably written -- notably on the local-fallback path, where there
+    is no vault to hold it and Postgres remains the sole system of record.
+
+    ``tags`` are the per-fragment classification tags the vault assigns *in its
+    own ingest pipeline*. Adepthood reads them and never re-derives them: a
+    second local classifier would be a second opinion nobody asked for. A vault
+    that does not return them yields an empty tuple, which is the expected
+    answer today rather than a failure.
+    """
+
+    stored: bool
+    vault_ref: str | None
+    action: VaultIngestAction | None = None
+    tags: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class VaultClassification:
     """Frequency/Wavelength-phase tags Creek assigns to a piece of content."""
@@ -543,6 +614,23 @@ class CreekVaultClient(Protocol):
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Hand a piece of writing to the vault for durable storage."""
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Hand one user-supplied document to the vault for its ingestors to parse.
+
+        Separate from :meth:`ingest` because the two carry different things and
+        are advertised separately: a vault may accept journal text without
+        accepting files, so a caller must gate on
+        :attr:`CreekCapability.UPLOAD` rather than assuming journal ingest
+        implies it.
+
+        Fails exactly as ingest does -- a refused request as
+        :class:`CreekVaultContractError`, a rejected credential as
+        :class:`CreekVaultAuthError`, an absent or unreadable vault as
+        :class:`CreekVaultUnavailableError`, and a capability the vault never
+        advertised as :class:`CreekCapabilityUnsupportedError` raised *before*
+        any document bytes reach the wire.
+        """
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Request Frequency/Wavelength-phase tags for ``body``."""

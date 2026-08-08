@@ -119,10 +119,11 @@ adepthood is willing to *accept* on the way back, and `_admissible_wheel`
 refuses a response that echoes anything wider
 (`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
 here, on either reading: only aggregate per-Frequency counts and
-shares cross this seam — never fragment content — intimate content
-never reaches the vault from adepthood at all (see "Intimate-tier
-content: pointer only" below), and creek independently caps a network
-consumer below intimate regardless of what adepthood would ask for. The
+shares cross this seam — never fragment content — no intimate *journal
+entry* reaches the vault from adepthood at all (see "Intimate-tier
+content: pointer only" below for the per-surface rule), and creek
+independently caps a network consumer below intimate regardless of what
+adepthood would ask for. The
 server instead applies its own published `open` default to what it
 *counts*, and `open` ranks unclassified content below `personal`: a
 not-yet-classified fragment is silently excluded from the count, so a
@@ -273,6 +274,56 @@ capability is still used for the others it supports:
   (ADR 0004's 2026-08-07 note) — Creek's own MCP server is untouched
   and remains what agents like CrawDad, Claude Code, and Hermes talk
   to, but nothing in this repository calls it any more.
+- **UPLOAD** — a *required* capability for the document-upload surface,
+  and gated entirely separately from JOURNAL: a vault that advertises
+  `creek.journal` has said nothing about whether it accepts files, so
+  the upload path checks `creek.upload` on its own
+  (`store_upload`, `backend/src/services/creek_vault_upload.py`) and an
+  unadvertised capability is refused locally with no request sent
+  (`_upload`, `backend/src/services/creek_vault_client.py`). Adepthood
+  `PUT`s the document to its own `/v1/uploads/{external_id}` URL,
+  carrying `filename`, `content_base64`, `timestamp`, and `tier`, and
+  **names no source or content type**: the vault reads the extension
+  off the filename and selects its own ingestor, so adepthood never
+  parses, sniffs, or classifies the document. `external_id` is a
+  deterministic digest of (owner user id, filename), which is what makes
+  a re-send idempotent — the vault edits the same fragment in place
+  rather than accumulating one per attempt — and it is a *digest*
+  specifically so a filename, which is the user's own words about their
+  life, never travels in a request line or an access log.
+
+  Tier semantics match JOURNAL: the document's tier and the declared
+  write ceiling are both the uploader's chosen tier, so the vault stores
+  at exactly that depth and refuses any widening.
+
+  Graceful degradation is finer-grained here than for JOURNAL, because
+  an upload has **no local system of record** — if the vault will not
+  take the document, it went nowhere, and the user has to be told which
+  problem they have. An unreachable vault reports `VAULT_UNAVAILABLE`,
+  a reachable vault that never advertised the capability reports
+  `CAPABILITY_UNSUPPORTED`, and a call that failed mid-flight (or
+  answered without durably storing) reports `DEGRADED`. All three are
+  answered as a `202` carrying the status and a self-serve message —
+  never a 5xx, since an optional integration being absent is not a
+  server fault. As with JOURNAL, **a failed upload is dropped, not
+  queued**: there is no spool, because durably holding user document
+  bytes outside the vault is a privacy decision nobody has made.
+
+  Per-fragment classification tags are read from the response when the
+  vault supplies them and are otherwise empty, which is the expected
+  answer today rather than a failure — adepthood deliberately builds no
+  second, local classifier.
+
+  **Intimate documents are forwarded, unlike intimate journal entries.**
+  An `intimate` upload is sent at the `INTIMATE` tier ceiling rather than
+  withheld, per the 2026-08-08 amendment to ADR 0004's Decision 6: the
+  vault is the user's own corpus on operator-held infrastructure, and
+  this path calls no cloud LLM. The vault's router still enforces the
+  ceiling it is handed, so a vault declining to store at `INTIMATE`
+  refuses the write and adepthood degrades honestly rather than
+  downgrading the tier to force a success. Note the asymmetry with
+  JOURNAL, which remains skip-only — see the amendment for why that is
+  deliberate and tracked in issue #2152.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -341,12 +392,26 @@ capability is still used for the others it supports:
 The rule governing whether, and how, intimate content may ever cross
 the adepthood-to-vault seam is recorded in
 [ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
-Decision 6, not in this document. That rule is **entirely unshipped**.
-Today's actual behavior is the skip-only mode from
-[ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
-classification short-circuits before any vault call at all, not even a
-handshake. No intimate journal content is transmitted to any vault
-today, in any form.
+Decision 6, not in this document. **It differs by surface**, and the
+split is deliberate:
+
+- **Journal entries — skip-only, unchanged.** The ciphertext/attested
+  transit topology in Decision 6 (a)–(d) is **entirely unshipped**, so
+  today's behavior remains the skip-only mode from
+  [ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
+  classification short-circuits before any vault call at all, not even
+  a handshake. No intimate journal *entry* is transmitted to any vault
+  today, in any form.
+- **Document uploads — vault-only.** Per the 2026-08-08 amendment to
+  Decision 6, an `intimate` document sent to `POST /journal/upload`
+  **is** forwarded to the vault, at the `INTIMATE` tier ceiling. The
+  amendment's reasoning is that the vault is the user's own corpus on
+  operator-held infrastructure rather than a third-party service, and
+  that this path calls no cloud LLM.
+
+The asymmetry between the two is known and tracked in issue #2152;
+read Decision 6's amendment before treating either half as the general
+rule.
 
 ## Vault tenancy: pointer only
 

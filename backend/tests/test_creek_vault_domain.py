@@ -116,15 +116,19 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Six wire-name capability members."""
+    """Seven wire-name capability members."""
 
-    def test_has_six_members(self) -> None:
-        """Exactly six capabilities are defined."""
-        assert len(CreekCapability) == 6
+    def test_has_seven_members(self) -> None:
+        """Exactly seven capabilities are defined."""
+        assert len(CreekCapability) == 7
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
         assert CreekCapability.HANDSHAKE.value == "creek.handshake"
+
+    def test_upload_value_is_wire_name(self) -> None:
+        """UPLOAD's value is the creek.upload wire name."""
+        assert CreekCapability.UPLOAD.value == "creek.upload"
 
     def test_journal_value_is_wire_name(self) -> None:
         """JOURNAL's value is the creek.journal wire name."""

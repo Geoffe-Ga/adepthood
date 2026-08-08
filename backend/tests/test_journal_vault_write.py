@@ -33,6 +33,8 @@ from domain.creek_vault import (
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from main import app
@@ -113,6 +115,10 @@ class SequencedVaultClient:
         if self._ingest_error is not None:
             raise self._ingest_error
         return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingest_calls)}")
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Return a fixed classification tag set."""
