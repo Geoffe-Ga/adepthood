@@ -1,6 +1,7 @@
+import asyncio
 import os
 import sys
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, MutableMapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -22,15 +23,21 @@ sys.path.insert(0, str(REPO_ROOT / "backend/src"))
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient, Response  # noqa: E402
-from sqlalchemy import JSON, text  # noqa: E402
+from sqlalchemy import JSON, event, text  # noqa: E402
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY  # noqa: E402
+from sqlalchemy.engine import Connection  # noqa: E402
+from sqlalchemy.engine.default import DefaultExecutionContext  # noqa: E402
+from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor  # noqa: E402
 from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncConnection,
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import ConnectionPoolEntry  # noqa: E402
+from sqlalchemy.util import await_only  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
 import models as _models  # noqa: E402, F401
@@ -54,18 +61,24 @@ _STUB_LICENSE_SALE_PREFIX = "stub-sale-"
 # ---------------------------------------------------------------------------
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-# SQLite serialises writers behind a lock and fails the statement outright once
-# its busy timeout expires, rather than queueing. The concurrency fixtures below
-# deliberately drive several simultaneous writers against one file, so on a
-# loaded machine — every xdist worker running its own share of the suite
-# (#2076) — the default 5 s ceiling is reached and the write raises
-# "database is locked" instead of waiting its turn.
+# A backstop, no longer the mechanism. What actually keeps the concurrency
+# fixtures from failing on "database is locked" is the in-process writer queue
+# below: SQLite has no lock queue of its own, so when several connections open
+# write transactions at once the losers sleep in its busy handler and each retry
+# briefly takes a SHARED read lock, denying the one connection holding RESERVED
+# the EXCLUSIVE promotion it needs in order to COMMIT. Nothing arbitrates that
+# pile-up, so a loaded runner simply runs out the clock. Serialising writers
+# ourselves leaves SQLite only a reader waiting on a single committing writer,
+# which is bounded by one commit rather than by the whole pile-up.
+#
+# The same constant bounds the wait for the in-process queue, so a write
+# transaction that somehow leaks its slot fails loudly instead of parking the
+# suite until the CI job ceiling.
 #
 # Raising the ceiling cannot mask a real defect: these tests assert an *outcome*
 # invariant (exactly one token pack credited, exactly one audit row), never a
 # latency bound. A genuine double-credit still fails the assertions no matter
-# how long a writer waits. All this buys is that the test stops failing for want
-# of CPU.
+# how long a writer waits.
 _CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS = 30
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
@@ -290,6 +303,142 @@ def zero_monthly_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "0")
 
 
+# ---------------------------------------------------------------------------
+# In-process writer queue for the concurrency fixture's file-backed SQLite
+# ---------------------------------------------------------------------------
+# Key on the connection's own ``info`` dict rather than on the queue, so a
+# transaction that issues two or three write statements claims the slot once.
+_WRITER_SLOT_HELD_KEY = "adepthood_sqlite_writer_slot_held"
+
+# ``isinsert`` / ``isupdate`` / ``isdelete`` are set from the *compiled* DML
+# construct, and a textual statement compiles to none of them -- yet a raw
+# ``UPDATE`` opens a write transaction just the same. The leading keyword is
+# what closes that gap.
+_TEXTUAL_WRITE_VERBS = ("INSERT", "UPDATE", "DELETE", "REPLACE")
+
+_WRITER_QUEUE_STALLED_MESSAGE = (
+    "The concurrency fixture's SQLite writer queue stalled: no connection freed "
+    f"the single write slot within {_CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS}s. A write "
+    "transaction leaked its slot -- it was neither committed, rolled back, nor closed."
+)
+
+
+class _SqliteWriterQueue:
+    """A single write slot for one engine, handed out in fair FIFO order.
+
+    SQLite fails a contended write once its busy timeout expires instead of
+    queueing it, so the fixture engine arbitrates writers itself. A connection
+    claims the slot before the first write statement of a transaction and holds
+    it until that transaction ends. Reads never touch the slot.
+    """
+
+    def __init__(self) -> None:
+        self._slot = asyncio.Lock()
+        self._waiters = 0
+
+    @property
+    def locked(self) -> bool:
+        """Whether some connection currently holds the write slot."""
+        return self._slot.locked()
+
+    @property
+    def waiters(self) -> int:
+        """How many writers are queued behind the current holder."""
+        return self._waiters
+
+    async def acquire(self) -> None:
+        """Wait for the write slot, counted as queued for as long as it waits."""
+        self._waiters += 1
+        try:
+            await self._slot.acquire()
+        finally:
+            self._waiters -= 1
+
+    def release(self) -> None:
+        """Hand the slot on; a no-op when nobody holds it.
+
+        Every connection checks in, including the read-only ones that never
+        claimed the slot, so releasing has to tolerate an idle queue.
+        """
+        if self._slot.locked():
+            self._slot.release()
+
+
+def _opens_a_write_transaction(statement: str, context: DefaultExecutionContext) -> bool:
+    """Whether this statement is the DML that puts SQLite into a write transaction."""
+    if context.isinsert or context.isupdate or context.isdelete:
+        return True
+    return statement.lstrip().upper().startswith(_TEXTUAL_WRITE_VERBS)
+
+
+async def _claim_writer_slot(queue: _SqliteWriterQueue) -> None:
+    """Take the write slot, failing loudly rather than hanging if it is stuck."""
+    try:
+        await asyncio.wait_for(queue.acquire(), _CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise RuntimeError(_WRITER_QUEUE_STALLED_MESSAGE) from exc
+
+
+def _free_writer_slot(queue: _SqliteWriterQueue, info: MutableMapping[str, object]) -> None:
+    """Release the write slot if the connection owning ``info`` is holding it."""
+    if info.pop(_WRITER_SLOT_HELD_KEY, False):
+        queue.release()
+
+
+def _install_sqlite_writer_queue(engine: AsyncEngine) -> _SqliteWriterQueue:
+    """Serialise ``engine``'s write transactions through one in-process slot.
+
+    The slot is taken at the first write statement rather than at transaction
+    start, which is what keeps reads running in parallel with an open write --
+    the wide read/write window the concurrency tests need in order to catch a
+    time-of-check/time-of-use regression.
+
+    It is freed on pool checkin, because a session returns its connection to the
+    pool at the end of every transaction and at no other time. Releasing on the
+    ``commit`` / ``rollback`` events instead would be too early: those fire
+    *before* the DBAPI call, so the next writer would start while this one still
+    held SQLite's write lock. Savepoints are correspondingly invisible here -- a
+    savepoint rollback never checks the connection in, and the outer transaction
+    it leaves open still owns the slot.
+    """
+    queue = _SqliteWriterQueue()
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def claim_slot_before_writing(
+        conn: Connection,
+        _cursor: DBAPICursor,
+        statement: str,
+        _parameters: object,
+        context: DefaultExecutionContext,
+        _executemany: object,
+    ) -> None:
+        """Claim the slot for a connection's first write of a transaction."""
+        if not _opens_a_write_transaction(statement, context):
+            return
+        if conn.info.get(_WRITER_SLOT_HELD_KEY, False):
+            return
+        await_only(_claim_writer_slot(queue))
+        conn.info[_WRITER_SLOT_HELD_KEY] = True
+
+    @event.listens_for(engine.sync_engine, "checkin")
+    def free_slot_on_checkin(
+        _dbapi_connection: DBAPIConnection, record: ConnectionPoolEntry
+    ) -> None:
+        """Free the slot when the transaction ends and the connection is pooled."""
+        _free_writer_slot(queue, record.info)
+
+    @event.listens_for(engine.sync_engine, "invalidate")
+    def free_slot_on_invalidate(
+        _dbapi_connection: DBAPIConnection,
+        record: ConnectionPoolEntry,
+        _exception: BaseException | None,
+    ) -> None:
+        """Free the slot when a hard failure retires the connection without a checkin."""
+        _free_writer_slot(queue, record.info)
+
+    return queue
+
+
 @pytest_asyncio.fixture
 async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client with per-request sessions for concurrency testing.
@@ -309,6 +458,7 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
     concurrent_factory = async_sessionmaker(
         concurrent_engine, class_=AsyncSession, expire_on_commit=False
     )
+    writer_queue = _install_sqlite_writer_queue(concurrent_engine)
 
     _replace_array_columns()
     async with concurrent_engine.begin() as conn:
@@ -321,12 +471,14 @@ async def concurrent_async_client(tmp_path: Path) -> AsyncGenerator[AsyncClient,
 
     app.dependency_overrides[get_session] = _per_request_session
     app.state.concurrent_session_factory = concurrent_factory
+    app.state.concurrent_writer_queue = writer_queue
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
     app.dependency_overrides.clear()
     app.state.concurrent_session_factory = None
+    app.state.concurrent_writer_queue = None
     await concurrent_engine.dispose()
 
 
@@ -345,6 +497,22 @@ async def concurrent_session_factory(
         msg = "concurrent_async_client must be requested before concurrent_session_factory"
         raise RuntimeError(msg)
     return factory
+
+
+@pytest_asyncio.fixture
+async def concurrent_writer_queue(
+    concurrent_async_client: AsyncClient,  # noqa: ARG001 — side-effect: installs the queue
+) -> _SqliteWriterQueue:
+    """Write-slot queue guarding the :func:`concurrent_async_client` engine.
+
+    Tests that assert *when* the single SQLite write slot is held depend on this
+    fixture; it is the same object the engine's own listeners drive.
+    """
+    queue: _SqliteWriterQueue | None = app.state.concurrent_writer_queue
+    if queue is None:
+        msg = "concurrent_async_client must be requested before concurrent_writer_queue"
+        raise RuntimeError(msg)
+    return queue
 
 
 # ---------------------------------------------------------------------------
