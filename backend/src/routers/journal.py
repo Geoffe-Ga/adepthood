@@ -425,6 +425,20 @@ _UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
 )
 
 
+# Matched to ``transcription.TRANSCRIBE_RATE_LIMIT`` rather than to the stricter
+# resonance limit, because this endpoint is the same *class* of thing: a base64
+# payload a person submits deliberately, in bursts, with no LLM spend attached.
+# Someone adding a folder of documents legitimately makes a dozen calls in a row,
+# and one document per request is the shipped contract (batching is a follow-up),
+# so a tighter cap would throttle ordinary use rather than abuse.
+#
+# It is bounded at all because an upload is heavier than an ordinary write: 10 MB
+# per call, twice what transcription accepts, and every accepted call is forwarded
+# to an external network dependency. A plain ``POST /journal/`` carries neither
+# cost, which is why it is unrated and this is not.
+UPLOAD_RATE_LIMIT = "20/minute"
+
+
 def _guard_upload_size(content_base64: str) -> None:
     """Refuse an oversized document before any of it is decoded.
 
@@ -453,7 +467,9 @@ def _guard_upload_size(content_base64: str) -> None:
     response_model=UploadDocumentResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_document(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: UploadDocumentRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],

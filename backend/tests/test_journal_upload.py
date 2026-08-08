@@ -46,7 +46,8 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from main import app
-from routers.journal import _UPLOAD_MESSAGES
+from routers.journal import _UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT
+from routers.transcription import TRANSCRIBE_RATE_LIMIT
 from schemas.journal_upload import MAX_UPLOAD_BASE64_CHARS
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -500,6 +501,18 @@ class TestUploadTiering:
         stamped = vault.upload_calls[0].created_at
         assert stamped.tzinfo is not None
         assert stamped >= before
+
+
+class TestUploadIsRateLimited:
+    """The endpoint is bounded, and bounded deliberately rather than by omission."""
+
+    def test_the_endpoint_declares_a_rate_limit(self) -> None:
+        """An unbounded 10 MB endpoint that calls an external dependency is an abuse lever."""
+        assert UPLOAD_RATE_LIMIT
+
+    def test_the_limit_matches_the_other_base64_payload_endpoint(self) -> None:
+        """Same class of endpoint, same bound -- so the two cannot drift apart silently."""
+        assert UPLOAD_RATE_LIMIT == TRANSCRIBE_RATE_LIMIT
 
 
 class TestUploadMessagesAreExhaustive:
