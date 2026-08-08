@@ -1,8 +1,7 @@
-"""Check-in request/response schemas."""
+"""Check-in response schemas."""
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel
@@ -19,11 +18,6 @@ CheckInReasonCode = Literal[
     "streak_held",
     "already_logged_today",
 ]
-
-
-class CheckInRequest(BaseModel):
-    goal_id: int
-    date: date
 
 
 class CheckInResult(BaseModel):

@@ -170,6 +170,7 @@ async def test_create_session_invalid_user_practice(
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "user_practice_not_found"
 
 
 @pytest.mark.asyncio

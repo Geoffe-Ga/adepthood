@@ -38,6 +38,7 @@ from models.course_stage import CourseStage
 from models.goal import Goal
 from models.journal_entry import JournalEntry
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 
@@ -478,22 +479,94 @@ async def test_idor_user_practice_get_returns_403(
 
 @pytest.mark.asyncio
 async def test_idor_practice_session_create_returns_403(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Cross-user POST /practice-sessions/ — body's user_practice_id is Alice's."""
-    alice_headers, alice_id = await _signup(async_client, "alice_ps_post")
-    bob_headers, _ = await _signup(async_client, "bob_ps_post")
+    """Bob cannot log a practice session against Alice's user-practice.
 
-    user_practice_id = await _create_user_practice(
-        async_client, db_session, alice_headers, alice_id
+    ``POST /practice-sessions/`` takes ``user_practice_id`` from the request
+    body, so the path-parameter ownership dependencies never see it.  An
+    unguarded write would graft sessions onto a victim's practice history --
+    rows that then surface in her session list and analytics rollups -- and a
+    denial that is not audited is a cross-tenant probe nobody can see.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_ps_post")
+    bob_headers, bob_id = await _signup(async_client, "bob_ps_post")
+
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id, practice_name="Alice PS Post"
+    )
+    bob_practice_id = await _create_user_practice(
+        async_client, db_session, bob_headers, bob_id, practice_name="Bob PS Post"
     )
 
-    resp = await async_client.post(
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(alice_practice_id),
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    # The identical payload against Bob's own practice is accepted, so the 403
+    # above can only be about ownership -- not a bad body or a locked stage.
+    baseline = await async_client.post(
         "/practice-sessions/",
-        json=_session_window_payload(user_practice_id),
+        json=_session_window_payload(bob_practice_id),
         headers=bob_headers,
     )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert baseline.status_code == HTTPStatus.CREATED
+    assert baseline.json()["user_practice_id"] == bob_practice_id
+
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(PracticeSession).where(col(PracticeSession.user_practice_id) == alice_practice_id)
+    )
+    smuggled = list(result.scalars().all())
+    assert smuggled == [], "cross-user session persisted against the victim's user-practice"
+
+    victim_view = await async_client.get(
+        "/practice-sessions/",
+        params={"user_practice_id": alice_practice_id},
+        headers=alice_headers,
+    )
+    assert victim_view.status_code == HTTPStatus.OK
+    assert victim_view.json() == []
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "user_practice"
+    assert getattr(denials[0], "resource_id", None) == alice_practice_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_practice_session_create_missing_user_practice_is_404_and_unaudited(
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``user_practice_id`` that exists for nobody 404s, and audits nothing.
+
+    A missing row must never reach the ownership comparison -- inverting that
+    order makes the endpoint an existence oracle.  A denial record for a row
+    that never existed would likewise poison the audit signal that genuine
+    cross-tenant probes are meant to raise.
+    """
+    headers, _ = await _signup(async_client, "ps_post_missing_up")
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(_DEFINITELY_MISSING_ID),
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "user_practice_not_found"
+    assert _denial_records(caplog) == []
 
 
 @pytest.mark.asyncio
