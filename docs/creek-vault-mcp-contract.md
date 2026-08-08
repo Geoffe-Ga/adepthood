@@ -273,6 +273,46 @@ capability is still used for the others it supports:
   (ADR 0004's 2026-08-07 note) — Creek's own MCP server is untouched
   and remains what agents like CrawDad, Claude Code, and Hermes talk
   to, but nothing in this repository calls it any more.
+- **UPLOAD** — a *required* capability for the document-upload surface,
+  and gated entirely separately from JOURNAL: a vault that advertises
+  `creek.journal` has said nothing about whether it accepts files, so
+  the upload path checks `creek.upload` on its own
+  (`store_upload`, `backend/src/services/creek_vault_upload.py`) and an
+  unadvertised capability is refused locally with no request sent
+  (`_upload`, `backend/src/services/creek_vault_client.py`). Adepthood
+  `PUT`s the document to its own `/v1/uploads/{external_id}` URL,
+  carrying `filename`, `content_base64`, `timestamp`, and `tier`, and
+  **names no source or content type**: the vault reads the extension
+  off the filename and selects its own ingestor, so adepthood never
+  parses, sniffs, or classifies the document. `external_id` is a
+  deterministic digest of (owner user id, filename), which is what makes
+  a re-send idempotent — the vault edits the same fragment in place
+  rather than accumulating one per attempt — and it is a *digest*
+  specifically so a filename, which is the user's own words about their
+  life, never travels in a request line or an access log.
+
+  Tier semantics match JOURNAL: the document's tier and the declared
+  write ceiling are both the uploader's chosen tier, so the vault stores
+  at exactly that depth and refuses any widening.
+
+  Graceful degradation is finer-grained here than for JOURNAL, because
+  an upload has **no local system of record** — if the vault will not
+  take the document, it went nowhere, and the user has to be told which
+  problem they have. An unreachable vault reports `VAULT_UNAVAILABLE`,
+  a reachable vault that never advertised the capability reports
+  `CAPABILITY_UNSUPPORTED`, and a call that failed mid-flight (or
+  answered without durably storing) reports `DEGRADED`. All three are
+  answered as a `202` carrying the status and a self-serve message —
+  never a 5xx, since an optional integration being absent is not a
+  server fault. As with JOURNAL, **a failed upload is dropped, not
+  queued**: there is no spool, because durably holding user document
+  bytes outside the vault is a privacy decision nobody has made.
+
+  Per-fragment classification tags are read from the response when the
+  vault supplies them and are otherwise empty, which is the expected
+  answer today rather than a failure — adepthood deliberately builds no
+  second, local classifier. Intimate-tier documents are never sent at
+  all; see "Intimate-tier content: pointer only" below.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).

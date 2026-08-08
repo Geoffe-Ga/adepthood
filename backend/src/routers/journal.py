@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from types import MappingProxyType
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -35,7 +39,14 @@ from domain.resonance import (
 )
 from domain.safety import assess_distress
 from domain.stage_progress import get_user_progress, is_stage_unlocked
-from errors import bad_gateway, conflict, forbidden, not_found, unprocessable
+from errors import (
+    bad_gateway,
+    conflict,
+    forbidden,
+    not_found,
+    payload_too_large,
+    unprocessable,
+)
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -63,6 +74,12 @@ from schemas.journal import (
     JournalMessageCreate,
     JournalMessageResponse,
 )
+from schemas.journal_upload import (
+    MAX_UPLOAD_BASE64_CHARS,
+    MAX_UPLOAD_BYTES,
+    UploadDocumentRequest,
+    UploadDocumentResponse,
+)
 from schemas.marginalia import (
     CareResourceResponse,
     CareResponse,
@@ -79,6 +96,7 @@ from services.checkin import CheckInContext, current_check_in, record_goal_compl
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.creek_vault_reflect import select_reflection_llm
+from services.creek_vault_upload import UploadedDocument, VaultUploadStatus, store_upload
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -376,6 +394,109 @@ async def _encrypted_search_page(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in page],
         total=len(matched),
         has_more=page_has_more(filters.offset, filters.limit, len(matched)),
+    )
+
+
+# What each upload outcome tells the person who sent the document. Every line
+# names what happened, why, and the one thing they can do next -- none of them
+# ends at "contact support", because every one of these has a self-serve remedy.
+_UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
+    {
+        VaultUploadStatus.ACCEPTED: (
+            "Your document is in your vault. It will show up in reflections from here on."
+        ),
+        VaultUploadStatus.SKIPPED_INTIMATE: (
+            "Intimate documents stay on this device for now — the private channel that "
+            "would carry them to your vault isn't built yet, so this one wasn't sent "
+            "anywhere. Re-classify it as personal to upload it."
+        ),
+        VaultUploadStatus.VAULT_UNAVAILABLE: (
+            "Your vault didn't answer, so the document wasn't sent. Check that your vault "
+            "is running and reachable, then upload it again."
+        ),
+        VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
+            "Your vault accepts journal entries but not file uploads yet. Update your "
+            "vault to a version that supports uploads, then try again."
+        ),
+        VaultUploadStatus.DEGRADED: (
+            "The upload didn't complete and the document wasn't stored. Nothing was "
+            "changed in your vault — please try again."
+        ),
+    }
+)
+
+
+def _guard_upload_size(content_base64: str) -> None:
+    """Refuse an oversized document before any of it is decoded.
+
+    Two gates, cheapest first, mirroring ``routers/transcription.py``: the
+    encoded length is checked against :data:`MAX_UPLOAD_BASE64_CHARS` so a huge
+    payload is rejected without allocating the decoded bytes at all, and the
+    decoded length is then checked against the real ceiling so a payload that
+    slipped past the first by rounding still cannot exceed it.
+
+    A malformed encoding is a 422 rather than a 413: it is a different defect
+    with a different fix, and forwarding bytes we could not decode would hand
+    the vault a file its ingestor cannot open.
+    """
+    if len(content_base64) > MAX_UPLOAD_BASE64_CHARS:
+        raise payload_too_large("document_too_large")
+    try:
+        raw = base64.b64decode(content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise unprocessable("invalid_document_encoding") from exc
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise payload_too_large("document_too_large")
+
+
+@router.post(
+    "/upload",
+    response_model=UploadDocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_document(
+    payload: UploadDocumentRequest,
+    current_user: Annotated[int, Depends(get_current_user)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+) -> UploadDocumentResponse:
+    """Forward one user document to the Creek Vault for its own ingestors to parse.
+
+    202 rather than 201, and 202 for *every* vault outcome including the
+    degraded ones. The status code says adepthood accepted the request and acted
+    on it; what became of the document is in the body, where a client can render
+    a specific, actionable sentence instead of inferring one from an error code.
+    A vault that is missing, unreachable, or unable to take files is a normal
+    condition of an optional integration, not a server fault, so none of them is
+    a 5xx.
+
+    Deliberately stateless: no row is written, no upload table exists, and
+    adepthood keeps no copy of the document. The vault's stored fragment is the
+    only record, addressed by an id derived from the upload's identity so a
+    re-send edits it in place. That also means an upload has no local fallback --
+    if the vault will not take it, it went nowhere, and the response says so
+    plainly rather than implying a success.
+
+    The size guard runs before anything else touches the payload, and an
+    ``intimate`` classification is withheld inside
+    :func:`~services.creek_vault_upload.store_upload` before any vault call at
+    all.
+    """
+    _guard_upload_size(payload.content_base64)
+    outcome = await store_upload(
+        vault_client,
+        UploadedDocument(
+            owner_user_id=current_user,
+            filename=payload.filename,
+            content_base64=payload.content_base64,
+            classification=payload.classification,
+            created_at=datetime.now(UTC),
+        ),
+    )
+    return UploadDocumentResponse(
+        status=outcome.status,
+        vault_ref=outcome.vault_ref,
+        tags=list(outcome.tags),
+        message=_UPLOAD_MESSAGES[outcome.status],
     )
 
 

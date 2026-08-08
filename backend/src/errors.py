@@ -68,6 +68,17 @@ def unprocessable(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=reason)
 
 
+def payload_too_large(reason: str) -> HTTPException:
+    """Return a 413 HTTPException for a request body past a declared ceiling.
+
+    Distinct from :func:`unprocessable` because size is the one rejection the
+    client can act on without changing anything else about the request: the
+    status alone tells them to send something smaller, and a proxy in front of
+    the app answers an oversized body with this same code.
+    """
+    return HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=reason)
+
+
 def bad_gateway(reason: str) -> HTTPException:
     """Return a 502 HTTPException for an upstream-dependency failure.
 
