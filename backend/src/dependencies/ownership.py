@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import Depends
 from sqlalchemy import ColumnElement
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped
 from sqlmodel import and_, col, or_, select
 
 from database import get_session
+from dependencies.auth import get_current_user_model
 from errors import forbidden, not_found
 from models.goal import Goal
 from models.goal_group import GoalGroup
@@ -19,6 +20,7 @@ from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.user import User
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
 
@@ -185,7 +187,7 @@ async def require_owned_user_practice(
 
     Delegates to :func:`resolve_owned_user_practice`, which owns the rule and
     emits the ``resource_access_denied`` audit row on a cross-tenant probe,
-    matching :func:`require_owned_goal_group`.
+    matching :func:`require_owned_habit`.
     """
     return await resolve_owned_user_practice(session, user_practice_id, current_user)
 
@@ -244,18 +246,42 @@ async def resolve_owned_goal_group(session: AsyncSession, group_id: int, user_id
     return group
 
 
-async def require_owned_goal_group(
+async def require_manageable_goal_group(
     group_id: int,
-    current_user: Annotated[int, Depends(get_current_user)],
+    caller: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
-    """Resolve ``group_id`` for write access -- owner only.
+    """Resolve ``group_id`` for write access, routing by what kind of group it is.
 
-    Delegates to :func:`resolve_owned_goal_group`, which owns the rule and
-    emits the ``resource_access_denied`` audit row on a cross-tenant probe,
-    matching :func:`require_owned_habit` and :func:`require_owned_user_practice`.
+    Two authorities, because goal groups are two different kinds of object:
+
+    - A **private group** stays owner-only. An admin is deliberately *not*
+      admitted here: adepthood's governing promise is that a user's own space is
+      their own, and an operator override on private content would trade one
+      violation for a larger one.
+    - A **shared template** is ownerless by construction
+      (``ck_goalgroup_shared_template_user_id`` keeps ``user_id IS NULL``
+      biconditional with the flag), so the owner comparison can never match
+      anybody. Before this dependency existed that meant *nothing could ever
+      edit or delete one* -- not the creator, not an operator -- so a published
+      template was permanently unmodifiable. Admin is that missing authority.
+
+    The ordering matters: the template branch is checked first, because falling
+    through to the owner comparison is exactly the dead end this fixes.
     """
-    return await resolve_owned_goal_group(session, group_id, current_user)
+    group = await session.get(GoalGroup, group_id)
+    if group is None:
+        raise not_found("goal_group")
+    caller_id = cast("int", caller.id)
+    if group.shared_template:
+        if not caller.is_admin:
+            log_ownership_denied("goal_group", group_id, caller_id)
+            raise forbidden("admin_required")
+        return group
+    if group.user_id != caller_id:
+        log_ownership_denied("goal_group", group_id, caller_id)
+        raise forbidden("forbidden")
+    return group
 
 
 async def require_visible_practice(

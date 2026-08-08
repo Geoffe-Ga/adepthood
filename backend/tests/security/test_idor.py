@@ -32,7 +32,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import col, select, update
 
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -40,6 +40,7 @@ from models.journal_entry import JournalEntry
 from models.practice import Practice
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
+from models.user import User
 
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
@@ -85,6 +86,14 @@ async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], i
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
+async def _promote(session: AsyncSession, username: str) -> None:
+    """Flip ``is_admin`` so the caller may publish a shared template."""
+    await session.execute(
+        update(User).where(col(User.email) == f"{username}@example.com").values(is_admin=True)
+    )
+    await session.commit()
 
 
 def _goal_put_payload(goal: dict[str, object]) -> dict[str, object]:
@@ -340,17 +349,20 @@ async def test_idor_goal_group_delete_returns_403(async_client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_idor_shared_template_mutation_returns_403(async_client: AsyncClient) -> None:
-    """BUG-GOAL-006: shared templates have no owner -- mutation always 403.
+async def test_idor_shared_template_mutation_returns_403(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-GOAL-006: an ordinary user cannot mutate a shared template.
 
-    Alice creates a shared template (``user_id IS NULL``).  Even the
-    creator cannot mutate it through the standard PUT/DELETE surface
-    because ``require_owned_goal_group`` checks ``group.user_id ==
-    current_user`` and ``None`` never equals an int.  An admin-only
-    moderation surface will land in a separate prompt; until then,
-    shared templates are read-only by design.
+    A template is ownerless (``user_id IS NULL``), so it can never match the
+    caller's id.  The admin moderation surface this docstring once anticipated
+    now exists -- ``require_manageable_goal_group`` routes templates to admin --
+    but a *non-admin* is still refused, which is what this pins.  Bob, an
+    ordinary user, is the one probing here.
     """
     alice_headers, _ = await _signup(async_client, "alice_shared")
+    await _promote(db_session, "alice_shared")
+    bob_headers, _ = await _signup(async_client, "bob_shared_probe")
 
     create = await async_client.post(
         "/goal-groups/",
@@ -363,19 +375,22 @@ async def test_idor_shared_template_mutation_returns_403(async_client: AsyncClie
     put = await async_client.put(
         f"/goal-groups/{group_id}",
         json={"name": "Hijacked"},
-        headers=alice_headers,
+        headers=bob_headers,
     )
     assert put.status_code == HTTPStatus.FORBIDDEN
 
-    delete = await async_client.delete(f"/goal-groups/{group_id}", headers=alice_headers)
+    delete = await async_client.delete(f"/goal-groups/{group_id}", headers=bob_headers)
     assert delete.status_code == HTTPStatus.FORBIDDEN
 
 
 @pytest.mark.asyncio
-async def test_idor_shared_template_get_is_visible(async_client: AsyncClient) -> None:
+async def test_idor_shared_template_get_is_visible(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     """Shared templates are readable by every authenticated user."""
     alice_headers, _ = await _signup(async_client, "alice_shared_get")
     bob_headers, _ = await _signup(async_client, "bob_shared_get")
+    await _promote(db_session, "alice_shared_get")
 
     create = await async_client.post(
         "/goal-groups/",
