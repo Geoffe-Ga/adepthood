@@ -67,14 +67,16 @@ _RAW_SQL_MANAGED_INDEXES: frozenset[str] = frozenset(
     }
 )
 
-# Migration-internal archive tables created by dedup steps (see e.g.
-# ``e1f2a3b4c5d6_contentcompletion_unique_user_content``).  These hold
-# rows that were dropped to satisfy a freshly-added unique constraint
-# and are intentionally not modeled in SQLModel — there is no router or
-# RLS policy that exposes them.  We tell autogenerate / ``alembic check``
-# to leave them alone so a successful ``upgrade head`` does not register
-# as drift the next time the gate runs.
-_MIGRATION_ARCHIVE_TABLE_PREFIX = "_duplicates_"
+# Migration-internal side tables.  ``_duplicates_*`` archives are created by
+# dedup steps (see e.g. ``e1f2a3b4c5d6_contentcompletion_unique_user_content``)
+# and hold rows that were dropped to satisfy a freshly-added unique
+# constraint; ``_quarantine_*`` tables are created by remediation steps (see
+# ``c1d2e3f4a5b7_quarantine_cross_tenant_references``) and hold the forensic
+# record of references that were detached.  Both are intentionally not modeled
+# in SQLModel — there is no router or RLS policy that exposes them.  We tell
+# autogenerate / ``alembic check`` to leave them alone so a successful
+# ``upgrade head`` does not register as drift the next time the gate runs.
+_MIGRATION_ARCHIVE_TABLE_PREFIXES: tuple[str, ...] = ("_duplicates_", "_quarantine_")
 
 
 def _include_object(
@@ -84,17 +86,22 @@ def _include_object(
     reflected: bool,  # noqa: ARG001
     compare_to: Any,  # noqa: ARG001
 ) -> bool:
-    """Skip raw-SQL-managed indexes and dedup archive tables.
+    """Skip raw-SQL-managed indexes and dedup / quarantine side tables.
 
     Without this, ``alembic check`` reports drift for every functional /
     partial index (see :data:`_RAW_SQL_MANAGED_INDEXES`) and for every
-    ``_duplicates_*`` archive table left behind by a dedup migration.
-    Both are migration-owned artifacts that the model layer
-    intentionally does not declare.
+    ``_duplicates_*`` archive table left behind by a dedup migration or
+    ``_quarantine_*`` table left behind by a remediation migration.  All
+    are migration-owned artifacts that the model layer intentionally does
+    not declare.
     """
     if type_ == "index" and name in _RAW_SQL_MANAGED_INDEXES:
         return False
-    if type_ == "table" and name is not None and name.startswith(_MIGRATION_ARCHIVE_TABLE_PREFIX):
+    if (
+        type_ == "table"
+        and name is not None
+        and name.startswith(_MIGRATION_ARCHIVE_TABLE_PREFIXES)
+    ):
         return False
     return True
 
