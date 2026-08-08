@@ -68,6 +68,7 @@ from domain.creek_vault import (
     CreekVaultError,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultUploadStatus,
     tier_ceiling_for,
 )
 
@@ -86,23 +87,6 @@ _EXTERNAL_ID_DIGEST_CHARS = 32
 # appear in neither an integer nor a filename, so no pair of distinct
 # (owner, filename) inputs can collide by rearrangement across the boundary.
 _IDENTITY_SEPARATOR = "\x00"
-
-
-class VaultUploadStatus(enum.StrEnum):
-    """The terminal outcome of a :func:`store_upload` attempt.
-
-    Exactly one is always returned, and the three non-accepted values stay apart
-    because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
-    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot
-    take files yet", and ``DEGRADED`` is "it broke, try again". Values are the
-    wire strings the API answers with, so they are contract and must not be
-    reworded casually.
-    """
-
-    ACCEPTED = "accepted"
-    VAULT_UNAVAILABLE = "vault_unavailable"
-    CAPABILITY_UNSUPPORTED = "capability_unsupported"
-    DEGRADED = "degraded"
 
 
 class UploadDegradeReason(enum.StrEnum):

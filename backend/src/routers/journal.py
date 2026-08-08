@@ -27,7 +27,11 @@ from dependencies.ownership import (
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
-from domain.creek_vault import CreekVaultCareEscalationError, CreekVaultClient
+from domain.creek_vault import (
+    CreekVaultCareEscalationError,
+    CreekVaultClient,
+    VaultUploadStatus,
+)
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
@@ -96,7 +100,7 @@ from services.checkin import CheckInContext, current_check_in, record_goal_compl
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.creek_vault_reflect import select_reflection_llm
-from services.creek_vault_upload import UploadedDocument, VaultUploadStatus, store_upload
+from services.creek_vault_upload import UploadedDocument, store_upload
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -471,10 +475,11 @@ async def upload_document(
     if the vault will not take it, it went nowhere, and the response says so
     plainly rather than implying a success.
 
-    The size guard runs before anything else touches the payload, and an
-    ``intimate`` classification is withheld inside
-    :func:`~services.creek_vault_upload.store_upload` before any vault call at
-    all.
+    The size guard runs before anything else touches the payload. Every
+    classification is forwarded, ``intimate`` included, at the tier the uploader
+    chose -- see :mod:`services.creek_vault_upload` for why the vault is not the
+    disclosure the privacy floor guards against, and note that this path calls no
+    cloud LLM at any tier.
     """
     _guard_upload_size(payload.content_base64)
     outcome = await store_upload(

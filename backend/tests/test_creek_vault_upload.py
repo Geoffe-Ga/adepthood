@@ -50,13 +50,13 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultUploadStatus,
     VaultWheelBalance,
 )
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
 from services.creek_vault_upload import (
     UploadedDocument,
     VaultUploadOutcome,
-    VaultUploadStatus,
     store_upload,
     upload_external_id,
 )

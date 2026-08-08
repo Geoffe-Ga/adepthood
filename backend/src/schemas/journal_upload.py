@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
+from domain.creek_vault import VaultUploadStatus
 from models.journal_entry import JournalClassification
-from services.creek_vault_upload import VaultUploadStatus
 
 # The decoded-bytes ceiling for one document. Ten megabytes comfortably admits a
 # scanned PDF or a long export while bounding what a single request can make the
@@ -86,9 +86,10 @@ class UploadDocumentRequest(BaseModel):
     to it on the far side.
 
     ``classification`` is the privacy tier the uploader chose, and it is honored
-    end to end -- an ``intimate`` document is withheld from the vault entirely
-    (see :mod:`services.creek_vault_upload`), never quietly downgraded so it can
-    be sent.
+    end to end: the document is stored at exactly that tier, never quietly
+    downgraded so a call can succeed. An ``intimate`` document *is* forwarded to
+    the vault -- see :mod:`services.creek_vault_upload` for the ratified reasoning
+    -- and to nothing else; no tier on this path reaches a cloud LLM.
     """
 
     filename: str = Field(

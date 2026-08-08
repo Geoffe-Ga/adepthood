@@ -419,6 +419,23 @@ class VaultIngestResult:
     action: VaultIngestAction | None = None
 
 
+class VaultUploadStatus(enum.StrEnum):
+    """The terminal outcome of a :func:`store_upload` attempt.
+
+    Exactly one is always returned, and the three non-accepted values stay apart
+    because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
+    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot
+    take files yet", and ``DEGRADED`` is "it broke, try again". Values are the
+    wire strings the API answers with, so they are contract and must not be
+    reworded casually.
+    """
+
+    ACCEPTED = "accepted"
+    VAULT_UNAVAILABLE = "vault_unavailable"
+    CAPABILITY_UNSUPPORTED = "capability_unsupported"
+    DEGRADED = "degraded"
+
+
 @dataclass(frozen=True)
 class VaultUploadRequest:
     """One user-supplied document handed to the vault for its own ingestors to parse.

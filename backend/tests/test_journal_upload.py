@@ -10,7 +10,8 @@ Four properties are pinned here that no lower layer can guarantee alone:
 
 - Every vault condition answers 202 with a distinguishable status, never a 500.
 - An oversized document is refused by size *before* its bytes are decoded.
-- An intimate document is withheld, and told so, rather than rerouted.
+- An intimate document is forwarded at its own tier, and is not rerouted
+  anywhere when the vault is unreachable.
 - A rejection never echoes the document back through the error envelope.
 """
 
@@ -41,11 +42,12 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultUploadStatus,
     VaultWheelBalance,
 )
 from main import app
+from routers.journal import _UPLOAD_MESSAGES
 from schemas.journal_upload import MAX_UPLOAD_BASE64_CHARS
-from services.creek_vault_upload import VaultUploadStatus
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -498,6 +500,28 @@ class TestUploadTiering:
         stamped = vault.upload_calls[0].created_at
         assert stamped.tzinfo is not None
         assert stamped >= before
+
+
+class TestUploadMessagesAreExhaustive:
+    """Every status the service can return has a sentence to show the user.
+
+    The router looks the message up unconditionally, so a status added to
+    :class:`VaultUploadStatus` without a matching entry would raise ``KeyError``
+    inside the handler and answer a 500 -- on the one path whose whole design is
+    that it never 500s. Today the mapping is complete; this makes that a
+    guarantee rather than a coincidence.
+    """
+
+    def test_every_status_has_a_message(self) -> None:
+        """A missing entry is a 500 on a path that must never 500."""
+        assert set(_UPLOAD_MESSAGES) == set(VaultUploadStatus)
+
+    @pytest.mark.parametrize("status", list(VaultUploadStatus))
+    def test_no_message_sends_the_user_to_support(self, status: VaultUploadStatus) -> None:
+        """Each outcome names a next step the user can take themselves."""
+        message = _UPLOAD_MESSAGES[status]
+        assert message.strip()
+        assert "contact support" not in message.lower()
 
 
 def _as_vault_client(client: CreekVaultClient) -> CreekVaultClient:
