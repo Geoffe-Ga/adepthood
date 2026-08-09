@@ -133,6 +133,8 @@ jest.mock('../components/StatsModal', () => ({
 const { habits: habitsApi } = require('../../../api');
 const HabitsScreen = require('../HabitsScreen').default;
 
+const mounted: any[] = [];
+
 const renderScreen = async (apiHabits: Array<ReturnType<typeof makeApiHabit>>) => {
   habitsApi.listAll.mockResolvedValue(apiHabits);
   jest
@@ -145,6 +147,7 @@ const renderScreen = async (apiHabits: Array<ReturnType<typeof makeApiHabit>>) =
   await renderer.act(async () => {
     await Promise.resolve();
   });
+  mounted.push(testRenderer);
   return testRenderer;
 };
 
@@ -205,6 +208,14 @@ const submitAdd = async (input: { name: string; icon: string }) => {
 
 describe('Habits screen negative carryover laps', () => {
   afterEach(() => {
+    // A screen left mounted keeps re-rendering, so the mocked AddHabitModal's
+    // *last* call -- what latestAddModalProps() reads -- can belong to an
+    // earlier test's tree. Tear every tree down before clearing the mocks.
+    mounted.splice(0).forEach((tree) => {
+      renderer.act(() => {
+        tree.unmount();
+      });
+    });
     jest.clearAllMocks();
   });
 
@@ -340,7 +351,7 @@ describe('Habits screen negative carryover laps', () => {
     expect(uniqueTiles(tree)).toHaveLength(2);
 
     // Display slot 0 on the negative lap is carryover id 101 at flat index 3.
-    const { TouchableOpacity, Pressable } = require('react-native');
+    const { TouchableOpacity } = require('react-native');
     const iconButtons = tree
       .findAllByType(TouchableOpacity)
       .filter((node: any) => node.props.testID === 'habit-icon');
@@ -349,9 +360,12 @@ describe('Habits screen negative carryover laps', () => {
       iconButtons[0].props.onPress();
     });
 
+    // Matched by testID rather than findAllByType(Pressable): RN 0.86 exports
+    // Pressable as a memo object, and react-test-renderer reports the wrapped
+    // render function as the node type, so an identity match never succeeds.
     const select = tree
-      .findAllByType(Pressable)
-      .find((node: any) => node.props.testID === 'emoji-picker-select');
+      .findAllByProps({ testID: 'emoji-picker-select' })
+      .find((node: any) => typeof node.props.onPress === 'function');
     expect(select).toBeDefined();
     await renderer.act(async () => {
       select.props.onPress();

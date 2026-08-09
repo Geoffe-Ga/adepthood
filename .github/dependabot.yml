@@ -49,109 +49,27 @@ updates:
           - "minor"
     open-pull-requests-limit: 15
     ignore:
-      # react-native-web 0.19.13 requires styleq ^0.1.3; styleq 0.2.x targets
-      # RNW 0.20+, so adopting it now desyncs the web style runtime. Unpin this
-      # when react-native-web is upgraded (Expo SDK 53 epic, #885).
+      # react-native-web 0.21.2 still declares styleq ^0.1.3; the 0.2.x line
+      # targets a later RNW. This one outlived the SDK 52 era -- the blocker is
+      # the pinned RNW major, not the Expo SDK. Unpin when RNW moves past 0.21.
       - dependency-name: "styleq"
         versions: [">=0.2.0"]
-      # Expo SDK 52 pins react-native-web to ~0.19.13; 0.20+ desyncs styleq (it
-      # targets the styleq 0.2.x line we pin below <0.2 — see the styleq entry
-      # above). Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "react-native-web"
-        versions: [">=0.20.0"]
-      # Expo SDK 52 pins expo-av to ~15.0.2 (verified by `expo install --check`);
-      # expo-av 16.x targets SDK 53. Expo packages are managed by `expo install`
-      # and must move together with the SDK, not piecemeal. Unpin at the SDK 53
-      # upgrade (#885), where expo-av is also superseded by expo-audio/expo-video.
-      - dependency-name: "expo-av"
-        versions: [">=16.0.0"]
-      # Expo SDK 52 pins expo-notifications to ~0.29.14 (verified by
-      # `expo install --check`); later majors target SDK 53+. Same SDK-managed
-      # rule as expo-av — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-notifications"
-        versions: [">=0.30.0"]
-      # Expo SDK 52 pins react-native to 0.76.x; 0.77+ needs React 19 / SDK 55+
-      # and ERESOLVE-fails install here. RN's 0.x minors are effective majors,
-      # so they must not ride the patch-minor group — unpin at the SDK 53
-      # upgrade (#885).
-      - dependency-name: "react-native"
-        versions: [">=0.77.0"]
-      # Expo SDK 52 pins react-native-screens to ~4.4.0; 4.5+ targets newer RN
-      # lines and its 4.26 fabric ScreenNativeComponent breaks the Jest suites.
-      # Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "react-native-screens"
-        versions: [">=4.5.0"]
-      # Expo SDK 52 pins expo-status-bar to ~2.0.x; 3.x targets SDK 53+. Expo
-      # packages move together with the SDK via `expo install`, not piecemeal —
-      # unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-status-bar"
-        versions: [">=3.0.0"]
-      # Expo SDK 52 pins @expo/metro-runtime to ~4.0.x; 5.x targets SDK 53+.
-      # Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "@expo/metro-runtime"
-        versions: [">=5.0.0"]
-      # Expo SDK 52 pins expo-secure-store to ~55.0.x; 56.x targets SDK 53+.
-      # Same SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-secure-store"
-        versions: [">=56.0.0"]
-      # react-native-reanimated 4.x requires the New Architecture pairing that
-      # ships with newer SDKs; SDK 52 pins ~3.16/3.17. Same SDK-managed rule —
-      # unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "react-native-reanimated"
-        versions: [">=4.0.0"]
-      # Expo SDK 52 pins expo-image-picker to ~16.0.x; 17.x targets SDK 53+.
-      # Expo packages move together with the SDK via `expo install`, not
-      # piecemeal — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-image-picker"
-        versions: [">=17.0.0"]
-      # Expo SDK 52 pins expo-keep-awake to ~14.0.x; 15.x targets SDK 53+. Same
-      # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-keep-awake"
-        versions: [">=15.0.0"]
-      # Expo SDK 52 pins expo-web-browser to ~14.0.2; 15.x targets SDK 53+, and
-      # because Expo renumbered its packages to track the SDK number the bot
-      # proposes a jump straight to the 57.x (SDK 57) line. Installing SDK-57
-      # packages against an SDK-52 runtime breaks the native layer. Same
-      # SDK-managed rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-web-browser"
-        versions: [">=15.0.0"]
-      # Expo SDK 52 pins expo-image-manipulator to ~13.0.6; 14.x targets SDK 53+
-      # and the bot proposes the renumbered 57.x line. Expo packages move
-      # together with the SDK via `expo install`, not piecemeal — unpin at the
-      # SDK 53 upgrade (#885).
-      - dependency-name: "expo-image-manipulator"
-        versions: [">=14.0.0"]
-      # Expo SDK 52 pins expo-apple-authentication to ~7.1.3; 8.x targets
-      # SDK 53+ and the bot proposes the renumbered 57.x line. Same SDK-managed
-      # rule — unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-apple-authentication"
-        versions: [">=8.0.0"]
-      # Expo SDK 52 pins expo-auth-session to ~6.0.3; 7.x targets SDK 53+ and
-      # the bot proposes the renumbered 57.x line. Same SDK-managed rule —
-      # unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-auth-session"
-        versions: [">=7.0.0"]
-      # Expo SDK 52 pins expo-file-system to ~18.0.12; 19.x targets SDK 53+ and
-      # the bot proposes the renumbered 57.x line. Same SDK-managed rule —
-      # unpin at the SDK 53 upgrade (#885).
-      - dependency-name: "expo-file-system"
-        versions: [">=19.0.0"]
-      # react-native-chart-kit 7.x peer-requires react >=19.1 and
-      # react-native >=0.81 — an Expo-SDK-scale pairing, not adaptable in
-      # isolation. Same SDK-managed rule — unpin at the SDK upgrade (#885).
-      - dependency-name: "react-native-chart-kit"
-        versions: [">=7.0.0"]
-      # react-test-renderer must match the React major exactly (18.3.1, paired
-      # with RN 0.76); 19.x needs React 19. It moves with the React upgrade, not
-      # on its own — unpin when React itself moves to 19.
-      - dependency-name: "react-test-renderer"
-        versions: [">=19.0.0"]
-      # @testing-library/react-native 14.x requires React 19 / RN >=0.78 /
-      # Node ^22.13 and replaces react-test-renderer with a React-19-paired Test
-      # Renderer. It moves with the React upgrade, not on its own — unpin with
-      # the React 19 upgrade.
+      # @testing-library/react-native 14.x has engines Node ^22.13; frontend CI
+      # runs Node 20 (frontend/.nvmrc). Its React 19 / RN >=0.78 requirements are
+      # satisfied now -- Node is the only thing left. Unpin with the CI Node 22
+      # move, alongside the @babel/core entry below.
       - dependency-name: "@testing-library/react-native"
         versions: [">=14.0.0"]
+      # Jest 30 needs jest-environment-node / babel-jest ^30, but
+      # @react-native/jest-preset 0.86.2 -- the preset jest.config.js uses --
+      # depends on both at ^29.7.0. Jest moves with the RN tooling, not on its
+      # own; unpin when the RN preset adopts the jest-30 line.
+      - dependency-name: "jest"
+        versions: [">=30.0.0"]
+      # @types/jest must match the jest major; it pairs with jest 30 and moves
+      # with it -- see the jest entry above.
+      - dependency-name: "@types/jest"
+        versions: [">=30.0.0"]
       # TypeScript 6/7 is the native-port line, unsupported by the expo / jest /
       # eslint toolchain we run; adopt it via a deliberate migration, not a
       # Dependabot bump. Unpin when the toolchain supports the 6+ line.
@@ -169,32 +87,9 @@ updates:
         versions: [">=10.0.0"]
       # eslint-plugin-unicorn 65.x requires eslint >=10.4 and Node >=22, neither
       # of which we run (eslint is pinned <10 above; CI Node is 20). Unpin with
-      # the ESLint-10 / Node-22 migration — see the eslint entry above.
+      # the ESLint-10 / Node-22 migration -- see the eslint entry above.
       - dependency-name: "eslint-plugin-unicorn"
         versions: [">=65.0.0"]
-      # Jest 30 needs jest-environment-node / babel-jest ^30, but RN 0.76 tooling
-      # pins the jest-29 line. Jest moves with the SDK toolchain, not on its own —
-      # unpin at the Expo SDK 53 upgrade (#885).
-      - dependency-name: "jest"
-        versions: [">=30.0.0"]
-      # @types/jest must match the jest major; it pairs with jest 30 and moves
-      # with it — unpin at the Expo SDK 53 upgrade (#885).
-      - dependency-name: "@types/jest"
-        versions: [">=30.0.0"]
-      # React 19 pairs with the RN 0.78+ / Expo SDK upgrade and ERESOLVE-fails
-      # against the RN 0.76 pins here. React moves with the SDK, not via a bot
-      # bump — unpin at the Expo SDK 53 upgrade (#885).
-      - dependency-name: "react"
-        versions: [">=19.0.0"]
-      # @types/react must match the react major; it pairs with react 19 and moves
-      # with it — unpin at the Expo SDK 53 upgrade (#885).
-      - dependency-name: "@types/react"
-        versions: [">=19.0.0"]
-      # Expo SDK 53+ upgrades deliberately via `expo install` tooling as part of
-      # the SDK epic, never via a Dependabot bump (a bare `expo` bump desyncs the
-      # whole managed toolchain). Unpin at the Expo SDK 53 upgrade (#885).
-      - dependency-name: "expo"
-        versions: [">=53.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
