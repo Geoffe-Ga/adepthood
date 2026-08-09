@@ -3,8 +3,10 @@ process.env.TZ = 'UTC';
 
 /** @type {import('jest').Config} */
 module.exports = {
-  // Use the react-native preset to avoid requiring Expo-specific tooling
-  preset: 'react-native',
+  // React Native >=0.85 removed the bundled 'react-native' preset; it now ships
+  // as its own package. Without this swap every suite fails to *start*, which
+  // reads as catastrophic breakage rather than a missing dependency.
+  preset: '@react-native/jest-preset',
   // BUG-FE-TEST-001: ``clearMocks: true`` zeroes mock call counts
   // between tests so a ``mockFetch.mockReturnValueOnce(...)`` queue from
   // one ``it()`` cannot leak into the next.  ``resetMocks: true`` is
