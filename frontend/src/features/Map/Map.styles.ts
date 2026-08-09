@@ -194,13 +194,13 @@ const styles = StyleSheet.create({
   // Clipping bowl for the magnified artwork + frost wash; radius set inline to
   // match the pill so the magnified wave never bleeds past the glass edge.
   magnifierClip: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   // Frost wash that rises while the lens is in motion (the "blur" read on
   // native; the web build adds a true backdrop blur on the pill itself).
   magnifierFrost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: colors.mystical.transparentLight,
   },
   magnifierCaption: {
@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
 
   // Optional decorative backdrop behind the grid (only when art is configured)
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.12,
   },
 

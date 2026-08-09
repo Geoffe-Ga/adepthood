@@ -23,7 +23,7 @@ function makeRef(node: FakeSelectionNode | null): React.RefObject<TextInput> {
 }
 
 interface HarnessProps {
-  nodeRef: React.RefObject<TextInput>;
+  nodeRef: React.RefObject<TextInput | null>;
   emitSpan: (startUtf16: number, endUtf16: number) => void;
 }
 

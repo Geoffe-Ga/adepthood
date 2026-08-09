@@ -168,7 +168,7 @@ jest.mock('expo-audio', () => ({
   // loads in the background, where expo-av's createAsync returned a promise.
   // Restarting a cue is seekTo(0) then play(); there is no replayAsync.
   createAudioPlayer: jest.fn(() => ({
-    seekTo: (jest.fn() as any).mockResolvedValue(undefined),
+    seekTo: jest.fn(() => Promise.resolve()),
     play: jest.fn(),
     remove: jest.fn(),
   })),

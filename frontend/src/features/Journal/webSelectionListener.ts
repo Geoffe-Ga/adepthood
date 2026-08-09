@@ -21,7 +21,7 @@ interface SelectableTextNode {
  * caller's emitSpan owns the UTF-16 to code-point conversion.
  */
 export function useWebSelectionListener(
-  nodeRef: RefObject<TextInput>,
+  nodeRef: RefObject<TextInput | null>,
   emitSpan: (startUtf16: number, endUtf16: number) => void,
 ): void {
   useEffect(() => {
