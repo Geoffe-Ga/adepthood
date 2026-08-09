@@ -1,6 +1,6 @@
 """Pydantic schemas for API models."""
 
-from schemas.checkin import CheckInRequest, CheckInResult
+from schemas.checkin import CheckInResult
 from schemas.energy import (
     EnergyPlan,
     EnergyPlanItem,
@@ -24,7 +24,6 @@ from schemas.practice import PracticeSessionCreate, PracticeSessionResponse
 __all__ = [
     "DEFAULT_PAGE_SIZE",
     "MAX_PAGE_SIZE",
-    "CheckInRequest",
     "CheckInResult",
     "EnergyHabit",
     "EnergyPlan",
