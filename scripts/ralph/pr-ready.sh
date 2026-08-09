@@ -291,16 +291,30 @@ hold_unproven=""
 issue_n="$(linked_issue "$pr_body")"
 if [[ -n "$issue_n" ]]; then
   exit_if_issue_holds "$issue_n" "linked by"
-elif [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
-  # Only Dependabot rewrites its own body, so only Dependabot can have lost the
-  # link. An empty author reads as human here, which is safe: the sole
-  # merge-without-review path re-verifies the author itself and fails closed on
-  # empty. A failed scan dies at once — unlike a matchless one, no later answer
-  # can arrive to settle it.
+fi
+
+# The marker route runs for EVERY bot lane, not only one whose body links
+# nothing. `linked_issue` takes the last reference match, so a regenerated body
+# carrying an upstream changelog line -- `Fixes #456` -- resolves an unrelated
+# issue in this repo. The hold lookup then consulted that issue, the bridge was
+# never reached, and a PR a human had parked printed `ready` and merged. Checking
+# the body link first and the marker as well costs one extra scan on bot lanes
+# and closes that: the two routes are independent answers to "is there a hold?",
+# and either may be the one that has it.
+#
+# Only Dependabot rewrites its own body, so only Dependabot can have lost the
+# link, and the scan stays off human lanes. An empty author reads as human here,
+# which is safe: the sole merge-without-review path re-verifies the author itself
+# and fails closed on empty. A failed scan dies at once -- unlike a matchless
+# one, no later answer can arrive to settle it.
+if [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
   bridge_issues="$(bridge_issues_for_pr)" ||
     die "could not scan for the bridge issue of PR #$pr; refusing to guess whether $OPTOUT_LABEL is set"
   if [[ -z "$bridge_issues" ]]; then
-    hold_unproven="yes"
+    # Unchanged from #2027, deliberately: unproven means NEITHER route resolved
+    # anything. A body that did resolve an issue is a resolution, so widening the
+    # scan must not start refusing lanes that classified fine before.
+    [[ -n "$issue_n" ]] || hold_unproven="yes"
   else
     while IFS= read -r bridge_n; do
       [[ -n "$bridge_n" ]] || continue

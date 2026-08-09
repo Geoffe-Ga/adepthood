@@ -798,7 +798,57 @@ check "a bot PR whose body still links an issue classifies from the link" "ready
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
      PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="dependencies" \
      ISSUE_LIST_SENTINEL="$S_ISSUE_LINKED" run 100)"
-probed "an intact body link never scans for a marker" "no" "$S_ISSUE_LINKED"
+# Was `"no"` until #2127. That pinned the narrower rule this issue replaces: the
+# marker scan ran ONLY when the body linked nothing, so a rewritten bot body
+# carrying an unrelated changelog `Fixes #456` resolved the wrong issue and the
+# bridge's hold was never consulted. A bot lane now checks both routes, so the
+# scan does run here. Kept rather than deleted -- it is still the pin that says
+# whether the scan happened, only its expected answer moved.
+probed "a bot lane checks the marker route as well as the body link" "yes" "$S_ISSUE_LINKED"
+
+# --- #2127: a changelog link in a rewritten bot body must not hide the bridge
+# `linked_issue` takes the LAST reference match, so an upstream changelog line
+# resolved to an unrelated issue in this repo, the hold lookup consulted *that*,
+# and the bridge marker was never reached. A parked PR would then merge.
+CHANGELOG_BODY="Bumps foo from 1 to 2.
+Release notes: Fixes #456
+<!-- dependabot-pr:100 -->"
+HELD_BRIDGE='[{"number":1982,"body":"<!-- dependabot-pr:100 -->"}]'
+
+# ISSUE_LABELS_FOR pins the hold to the BRIDGE issue only, so #456 -- the
+# changelog link -- reads unlabelled. Without it the fake answers every issue
+# identically and the case would pass even with the bug present.
+check "a bridge hold is honoured despite a changelog link in the body" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$CHANGELOG_BODY" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="do-not-auto-merge" ISSUE_LABELS_FOR=1982 run 100)"
+
+# The body-link route must keep working on its own -- this is #2027's case and
+# it must not regress while widening to check both.
+check "a hold reachable by the body link alone is still honoured" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="do-not-auto-merge" \
+     ISSUE_LABELS_FOR=1982 run 100)"
+
+# Both routes present and agreeing: one optout, not a double-exit or a crash.
+check "both routes agreeing still yields exactly optout" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="do-not-auto-merge" ISSUE_LABELS_FOR=1982 run 100)"
+
+# Neither route holds: the lane merges as before. Widening must not invent holds.
+check "an unheld bot lane with a changelog link still reaches ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$CHANGELOG_BODY" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="dependencies" run 100)"
+
+# Human lanes keep "last link wins" and pay for no extra scan.
+S_HUMAN_SCAN="$WORK/issue-list-human"
+check "a human PR with a changelog link is unaffected" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="someone" PR_BODY="$CHANGELOG_BODY" ISSUE_LABELS="enhancement" \
+     ISSUE_LIST_SENTINEL="$S_HUMAN_SCAN" run 100)"
+probed "a human lane never pays for the marker scan" "no" "$S_HUMAN_SCAN"
 
 # The knowing cost of checking the hold FIRST, pinned rather than hidden: an
 # unlinked bot lane pays for the scan even while CI is still running. That is the
