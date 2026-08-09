@@ -55,6 +55,10 @@ module.exports = {
       'sentry-expo|' +
       'native-base|' +
       'react-native-markdown-display|' +
+      // chart-kit 7 ships ESM where 6 shipped CJS, so the real module now needs
+      // transforming. Nothing caught this for a while because every StatsModal
+      // test mocked the library away; StatsModal.realCharts.test.tsx renders it.
+      'react-native-chart-kit|' +
       'uuid' +
       ')/)',
   ],
