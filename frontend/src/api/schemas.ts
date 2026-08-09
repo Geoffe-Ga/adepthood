@@ -244,11 +244,34 @@ const MIN_ASPECT = 1;
 /** Highest Aspect tag (stage 10); the curriculum has ten stages. */
 const MAX_ASPECT = 10;
 
+/**
+ * The two senders the client renders differently. The backend types ``sender``
+ * as a bare ``str`` (``schemas/journal.py:128``), so a third value is one server
+ * change away -- and a ``z.enum`` at a *list* boundary fails the whole response
+ * over a single unrecognised row. Same reasoning as ``TIER_VALUES`` above:
+ * accept the string at the boundary, narrow at the point of use.
+ */
+export const SENDER_VALUES = ['user', 'bot'] as const;
+export type Sender = (typeof SENDER_VALUES)[number];
+
+/**
+ * Narrow a server-supplied sender, falling back to ``bot`` for anything else.
+ *
+ * ``bot`` rather than ``user`` on purpose: an unrecognised speaker is not the
+ * person who was writing, and rendering someone else's words as theirs is the
+ * worse of the two wrong answers.
+ */
+export function narrowSender(value: unknown): Sender {
+  return typeof value === 'string' && (SENDER_VALUES as readonly string[]).includes(value)
+    ? (value as Sender)
+    : 'bot';
+}
+
 /** One journal message (mirrors the backend ``JournalMessage`` response). */
 export const journalMessageSchema = z.object({
   id: z.number().int(),
   message: z.string(),
-  sender: z.enum(['user', 'bot']),
+  sender: z.string(),
   // Same ISO-8601 contract as every other timestamp column (goal completions
   // etc.) — bare z.string() would silently accept "not-a-date".
   timestamp: isoDateTime,
@@ -267,6 +290,12 @@ export const journalMessageSchema = z.object({
   // untagged / pre-column responses still validate.
   primary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
   secondary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
+  // Hierarchical-journaling fields (``schemas/journal.py:137-138``). Zod strips
+  // what it does not declare, so omitting these did not fail validation -- it
+  // silently deleted them from every validated list response. Optional *and*
+  // nullable to match the backend's ``str | None = None`` exactly.
+  reflection_level: z.string().nullable().optional(),
+  reflection_scope_key: z.string().nullable().optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */

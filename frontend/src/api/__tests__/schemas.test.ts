@@ -284,14 +284,18 @@ describe('journalListResponseSchema validation', () => {
     expect(parsed.items[0]?.tag).toBe('weekly_prompt');
   });
 
-  it('rejects an unknown sender', () => {
-    expect(() =>
-      journalListResponseSchema.parse({
-        items: [{ ...message, sender: 'system' }],
-        total: 1,
-        has_more: false,
-      }),
-    ).toThrow();
+  it('accepts an unknown sender rather than failing the whole list', () => {
+    // This asserted the opposite until 2026-08-09. The backend types `sender`
+    // as a bare `str`, so a third value is one server change away -- and under
+    // the old `z.enum` a single unrecognised row took down every other entry in
+    // the response with it. Narrowing moved to the point of use (`narrowSender`),
+    // which is the same trade `narrowTier` already makes for `tier`.
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, sender: 'system' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.sender).toBe('system');
   });
 
   it('rejects a non-ISO timestamp (same contract as other timestamp columns)', () => {
