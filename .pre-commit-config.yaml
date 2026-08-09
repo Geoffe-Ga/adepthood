@@ -39,6 +39,12 @@ repos:
           (?x)(
             ^frontend/package-lock\.json$
             |^backend/content/
+            # Generated from the app's own routes and schemas (~424KB for 96
+            # paths / 160 components) and held current by the openapi-drift CI
+            # job. Excluded rather than raising --maxkb, which would weaken the
+            # guard for every file; this hook exists to catch an accidental
+            # binary, and this is a deliberate, reviewed, gated artifact.
+            |^backend/openapi\.json$
           )
       - id: no-commit-to-branch
         args: ["--branch", "main"]
