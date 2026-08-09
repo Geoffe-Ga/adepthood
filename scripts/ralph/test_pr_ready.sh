@@ -830,8 +830,13 @@ check "a hold reachable by the body link alone is still honoured" "optout" \
      PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="do-not-auto-merge" \
      ISSUE_LABELS_FOR=1982 run 100)"
 
-# Both routes present and agreeing: one optout, not a double-exit or a crash.
-check "both routes agreeing still yields exactly optout" "optout" \
+# Named for what it actually verifies. `exit_if_issue_holds` exits on the FIRST
+# hold it finds, so with the body link held the marker route is never reached --
+# this pins that the body-link route still short-circuits cleanly when both are
+# present, not that both are consulted. The case where both genuinely run is the
+# changelog one above: the body link resolves an UNHELD issue, so evaluation
+# continues into the marker scan, which is where the hold actually is.
+check "a held body link short-circuits before the marker route" "optout" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
      PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LIST_JSON="$HELD_BRIDGE" \
      ISSUE_LABELS="do-not-auto-merge" ISSUE_LABELS_FOR=1982 run 100)"
