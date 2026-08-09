@@ -172,11 +172,19 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        # Bare ``--cov`` (not ``--cov=.``) so the measured set is the single
-        # declaration in [tool.coverage.run] source (= {src, scripts}), the
-        # same set backend-ci.yml's branch-coverage step asserts over.
-        # ``-n auto`` distributes the suite: 15m58s -> 4m07s on 4 cores (#2076).
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest -n auto --dist loadfile --cov --cov-report=term-missing --cov-fail-under=90'
+        # Routed through test.sh rather than calling pytest directly, because
+        # that script takes .gate-state/locks/backend-suite.lock first. A push
+        # firing while check-all.sh is mid-run otherwise gives two whole-suite
+        # runs sharing one coverage data file, one set of SQLite fixtures, and
+        # the cores ``-n auto`` sized for a single process -- and the damage is
+        # a wrong number rather than a crash, so nothing announces it.
+        #
+        # ``--all --coverage`` is the same run this line used to spell out:
+        # distributed (``-n "$PYTEST_WORKERS" --dist loadfile``), bare ``--cov``
+        # so the measured set stays the single [tool.coverage.run] declaration
+        # (= {src, scripts}) that backend-ci.yml's branch-coverage step asserts
+        # over, and ``--cov-fail-under=90``.
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/test.sh --all --coverage'
         pass_filenames: false
         files: ^backend/
         stages: [pre-push]
