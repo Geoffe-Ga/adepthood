@@ -830,3 +830,82 @@ limitation, not a virtue — an operator watching only the fallback-rate
 counter cannot tell a misconfigured vault from an intentionally absent
 one today; the WARNING is what carries that distinction until a future
 issue gives the URL defect its own telemetry.
+
+## Note, 2026-08-09 — Decision 4 refines to membership in the server's supported set
+
+Decision 4 states the rule as "client and server must match on **exact
+`major.minor`**". That phrasing predates the `supported_contract_minors`
+field, and taken literally it compares adepthood's pin against the
+single version the server advertises *as its own*. That is strictly
+more brittle than the contract requires, and it had already begun to
+bite.
+
+`CapabilitiesResponse.schema.json` publishes three version fields, and
+adepthood read only the first: `contract_version` ("Full semantic
+contract version"), `contract_minor` ("The `major.minor` spoken
+here"), and `supported_contract_minors` ("Every contract minor this
+server still serves"). The third exists precisely so that a client can
+negotiate, and it is a `required` property — a server that omits it
+has published a malformed document.
+
+Upstream `creek-vault` moved to contract 0.3.0 on 2026-08-08 and
+deliberately *widened* rather than shifted its window. From upstream's
+own ADR: "`SUPPORTED_CONTRACT_MINORS` was widened to `("0.3", "0.2")`
+in the same change rather than shifted, so an existing client still
+sending `X-Creek-Contract-Version: 0.2` is served exactly as before."
+Against that server, adepthood read `contract_version` as `"0.3.0"`,
+found `0.3 != 0.2`, and degraded to the local fallback — **refusing a
+vault that was actively advertising that it would answer it**.
+
+**The refined rule: `client_minor ∈ server.supported_contract_minors`.**
+This is still exact-minor matching pre-1.0, and it still relaxes to a
+major match at 1.0 — the per-entry comparison is unchanged. What
+changes is *what* the pin is compared against: the set the server
+serves, not the one minor it happens to speak natively. The two worked
+examples in Decision 4 both still hold, because a server advertising
+`0.3.0` and serving only `0.3` publishes `["0.3"]`, which a `0.2.x`
+client is correctly not a member of.
+
+This is a refinement, not a widening of the kind Decision 4 forbids.
+The prohibition there is against relaxing *how* versions are compared —
+back toward major-only, or dropping the check. Nothing here does that:
+a server whose window has genuinely moved past adepthood's pin is
+still rejected, still as `INCOMPATIBLE_VERSION`, and an absent or
+wrong-typed `supported_contract_minors` degrades as a malformed
+payload rather than being silently trusted. Fail-closed in both
+directions.
+
+**Alongside it, the required request header, which was never sent.**
+Upstream's ratified ADR: "Every `/v1` **capability** endpoint requires
+an `X-Creek-Contract-Version: <major.minor>` request header; a missing
+or mismatched value is refused `409 incompatible_version` before any
+vault read. `GET /v1/capabilities` requires nothing on this axis,
+deliberately — the negotiation endpoint must never itself be able to
+fail to negotiate." Adepthood sent only `Authorization`, on every
+request, since the HTTP cutover shipped. A real Creek server would
+have accepted the handshake and then refused **every** journal upsert,
+reflection and wheel call — presenting as a configured, reachable,
+correctly-credentialed vault that accepts negotiation and then does no
+work.
+
+**Why no gate caught either.** The conformance suite validates payload
+*shapes* against the vendored bundle, and the bundle contains schemas
+and examples only: it says nothing about request headers, so no
+fixture could have caught a missing one. This is the same failure mode
+as the upload client retired in the 2026-08-07 note above — a fake
+answers any request it is given. The test added with this change
+therefore drives a fake that **refuses** capability requests lacking
+the header, which is the only shape of test that can hold the property.
+
+The `409 incompatible_version` a real server sends on the capability
+path is counted as `vault_incompatible_version`, not as a generic
+contract failure, which is what Decision 4's own "distinguishable
+signal" requirement asks for on this newer axis.
+
+**What is not claimed.** `CONTRACT_VERSION` stays pinned at `0.2.0`;
+0.2 remains served upstream, and moving the pin is separate work.
+The vendored bundle in `backend/tests/fixtures/creek_v1/` is still at
+upstream `879d961` (contract 0.2.0) while upstream `main` is at 0.3.0,
+so the scheduled `Creek contract drift` workflow is expected to go red
+on its next run — that is the gate working as designed, and
+re-vendoring is deliberately not bundled here.
