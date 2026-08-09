@@ -134,6 +134,8 @@ In the backend service's **Variables** tab, add:
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2) |
 | `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break |
+| `GOOGLE_OAUTH_CLIENT_IDS` | *(comma-separated Google client IDs)* | Only for Google sign-in — unset means every Google token is rejected |
+| `APPLE_OAUTH_CLIENT_IDS` | *(the iOS bundle identifier)* | Only for Apple sign-in — unset means every Apple token is rejected |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -220,11 +222,18 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_API_BASE_URL` | `https://your-backend.up.railway.app` | The backend service URL |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://adepthood.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
 | `PORT` | `80` | nginx listens on 80 |
 
-> **Important:** `EXPO_PUBLIC_API_BASE_URL` is baked into the JavaScript
-> bundle at **build time** (not runtime). If you change the backend URL, you
-> must **redeploy** the frontend for it to take effect.
+> **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
+> bundle at **build time** (not runtime). If you change one, you must
+> **redeploy** the frontend for it to take effect.
+>
+> Each one must also be declared as an `ARG`/`ENV` pair in `frontend/Dockerfile`.
+> A Docker build sees none of Railway's service variables unless the Dockerfile
+> names them, so an undeclared variable produces a **green deploy with the
+> feature silently missing** and nothing in any log — the value simply never
+> reaches `expo export`.
 
 ### 4c. Deploy and verify
 
@@ -369,6 +378,8 @@ than a migration.
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
+| `GOOGLE_OAUTH_CLIENT_IDS` | For Google sign-in | *(empty)* | Comma-separated Google OAuth client IDs the backend will accept ID tokens for (web + iOS + Android). Empty means every Google token is rejected, which is why the buttons appear to do nothing. |
+| `APPLE_OAUTH_CLIENT_IDS` | For Apple sign-in | *(empty)* | Comma-separated audiences accepted on Apple identity tokens — for this app the iOS bundle identifier, since Apple sign-in is offered only on iOS. Empty means every Apple token is rejected. |
 | `IPV6_THROTTLE_PREFIX_LEN` | No | `64` | Bit length of the IPv6 prefix that throttle keys (the rate limiter and the invalid-license throttle) group on, so one subscriber's delegated address range can't mint one bucket per address. Audit rows always keep the full address regardless. Valid range `1`-`128`; anything else falls back to the default rather than being clamped. A smaller number covers a larger delegation: lower it to `56`/`48` if you see IPv6 abuse, raise it to `128` to restore per-address keying (which reopens the bypass). |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
@@ -395,6 +406,9 @@ than a migration.
 | `EXPO_PUBLIC_API_BASE_URL` | Yes | Full URL of the backend API (e.g., `https://api.adepthood.com`). Baked in at build time. |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | No | Gumroad product page opened by the Get Started CTA. Defaults to `https://adepthood.gumroad.com/l/aptitude`. |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | No | Gumroad help article linked from the signup form's "Where's my key?" link. Defaults to `https://help.gumroad.com/article/76-license-keys`. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 
 ---
 
