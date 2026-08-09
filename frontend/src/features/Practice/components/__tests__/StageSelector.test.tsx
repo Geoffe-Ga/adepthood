@@ -4,9 +4,10 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { COLOR_PALETTE } from '../../data/colorPalette';
 import StageSelector from '../StageSelector';
 
-import { accent, BORDER_RADIUS, editorialType, ink, surface } from '@/design/tokens';
+import { accent, BORDER_RADIUS, editorialType, ink, STAGE_ORDER, surface } from '@/design/tokens';
 
 const flatten = (style: unknown): Record<string, unknown> =>
   StyleSheet.flatten(style as never) as Record<string, unknown>;
@@ -297,24 +298,24 @@ describe('StageSelector — picker variant', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('applies the fixed picker-box container style', () => {
+  it('applies the fixed picker-box container geometry', () => {
     const { getByTestId } = render(
       <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
     );
+    // Geometry only. The fill and the text colour are per-stage now (see the
+    // frequency-colour suite below), so pinning a single grey here would just
+    // re-assert the flat treatment this variant deliberately left behind.
     const container = flatten(getByTestId('picker-3').props.style);
-    expect(container.minWidth).toBe(36);
-    expect(container.backgroundColor).toBe(surface.sunken);
     expect(container.borderRadius).toBe(BORDER_RADIUS.sm);
     expect(container.alignItems).toBe('center');
+    expect(container.borderWidth).toBe(1);
   });
 
-  it('applies the fixed picker text style', () => {
+  it('applies the fixed picker text weight', () => {
     const { getByText } = render(
       <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
     );
-    const text = flatten(getByText('4').props.style);
-    expect(text.color).toBe(ink.primary);
-    expect(text.fontWeight).toBe('700');
+    expect(flatten(getByText('4').props.style).fontWeight).toBe('700');
   });
 
   it('adds opacity 0.5 to the container when disabled', () => {
@@ -331,5 +332,59 @@ describe('StageSelector — picker variant', () => {
     );
     const container = flatten(getByTestId('picker-3').props.style);
     expect(container.opacity).not.toBe(0.5);
+  });
+});
+
+describe('StageSelector — picker grid layout and frequency colour', () => {
+  it('lays the ten stages out column-major, so the rows read 1 3 5 7 9 / 2 4 6 8 10', () => {
+    const { getByTestId } = render(
+      <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
+    );
+    // Five columns, each holding its odd/even pair top-to-bottom. Asserted on the
+    // column subtrees rather than on flat render order, because a flat list can
+    // be in the right order and still wrap into the wrong visual rows.
+    for (let column = 1; column <= 5; column += 1) {
+      const chips = getByTestId(`picker-column-${column}`).props.children as unknown[];
+      const ids = (chips as { props: { testID: string } }[]).map((c) => c.props.testID);
+      expect(ids).toEqual([`picker-${2 * column - 1}`, `picker-${2 * column}`]);
+    }
+  });
+
+  it('tints every chip with its own frequency swatch and the AA-paired text colour', () => {
+    const { getByTestId, getByText } = render(
+      <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
+    );
+    for (let n = 1; n <= 10; n += 1) {
+      const swatch = COLOR_PALETTE[STAGE_ORDER[n - 1] as keyof typeof COLOR_PALETTE];
+      expect(flatten(getByTestId(`picker-${n}`).props.style).backgroundColor).toBe(swatch.bg);
+      // The paired text colour is what carries the AA guarantee; colorPalette's
+      // own suite proves the ratio, so this only has to prove we use the pair.
+      expect(flatten(getByText(String(n)).props.style).color).toBe(swatch.text);
+    }
+  });
+
+  it('outlines every chip so the white Clear Light stage cannot vanish on the card', () => {
+    const { getByTestId } = render(
+      <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
+    );
+    // Stage 10 is #ffffff, the same value as a light picker card, so the border
+    // is the only thing giving it an edge. Applied uniformly rather than
+    // special-cased, so there is one rule to keep true.
+    for (const n of [1, 10]) {
+      const style = flatten(getByTestId(`picker-${n}`).props.style);
+      expect(style.borderColor).toBe(surface.hairline);
+      expect(style.borderWidth).toBe(1);
+    }
+  });
+
+  it('keeps the picker chrome the other variants do not get', () => {
+    const { getByTestId } = render(
+      <StageSelector variant="filter" onSelect={jest.fn()} testIDPrefix="filter" />,
+    );
+    // The grid and the tinting are the picker's alone; filter/radio are untouched.
+    expect(() => getByTestId('filter-column-1')).toThrow();
+    expect(flatten(getByTestId('filter-3').props.style).backgroundColor).not.toBe(
+      COLOR_PALETTE.Red.bg,
+    );
   });
 });
