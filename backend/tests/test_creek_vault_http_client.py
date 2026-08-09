@@ -235,10 +235,27 @@ def _handshake_payload(
     *,
     available: bool = True,
 ) -> dict[str, object]:
-    """Build the only capability response shape adepthood already parses."""
+    """Build a handshake document in the shape Creek actually publishes.
+
+    Callers pass adepthood-side capability values (``creek.*``) because that is
+    the vocabulary the assertions are written in; this translates them to Creek's
+    published wire names on the way out, so every test exercises the real
+    document shape rather than one shaped to the client's former bugs.
+    Availability is nested under ``vault``, where Creek puts it.
+
+    A capability with no published name (UPLOAD, SAVE, CLASSIFY) is emitted
+    unchanged so a test can still assert that an unrecognised advertisement is
+    dropped rather than coerced.
+    """
+    wire_name = {
+        CreekCapability.HANDSHAKE.value: "capabilities",
+        CreekCapability.JOURNAL.value: "journal-upsert",
+        CreekCapability.REFLECT.value: "reflections",
+        CreekCapability.WHEEL.value: "wheel",
+    }
     return {
-        "available": available,
-        "capabilities": list(capabilities),
+        "vault": {"available": available},
+        "capabilities": [wire_name.get(c, c) for c in capabilities],
         "contract_version": contract_version,
         "ontology_version": ontology_version,
         "attestation": attestation,
@@ -1394,11 +1411,14 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
 async def test_classify_is_still_refused_when_advertised(
     http_clients: ClientFactory,
 ) -> None:
-    """Classify is the one capability left unratified, so it refuses even when advertised.
+    """Classify refuses, and at contract 0.2.0 it cannot even be advertised.
 
-    Its ``/v1`` payload shape has not shipped, so an advertised classify still
-    degrades the caller onto its local pipeline rather than guessing a wire
-    format.
+    Two guarantees, and the second is stronger than it used to be. Creek
+    publishes no wire name for classify, so an advertisement of it is dropped at
+    the parse boundary and :meth:`supports` is ``False`` -- there is no document
+    a conformant vault can send that turns it on. And independently of that, the
+    call refuses rather than guessing a payload shape that has never shipped, so
+    the caller degrades onto its local pipeline either way.
     """
     advertised = [
         CreekCapability.JOURNAL.value,
@@ -1410,7 +1430,8 @@ async def test_classify_is_still_refused_when_advertised(
         _VAULT_URL, _API_KEY, http_client=http_clients(_healthy_handler(advertised))
     )
     await client.handshake()
-    assert client.supports(CreekCapability.CLASSIFY) is True
+    # Unadvertisable by construction: Creek has no published name for it.
+    assert client.supports(CreekCapability.CLASSIFY) is False
     with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
         await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
     assert CreekCapability.CLASSIFY.value in str(exc_info.value)
@@ -3191,7 +3212,8 @@ async def test_handshake_drops_a_non_string_capability_beside_the_valid_ones(
     """
     payload = {
         **_handshake_payload([]),
-        "capabilities": [CreekCapability.JOURNAL.value, 42, CreekCapability.WHEEL.value],
+        # Creek's published wire names, since this bypasses the helper's translation.
+        "capabilities": ["journal-upsert", 42, "wheel"],
     }
     client = HttpCreekVaultClient(
         _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))

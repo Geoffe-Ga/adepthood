@@ -77,7 +77,11 @@ from domain.creek_vault import (
     VaultTierCeiling,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
-from services.creek_vault_client import HandshakeDegradeReason, HttpCreekVaultClient
+from services.creek_vault_client import (
+    _CAPABILITY_BY_WIRE_NAME,
+    HandshakeDegradeReason,
+    HttpCreekVaultClient,
+)
 
 MANIFEST_NAME = "manifest.json"
 README_NAME = "README.md"
@@ -159,20 +163,13 @@ _ERROR_STATES = frozenset(
     state for state, status in _STATUS_BY_STATE.items() if status != HTTPStatus.OK
 )
 
-# TRANSLATION THAT EXISTS ONLY BECAUSE OF TWO DIVERGENCES. Creek advertises its
-# capabilities by their published names; ``CreekCapability`` spells the same four
-# ideas as ``creek.*`` values, and the two sets share no member. This table, plus
-# the lifting of ``vault.available`` in :func:`_client_readable_capabilities`, is
-# the entire difference between Creek's ratified capability document and a
-# document today's client can complete a handshake against. Both must be deleted
-# the moment the client reads Creek's document natively: they are scaffolding
-# around a bug, not part of the contract.
-_CAPABILITY_BY_CREEK_NAME: Mapping[str, CreekCapability] = {
-    "capabilities": CreekCapability.HANDSHAKE,
-    "journal-upsert": CreekCapability.JOURNAL,
-    "reflections": CreekCapability.REFLECT,
-    "wheel": CreekCapability.WHEEL,
-}
+# The client's own wire-name translation, imported rather than restated. It used
+# to be duplicated here as scaffolding around two divergences -- the client read
+# a top-level ``available`` Creek does not publish, and mapped advertised names
+# through ``CreekCapability``, whose ``creek.*`` values share no member with
+# Creek's published names. Both are fixed, so the fixture is served verbatim and
+# this alias exists only so the guard below asserts against the SHIPPED table.
+_CAPABILITY_BY_CREEK_NAME = _CAPABILITY_BY_WIRE_NAME
 
 Handler = Callable[[httpx.Request], httpx.Response]
 ClientFactory = Callable[[Handler], HttpCreekVaultClient]
@@ -256,31 +253,6 @@ _CAPABILITY_ERROR_CELLS = tuple(
 )
 
 
-def _client_readable_capabilities() -> dict[str, object]:
-    """Derive a handshake document today's client can complete, from Creek's own.
-
-    Exactly two edits to ``examples/capabilities/success.json``, each undoing one
-    known divergence: ``vault.available`` is lifted to the top-level key the
-    client reads, and Creek's published capability names are translated through
-    :data:`_CAPABILITY_BY_CREEK_NAME`. Every other field is Creek's, unmodified.
-
-    This is scaffolding around a bug. When the client reads Creek's document
-    natively it must be deleted rather than generalised -- keeping it would let
-    the journal conformance cells go on passing against a document Creek does not
-    publish.
-    """
-    published = _read_json("examples/capabilities/success.json")
-    vault = published["vault"]
-    assert isinstance(vault, dict)
-    advertised = published["capabilities"]
-    assert isinstance(advertised, list)
-    return {
-        **published,
-        "available": vault["available"],
-        "capabilities": [_CAPABILITY_BY_CREEK_NAME[str(name)].value for name in advertised],
-    }
-
-
 @dataclass
 class _Recorder:
     """A route-aware ``MockTransport`` handler that records every request it sees.
@@ -303,7 +275,9 @@ class _Recorder:
         """Answer one request, recording the method and path it arrived on."""
         self.calls.append(f"{request.method} {request.url.path}")
         if request.url.path == _CAPABILITIES_PATH:
-            return httpx.Response(HTTPStatus.OK, json=_client_readable_capabilities())
+            return httpx.Response(
+                HTTPStatus.OK, json=_read_json("examples/capabilities/success.json")
+            )
         if request.url.path == _WHEEL_PATH:
             return httpx.Response(self.wheel_status, json=self.wheel_payload)
         if request.url.path == _REFLECTIONS_PATH:
@@ -540,7 +514,7 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The divergence-bridging table must name exactly Creek's four capabilities."""
+    """The client's wire-name table must name exactly Creek's four published capabilities."""
     assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
     assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
 
@@ -564,14 +538,6 @@ def test_every_published_error_code_has_a_status_and_a_retry_disposition() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the client reads a top-level 'available' where Creek nests 'vault.available', "
-        "and maps advertised names through CreekCapability, whose creek.* values share "
-        "no member with Creek's published capabilities/journal-upsert/reflections/wheel"
-    ),
-)
 async def test_ratified_capability_documents_are_understood(
     vault_clients: ClientFactory,
 ) -> None:
@@ -600,30 +566,6 @@ async def test_ratified_capability_documents_are_understood(
 
     assert empty_result.available is False
     assert empty.last_degrade_reason == HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_observed_capability_success_degrades_to_vault_reported_unavailable(
-    vault_clients: ClientFactory,
-) -> None:
-    """The observed outcome is the divergence, not the contract.
-
-    Creek's ratified success document advertises an available vault and four
-    capabilities. Today's client reports the vault unavailable and supports
-    nothing, and the reason it records is the maximally misleading one: it never
-    reaches the capability list, because the top-level ``available`` key it looks
-    for is absent, so it concludes the vault reported itself unavailable.
-    """
-    client = vault_clients(
-        _static_handler(_read_json("examples/capabilities/success.json"), HTTPStatus.OK),
-    )
-
-    result = await client.handshake()
-
-    assert result.available is False
-    assert result.capabilities == frozenset()
-    assert client.last_degrade_reason == HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
-    assert client.supports(CreekCapability.JOURNAL) is False
 
 
 @pytest.mark.asyncio

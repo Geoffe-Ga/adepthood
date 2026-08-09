@@ -96,10 +96,13 @@ _SENTINELS: tuple[str, ...] = (
 
 # The capabilities a healthy scripted vault advertises: every ratified surface,
 # so one handler serves the ingest, reflect, and wheel exchanges alike.
+# Creek's PUBLISHED wire names, not adepthood's ``creek.*`` telemetry keys. The
+# two vocabularies are translated at the client's parse boundary, so a fixture
+# advertising the internal names would be a document no vault can send.
 _RATIFIED_CAPABILITIES: tuple[str, ...] = (
-    CreekCapability.JOURNAL.value,
-    CreekCapability.REFLECT.value,
-    CreekCapability.WHEEL.value,
+    "journal-upsert",
+    "reflections",
+    "wheel",
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -193,7 +196,8 @@ class _ScriptedVault:
     def _capability_document(self) -> dict[str, object]:
         """Build the capability document this scripted vault advertises."""
         return {
-            "available": True,
+            # Creek nests availability under ``vault``; the client reads it there.
+            "vault": {"available": True},
             "capabilities": self._capabilities,
             "contract_version": self._contract_version,
             "ontology_version": _ONTOLOGY_VERSION,
@@ -230,7 +234,7 @@ class _ScriptedHandshake:
 # serve. It is the one degrade reason with no error behind it at all.
 _VAULT_REPORTED_UNAVAILABLE_REPLY = _Reply(
     payload={
-        "available": False,
+        "vault": {"available": False},
         "capabilities": list(_RATIFIED_CAPABILITIES),
         "contract_version": CONTRACT_VERSION,
         "ontology_version": _ONTOLOGY_VERSION,

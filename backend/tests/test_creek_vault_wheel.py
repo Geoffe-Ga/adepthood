@@ -327,8 +327,8 @@ def _published_shares(payload: dict[str, object]) -> list[object]:
 def _capability_document() -> dict[str, object]:
     """Build the handshake document a vault advertising only the wheel would serve."""
     return {
-        "available": True,
-        "capabilities": [CreekCapability.WHEEL.value],
+        "vault": {"available": True},
+        "capabilities": ["wheel"],
         "contract_version": CONTRACT_VERSION,
         "ontology_version": _ONTOLOGY_VERSION,
         "attestation": None,
