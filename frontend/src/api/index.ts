@@ -1237,7 +1237,12 @@ export type EntryStatus = 'draft' | 'finished';
 export interface JournalMessage {
   id: number;
   message: string;
-  sender: 'user' | 'bot';
+  /**
+   * Widened from ``'user' | 'bot'`` to match the backend, which types this as a
+   * bare ``str``. Narrow with ``narrowSender`` before branching on it, rather
+   * than assuming the union -- see the note on ``SENDER_VALUES`` in schemas.ts.
+   */
+  sender: string;
   timestamp: string;
   tag: JournalTag;
   practice_session_id: number | null;
@@ -1252,6 +1257,12 @@ export interface JournalMessage {
   primary_aspect?: number | null;
   /** Secondary chord Aspect (a stage 1..10); only meaningful with a primary. */
   secondary_aspect?: number | null;
+  /**
+   * Hierarchical-journaling scope (``schemas/journal.py:137-138``). Absent on
+   * responses predating the columns, null when the entry is not a reflection.
+   */
+  reflection_level?: string | null;
+  reflection_scope_key?: string | null;
 }
 
 /**
