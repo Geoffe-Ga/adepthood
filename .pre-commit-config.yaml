@@ -4,6 +4,17 @@
 # the digest drift in CI. Exempt the whole tree from every hook, like node_modules.
 exclude: ^backend/content/
 
+# Which git hooks a bare ``pre-commit install`` writes. Declared here rather than
+# left to the caller's flags because the omission was invisible and cost real
+# time: the three ``stages: [pre-push]`` hooks below -- the whole expensive local
+# gate -- had never fired on anybody's machine, because ``dev-setup.sh`` installed
+# only ``pre-commit`` and ``commit-msg`` and nothing supplied ``--hook-type
+# pre-push``. CI ran them regardless, so nothing shipped unverified, but four
+# documents described a push-time gate that did not exist, and every coverage or
+# complexity regression surfaced ~18 minutes into CI instead of ~5 minutes
+# locally. Naming the set here means a future install cannot silently drop one.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
