@@ -56,6 +56,9 @@ mkdir -p "$BIN"
 # Arg-aware fake gh. Behaviour is driven by env vars the test sets per case:
 #   CHECKS_EC     — exit code `gh pr checks` should return (0 green / 8 pending / other failed)
 #   MERGE_STATE   — mergeStateStatus (CLEAN / BEHIND / ...)
+#   PR_FILES      — newline-separated paths the PR touches; drives the
+#                   review-self-skip detection
+#   PR_FILES_EC   — exit code for that lookup (non-zero ⇒ unreadable)
 #   HEAD_DATE     — RFC3339 committedDate of the PR HEAD commit
 #   HEAD_AUTHOR   — `authors[0].login` of that same HEAD commit, the third field of
 #                   the `--json mergeStateStatus,commits` answer; defaults to the
@@ -162,6 +165,9 @@ case "$args" in
       printf '%s|%s|%s\n' "${PR_AUTHOR:-}" "${REVIEW_CONCLUSIONS:-}" "${NON_REVIEW_SUCCESSES-1}"
     fi
     exit "${REVIEW_EC:-0}" ;;
+  *"pr view"*"--json files"*)
+    printf '%s\n' "${PR_FILES:-}"
+    exit "${PR_FILES_EC:-0}" ;;
   *"--json mergeStateStatus"*)
     printf '%s|%s|%s\n' "${MERGE_STATE:-CLEAN}" "${HEAD_DATE:-}" "${HEAD_AUTHOR-dependabot[bot]}" ;;
   *"--json comments"*)
@@ -205,6 +211,45 @@ check "green + CLEAN + fresh LGTM → ready" "ready" \
 # --- behind: green + fresh LGTM but not up-to-date -------------------------
 check "green + BEHIND + fresh LGTM → behind" "behind" \
   "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+# --- a PR editing the review workflow is a terminal state, not a wait -------
+# claude-code-action self-skips (anti-tamper) on any PR that edits the workflow
+# it runs from, and the Post-review step exits 0 with a warning -- so the check
+# reports SUCCESS, no verdict is ever posted, and the lane sat at
+# `awaiting-review` forever while ralph-tick sent it hunting a merge conflict
+# that does not exist.
+REVIEW_WF=".github/workflows/claude-code-review.yml"
+
+check "green + edits the review workflow + no verdict → review-self-skipped" "review-self-skipped" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+check "a stale verdict on such a PR is still review-self-skipped" "review-self-skipped" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+# The escape hatch: a human who reviews it by hand and posts a fresh LGTM must
+# be able to land it. Detection must not outrank a real, fresh verdict.
+check "a FRESH human LGTM on such a PR still reaches ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
+     PR_FILES="$REVIEW_WF" BEHIND_BY=0 run 100)"
+
+# A fresh non-LGTM is the review speaking; it routes to address-feedback as ever.
+check "a FRESH non-LGTM on such a PR is still changes-requested" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+# Touching a *different* workflow does not trip it -- only the review workflow
+# self-skips, so only it earns the token.
+check "editing an unrelated workflow still awaits review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES=".github/workflows/backend-ci.yml" run 100)"
+
+# Fails OPEN to the old behaviour: an unreadable file list must not invent a
+# terminal state and park a lane a human never asked to hold.
+check "an unreadable file list falls back to awaiting-review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES="" PR_FILES_EC=1 run 100)"
 
 # --- non-actionable merge states get their own tokens ----------------------
 # All five used to print `behind`, whose remedy is `fleet.sh sync`. A sync

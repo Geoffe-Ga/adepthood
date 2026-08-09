@@ -26,6 +26,10 @@
 #                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
 #                    (address-feedback): Gate 4 has spoken and wants changes
 #   awaiting-review  no verdict yet, or only a stale one (predates HEAD) → wait
+#   review-self-skipped  this PR edits the review workflow, so claude-code-action
+#                    self-skipped (anti-tamper) and no verdict will EVER arrive →
+#                    terminal: hand it to a human. The loop must stop re-checking
+#                    it; a fresh human-posted LGTM still reaches `ready`.
 #   optout           `do-not-auto-merge` on the PR, on the issue its body closes,
 #                    or on the bridge issue whose marker names this PR → the
 #                    loop does not act on this PR AT ALL (no merge, no sync, no
@@ -156,6 +160,9 @@ readonly DEPENDABOT_COMMIT_AUTHOR="dependabot[bot]"
 # that genuinely passed.
 readonly REVIEW_CHECK_NAME="claude-review"
 readonly SKIPPED_CONCLUSION="SKIPPED"
+# The one workflow whose own edits make it self-skip. Matched exactly, because
+# editing any *other* workflow does not suppress the review.
+readonly REVIEW_WORKFLOW_PATH=".github/workflows/claude-code-review.yml"
 readonly SUCCESS_CONCLUSION="SUCCESS"
 
 # How many non-review checks must have actually passed before "CI is green" may
@@ -385,6 +392,34 @@ review_gate_absent() {
   all_conclusions_skipped "$conclusions"
 }
 
+# True when this PR edits the review workflow itself, which is why no verdict
+# will ever arrive for it.
+#
+# claude-code-action self-skips as anti-tamper on any PR touching the workflow it
+# runs from, and the Post-review step handles that by warning and exiting 0. So
+# the `claude-review` check reports SUCCESS rather than SKIPPED: the
+# review-gate-absent path does not apply, no verdict comment exists, and the lane
+# printed `awaiting-review` forever while ralph-tick Step 1 sent it hunting a
+# merge conflict that was never there. Exiting 0 with a warning was right when a
+# human drove these PRs; it is wrong now that a loop reads the check as a gate.
+#
+# Detected here rather than by changing that workflow, deliberately: the
+# anti-tamper behaviour is worth keeping exactly as it is, the check must not go
+# red (that routes to ci-debugging, which cannot fix it either), and no verdict
+# may ever be fabricated. This only names the condition the orchestrator already
+# faced.
+#
+# Fails OPEN, unlike the freshness probe: an unreadable file list falls through
+# to the old `awaiting-review`. A false positive here parks a lane as needing a
+# human when nothing asked for that, which is worse than one more wait.
+review_edits_own_workflow() {
+  local files
+  files="$(gh pr view "${gh_args[@]}" --json files --jq '.files[].path' 2>/dev/null)" || return 1
+  [[ -n "$files" ]] || return 1
+  grep -Fxq "$REVIEW_WORKFLOW_PATH" <<<"$files"
+}
+
+
 # Fresh LGTM ⇔ latest verdict is LGTM AND its createdAt is strictly newer than
 # the HEAD commit. RFC3339 UTC timestamps are fixed-width, so a lexical string
 # compare is a correct chronological compare (portable — no date arithmetic).
@@ -402,6 +437,7 @@ if [[ "$verdict_lgtm" != "true" || -z "$verdict_date" ]] || ! [[ "$verdict_date"
   if [[ "$verdict_lgtm" == "false" && -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]]; then
     echo "changes-requested"; exit 0
   fi
+  review_edits_own_workflow && { echo "review-self-skipped"; exit 0; }
   review_gate_absent || { echo "awaiting-review"; exit 0; }
   ready_token="ready-unreviewed"
 fi
