@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, TextInput } from 'react-native';
-import type { NativeSyntheticEvent, TextInputFocusEventData, TextInputProps } from 'react-native';
+import type { BlurEvent, FocusEvent, TextInputProps } from 'react-native';
 
 import {
   accent,
@@ -32,11 +32,15 @@ export function TextField({
   ...rest
 }: TextFieldProps): React.JSX.Element {
   const [focused, setFocused] = useState(false);
-  const handleFocus = (event: NativeSyntheticEvent<TextInputFocusEventData>): void => {
+  // Typed as RN's FocusEvent/BlurEvent rather than
+  // NativeSyntheticEvent<TextInputFocusEventData>: RN 0.86 narrowed TextInput's
+  // focus callbacks to a TargetedEvent payload, which carries neither `text`
+  // nor `eventCount`.
+  const handleFocus = (event: FocusEvent): void => {
     setFocused(true);
     onFocus?.(event);
   };
-  const handleBlur = (event: NativeSyntheticEvent<TextInputFocusEventData>): void => {
+  const handleBlur = (event: BlurEvent): void => {
     setFocused(false);
     onBlur?.(event);
   };

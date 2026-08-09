@@ -110,7 +110,7 @@ const WelcomeFooter = ({ page, isLast, onNext, onBegin }: FooterProps): React.JS
 interface Pager {
   page: number;
   width: number;
-  scrollRef: React.RefObject<ScrollView>;
+  scrollRef: React.RefObject<ScrollView | null>;
   onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
   goNext: () => void;
 }

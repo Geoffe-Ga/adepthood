@@ -92,3 +92,15 @@ afterEach(() => {
   }
   outstandingAnimationFrames.clear();
 });
+
+jest.mock('react-test-renderer', () => {
+  const actual = jest.requireActual('react-test-renderer');
+  const create = (element, options) => {
+    let renderer;
+    actual.act(() => {
+      renderer = actual.create(element, options);
+    });
+    return renderer;
+  };
+  return { ...actual, create };
+});

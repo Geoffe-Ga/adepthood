@@ -4,7 +4,7 @@
 // warning per sound and falls back to a no-op — a missing file must not break
 // the practice session.
 
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 
 import type { AudioAdapter, CueKind, IntervalBellTone } from '../types';
 
@@ -42,11 +42,18 @@ function soundKeyFor(kind: CueKind, tone?: IntervalBellTone): SoundKey {
   return kind;
 }
 
-// Structural type for the subset of expo-av's Sound surface this adapter uses.
-// Avoids tangling with expo-av's class typing while keeping the contract clear.
+// Structural type for the subset of expo-audio's AudioPlayer this adapter uses.
+// Kept structural for the same reason it always was: the adapter should depend on
+// the three operations it performs, not on the library's class typing.
+//
+// expo-av's `replayAsync` has no equivalent — expo-audio separates seeking from
+// playing — so restarting a cue is `seekTo(0)` then `play()`. That ordering
+// matters: a cue retriggered mid-playback must restart from the top, which is
+// what a ritual bell means, rather than resuming wherever it was.
 interface PlayableSound {
-  replayAsync: () => Promise<unknown>;
-  unloadAsync: () => Promise<unknown>;
+  seekTo: (seconds: number) => Promise<void>;
+  play: () => void;
+  remove: () => void;
 }
 
 interface SoundEntry {
@@ -67,7 +74,7 @@ export function createNoopAudioAdapter(): AudioAdapter {
 }
 
 /**
- * expo-av-backed adapter. Sound loading is fire-and-forget; if an asset
+ * expo-audio-backed adapter. Sound loading is fire-and-forget; if an asset
  * fails to load, that cue degrades to a no-op and a single warning is
  * emitted (subsequent plays do not re-warn).
  */
@@ -93,11 +100,11 @@ async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
     return;
   }
   try {
-    const { sound } = await Audio.Sound.createAsync(asset);
-    // expo-av's `Sound` class implements Playback's methods structurally but
-    // TypeScript's class-side typing doesn't surface them as own members; cast
-    // through unknown rather than tighten the structural contract.
-    entry.sound = sound as unknown as PlayableSound;
+    // expo-audio's createAudioPlayer is synchronous — it returns a player
+    // immediately and loads in the background, where expo-av returned a promise.
+    // The enclosing function stays async so every call site keeps its contract;
+    // only the await disappears.
+    entry.sound = createAudioPlayer(asset) as unknown as PlayableSound;
   } catch (err) {
     markFailed(entry, key, err);
   }
@@ -113,7 +120,8 @@ async function playCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
   const entry = entries.get(key);
   if (!entry || entry.failed || !entry.sound) return;
   try {
-    await entry.sound.replayAsync();
+    await entry.sound.seekTo(0);
+    entry.sound.play();
   } catch (err) {
     markFailed(entry, key, err);
   }
@@ -122,7 +130,7 @@ async function playCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
 function disposeAll(entries: Map<SoundKey, SoundEntry>): void {
   for (const entry of entries.values()) {
     if (entry.sound) {
-      void entry.sound.unloadAsync();
+      entry.sound.remove();
       entry.sound = null;
     }
   }
