@@ -254,6 +254,37 @@ async def test_payload_missing_sale_id_returns_400_and_writes_nothing(
 
 
 @pytest.mark.asyncio
+async def test_non_utf8_body_returns_400_and_writes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A body that is not UTF-8 is rejected with 400 and persists zero rows.
+
+    Reads the ping body directly rather than through Starlette's form reader
+    (which needs a parser this app deliberately does not depend on -- see
+    ``test_transcription_privacy``), so decoding is this router's own step and
+    its failure is this router's own to answer for. Undecodable bytes are the
+    same class of fault as a missing ``sale_id``: nothing usable arrived, so it
+    gets the same 400 and the same reason code rather than a 500 traceback on a
+    payment surface.
+    """
+    caplog.set_level(logging.DEBUG)
+
+    response = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        content=b"sale_id=\xff\xfe_not_utf8",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert "reason_code=malformed_payload" in caplog.text
+    assert await _count_sales(db_session) == 0
+
+
+@pytest.mark.asyncio
 async def test_concurrent_replay_collapses_via_unique_constraint(
     async_client: AsyncClient,
     db_session: AsyncSession,
