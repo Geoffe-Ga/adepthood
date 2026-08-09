@@ -1,0 +1,110 @@
+name: "Scan: DAST (OWASP ZAP)"
+
+# Dynamic Application Security Testing: boots the real FastAPI app against a
+# throwaway Postgres (migrated, not the SQLite test fixture) and points OWASP
+# ZAP's API scan at its live OpenAPI schema. This is the dynamic counterpart
+# to the static/dependency coverage the repo already has (bandit, pip-audit,
+# npm audit, detect-secrets, scan-security.yml) — those read source and
+# manifests; this one sends real HTTP requests at a running server and checks
+# the actual responses (security headers, error handling, injection probes).
+#
+# Not wired into pull_request: a ZAP API scan takes several minutes and its
+# findings are a slow-burn hygiene signal, not a per-PR merge gate. It runs on
+# its own schedule plus workflow_dispatch, same as the other scan-*.yml jobs.
+# workflow_dispatch is also the hook the queue-depth hopper can use to refill
+# the Ralph backlog off-schedule.
+#
+# The zaproxy action files its own GitHub issue with the alert report
+# (allow_issue_writing input, default true) and by default does not fail the
+# job on findings (fail_action: false) — findings become backlog issues for
+# the Ralph loop to triage, the same shape as the other scan wrappers,
+# without turning a noisy scanner into a red build.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"       # weekly, Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      fail_on_alerts:
+        description: "Fail this job if ZAP reports any alerts (default: file an issue only)."
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  dast:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: uv pip install --system -r backend/requirements-lock.txt
+
+      - name: Apply migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Start the app against Postgres
+        working-directory: backend
+        env:
+          PYTHONPATH: src
+        run: |
+          nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 --no-proxy-headers \
+            > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/uvicorn.pid"
+
+      - name: Wait for readiness
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health/ready > /dev/null; then
+              echo "App is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::App did not become ready in time."
+          cat "$RUNNER_TEMP/uvicorn.log"
+          exit 1
+
+      - name: ZAP API scan
+        uses: zaproxy/action-api-scan@bd24b11e76da11ab60302c8ae87f091cbb11f034  # v0.10.0
+        with:
+          target: "http://localhost:8000/openapi.json"
+          format: openapi
+          fail_action: ${{ github.event.inputs.fail_on_alerts || 'false' }}
+          issue_title: "DAST: ZAP API scan findings"
+
+      - name: Dump server log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/uvicorn.log" || true
