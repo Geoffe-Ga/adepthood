@@ -52,6 +52,7 @@ from models.journal_entry import JournalEntry
 from services.creek_vault_client import (
     _RETIRED_PROTOCOL_EVENT,
     _UNKNOWN_PROTOCOL_EVENT,
+    CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
     VaultUrlDefect,
@@ -159,6 +160,8 @@ _CAPABILITY_PAYLOAD: dict[str, object] = {
     "vault": {"available": True},
     "capabilities": ["journal-upsert"],
     "contract_version": CONTRACT_VERSION,
+    "contract_minor": CONTRACT_MINOR,
+    "supported_contract_minors": [CONTRACT_MINOR],
     "ontology_version": "aptitude-wavelength/2026-05-23",
     "attestation": None,
 }

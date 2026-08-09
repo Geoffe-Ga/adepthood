@@ -91,10 +91,10 @@ import asyncio
 import enum
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
-from typing import NoReturn
+from typing import NoReturn, cast
 from urllib.parse import quote
 
 import httpx
@@ -188,6 +188,20 @@ _VERSION_MAJOR_INDEX = 0
 _PRE_1_0_MAJOR = "0"
 _PRE_1_0_MATCHED_COMPONENTS = 2
 _POST_1_0_MATCHED_COMPONENTS = 1
+
+# Creek requires an ``X-Creek-Contract-Version: <major.minor>`` header on every
+# ``/v1`` *capability* call and refuses a missing or mismatched one with
+# ``409 incompatible_version`` before any vault read. ``GET /v1/capabilities`` is
+# exempt by design -- the negotiation endpoint must never itself be able to fail
+# to negotiate -- which is why sending it is a per-call decision rather than a
+# default baked into the pooled client.
+_CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
+
+# The header carries ``major.minor`` wherever the contract sits relative to 1.0,
+# so this is its own width rather than a reuse of the pre-1.0 match width above,
+# which shares the value but not the meaning.
+_CONTRACT_MINOR_COMPONENTS = 2
+CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS])
 
 # Every way an httpx call can fail to land, whether it left this process or
 # not. ``OSError`` covers connection and timeout errors (the whole-request
@@ -561,6 +575,42 @@ def _contract_version_compatible(advertised: str, pinned: str = CONTRACT_VERSION
     return advertised.split(".")[:matched] == pinned_components[:matched]
 
 
+def _require_str_sequence(payload: Mapping[str, object], key: str) -> Sequence[str]:
+    """Return ``payload[key]`` as a sequence of strings or raise so parsing fails closed.
+
+    Raises ``KeyError`` when absent and ``TypeError`` when present but not an
+    array of strings; both are caught upstream and degrade the handshake to
+    unavailable. A bare ``str`` is rejected rather than accepted as a
+    one-element sequence, because iterating one would compare single characters
+    and quietly find no match.
+    """
+    value = payload[key]
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise TypeError(f"handshake field {key!r} must be an array of strings")
+    if not all(isinstance(item, str) for item in value):
+        raise TypeError(f"handshake field {key!r} must contain only strings")
+    return cast("Sequence[str]", value)
+
+
+def _contract_minor_supported(supported: Sequence[str], pinned: str = CONTRACT_VERSION) -> bool:
+    """Return whether the vault still serves the contract minor adepthood speaks.
+
+    The refinement of ADR 0004 Decision 4 recorded in that ADR's 2026-08-09
+    amendment. The original rule compared adepthood's pin against the single
+    version a server advertises as its own, which is strictly more brittle than
+    the contract requires: Creek publishes ``supported_contract_minors``
+    precisely so a server can widen its window without cutting clients off, and
+    it did exactly that on moving to 0.3.0 while continuing to serve 0.2. Under
+    the old rule adepthood refused that server while it was actively advertising
+    that it would answer.
+
+    Per entry the comparison is unchanged -- :func:`_contract_version_compatible`
+    still decides what compatible means, including the post-1.0 relaxation to a
+    major match -- so this widens *what* is compared against, not *how*.
+    """
+    return any(_contract_version_compatible(minor, pinned) for minor in supported)
+
+
 def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     """Parse a well-formed handshake payload into a populated result.
 
@@ -577,7 +627,7 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     and is caught by :meth:`HttpCreekVaultClient._probe`.
     """
     contract_version = _require_str(payload, "contract_version")
-    if not _contract_version_compatible(contract_version):
+    if not _contract_minor_supported(_require_str_sequence(payload, "supported_contract_minors")):
         raise _IncompatibleContractVersionError
     vault = payload.get("vault")
     if not isinstance(vault, Mapping) or vault.get("available") is not True:
@@ -1372,7 +1422,12 @@ class HttpCreekVaultClient:
         return _VAULT_HTTP_POOL.get()
 
     async def _authorized_request(
-        self, method: str, url: str, json_body: Mapping[str, object] | None = None
+        self,
+        method: str,
+        url: str,
+        json_body: Mapping[str, object] | None = None,
+        *,
+        contract_versioned: bool = True,
     ) -> httpx.Response:
         """Send one authorized vault request under the whole-request deadline.
 
@@ -1380,6 +1435,16 @@ class HttpCreekVaultClient:
         that must hold for *every* call hold once. The authorization header is
         built here, per call, so the credential lives only for the duration of
         the request and never on the shared pooled client.
+
+        ``contract_versioned`` carries :data:`_CONTRACT_VERSION_HEADER`, which
+        Creek requires on every ``/v1`` capability call and refuses a missing one
+        with ``409 incompatible_version`` before any vault read. It defaults to
+        ``True`` so a capability added later carries it without anyone
+        remembering; the sole caller that opts out is the capability document
+        fetch, which the contract exempts on purpose. No fixture can catch this
+        omission -- the vendored bundle publishes schemas and examples, and says
+        nothing about request headers -- so the test that guards it drives a fake
+        which refuses requests lacking the header.
 
         The deadline is necessary because httpx's ``read`` budget is per
         socket-read rather than a deadline: a trickling vault would otherwise
@@ -1389,11 +1454,14 @@ class HttpCreekVaultClient:
         call time rather than captured, so a redeployment (or a test) can move
         the ceiling without rebuilding the adapter.
         """
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        if contract_versioned:
+            headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
         async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
             return await self._active_client().request(
                 method,
                 url,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=headers,
                 json=json_body,
             )
 
@@ -1405,7 +1473,9 @@ class HttpCreekVaultClient:
         that decodes to something other than a JSON object is a malformed
         payload, so it raises ``TypeError`` rather than being cast.
         """
-        response = await self._authorized_request("GET", f"{self._url}{_CAPABILITIES_PATH}")
+        response = await self._authorized_request(
+            "GET", f"{self._url}{_CAPABILITIES_PATH}", contract_versioned=False
+        )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping):

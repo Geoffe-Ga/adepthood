@@ -47,6 +47,7 @@ from domain.creek_vault import (
 from observability import NO_TRACE, SUPPRESS_TRACE_CORRELATION, TraceIdLogFilter, trace_id_var
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
+    _CONTRACT_MINOR_COMPONENTS,
     _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
@@ -200,6 +201,8 @@ class _ScriptedVault:
             "vault": {"available": True},
             "capabilities": self._capabilities,
             "contract_version": self._contract_version,
+            "contract_minor": _minor_of(self._contract_version),
+            "supported_contract_minors": [_minor_of(self._contract_version)],
             "ontology_version": _ONTOLOGY_VERSION,
             "attestation": None,
         }
@@ -232,11 +235,23 @@ class _ScriptedHandshake:
 # A capability document from a vault that parses perfectly and reports itself out
 # of service -- not a failure to reach it, but an honest answer that it cannot
 # serve. It is the one degrade reason with no error behind it at all.
+def _minor_of(contract_version: str) -> str:
+    """Return the ``major.minor`` a server advertising ``contract_version`` serves.
+
+    The narrowest truthful claim for a given version, which keeps the skew cases
+    skewed: they advertise a version adepthood does not speak, and a wider
+    default would quietly make them compatible.
+    """
+    return ".".join(contract_version.split(".")[:_CONTRACT_MINOR_COMPONENTS])
+
+
 _VAULT_REPORTED_UNAVAILABLE_REPLY = _Reply(
     payload={
         "vault": {"available": False},
         "capabilities": list(_RATIFIED_CAPABILITIES),
         "contract_version": CONTRACT_VERSION,
+        "contract_minor": _minor_of(CONTRACT_VERSION),
+        "supported_contract_minors": [_minor_of(CONTRACT_VERSION)],
         "ontology_version": _ONTOLOGY_VERSION,
         "attestation": None,
     }

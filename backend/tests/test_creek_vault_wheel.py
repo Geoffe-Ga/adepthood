@@ -48,6 +48,7 @@ from models.user import User
 from observability import trace_id_var
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
+    CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
     _wheel_aspects,
@@ -330,6 +331,8 @@ def _capability_document() -> dict[str, object]:
         "vault": {"available": True},
         "capabilities": ["wheel"],
         "contract_version": CONTRACT_VERSION,
+        "contract_minor": CONTRACT_MINOR,
+        "supported_contract_minors": [CONTRACT_MINOR],
         "ontology_version": _ONTOLOGY_VERSION,
         "attestation": None,
     }
