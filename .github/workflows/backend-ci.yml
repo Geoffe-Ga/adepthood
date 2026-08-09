@@ -9,11 +9,23 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      # The backend's own tooling lives outside backend/, so without this a PR
+      # editing only a script here triggers nothing -- including the drift gate
+      # that script IS. Caught in review of #2038: export_openapi.py sits at
+      # scripts/backend/, so a change to render_spec or the --check exit logic
+      # would have run neither openapi-drift nor the pytest job that covers it.
+      - "scripts/backend/**"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
+      # The backend's own tooling lives outside backend/, so without this a PR
+      # editing only a script here triggers nothing -- including the drift gate
+      # that script IS. Caught in review of #2038: export_openapi.py sits at
+      # scripts/backend/, so a change to render_spec or the --check exit logic
+      # would have run neither openapi-drift nor the pytest job that covers it.
+      - "scripts/backend/**"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
 
