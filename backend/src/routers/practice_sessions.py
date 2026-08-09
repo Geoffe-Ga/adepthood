@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
 from database import get_session
-from dependencies.ownership import require_owned_user_practice
+from dependencies.ownership import require_owned_user_practice, resolve_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
@@ -48,32 +48,6 @@ _INSIGHTS_CACHE_CONTROL = "private, max-age=60"
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
-
-
-async def _resolve_user_practice_for_session(
-    session: AsyncSession,
-    user_practice_id: int,
-    current_user: int,
-) -> UserPractice:
-    """Fetch the target ``UserPractice`` and enforce the 404→403 split.
-
-    Pulled out of :func:`create_session` because the body-parameter
-    ownership check can't ride :func:`require_owned_user_practice`
-    (FastAPI's DI cannot extract body fields into sub-deps).  Keeping
-    the lookup here keeps the handler's branching shallow enough for
-    xenon rank A while preserving the canonical 404-then-403 order the
-    IDOR matrix test relies on.
-    """
-    user_practice = (
-        (await session.execute(select(UserPractice).where(UserPractice.id == user_practice_id)))
-        .scalars()
-        .first()
-    )
-    if user_practice is None:
-        raise not_found("user_practice")
-    if user_practice.user_id != current_user:
-        raise forbidden("forbidden")
-    return user_practice
 
 
 async def _require_stage_unlocked_for_session(
@@ -270,7 +244,7 @@ async def _perform_create_session(
         if cached_id is not None:
             return await _load_session(session, cached_id)
 
-    user_practice = await _resolve_user_practice_for_session(
+    user_practice = await resolve_owned_user_practice(
         session, payload.user_practice_id, current_user
     )
     await _require_stage_unlocked_for_session(session, current_user, user_practice, user_tz)
