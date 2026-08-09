@@ -1,0 +1,340 @@
+name: Ecosystem Distribute
+
+# Ships the model-release cleanup workflow to every ACTIVE repo under this
+# owner, and fans out the "a new model shipped" signal to all of them at once.
+#
+# Adepthood is the canonical source. Two files travel together:
+#   .github/workflows/model-release-cleanup.yml   the workflow
+#   prompts/model-release-cleanup.md              the audit charter it reads
+#
+# WHY COPIES AND NOT A REUSABLE WORKFLOW: cross-repo `workflow_call` from a
+# PRIVATE repo is an organization-only feature, and this owner is a user
+# account. So the distributed workflow is deliberately self-contained and this
+# job keeps the copies in sync. Edit the canonical copy here; downstream copies
+# are overwritten on the next sync.
+#
+# Modes:
+#   sync      open a PR in each target repo adding/updating the two files.
+#   dispatch  fire `repository_dispatch: model-released` at each target repo,
+#             starting a cleanup run everywhere simultaneously.
+#   both      sync first, then dispatch (the new-model-day default).
+#
+# Sync is idempotent: a repo already holding identical files is skipped, so
+# re-running costs nothing. Nothing merges itself — every target gets a
+# reviewable PR.
+#
+# Required configuration:
+#   secret  ECOSYSTEM_PAT  - PAT (classic `repo`, or fine-grained with Contents
+#           + Pull requests: write) covering the target repos. The built-in
+#           GITHUB_TOKEN cannot reach across repositories, so there is no
+#           token-free path here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "sync = distribute the files. dispatch = trigger cleanup runs. both = sync then dispatch."
+        required: false
+        default: "sync"
+        type: choice
+        options: [sync, dispatch, both]
+      release:
+        description: "Release the cleanup should audit against, e.g. 'Claude Opus 5'. Blank = each repo's agent resolves it. Used by dispatch."
+        required: false
+        default: ""
+      active_days:
+        description: "A repo counts as active if it was pushed to within this many days."
+        required: false
+        default: "180"
+      repos:
+        description: "Space-separated repo names to target explicitly (e.g. 'Creek-Vault aptitude-course'). Blank = auto-discover all active repos."
+        required: false
+        default: ""
+      exclude:
+        description: "Space-separated repo names to skip."
+        required: false
+        default: ""
+
+concurrency:
+  group: ecosystem-distribute
+  cancel-in-progress: false
+
+# Everything cross-repo rides ECOSYSTEM_PAT; the job token itself needs nothing
+# beyond reading this repo's own contents.
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Resolve target repos
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
+      count: ${{ steps.resolve.outputs.count }}
+      mode: ${{ steps.resolve.outputs.mode }}
+    env:
+      GH_TOKEN: ${{ secrets.ECOSYSTEM_PAT }}
+      OWNER: ${{ github.repository_owner }}
+      MODE_INPUT: ${{ github.event.inputs.mode || 'sync' }}
+      ACTIVE_DAYS: ${{ github.event.inputs.active_days || '180' }}
+      REPOS_INPUT: ${{ github.event.inputs.repos || '' }}
+      EXCLUDE_INPUT: ${{ github.event.inputs.exclude || '' }}
+    steps:
+      - name: Discover active repositories
+        id: resolve
+        run: |
+          set -euo pipefail
+
+          # Normalize mode HERE rather than gating each job on the raw input: a
+          # dispatch that omits `mode` yields an empty string, which satisfies
+          # both `!= 'sync'` and `!= 'dispatch'` and would silently run both.
+          case "$MODE_INPUT" in
+            sync|dispatch|both) MODE="$MODE_INPUT" ;;
+            *)
+              echo "::error::Invalid mode '$MODE_INPUT' — expected sync, dispatch, or both."
+              exit 1
+              ;;
+          esac
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::ECOSYSTEM_PAT is not set. Cross-repo distribution needs a PAT — the built-in GITHUB_TOKEN cannot reach other repositories."
+            exit 1
+          fi
+
+          if ! printf '%s' "$ACTIVE_DAYS" | grep -qE '^[0-9]+$'; then
+            echo "::error::active_days must be a whole number, got '$ACTIVE_DAYS'."
+            exit 1
+          fi
+          CUTOFF=$(date -u -d "$ACTIVE_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+
+          if [ -n "$REPOS_INPUT" ]; then
+            # Explicit list: honour it verbatim, but still validate each name so
+            # a typo fails loudly here instead of 404-ing mid-distribution.
+            ALL=""
+            for name in $REPOS_INPUT; do
+              if ! gh repo view "$OWNER/$name" --json name >/dev/null 2>&1; then
+                echo "::error::No such repository: $OWNER/$name"
+                exit 1
+              fi
+              ALL="$ALL $name"
+            done
+            echo "Explicit target list: $ALL" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            # Auto-discovery is the point: "all active repos" should not be a
+            # hand-maintained list that silently rots as repos come and go.
+            # Sources (forks) only, never archived, pushed since the cutoff.
+            ALL=$(gh repo list "$OWNER" --no-archived --source --limit 200 \
+                    --json name,pushedAt \
+                    --jq "[.[] | select(.pushedAt >= \"$CUTOFF\") | .name] | .[]")
+            echo "Active repos (pushed since $CUTOFF): $(echo "$ALL" | tr '\n' ' ')" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+          TARGETS=""
+          for name in $ALL; do
+            SKIP=false
+            for ex in $EXCLUDE_INPUT; do
+              if [ "$name" = "$ex" ]; then SKIP=true; fi
+            done
+            if [ "$SKIP" = true ]; then
+              echo "excluded: $name"
+              continue
+            fi
+            TARGETS="$TARGETS $name"
+          done
+
+          # `select(length > 0)` matters: with TARGETS empty, `printf` still
+          # emits one newline, which would otherwise serialize to [""] and read
+          # as a count of 1 rather than tripping the no-targets guard below.
+          # shellcheck disable=SC2086  # word splitting is how the list is built
+          JSON=$(printf '%s\n' $TARGETS | jq -R 'select(length > 0)' | jq -sc .)
+          COUNT=$(jq 'length' <<<"$JSON")
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::No target repositories resolved — nothing to distribute."
+            exit 1
+          fi
+          echo "targets=$JSON" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Targeting $COUNT repo(s): $(jq -r 'join(", ")' <<<"$JSON")" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  sync:
+    name: "Sync ${{ matrix.repo }}"
+    needs: plan
+    if: needs.plan.outputs.mode != 'dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        repo: ${{ fromJSON(needs.plan.outputs.targets) }}
+    env:
+      GH_TOKEN: ${{ secrets.ECOSYSTEM_PAT }}
+      OWNER: ${{ github.repository_owner }}
+      TARGET: ${{ matrix.repo }}
+    steps:
+      - name: Checkout canonical source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+          path: source
+          # The ECOSYSTEM_PAT credential helper is configured below and would
+          # otherwise be shadowed by the job token persisted into .git/config.
+          persist-credentials: false
+
+      - name: Distribute the cleanup workflow
+        run: |
+          set -euo pipefail
+
+          if [ "$TARGET" = "${GITHUB_REPOSITORY#*/}" ]; then
+            echo "$TARGET is the canonical source — nothing to sync." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Credential helper rather than a token-in-URL remote: the token never
+          # lands in .git/config, `git remote -v`, or the run log.
+          gh auth setup-git
+
+          if ! git clone --depth 1 "https://github.com/$OWNER/$TARGET.git" target; then
+            echo "::error::Could not clone $OWNER/$TARGET — check ECOSYSTEM_PAT covers it."
+            exit 1
+          fi
+          cd target
+          BASE=$(git rev-parse --abbrev-ref HEAD)
+
+          mkdir -p .github/workflows prompts
+          cp ../source/.github/workflows/model-release-cleanup.yml .github/workflows/
+          cp ../source/prompts/model-release-cleanup.md prompts/
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "$TARGET is already in sync." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # An open sync PR means the previous distribution has not been
+          # reviewed. Stacking a second one makes both diffs unreviewable.
+          OPEN=$(gh pr list --repo "$OWNER/$TARGET" --state open \
+                   --label ecosystem-sync --limit 5 --json number --jq 'length' \
+                 2>/dev/null || echo 0)
+          if [ "$OPEN" -gt 0 ]; then
+            echo "::notice::$TARGET already has an open ecosystem-sync PR — standing down."
+            echo "$TARGET: sync PR already open, skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          BRANCH="claude/ecosystem-sync-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add .github/workflows/model-release-cleanup.yml prompts/model-release-cleanup.md
+          git commit -m "chore(agents): sync the model-release cleanup workflow
+
+          Distributed from $GITHUB_REPOSITORY. Adds (or updates) the workflow
+          that audits this repo's agent ecosystem after a new Claude release and
+          purges the skills, subagents, commands, hooks, and config the release
+          made obsolete, plus the audit charter it reads.
+
+          Run it from the Actions tab, or let the distributor fan out a
+          model-released dispatch when a new model ships. It needs the
+          CLAUDE_CODE_OAUTH_TOKEN secret to be set in this repo."
+
+          for delay in 2 4 8 16 0; do
+            if git push -u origin "$BRANCH"; then break; fi
+            if [ "$delay" -eq 0 ]; then
+              echo "::error::Failed to push to $TARGET after retries."
+              exit 1
+            fi
+            echo "push failed — retrying in ${delay}s"
+            sleep "$delay"
+          done
+
+          gh label create ecosystem-sync --repo "$OWNER/$TARGET" \
+            --description "Agent-ecosystem tooling distributed from the canonical repo" \
+            --color 1d76db --force
+          cat > /tmp/pr-body.md <<'BODY'
+          ## What this adds
+
+          The **model-release artifact cleanup** workflow, distributed from the
+          canonical repo, plus the audit charter it reads.
+
+          | File | Purpose |
+          |---|---|
+          | `.github/workflows/model-release-cleanup.yml` | The workflow. Manual dispatch, or `repository_dispatch: model-released` for fan-out. |
+          | `prompts/model-release-cleanup.md` | The audit charter — burden of proof, classification scheme, hard limits. |
+
+          ## What it does
+
+          When a new Claude model or Claude Code release ships, it audits this
+          repo's agent ecosystem — skills, subagents, commands, hooks, config,
+          prompt scaffolding — and deletes what the release made obsolete.
+
+          It resolves what actually changed by **fetching** the Claude Code
+          CHANGELOG, the docs index, and the model migration guide, because a
+          model's training data predates the release it is auditing. Every
+          deletion must cite a capability that landed natively.
+
+          **Deletion is the default verdict**; an artifact survives only on
+          repo-specific domain knowledge, fragile mechanics, or enforced
+          automation. Scaffolding written for a weaker model does not just go
+          redundant — it burns tokens every session, over-triggers on a model
+          that follows plain instructions, and displaces better plans. Expect a
+          large diff; that is the win.
+
+          Nothing merges itself: the workflow opens a reviewable PR, and git
+          history is permanent. Let the retrospective refill whatever turns out
+          to be genuinely necessary.
+
+          ## Before it can run
+
+          Set the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repo.
+
+          ---
+          _Generated by [Claude Code](https://claude.ai/code)_
+          BODY
+
+          URL=$(gh pr create --repo "$OWNER/$TARGET" \
+                  --base "$BASE" --head "$BRANCH" \
+                  --title "chore(agents): add the model-release cleanup workflow" \
+                  --body-file /tmp/pr-body.md \
+                  --label "ecosystem-sync")
+          echo "$TARGET: $URL" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  dispatch:
+    name: Fan out the model-released signal
+    needs: [plan, sync]
+    # `always()` so a single unreachable repo in the sync matrix does not block
+    # the fan-out to every other repo; `!failure()` on plan still gates on
+    # having resolved a target list at all.
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.mode != 'sync'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ECOSYSTEM_PAT }}
+      OWNER: ${{ github.repository_owner }}
+      TARGETS: ${{ needs.plan.outputs.targets }}
+      RELEASE: ${{ github.event.inputs.release || '' }}
+    steps:
+      - name: Trigger a cleanup run in every target repo
+        run: |
+          set -euo pipefail
+          FAILED=""
+          for name in $(jq -r '.[]' <<<"$TARGETS"); do
+            # A repo that has not merged its sync PR yet has no model-released
+            # trigger registered, so the dispatch 4xx's. That is expected during
+            # rollout, not a failure of the fan-out — record and carry on.
+            if gh api "repos/$OWNER/$name/dispatches" \
+                 --method POST \
+                 --field event_type=model-released \
+                 --field "client_payload[release]=$RELEASE" \
+                 --field "client_payload[mode]=purge" >/dev/null 2>&1; then
+              echo "dispatched: $name" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::dispatch failed for $name — the cleanup workflow is probably not merged there yet."
+              FAILED="$FAILED $name"
+            fi
+          done
+          if [ -n "$FAILED" ]; then
+            echo "Not dispatched (workflow not present yet):$FAILED" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

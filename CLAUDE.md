@@ -153,6 +153,17 @@ dependency graph and the current phase breakdown.
 When continuing work, always check git log and codebase state to determine
 which issues are complete before picking up the next one.
 
+## Model-Release Cleanup
+
+When a new Claude model or Claude Code release ships, run **Ecosystem
+Distribute** (`.github/workflows/ecosystem-distribute.yml`, mode `both`). It
+syncs `model-release-cleanup.yml` + `prompts/model-release-cleanup.md` to every
+active repo under the owner and triggers a cleanup run in each: an audit that
+fetches the release notes and purges the skills, subagents, commands, and hooks
+the release made obsolete. Deletion is the default verdict — the retrospective
+refills what turns out to be necessary. This repo holds the canonical copies;
+downstream copies are overwritten on the next sync, so edit them here.
+
 ## Useful Patterns
 
 ### Backend Test Pattern
