@@ -206,6 +206,32 @@ check "green + CLEAN + fresh LGTM → ready" "ready" \
 check "green + BEHIND + fresh LGTM → behind" "behind" \
   "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
 
+# --- non-actionable merge states get their own tokens ----------------------
+# All five used to print `behind`, whose remedy is `fleet.sh sync`. A sync
+# cannot supply a missing check, un-draft a PR a human parked, resolve a
+# conflict, or hurry GitHub's mergeability computation -- so each wake synced a
+# no-op and dispatched a worker with nothing to do.
+check "green + UNKNOWN → unknown (GitHub still computing)" "unknown" \
+  "$(CHECKS_EC=0 MERGE_STATE=UNKNOWN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + DRAFT → draft (a human parked it)" "draft" \
+  "$(CHECKS_EC=0 MERGE_STATE=DRAFT HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + BLOCKED → blocked (a required gate is missing)" "blocked" \
+  "$(CHECKS_EC=0 MERGE_STATE=BLOCKED HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + DIRTY → conflicted (needs a real merge, not a sync)" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+# CLEAN-but-stale is the one case `behind` still means, and it must survive.
+check "green + CLEAN + stale head → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=3 run 100)"
+
+# A state nobody has enumerated must not silently become `ready`; it falls back
+# to the safe, actionable token rather than to a merge.
+check "green + an unenumerated state → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=HAS_HOOKS HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
 # --- stale-verdict guard: an LGTM older than HEAD does NOT count ------------
 check "green + CLEAN + STALE LGTM → awaiting-review" "awaiting-review" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true" run 100)"
@@ -476,7 +502,12 @@ check "reviewless + 17 commits behind → behind, never ready-unreviewed" "behin
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=17 run 100)"
 
-check "reviewless + DIRTY → behind, never ready-unreviewed" "behind" \
+# Was `behind` until the non-actionable states were split out. The property this
+# case exists for is unchanged and is what the name states: a conflicting bot PR
+# must never reach `ready-unreviewed`. `conflicted` says that more precisely --
+# and unlike `behind` it does not send the orchestrator to a sync that cannot
+# resolve a conflict.
+check "reviewless + DIRTY → conflicted, never ready-unreviewed" "conflicted" \
   "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$NO_VERDICT" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
 
