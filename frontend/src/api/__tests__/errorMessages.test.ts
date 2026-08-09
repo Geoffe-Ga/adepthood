@@ -305,3 +305,35 @@ describe('formatApiError', () => {
     expect(result).toMatch(/offline/i);
   });
 });
+
+describe('rate_limit_exceeded copy is surface-neutral', () => {
+  // The backend emits one shared `rate_limit_exceeded` for every limiter
+  // (`main.py:424`, registered app-wide at `:599`), and those limiters span
+  // BotMason chat at 5/minute through auth routes at 1/minute and 10/hour. Copy
+  // that names any one surface is wrong on all the others -- a user tripping the
+  // signup limiter was told about sending chat messages to BotMason.
+  const copy = USER_FACING_ERROR_MESSAGES.rate_limit_exceeded ?? '';
+
+  it('names no product surface, since every limiter shares this code', () => {
+    expect(copy).not.toMatch(/botmason/i);
+    expect(copy).not.toMatch(/message/i);
+    expect(copy).not.toMatch(/chat/i);
+  });
+
+  it('quotes no specific limit, since the limiters disagree', () => {
+    // The old copy said "10 messages per minute" -- wrong even for BotMason,
+    // whose own decorator is 5/minute.
+    expect(copy).not.toMatch(/\d+\s*(per|\/)\s*(minute|hour)/i);
+    expect(copy).not.toMatch(/\d+\s+messages/i);
+  });
+
+  it('stays non-coercive, per "you choose your depth"', () => {
+    // No scolding and no urgency: hitting a limiter is not a transgression.
+    expect(copy).not.toMatch(/too many|slow down|stop|must|immediately|warning/i);
+  });
+
+  it('still tells the user what happened and that waiting resolves it', () => {
+    expect(copy).toBeTruthy();
+    expect(copy).toMatch(/again|moment|minute|shortly/i);
+  });
+});

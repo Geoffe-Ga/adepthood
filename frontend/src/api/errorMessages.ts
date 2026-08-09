@@ -136,8 +136,14 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
 
   // --- Streaming / rate limits / network -------------------------------
-  rate_limit_exceeded:
-    "You're sending messages faster than BotMason can keep up. Slow down to 10 messages per minute.",
+  // Deliberately surface-neutral and number-free. The backend emits this one
+  // code from a single app-wide handler (``main.py:424``), and the limiters
+  // behind it range from BotMason chat at 5/minute to auth routes at 1/minute
+  // and 10/hour -- so any wording that names a surface, or quotes a rate, is
+  // wrong everywhere else. The previous copy named BotMason *and* said
+  // "10 messages per minute", which was wrong even for BotMason. A surface that
+  // wants its own real limit can override this locally.
+  rate_limit_exceeded: "That's a lot of requests in a short time. Give it a moment and try again.",
   llm_provider_error: PROVIDER_TROUBLE,
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
