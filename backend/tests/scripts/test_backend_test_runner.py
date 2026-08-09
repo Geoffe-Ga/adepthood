@@ -865,3 +865,51 @@ def test_a_whole_suite_run_keeps_its_distribution_and_marker_selection(
         _WHOLE_SUITE_TARGET,
     ):
         assert expected in argv, f"the whole-suite invocation lost {expected!r}; got: {argv}"
+
+
+# --- the pre-push hook must not bypass the lock this module exists to prove ---
+
+_HOOK_ID = "backend-tests-coverage"
+_RUNNER_PATH = "scripts/backend/test.sh"
+
+
+def _hook_entry(hook_id: str) -> str:
+    """Return the ``entry:`` line of one pre-commit hook, as raw text.
+
+    Parsed as text rather than with PyYAML on purpose: that package is absent
+    from every requirements file here, and importing it turns this guard into a
+    collection error on the 3.11 compat job instead of a test.
+    """
+    config = (_REPO_ROOT / ".pre-commit-config.yaml").read_text()
+    block = config.split(f"- id: {hook_id}", 1)[1]
+    for line in block.splitlines():
+        if line.strip().startswith("entry:"):
+            return line
+    raise AssertionError(f"hook {hook_id!r} has no entry: line")
+
+
+def test_the_pre_push_suite_hook_routes_through_the_test_script() -> None:
+    """The pre-push whole-suite run takes the lock, like every other whole-suite run.
+
+    The hook used to invoke ``pytest`` directly, which is the one path in the
+    repo that runs the entire suite *without* acquiring
+    ``.gate-state/locks/backend-suite.lock``. That is not a style point: a
+    ``git push`` firing while ``check-all.sh`` is mid-run gives two whole-suite
+    runs sharing one coverage data file, one set of SQLite fixtures, and the
+    cores ``-n auto`` sized for a single process. Neither result describes the
+    machine it claims to -- and the failure is a wrong *number*, not a crash,
+    so nothing announces it.
+
+    ``test.sh --all --coverage`` is the same run: it distributes
+    (``-n "$PYTEST_WORKERS" --dist loadfile``) and applies
+    ``--cov-fail-under=90``, and it takes the lock first.
+    """
+    entry = _hook_entry(_HOOK_ID)
+
+    assert _RUNNER_PATH in entry, (
+        f"the {_HOOK_ID} hook must run the whole suite through {_RUNNER_PATH}, "
+        f"which takes the whole-suite lock; got: {entry.strip()}"
+    )
+    assert "pytest -n auto" not in entry, (
+        f"the hook invokes pytest directly, bypassing the whole-suite lock; got: {entry.strip()}"
+    )

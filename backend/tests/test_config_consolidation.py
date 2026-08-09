@@ -60,9 +60,24 @@ class TestConfigConsolidation:
         assert '"test.sh" --unit --coverage-data' in check_all
 
     def test_pre_push_hook_still_enforces_the_threshold(self) -> None:
-        """The pre-push hook is the second place the 90% gate is enforced."""
+        """The pre-push hook is the second place the 90% gate is enforced.
+
+        Asserted through the runner rather than by grepping the hook file. The
+        hook stopped spelling the flag out when it was rerouted through
+        ``test.sh`` to take the whole-suite lock, and a substring search over
+        the YAML then matched the *comment* explaining that -- passing whether
+        or not any threshold was still applied. Following the value to where it
+        actually lives is what keeps this a guard instead of a spell-check.
+        """
         hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
-        assert "--cov-fail-under=90" in hooks
+        entry = next(
+            line
+            for line in hooks.split("- id: backend-tests-coverage", 1)[1].splitlines()
+            if line.strip().startswith("entry:")
+        )
+        assert "--coverage" in entry, entry
+        runner = (REPO_ROOT / "scripts" / "backend" / "test.sh").read_text()
+        assert "--cov-fail-under=90" in runner
 
     def test_suite_runs_distributed(self) -> None:
         """Whole-suite runs must be distributed; serial costs 16 min a round.
