@@ -564,8 +564,13 @@ const useOnboardingEffects = (
         if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
         prepareHabitsForReorder();
       };
-      document.addEventListener('keydown', handler);
-      return () => document.removeEventListener('keydown', handler);
+      // Captured, not re-resolved: a cleanup that reaches for the `document`
+      // global runs at teardown, when the DOM may already be gone, and then
+      // throws instead of quietly no-opping. Same hole as
+      // Journal/webSelectionListener.ts; React 19 runs cleanups where 18 did not.
+      const doc = document;
+      doc.addEventListener('keydown', handler);
+      return () => doc.removeEventListener('keydown', handler);
     }
   }, [step, prepareHabitsForReorder]);
 };

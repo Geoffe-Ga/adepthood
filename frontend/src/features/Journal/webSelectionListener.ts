@@ -38,7 +38,14 @@ export function useWebSelectionListener(
       }
     };
 
-    document.addEventListener('selectionchange', read);
-    return () => document.removeEventListener('selectionchange', read);
+    // Capture the document rather than re-resolving the global in the cleanup.
+    // The guard above only covers mount: a cleanup that reaches for `document`
+    // runs at teardown, by which point the DOM may be gone, and the bare global
+    // then throws a ReferenceError instead of quietly no-opping. React 19 runs
+    // effect cleanups where 18 did not, which is what surfaced this -- the hole
+    // was always here.
+    const doc = document;
+    doc.addEventListener('selectionchange', read);
+    return () => doc.removeEventListener('selectionchange', read);
   }, [emitSpan, nodeRef]);
 }
