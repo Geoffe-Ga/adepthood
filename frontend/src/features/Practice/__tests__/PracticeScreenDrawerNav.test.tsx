@@ -163,18 +163,15 @@ jest.mock('@react-navigation/native', () => {
   };
 });
 
-jest.mock('expo-av', () => ({
-  Audio: {
-    Sound: {
-      createAsync: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-        sound: {
-          replayAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-          unloadAsync: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-          setOnPlaybackStatusUpdate: jest.fn(),
-        },
-      }),
-    },
-  },
+jest.mock('expo-audio', () => ({
+  // expo-audio's createAudioPlayer is SYNCHRONOUS -- it returns a player and
+  // loads in the background, where expo-av's createAsync returned a promise.
+  // Restarting a cue is seekTo(0) then play(); there is no replayAsync.
+  createAudioPlayer: jest.fn(() => ({
+    seekTo: (jest.fn() as any).mockResolvedValue(undefined),
+    play: jest.fn(),
+    remove: jest.fn(),
+  })),
 }));
 
 jest.mock('expo-keep-awake', () => ({
