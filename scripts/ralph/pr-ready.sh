@@ -11,6 +11,15 @@
 #                    authored it AND pushed its HEAD commit, and `claude-review`
 #                    reported SKIPPED → the orchestrator decides (see below)
 #   behind           LGTM (fresh) + CI green but the branch is not current → sync first
+#   unknown          GitHub has not finished computing mergeability (routine for a
+#                    few seconds after every push) → wait for a later wake; a sync
+#                    would merge nothing and push nothing
+#   draft            the PR is a draft: a deliberate human hold → the loop does not
+#                    act on it (same standing as `optout`)
+#   blocked          a required check or review is missing → a sync cannot supply
+#                    it; a human or the review gate must
+#   conflicted       the branch conflicts with its base → needs a real conflict
+#                    resolution (Gate 1), not a sync
 #   pending          CI still running → wait for a later wake
 #   ci-failed        CI has a failing/errored check → Step 2 (ci-debugging)
 #   changes-requested  a FRESH verdict (posted after the PR's HEAD commit) that
@@ -428,5 +437,21 @@ if [[ "$merge_state" == "CLEAN" ]] && branch_is_current; then
     die "PR #$pr is Dependabot's, its body links no issue, and no open $BRIDGE_ISSUE_LABEL issue carries $PR_MARKER, so $OPTOUT_LABEL can be neither found nor ruled out; re-run the Dependabot-to-Ralph bridge reconciler (gh workflow run dependabot-to-ralph-issue.yml) to re-link the PR body, then retry"
   echo "$ready_token"
 else
-  echo "behind"
+  # Not mergeable -- but `behind`'s remedy (fleet.sh sync) only helps one of the
+  # reasons why. These four each get their own token because a sync cannot
+  # supply a missing check, un-draft a PR a human parked, resolve a conflict, or
+  # hurry GitHub's mergeability computation. Collapsed together, every wake
+  # synced a no-op and dispatched a worker with nothing to do -- and against
+  # DRAFT the loop fought a human indefinitely.
+  case "$merge_state" in
+    UNKNOWN) echo "unknown" ;;
+    DRAFT) echo "draft" ;;
+    BLOCKED) echo "blocked" ;;
+    DIRTY | CONFLICTING) echo "conflicted" ;;
+    # CLEAN-but-stale, BEHIND, and anything not enumerated above. The fallback
+    # is deliberately `behind` rather than a new "unclassified" token: a sync is
+    # always safe, so an unrecognised state costs one wasted sync instead of
+    # wedging the lane on a token no caller knows how to route.
+    *) echo "behind" ;;
+  esac
 fi
