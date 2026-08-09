@@ -41,20 +41,31 @@
 # limit or an expired token silently defeat the one control a human retains over this
 # loop. So is an UNPROVABLE one on a bot PR about to be merged (see below).
 #
-# WHY THE MARKER FALLBACK EXISTS: the body-link route to the hold vanishes on exactly
+# WHY THE MARKER ROUTE EXISTS: the body-link route to the hold vanishes on exactly
 # the PRs the hold exists for. Dependabot regenerates its PR body from its own template
 # on every rebase and group recomputation, taking the bridge's appended `Closes #N` with
 # it — so `linked_issue` comes back empty and "no link" would be read as "no hold", a
 # fail-OPEN on the one PR class this loop merges with no review verdict. The bridge also
 # stamps `<!-- dependabot-pr:<N> -->` into the ISSUE body, which that rewrite cannot
-# reach because it lives on another object; that is the durable route. It is scanned only
-# on a Dependabot-authored PR whose body links nothing (human PRs routinely link nothing
-# and must classify normally, and an empty author reads as human), so in steady state the
-# extra `gh issue list` costs no lane anything. A scan that matches NOTHING is silence,
-# not proof: it is filtered by the `dependencies` label, which this repo has watched fail
-# to stick — hence `ensure-issue-label.sh`. Such a lane therefore classifies normally and
-# is refused only at the point of merge, so `behind` still prints `behind` (a sync is
-# always safe, and re-linking the body is often what makes the hold provable again).
+# reach because it lives on another object; that is the durable route.
+#
+# It is NOT a fallback: it runs on EVERY Dependabot-authored lane, whether or not the
+# body links something. It was a fallback until #2127, and that was the bug — a
+# regenerated body carrying an upstream changelog line (`Fixes #456`) still matches the
+# reference pattern, `linked_issue` takes the LAST match, and the hold lookup then
+# consulted an unrelated issue while the bridge went unread. A parked PR printed `ready`.
+# The two routes are independent answers to "is there a hold?" and either may be the one
+# that has it, so both are asked.
+#
+# The cost is one `gh issue list` per bot lane — paid on every bot lane now, not only
+# unlinked ones. Human lanes still pay nothing (they routinely link nothing and must
+# classify normally, and an empty author reads as human).
+#
+# A scan that matches NOTHING is silence, not proof: it is filtered by the `dependencies`
+# label, which this repo has watched fail to stick — hence `ensure-issue-label.sh`. A
+# lane where NEITHER route resolved anything therefore classifies normally and is refused
+# only at the point of merge, so `behind` still prints `behind` (a sync is always safe,
+# and re-linking the body is often what makes the hold provable again).
 #
 # An unresolvable hold on a bot PR that would otherwise merge is likewise one of those
 # exit-2 tooling errors: no token, and the next wake retries.
@@ -291,16 +302,30 @@ hold_unproven=""
 issue_n="$(linked_issue "$pr_body")"
 if [[ -n "$issue_n" ]]; then
   exit_if_issue_holds "$issue_n" "linked by"
-elif [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
-  # Only Dependabot rewrites its own body, so only Dependabot can have lost the
-  # link. An empty author reads as human here, which is safe: the sole
-  # merge-without-review path re-verifies the author itself and fails closed on
-  # empty. A failed scan dies at once — unlike a matchless one, no later answer
-  # can arrive to settle it.
+fi
+
+# The marker route runs for EVERY bot lane, not only one whose body links
+# nothing. `linked_issue` takes the last reference match, so a regenerated body
+# carrying an upstream changelog line -- `Fixes #456` -- resolves an unrelated
+# issue in this repo. The hold lookup then consulted that issue, the bridge was
+# never reached, and a PR a human had parked printed `ready` and merged. Checking
+# the body link first and the marker as well costs one extra scan on bot lanes
+# and closes that: the two routes are independent answers to "is there a hold?",
+# and either may be the one that has it.
+#
+# Only Dependabot rewrites its own body, so only Dependabot can have lost the
+# link, and the scan stays off human lanes. An empty author reads as human here,
+# which is safe: the sole merge-without-review path re-verifies the author itself
+# and fails closed on empty. A failed scan dies at once -- unlike a matchless
+# one, no later answer can arrive to settle it.
+if [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
   bridge_issues="$(bridge_issues_for_pr)" ||
     die "could not scan for the bridge issue of PR #$pr; refusing to guess whether $OPTOUT_LABEL is set"
   if [[ -z "$bridge_issues" ]]; then
-    hold_unproven="yes"
+    # Unchanged from #2027, deliberately: unproven means NEITHER route resolved
+    # anything. A body that did resolve an issue is a resolution, so widening the
+    # scan must not start refusing lanes that classified fine before.
+    [[ -n "$issue_n" ]] || hold_unproven="yes"
   else
     while IFS= read -r bridge_n; do
       [[ -n "$bridge_n" ]] || continue
