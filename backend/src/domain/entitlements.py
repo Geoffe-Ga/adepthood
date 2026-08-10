@@ -60,10 +60,12 @@ __all__ = [
     "GumroadUnavailableError",
     "LicenseOutcome",
     "grant_course_access",
+    "grant_manual_course_access",
     "has_course_access",
     "is_aptitude_product_id",
     "is_token_pack_product_id",
     "revoke_course_access",
+    "revoke_entitlement_by_id",
     "token_pack_product_ids",
     "token_pack_size",
     "verify_aptitude_license",
@@ -80,7 +82,10 @@ REASON_WEBHOOK_SALE = "webhook_sale"
 # lapsed" — the entitlement outcome is identical, the accounting is not.
 REASON_REFUND = "refund"
 REASON_CANCELLATION = "cancellation"
-# Still forward-reserved: no manual admin-override revocation path exists yet.
+# Both halves of the operator's manual surface: grant_manual_course_access and
+# revoke_entitlement_by_id, reached from the /admin/users/{user_id}/entitlements
+# routes. One code for both directions -- the free-text reason the operator had
+# to supply carries the specifics.
 REASON_ADMIN_OVERRIDE = "admin_override"
 REASON_DUPLICATE_SIGNUP = "duplicate_signup"
 REASON_EMAIL_MISMATCH = "email_mismatch"
@@ -279,7 +284,7 @@ async def revoke_entitlement_by_id(
     session: AsyncSession,
     user_id: int,
     entitlement_id: int,
-    reason: str,
+    reason_code: str,
 ) -> Entitlement | None:
     """Revoke one specific entitlement, returning it, or ``None`` if it cannot be.
 
@@ -293,6 +298,10 @@ async def revoke_entitlement_by_id(
     ``user_id`` is part of the lookup, not a courtesy check — without it the
     id alone addresses the row, and a mistyped user id would revoke a
     stranger's access while appearing to act on the intended account.
+
+    ``reason_code`` is one of this module's constants, not free text: the
+    structured log is grepped by reason, so it needs a single spelling. An
+    operator's own words belong in the caller's audit entry.
     """
     result = await session.execute(
         select(Entitlement).where(
@@ -311,7 +320,7 @@ async def revoke_entitlement_by_id(
     logger.info(
         "entitlement_revoked",
         extra={
-            "reason_code": reason,
+            "reason_code": reason_code,
             "user_id": user_id,
             "entitlement_id": entitlement.id,
         },

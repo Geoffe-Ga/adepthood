@@ -19,7 +19,11 @@ from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
-from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
+from domain.entitlements import (
+    REASON_ADMIN_OVERRIDE,
+    grant_manual_course_access,
+    revoke_entitlement_by_id,
+)
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
@@ -466,7 +470,9 @@ async def revoke_entitlement(
     """
     session, admin = context.session, context.admin
     await _require_user(session, user_id)
-    entitlement = await revoke_entitlement_by_id(session, user_id, entitlement_id, payload.reason)
+    entitlement = await revoke_entitlement_by_id(
+        session, user_id, entitlement_id, REASON_ADMIN_OVERRIDE
+    )
     if entitlement is None:
         raise not_found("entitlement")
     logger.warning(
