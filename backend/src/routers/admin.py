@@ -7,24 +7,36 @@ identity is a first-class per-user flag rather than a shared header secret.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from decimal import Decimal
+from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
+from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from errors import bad_request, not_found
+from models.entitlement import Entitlement
+from models.gumroad_sale import GumroadSale
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
 from models.user import User
+from models.wallet_audit import WalletAudit
+from rate_limit import limiter
 from schemas import PaginationParams
 from schemas.admin import (
+    AdminUserSummary,
     EnergyPlanCleanupResult,
+    EntitlementGrantRequest,
+    EntitlementRevokeRequest,
+    EntitlementSummary,
+    GumroadSaleSummary,
     ModelUsageBreakdown,
     StageProgressGap,
     StageProgressGapsPage,
@@ -32,6 +44,7 @@ from schemas.admin import (
     StageProgressRepairResult,
     UsageStatsResponse,
     UserUsageBreakdown,
+    WalletAuditEntry,
 )
 from schemas.pagination import count_query_total, page_has_more, paginate_query
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
@@ -40,6 +53,17 @@ from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_pl
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
 # the response shape stable across both engines (BUG-ADMIN-004).
 _ZERO_COST = Decimal(0)
+
+# How much history the user summary carries. Enough to see the recent shape of
+# an account without turning one operator lookup into an unbounded scan of a
+# heavy customer's ledger.
+_WALLET_AUDIT_LIMIT = 20
+_GUMROAD_SALE_LIMIT = 10
+
+# Manual overrides are rare, deliberate, and irreversible-ish (a revoke cuts
+# off access immediately). A tight limit bounds the blast radius of a stolen
+# admin token or a looping script without ever inconveniencing a human.
+_OVERRIDE_RATE_LIMIT = "10/minute"
 
 
 def _to_decimal(value: object) -> Decimal:
@@ -326,3 +350,211 @@ async def cleanup_energy_plans(
         extra={"admin_id": admin.id, "deleted": deleted, "older_than_days": older_than_days},
     )
     return EnergyPlanCleanupResult(deleted=deleted, older_than_days=older_than_days)
+
+
+@dataclass(frozen=True)
+class _AdminContext:
+    """The session and the acting admin, which always travel together here.
+
+    Bundled into one dependency so the override routes stay under ruff's
+    ``PLR0913`` argument cap without dropping either the audit actor or the
+    rate-limiter's ``request`` — the same restructure-don't-suppress move as
+    :class:`services.wallet._AuditEntry` and the ``domain.streaks`` kwarg
+    bundle.
+    """
+
+    session: AsyncSession
+    admin: User
+
+
+async def admin_context(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    admin: Annotated[User, Depends(require_admin)],
+) -> _AdminContext:
+    """Resolve the admin gate and the session as a single dependency."""
+    return _AdminContext(session=session, admin=admin)
+
+
+async def _require_user(session: AsyncSession, user_id: int) -> User:
+    """Load a target user or 404.
+
+    Every route below addresses a user by a path id an operator typed, so an
+    unknown id is a mistake worth reporting rather than an empty-but-plausible
+    result.
+    """
+    user = await session.get(User, user_id)
+    if user is None:
+        raise not_found("user")
+    return user
+
+
+def _entitlement_summary(entitlement: Entitlement) -> EntitlementSummary:
+    """Project one entitlement row onto its wire shape."""
+    if entitlement.id is None:
+        msg = "entitlement id missing after persistence"
+        raise ValueError(msg)
+    return EntitlementSummary(
+        id=entitlement.id,
+        kind=entitlement.kind,
+        product_id=entitlement.product_id,
+        source_sale_id=entitlement.source_sale_id,
+        granted_at=entitlement.granted_at,
+        revoked_at=entitlement.revoked_at,
+        metadata=entitlement.entitlement_metadata,
+    )
+
+
+@router.post(
+    "/users/{user_id}/entitlements",
+    response_model=EntitlementSummary,
+    status_code=HTTPStatus.CREATED,
+)
+@limiter.limit(_OVERRIDE_RATE_LIMIT)
+async def grant_entitlement(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    user_id: int,
+    payload: EntitlementGrantRequest,
+    context: Annotated[_AdminContext, Depends(admin_context)],
+) -> EntitlementSummary:
+    """Comp a user's course access, recording who did it and why.
+
+    The manual counterpart to the Gumroad webhook grant: no sale funds it, so
+    ``source_sale_id`` stays NULL and the operator's ``reason`` is written into
+    the entitlement's metadata bag. That pairing is what later distinguishes a
+    deliberate comp from a payment that was never reconciled.
+
+    Idempotent, inheriting the domain layer's single-active-row behaviour — a
+    repeated click refreshes the existing grant rather than colliding with the
+    partial unique index.
+    """
+    session, admin = context.session, context.admin
+    target = await _require_user(session, user_id)
+    entitlement = await grant_manual_course_access(
+        session,
+        target,
+        reason=payload.reason,
+        actor_admin_id=admin.id,
+    )
+    logger.warning(
+        "admin_entitlement_granted",
+        extra={
+            "actor": admin.id,
+            "action": "entitlement_grant",
+            "target_user_id": user_id,
+            "entitlement_id": entitlement.id,
+            "reason": payload.reason,
+        },
+    )
+    return _entitlement_summary(entitlement)
+
+
+@router.delete("/users/{user_id}/entitlements/{entitlement_id}", response_model=EntitlementSummary)
+@limiter.limit(_OVERRIDE_RATE_LIMIT)
+async def revoke_entitlement(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    user_id: int,
+    entitlement_id: int,
+    payload: EntitlementRevokeRequest,
+    context: Annotated[_AdminContext, Depends(admin_context)],
+) -> EntitlementSummary:
+    """Revoke one named entitlement, recording who did it and why.
+
+    404s when the row is missing, already revoked, or owned by another user.
+    An operator who reads a 200 as "access removed" when nothing changed is
+    exactly the failure this endpoint exists to prevent, so the by-id lookup
+    reports rather than no-ops.
+    """
+    session, admin = context.session, context.admin
+    await _require_user(session, user_id)
+    entitlement = await revoke_entitlement_by_id(session, user_id, entitlement_id, payload.reason)
+    if entitlement is None:
+        raise not_found("entitlement")
+    logger.warning(
+        "admin_entitlement_revoked",
+        extra={
+            "actor": admin.id,
+            "action": "entitlement_revoke",
+            "target_user_id": user_id,
+            "entitlement_id": entitlement_id,
+            "reason": payload.reason,
+        },
+    )
+    return _entitlement_summary(entitlement)
+
+
+@router.get("/users/{user_id}/summary", response_model=AdminUserSummary)
+async def get_user_summary(
+    user_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    admin: Annotated[User, Depends(require_admin)],
+) -> AdminUserSummary:
+    """One account's entitlement, wallet and purchase picture in a single call.
+
+    Read-only, and deliberately an aggregate: answering "why does this person
+    say they paid but have no access?" otherwise means three queries against
+    three tables, which is the SQL-console habit these endpoints replace.
+
+    The wallet ledger and sale history are capped at the newest
+    ``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales match on
+    email because :class:`models.gumroad_sale.GumroadSale` carries no user id —
+    a purchase made under a different address will not appear here, which is
+    itself usually the answer.
+    """
+    target = await _require_user(session, user_id)
+
+    entitlement_rows = (
+        (
+            await session.execute(
+                select(Entitlement)
+                .where(col(Entitlement.user_id) == user_id)
+                .order_by(col(Entitlement.granted_at).desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    audit_rows = (
+        (
+            await session.execute(
+                select(WalletAudit)
+                .where(col(WalletAudit.user_id) == user_id)
+                .order_by(col(WalletAudit.created_at).desc(), col(WalletAudit.id).desc())
+                .limit(_WALLET_AUDIT_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    sale_rows = (
+        (
+            await session.execute(
+                select(GumroadSale)
+                .where(col(GumroadSale.email) == target.email)
+                .order_by(col(GumroadSale.created_at).desc(), col(GumroadSale.id).desc())
+                .limit(_GUMROAD_SALE_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    logger.info(
+        "admin_user_summary_read",
+        extra={"actor": admin.id, "action": "user_summary", "target_user_id": user_id},
+    )
+
+    return AdminUserSummary(
+        user_id=user_id,
+        email=target.email,
+        created_at=target.created_at,
+        is_admin=target.is_admin,
+        entitlements=[_entitlement_summary(row) for row in entitlement_rows],
+        offering_balance=target.offering_balance,
+        monthly_messages_used=target.monthly_messages_used,
+        wallet_audit=[
+            WalletAuditEntry.model_validate(row, from_attributes=True) for row in audit_rows
+        ],
+        gumroad_sales=[
+            GumroadSaleSummary.model_validate(row, from_attributes=True) for row in sale_rows
+        ],
+    )

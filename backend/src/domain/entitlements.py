@@ -173,6 +173,9 @@ async def grant_course_access(
     overwritten by non-``None`` derivations so a bare re-grant cannot erase
     provenance. Commits, then logs ``entitlement_granted`` with
     ``reason_code`` (ids only — never emails or keys).
+
+    For an operator's manual comp see :func:`grant_manual_course_access`,
+    which records a stated reason instead of a sale link.
     """
     if user.id is None:
         msg = "user id missing before entitlement grant"
@@ -222,6 +225,98 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
             "entitlement_id": entitlement.id,
         },
     )
+
+
+async def grant_manual_course_access(
+    session: AsyncSession,
+    user: User,
+    *,
+    reason: str,
+    actor_admin_id: int | None,
+) -> Entitlement:
+    """Comp a user's course access, recording the operator's stated reason.
+
+    The manual counterpart to :func:`grant_course_access`. Deliberately its own
+    function rather than another keyword on that one: no sale funds this grant,
+    so ``source_sale_id`` and ``product_id`` stay untouched — that NULL is what
+    later distinguishes a comp from a payment nobody reconciled — while
+    ``reason`` is mandatory rather than optional.
+
+    Shares the same single-active-row idempotency, so a repeated click
+    refreshes the existing grant instead of colliding with the partial unique
+    index. The reason and actor are merged into the metadata bag rather than
+    assigned, so a re-comp adds to the record instead of erasing why the first
+    one happened.
+    """
+    if user.id is None:
+        msg = "user id missing before manual entitlement grant"
+        raise ValueError(msg)
+    entitlement = await _find_active_entitlement(session, user.id)
+    if entitlement is None:
+        entitlement = Entitlement(user_id=user.id)
+    # Rebind rather than mutate: SQLAlchemy does not track in-place edits to a
+    # JSON dict, so a mutated bag would silently not persist.
+    entitlement.entitlement_metadata = {
+        **entitlement.entitlement_metadata,
+        "reason": reason,
+        "granted_by_admin_id": actor_admin_id,
+    }
+    session.add(entitlement)
+    await session.commit()
+    await session.refresh(entitlement)
+    logger.info(
+        "entitlement_granted",
+        extra={
+            "reason_code": REASON_ADMIN_OVERRIDE,
+            "user_id": user.id,
+            "entitlement_id": entitlement.id,
+        },
+    )
+    return entitlement
+
+
+async def revoke_entitlement_by_id(
+    session: AsyncSession,
+    user_id: int,
+    entitlement_id: int,
+    reason: str,
+) -> Entitlement | None:
+    """Revoke one specific entitlement, returning it, or ``None`` if it cannot be.
+
+    The addressed-by-id counterpart to :func:`revoke_course_access`, which
+    finds whatever is active for a user and no-ops when nothing is. That is
+    right for a webhook replay and wrong for an operator: a caller who names a
+    row needs to learn that the row was already revoked, belongs to someone
+    else, or never existed, rather than reading a success for a change that
+    did not happen.
+
+    ``user_id`` is part of the lookup, not a courtesy check — without it the
+    id alone addresses the row, and a mistyped user id would revoke a
+    stranger's access while appearing to act on the intended account.
+    """
+    result = await session.execute(
+        select(Entitlement).where(
+            Entitlement.id == entitlement_id,
+            Entitlement.user_id == user_id,
+            col(Entitlement.revoked_at).is_(None),
+        )
+    )
+    entitlement = result.scalars().first()
+    if entitlement is None:
+        return None
+    entitlement.revoked_at = datetime.now(UTC)
+    session.add(entitlement)
+    await session.commit()
+    await session.refresh(entitlement)
+    logger.info(
+        "entitlement_revoked",
+        extra={
+            "reason_code": reason,
+            "user_id": user_id,
+            "entitlement_id": entitlement.id,
+        },
+    )
+    return entitlement
 
 
 def _split_ids(raw: str) -> list[str]:

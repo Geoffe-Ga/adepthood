@@ -24,6 +24,70 @@
         "title": "AcceptSuggestionResponse",
         "type": "object"
       },
+      "AdminUserSummary": {
+        "description": "Everything the operator needs about one account, in a single call.\n\nDeliberately a read-only aggregate: the point is to replace a SQL console\nsession, so it gathers the entitlement, wallet and purchase pictures that\nwould otherwise require three separate queries against three tables.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "entitlements": {
+            "items": {
+              "$ref": "#/components/schemas/EntitlementSummary"
+            },
+            "title": "Entitlements",
+            "type": "array"
+          },
+          "gumroad_sales": {
+            "items": {
+              "$ref": "#/components/schemas/GumroadSaleSummary"
+            },
+            "title": "Gumroad Sales",
+            "type": "array"
+          },
+          "is_admin": {
+            "title": "Is Admin",
+            "type": "boolean"
+          },
+          "monthly_messages_used": {
+            "title": "Monthly Messages Used",
+            "type": "integer"
+          },
+          "offering_balance": {
+            "title": "Offering Balance",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "wallet_audit": {
+            "items": {
+              "$ref": "#/components/schemas/WalletAuditEntry"
+            },
+            "title": "Wallet Audit",
+            "type": "array"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "created_at",
+          "is_admin",
+          "entitlements",
+          "offering_balance",
+          "monthly_messages_used",
+          "wallet_audit",
+          "gumroad_sales"
+        ],
+        "title": "AdminUserSummary",
+        "type": "object"
+      },
       "AppleOAuthRequest": {
         "description": "Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.\n\nApple never puts the name in the token.  It is handed to the client once,\nduring the very first authorization, and never sent again -- so the client\nforwards it here or it is lost.  That also makes it the one field on this\nroute the provider has *not* vouched for, which is why the ladder consults\nit only when creating a brand-new row: a later request carrying a different\nname can never relabel an account that already exists.\n\nBlank (or whitespace-only) means \"no name\", not an empty name, so the\ncolumn stays ``NULL`` and every reader's fallback keeps working.  The\nlength bound matches the column's, so an over-long name is a 422 here\nrather than a truncating write or a 500 from mid-transaction.",
         "properties": {
@@ -935,6 +999,116 @@
         "title": "EnergyPlanResponse",
         "type": "object"
       },
+      "EntitlementGrantRequest": {
+        "description": "A manual entitlement grant, with the operator's reason.\n\n``reason`` is the paper trail these endpoints exist to produce, so it is\nconstrained rather than merely typed: ``min_length`` alone would accept\n``\"   \"``, which records nothing while looking like a recorded decision.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/EntitlementKind",
+            "default": "course_access"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "EntitlementGrantRequest",
+        "type": "object"
+      },
+      "EntitlementKind": {
+        "description": "The kinds of access an entitlement can grant.\n\n``COURSE_ACCESS`` is the paid-course gate; future kinds (e.g. BotMason\ntoken bundles) extend this enum and the derived CHECK constraint follows\nautomatically.",
+        "enum": [
+          "course_access"
+        ],
+        "title": "EntitlementKind",
+        "type": "string"
+      },
+      "EntitlementRevokeRequest": {
+        "description": "A manual revocation, with the operator's reason. See the grant request.",
+        "properties": {
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "EntitlementRevokeRequest",
+        "type": "object"
+      },
+      "EntitlementSummary": {
+        "description": "One entitlement as the admin surface reports it.\n\n``source_sale_id`` is included because NULL is what distinguishes a comp\nfrom a paid grant, and that distinction is the first thing an operator\nlooking at a disputed account needs.",
+        "properties": {
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "source_sale_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Sale Id"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "product_id",
+          "source_sale_id",
+          "granted_at",
+          "revoked_at",
+          "metadata"
+        ],
+        "title": "EntitlementSummary",
+        "type": "object"
+      },
       "EntryStatus": {
         "description": "Lifecycle of a long-form journal entry, backing ``JournalEntry.status``.\n\n``draft`` while being written; ``finished`` once committed.",
         "enum": [
@@ -1517,6 +1691,56 @@
           "id_token"
         ],
         "title": "GoogleOAuthRequest",
+        "type": "object"
+      },
+      "GumroadSaleSummary": {
+        "description": "One Gumroad sale matched to the user by email.\n\n``GumroadSale`` carries no user id, so email is the only link available;\nthe summary reports what matched so a mismatch is visible rather than\nsilently absent.\n\nNo price field: :class:`models.gumroad_sale.GumroadSale` stores none. The\namount lives only inside ``raw_payload``, which is the verbatim webhook\nform and is deliberately not surfaced here — it carries the whole Gumroad\npayload, more than an entitlement question needs.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "gumroad_sale_id": {
+            "title": "Gumroad Sale Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_recurring_charge": {
+            "title": "Is Recurring Charge",
+            "type": "boolean"
+          },
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          },
+          "refunded": {
+            "title": "Refunded",
+            "type": "boolean"
+          },
+          "resource_name": {
+            "title": "Resource Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "gumroad_sale_id",
+          "product_id",
+          "email",
+          "resource_name",
+          "is_recurring_charge",
+          "refunded",
+          "created_at"
+        ],
+        "title": "GumroadSaleSummary",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6278,6 +6502,66 @@
         "title": "VaultUploadStatus",
         "type": "string"
       },
+      "WalletAuditEntry": {
+        "description": "One wallet ledger row, newest-first in the summary.",
+        "properties": {
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id"
+          },
+          "balance_after": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance After",
+            "type": "string"
+          },
+          "balance_before": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance Before",
+            "type": "string"
+          },
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delta": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Delta",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bucket",
+          "reason",
+          "delta",
+          "balance_before",
+          "balance_after",
+          "actor_user_id",
+          "created_at"
+        ],
+        "title": "WalletAuditEntry",
+        "type": "object"
+      },
       "WeekCountResponse": {
         "additionalProperties": false,
         "description": "Typed contract for ``GET /practice-sessions/week-count``.\n\n``extra=\"forbid\"`` so a stray key (a drifting hand-built dict) is rejected\nrather than silently passed through — the wire shape stays exactly ``{count}``.",
@@ -6635,6 +6919,212 @@
           }
         },
         "summary": "Get Usage Stats",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/users/{user_id}/entitlements": {
+      "post": {
+        "description": "Comp a user's course access, recording who did it and why.\n\nThe manual counterpart to the Gumroad webhook grant: no sale funds it, so\n``source_sale_id`` stays NULL and the operator's ``reason`` is written into\nthe entitlement's metadata bag. That pairing is what later distinguishes a\ndeliberate comp from a payment that was never reconciled.\n\nIdempotent, inheriting the domain layer's single-active-row behaviour — a\nrepeated click refreshes the existing grant rather than colliding with the\npartial unique index.",
+        "operationId": "grant_entitlement_admin_users__user_id__entitlements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntitlementGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntitlementSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grant Entitlement",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/users/{user_id}/entitlements/{entitlement_id}": {
+      "delete": {
+        "description": "Revoke one named entitlement, recording who did it and why.\n\n404s when the row is missing, already revoked, or owned by another user.\nAn operator who reads a 200 as \"access removed\" when nothing changed is\nexactly the failure this endpoint exists to prevent, so the by-id lookup\nreports rather than no-ops.",
+        "operationId": "revoke_entitlement_admin_users__user_id__entitlements__entitlement_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entitlement_id",
+            "required": true,
+            "schema": {
+              "title": "Entitlement Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntitlementRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntitlementSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Entitlement",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/users/{user_id}/summary": {
+      "get": {
+        "description": "One account's entitlement, wallet and purchase picture in a single call.\n\nRead-only, and deliberately an aggregate: answering \"why does this person\nsay they paid but have no access?\" otherwise means three queries against\nthree tables, which is the SQL-console habit these endpoints replace.\n\nThe wallet ledger and sale history are capped at the newest\n``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales match on\nemail because :class:`models.gumroad_sale.GumroadSale` carries no user id —\na purchase made under a different address will not appear here, which is\nitself usually the answer.",
+        "operationId": "get_user_summary_admin_users__user_id__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get User Summary",
         "tags": [
           "admin"
         ]
