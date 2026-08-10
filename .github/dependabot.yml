@@ -101,6 +101,14 @@ updates:
       # release widens that peer range.
       - dependency-name: "react-native-worklets"
         versions: [">=0.11.0"]
+      # Expo SDK 57 expects async-storage 2.2.0; `expo install --check` on the
+      # 3.1.1 bump reports "may not work correctly until you install the
+      # expected versions". Nothing in the suite would catch it -- jest.config
+      # maps this package to src/__mocks__/async-storage.js, so all 450 suites
+      # pass against the mock no matter what the real module does. It moves
+      # with the SDK. Unpin when an Expo SDK expects the 3.x line.
+      - dependency-name: "@react-native-async-storage/async-storage"
+        versions: [">=3.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
