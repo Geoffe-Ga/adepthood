@@ -272,6 +272,126 @@ async def test_revoke_marks_the_row_revoked(
 
 
 @pytest.mark.asyncio
+async def test_revoke_writes_its_reason_to_the_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The revocation's audit lands on the entitlement, not only in a log line.
+
+    A revoked row outlives application-log retention, and an operator asking
+    "why did this person lose access?" months later should be able to read the
+    answer off the row rather than reconstruct it from a log search. Logging
+    alone is a materially weaker guarantee than the one this surface promises.
+    """
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "audited-revoke@example.com")
+    entitlement = Entitlement(user_id=target)
+    db_session.add(entitlement)
+    await db_session.commit()
+    await db_session.refresh(entitlement)
+    entitlement_id = entitlement.id
+
+    resp = await async_client.request(
+        "DELETE",
+        f"/admin/users/{target}/entitlements/{entitlement_id}",
+        json={"reason": "chargeback filed with the bank"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+    db_session.expire_all()
+    revoked = await db_session.get(Entitlement, entitlement_id)
+    assert revoked is not None
+    assert revoked.revoked_at is not None
+    assert revoked.entitlement_metadata.get("revocation_reason") == (
+        "chargeback filed with the bank"
+    )
+    assert revoked.entitlement_metadata.get("revoked_by_admin_id") is not None
+
+
+@pytest.mark.asyncio
+async def test_revoke_preserves_the_grant_reason(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Revoking records why access ended without erasing why it began.
+
+    Both stories matter to the operator reading the row, so the revocation
+    merges into the metadata bag under its own keys rather than replacing it.
+    """
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "grant-then-revoke@example.com")
+
+    granted = await async_client.post(
+        f"/admin/users/{target}/entitlements",
+        json={"kind": "course_access", "reason": "beta cohort comp"},
+        headers=admin_headers,
+    )
+    assert granted.status_code == HTTPStatus.CREATED, granted.text
+    entitlement_id = granted.json()["id"]
+
+    revoked_resp = await async_client.request(
+        "DELETE",
+        f"/admin/users/{target}/entitlements/{entitlement_id}",
+        json={"reason": "cohort ended"},
+        headers=admin_headers,
+    )
+    assert revoked_resp.status_code == HTTPStatus.OK, revoked_resp.text
+
+    db_session.expire_all()
+    row = await db_session.get(Entitlement, entitlement_id)
+    assert row is not None
+    assert row.entitlement_metadata.get("reason") == "beta cohort comp"
+    assert row.entitlement_metadata.get("revocation_reason") == "cohort ended"
+
+
+@pytest.mark.asyncio
+async def test_grant_honours_the_requested_kind(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The ``kind`` field is applied, not accepted and discarded.
+
+    ``EntitlementKind`` has one member today, so this cannot yet produce a
+    visibly wrong grant. It pins the wiring anyway: the partial unique index is
+    on ``(user_id, kind)``, so the moment a second kind exists, a lookup that
+    ignored kind would refresh the wrong row and one kind would silently
+    overwrite another.
+    """
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "kinded@example.com")
+
+    resp = await async_client.post(
+        f"/admin/users/{target}/entitlements",
+        json={"kind": EntitlementKind.COURSE_ACCESS.value, "reason": "explicit kind"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED, resp.text
+    assert resp.json()["kind"] == EntitlementKind.COURSE_ACCESS.value
+
+    rows = await _active_entitlements(db_session, target)
+    assert [row.kind for row in rows] == [EntitlementKind.COURSE_ACCESS]
+
+
+@pytest.mark.asyncio
+async def test_grant_rejects_an_unknown_kind(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A kind outside the enum is refused rather than coerced to the default.
+
+    Silently substituting ``course_access`` for whatever was asked is how an
+    operator ends up believing they granted something they did not.
+    """
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "bad-kind@example.com")
+
+    resp = await async_client.post(
+        f"/admin/users/{target}/entitlements",
+        json={"kind": "botmason_tokens", "reason": "not a real kind yet"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert await _active_entitlements(db_session, target) == []
+
+
+@pytest.mark.asyncio
 async def test_revoke_404s_when_already_revoked(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

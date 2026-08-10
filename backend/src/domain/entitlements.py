@@ -131,12 +131,23 @@ class AptitudeLicenseCheck:
     purchase: GumroadPurchase | None = None
 
 
-async def _find_active_entitlement(session: AsyncSession, user_id: int) -> Entitlement | None:
-    """Return the user's active ``course_access`` entitlement, if any."""
+async def _find_active_entitlement(
+    session: AsyncSession,
+    user_id: int,
+    kind: EntitlementKind = EntitlementKind.COURSE_ACCESS,
+) -> Entitlement | None:
+    """Return the user's active entitlement of ``kind``, if any.
+
+    ``kind`` is a parameter rather than a hardcoded constant because the
+    partial unique index is on ``(user_id, kind)``: a lookup that ignored kind
+    would find a *different* kind's row and refresh it in place, which is how
+    a second kind would silently overwrite the first the moment the enum
+    grows past its single current member.
+    """
     result = await session.execute(
         select(Entitlement).where(
             Entitlement.user_id == user_id,
-            Entitlement.kind == EntitlementKind.COURSE_ACCESS,
+            Entitlement.kind == kind,
             col(Entitlement.revoked_at).is_(None),
         )
     )
@@ -238,8 +249,9 @@ async def grant_manual_course_access(
     *,
     reason: str,
     actor_admin_id: int | None,
+    kind: EntitlementKind = EntitlementKind.COURSE_ACCESS,
 ) -> Entitlement:
-    """Comp a user's course access, recording the operator's stated reason.
+    """Comp a user access of ``kind``, recording the operator's stated reason.
 
     The manual counterpart to :func:`grant_course_access`. Deliberately its own
     function rather than another keyword on that one: no sale funds this grant,
@@ -256,9 +268,9 @@ async def grant_manual_course_access(
     if user.id is None:
         msg = "user id missing before manual entitlement grant"
         raise ValueError(msg)
-    entitlement = await _find_active_entitlement(session, user.id)
+    entitlement = await _find_active_entitlement(session, user.id, kind)
     if entitlement is None:
-        entitlement = Entitlement(user_id=user.id)
+        entitlement = Entitlement(user_id=user.id, kind=kind)
     # Rebind rather than mutate: SQLAlchemy does not track in-place edits to a
     # JSON dict, so a mutated bag would silently not persist.
     entitlement.entitlement_metadata = {
@@ -284,24 +296,29 @@ async def revoke_entitlement_by_id(
     session: AsyncSession,
     user_id: int,
     entitlement_id: int,
-    reason_code: str,
+    *,
+    reason: str,
+    actor_admin_id: int | None,
 ) -> Entitlement | None:
     """Revoke one specific entitlement, returning it, or ``None`` if it cannot be.
 
-    The addressed-by-id counterpart to :func:`revoke_course_access`, which
-    finds whatever is active for a user and no-ops when nothing is. That is
-    right for a webhook replay and wrong for an operator: a caller who names a
-    row needs to learn that the row was already revoked, belongs to someone
-    else, or never existed, rather than reading a success for a change that
-    did not happen.
+    The operator's manual revocation, and the addressed-by-id counterpart to
+    :func:`revoke_course_access`, which finds whatever is active for a user and
+    no-ops when nothing is. That is right for a webhook replay and wrong for an
+    operator: a caller who names a row needs to learn that the row was already
+    revoked, belongs to someone else, or never existed, rather than reading a
+    success for a change that did not happen.
 
     ``user_id`` is part of the lookup, not a courtesy check — without it the
     id alone addresses the row, and a mistyped user id would revoke a
     stranger's access while appearing to act on the intended account.
 
-    ``reason_code`` is one of this module's constants, not free text: the
-    structured log is grepped by reason, so it needs a single spelling. An
-    operator's own words belong in the caller's audit entry.
+    ``reason`` is the operator's own words and is written to the row's metadata
+    bag, so the record survives log retention. The structured log carries
+    :data:`REASON_ADMIN_OVERRIDE` instead — that field is grepped by reason and
+    needs one spelling per transition, which free text would defeat. This
+    function is always the manual path, so the code is fixed rather than
+    passed, mirroring :func:`grant_manual_course_access`.
     """
     result = await session.execute(
         select(Entitlement).where(
@@ -314,13 +331,23 @@ async def revoke_entitlement_by_id(
     if entitlement is None:
         return None
     entitlement.revoked_at = datetime.now(UTC)
+    # The revocation's own audit, written to the row rather than only logged.
+    # A revoked entitlement outlives application-log retention, and the
+    # operator reading it later — the entire point of this surface — should not
+    # have to reconstruct why access went away from a log search. Rebound, not
+    # mutated: SQLAlchemy does not track in-place edits to a JSON dict.
+    entitlement.entitlement_metadata = {
+        **entitlement.entitlement_metadata,
+        "revocation_reason": reason,
+        "revoked_by_admin_id": actor_admin_id,
+    }
     session.add(entitlement)
     await session.commit()
     await session.refresh(entitlement)
     logger.info(
         "entitlement_revoked",
         extra={
-            "reason_code": reason_code,
+            "reason_code": REASON_ADMIN_OVERRIDE,
             "user_id": user_id,
             "entitlement_id": entitlement.id,
         },

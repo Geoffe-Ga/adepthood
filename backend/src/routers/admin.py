@@ -19,11 +19,7 @@ from sqlmodel import col
 
 from database import get_session
 from dependencies.auth import require_admin
-from domain.entitlements import (
-    REASON_ADMIN_OVERRIDE,
-    grant_manual_course_access,
-    revoke_entitlement_by_id,
-)
+from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
@@ -438,7 +434,15 @@ async def grant_entitlement(
         target,
         reason=payload.reason,
         actor_admin_id=admin.id,
+        kind=payload.kind,
     )
+    # Two log lines per mutation, on purpose. The domain layer's
+    # `entitlement_granted` / `entitlement_revoked` records the state
+    # transition with a fixed reason_code and is emitted for every path,
+    # webhook included, so it can be counted and grepped by reason. This one is
+    # the operator audit: who acted, on whom, and in their own words. Do not
+    # merge them — a reader looking for "did access change?" and one asking
+    # "who did this?" want different queries.
     logger.warning(
         "admin_entitlement_granted",
         extra={
@@ -471,7 +475,11 @@ async def revoke_entitlement(
     session, admin = context.session, context.admin
     await _require_user(session, user_id)
     entitlement = await revoke_entitlement_by_id(
-        session, user_id, entitlement_id, REASON_ADMIN_OVERRIDE
+        session,
+        user_id,
+        entitlement_id,
+        reason=payload.reason,
+        actor_admin_id=admin.id,
     )
     if entitlement is None:
         raise not_found("entitlement")
