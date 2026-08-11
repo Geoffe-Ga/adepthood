@@ -8,7 +8,7 @@ annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
-anthropic==0.120.2
+anthropic==0.121.0
     # via -r backend/requirements.txt
 anyio==4.14.2
     # via
@@ -136,7 +136,7 @@ sqlalchemy==2.0.51
     #   sqlmodel
 sqlmodel==0.0.39
     # via -r backend/requirements.txt
-starlette==1.4.1
+starlette==1.5.0
     # via fastapi
 tqdm==4.70.0
     # via openai
