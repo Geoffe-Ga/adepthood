@@ -171,9 +171,22 @@ the trend ledger gets at most one record per UTC day.
 
 `scripts/graph/test_append_benchmark_trend.sh` and
 `scripts/graph/test_semantic_staleness.sh` are offline shell tests for the
-two scripts above, run by `.github/workflows/graph-tests.yml` on any change
-under `scripts/graph/**` (this tooling lives outside `backend/`, so the
-backend-scoped lint/coverage gates don't otherwise cover it).
+two scripts above. They are two of the suites `.github/workflows/graph-tests.yml`
+runs — this tooling lives outside `backend/`, so the backend-scoped
+lint/coverage gates don't otherwise cover it.
+
+The workflow does not name suites. It runs `bash scripts/graph/run_tests.sh`,
+which globs every `scripts/graph/test_*.sh`, so a new suite is gated the moment
+it lands. (Naming them is what drifted: the workflow once listed two of eight,
+leaving six invoked by nothing.) The runner invokes each through `bash` — their
+recorded git modes are mixed — and fails if a suite fails, or if the glob
+matches nothing at all.
+
+Its `paths:` filter covers more than `scripts/graph/**`, because several suites
+assert over files elsewhere: `prompts/scans/**` (the scan-prompt preambles),
+`.claude/**` (the graph skill, agent instructions, hooks, settings),
+`scripts/ralph/PROMPT.md` and `.github/workflows/weekly-playbook.yml`. Editing
+a file a suite reads must be able to fire the suite that reads it.
 
 The ledger also feeds the Discord Ralph recap's knowledge-graph line — see
 [`scripts/ralph/RECAP.md`](../ralph/RECAP.md).
