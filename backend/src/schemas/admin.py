@@ -1,10 +1,14 @@
-"""Admin-dashboard response schemas for LLM usage stats."""
+"""Admin-dashboard schemas: LLM usage stats and manual entitlement overrides."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, StringConstraints, field_serializer
+
+from models.entitlement import EntitlementKind
 
 # Six decimal places match the storage scale on
 # :class:`models.llm_usage_log.LLMUsageLog.estimated_cost_usd` so the
@@ -155,3 +159,93 @@ class EnergyPlanCleanupResult(BaseModel):
 
     deleted: int
     older_than_days: int
+
+
+class EntitlementGrantRequest(BaseModel):
+    """A manual entitlement grant, with the operator's reason.
+
+    ``reason`` is the paper trail these endpoints exist to produce, so it is
+    constrained rather than merely typed: ``min_length`` alone would accept
+    ``"   "``, which records nothing while looking like a recorded decision.
+    """
+
+    kind: EntitlementKind = EntitlementKind.COURSE_ACCESS
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class EntitlementRevokeRequest(BaseModel):
+    """A manual revocation, with the operator's reason. See the grant request."""
+
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class EntitlementSummary(BaseModel):
+    """One entitlement as the admin surface reports it.
+
+    ``source_sale_id`` is included because NULL is what distinguishes a comp
+    from a paid grant, and that distinction is the first thing an operator
+    looking at a disputed account needs.
+    """
+
+    id: int
+    kind: str
+    product_id: str | None
+    source_sale_id: int | None
+    granted_at: datetime
+    revoked_at: datetime | None
+    metadata: dict[str, object]
+
+
+class WalletAuditEntry(BaseModel):
+    """One wallet ledger row, newest-first in the summary."""
+
+    id: int
+    bucket: str
+    reason: str
+    delta: Decimal
+    balance_before: Decimal
+    balance_after: Decimal
+    actor_user_id: int | None
+    created_at: datetime
+
+
+class GumroadSaleSummary(BaseModel):
+    """One Gumroad sale matched to the user by email.
+
+    ``GumroadSale`` carries no user id, so email is the only link available;
+    the summary reports what matched so a mismatch is visible rather than
+    silently absent.
+
+    No price field: :class:`models.gumroad_sale.GumroadSale` stores none. The
+    amount lives only inside ``raw_payload``, which is the verbatim webhook
+    form and is deliberately not surfaced here — it carries the whole Gumroad
+    payload, more than an entitlement question needs.
+    """
+
+    id: int
+    gumroad_sale_id: str
+    product_id: str
+    email: str
+    resource_name: str
+    is_recurring_charge: bool
+    refunded: bool
+    created_at: datetime
+
+
+class AdminUserSummary(BaseModel):
+    """Everything the operator needs about one account, in a single call.
+
+    Deliberately a read-only aggregate: the point is to replace a SQL console
+    session, so it gathers the entitlement, wallet and purchase pictures that
+    would otherwise require three separate queries against three tables.
+    """
+
+    user_id: int
+    email: str
+    created_at: datetime
+    is_admin: bool
+    entitlements: list[EntitlementSummary]
+    offering_balance: int
+    monthly_messages_used: int
+    wallet_audit: list[WalletAuditEntry]
+    gumroad_sales: list[GumroadSaleSummary]
