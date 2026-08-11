@@ -258,9 +258,23 @@ async def _record_vault_outcome(
     send. Column reconciliation lives in :func:`_apply_vault_outcome`; only a
     real column change re-commits, so the common no-op paths stay free of a
     redundant write.
+
+    The commit below the id check is what keeps a pooled connection out of the
+    network round trip. Callers reach here having already committed the entry,
+    but each then calls ``session.refresh``, which opens a *fresh* transaction
+    -- and an open transaction is a checked-out connection. Left in place it
+    would be held for the whole vault request, so pool capacity would be
+    governed by the vault's latency rather than our own query time: the pool is
+    at SQLAlchemy's defaults (five plus ten overflow) and the vault's
+    whole-request deadline is thirty seconds, so fifteen concurrent writes
+    against a *slow* vault would starve every other database-backed endpoint. A
+    vault that is down is already safe; this is about one that answers slowly.
+    Ending the transaction here returns the connection immediately, and the
+    session transparently checks out a new one for the outcome write below.
     """
     if entry.id is None:
         return
+    await session.commit()
     outcome = await store_and_classify(
         vault_client,
         entry_id=entry.id,
