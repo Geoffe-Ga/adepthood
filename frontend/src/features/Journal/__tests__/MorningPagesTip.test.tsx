@@ -1,5 +1,4 @@
 /* eslint-env jest */
-// RED: `MorningPagesTip` does not exist yet; `require('../MorningPagesTip')` throws until it does.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
@@ -47,6 +46,23 @@ beforeEach(() => {
   mockSave.mockResolvedValue(undefined);
 });
 
+/**
+ * Swap the flat mocks for a fake that actually remembers what was written.
+ *
+ * The default `mockLoad` answers `false` unconditionally, which is fine for the
+ * single-render tests but useless for anything about a *later* visit: a remount
+ * would report "not dismissed" however the component behaved. Tests that turn on
+ * persistence call this so their assertions depend on the write.
+ */
+function useStatefulStorage(): void {
+  let stored = false;
+  mockLoad.mockImplementation(() => Promise.resolve(stored));
+  mockSave.mockImplementation((value: boolean) => {
+    stored = value;
+    return Promise.resolve();
+  });
+}
+
 describe('MorningPagesTip', () => {
   it('renders the tip when the dismissal flag is unset', async () => {
     const { findByTestId } = render(<MorningPagesTip onBegin={mockOnBegin} />);
@@ -83,7 +99,7 @@ describe('MorningPagesTip', () => {
     await waitFor(() => expect(queryByTestId('journal-morning-pages-tip')).toBeNull());
   });
 
-  it('the CTA calls onBegin, persists true, and hides the band', async () => {
+  it('the CTA calls onBegin and leaves the tip in place — beginning is not declining', async () => {
     const { findByTestId, getByTestId, queryByTestId } = render(
       <MorningPagesTip onBegin={mockOnBegin} />,
     );
@@ -94,8 +110,53 @@ describe('MorningPagesTip', () => {
     });
 
     expect(mockOnBegin).toHaveBeenCalledTimes(1);
-    expect(mockSave).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(queryByTestId('journal-morning-pages-tip')).toBeNull());
+    // The inversion of the original assertion, kept rather than deleted so the
+    // reversal of #1889's "starting an entry also counts as dismissal" stays
+    // legible here. Taking up the invitation is the opposite of declining it.
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(queryByTestId('journal-morning-pages-tip')).not.toBeNull();
+  });
+
+  it('the tip is still there on the next visit after beginning a page', async () => {
+    // The criterion is about the *next* shelf visit, not just the press: a
+    // component that skipped the write but still set local state would satisfy
+    // the test above and still hide the tip for the rest of the session.
+    //
+    // The default mocks cannot show that. `mockLoad` is pinned to `false` in
+    // `beforeEach`, so a remount reports "not dismissed" no matter what was
+    // written -- the assertion would hold even if the CTA still persisted.
+    // So this drives a fake that actually round-trips, and the sibling test
+    // below dismisses through the same fake to prove it can report `true`.
+    useStatefulStorage();
+
+    const first = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    await first.findByTestId('journal-morning-pages-tip');
+    await act(async () => {
+      fireEvent.press(first.getByTestId('journal-morning-pages-tip'));
+    });
+    first.unmount();
+
+    const remounted = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    expect(await remounted.findByTestId('journal-morning-pages-tip')).toBeTruthy();
+    remounted.unmount();
+  });
+
+  it('the tip is gone on the next visit after an explicit dismissal', async () => {
+    // The other half of the pair. Same round-tripping fake, opposite outcome --
+    // which is what makes the test above evidence rather than a fake that only
+    // ever says "not dismissed".
+    useStatefulStorage();
+
+    const first = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    await first.findByTestId('journal-morning-pages-tip');
+    await act(async () => {
+      fireEvent.press(first.getByTestId('journal-morning-pages-dismiss'));
+    });
+    first.unmount();
+
+    const remounted = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    await waitFor(() => expect(remounted.queryByTestId('journal-morning-pages-tip')).toBeNull());
+    remounted.unmount();
   });
 
   it('renders no streak or shame copy anywhere in the band', async () => {
