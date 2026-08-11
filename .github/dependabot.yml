@@ -70,11 +70,14 @@ updates:
       # with it -- see the jest entry above.
       - dependency-name: "@types/jest"
         versions: [">=30.0.0"]
-      # TypeScript 6/7 is the native-port line, unsupported by the expo / jest /
-      # eslint toolchain we run; adopt it via a deliberate migration, not a
-      # Dependabot bump. Unpin when the toolchain supports the 6+ line.
+      # TypeScript 7 is the native-port line; adopt it via a deliberate
+      # migration, not a Dependabot bump. The floor was ">=6.0.0" until the SDK
+      # 57 chain adopted 6.0.3 -- which silently turned this rule from "hold 6
+      # back" into "freeze the 6.x we are on", suppressing every 6.x patch.
+      # backend/tests/test_dependabot_ignores.py now fails when a floor drops to
+      # or below the installed version. Unpin when the toolchain supports 7.
       - dependency-name: "typescript"
-        versions: [">=6.0.0"]
+        versions: [">=7.0.0"]
       # @babel/core 8.x engines require Node ^22.18 || >=24.11; frontend CI is
       # pinned to Node 20 (.nvmrc). Unpin when CI Node moves to 22+.
       - dependency-name: "@babel/core"
@@ -90,6 +93,22 @@ updates:
       # the ESLint-10 / Node-22 migration -- see the eslint entry above.
       - dependency-name: "eslint-plugin-unicorn"
         versions: [">=65.0.0"]
+      # react-native-worklets is not independently upgradable: Expo SDK 57 pins
+      # 0.10.1 (`expo install --check` reports the tree up to date at it), and
+      # react-native-reanimated 4.5.1 declares a peer of "0.10.x". The 0.11.3
+      # bump ERESOLVE-failed frontend CI for exactly that reason. It moves with
+      # the SDK via `expo install`, not on its own. Unpin when a reanimated
+      # release widens that peer range.
+      - dependency-name: "react-native-worklets"
+        versions: [">=0.11.0"]
+      # Expo SDK 57 expects async-storage 2.2.0; `expo install --check` on the
+      # 3.1.1 bump reports "may not work correctly until you install the
+      # expected versions". Nothing in the suite would catch it -- jest.config
+      # maps this package to src/__mocks__/async-storage.js, so all 450 suites
+      # pass against the mock no matter what the real module does. It moves
+      # with the SDK. Unpin when an Expo SDK expects the 3.x line.
+      - dependency-name: "@react-native-async-storage/async-storage"
+        versions: [">=3.0.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
