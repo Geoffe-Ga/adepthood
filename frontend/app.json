@@ -9,6 +9,7 @@
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "usesAppleSignIn": true
     },
     "name": "frontend",
