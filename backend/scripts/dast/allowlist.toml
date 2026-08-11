@@ -139,6 +139,30 @@ path     = "/admin/stage-progress/{user_id}/repair"
 category = "admin_only"
 reason   = "gated on the admin role rather than on ownership; both identities are denied"
 
+# The entitlement overrides and the user summary act on *another* user by
+# design -- that is the whole point of an operator surface -- so ownership is
+# the wrong axis for them. The admin role is the control, and
+# tests/test_admin_entitlements.py exercises the anonymous and non-admin legs
+# on all three.
+
+[[route]]
+method   = "POST"
+path     = "/admin/users/{user_id}/entitlements"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "DELETE"
+path     = "/admin/users/{user_id}/entitlements/{entitlement_id}"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "GET"
+path     = "/admin/users/{user_id}/summary"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
 # --- No way to create the object from outside the process -------------------
 
 [[route]]

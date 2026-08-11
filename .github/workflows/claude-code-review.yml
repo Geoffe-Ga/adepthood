@@ -51,11 +51,30 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: "dependabot[bot]"
           prompt:  |
-            Review this pull request against the repository's CLAUDE.md. Read the
-            change with `gh pr diff` and `gh pr view` (and any files you need).
+            Review pull request #${{ github.event.pull_request.number }} in the
+            repository ${{ github.repository }}, against that repository's
+            CLAUDE.md. Read the change with
+
+                gh pr diff ${{ github.event.pull_request.number }}
+                gh pr view ${{ github.event.pull_request.number }}
+
+            and any files you need.
+
+            Always pass that number explicitly. A bare `gh pr diff` resolves only
+            when the checkout is on a recognizable PR branch; here it is a merge
+            ref, so the bare form fails and any recovery that guesses -- listing
+            open PRs and taking the newest, say -- silently reviews somebody
+            else's change. The "Post review" step below attaches whatever you
+            return to #${{ github.event.pull_request.number }} regardless, so a
+            guess becomes a verdict on a PR you never read.
 
             Do NOT post a comment yourself. Return ONLY the structured result with
-            three fields:
+            four fields:
+
+            - "reviewed_pr_number": the number of the PR you actually read, as an
+              integer. This is checked against the PR being posted to and a
+              mismatch fails the run, so report what you read rather than what
+              you were asked to read.
 
             - "review_markdown": the full review as GitHub markdown, using this
               template (omit the verdict here — it is a separate field below):
@@ -105,8 +124,8 @@ jobs:
           # (fixes the flaky success-with-no-comment runs, #810). gh pr comment is
           # intentionally NOT in allowed-tools so the agent cannot post on its own.
           claude_args: >-
-            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","verdict_rationale","review_markdown"],"properties":{"verdict":{"type":"string","enum":["CHANGES_REQUESTED","COMMENTS","LGTM"]},"verdict_rationale":{"type":"string"},"review_markdown":{"type":"string"}}}'
-            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","verdict_rationale","review_markdown","reviewed_pr_number"],"properties":{"verdict":{"type":"string","enum":["CHANGES_REQUESTED","COMMENTS","LGTM"]},"verdict_rationale":{"type":"string"},"review_markdown":{"type":"string"},"reviewed_pr_number":{"type":"integer"}}}'
+            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
       - name: Post review
         # Deterministic: this step always runs after a successful review and posts
@@ -135,6 +154,18 @@ jobs:
               exit 0
             fi
             echo "::error::Claude review produced no structured output — failing so it is re-run, never a silent no-review."
+            exit 1
+          fi
+          # Refuse to post a review of a different PR. The agent resolves the PR
+          # itself, so a failed `gh pr diff` plus a guessing recovery can produce
+          # a complete, plausible review of somebody else's change -- which this
+          # step would otherwise attach here with full confidence. That happened:
+          # #2211's review landed on #2210. The dangerous direction is a
+          # misrouted LGTM, since pr-ready.sh treats it as the merge criterion
+          # and nothing downstream re-reads the body. Fail loudly instead.
+          reviewed=$(jq -r '.reviewed_pr_number // empty' <<<"$STRUCTURED")
+          if [ "$reviewed" != "$PR_NUMBER" ]; then
+            echo "::error::Review reports PR #${reviewed:-<missing>} but this run is for PR #$PR_NUMBER — refusing to post a review of a different change."
             exit 1
           fi
           verdict=$(jq -r '.verdict' <<<"$STRUCTURED")
