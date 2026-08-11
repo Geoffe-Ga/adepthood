@@ -471,6 +471,40 @@ async def test_revoke_rejects_a_blank_reason(
 
 
 @pytest.mark.asyncio
+async def test_summary_matches_sales_whose_email_differs_only_by_case(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A sale typed with different capitalisation still belongs to the account.
+
+    ``GumroadSale.email`` is stored exactly as Gumroad reports it, while
+    ``User.email`` is normalised at signup — so the two legitimately differ in
+    case for the same person. ``routers/gumroad._find_user_by_email`` already
+    folds case for this reason; a summary that did not would show
+    ``gumroad_sales: []`` for a buyer who *did* pay, which is precisely the
+    account most likely to be the subject of the support ticket that sent the
+    operator here.
+    """
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target_email = "jane.doe@example.com"
+    target = await _make_user(db_session, target_email)
+    db_session.add(
+        GumroadSale(
+            gumroad_sale_id="mixed-case-sale",
+            product_id="prod-1",
+            # As Gumroad reports it: the address the buyer typed.
+            email="Jane.Doe@Example.com",
+            resource_name="sale",
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    sale_ids = {sale["gumroad_sale_id"] for sale in resp.json()["gumroad_sales"]}
+    assert sale_ids == {"mixed-case-sale"}
+
+
+@pytest.mark.asyncio
 async def test_summary_reports_the_users_access_picture(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

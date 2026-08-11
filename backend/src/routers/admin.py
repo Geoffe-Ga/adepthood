@@ -543,7 +543,12 @@ async def get_user_summary(
         (
             await session.execute(
                 select(GumroadSale)
-                .where(col(GumroadSale.email) == target.email)
+                # Case-folded, like routers/gumroad._find_user_by_email. Gumroad
+                # stores the address the buyer typed while accounts are
+                # normalised at signup, so an exact match hides the sales of
+                # anyone who capitalised their email differently — the very
+                # account most likely to be the reason an operator opened this.
+                .where(func.lower(col(GumroadSale.email)) == target.email.strip().lower())
                 .order_by(col(GumroadSale.created_at).desc(), col(GumroadSale.id).desc())
                 .limit(_GUMROAD_SALE_LIMIT)
             )
