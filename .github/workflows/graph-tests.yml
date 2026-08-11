@@ -1,18 +1,37 @@
 name: Graph Tests
 
 # Offline tests for the graph tooling under scripts/graph/. These scripts live
-# outside backend/, so the backend-scoped lint/coverage gates don't cover them —
-# this workflow keeps the benchmark-trend ledger and the semantic staleness
-# probe honest.
+# outside backend/, so the backend-scoped lint/coverage gates don't cover them.
+#
+# The run step globs the directory rather than naming suites, because naming
+# them drifted: this workflow once listed two of eight, so six suites were
+# gated by nothing at all. No inventory of the suites is kept here either —
+# a list in a comment drifts exactly as a list in a run step does, and
+# scripts/graph/ is the one place it cannot. See scripts/graph/run_tests.sh.
 
+# The two lists below are identical and must stay so. GitHub Actions does not
+# support YAML anchors in workflow files, so they are spelled out twice, as in
+# every sibling workflow here; scripts/graph/test_run_tests.sh checks each
+# trigger's list separately, so editing one and forgetting the other fails.
 on:
   push:
     paths:
       - "scripts/graph/**"
+      # Files the suites assert over, all outside scripts/graph/. Without these
+      # a change to a scanned prompt or an agent instruction could not fire this
+      # workflow, so the guard covering it would never run.
+      - "prompts/scans/**"
+      - ".claude/**"
+      - "scripts/ralph/PROMPT.md"
+      - ".github/workflows/weekly-playbook.yml"
       - ".github/workflows/graph-tests.yml"
   pull_request:
     paths:
       - "scripts/graph/**"
+      - "prompts/scans/**"
+      - ".claude/**"
+      - "scripts/ralph/PROMPT.md"
+      - ".github/workflows/weekly-playbook.yml"
       - ".github/workflows/graph-tests.yml"
 
 permissions:
@@ -32,6 +51,4 @@ jobs:
           python-version: "3.12"
 
       - name: Run graph tool tests
-        run: |
-          bash scripts/graph/test_append_benchmark_trend.sh
-          bash scripts/graph/test_semantic_staleness.sh
+        run: bash scripts/graph/run_tests.sh
