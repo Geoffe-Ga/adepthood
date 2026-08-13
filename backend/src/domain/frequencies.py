@@ -1,33 +1,50 @@
-"""The APTITUDE frequency ontology — F1..F10, and nothing else.
+"""The ten Aspects of Wholeness — F1..F10, keyed by colour.
 
-This vocabulary is **shared with Creek**, which declares it with
-``extra="forbid"`` and notes that "an eleventh frequency is a change to the
-shared ontology vocabulary — a contract change with a version bump". The set
-here is therefore fixed by contract, not by convenience: adding, renaming or
-dropping a member is a contract change, and callers treat an unrecognised code
-as a protocol error rather than something to coerce.
+One set of ten developmental positions with three interchangeable names. They
+are the **Aspects of Wholeness**, the **Frequencies**, and the **Stages**: not
+three vocabularies that happen to align, but one thing the codebase and the
+course each learned to call by a different word.
 
-It is vendored rather than imported. Creek's classifier lives in another
-repository and is coupled to the vault's on-disk fragment layout, so importing
-it would drag that layout in; re-deriving the names at each call site is
-exactly what ``extra="forbid"`` exists to prevent. Vendoring the table — the
-same posture as ``backend/tests/fixtures/creek_v1/`` — keeps one spelling in
-one place.
+``NORTH-STAR.md`` states the identity outright — "the shared ontology where
+Adepthood's Aspects equal Creek's Frequencies equal the Wavelength phases" —
+and ``graph/ontology-spine.md`` writes each row as an equation:
+``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``.
 
-**This is not the curriculum's Aspects.** ``services.creek_vault_client`` makes
-the argument in full at its ``_WHEEL_FREQUENCY_CODES`` definition: creek
-publishes a distribution over its classified corpus, adepthood renders per-stage
-Aspect fullness from the 36-week curriculum, and "creek's ``Agency`` is not a
-course Aspect". Both happen to have ten members, which that comment correctly
-calls a coincidence of cardinality. This module owns the ontology half of that
-pair; :mod:`curriculum` owns the other.
+**Colour is the primary key.** Beige through Clear Light is the stable
+identifier across every surface: the ``NN-colour`` content directories, the
+``STAGE_COLORS`` design tokens, the habit ring, and the vault's wire codes. The
+names drift between contexts — F3 is "Self-Love / Power" upstream, ``aspect``
+"Self-Love" plus ``title`` "Power" in ``archetypal_wavelength.json``, and the
+composite is literally those two joined — but the colour does not.
 
-That coincidence is also why this module exists rather than the codes staying
-where they were. ``_WHEEL_FREQUENCY_CODES`` derived its whitelist from
-``TOTAL_STAGES`` — a curriculum quantity — so a curriculum that grew to twelve
-stages would have silently begun accepting ``F11`` and ``F12``, admitting two
-frequencies the shared ontology forbids. Deriving the whitelist from the
-ontology instead makes the two independent, as its own comment argues they are.
+======  ============  ============================  ==================
+Code    Colour        Aspect                        Title
+======  ============  ============================  ==================
+F1      Beige         Agency                        Survival
+F2      Purple        Receptivity                   Magick
+F3      Red           Self-Love                     Power
+F4      Blue          Community Love                Conformity
+F5      Orange        Intellectual Understanding    Achievist
+F6      Green         Embodied Understanding        Pluralist
+F7      Yellow        Systems Wisdom                Integrative
+F8      Teal          True Self Connection          Nondual
+F9      Ultraviolet   Unity                         Effortless Being
+F10     Clear Light   Emptiness                     Pure Awareness
+======  ============  ============================  ==================
+
+**There are exactly ten, and more than ten still means these ten.** The habits
+surface lets someone carry more than ten rings; those repeat the same Beige to
+Clear Light cycle rather than extending the set (``HabitUtils.stageAtIndex``
+takes the modulo, and negative carryover slots wrap backwards from Clear
+Light). An eleventh *position* is a change to the shared ontology vocabulary —
+Creek declares the set with ``extra="forbid"`` — and needs a contract version
+bump, not a code change.
+
+The vocabulary is vendored rather than imported because Creek's classifier
+lives in another repository and is coupled to the vault's on-disk fragment
+layout. This module is the backend's single spelling of the table; the
+curriculum's own copy is ``curriculum/archetypal_wavelength.json``, and the two
+must agree row for row.
 """
 
 from __future__ import annotations
@@ -76,6 +93,27 @@ FREQUENCY_NAMES: Final[MappingProxyType[Frequency, str]] = MappingProxyType(
         Frequency.F10: "Emptiness",
     }
 )
+
+# The colour per code -- the primary key. Names differ between the vault, the
+# curriculum dataset and the course content; the colour is what every surface
+# agrees on, so it is what joins them. Spelled as the curriculum spells it
+# (``spiral_dynamics_color``), which is also how ``STAGE_COLORS`` and the
+# ``NN-colour`` content directories spell it.
+FREQUENCY_COLORS: Final[MappingProxyType[Frequency, str]] = MappingProxyType(
+    {
+        Frequency.F1: "Beige",
+        Frequency.F2: "Purple",
+        Frequency.F3: "Red",
+        Frequency.F4: "Blue",
+        Frequency.F5: "Orange",
+        Frequency.F6: "Green",
+        Frequency.F7: "Yellow",
+        Frequency.F8: "Teal",
+        Frequency.F9: "Ultraviolet",
+        Frequency.F10: "Clear Light",
+    }
+)
+
 
 #: Every valid code, in canonical order. The whitelist any wire-facing parser
 #: should check against, so an eleventh code from either side is ignored rather

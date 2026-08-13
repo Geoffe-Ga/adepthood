@@ -14,11 +14,13 @@ refusing to absorb a vocabulary the ontology does not contain.
 from __future__ import annotations
 
 import inspect
+import json
+import pathlib
 from types import SimpleNamespace
 
 import pytest
 
-from domain.frequencies import FREQUENCY_NAMES, Frequency, frequency_table
+from domain.frequencies import FREQUENCY_COLORS, FREQUENCY_NAMES, Frequency, frequency_table
 from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
 from services.botmason import LLMProviderError
@@ -317,3 +319,84 @@ def test_classification_is_stateless() -> None:
     """
     source = inspect.getsource(fc.classify_frequencies)
     assert "conversation_history=[]" in source
+
+
+# --- the vocabulary is one thing, not three ----------------------------------
+# Aspects of Wholeness == Frequencies == Stages, keyed by colour. NORTH-STAR.md
+# states the identity and graph/ontology-spine.md writes it as an equation per
+# row. These tests hold the vendored table to the curriculum dataset so the two
+# spellings of one ontology cannot drift apart -- which is the whole reason the
+# vendored copy is allowed to exist.
+
+
+def _curriculum_stages() -> list[dict[str, object]]:
+    """The curriculum's own copy of the ten positions."""
+    source = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "src"
+        / "curriculum"
+        / "archetypal_wavelength.json"
+    )
+    stages: list[dict[str, object]] = json.loads(source.read_text(encoding="utf-8"))["stages"]
+    return stages
+
+
+def test_the_vendored_colours_match_the_curriculum() -> None:
+    """Colour is the primary key, so it is the join that must hold exactly.
+
+    If this fails, one of the two spellings of a single ontology has moved and
+    every colour-keyed surface -- content directories, STAGE_COLORS, the habit
+    ring -- is now pointing somewhere the other does not agree with.
+    """
+    curriculum = {
+        int(str(stage["stage_number"])): stage["spiral_dynamics_color"]
+        for stage in _curriculum_stages()
+    }
+
+    assert curriculum == {int(code.value[1:]): FREQUENCY_COLORS[code] for code in Frequency}
+
+
+def test_the_curriculum_has_exactly_ten_positions() -> None:
+    """More than ten rings still means these ten, cycling.
+
+    The habits surface repeats Beige -> Clear Light for extra laps rather than
+    extending the set; an eleventh position would be a contract change.
+    """
+    assert len(_curriculum_stages()) == _EXPECTED_FREQUENCY_COUNT
+
+
+def _acceptable_names(row: dict[str, object]) -> set[str]:
+    """The names a Frequency could carry if it matched the curriculum row."""
+    aspect, title = str(row["aspect"]), str(row["title"])
+    return {aspect, f"{aspect} / {title}"}
+
+
+def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> None:
+    """Names drift between labelings; the colour is what actually joins them.
+
+    This is why colour is the primary key rather than a display detail. The
+    vault-side Frequency name and the curriculum's aspect/title agree for six
+    of the ten positions and diverge for the middle four:
+
+    ======  ==========================  ============================
+    Code    Frequency name              Curriculum aspect / title
+    ======  ==========================  ============================
+    F5      Achievism                   Intellectual Understanding / Achievist
+    F6      Pluralism                   Embodied Understanding / Pluralist
+    F7      Integration                 Systems Wisdom / Integrative
+    F8      True Self / Transcendence   True Self Connection / Nondual
+    ======  ==========================  ============================
+
+    Those are the same four positions under two vocabularies, not eight
+    positions. Joining on a name would silently mismatch them; joining on
+    colour cannot. Recorded as a test so the divergence is a known, asserted
+    fact rather than something the next reader rediscovers as a bug.
+    """
+    by_number = {int(str(stage["stage_number"])): stage for stage in _curriculum_stages()}
+    diverging = {
+        code
+        for code in Frequency
+        if FREQUENCY_NAMES[code] not in _acceptable_names(by_number[int(code.value[1:])])
+    }
+
+    assert diverging == {Frequency.F5, Frequency.F6, Frequency.F7, Frequency.F8}
