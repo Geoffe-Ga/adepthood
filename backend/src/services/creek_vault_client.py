@@ -276,8 +276,10 @@ _WHEEL_OK_STATUS = "ok"
 # That ``F{n}`` -> stage ``n`` correspondence is a **semantic identity**, and
 # this is the definition site where that has to be said. The Frequencies, the
 # Aspects of Wholeness and the Stages are one set of ten developmental
-# positions under three names -- ``NORTH-STAR.md``: "the shared ontology where
-# Adepthood's Aspects equal Creek's Frequencies equal the Wavelength phases",
+# positions under four names -- Aspect, Frequency, Stage, Wavelength Mode --
+# per ``NORTH-STAR.md``: "the shared ontology where Adepthood's Aspects equal
+# Creek's Frequencies equal the Wavelength Modes". Modes are these ten,
+# colour-keyed; the six Wavelength *phases* are a different axis entirely,
 # and ``graph/ontology-spine.md`` writes each row as
 # ``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``. F1 *is* stage 1, and
 # creek's ``Agency`` *is* the course Aspect Agency.

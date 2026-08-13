@@ -1,14 +1,22 @@
 """The ten Aspects of Wholeness — F1..F10, keyed by colour.
 
-One set of ten developmental positions with three interchangeable names. They
-are the **Aspects of Wholeness**, the **Frequencies**, and the **Stages**: not
-three vocabularies that happen to align, but one thing the codebase and the
-course each learned to call by a different word.
+One set of ten developmental positions with four interchangeable names. They
+are the **Aspects of Wholeness**, the **Frequencies**, the **Stages** and the
+**Wavelength Modes**: not four vocabularies that happen to align, but one thing
+the codebase and the course each learned to call by a different word.
 
 ``NORTH-STAR.md`` states the identity outright — "the shared ontology where
-Adepthood's Aspects equal Creek's Frequencies equal the Wavelength phases" —
-and ``graph/ontology-spine.md`` writes each row as an equation:
+Adepthood's Aspects equal Creek's Frequencies equal the Wavelength Modes" — and
+``graph/ontology-spine.md`` writes each row as an equation:
 ``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``.
+
+**Modes are not phases, and this is the confusion to guard against.** A Mode is
+one of these ten, colour-keyed — Beige's Mode is Inhabit (Do), Clear Light's is
+Be (Both/Neither), each named in its ``NN-colour`` chapter as "The Mode of the
+Wavelength of <Colour>". The Wavelength *phases* are a different axis
+altogether: six of them (Rising, Peaking, Withdrawal, Diminishing, Bottoming
+Out, Restoration), a cycle every position moves through rather than a member of
+the set of ten.
 
 **Colour is the primary key.** Beige through Clear Light is the stable
 identifier across every surface: the ``NN-colour`` content directories, the
@@ -17,20 +25,20 @@ names drift between contexts — F3 is "Self-Love / Power" upstream, ``aspect``
 "Self-Love" plus ``title`` "Power" in ``archetypal_wavelength.json``, and the
 composite is literally those two joined — but the colour does not.
 
-======  ============  ============================  ==================
-Code    Colour        Aspect                        Title
-======  ============  ============================  ==================
-F1      Beige         Agency                        Survival
-F2      Purple        Receptivity                   Magick
-F3      Red           Self-Love                     Power
-F4      Blue          Community Love                Conformity
-F5      Orange        Intellectual Understanding    Achievist
-F6      Green         Embodied Understanding        Pluralist
-F7      Yellow        Systems Wisdom                Integrative
-F8      Teal          True Self Connection          Nondual
-F9      Ultraviolet   Unity                         Effortless Being
-F10     Clear Light   Emptiness                     Pure Awareness
-======  ============  ============================  ==================
+======  ============  ============================  ==================  ==================
+Code    Colour        Aspect                        Title               Mode
+======  ============  ============================  ==================  ==================
+F1      Beige         Agency                        Survival            Inhabit (Do)
+F2      Purple        Receptivity                   Magick              Inhabit (Feel)
+F3      Red           Self-Love                     Power               Express (Do)
+F4      Blue          Community Love                Conformity          Express (Feel)
+F5      Orange        Intellectual Understanding    Achievist           Collaborate (Do)
+F6      Green         Embodied Understanding        Pluralist           Collaborate (Feel)
+F7      Yellow        Systems Wisdom                Integrative         Integrate (Do)
+F8      Teal          True Self Connection          Nondual             Integrate (Feel)
+F9      Ultraviolet   Unity                         Effortless Being    Absorb (Do/Feel)
+F10     Clear Light   Emptiness                     Pure Awareness      Be (Both/Neither)
+======  ============  ============================  ==================  ==================
 
 **There are exactly ten, and more than ten still means these ten.** The habits
 surface lets someone carry more than ten rings; those repeat the same Beige to
