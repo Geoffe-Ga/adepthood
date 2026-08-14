@@ -64,11 +64,11 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
-    CreekVaultAuthError,
     CreekVaultCareEscalationError,
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultUnavailableError,
+    VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
@@ -631,17 +631,20 @@ async def test_journal_upsert_empty_is_an_unchanged_write(vault_clients: ClientF
 
 
 @pytest.mark.asyncio
-async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
+async def test_journal_upsert_refusal_reports_a_refusal_not_a_rejected_credential(
     vault_clients: ClientFactory,
 ) -> None:
-    """Creek ratifies this cell as a privacy refusal; the write path reports a bad key.
+    """Creek ratifies this cell as a privacy refusal, and the write path now says so.
 
     ``examples/journal-upsert/refusal.json`` carries ``privacy_refused`` at 403.
-    The ingest path decides a credential-rejected status *before* it reads any
-    code, so the refusal is classified on status alone and surfaces as an auth
-    failure. An operator reading that would go and rotate a credential that was
-    never refused. The read path resolved this by consulting the code first; the
-    write path has not, and this cell records that it has not.
+    The ingest path used to decide a credential-rejected status *before* reading
+    any code, so the refusal was classified on status alone and surfaced as an
+    auth failure -- sending an operator to rotate a credential that was never
+    refused, while the actual remedy went unmentioned. This cell recorded that
+    misreport as known until the write path was aligned with the read paths,
+    which had consulted the code first all along.
+
+    Inverted rather than deleted so the reversal stays legible here.
     """
     recorder = _Recorder(
         journal_payload=_read_json("examples/journal-upsert/refusal.json"),
@@ -649,8 +652,10 @@ async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
     )
     client = await _handshaken(vault_clients, recorder)
 
-    with pytest.raises(CreekVaultAuthError):
+    with pytest.raises(CreekVaultContractError) as raised:
         await client.ingest(_ingest_request())
+
+    assert raised.value.code is VaultErrorCode.PRIVACY_REFUSED
 
 
 @pytest.mark.asyncio
