@@ -123,6 +123,8 @@ from domain.creek_vault import (
     VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
+    WireTierCeiling,
+    wire_ceiling_for,
 )
 from services.creek_vault_payload import (
     _CALL_FAILED,
@@ -197,6 +199,23 @@ _POST_1_0_MATCHED_COMPONENTS = 1
 # default baked into the pooled client.
 _CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
 
+# Creek admits every ``/v1`` request at the ceiling this header declares, and
+# **defaults an absent one to ``open``** -- the most restrictive value, chosen so
+# an omitted header can only ever fail closed on the server's side. That default
+# is why the header is not optional here: ``open`` cannot admit a ``personal``
+# write, and ``personal`` is adepthood's default journal classification, so a
+# client that omits the header has every default entry refused and reads a wheel
+# computed over open-tier material alone. It is one of the two standing ``Vary``
+# tokens upstream, so it is also what keeps one caller's ceiling-filtered answer
+# out of another's cache.
+_CEILING_HEADER = "X-Creek-Tier-Ceiling"
+
+# The ceiling a call carrying no user content declares. Only the capability
+# handshake qualifies: it names no entry and reads no fragment, so the narrowest
+# ceiling is the honest one, and declaring it explicitly means no request leaves
+# this adapter relying on a server-side default to be what we assumed.
+_CONTENT_FREE_CEILING = WireTierCeiling.OPEN
+
 # The header carries ``major.minor`` wherever the contract sits relative to 1.0,
 # so this is its own width rather than a reuse of the pre-1.0 match width above,
 # which shares the value but not the meaning.
@@ -253,13 +272,19 @@ _MAX_FRAGMENT_ID_LENGTH = 256
 # silently excludes every not-yet-classified fragment, so a young corpus reads
 # back as an all-zero wheel.
 #
-# On the ratified ``/v1`` surface this is no longer a ceiling adepthood can
-# *declare* -- that surface publishes no field or parameter for one -- so there
-# it serves as the widest ceiling adepthood is willing to **accept**, which
-# :func:`_ceiling_admissible` verifies the vault's echo against. The two
-# readings are the same number for the same reason: this is the most material
-# adepthood ever authorized a vault to count over.
+# It is read twice, as the same number for the same reason -- this is the most
+# material adepthood ever authorizes a vault to count over. Outbound it is
+# *declared*, in :data:`_CEILING_HEADER`; inbound it is the widest ceiling
+# adepthood is willing to **accept**, which :func:`_ceiling_admissible` verifies
+# the vault's echo against. Declaring it is not optional: the ``/v1`` request
+# body and query string publish no field for a ceiling, and reading that as "the
+# surface has none" is what left this read taking Creek's ``open`` default and
+# counting a fraction of the corpus while looking computed.
 _WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
+
+# The same ceiling in the vocabulary the header speaks, resolved once at import
+# so a wheel read cannot be the call that discovers the translation refuses.
+_WHEEL_WIRE_CEILING = wire_ceiling_for(_WHEEL_TIER_CEILING)
 
 # The status a ``creek.wheel`` response reports when it actually computed a
 # wheel. Its own constant rather than a reuse of
@@ -1084,9 +1109,13 @@ def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
     """Map an ingest request onto the ratified ``/v1`` journal-entry fields.
 
     Exactly three fields, and no more: the entry id travels in the URL (it is
-    the resource), and a separately declared write ceiling would be redundant
-    here anyway, since a journal write always stores at the writer's own tier.
-    Sending a field the ratified shape does not name would be guessing.
+    the resource), and the write ceiling travels in :data:`_CEILING_HEADER`,
+    which is where Creek reads it from. Sending a field the ratified shape does
+    not name would be guessing. The body's ``tier`` and that header carry the
+    same value on this path -- a journal write stores at the writer's own tier --
+    but they are not one claim said twice: the header is what the caller is
+    *admitted* at, and Creek refuses the write outright when the tier here
+    outranks it.
     """
     return {
         "content": request.body,
@@ -1427,6 +1456,7 @@ class HttpCreekVaultClient:
         url: str,
         json_body: Mapping[str, object] | None = None,
         *,
+        ceiling: WireTierCeiling,
         contract_versioned: bool = True,
     ) -> httpx.Response:
         """Send one authorized vault request under the whole-request deadline.
@@ -1435,6 +1465,15 @@ class HttpCreekVaultClient:
         that must hold for *every* call hold once. The authorization header is
         built here, per call, so the credential lives only for the duration of
         the request and never on the shared pooled client.
+
+        ``ceiling`` carries :data:`_CEILING_HEADER`, the tier ceiling Creek
+        admits the call at. It has **no default**, unlike ``contract_versioned``,
+        and the asymmetry is the point: every capability declares a different
+        ceiling, derived from the material that call actually touches, so a
+        default would be a value somebody forgot to think about rather than one
+        that is right for the next capability. Typed :class:`WireTierCeiling`
+        rather than :class:`~domain.creek_vault.VaultTierCeiling` so an intimate
+        ceiling is not merely refused here but unspellable at this signature.
 
         ``contract_versioned`` carries :data:`_CONTRACT_VERSION_HEADER`, which
         Creek requires on every ``/v1`` capability call and refuses a missing one
@@ -1452,9 +1491,12 @@ class HttpCreekVaultClient:
         Expiry raises ``TimeoutError``, an ``OSError`` subclass, so it lands in
         each caller's existing transport branch. The module constant is read at
         call time rather than captured, so a redeployment (or a test) can move
-        the ceiling without rebuilding the adapter.
+        the deadline without rebuilding the adapter.
         """
-        headers = {"Authorization": f"Bearer {self._api_key}"}
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            _CEILING_HEADER: ceiling.value,
+        }
         if contract_versioned:
             headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
         async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
@@ -1474,7 +1516,10 @@ class HttpCreekVaultClient:
         payload, so it raises ``TypeError`` rather than being cast.
         """
         response = await self._authorized_request(
-            "GET", f"{self._url}{_CAPABILITIES_PATH}", contract_versioned=False
+            "GET",
+            f"{self._url}{_CAPABILITIES_PATH}",
+            ceiling=_CONTENT_FREE_CEILING,
+            contract_versioned=False,
         )
         response.raise_for_status()
         payload = response.json()
@@ -1594,8 +1639,15 @@ class HttpCreekVaultClient:
         already inside :data:`_HTTP_CALL_FAILED_ERRORS`.
         """
         entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{_entry_path_segment(request.entry_id)}"
+        # Resolved *before* the try, and before any request exists: an entry
+        # whose ceiling has no wire spelling is refused while its body is still
+        # only a field on a frozen dataclass, and that refusal is a contract
+        # fault rather than one of the transport failures normalized below.
+        ceiling = wire_ceiling_for(request.tier_ceiling)
         try:
-            return await self._authorized_request("PUT", entry_url, _journal_entry_body(request))
+            return await self._authorized_request(
+                "PUT", entry_url, _journal_entry_body(request), ceiling=ceiling
+            )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_INGEST_FAILED_MESSAGE) from None
         except _HTTP_CALL_FAILED_ERRORS:
@@ -1695,16 +1747,18 @@ class HttpCreekVaultClient:
         """Refuse classification, naming the capability and nothing else."""
         _refuse_unratified(CreekCapability.CLASSIFY)
 
-    async def _post_reflection(self, body: str) -> httpx.Response:
+    async def _post_reflection(self, body: str, ceiling: WireTierCeiling) -> httpx.Response:
         """Ask the collection for a reflection, normalizing any transport failure.
 
         One ``POST`` of the ratified two-field request and nothing else: no
         ``entry_ref``, since adepthood reflects on an ad-hoc body rather than on a
-        fragment the vault already stores, and no tier-ceiling field under any
+        fragment the vault already stores, and no tier-ceiling *field* under any
         spelling, since the published request is ``additionalProperties: false``
-        and names none -- inventing one would be guessing at a contract, and the
-        ceiling is verified on the way back instead
-        (:func:`_admissible_ceiling`).
+        and names none -- inventing one would be guessing at a contract. The
+        ceiling is declared in :data:`_CEILING_HEADER` instead, which is where
+        Creek reads it, and the echo is still verified on the way back
+        (:func:`_admissible_ceiling`): a ceiling declared and a ceiling honoured
+        are two different claims.
 
         Every transport failure (connection refused, a socket error, a URL httpx
         will not build a request for) becomes
@@ -1716,7 +1770,10 @@ class HttpCreekVaultClient:
         """
         try:
             return await self._authorized_request(
-                "POST", f"{self._url}{_REFLECTIONS_PATH}", _reflection_request_body(body)
+                "POST",
+                f"{self._url}{_REFLECTIONS_PATH}",
+                _reflection_request_body(body),
+                ceiling=ceiling,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
@@ -1753,10 +1810,13 @@ class HttpCreekVaultClient:
         Creek's 200 care handoff into
         :class:`~domain.creek_vault.CreekVaultCareEscalationError`, which is
         outside the degrade hierarchy on purpose.
+
+        The ceiling is resolved before the body is handed anywhere, so a tier
+        Creek's wire cannot express refuses here rather than travelling.
         """
         if not self.supports(CreekCapability.REFLECT):
             raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
-        response = await self._post_reflection(body)
+        response = await self._post_reflection(body, wire_ceiling_for(tier_ceiling))
         if not response.is_success:
             raise _read_failure(CreekCapability.REFLECT, response) from None
         payload = _decoded_object(response)
@@ -1771,7 +1831,10 @@ class HttpCreekVaultClient:
 
         A bare ``GET`` of one collection URL: no query parameters and no body,
         because the ratified surface publishes neither for this capability, and
-        sending an undocumented one would be guessing at a contract.
+        sending an undocumented one would be guessing at a contract. The ceiling
+        it counts over is declared in :data:`_CEILING_HEADER`, which is the
+        surface that *is* published for one -- without it Creek would default to
+        ``open`` and answer a wheel over open-tier material alone.
 
         Every transport failure (connection refused, a socket error, a URL httpx
         will not build a request for) becomes
@@ -1781,7 +1844,9 @@ class HttpCreekVaultClient:
         clause is ordered first for the reason :meth:`_put_journal_entry` gives.
         """
         try:
-            return await self._authorized_request("GET", f"{self._url}{_WHEEL_PATH}")
+            return await self._authorized_request(
+                "GET", f"{self._url}{_WHEEL_PATH}", ceiling=_WHEEL_WIRE_CEILING
+            )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_WHEEL_FAILED_MESSAGE) from None
         except _HTTP_CALL_FAILED_ERRORS:

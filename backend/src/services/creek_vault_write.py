@@ -59,6 +59,7 @@ from domain.creek_vault import (
     CreekVaultError,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultTierCeiling,
     tier_ceiling_for,
 )
 from models.journal_entry import JournalClassification
@@ -251,7 +252,12 @@ async def store_and_classify(
        see the module docstring for why intimate bodies are withheld.
     2. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier, raising
        ``ValueError`` (fail closed) for an unknown classification -- this error
-       propagates, since an unrecognized tier must never widen to OPEN.
+       propagates, since an unrecognized tier must never widen to OPEN. A tier
+       that resolves to :attr:`~domain.creek_vault.VaultTierCeiling.INTIMATE`
+       short-circuits exactly as step 1 does, and that is not a duplicate of it:
+       step 1 knows one *spelling*, this knows the *tier*, so a classification
+       added later that maps to intimate under any other name is withheld by
+       this line rather than discovered at the wire.
     3. A handshake probes the vault; an unavailable or non-ingesting vault
        degrades to :attr:`VaultWriteStatus.UNAVAILABLE`.
     4. Ingest runs; a transport failure or a ``stored=False`` result degrades to
@@ -268,6 +274,8 @@ async def store_and_classify(
     if classification == JournalClassification.INTIMATE:
         return _SKIPPED_INTIMATE_OUTCOME
     tier_ceiling = tier_ceiling_for(classification)
+    if tier_ceiling is VaultTierCeiling.INTIMATE:
+        return _SKIPPED_INTIMATE_OUTCOME
     await client.handshake()
     if not _ingest_ready(client):
         return _UNAVAILABLE_OUTCOME
