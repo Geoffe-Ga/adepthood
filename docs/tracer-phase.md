@@ -100,12 +100,23 @@ disable the workflows in the Actions UI if you need the shutoff immediately.
 
 ## The priority scheme while this is in force
 
-- **P0** — on the tracer path. Nothing else may hold P0.
+- **P0** — on the tracer path, carrying the `tracer` label. Nothing else may
+  hold P0 in adepthood. Creek Vault additionally keeps four tier-safety
+  guardrails at P0 (#1031, #1106, #1212, #1529) because the tracer runs are what
+  push real journal content across the boundary those issues protect.
 - **P1** — has an open PR. Finish what is already in flight rather than
   stranding it.
-- **P3** — everything else, parked.
+- **P2** — real, hand-written work that is neither on the path nor in flight.
+- **P3** — parked: scan-generated findings, deferred epics, and anything
+  blocked on an upstream decision.
 
 `scripts/ralph/pick-next.sh` orders by `[priority tier, issue number ascending]`,
-so this puts the tracer path at the front of the queue by construction.
+so this puts the tracer path at the front of the queue by construction. Because
+P0 and P1 together are small and the fleet is idle, nothing reaches the P2/P3
+boundary during this phase — the distinction is kept because it carries real
+signal about relative value, not because it changes what runs next.
+
+Every open issue in both repositories now carries exactly one tier. The legacy
+`priority-high` / `priority-medium` / `priority-low` labels are retired.
 
 New issues are filed by hand, only from observed failures.
