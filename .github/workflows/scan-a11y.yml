@@ -8,8 +8,9 @@ name: "Scan: Accessibility audit"
 # queue-depth hopper uses to refill the Ralph backlog off-schedule.
 
 on:
-  schedule:
-    - cron: "0 8 3 * *"       # monthly (3rd) 08:00 UTC
+  # [tracer-phase] scheduled run disabled — see docs/tracer-phase.md
+  # schedule:
+  # - cron: "0 8 3 * *"       # monthly (3rd) 08:00 UTC
   workflow_dispatch:
     inputs:
       max_issues:

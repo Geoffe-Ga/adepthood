@@ -24,9 +24,10 @@ on:
       - "frontend/**"
       - "scripts/**"
       - ".github/workflows/graph-build.yml"
-  schedule:
-    # Nightly full rebuild (catches deletions the incremental path skips).
-    - cron: "40 4 * * *"
+  # [tracer-phase] scheduled run disabled — see docs/tracer-phase.md
+  # schedule:
+  # # Nightly full rebuild (catches deletions the incremental path skips).
+  # - cron: "40 4 * * *"
   workflow_dispatch:
 
 # contents: write for the rolling-release upsert and the benchmark-trend
