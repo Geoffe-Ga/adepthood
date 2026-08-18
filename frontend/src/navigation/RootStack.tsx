@@ -12,6 +12,7 @@ import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
+import VaultSettingsScreen from '../features/Settings/VaultSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
@@ -35,6 +36,7 @@ export type RootStackParamList = {
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   SupportCare: undefined;
+  VaultSettings: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
@@ -126,6 +128,11 @@ const RootStack = (): React.JSX.Element => (
       name="SupportCare"
       component={SupportCareScreen}
       options={{ title: 'Support & care' }}
+    />
+    <Stack.Screen
+      name="VaultSettings"
+      component={VaultSettingsScreen}
+      options={{ title: 'Private vault' }}
     />
     <Stack.Screen
       name="SharePreview"
