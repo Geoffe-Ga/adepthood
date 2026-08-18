@@ -33,6 +33,7 @@ module.exports = {
     '^expo-apple-authentication$': '<rootDir>/src/__mocks__/expo-apple-authentication.js',
     '^expo-auth-session/providers/google$': '<rootDir>/src/__mocks__/expo-auth-session-google.js',
     '^expo-web-browser$': '<rootDir>/src/__mocks__/expo-web-browser.js',
+    '^expo-document-picker$': '<rootDir>/src/__mocks__/expo-document-picker.js',
     '^expo-file-system$': '<rootDir>/src/__mocks__/expo-file-system.js',
     '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
     '^expo-screen-orientation$': '<rootDir>/src/__mocks__/expo-screen-orientation.js',
