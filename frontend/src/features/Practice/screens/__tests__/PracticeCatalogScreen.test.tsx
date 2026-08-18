@@ -31,7 +31,6 @@ const presetA: PracticeItem = {
   description: 'Anchor in the breath cycle.',
   instructions: '',
   default_duration_minutes: 10,
-  submitted_by_user_id: null,
   approved: true,
   mode: 'meditation_timer',
   mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
@@ -44,7 +43,6 @@ const presetB: PracticeItem = {
   description: 'A random-bell session.',
   instructions: '',
   default_duration_minutes: 20,
-  submitted_by_user_id: null,
   approved: true,
   mode: 'random_interval_bell',
   mode_config: {
@@ -63,7 +61,6 @@ const myDraft: PracticeItem = {
   description: 'Customized random bell.',
   instructions: '',
   default_duration_minutes: 15,
-  submitted_by_user_id: 42,
   approved: false,
   mode: 'random_interval_bell',
   mode_config: {
@@ -589,7 +586,6 @@ describe('PracticeCatalogScreen — cross-stage copy', () => {
     const createdDraft: PracticeItem = { ...presetA, id: 501, stage_number: 6, approved: false };
     const assignedCopy: UserPractice = {
       id: 1,
-      user_id: 9,
       practice_id: 501,
       stage_number: 6,
       start_date: '2026-07-15',
@@ -619,7 +615,6 @@ describe('PracticeCatalogScreen — cross-stage copy', () => {
     const createdDraft: PracticeItem = { ...presetA, id: 501, stage_number: 6, approved: false };
     const assignedCopy: UserPractice = {
       id: 1,
-      user_id: 9,
       practice_id: 501,
       stage_number: 6,
       start_date: '2026-07-15',

@@ -10,7 +10,6 @@ const practiceWithMode: PracticeItem = {
   description: 'A short reset.',
   instructions: 'Breathe in for four, out for six.',
   default_duration_minutes: 5,
-  submitted_by_user_id: null,
   approved: true,
   mode: 'meditation_timer',
   mode_config: { mode: 'meditation_timer', duration_minutes: 5 },
@@ -21,12 +20,10 @@ const createdDraft: PracticeItem = {
   id: 501,
   stage_number: 6,
   approved: false,
-  submitted_by_user_id: 9,
 };
 
 const assignedUserPractice: UserPractice = {
   id: 1,
-  user_id: 9,
   practice_id: 501,
   stage_number: 6,
   start_date: '2026-07-15',
