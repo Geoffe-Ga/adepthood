@@ -2028,11 +2028,9 @@ export interface PracticeItem {
   description: string;
   instructions: string;
   default_duration_minutes: number;
-  // Absent on the wire — the backend ``PracticeResponse`` omits it to avoid
-  // leaking who proposed a draft (BUG-PRACTICE-001 / BUG-SCHEMA-010). Optional
-  // here so callers don't assume a value the server never sends; see
-  // ``practiceItemSchema`` in ``schemas.ts``.
-  submitted_by_user_id?: number | null;
+  // ``submitted_by_user_id`` is intentionally absent — the backend
+  // ``PracticeResponse`` omits it to avoid leaking who proposed a draft
+  // (BUG-PRACTICE-001 / BUG-SCHEMA-010).
   approved: boolean;
   /** ritual-01: discriminator for ``mode_config``. Older fixtures may omit. */
   mode?: string;
@@ -2042,8 +2040,8 @@ export interface PracticeItem {
 
 export interface UserPractice {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   practice_id: number;
   stage_number: number;
   start_date: string;
@@ -2188,8 +2186,8 @@ export interface PracticeSessionCreate {
 
 export interface PracticeSessionResponse {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   user_practice_id: number;
   duration_minutes: number;
   timestamp: string;
@@ -2310,9 +2308,7 @@ export const userPractices = {
    *
    * Passing ``mode_config_override: null`` resets to the catalog default;
    * passing ``undefined`` (or omitting the field) leaves the existing
-   * override untouched. The endpoint is documented in ritual-03; until
-   * that PR lands, this client method targets the agreed-upon route so
-   * the frontend can be cut over with no extra refactor.
+   * override untouched. The endpoint is documented in ritual-03.
    */
   customize(
     userPracticeId: number,

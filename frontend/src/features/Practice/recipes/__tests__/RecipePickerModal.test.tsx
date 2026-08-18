@@ -64,7 +64,6 @@ const userRecipe: PracticeRecipe = {
 
 const userPracticeFixture: UserPractice = {
   id: 17,
-  user_id: 1,
   practice_id: 5,
   stage_number: 1,
   start_date: '2026-05-01',
