@@ -2310,9 +2310,7 @@ export const userPractices = {
    *
    * Passing ``mode_config_override: null`` resets to the catalog default;
    * passing ``undefined`` (or omitting the field) leaves the existing
-   * override untouched. The endpoint is documented in ritual-03; until
-   * that PR lands, this client method targets the agreed-upon route so
-   * the frontend can be cut over with no extra refactor.
+   * override untouched. The endpoint is documented in ritual-03.
    */
   customize(
     userPracticeId: number,
