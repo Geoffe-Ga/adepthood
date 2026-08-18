@@ -13,7 +13,6 @@ const samplePractice: PracticeItem = {
   description: 'A 5-minute reset under canopy.',
   instructions: 'Find a tree, place a palm on the bark, breathe.',
   default_duration_minutes: 5,
-  submitted_by_user_id: null,
   approved: true,
   mode: 'random_interval_bell',
   mode_config: {
@@ -27,7 +26,6 @@ const samplePractice: PracticeItem = {
 
 const assignedUserPractice: UserPractice = {
   id: 1,
-  user_id: 9,
   practice_id: 77,
   stage_number: 4,
   start_date: '2026-05-23',
@@ -39,12 +37,10 @@ const copiedDraft: PracticeItem = {
   id: 501,
   stage_number: 6,
   approved: false,
-  submitted_by_user_id: 9,
 };
 
 const copiedAssignment: UserPractice = {
   id: 2,
-  user_id: 9,
   practice_id: 501,
   stage_number: 6,
   start_date: '2026-07-15',

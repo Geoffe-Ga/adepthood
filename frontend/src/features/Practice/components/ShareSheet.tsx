@@ -3,8 +3,8 @@
  * share links and revoke outstanding ones.
  *
  * Owner-only by construction: the parent decides whether to mount the
- * sheet (typically by checking `practice.submitted_by_user_id === currentUserId`
- * or that the row is a preset). When mounted, the sheet:
+ * sheet (the wire carries no submitter id, so ownership is inferred from
+ * the listing the row came from). When mounted, the sheet:
  *
  * 1. Loads the existing active links via `practiceShare.list`.
  * 2. Offers a Mint form with two optional knobs (`expires_in_days`

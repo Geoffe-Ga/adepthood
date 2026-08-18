@@ -59,7 +59,6 @@ const validPractice = (over: Record<string, unknown> = {}) => ({
   description: 'desc',
   instructions: 'inst',
   default_duration_minutes: 5,
-  submitted_by_user_id: null,
   approved: true,
   ...over,
 });
