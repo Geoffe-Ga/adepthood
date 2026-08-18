@@ -360,12 +360,11 @@ describe('per-item paginated schemas', () => {
     description: 'desc',
     instructions: 'inst',
     default_duration_minutes: 10,
-    submitted_by_user_id: null,
     approved: true,
   };
 
   it('practiceItemSchema accepts valid (mode_config optional) and rejects drift', () => {
-    expect(practiceItemSchema.parse(practiceItem).submitted_by_user_id).toBeNull();
+    expect(practiceItemSchema.parse(practiceItem).name).toBe('Breath');
     expect(() =>
       practiceItemSchema.parse({ ...practiceItem, mode: 'meditation_timer', mode_config: {} }),
     ).not.toThrow();
@@ -375,14 +374,9 @@ describe('per-item paginated schemas', () => {
     expect(() => practiceItemSchema.parse({ ...practiceItem, name: undefined })).toThrow();
   });
 
-  it('practiceItemSchema accepts the live backend shape that omits submitted_by_user_id', () => {
-    // PracticeResponse deliberately excludes ``submitted_by_user_id``
-    // (BUG-PRACTICE-001 / BUG-SCHEMA-010) to avoid leaking who proposed a
-    // draft. The field is therefore ABSENT on the wire, not null. A
-    // ``.nullable()`` (non-optional) schema rejected ``undefined`` and made
-    // every catalog/practice fetch fail validation -> the "Something changed
-    // on the server" banner. The mode + mode_config keys are always present
-    // on the real response.
+  it('practiceItemSchema accepts the live backend shape (PracticeResponse)', () => {
+    // PracticeResponse excludes submitted_by_user_id (BUG-PRACTICE-001 /
+    // BUG-SCHEMA-010); mode + mode_config are always present.
     const wire = {
       id: 7,
       stage_number: 2,
@@ -395,8 +389,12 @@ describe('per-item paginated schemas', () => {
       mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
     };
     const parsed = practiceItemSchema.parse(wire);
-    expect(parsed.submitted_by_user_id).toBeUndefined();
     expect(parsed.name).toBe('Breath');
+  });
+
+  it('practiceItemSchema does not carry submitted_by_user_id through', () => {
+    const parsed = practiceItemSchema.parse({ ...practiceItem, submitted_by_user_id: 42 });
+    expect('submitted_by_user_id' in parsed).toBe(false);
   });
 
   // No user_id: the backend omits it from user-scoped responses (BUG-T7), so the
@@ -417,6 +415,11 @@ describe('per-item paginated schemas', () => {
     expect(() => userPracticeSchema.parse({ ...userPractice, start_date: undefined })).toThrow();
   });
 
+  it('userPracticeSchema does not carry user_id through', () => {
+    const parsed = userPracticeSchema.parse({ ...userPractice, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
+  });
+
   // No user_id — same OwnedResourcePublic (BUG-T7) contract as userPractice.
   const session = {
     id: 9,
@@ -432,6 +435,11 @@ describe('per-item paginated schemas', () => {
     expect(() =>
       practiceSessionResponseSchema.parse({ ...session, user_practice_id: undefined }),
     ).toThrow();
+  });
+
+  it('practiceSessionResponseSchema does not carry user_id through', () => {
+    const parsed = practiceSessionResponseSchema.parse({ ...session, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
   });
 });
 

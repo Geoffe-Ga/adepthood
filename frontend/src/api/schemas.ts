@@ -385,16 +385,9 @@ export const practiceItemSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   default_duration_minutes: z.number(),
-  // The backend ``PracticeResponse`` intentionally OMITS this field
-  // (BUG-PRACTICE-001 / BUG-SCHEMA-010): echoing the submitter's user id on
-  // a catalog GET turns the endpoint into a user-id enumeration oracle. The
-  // field is therefore ABSENT on the wire, not ``null``. ``.nullish()``
-  // (``number | null | undefined``) tolerates the absence; a plain
-  // ``.nullable()`` rejected the missing key and failed every practice fetch
-  // with ``ApiValidationError`` — the "Something changed on the server"
-  // banner on the Practice and Catalog screens. Keep this absent-tolerant
-  // unless the backend re-introduces the field.
-  submitted_by_user_id: z.number().int().nullish(),
+  // No ``submitted_by_user_id``: ``PracticeResponse`` omits it so a catalog
+  // GET can't become a user-id enumeration oracle (BUG-PRACTICE-001 /
+  // BUG-SCHEMA-010).
   approved: z.boolean(),
   mode: z.string().optional(),
   mode_config: z.record(z.string(), z.unknown()).optional(),
@@ -425,9 +418,7 @@ export const practiceRecipeSchema = z.object({
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   practice_id: z.number().int(),
   stage_number: z.number().int(),
   start_date: isoDate,
@@ -441,9 +432,7 @@ export const userPracticeSchema = z.object({
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
 export const practiceSessionResponseSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   user_practice_id: z.number().int(),
   duration_minutes: z.number(),
   timestamp: isoDateTime,
