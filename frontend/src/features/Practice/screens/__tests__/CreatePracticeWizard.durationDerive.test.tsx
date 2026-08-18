@@ -32,7 +32,6 @@ const meditationPractice: PracticeItem = {
   description: '',
   instructions: '',
   default_duration_minutes: 10,
-  submitted_by_user_id: 9,
   approved: false,
   mode: 'meditation_timer',
   mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
@@ -45,7 +44,6 @@ const metronomePractice: PracticeItem = {
   description: '',
   instructions: '',
   default_duration_minutes: 10,
-  submitted_by_user_id: 9,
   approved: false,
   mode: 'metronome',
   mode_config: {
@@ -216,7 +214,6 @@ describe('CreatePracticeWizard — Bug B: duration field hiding + derive', () =>
       description: '',
       instructions: '',
       default_duration_minutes: 10,
-      submitted_by_user_id: 9,
       approved: false,
       mode: 'rep_counter',
       mode_config: { mode: 'rep_counter', target_reps: 10, unit_label: 'reps' },
