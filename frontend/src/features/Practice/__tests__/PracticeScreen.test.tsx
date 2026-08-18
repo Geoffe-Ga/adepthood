@@ -25,7 +25,6 @@ const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => 
   description: 'Focus on the breath to develop concentration.',
   instructions: 'Sit comfortably and focus on your breathing.',
   default_duration_minutes: 10,
-  submitted_by_user_id: null,
   approved: true,
   mode: 'meditation_timer',
   mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
@@ -34,7 +33,6 @@ const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => 
 
 const sampleUserPractice = (overrides: Partial<UserPractice> = {}): UserPractice => ({
   id: 10,
-  user_id: 1,
   practice_id: 1,
   stage_number: 1,
   start_date: '2026-04-12',
@@ -421,7 +419,6 @@ describe('PracticeScreen', () => {
       id: 42,
       name: 'My Custom Sit',
       approved: false,
-      submitted_by_user_id: 1,
     });
     mockPracticesList.mockImplementation((options: unknown) => {
       const includeMine =
