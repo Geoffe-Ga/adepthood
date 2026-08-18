@@ -309,6 +309,35 @@ export const journalListResponseSchema = z.object({
 export const transcribePageSchema = z.object({ text: z.string() });
 export type TranscribePageT = z.infer<typeof transcribePageSchema>;
 
+/**
+ * What the vault did with one uploaded document — the wire strings of the
+ * backend's ``VaultUploadStatus``. All four are distinct outcomes with distinct
+ * remedies, so the enum is pinned rather than left as a bare string: a fifth
+ * value the client has no honest sentence for must surface as
+ * ``ApiValidationError`` rather than render as a blank row.
+ */
+export const vaultUploadStatusSchema = z.enum([
+  'accepted',
+  'vault_unavailable',
+  'capability_unsupported',
+  'degraded',
+]);
+export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
+
+/**
+ * One document's upload outcome. ``vault_ref`` is the vault's fragment handle,
+ * present only when the document was accepted; ``tags`` are what the vault's
+ * ingest pipeline assigned (empty is the expected answer today, not a failure);
+ * ``message`` is the backend's own self-serve sentence.
+ */
+export const uploadDocumentSchema = z.object({
+  status: vaultUploadStatusSchema,
+  vault_ref: z.string().nullable().optional(),
+  tags: z.array(z.string()),
+  message: z.string(),
+});
+export type UploadDocumentT = z.infer<typeof uploadDocumentSchema>;
+
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
 // The deep ``mode_config`` / ``mode_metadata`` payloads are validated

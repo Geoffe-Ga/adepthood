@@ -8,6 +8,7 @@ import { CreatePracticeWizard } from '../features/Practice/screens/CreatePractic
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
+import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
@@ -32,6 +33,7 @@ export interface CreatePracticePrefill {
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<RootTabParamList>;
   Settings: undefined;
+  SeedCorpus: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   SupportCare: undefined;
@@ -112,6 +114,11 @@ const RootStack = (): React.JSX.Element => (
   <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
     <Stack.Screen name="Settings" component={SettingsHubScreen} options={{ title: 'Settings' }} />
+    <Stack.Screen
+      name="SeedCorpus"
+      component={SeedCorpusScreen}
+      options={{ title: 'Your corpus' }}
+    />
     <Stack.Screen
       name="ApiKeySettings"
       component={ApiKeySettingsScreen}
