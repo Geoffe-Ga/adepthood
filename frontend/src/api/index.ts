@@ -37,6 +37,7 @@ import {
   timezoneReadSchema,
   transcribePageSchema,
   uiFlagsSchema,
+  uploadDocumentSchema,
   wheelBalanceSchema,
   type AcceptSuggestionResultT,
   type CareKindT,
@@ -67,6 +68,7 @@ import {
   type Tier,
   type TimezoneReadT,
   type TranscribePageT,
+  type UploadDocumentT,
   type WheelBalanceT,
 } from './schemas';
 
@@ -140,6 +142,9 @@ export class ApiTimeoutError extends Error {
 /** Transcribed-text result envelope, re-exported for callers of `journal.transcribePage`. */
 export type { TranscribePageT } from './schemas';
 
+/** Vault upload outcome, re-exported for callers of `journal.uploadDocument`. */
+export type { UploadDocumentT, VaultUploadStatusT } from './schemas';
+
 /** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 
@@ -181,6 +186,40 @@ export class TranscriptionError extends Error {
     // stamp an explicit `undefined` cause instead of leaving it unset.
     super(`transcription failed: ${kind}`, cause === undefined ? undefined : { cause });
     this.name = 'TranscriptionError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+/**
+ * The stable, UI-facing failure taxonomy for a document upload. A vault that is
+ * missing, out of date, or degraded is NOT in here: those are 202 outcomes the
+ * caller renders from {@link UploadDocumentT.status}. Only a request that never
+ * produced an outcome lands here.
+ */
+export type DocumentUploadErrorKind =
+  'too_large' | 'invalid_document' | 'rate_limited' | 'network' | 'timeout' | 'unknown';
+
+/**
+ * Upload timeout: 120s, four times {@link FETCH_TIMEOUT_MS}. A 10 MB document
+ * encodes to ~13 MB of JSON and is then forwarded to the vault, so the default
+ * 30s would abort uploads that are simply large rather than stuck.
+ */
+export const UPLOAD_DOCUMENT_TIMEOUT_MS = 120_000;
+
+/**
+ * Typed failure for {@link journal.uploadDocument}. PRIVACY: the message is a
+ * static per-`kind` string and never interpolates the base64 document or the
+ * filename, so it is safe to log or surface. The originating error is preserved
+ * on `cause` for diagnostics.
+ */
+export class DocumentUploadError extends Error {
+  kind: DocumentUploadErrorKind;
+  status: number | null;
+
+  constructor(kind: DocumentUploadErrorKind, status: number | null, cause?: unknown) {
+    super(`document upload failed: ${kind}`, cause === undefined ? undefined : { cause });
+    this.name = 'DocumentUploadError';
     this.kind = kind;
     this.status = status;
   }
@@ -1435,6 +1474,44 @@ function toTranscriptionError(err: unknown): TranscriptionError {
   return new TranscriptionError('unknown', status, err);
 }
 
+/** HTTP statuses the upload endpoint answers with, mapped to a stable kind. */
+const UPLOAD_STATUS_KINDS: Record<number, DocumentUploadErrorKind> = {
+  413: 'too_large',
+  422: 'invalid_document',
+  429: 'rate_limited',
+  0: 'network',
+};
+
+/**
+ * Map any thrown error to a {@link DocumentUploadError} without ever touching the
+ * request body, so the document's bytes cannot leak into a message or a log.
+ */
+function toDocumentUploadError(err: unknown): DocumentUploadError {
+  if (err instanceof ApiTimeoutError) {
+    return new DocumentUploadError('timeout', null, err);
+  }
+  if (err instanceof ApiError) {
+    return new DocumentUploadError(UPLOAD_STATUS_KINDS[err.status] ?? 'unknown', err.status, err);
+  }
+  // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
+  // the core client does not retry) rather than the synthesized ApiError(0).
+  if (err instanceof TypeError && err.message.toLowerCase().includes('network')) {
+    return new DocumentUploadError('network', null, err);
+  }
+  const status = err instanceof ApiValidationError ? err.status : null;
+  return new DocumentUploadError('unknown', status, err);
+}
+
+/** One document handed to the vault: its own name, its bytes, and its tier. */
+export interface UploadDocumentInput {
+  /** The document's own name; its extension selects the vault's ingestor. */
+  filename: string;
+  /** The document's bytes, base64-encoded — never logged, never persisted. */
+  contentBase64: string;
+  /** The privacy tier the uploader chose, honored end to end. */
+  classification: JournalClassification;
+}
+
 export const journal = {
   list(params: JournalListParams = {}, token?: string): Promise<JournalListResponse> {
     const query = new URLSearchParams();
@@ -1503,6 +1580,33 @@ export const journal = {
       });
     } catch (err: unknown) {
       throw toTranscriptionError(err);
+    }
+  },
+  /**
+   * Hand one document to the Creek Vault for its own ingestors to parse. The
+   * transport is base64-in-JSON, deliberately never multipart — the backend
+   * carries no form-file surface and a privacy test fails the build on one.
+   *
+   * Stateless: nothing is persisted on this side, and every vault outcome
+   * (including "your vault cannot take files yet") arrives as a 202 whose
+   * ``status`` the caller renders. A thrown {@link DocumentUploadError} means
+   * the request produced no outcome at all. PRIVACY: the bytes never enter an
+   * error message or a log line.
+   */
+  async uploadDocument(
+    { filename, contentBase64, classification }: UploadDocumentInput,
+    token?: string,
+  ): Promise<UploadDocumentT> {
+    try {
+      return await request<UploadDocumentT>('/journal/upload', {
+        method: 'POST',
+        body: { filename, content_base64: contentBase64, classification },
+        token,
+        timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
+        schema: uploadDocumentSchema as unknown as z.ZodType<UploadDocumentT>,
+      });
+    } catch (err: unknown) {
+      throw toDocumentUploadError(err);
     }
   },
 };
@@ -2028,11 +2132,9 @@ export interface PracticeItem {
   description: string;
   instructions: string;
   default_duration_minutes: number;
-  // Absent on the wire — the backend ``PracticeResponse`` omits it to avoid
-  // leaking who proposed a draft (BUG-PRACTICE-001 / BUG-SCHEMA-010). Optional
-  // here so callers don't assume a value the server never sends; see
-  // ``practiceItemSchema`` in ``schemas.ts``.
-  submitted_by_user_id?: number | null;
+  // ``submitted_by_user_id`` is intentionally absent — the backend
+  // ``PracticeResponse`` omits it to avoid leaking who proposed a draft
+  // (BUG-PRACTICE-001 / BUG-SCHEMA-010).
   approved: boolean;
   /** ritual-01: discriminator for ``mode_config``. Older fixtures may omit. */
   mode?: string;
@@ -2042,8 +2144,8 @@ export interface PracticeItem {
 
 export interface UserPractice {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   practice_id: number;
   stage_number: number;
   start_date: string;
@@ -2188,8 +2290,8 @@ export interface PracticeSessionCreate {
 
 export interface PracticeSessionResponse {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   user_practice_id: number;
   duration_minutes: number;
   timestamp: string;
@@ -2310,9 +2412,7 @@ export const userPractices = {
    *
    * Passing ``mode_config_override: null`` resets to the catalog default;
    * passing ``undefined`` (or omitting the field) leaves the existing
-   * override untouched. The endpoint is documented in ritual-03; until
-   * that PR lands, this client method targets the agreed-upon route so
-   * the frontend can be cut over with no extra refactor.
+   * override untouched. The endpoint is documented in ritual-03.
    */
   customize(
     userPracticeId: number,

@@ -2,6 +2,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ChevronRight,
+  FolderUp,
   Globe,
   KeyRound,
   LifeBuoy,
@@ -129,6 +130,23 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
+/**
+ * Corpus group: the way in for writing that already exists elsewhere. Phrased
+ * as an offer, not a task — the journal works fine on its own, and this only
+ * widens what reflections can draw on for people who want that.
+ */
+const CorpusSection = ({ onSeedCorpus }: { onSeedCorpus: () => void }): React.JSX.Element => (
+  <EditorialSection title="Your corpus" testID="settings-group-corpus">
+    <SettingsRow
+      icon={FolderUp}
+      label="Bring in your writing"
+      description="Add notes, exports, and documents you have already written elsewhere."
+      onPress={onSeedCorpus}
+      testID="settings-row-seed-corpus"
+    />
+  </EditorialSection>
+);
+
 /** Session group: the destructive log-out action. */
 const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Element => (
   <EditorialSection title="Session" testID="settings-group-session">
@@ -163,6 +181,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
+  const openSeedCorpus = useCallback(() => navigation.navigate('SeedCorpus'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -173,6 +192,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <CorpusSection onSeedCorpus={openSeedCorpus} />
       <PrivacySection />
       <ChooseDepthsSection />
       <SessionSection onLogout={onLogout} />

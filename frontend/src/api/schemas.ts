@@ -309,6 +309,35 @@ export const journalListResponseSchema = z.object({
 export const transcribePageSchema = z.object({ text: z.string() });
 export type TranscribePageT = z.infer<typeof transcribePageSchema>;
 
+/**
+ * What the vault did with one uploaded document — the wire strings of the
+ * backend's ``VaultUploadStatus``. All four are distinct outcomes with distinct
+ * remedies, so the enum is pinned rather than left as a bare string: a fifth
+ * value the client has no honest sentence for must surface as
+ * ``ApiValidationError`` rather than render as a blank row.
+ */
+export const vaultUploadStatusSchema = z.enum([
+  'accepted',
+  'vault_unavailable',
+  'capability_unsupported',
+  'degraded',
+]);
+export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
+
+/**
+ * One document's upload outcome. ``vault_ref`` is the vault's fragment handle,
+ * present only when the document was accepted; ``tags`` are what the vault's
+ * ingest pipeline assigned (empty is the expected answer today, not a failure);
+ * ``message`` is the backend's own self-serve sentence.
+ */
+export const uploadDocumentSchema = z.object({
+  status: vaultUploadStatusSchema,
+  vault_ref: z.string().nullable().optional(),
+  tags: z.array(z.string()),
+  message: z.string(),
+});
+export type UploadDocumentT = z.infer<typeof uploadDocumentSchema>;
+
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
 // The deep ``mode_config`` / ``mode_metadata`` payloads are validated
@@ -385,16 +414,9 @@ export const practiceItemSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   default_duration_minutes: z.number(),
-  // The backend ``PracticeResponse`` intentionally OMITS this field
-  // (BUG-PRACTICE-001 / BUG-SCHEMA-010): echoing the submitter's user id on
-  // a catalog GET turns the endpoint into a user-id enumeration oracle. The
-  // field is therefore ABSENT on the wire, not ``null``. ``.nullish()``
-  // (``number | null | undefined``) tolerates the absence; a plain
-  // ``.nullable()`` rejected the missing key and failed every practice fetch
-  // with ``ApiValidationError`` — the "Something changed on the server"
-  // banner on the Practice and Catalog screens. Keep this absent-tolerant
-  // unless the backend re-introduces the field.
-  submitted_by_user_id: z.number().int().nullish(),
+  // No ``submitted_by_user_id``: ``PracticeResponse`` omits it so a catalog
+  // GET can't become a user-id enumeration oracle (BUG-PRACTICE-001 /
+  // BUG-SCHEMA-010).
   approved: z.boolean(),
   mode: z.string().optional(),
   mode_config: z.record(z.string(), z.unknown()).optional(),
@@ -425,9 +447,7 @@ export const practiceRecipeSchema = z.object({
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   practice_id: z.number().int(),
   stage_number: z.number().int(),
   start_date: isoDate,
@@ -441,9 +461,7 @@ export const userPracticeSchema = z.object({
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
 export const practiceSessionResponseSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   user_practice_id: z.number().int(),
   duration_minutes: z.number(),
   timestamp: isoDateTime,

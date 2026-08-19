@@ -26,7 +26,6 @@ const createdPractice: PracticeItem = {
   description: '',
   instructions: '',
   default_duration_minutes: 20,
-  submitted_by_user_id: 9,
   approved: false,
   mode: 'random_interval_bell',
   mode_config: {
@@ -40,7 +39,6 @@ const createdPractice: PracticeItem = {
 
 const createdUserPractice: UserPractice = {
   id: 4242,
-  user_id: 9,
   practice_id: 501,
   stage_number: 4,
   start_date: '2026-05-23',
