@@ -56,7 +56,16 @@ jobs:
         # job that talks to the network. The version comes from the repo's own
         # pins as a constraint rather than being restated here, so this job can
         # never quietly fetch with a different httpx than the app ships.
-        run: pip install -c backend/requirements.txt httpx
+        #
+        # The extras are stripped first because pip refuses a constraints file
+        # containing any ("Constraints cannot have extras"), and one pin grew a
+        # set. Stripping rather than dropping the offending lines: a constraint
+        # file's whole job is to bound versions, extras say nothing about a
+        # version, and a filter that removed lines would quietly unpin whatever
+        # it removed.
+        run: |
+          sed -E 's/\[[^]]*\]//' backend/requirements.txt > /tmp/creek-drift-constraints.txt
+          pip install -c /tmp/creek-drift-constraints.txt httpx
 
       - name: Compare the vendored bundle against what Creek publishes today
         working-directory: backend
