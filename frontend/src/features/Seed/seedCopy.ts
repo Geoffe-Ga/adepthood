@@ -16,8 +16,13 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   uploading: 'Going over now…',
   ingested: 'In your vault. It will show up in reflections from here on.',
   vault_unavailable: "Your vault didn't answer. Check that it's running, then send this again.",
+  // Said whether the vault is the one without uploads or Adepthood is, because
+  // the backend answers a single status for both and neither the app nor the
+  // person can tell them apart from here. Naming only the vault would send
+  // someone to update software that may already be current.
   capability_unsupported:
-    "Your vault doesn't take files yet. Update it when you like, and this will go through.",
+    "Uploads aren't working between Adepthood and your vault yet. Keep this one — it can " +
+    'go over once either side has caught up.',
   degraded: "This didn't finish, and nothing in your vault changed. You can send it again.",
   unsupported_format: 'Your vault has no reader for this kind of file yet.',
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,

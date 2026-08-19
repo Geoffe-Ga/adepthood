@@ -6492,7 +6492,7 @@
         "type": "object"
       },
       "VaultUploadStatus": {
-        "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"your vault cannot\ntake files yet\", and ``DEGRADED`` is \"it broke, try again\". Values are the\nwire strings the API answers with, so they are contract and must not be\nreworded casually.",
+        "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"uploads do not\nwork between these two versions yet\", and ``DEGRADED`` is \"it broke, try\nagain\". Values are the wire strings the API answers with, so they are\ncontract and must not be reworded casually.\n\n``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is\nbehind. Either side can be: a vault too old to take files, or a vault\noffering an upload route this client recognises but cannot yet speak. What\nthe user needs from the status is the same in both -- that no retry helps --\nand splitting it would add a fourth wire value every consumer of this enum\nwould have to learn before it could render anything at all.",
         "enum": [
           "accepted",
           "vault_unavailable",

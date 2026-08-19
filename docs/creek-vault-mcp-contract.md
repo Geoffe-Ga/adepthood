@@ -328,9 +328,15 @@ capability is still used for the others it supports:
   an upload has **no local system of record** — if the vault will not
   take the document, it went nowhere, and the user has to be told which
   problem they have. An unreachable vault reports `VAULT_UNAVAILABLE`,
-  a reachable vault that never advertised the capability reports
-  `CAPABILITY_UNSUPPORTED`, and a call that failed mid-flight (or
-  answered without durably storing) reports `DEGRADED`. All three are
+  and a call that failed mid-flight (or answered without durably
+  storing) reports `DEGRADED`. `CAPABILITY_UNSUPPORTED` covers every way
+  the capability turns out to be unavailable: a vault that never
+  advertised it, a vault that withdrew it between the handshake and the
+  call, and a vault advertising an upload route adepthood recognises but
+  cannot yet speak. The three are one status because they are one fact
+  to the person waiting — uploads do not work between these two
+  versions, and no retry changes that — while `DEGRADED` means the
+  opposite, that another attempt may well succeed. All three are
   answered as a `202` carrying the status and a self-serve message —
   never a 5xx, since an optional integration being absent is not a
   server fault. As with JOURNAL, **a failed upload is dropped, not
