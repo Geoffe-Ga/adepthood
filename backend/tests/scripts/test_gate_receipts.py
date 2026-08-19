@@ -58,6 +58,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -262,6 +263,20 @@ _DEGENERATE_MESSAGE_MARKERS = ("path", "match")
 
 # Well-formed-looking names that must be rejected before any interpolation.
 _INVALID_GATE_NAMES = ("../escape", "back end", "Backend", "back/end", "")
+
+# git's own directory is left out of every tree snapshot below, and has to be.
+# `git commit` leaves a detached `git maintenance run --auto` running behind it,
+# and that process creates and then removes `.git/objects/maintenance.lock` on a
+# schedule no test controls, so a listing that descended into `.git` would be
+# comparing git's private bookkeeping rather than anything a script did. Nothing
+# under `.git` is this script's to touch in the first place: it reads the tree by
+# asking git, and writes only into the receipts directory.
+_GIT_DIR_NAME = ".git"
+_MAINTENANCE_LOCK = Path(_GIT_DIR_NAME) / "objects" / "maintenance.lock"
+
+# A receipt-shaped file in a place no gate may write one: planted by hand to
+# show the snapshot below still notices a file that should not be there.
+_LEAKED_FILE = Path("backend") / "src" / "leaked.receipt"
 
 _PIP_SHIM = """#!/usr/bin/env bash
 if [ "${{1:-}}" = "freeze" ]; then
@@ -711,6 +726,33 @@ def checkout(tmp_path: Path) -> _Checkout:
         The staged checkout under test.
     """
     return _stage_checkout(tmp_path)
+
+
+def _tree_snapshot(root: Path) -> dict[Path, int | None]:
+    """Return everything a checkout holds, keyed by path and sized.
+
+    The size travels with each path so the snapshot notices a file rewritten in
+    place, not only one created or removed. git's own directory is skipped for
+    the reason recorded at ``_GIT_DIR_NAME``: a detached maintenance process
+    edits it on its own schedule, and comparing that would decide the invariant
+    by a race rather than by the code.
+
+    Args:
+        root: Checkout root to list.
+
+    Returns:
+        A mapping of checkout-relative path to size in bytes, or ``None`` for a
+        directory. Symlinks are measured without being followed, so a broken one
+        is recorded rather than raising.
+    """
+    snapshot: dict[Path, int | None] = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if _GIT_DIR_NAME in relative.parts:
+            continue
+        info = path.lstat()
+        snapshot[relative] = None if stat.S_ISDIR(info.st_mode) else info.st_size
+    return snapshot
 
 
 def _receipt_field(text: str, key: str) -> str:
@@ -1569,7 +1611,7 @@ def test_an_invalid_gate_name_is_rejected_before_any_path_is_touched(
         checkout: The staged checkout.
         name: A malformed gate name.
     """
-    before = sorted(path.relative_to(checkout.root) for path in checkout.root.rglob("*"))
+    before = _tree_snapshot(checkout.root)
 
     result = checkout.run(_CHECK_COMMAND, name)
 
@@ -1577,11 +1619,69 @@ def test_an_invalid_gate_name_is_rejected_before_any_path_is_touched(
         f"the malformed gate name {name!r} must exit {_CANNOT_EVALUATE_EXIT_CODE}; "
         f"got exit {result.returncode} with stderr: {result.stderr!r}"
     )
-    after = sorted(path.relative_to(checkout.root) for path in checkout.root.rglob("*"))
-    assert after == before, (
+    assert _tree_snapshot(checkout.root) == before, (
         f"the malformed gate name {name!r} changed the tree; a rejected name "
-        "must not create, read, or remove anything"
+        "must not create, remove, or rewrite anything"
     )
+
+
+def test_the_tree_snapshot_ignores_gits_own_background_bookkeeping(
+    checkout: _Checkout,
+) -> None:
+    """Git editing its own directory is not the script touching the tree.
+
+    Every ``git commit`` this fixture makes leaves a detached
+    ``git maintenance run --auto`` behind it, which takes and releases
+    ``.git/objects/maintenance.lock`` whenever it gets around to it. Listing
+    that directory made the untouched-tree assertion above a coin flip on the
+    timing of a process no test starts or waits for, so it is excluded and this
+    test is what holds the exclusion in place.
+
+    Args:
+        checkout: The staged checkout.
+    """
+    before = _tree_snapshot(checkout.root)
+
+    (checkout.root / _MAINTENANCE_LOCK).touch()
+
+    assert _tree_snapshot(checkout.root) == before, (
+        "a lock file git writes inside its own directory must not read as a "
+        "change to the tree the script is answerable for"
+    )
+
+
+def test_the_tree_snapshot_notices_every_way_the_tree_could_be_touched(
+    checkout: _Checkout,
+) -> None:
+    """Excluding ``.git`` must cost the untouched-tree assertion none of its teeth.
+
+    A snapshot narrowed until it proves nothing would be worse than the flake it
+    replaced, because the assertion it backs is the guard that a traversal-shaped
+    gate name never reaches the filesystem. So each way a script could touch the
+    tree - writing a file, removing one, rewriting one in place - is shown here
+    to move the snapshot.
+
+    Args:
+        checkout: The staged checkout.
+    """
+    before = _tree_snapshot(checkout.root)
+
+    leaked = checkout.root / _LEAKED_FILE
+    leaked.write_text(_MODULE_TEXT)
+    assert _tree_snapshot(checkout.root) != before, "a created file must be noticed"
+    leaked.unlink()
+
+    deletable = checkout.root / _DELETABLE_FILE
+    deletable.unlink()
+    assert _tree_snapshot(checkout.root) != before, "a removed file must be noticed"
+    deletable.write_text(_MODULE_TEXT)
+    assert _tree_snapshot(checkout.root) == before, (
+        "restoring the tree exactly must restore the snapshot exactly, or the "
+        "comparison above proves nothing about what changed"
+    )
+
+    (checkout.root / _SOURCE_FILE).write_text(f"{_MODULE_TEXT}{_MUTATION_TEXT}")
+    assert _tree_snapshot(checkout.root) != before, "a file rewritten in place must be noticed"
 
 
 def test_an_unregistered_gate_name_cannot_be_evaluated(checkout: _Checkout) -> None:
