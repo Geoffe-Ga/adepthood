@@ -6,7 +6,7 @@ bandit==1.9.4
 interrogate==1.7.0
 isort==8.0.1
 mypy==2.3.0
-pre-commit==4.6.1
+pre-commit==4.6.2
 pytest==9.1.1
 pytest-cov==7.1.0
 # Distributes the ~3k-test suite across cores. Measured on 4 cores: 15m58s
@@ -17,7 +17,7 @@ pytest-xdist==3.8.0
 # Type stubs for the runtime jsonschema dependency (issues #389/#390).
 types-jsonschema==4.26.0.20260518
 radon==6.0.1
-ruff==0.16.1
+ruff==0.16.2
 vulture==2.16
 xenon==0.9.3
 pydantic==2.13.4
