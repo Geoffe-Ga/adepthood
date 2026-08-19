@@ -24,6 +24,69 @@
         "title": "AcceptSuggestionResponse",
         "type": "object"
       },
+      "AccountDeletionReceipt": {
+        "description": "What the erasure reached, stated plainly enough to show a user.\n\n``erased`` / ``anonymised`` / ``retained`` are the table names the policy\nclassified, not row contents. They are returned so the client can render an\nhonest \"here is what happens\" panel from the server's own policy instead of\nfrom prose that drifts away from it.",
+        "properties": {
+          "anonymised": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Anonymised",
+            "type": "array"
+          },
+          "erased": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Erased",
+            "type": "array"
+          },
+          "recoverable": {
+            "title": "Recoverable",
+            "type": "boolean"
+          },
+          "retained": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retained",
+            "type": "array"
+          },
+          "rows_erased": {
+            "title": "Rows Erased",
+            "type": "integer"
+          },
+          "vault": {
+            "$ref": "#/components/schemas/VaultDisposition"
+          }
+        },
+        "required": [
+          "recoverable",
+          "rows_erased",
+          "erased",
+          "anonymised",
+          "retained",
+          "vault"
+        ],
+        "title": "AccountDeletionReceipt",
+        "type": "object"
+      },
+      "AccountDeletionRequest": {
+        "description": "Explicit, typed confirmation that the caller means to be erased.\n\nThe caller retypes their own email address. A confirmation the client could\nsynthesise (a boolean, a fixed word) would make an accidental or replayed\nrequest indistinguishable from a deliberate one; an address the user has to\nread off their own account cannot be produced by a mis-tap.",
+        "properties": {
+          "confirm_email": {
+            "maxLength": 254,
+            "minLength": 1,
+            "title": "Confirm Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm_email"
+        ],
+        "title": "AccountDeletionRequest",
+        "type": "object"
+      },
       "AdminUserSummary": {
         "description": "Everything the operator needs about one account, in a single call.\n\nDeliberately a read-only aggregate: the point is to replace a SQL console\nsession, so it gathers the entitlement, wallet and purchase pictures that\nwould otherwise require three separate queries against three tables.",
         "properties": {
@@ -6489,6 +6552,30 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VaultDisposition": {
+        "description": "What the deletion did — and did not do — outside adepthood.",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "guidance": {
+            "title": "Guidance",
+            "type": "string"
+          },
+          "purged": {
+            "title": "Purged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "purged",
+          "guidance"
+        ],
+        "title": "VaultDisposition",
         "type": "object"
       },
       "VaultUploadStatus": {
@@ -13824,6 +13911,66 @@
         "summary": "Get Usage",
         "tags": [
           "botmason"
+        ]
+      }
+    },
+    "/users/me": {
+      "delete": {
+        "description": "Erase the authenticated caller's account and personal data, irreversibly.\n\nThe subject is resolved from the JWT alone — there is no ``user_id`` in the\npath or the body — so this route cannot be pointed at anybody else. The\ncaller retypes their own email address as confirmation; a mismatch is a 400\nand touches nothing.\n\nThe response enumerates the tables erased, the ones that survive with the\naccount's name cleared off them, and what a user with a Creek Vault still\nhas to purge themselves. Nothing here calls the vault, so an unreachable\none cannot delay or block the erasure.",
+        "operationId": "delete_my_account_users_me_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Account",
+        "tags": [
+          "users"
         ]
       }
     },

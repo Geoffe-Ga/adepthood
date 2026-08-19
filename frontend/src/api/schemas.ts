@@ -113,6 +113,27 @@ export const timezoneReadSchema = z.object({
 export type TimezoneReadT = z.infer<typeof timezoneReadSchema>;
 
 /**
+ * Response for ``DELETE /users/me``: the receipt the server issues once an
+ * account and its data are gone. ``erased`` / ``anonymised`` / ``retained``
+ * are table names from the server's own deletion policy, so the confirmation
+ * screen can report what actually happened rather than prose that drifts.
+ */
+export const accountDeletionReceiptSchema = z.object({
+  recoverable: z.boolean(),
+  rows_erased: z.number().int().nonnegative(),
+  erased: z.array(z.string()),
+  anonymised: z.array(z.string()),
+  retained: z.array(z.string()),
+  vault: z.object({
+    configured: z.boolean(),
+    purged: z.boolean(),
+    guidance: z.string(),
+  }),
+});
+
+export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchema>;
+
+/**
  * Response for ``POST /auth/password-reset/request``.  Always 202 with
  * the same body shape regardless of whether the email is registered --
  * the message is the SPEC R4 anti-enumeration constant.

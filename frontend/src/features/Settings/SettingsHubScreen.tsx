@@ -7,6 +7,7 @@ import {
   LifeBuoy,
   LogOut,
   ShieldCheck,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react-native';
 import React, { useCallback } from 'react';
@@ -129,8 +130,18 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
-/** Session group: the destructive log-out action. */
-const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Element => (
+interface SessionSectionProps {
+  onLogout: () => void;
+  onDeleteAccount: () => void;
+}
+
+/**
+ * Session group: the destructive log-out action, and below it the permanent
+ * one. Account deletion lives here rather than behind a support email because
+ * App Store Guideline 5.1.1(v) requires the path to be inside the app — and
+ * because a journal you cannot leave is not one you fully own.
+ */
+const SessionSection = ({ onLogout, onDeleteAccount }: SessionSectionProps): React.JSX.Element => (
   <EditorialSection title="Session" testID="settings-group-session">
     <SettingsRow
       icon={LogOut}
@@ -138,6 +149,14 @@ const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Eleme
       description="Sign out of Adepthood on this device."
       onPress={onLogout}
       testID="settings-row-logout"
+      destructive
+    />
+    <SettingsRow
+      icon={Trash2}
+      label="Delete account"
+      description="Erase your account and everything in it. This cannot be undone."
+      onPress={onDeleteAccount}
+      testID="settings-row-delete-account"
       destructive
     />
   </EditorialSection>
@@ -163,6 +182,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
+  const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -175,7 +195,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
       <PrivacySection />
       <ChooseDepthsSection />
-      <SessionSection onLogout={onLogout} />
+      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
     </ScreenScaffold>
   );

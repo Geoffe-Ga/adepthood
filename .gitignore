@@ -59,8 +59,12 @@ __pycache__/
 *$py.class
 
 # Virtual environments
+# No trailing slash on .venv: a git worktree gets its interpreter as a *symlink*
+# back to the main checkout's .venv, and a directory-only pattern does not match
+# a symlink -- so every worktree showed an untracked .venv until this line lost
+# its slash.
 .env/
-.venv/
+.venv
 venv/
 ENV/
 env/

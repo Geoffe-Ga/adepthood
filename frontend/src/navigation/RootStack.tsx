@@ -9,6 +9,7 @@ import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCata
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
+import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -34,6 +35,7 @@ export type RootStackParamList = {
   Settings: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
+  DeleteAccount: undefined;
   SupportCare: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
@@ -121,6 +123,11 @@ const RootStack = (): React.JSX.Element => (
       name="TimezoneSettings"
       component={TimezoneSettingsScreen}
       options={{ title: 'Time zone' }}
+    />
+    <Stack.Screen
+      name="DeleteAccount"
+      component={DeleteAccountScreen}
+      options={{ title: 'Delete account' }}
     />
     <Stack.Screen
       name="SupportCare"
