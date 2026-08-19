@@ -1,10 +1,16 @@
 {
   "capabilities": [],
-  "contract_minor": "0.2",
-  "contract_version": "0.2.0",
+  "contract_minor": "0.8",
+  "contract_version": "0.8.0",
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "status": "uninitialized",
   "supported_contract_minors": [
+    "0.8",
+    "0.7",
+    "0.6",
+    "0.5",
+    "0.4",
+    "0.3",
     "0.2"
   ],
   "tier_model": {

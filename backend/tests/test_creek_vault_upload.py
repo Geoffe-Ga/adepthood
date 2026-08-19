@@ -75,6 +75,20 @@ _VAULT_API_KEY = "creek-vault-upload-path-key"  # pragma: allowlist secret
 # routed handler below can tell a handshake apart from the upload under test.
 _CAPABILITIES_SEGMENT = "/v1/capabilities"
 
+# Creek's own published capability names, written out rather than read back
+# through the adapter's translation table: a test that sourced its wire names
+# from the mapping under test would agree with that mapping no matter what it
+# said. ``upload`` joined the list at contract 0.8.0 and is the one name whose
+# advertisement depends on the caller's declared minor.
+_UPLOAD_WIRE_NAME = "upload"
+_ADVERTISED_WIRE_NAMES = (
+    "capabilities",
+    "journal-upsert",
+    "reflections",
+    "wheel",
+    _UPLOAD_WIRE_NAME,
+)
+
 # Distinctive enough to spot anywhere it must not appear: a repr, a log record,
 # or an exception message. The bytes a user uploads are the most private thing
 # this seam touches, so "absent by construction" is asserted, not assumed.
@@ -547,48 +561,84 @@ def _stored_payload(
 
 
 class TestHttpClientUploadRefuses:
-    """There is no ``/v1`` upload surface, so the adapter refuses rather than guessing.
+    """The route exists now; this adapter has not been built onto it, so it still refuses.
 
     This class used to drive a ``PUT`` against ``/v1/uploads/{external_id}`` — a
-    route Creek has never served. The ratified ``/v1`` capability vocabulary is a
-    closed enum of exactly four names (``capabilities``, ``journal-upsert``,
-    ``reflections``, ``wheel``) under ``additionalProperties: false``, identical
-    across every supported contract minor. No upload name, no upload schema, no
-    upload route.
+    route Creek has never served — and the refusal replaced that guessed wire
+    shape. Refusing rather than guessing still holds. The *reason* it used to
+    give does not: the published capability vocabulary was a closed enum of four
+    names, the same four answered to every caller on every supported contract
+    minor, so the claim was that no conformant vault could ever advertise an
+    upload at all.
 
-    ``creek.upload`` does exist, as an **MCP tool** at contract 0.3.0
-    (Geoffe-Ga/Creek-Vault#1023, closed) — on the transport ADR 0004 retired.
-    Reaching it is a transport decision, not a parsing one, so it is not marked
-    xfail here: an xfail would name a *closed* upstream issue and could never
-    flip green.
+    Contract 0.8.0 falsifies that. ``upload`` is a published fifth name,
+    ``POST /v1/uploads`` is its route, and — this being the first bump whose
+    capability list is not minor-independent — the advertisement is keyed on the
+    caller's declared minor: a client below ``0.8`` is not shown it and is
+    refused the route with ``incompatible_version``.
+
+    So the refusal survives on a narrower and truer claim: adepthood recognises
+    the wire name but has not implemented the call. Recognising and calling are
+    separate changes; only the first is made here, and the tests below pin the
+    seam between them so the two cannot silently merge into one.
     """
 
     @pytest.mark.asyncio
-    async def test_upload_refuses_and_names_the_capability(
+    async def test_upload_refuses_even_when_the_vault_advertises_the_route(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Refusing beats inventing a wire shape, which is this seam's whole discipline."""
+        """The refusal is adepthood's own, not a capability gate the vault happened to trip."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
-            http_client=vault_http_clients(_routed_handler(_stored_payload())),
+            http_client=vault_http_clients(
+                _routed_handler(_stored_payload(), capabilities=list(_ADVERTISED_WIRE_NAMES))
+            ),
         )
         await client.handshake()
 
+        assert client.supports(CreekCapability.UPLOAD) is True
         with pytest.raises(CreekCapabilityUnsupportedError) as caught:
             await client.upload(_upload_request())
 
         assert CreekCapability.UPLOAD.value in str(caught.value)
 
     @pytest.mark.asyncio
-    async def test_upload_is_never_advertised_by_a_conformant_vault(
+    async def test_a_vault_advertising_the_upload_wire_name_is_believed(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Even a vault naming it gets it dropped: it is outside the published enum."""
+        """The published name maps onto the capability rather than being dropped as unknown."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
-            http_client=vault_http_clients(_routed_handler(_stored_payload())),
+            http_client=vault_http_clients(
+                _routed_handler(_stored_payload(), capabilities=[_UPLOAD_WIRE_NAME])
+            ),
+        )
+        await client.handshake()
+
+        assert client.supports(CreekCapability.UPLOAD) is True
+
+    @pytest.mark.asyncio
+    async def test_a_vault_below_the_upload_threshold_is_not_credited_with_it(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The other direction: silence about ``upload`` must never read as support.
+
+        This is the shape a vault serving a pre-0.8 caller answers with, and the
+        one adepthood saw from every vault before the pin moved.
+        """
+        client = HttpCreekVaultClient(
+            _VAULT_URL,
+            _VAULT_API_KEY,
+            http_client=vault_http_clients(
+                _routed_handler(
+                    _stored_payload(),
+                    capabilities=[
+                        name for name in _ADVERTISED_WIRE_NAMES if name != _UPLOAD_WIRE_NAME
+                    ],
+                )
+            ),
         )
         await client.handshake()
 

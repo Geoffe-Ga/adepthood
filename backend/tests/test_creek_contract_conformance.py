@@ -13,8 +13,8 @@ Re-vendoring the bundle
    never a branch. A branch would let the "pinned" copy move underneath the
    checksums that are the only thing making it a pin.
 2. Verify every fetched file against Creek's own ``manifest.json``, which records
-   a sha256 for the 45 files it covers -- it covers neither itself nor the
-   hand-written ``README.md``.
+   a sha256 for every file it covers -- it covers neither itself nor the
+   hand-written ``README.md``, which is why the two counts here differ by two.
 3. Regenerate ``vendor.json`` with the drift script's ``snapshot`` subcommand and
    commit its output verbatim. ``tests/scripts/test_creek_contract_drift.py``
    asserts the committed sidecar is exactly what that command produces.
@@ -26,23 +26,18 @@ Re-vendoring the bundle
    ``CONTRACT_VERSION``, the pinned-version bullet in ADR 0004, and the contract
    document's version bullet together, in one reviewed change.
 
-The strict-xfail tripwire
--------------------------
+The capability list is no longer minor-independent
+--------------------------------------------------
 
-Two divergences separate today's client from Creek's ratified documents, and
-both live in the handshake. The client reads a top-level ``available`` where
-Creek nests ``vault.available``, and it maps advertised capability names through
-``CreekCapability``, whose ``creek.*`` values share no member with Creek's
-published names. Fixing either belongs to the client, not to this suite.
-
-Until they are fixed, the ratified outcome is asserted under
-``@pytest.mark.xfail(strict=True)``. Repo-wide ``xfail_strict`` means that
-assertion executes on every run and becomes a **hard failure the moment it starts
-passing** -- which is exactly when the client is fixed and the marker must be
-deleted. That is the intent: the tripwire reports the divergence closing in the
-same run that closes it. It is paired with plainly-asserted, today-green
-observations of what the client actually does, so the current behaviour is
-recorded rather than merely known.
+Through contract 0.7 every supported minor was answered the same four capability
+names, so "what a vault advertises" was a fact about the vault alone. Contract
+0.8.0 ends that: ``GET /v1/capabilities`` keys what it advertises on the
+caller's declared minor, ``upload`` is published only at or above ``0.8``, and
+``POST /v1/uploads`` refuses a caller below that threshold outright. The
+consequence for this suite is that ``examples/capabilities/success.json`` is the
+document a **0.8** caller receives, not a document every caller receives, and
+the counts below (five capabilities, thirty-five cells, four unreachable
+care-escalation sentinels) are the 0.8 shape rather than a permanent one.
 """
 
 from __future__ import annotations
@@ -64,6 +59,7 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekCeilingUnrepresentableError,
     CreekVaultCareEscalationError,
     CreekVaultContractError,
     CreekVaultError,
@@ -75,6 +71,7 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    wire_ceiling_for,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
 from services.creek_vault_client import (
@@ -89,16 +86,16 @@ VENDOR_NAME = "vendor.json"
 RETRY_POLICY_NAME = "retry-policy.json"
 
 PINNED_REPO = "Geoffe-Ga/creek-vault"
-PINNED_COMMIT = "879d9611cb4c3b5599578f39772b906c8c170e02"  # pragma: allowlist secret
+PINNED_COMMIT = "349a56d6fd36ed18971c53f6d2c3d527b047074c"  # pragma: allowlist secret
 PINNED_PATH = "docs/contracts/adepthood-v1"
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
-CREEK_MANIFEST_ENTRIES = 45
-VENDORED_FILES = 47
-EXAMPLE_CELLS = 28
-CAPABILITY_COUNT = 4
+CREEK_MANIFEST_ENTRIES = 54
+VENDORED_FILES = 56
+EXAMPLE_CELLS = 35
+CAPABILITY_COUNT = 5
 STATE_COUNT = 7
-UNREACHABLE_CELLS = 3
+UNREACHABLE_CELLS = 4
 REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
 
 _VAULT_URL = "https://vault.example.test"
@@ -137,6 +134,21 @@ _CREDENTIAL_MARKERS = ('"api_key"', '"password"', '"token"', '"secret"', "Bearer
 # The tier that must never egress, and the three fields it could travel in.
 _FORBIDDEN_TIER = "intimate"
 _TIER_FIELDS = ("tier", "tier_ceiling", "routed_tier")
+
+# The two published request shapes that write into the vault, and the field both
+# must demand. Creek removed this field's ``open`` default from its write tools
+# at 0.7.0 -- a caller that omitted it had its content filed in the clear -- and
+# typed the upload's copy to the wire ceiling at 0.8.0, so omission is not
+# defaultable and ``intimate`` is not expressible. Adepthood satisfies both by
+# construction; the tests below pin that rather than rebuild it.
+_WRITE_REQUEST_SCHEMAS = (
+    "schemas/JournalUpsertRequest.schema.json",
+    "schemas/UploadRequest.schema.json",
+)
+_TIER_FIELD = "tier"
+_WIRE_TIER_CEILING_DEF = "WireTierCeiling"
+_WIRE_TIER_CEILING_REF = f"#/$defs/{_WIRE_TIER_CEILING_DEF}"
+_PUBLISHED_WIRE_CEILINGS = ("open", "personal")
 
 # The two keys a journal body would travel under if one had been published.
 _BODY_KEYS = ("content", "body")
@@ -447,7 +459,7 @@ def test_the_two_manifests_agree_on_every_shared_digest() -> None:
 
 
 def test_the_two_manifests_jointly_cover_every_vendored_path_once() -> None:
-    """Creek's 45 plus the two files it cannot cover are exactly the 47 on disk."""
+    """Creek's entries plus the two files it cannot cover are exactly what is on disk."""
     creek = frozenset(_digests(MANIFEST_NAME))
     uncovered = frozenset({MANIFEST_NAME, README_NAME})
 
@@ -465,7 +477,7 @@ def test_contract_version_agrees_across_both_manifests_and_the_domain_pin() -> N
     """One version string in three places; any two of them disagreeing is the bug."""
     assert _read_json(VENDOR_NAME)["contract_version"] == CONTRACT_VERSION
     assert _read_json(MANIFEST_NAME)["contract_version"] == CONTRACT_VERSION
-    assert CONTRACT_VERSION == "0.2.0"
+    assert CONTRACT_VERSION == "0.8.0"
 
 
 def test_ontology_version_agrees_across_both_manifests() -> None:
@@ -479,7 +491,7 @@ def test_ontology_version_agrees_across_both_manifests() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
+def test_the_example_matrix_is_the_published_five_by_seven_grid() -> None:
     """Non-vacuity first: an emptied bundle fails here rather than passing silently."""
     assert len(_CELLS) == EXAMPLE_CELLS
     assert len(_CAPABILITIES) == CAPABILITY_COUNT
@@ -490,7 +502,7 @@ def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
 
 
 def test_the_parametrised_case_list_covers_every_capability() -> None:
-    """The cases that drive the client must span all four capabilities, not one."""
+    """The cases that drive the client must span every published capability, not one."""
     assert _REACHABLE != ()
     assert frozenset(cell.capability for cell in _REACHABLE) == _CAPABILITIES
     assert frozenset(cell.state for cell in _REACHABLE) == _STATES
@@ -498,11 +510,12 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 
 def test_only_reflections_publishes_a_reachable_care_escalation() -> None:
-    """The care guard runs in one capability, so the other three cells are sentinels."""
+    """The care guard runs in one capability, so every other cell is a sentinel."""
     assert {cell.capability for cell in _UNREACHABLE} == {
         "capabilities",
         "journal-upsert",
         "wheel",
+        "upload",
     }
     assert {cell.state for cell in _UNREACHABLE} == {"care-escalation"}
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
@@ -514,7 +527,12 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The client's wire-name table must name exactly Creek's four published capabilities."""
+    """The client's wire-name table must name exactly Creek's published capabilities.
+
+    Not four of them, and not four plus whatever the client invented: the set is
+    read off the manifest, so a capability Creek publishes and the client cannot
+    name fails here rather than silently degrading every call that needs it.
+    """
     assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
     assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
 
@@ -962,6 +980,85 @@ def test_a_renamed_request_parameter_is_caught_by_the_checksum(tmp_path: Path) -
 def test_no_example_names_the_intimate_tier_in_any_tier_field(cell: _Cell) -> None:
     """Intimate content never egresses, so no published example may route at it."""
     assert _FORBIDDEN_TIER not in set(_tier_values(_read_json(cell.path)))
+
+
+@pytest.mark.parametrize("relative", _WRITE_REQUEST_SCHEMAS)
+def test_every_write_request_schema_demands_an_explicit_two_ceiling_tier(relative: str) -> None:
+    """Both published write shapes require ``tier`` and admit only the two wire ceilings.
+
+    Two properties, and the pairing is the point. *Required* means omission is
+    not defaultable, so a caller that says nothing about a document's depth is
+    refused rather than having it filed in the clear. *Two-member* means
+    ``intimate`` has no spelling at all, so the depth that must never egress
+    cannot be named even deliberately. Read off the bundle rather than restated,
+    because a schema that quietly regained a default would still satisfy a
+    hand-written copy of this rule.
+    """
+    schema = _read_json(relative)
+    required = schema["required"]
+    assert isinstance(required, list)
+    assert _TIER_FIELD in required
+
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties[_TIER_FIELD]["$ref"] == _WIRE_TIER_CEILING_REF
+
+    defs = schema["$defs"]
+    assert isinstance(defs, dict)
+    assert defs[_WIRE_TIER_CEILING_DEF]["enum"] == list(_PUBLISHED_WIRE_CEILINGS)
+
+
+def test_the_wire_ceiling_translation_admits_exactly_the_published_ceilings() -> None:
+    """Adepthood's one door onto the wire vocabulary matches the published enum.
+
+    The bundle says which ceilings a remote caller may name; this asserts the
+    translation agrees, and that the third ceiling raises instead of narrowing.
+    Narrowing would be the worst available outcome -- it would file content a
+    writer marked intimate under a depth they never chose, and every downstream
+    guard would see a well-formed request.
+    """
+    translated = {
+        wire_ceiling_for(ceiling).value
+        for ceiling in VaultTierCeiling
+        if ceiling.value in _PUBLISHED_WIRE_CEILINGS
+    }
+    assert translated == set(_PUBLISHED_WIRE_CEILINGS)
+
+    with pytest.raises(CreekCeilingUnrepresentableError):
+        wire_ceiling_for(VaultTierCeiling.INTIMATE)
+
+
+@pytest.mark.asyncio
+async def test_a_journal_upsert_puts_an_explicit_tier_on_the_wire(
+    vault_clients: ClientFactory,
+) -> None:
+    """The write the client actually sends carries the field the schema demands.
+
+    The schema test above proves the server refuses a tier-less write; this
+    proves adepthood never asks it to. Asserted on the body that left the
+    process, so a future refactor that reintroduced an omitted-means-open path
+    fails here rather than in Creek's logs.
+    """
+    sent: list[Mapping[str, object]] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        """Answer the ratified journal exchange, recording each non-handshake body."""
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(
+                HTTPStatus.OK, json=_read_json("examples/capabilities/success.json")
+            )
+        body = json.loads(request.content)
+        assert isinstance(body, dict)
+        sent.append(body)
+        return httpx.Response(
+            HTTPStatus.OK, json=_read_json("examples/journal-upsert/success.json")
+        )
+
+    client = vault_clients(_capture)
+    await client.handshake()
+    await client.ingest(_ingest_request())
+
+    assert [body[_TIER_FIELD] for body in sent] == [VaultTierCeiling.PERSONAL.value]
 
 
 def test_the_capability_document_publishes_the_two_ceiling_tier_model() -> None:
