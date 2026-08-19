@@ -15,10 +15,11 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select, update
 
 from models.goal import Goal
 from models.habit import Habit
+from models.user import User
 
 # Sentinel well above any seeded row, matching the security suite's probe id.
 _DEFINITELY_MISSING_ID = 999_999
@@ -88,6 +89,18 @@ async def _create_goal_group(
     resp = await client.post("/goal-groups/", json=body, headers=headers)
     assert resp.status_code == HTTPStatus.CREATED
     return int(resp.json()["id"])
+
+
+async def _promote(session: AsyncSession, username: str) -> None:
+    """Flip ``is_admin`` so the caller may publish a shared template.
+
+    Publishing to every user is an operator act; the ordinary-user refusal is
+    pinned in ``tests/test_goal_group_shared_template_authority.py``.
+    """
+    await session.execute(
+        update(User).where(col(User.email) == f"{username}@example.com").values(is_admin=True)
+    )
+    await session.commit()
 
 
 async def _stored_goal_group_id(db_session: AsyncSession, goal_id: int | None) -> int | None:
@@ -395,6 +408,9 @@ async def test_update_goal_rejects_shared_template_group(
     """
     headers, user_id = await _signup(async_client, "templateconsumer")
     author_headers, _author_id = await _signup(async_client, "templateauthor")
+    # Only an operator may publish a template, so the fixture promotes the
+    # author; the guard under test is about the *consumer*, who stays ordinary.
+    await _promote(db_session, "templateauthor")
     goal = await _seed_goal(db_session, user_id)
     template_id = await _create_goal_group(
         async_client, author_headers, "Community Meditation", shared_template=True

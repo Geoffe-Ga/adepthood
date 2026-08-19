@@ -21,6 +21,18 @@ COPY frontend/ ./
 ARG EXPO_PUBLIC_API_BASE_URL
 ENV EXPO_PUBLIC_API_BASE_URL=$EXPO_PUBLIC_API_BASE_URL
 
+# Same deal for the Google web client ID, and it must be declared here for the
+# same reason: a Docker build sees none of Railway's service variables unless
+# the Dockerfile names them. Without this ARG the value never reaches
+# `expo export`, `resolveEnv` returns '', and SocialAuthButtons hides the
+# button -- a green deploy with no visible feature and nothing in any log.
+#
+# Only the _WEB id belongs here. The _IOS and _ANDROID ids are consumed by EAS
+# native builds, which never run this Dockerfile; declaring them would be dead
+# config that reads as though this image supported native.
+ARG EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB
+ENV EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB=$EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB
+
 RUN npx expo export --platform web
 
 # ---- Serve stage ----

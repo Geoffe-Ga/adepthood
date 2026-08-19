@@ -177,7 +177,7 @@ export function buildMockStageState() {
 
 /** ``react-native/Libraries/Interaction/InteractionManager`` — runs callbacks now. */
 export function mockInteractionManagerModule() {
-  return {
+  const manager = {
     runAfterInteractions: (cb: () => void) => {
       cb();
       return { then: () => {}, done: () => {}, cancel: () => {} };
@@ -185,6 +185,12 @@ export function mockInteractionManagerModule() {
     createInteractionHandle: () => 1,
     clearInteractionHandle: () => {},
   };
+  // RN 0.86 ships this module as `export default InteractionManagerStub` (an ES
+  // default export, and stubbed under the New Architecture). A mock returning
+  // only named properties leaves the default-import interop resolving to
+  // `undefined`, so the consumer reads `undefined.runAfterInteractions`.
+  // Both shapes are returned so a direct named read still works.
+  return { __esModule: true, default: manager, ...manager };
 }
 
 /**

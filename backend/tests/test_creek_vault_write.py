@@ -34,6 +34,8 @@ from domain.creek_vault import (
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
@@ -133,6 +135,10 @@ class RecordingVaultClient:
         if isinstance(self._ingest, Exception):
             raise self._ingest
         return self._ingest
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Record the classify call, then raise or return the scripted result."""

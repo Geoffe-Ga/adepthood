@@ -34,6 +34,8 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
 )
@@ -46,6 +48,7 @@ from models.user import User
 from observability import trace_id_var
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
+    CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
     _wheel_aspects,
@@ -132,6 +135,10 @@ class RecordingWheelVaultClient:
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
         raise NotImplementedError(request)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
@@ -285,7 +292,7 @@ async def _seed_habit_with_completion(
     goal = Goal(
         habit_id=habit.id,
         title="g",
-        tier="t",
+        tier="clear",
         target=1,
         target_unit="rep",
         frequency=1,
@@ -321,9 +328,11 @@ def _published_shares(payload: dict[str, object]) -> list[object]:
 def _capability_document() -> dict[str, object]:
     """Build the handshake document a vault advertising only the wheel would serve."""
     return {
-        "available": True,
-        "capabilities": [CreekCapability.WHEEL.value],
+        "vault": {"available": True},
+        "capabilities": ["wheel"],
         "contract_version": CONTRACT_VERSION,
+        "contract_minor": CONTRACT_MINOR,
+        "supported_contract_minors": [CONTRACT_MINOR],
         "ontology_version": _ONTOLOGY_VERSION,
         "attestation": None,
     }

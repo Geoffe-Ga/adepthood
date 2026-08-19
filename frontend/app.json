@@ -9,10 +9,10 @@
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "usesAppleSignIn": true
     },
     "name": "frontend",
-    "newArchEnabled": true,
     "orientation": "portrait",
     "plugins": [
       [
@@ -21,14 +21,19 @@
           "cameraPermission": "Allow Adepthood to use the camera to photograph handwritten journal pages for transcription.",
           "photosPermission": "Allow Adepthood to access your photos so you can add them as meditation cards."
         }
+      ],
+      "expo-audio",
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#ffffff",
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain"
+        }
       ]
     ],
     "slug": "frontend",
-    "splash": {
-      "backgroundColor": "#ffffff",
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain"
-    },
     "userInterfaceStyle": "light",
     "version": "1.0.0",
     "web": {

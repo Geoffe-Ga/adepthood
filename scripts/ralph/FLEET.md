@@ -29,7 +29,8 @@ predict which files a change will touch before we make it. So the loop never
   commits behind `main` reports `CLEAN`. The `BEHIND` path below was designed but
   had never once fired here, so lanes were routinely merging out of date on a
   green that proved nothing about today's `main`. `CLEAN` is retained only as the
-  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`. If a sibling
+  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`, each of
+  which now prints its own token rather than collapsing into `behind`. If a sibling
   merged after this lane went green, the lane is behind; it **syncs the new
   `main` into its branch (by merge, not rebase — a plain push updates the PR
   and re-runs CI, never a force-push)** and merges on a later wake once green
@@ -151,10 +152,15 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `ready` | fresh `LGTM` + CI green + `CLEAN` + `behind_by == 0`. | Merge now. |
 | `ready-unreviewed` | CI green *with at least one non-review check actually `SUCCESS`* + `CLEAN` + `behind_by == 0`, but this PR has no review gate: Dependabot both authored it and pushed its HEAD commit, and every `claude-review` entry reported `SKIPPED`. | Merge — on a `dependencies` lane only. On any other lane the review workflow is misconfigured: stop and investigate. |
 | `behind` | `LGTM` + green but not current with `main`. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
+| `unknown` | GitHub has not finished computing mergeability — routine for a few seconds after every push. | Wait for a later wake. A sync would merge nothing and push nothing, so the next wake would be identical. |
+| `draft` | the PR is a draft: a deliberate human hold. | Leave the lane alone, same standing as `optout`. The loop must not fight a human who parked a PR. |
+| `blocked` | a required check or review is missing. | A sync cannot supply it. Wait, or escalate if it stays blocked — do not dispatch a worker. |
+| `conflicted` | the branch conflicts with its base (`DIRTY`/`CONFLICTING`). | Needs a real conflict resolution — drop to Gate 1. `fleet.sh sync` will exit 3 on the conflict rather than fix it. |
 | `pending` | CI still running. | Wait for a later wake. |
 | `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
 | `changes-requested` | a fresh verdict (posted after HEAD) that is not `LGTM` — `CHANGES_REQUESTED` or `COMMENTS`. Gate 4 failed. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
 | `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
+| `review-self-skipped` | this PR edits `.github/workflows/claude-code-review.yml`, so `claude-code-action` self-skipped as anti-tamper and no verdict will ever be posted. The check reports `SUCCESS`, not `SKIPPED`, so the reviewless path does not apply either. | **Terminal — hand it to a human.** Stop re-checking the lane; it is not waiting on anything. A human who reviews it and posts a fresh `LGTM` still lands it via `ready`. Common on Dependabot bumps of `anthropics/claude-code-action`. |
 | `optout` | `do-not-auto-merge` on the PR, on the issue its body closes, or — when a Dependabot PR's body links nothing — on the bridge issue carrying that PR's `<!-- dependabot-pr:<N> -->` marker. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
 | *non-zero exit* | could not classify (API failure, expired token). | Leave the lane alone this wake; the next wake retries. |
 

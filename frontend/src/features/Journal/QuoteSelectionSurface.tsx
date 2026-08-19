@@ -131,7 +131,7 @@ function useSelectionSurfaceState(
 interface SelectionBodyProps {
   body: string;
   onSelectionChange: (_event: SelectionChangeEvent) => void;
-  inputRef: React.RefObject<TextInput>;
+  inputRef: React.RefObject<TextInput | null>;
   testID: string;
 }
 

@@ -211,7 +211,7 @@ interface AddHabitsStepProps {
   newHabitName: string;
   setNewHabitName: (_v: string) => void;
   error: string;
-  inputRef: React.RefObject<TextInput>;
+  inputRef: React.RefObject<TextInput | null>;
   onAddHabit: () => void;
   onKeyPress: (
     _e: NativeSyntheticEvent<TextInputKeyPressEventData & { metaKey?: boolean; ctrlKey?: boolean }>,
@@ -230,7 +230,7 @@ const HabitInputRow = ({
 }: {
   newHabitName: string;
   setNewHabitName: (_v: string) => void;
-  inputRef: React.RefObject<TextInput>;
+  inputRef: React.RefObject<TextInput | null>;
   onAddHabit: () => void;
   onKeyPress: AddHabitsStepProps['onKeyPress'];
   isAddDisabled: boolean;
@@ -310,7 +310,7 @@ const AddHabitsStep = ({
 interface EnergyStepProps {
   type: 'cost' | 'return';
   habits: OnboardingHabit[];
-  scrollRef: React.RefObject<ScrollView>;
+  scrollRef: React.RefObject<ScrollView | null>;
   onBack: () => void;
   onContinue: () => void;
   onValueChange: (_index: number, _type: 'cost' | 'return', _value: number) => void;
@@ -502,7 +502,7 @@ const ReorderStep = ({
 
 interface TemplateStepProps {
   habits: OnboardingHabit[];
-  scrollRef: React.RefObject<ScrollView>;
+  scrollRef: React.RefObject<ScrollView | null>;
   goalGroupTemplates: ApiGoalGroup[];
   onAssign: (_habitIndex: number, _groupId: number | null) => void;
   onBack: () => void;
@@ -551,7 +551,7 @@ const TemplateStep = ({
 
 const useOnboardingEffects = (
   step: number,
-  scrollRef: React.RefObject<ScrollView>,
+  scrollRef: React.RefObject<ScrollView | null>,
   prepareHabitsForReorder: () => void,
 ) => {
   useEffect(() => {
@@ -564,8 +564,13 @@ const useOnboardingEffects = (
         if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
         prepareHabitsForReorder();
       };
-      document.addEventListener('keydown', handler);
-      return () => document.removeEventListener('keydown', handler);
+      // Captured, not re-resolved: a cleanup that reaches for the `document`
+      // global runs at teardown, when the DOM may already be gone, and then
+      // throws instead of quietly no-opping. Same hole as
+      // Journal/webSelectionListener.ts; React 19 runs cleanups where 18 did not.
+      const doc = document;
+      doc.addEventListener('keydown', handler);
+      return () => doc.removeEventListener('keydown', handler);
     }
   }, [step, prepareHabitsForReorder]);
 };

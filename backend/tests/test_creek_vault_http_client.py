@@ -56,6 +56,8 @@ from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from main import app, lifespan
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
+    _CONTRACT_MINOR_COMPONENTS,
+    _CONTRACT_VERSION_HEADER,
     _MAX_FRAGMENT_ID_LENGTH,
     _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _VAULT_HTTP_TIMEOUT,
@@ -63,6 +65,7 @@ from services.creek_vault_client import (
     _VAULT_TOTAL_DEADLINE_SECONDS,
     _WHEEL_FREQUENCY_CODES,
     _WHEEL_OK_STATUS,
+    CONTRACT_MINOR,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
@@ -82,6 +85,7 @@ from services.creek_vault_payload import (
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
+    outcome_for_error,
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
 )
@@ -227,20 +231,60 @@ AsyncHandler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 ClientFactory = Callable[[Handler | AsyncHandler], httpx.AsyncClient]
 
 
+def _minor_of(contract_version: str) -> str:
+    """Return the ``major.minor`` of a full semantic contract version."""
+    return ".".join(contract_version.split(".")[:_CONTRACT_MINOR_COMPONENTS])
+
+
+# Inlined rather than a parameter: no test has ever overridden it, and carrying
+# it as one pushed the builder past the argument ceiling once
+# ``supported_contract_minors`` became a required field to vary.
+_ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
+
+
 def _handshake_payload(
     capabilities: Sequence[str],
     contract_version: str = CONTRACT_VERSION,
-    ontology_version: str = "aptitude-wavelength/2026-05-23",
     attestation: Mapping[str, object] | None = None,
     *,
     available: bool = True,
+    supported_contract_minors: Sequence[str] | None = None,
 ) -> dict[str, object]:
-    """Build the only capability response shape adepthood already parses."""
+    """Build a handshake document in the shape Creek actually publishes.
+
+    Callers pass adepthood-side capability values (``creek.*``) because that is
+    the vocabulary the assertions are written in; this translates them to Creek's
+    published wire names on the way out, so every test exercises the real
+    document shape rather than one shaped to the client's former bugs.
+    Availability is nested under ``vault``, where Creek puts it.
+
+    A capability with no published name (UPLOAD, SAVE, CLASSIFY) is emitted
+    unchanged so a test can still assert that an unrecognised advertisement is
+    dropped rather than coerced.
+
+    ``supported_contract_minors`` defaults to the single minor of
+    ``contract_version``, which is the narrowest thing a server advertising that
+    version can truthfully claim. That default is load-bearing for the existing
+    skew cases: they pass ``"0.3.0"`` to mean "a server adepthood cannot talk
+    to", and a default that quietly included adepthood's own pin would invert
+    what every one of them asserts.
+    """
+    wire_name = {
+        CreekCapability.HANDSHAKE.value: "capabilities",
+        CreekCapability.JOURNAL.value: "journal-upsert",
+        CreekCapability.REFLECT.value: "reflections",
+        CreekCapability.WHEEL.value: "wheel",
+    }
+    minor = _minor_of(contract_version)
     return {
-        "available": available,
-        "capabilities": list(capabilities),
+        "vault": {"available": available},
+        "capabilities": [wire_name.get(c, c) for c in capabilities],
         "contract_version": contract_version,
-        "ontology_version": ontology_version,
+        "contract_minor": minor,
+        "supported_contract_minors": (
+            [minor] if supported_contract_minors is None else list(supported_contract_minors)
+        ),
+        "ontology_version": _ONTOLOGY_VERSION,
         "attestation": attestation,
     }
 
@@ -305,6 +349,13 @@ def _payload_without_contract_version() -> dict[str, object]:
     """Build a capability payload whose contract_version key is absent."""
     payload = _handshake_payload([CreekCapability.JOURNAL.value])
     del payload["contract_version"]
+    return payload
+
+
+def _payload_without_supported_minors() -> dict[str, object]:
+    """Build a capability payload whose supported_contract_minors key is absent."""
+    payload = _handshake_payload([CreekCapability.JOURNAL.value])
+    del payload["supported_contract_minors"]
     return payload
 
 
@@ -1394,11 +1445,14 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
 async def test_classify_is_still_refused_when_advertised(
     http_clients: ClientFactory,
 ) -> None:
-    """Classify is the one capability left unratified, so it refuses even when advertised.
+    """Classify refuses, and at contract 0.2.0 it cannot even be advertised.
 
-    Its ``/v1`` payload shape has not shipped, so an advertised classify still
-    degrades the caller onto its local pipeline rather than guessing a wire
-    format.
+    Two guarantees, and the second is stronger than it used to be. Creek
+    publishes no wire name for classify, so an advertisement of it is dropped at
+    the parse boundary and :meth:`supports` is ``False`` -- there is no document
+    a conformant vault can send that turns it on. And independently of that, the
+    call refuses rather than guessing a payload shape that has never shipped, so
+    the caller degrades onto its local pipeline either way.
     """
     advertised = [
         CreekCapability.JOURNAL.value,
@@ -1410,7 +1464,8 @@ async def test_classify_is_still_refused_when_advertised(
         _VAULT_URL, _API_KEY, http_client=http_clients(_healthy_handler(advertised))
     )
     await client.handshake()
-    assert client.supports(CreekCapability.CLASSIFY) is True
+    # Unadvertisable by construction: Creek has no published name for it.
+    assert client.supports(CreekCapability.CLASSIFY) is False
     with pytest.raises(CreekCapabilityUnsupportedError) as exc_info:
         await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
     assert CreekCapability.CLASSIFY.value in str(exc_info.value)
@@ -3191,7 +3246,8 @@ async def test_handshake_drops_a_non_string_capability_beside_the_valid_ones(
     """
     payload = {
         **_handshake_payload([]),
-        "capabilities": [CreekCapability.JOURNAL.value, 42, CreekCapability.WHEEL.value],
+        # Creek's published wire names, since this bypasses the helper's translation.
+        "capabilities": ["journal-upsert", 42, "wheel"],
     }
     client = HttpCreekVaultClient(
         _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))
@@ -3665,3 +3721,184 @@ async def test_http_wheel_read_timeout_is_a_timeout_not_a_bare_unavailability(
 
     assert CreekCapability.WHEEL.value in str(exc_info.value)
     assert vault_outcome_counts()[(VaultTelemetryOutcome.TIMEOUT, CreekCapability.WHEEL)] == 1
+
+
+class _ContractVersionEnforcingHandler:
+    """A fake ``/v1`` that refuses capability calls lacking the contract header.
+
+    The whole point of this fixture: a fake that answers regardless of headers
+    cannot prove the header is sent, and one that answered regardless is exactly
+    what let the omission ship. ``GET /v1/capabilities`` is served without the
+    header because the contract exempts it -- and it records what it saw, so a
+    test can also assert adepthood does not send it there.
+    """
+
+    def __init__(self, capabilities: Sequence[str], reply: httpx.Response | None = None) -> None:
+        """Store the advertised capabilities and the reply for a capability call."""
+        self._capabilities = list(capabilities)
+        self._reply = reply
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def capability_requests(self) -> list[httpx.Request]:
+        """Return every request that was not the exempt capability-document GET."""
+        return [r for r in self.requests if not r.url.path.endswith("/capabilities")]
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Serve the handshake unconditionally; refuse an unversioned capability call."""
+        self.requests.append(request)
+        if request.url.path.endswith("/capabilities"):
+            return httpx.Response(HTTPStatus.OK, json=_handshake_payload(self._capabilities))
+        if request.headers.get(_CONTRACT_VERSION_HEADER) != CONTRACT_MINOR:
+            return httpx.Response(
+                HTTPStatus.CONFLICT,
+                json=_error_payload(VaultErrorCode.INCOMPATIBLE_VERSION.value),
+            )
+        assert self._reply is not None
+        return self._reply
+
+
+@pytest.mark.asyncio
+async def test_journal_ingest_carries_the_contract_version_header(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault that refuses unversioned capability calls still accepts adepthood's ingest."""
+    handler = _ContractVersionEnforcingHandler(
+        [CreekCapability.JOURNAL.value],
+        httpx.Response(HTTPStatus.OK, json=_ingest_payload()),
+    )
+    client = await _handshaken_client(handler, http_clients)
+    result = await client.ingest(_ingest_request())
+    assert result.stored is True
+    assert handler.capability_requests
+    assert all(
+        request.headers[_CONTRACT_VERSION_HEADER] == CONTRACT_MINOR
+        for request in handler.capability_requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_capability_document_fetch_is_exempt_from_the_header(
+    http_clients: ClientFactory,
+) -> None:
+    """The negotiation endpoint must never itself be able to fail to negotiate."""
+    handler = _ContractVersionEnforcingHandler([CreekCapability.JOURNAL.value])
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    await client.handshake()
+    handshake_requests = [r for r in handler.requests if r.url.path.endswith("/capabilities")]
+    assert handshake_requests
+    assert all(_CONTRACT_VERSION_HEADER not in r.headers for r in handshake_requests)
+
+
+@pytest.mark.asyncio
+async def test_a_server_serving_a_widened_window_is_still_compatible(
+    http_clients: ClientFactory,
+) -> None:
+    """Upstream's 0.3.0 widening keeps serving 0.2, so adepthood must accept it.
+
+    The exact case that made the old rule wrong: upstream moved to 0.3.0 and
+    widened ``SUPPORTED_CONTRACT_MINORS`` to ``("0.3", "0.2")`` rather than
+    shifting it, so a client still speaking 0.2 is served as before. Gating on
+    the server's own ``contract_version`` refused that vault while it was
+    advertising that it would answer.
+    """
+    handler = _json_handler(
+        _handshake_payload(
+            [CreekCapability.JOURNAL.value],
+            "0.3.0",
+            supported_contract_minors=["0.3", "0.2"],
+        )
+    )
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    result = await client.handshake()
+    assert result.available is True
+    assert client.last_degrade_reason is None
+    assert client.supports(CreekCapability.JOURNAL) is True
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_no_longer_serves_our_minor_is_incompatible(
+    http_clients: ClientFactory,
+) -> None:
+    """A window that has moved past adepthood's pin is still version skew."""
+    handler = _json_handler(
+        _handshake_payload(
+            [CreekCapability.JOURNAL.value],
+            "0.4.0",
+            supported_contract_minors=["0.4", "0.3"],
+        )
+    )
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    assert await client.handshake() == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.INCOMPATIBLE_VERSION
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(_payload_without_supported_minors(), id="absent"),
+        pytest.param(
+            _handshake_payload([CreekCapability.JOURNAL.value])
+            | {"supported_contract_minors": "0.2"},
+            id="bare_string",
+        ),
+        pytest.param(
+            _handshake_payload([CreekCapability.JOURNAL.value])
+            | {"supported_contract_minors": [2]},
+            id="not_strings",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_unusable_supported_minors_field_is_a_malformed_payload(
+    payload: Mapping[str, object],
+    http_clients: ClientFactory,
+) -> None:
+    """It is a required property, so its absence or wrong type is a malformed document.
+
+    Never silently trusted: a server that cannot say which minors it serves has
+    not negotiated, and treating that as compatible would be the same
+    assume-it-works mistake in the other direction.
+    """
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _API_KEY, http_client=http_clients(_json_handler(payload))
+    )
+    assert await client.handshake() == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.MALFORMED_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_a_409_on_a_capability_call_counts_as_version_skew(
+    http_clients: ClientFactory,
+) -> None:
+    """Version skew stays countable apart from a generic contract failure.
+
+    ADR 0004 Decision 4 already requires that separation, and ``409
+    incompatible_version`` is the response code that carries it on the capability
+    path -- what a real Creek server answers when the header does not name a
+    minor it serves. The handshake still succeeds here, which is the point: the
+    refusal happens per capability call, not at negotiation.
+    """
+
+    def _handle(request: httpx.Request) -> httpx.Response:
+        """Handshake healthily, then refuse the ingest with the published skew code."""
+        if request.url.path.endswith("/capabilities"):
+            return httpx.Response(
+                HTTPStatus.OK, json=_handshake_payload([CreekCapability.JOURNAL.value])
+            )
+        return httpx.Response(
+            HTTPStatus.CONFLICT,
+            json=_error_payload(VaultErrorCode.INCOMPATIBLE_VERSION.value),
+        )
+
+    client = await _handshaken_client(_handle, http_clients)
+    with pytest.raises(CreekVaultContractError) as caught:
+        await client.ingest(_ingest_request())
+    assert caught.value.code is VaultErrorCode.INCOMPATIBLE_VERSION
+    assert outcome_for_error(caught.value) is VaultTelemetryOutcome.INCOMPATIBLE_VERSION
+
+
+def test_the_contract_minor_is_the_first_two_components_of_the_pin() -> None:
+    """The header value is derived from the pin, never written out twice."""
+    assert ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS]) == CONTRACT_MINOR
+    assert CONTRACT_VERSION.startswith(CONTRACT_MINOR)

@@ -8,7 +8,7 @@
  * PRIVACY: warnings emitted here carry only a cache-relative filename — never
  * a full device path, and never any image contents.
  */
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 
 /** The two transient device files a capture page owns. */
 export interface CapturePageFiles {
@@ -25,7 +25,7 @@ export interface CapturePageFiles {
  * of logs.
  */
 function cacheRelativeName(uri: string): string {
-  const cacheRoot = FileSystem.cacheDirectory;
+  const cacheRoot = Paths.cache.uri;
   if (cacheRoot && uri.startsWith(cacheRoot)) {
     return uri.slice(cacheRoot.length);
   }
@@ -33,9 +33,16 @@ function cacheRelativeName(uri: string): string {
 }
 
 /** Delete one transient file, idempotently; a failure only warns, metadata-only. */
-async function deleteQuietly(uri: string): Promise<void> {
+function deleteQuietly(uri: string): void {
   try {
-    await FileSystem.deleteAsync(uri, { idempotent: true });
+    const file = new File(uri);
+    // Guarded rather than deleted outright: ``delete()`` throws on a file that
+    // is already gone, where the retired ``deleteAsync(uri, { idempotent: true })``
+    // resolved quietly. Cleanup runs over files an earlier pass may already have
+    // released, so absence is a success, not something to warn about.
+    if (file.exists) {
+      file.delete();
+    }
   } catch {
     // Deliberately swallowed: cleanup is best-effort, and the raised error can
     // embed the full path — so only the cache-relative name is surfaced.
@@ -49,8 +56,8 @@ async function deleteQuietly(uri: string): Promise<void> {
  * the returned promise never rejects.
  */
 export async function releasePageFiles(page: CapturePageFiles): Promise<void> {
-  await deleteQuietly(page.sourceUri);
-  await deleteQuietly(page.uri);
+  deleteQuietly(page.sourceUri);
+  deleteQuietly(page.uri);
 }
 
 /**
@@ -60,7 +67,9 @@ export async function releasePageFiles(page: CapturePageFiles): Promise<void> {
  * and every uri is attempted; an empty set touches nothing.
  */
 export async function releaseUris(uris: readonly string[]): Promise<void> {
-  await Promise.all(uris.map((uri) => deleteQuietly(uri)));
+  uris.forEach((uri) => {
+    deleteQuietly(uri);
+  });
 }
 
 /**

@@ -33,6 +33,8 @@ from domain.creek_vault import (
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from main import app
@@ -113,6 +115,10 @@ class SequencedVaultClient:
         if self._ingest_error is not None:
             raise self._ingest_error
         return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingest_calls)}")
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Return a fixed classification tag set."""
@@ -507,3 +513,86 @@ async def test_entry_saves_locally_when_ingest_raises_a_contract_error(
     row = await _entry_row(db_session, int(resp.json()["id"]))
     assert row.vault_ref is None
     assert len(fake.ingest_calls) == 1
+
+
+class TransactionObservingVaultClient(SequencedVaultClient):
+    """Records whether the request's DB session held a transaction during ingest.
+
+    The whole point of the connection-occupancy work: an open transaction means
+    a connection is checked out of the pool, and holding one across a
+    third-party HTTP round trip couples pool capacity to that third party's
+    latency. This fake observes the session at exactly the moment the network
+    call would be in flight.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Watch ``session`` -- the same one the request handler is using."""
+        super().__init__()
+        self._session = session
+        self.in_transaction_during_ingest: list[bool] = []
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Sample the session's transaction state, then ingest normally."""
+        self.in_transaction_during_ingest.append(self._session.in_transaction())
+        return await super().ingest(request)
+
+
+@pytest.mark.asyncio
+async def test_create_does_not_hold_a_db_transaction_across_the_vault_call(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """No pooled connection is occupied while the vault request is in flight.
+
+    The pool is at SQLAlchemy's defaults -- five connections plus ten overflow --
+    and the vault's whole-request deadline is thirty seconds, so fifteen
+    concurrent writes against a *slow* vault would starve every other
+    database-backed endpoint for the length of that deadline. A vault that is
+    down is already safe; this is about one that answers slowly.
+    """
+    fake = TransactionObservingVaultClient(db_session)
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_no_hold")
+
+    resp = await async_client.post(
+        "/journal/",
+        json={"message": "A public reflection.", "classification": "public"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+    assert fake.in_transaction_during_ingest == [False], (
+        "the request session held an open transaction -- and therefore a pooled "
+        "connection -- while the vault HTTP call was in flight"
+    )
+    # The outcome must still be persisted through the short-lived session.
+    row = await _entry_row(db_session, int(resp.json()["id"]))
+    assert row.vault_ref == "vault-ref-1"
+
+
+@pytest.mark.asyncio
+async def test_patch_does_not_hold_a_db_transaction_across_the_vault_call(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The re-ingest path on PATCH carries the same property as create."""
+    fake = TransactionObservingVaultClient(db_session)
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_no_hold_patch")
+
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "First body.", "classification": "public"},
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.CREATED
+    entry_id = int(created.json()["id"])
+
+    patched = await async_client.patch(
+        f"/journal/{entry_id}",
+        json={"message": "An edited body."},
+        headers=headers,
+    )
+    assert patched.status_code == HTTPStatus.OK
+
+    assert fake.in_transaction_during_ingest == [False, False], (
+        "a vault call ran with the request session's transaction still open"
+    )

@@ -91,10 +91,10 @@ import asyncio
 import enum
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from http import HTTPStatus
-from types import TracebackType
-from typing import NoReturn
+from types import MappingProxyType, TracebackType
+from typing import NoReturn, cast
 from urllib.parse import quote
 
 import httpx
@@ -119,6 +119,8 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
 )
@@ -186,6 +188,20 @@ _VERSION_MAJOR_INDEX = 0
 _PRE_1_0_MAJOR = "0"
 _PRE_1_0_MATCHED_COMPONENTS = 2
 _POST_1_0_MATCHED_COMPONENTS = 1
+
+# Creek requires an ``X-Creek-Contract-Version: <major.minor>`` header on every
+# ``/v1`` *capability* call and refuses a missing or mismatched one with
+# ``409 incompatible_version`` before any vault read. ``GET /v1/capabilities`` is
+# exempt by design -- the negotiation endpoint must never itself be able to fail
+# to negotiate -- which is why sending it is a per-call decision rather than a
+# default baked into the pooled client.
+_CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
+
+# The header carries ``major.minor`` wherever the contract sits relative to 1.0,
+# so this is its own width rather than a reuse of the pre-1.0 match width above,
+# which shares the value but not the meaning.
+_CONTRACT_MINOR_COMPONENTS = 2
+CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS])
 
 # Every way an httpx call can fail to land, whether it left this process or
 # not. ``OSError`` covers connection and timeout errors (the whole-request
@@ -477,8 +493,30 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
     return value
 
 
+# Creek advertises its capabilities under these published names.
+# :class:`CreekCapability` spells the same ideas as ``creek.*`` values, which are
+# deliberately *adepthood's* vocabulary and telemetry keys rather than a claim
+# about the wire (see that enum's docstring). The translation therefore lives
+# here, at the parse boundary, and nowhere else.
+#
+# Only four of the seven members have a published name. UPLOAD, SAVE and
+# CLASSIFY are adepthood-side concepts Creek does not advertise at contract
+# 0.2.0, so :meth:`supports` is permanently ``False`` for them and every
+# capability-gated path degrades. That is the contract reporting a capability
+# that does not exist yet, not a hole in this table -- do not invent wire names
+# for them.
+_CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
+    {
+        "capabilities": CreekCapability.HANDSHAKE,
+        "journal-upsert": CreekCapability.JOURNAL,
+        "reflections": CreekCapability.REFLECT,
+        "wheel": CreekCapability.WHEEL,
+    }
+)
+
+
 def _coerce_capability(item: object) -> CreekCapability | None:
-    """Map one advertised wire string to a capability, or ``None`` if unknown.
+    """Map one advertised wire name to a capability, or ``None`` if unknown.
 
     Unknown/forward-compatible capability strings are dropped rather than
     erroring, so a vault can advertise new capabilities without breaking an
@@ -486,10 +524,7 @@ def _coerce_capability(item: object) -> CreekCapability | None:
     """
     if not isinstance(item, str):
         return None
-    try:
-        return CreekCapability(item)
-    except ValueError:
-        return None
+    return _CAPABILITY_BY_WIRE_NAME.get(item)
 
 
 def _parse_capabilities(raw: object) -> frozenset[CreekCapability]:
@@ -540,22 +575,62 @@ def _contract_version_compatible(advertised: str, pinned: str = CONTRACT_VERSION
     return advertised.split(".")[:matched] == pinned_components[:matched]
 
 
+def _require_str_sequence(payload: Mapping[str, object], key: str) -> Sequence[str]:
+    """Return ``payload[key]`` as a sequence of strings or raise so parsing fails closed.
+
+    Raises ``KeyError`` when absent and ``TypeError`` when present but not an
+    array of strings; both are caught upstream and degrade the handshake to
+    unavailable. A bare ``str`` is rejected rather than accepted as a
+    one-element sequence, because iterating one would compare single characters
+    and quietly find no match.
+    """
+    value = payload[key]
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise TypeError(f"handshake field {key!r} must be an array of strings")
+    if not all(isinstance(item, str) for item in value):
+        raise TypeError(f"handshake field {key!r} must contain only strings")
+    return cast("Sequence[str]", value)
+
+
+def _contract_minor_supported(supported: Sequence[str], pinned: str = CONTRACT_VERSION) -> bool:
+    """Return whether the vault still serves the contract minor adepthood speaks.
+
+    The refinement of ADR 0004 Decision 4 recorded in that ADR's 2026-08-09
+    amendment. The original rule compared adepthood's pin against the single
+    version a server advertises as its own, which is strictly more brittle than
+    the contract requires: Creek publishes ``supported_contract_minors``
+    precisely so a server can widen its window without cutting clients off, and
+    it did exactly that on moving to 0.3.0 while continuing to serve 0.2. Under
+    the old rule adepthood refused that server while it was actively advertising
+    that it would answer.
+
+    Per entry the comparison is unchanged -- :func:`_contract_version_compatible`
+    still decides what compatible means, including the post-1.0 relaxation to a
+    major match -- so this widens *what* is compared against, not *how*.
+    """
+    return any(_contract_version_compatible(minor, pinned) for minor in supported)
+
+
 def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     """Parse a well-formed handshake payload into a populated result.
 
     Reads and version-checks the contract before anything else: an incompatible
     version raises :class:`_IncompatibleContractVersionError` (we will not call a
     surface we do not understand), which every caller degrades to unavailable.
-    Then honors the vault's own ``available`` field, fail-closed: a
-    reachable server is not necessarily an available vault, so anything other
-    than a literal ``True`` (including a missing field) degrades to
+    Then honors the vault's own availability, fail-closed: a reachable server is
+    not necessarily an available vault, so anything other than a literal ``True``
+    -- a missing ``vault`` object, a missing or wrong-typed ``available`` inside
+    it -- degrades to unavailable. Creek publishes that flag *nested* under
+    ``vault``; reading a top-level ``available`` (which its documents do not
+    carry) is what made every handshake against a conformant vault report
     unavailable. Any missing key or wrong-typed field raises out of the helpers
     and is caught by :meth:`HttpCreekVaultClient._probe`.
     """
     contract_version = _require_str(payload, "contract_version")
-    if not _contract_version_compatible(contract_version):
+    if not _contract_minor_supported(_require_str_sequence(payload, "supported_contract_minors")):
         raise _IncompatibleContractVersionError
-    if payload.get("available") is not True:
+    vault = payload.get("vault")
+    if not isinstance(vault, Mapping) or vault.get("available") is not True:
         return HandshakeResult.unavailable()
     return HandshakeResult(
         available=True,
@@ -813,6 +888,7 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 # capability document are the only ``/v1`` shapes Creek has ratified.
 _JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
 
+
 # The whole-corpus frequency aggregate, relative to the configured base URL. Not
 # a resource but a computation over every admitted fragment, so it is read from
 # one collection-level URL that takes no identifier -- and, on the ratified
@@ -897,6 +973,7 @@ _CREDENTIAL_REJECTED_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCa
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
+
 # The one not-stored result every unreadable 2xx collapses to. Interned because
 # it is value-identical on each of those paths, and named so no branch is
 # tempted to invent a ``vault_ref`` the vault never issued.
@@ -989,7 +1066,18 @@ def _entry_path_segment(entry_id: int) -> str:
     request, and a future identifier type must not be able to redirect it by its
     shape alone.
     """
-    return quote(str(entry_id), safe="").replace(".", _ENCODED_DOT)
+    return _inert_path_segment(str(entry_id))
+
+
+def _inert_path_segment(raw: str) -> str:
+    """Encode ``raw`` into exactly one path segment that cannot climb out of it.
+
+    Factored out of :func:`_entry_path_segment` so the upload path gets the same
+    guarantee from the same code rather than a second implementation that has to
+    remember the dot rule independently -- and an upload's id is a string from
+    the start, which is exactly the case that rule exists for.
+    """
+    return quote(raw, safe="").replace(".", _ENCODED_DOT)
 
 
 def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
@@ -1081,8 +1169,19 @@ def _faults_our_request(response: httpx.Response) -> bool:
     return response.is_client_error and response.status_code not in _RETRYABLE_CLIENT_STATUSES
 
 
-def _ingest_failure(response: httpx.Response) -> CreekVaultError:
-    """Classify a non-2xx ingest response into the failure it actually is.
+def _write_failure(
+    response: httpx.Response,
+    *,
+    call_failed: str,
+    request_rejected: str,
+    credential_rejected: str,
+) -> CreekVaultError:
+    """Classify a non-2xx write response into the failure it actually is.
+
+    Shared by both write capabilities -- journal ingest and document upload --
+    because the *classification* is a property of the answer rather than of what
+    was being written. Only the three static messages differ, and they are
+    parameters precisely so each capability names itself in what it raises.
 
     The order encodes what each answer tells an operator to do:
 
@@ -1100,13 +1199,23 @@ def _ingest_failure(response: httpx.Response) -> CreekVaultError:
        request, so they answer to the availability story instead.
     """
     if response.status_code in _CREDENTIAL_REJECTED_STATUSES:
-        return CreekVaultAuthError(_CREDENTIAL_REJECTED_MESSAGE)
+        return CreekVaultAuthError(credential_rejected)
     code = _vault_error_code(response)
     if code in _CONTRACT_ERROR_CODES:
-        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE, code=code)
+        return CreekVaultContractError(request_rejected, code=code)
     if code is None and _faults_our_request(response):
-        return CreekVaultContractError(_INGEST_REJECTED_MESSAGE)
-    return CreekVaultUnavailableError(_INGEST_FAILED_MESSAGE)
+        return CreekVaultContractError(request_rejected)
+    return CreekVaultUnavailableError(call_failed)
+
+
+def _ingest_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed journal ingest, naming the JOURNAL capability."""
+    return _write_failure(
+        response,
+        call_failed=_INGEST_FAILED_MESSAGE,
+        request_rejected=_INGEST_REJECTED_MESSAGE,
+        credential_rejected=_CREDENTIAL_REJECTED_MESSAGE,
+    )
 
 
 def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> CreekVaultError:
@@ -1313,7 +1422,12 @@ class HttpCreekVaultClient:
         return _VAULT_HTTP_POOL.get()
 
     async def _authorized_request(
-        self, method: str, url: str, json_body: Mapping[str, object] | None = None
+        self,
+        method: str,
+        url: str,
+        json_body: Mapping[str, object] | None = None,
+        *,
+        contract_versioned: bool = True,
     ) -> httpx.Response:
         """Send one authorized vault request under the whole-request deadline.
 
@@ -1321,6 +1435,16 @@ class HttpCreekVaultClient:
         that must hold for *every* call hold once. The authorization header is
         built here, per call, so the credential lives only for the duration of
         the request and never on the shared pooled client.
+
+        ``contract_versioned`` carries :data:`_CONTRACT_VERSION_HEADER`, which
+        Creek requires on every ``/v1`` capability call and refuses a missing one
+        with ``409 incompatible_version`` before any vault read. It defaults to
+        ``True`` so a capability added later carries it without anyone
+        remembering; the sole caller that opts out is the capability document
+        fetch, which the contract exempts on purpose. No fixture can catch this
+        omission -- the vendored bundle publishes schemas and examples, and says
+        nothing about request headers -- so the test that guards it drives a fake
+        which refuses requests lacking the header.
 
         The deadline is necessary because httpx's ``read`` budget is per
         socket-read rather than a deadline: a trickling vault would otherwise
@@ -1330,11 +1454,14 @@ class HttpCreekVaultClient:
         call time rather than captured, so a redeployment (or a test) can move
         the ceiling without rebuilding the adapter.
         """
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        if contract_versioned:
+            headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
         async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
             return await self._active_client().request(
                 method,
                 url,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=headers,
                 json=json_body,
             )
 
@@ -1346,7 +1473,9 @@ class HttpCreekVaultClient:
         that decodes to something other than a JSON object is a malformed
         payload, so it raises ``TypeError`` rather than being cast.
         """
-        response = await self._authorized_request("GET", f"{self._url}{_CAPABILITIES_PATH}")
+        response = await self._authorized_request(
+            "GET", f"{self._url}{_CAPABILITIES_PATH}", contract_versioned=False
+        )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping):
@@ -1522,6 +1651,32 @@ class HttpCreekVaultClient:
             CreekCapability.JOURNAL,
         )
         return result
+
+    async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Refuse a document upload: Creek publishes no ``/v1`` surface for one.
+
+        This looks like ``classify``'s refusal because it is the same situation.
+        The ratified ``/v1`` capability vocabulary is a closed enum of exactly
+        four names -- ``capabilities``, ``journal-upsert``, ``reflections``,
+        ``wheel`` -- under ``additionalProperties: false``, identical across every
+        supported contract minor. There is no upload name, no upload schema, and
+        no upload route, so no conformant vault can ever advertise or serve one.
+
+        ``creek.upload`` is real, but it is an **MCP tool** at contract 0.3.0
+        (Geoffe-Ga/Creek-Vault#1023), and adepthood's MCP client was retired by
+        ADR 0004. Reaching it would be a transport decision, not a parsing one.
+
+        This previously ``PUT`` a body to an invented ``/v1/uploads/{id}`` URL.
+        Creek has never served that route. Guessing a wire shape is exactly what
+        this seam exists to refuse, so the guess is gone and the refusal is
+        counted under its own capability like every other.
+        """
+        with _CountingOutcome(CreekCapability.UPLOAD):
+            return await self._upload()
+
+    async def _upload(self) -> VaultUploadResult:
+        """Refuse the upload, naming the capability and nothing else."""
+        _refuse_unratified(CreekCapability.UPLOAD)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: its ``/v1`` request/response shape is unratified.
@@ -1736,6 +1891,17 @@ class LocalFallbackCreekVaultClient:
         """No-op ingest: report not stored without raising (Postgres is authoritative)."""
         record_vault_outcome(self._outcome, CreekCapability.JOURNAL)
         return VaultIngestResult(stored=False, vault_ref=None)
+
+    async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
+        """No-op upload: report not stored without raising, exactly as ingest does.
+
+        Not a raise, because an absent vault is not an error the uploader caused
+        -- the write service turns this into an honest "no vault to keep it in"
+        outcome, and a document nobody could store is the same non-event a
+        journal entry's unreplicated copy is.
+        """
+        record_vault_outcome(self._outcome, CreekCapability.UPLOAD)
+        return VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""

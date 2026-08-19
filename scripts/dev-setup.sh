@@ -32,8 +32,11 @@ npx expo install
 popd >/dev/null || exit 1
 
 echo "✅ Installing pre-commit hooks..."
+# Which hook types get written is declared by ``default_install_hook_types`` in
+# .pre-commit-config.yaml, so this installs pre-commit, commit-msg AND pre-push
+# without restating the list here. Keeping the set in one place is the point: it
+# was split across this script and the config that a whole stage went missing.
 pre-commit install --install-hooks
-pre-commit install --hook-type commit-msg
 
 echo "🎉 Setup complete! Your environment is ready."
 echo ""

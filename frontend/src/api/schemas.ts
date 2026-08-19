@@ -244,11 +244,34 @@ const MIN_ASPECT = 1;
 /** Highest Aspect tag (stage 10); the curriculum has ten stages. */
 const MAX_ASPECT = 10;
 
+/**
+ * The two senders the client renders differently. The backend types ``sender``
+ * as a bare ``str`` (``schemas/journal.py:128``), so a third value is one server
+ * change away -- and a ``z.enum`` at a *list* boundary fails the whole response
+ * over a single unrecognised row. Same reasoning as ``TIER_VALUES`` above:
+ * accept the string at the boundary, narrow at the point of use.
+ */
+export const SENDER_VALUES = ['user', 'bot'] as const;
+export type Sender = (typeof SENDER_VALUES)[number];
+
+/**
+ * Narrow a server-supplied sender, falling back to ``bot`` for anything else.
+ *
+ * ``bot`` rather than ``user`` on purpose: an unrecognised speaker is not the
+ * person who was writing, and rendering someone else's words as theirs is the
+ * worse of the two wrong answers.
+ */
+export function narrowSender(value: unknown): Sender {
+  return typeof value === 'string' && (SENDER_VALUES as readonly string[]).includes(value)
+    ? (value as Sender)
+    : 'bot';
+}
+
 /** One journal message (mirrors the backend ``JournalMessage`` response). */
 export const journalMessageSchema = z.object({
   id: z.number().int(),
   message: z.string(),
-  sender: z.enum(['user', 'bot']),
+  sender: z.string(),
   // Same ISO-8601 contract as every other timestamp column (goal completions
   // etc.) — bare z.string() would silently accept "not-a-date".
   timestamp: isoDateTime,
@@ -267,6 +290,12 @@ export const journalMessageSchema = z.object({
   // untagged / pre-column responses still validate.
   primary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
   secondary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
+  // Hierarchical-journaling fields (``schemas/journal.py:137-138``). Zod strips
+  // what it does not declare, so omitting these did not fail validation -- it
+  // silently deleted them from every validated list response. Optional *and*
+  // nullable to match the backend's ``str | None = None`` exactly.
+  reflection_level: z.string().nullable().optional(),
+  reflection_scope_key: z.string().nullable().optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */
@@ -279,6 +308,35 @@ export const journalListResponseSchema = z.object({
 /** Handwriting-transcription result: the OCR'd text of one journal page. */
 export const transcribePageSchema = z.object({ text: z.string() });
 export type TranscribePageT = z.infer<typeof transcribePageSchema>;
+
+/**
+ * What the vault did with one uploaded document — the wire strings of the
+ * backend's ``VaultUploadStatus``. All four are distinct outcomes with distinct
+ * remedies, so the enum is pinned rather than left as a bare string: a fifth
+ * value the client has no honest sentence for must surface as
+ * ``ApiValidationError`` rather than render as a blank row.
+ */
+export const vaultUploadStatusSchema = z.enum([
+  'accepted',
+  'vault_unavailable',
+  'capability_unsupported',
+  'degraded',
+]);
+export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
+
+/**
+ * One document's upload outcome. ``vault_ref`` is the vault's fragment handle,
+ * present only when the document was accepted; ``tags`` are what the vault's
+ * ingest pipeline assigned (empty is the expected answer today, not a failure);
+ * ``message`` is the backend's own self-serve sentence.
+ */
+export const uploadDocumentSchema = z.object({
+  status: vaultUploadStatusSchema,
+  vault_ref: z.string().nullable().optional(),
+  tags: z.array(z.string()),
+  message: z.string(),
+});
+export type UploadDocumentT = z.infer<typeof uploadDocumentSchema>;
 
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
@@ -356,16 +414,9 @@ export const practiceItemSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   default_duration_minutes: z.number(),
-  // The backend ``PracticeResponse`` intentionally OMITS this field
-  // (BUG-PRACTICE-001 / BUG-SCHEMA-010): echoing the submitter's user id on
-  // a catalog GET turns the endpoint into a user-id enumeration oracle. The
-  // field is therefore ABSENT on the wire, not ``null``. ``.nullish()``
-  // (``number | null | undefined``) tolerates the absence; a plain
-  // ``.nullable()`` rejected the missing key and failed every practice fetch
-  // with ``ApiValidationError`` — the "Something changed on the server"
-  // banner on the Practice and Catalog screens. Keep this absent-tolerant
-  // unless the backend re-introduces the field.
-  submitted_by_user_id: z.number().int().nullish(),
+  // No ``submitted_by_user_id``: ``PracticeResponse`` omits it so a catalog
+  // GET can't become a user-id enumeration oracle (BUG-PRACTICE-001 /
+  // BUG-SCHEMA-010).
   approved: z.boolean(),
   mode: z.string().optional(),
   mode_config: z.record(z.string(), z.unknown()).optional(),
@@ -396,9 +447,7 @@ export const practiceRecipeSchema = z.object({
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   practice_id: z.number().int(),
   stage_number: z.number().int(),
   start_date: isoDate,
@@ -412,9 +461,7 @@ export const userPracticeSchema = z.object({
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
 export const practiceSessionResponseSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   user_practice_id: z.number().int(),
   duration_minutes: z.number(),
   timestamp: isoDateTime,

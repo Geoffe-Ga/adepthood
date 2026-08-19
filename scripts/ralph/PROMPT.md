@@ -114,14 +114,15 @@ behind-main rebases across parallel lanes.
    | `./scripts/backend/test.sh <paths>` (targeted) | every Red→Green cycle | seconds |
    | `./scripts/<side>/check-all.sh` | once, when Gate 1 is green | ~4m23s cold backend; ~8s on a receipt hit |
    | `git commit` hooks (staged files only) | automatic | seconds to ~1 min |
-   | `git push` hooks (full suite + coverage) | automatic *if installed* | ~5 min |
+   | `git push` hooks (full suite + coverage) | automatic | ~5 min |
 
-   The push rung fires only where the `pre-push` hook type is installed
-   (`pre-commit install --hook-type pre-push`); `scripts/dev-setup.sh` does not
-   install it today, so on most dev boxes `git push` runs nothing. Backend CI
-   runs that stage regardless, so the checks are never skipped outright — they
-   just land ~18 minutes later instead of ~5. Do not treat a silent push as a
-   pass.
+   The push rung fires on every push: `default_install_hook_types` in
+   `.pre-commit-config.yaml` makes a bare `pre-commit install` write the
+   `pre-push` hook along with the other two. On a checkout predating that, run
+   `pre-commit install` once and confirm `.git/hooks/pre-push` exists — a push
+   that produces no hook output on such a box means the rung is not wired, and
+   the checks land ~18 minutes later in CI instead of ~5. Backend CI runs the
+   stage regardless, so nothing is skipped outright.
 
    Run `check-all.sh` until exit 0 (`scripts/backend/check-all.sh` and/or
    `scripts/frontend/check-all.sh`; `./scripts/<side>/fix-all.sh` for

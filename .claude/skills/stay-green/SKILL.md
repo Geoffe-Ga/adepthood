@@ -52,13 +52,15 @@ nothing and doubles the wait:
 | `./scripts/backend/test.sh <paths>` (targeted) | every Red-Green cycle | seconds |
 | `./scripts/<side>/check-all.sh` | once, when Gate 1 is green | ~4m23s cold backend; ~8s on a receipt hit |
 | `git commit` hooks (staged files only) | automatic | seconds to ~1 min |
-| `git push` hooks (full suite + coverage) | automatic *if installed* | ~5 min |
+| `git push` hooks (full suite + coverage) | automatic | ~5 min |
 
-The push rung fires only where the `pre-push` hook type is installed
-(`pre-commit install --hook-type pre-push`); `scripts/dev-setup.sh` does not
-install it today, so on most dev boxes `git push` runs nothing. Backend CI runs
-that stage regardless, so nothing is skipped outright -- it just surfaces ~18
-minutes later instead of ~5. A silent push is not a pass.
+The push rung fires on every push: `default_install_hook_types` in
+`.pre-commit-config.yaml` makes a bare `pre-commit install` write the `pre-push`
+hook alongside the other two. On a checkout predating that, run `pre-commit
+install` once and confirm `.git/hooks/pre-push` exists -- a push producing no
+hook output on such a box means the rung is not wired, and the checks surface
+~18 minutes later in CI instead of ~5. Backend CI runs the stage regardless, so
+nothing is skipped outright.
 
 ```bash
 ./scripts/backend/check-all.sh    # drift preflight, lint, format, mypy,

@@ -128,7 +128,7 @@ non-zero when it cannot classify a lane (including when a bot PR about to merge
 has a hold it can neither find nor rule out), and an unchecked `$STATUS` would
 just come back empty:
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | pending | ci-failed | changes-requested | awaiting-review | optout
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | unknown | draft | blocked | conflicted | pending | ci-failed | changes-requested | awaiting-review | review-self-skipped | optout
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -197,6 +197,23 @@ Then act on `$STATUS`:
   already arrived, and this token exists precisely so the watcher wakes on it
   instead of sleeping out its timeout (a fresh non-LGTM used to read as
   `awaiting-review`, which the watcher counts as in-flight).
+- **`unknown`** / **`draft`** / **`blocked`** / **`conflicted`** — not mergeable,
+  and **a sync cannot help**. These used to print `behind`, so every wake synced
+  a no-op and dispatched a worker with nothing to do; against `draft` the loop
+  fought a human who had deliberately parked the PR. `unknown` is GitHub still
+  computing mergeability (wait). `draft` and `blocked` are holds the loop does
+  not act on. `conflicted` needs a real conflict resolution at Gate 1 —
+  `fleet.sh sync` exits 3 on it rather than fixing it.
+
+- **`review-self-skipped`** — this PR edits the review workflow, so
+  `claude-code-action` self-skipped as anti-tamper and **no verdict will ever
+  arrive**. The check reports `SUCCESS` rather than `SKIPPED`, so this used to
+  read as `awaiting-review` forever, and the guidance below sent the lane hunting
+  a merge conflict that did not exist. **Terminal: hand it to a human and stop
+  re-checking.** Do not sync, do not dispatch a worker, and never fabricate an
+  LGTM. A human who reviews it by hand and posts a fresh `LGTM` still lands it
+  through `ready`.
+
 - **`pending`** / **`awaiting-review`** — CI is still running, or the verdict
   is genuinely missing or stale (predates HEAD; a fresh non-LGTM prints
   `changes-requested` instead). Leave the lane; its Step 5 wake (webhook

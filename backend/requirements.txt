@@ -11,9 +11,19 @@ fastapi==0.141.1
 uvicorn==0.52.1
 pydantic==2.13.4
 email-validator==2.3.0
-sqlalchemy==2.0.51
+# The ``asyncio`` extra, not bare sqlalchemy, because that is what this app
+# actually uses -- and it is the only way greenlet gets declared honestly.
+# SQLAlchemy's bare dependency on greenlet carries a platform marker listing
+# aarch64/ppc64le/x86_64/amd64/win32; macOS on Apple silicon reports ``arm64``,
+# which is in none of them, so a from-scratch install on the primary dev
+# platform silently omitted it and every async DB test died with "the greenlet
+# library is required". CI never saw it -- ubuntu-latest is x86_64. The extra
+# requires greenlet unconditionally, so the single source of truth stays
+# SQLAlchemy's own metadata rather than a version we would have to keep in step
+# by hand.
+sqlalchemy[asyncio]==2.0.51
 sqlmodel==0.0.39
-alembic==1.18.5
+alembic==1.19.0
 asyncpg==0.31.0
 aiosqlite==0.22.1
 bcrypt==5.0.0
@@ -28,14 +38,6 @@ tzdata==2026.3
 pytest==9.1.1
 pytest-asyncio==1.4.0
 httpx==0.28.1
-# MCP SDK powering the Creek Vault streamable-HTTP transport
-# (services/creek_vault_client.py); unconfigured deployments never open it.
-mcp==2.0.0
-# The HTTP library the MCP SDK speaks, distinct from the ``httpx`` the plain
-# HTTP vault client uses. Already a transitive mcp dependency; pinned here
-# because the vault client imports it directly to build the MCP transport's
-# timeout budget and to name its errors in the degrade set.
-httpx2==2.9.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
 openai==2.53.0

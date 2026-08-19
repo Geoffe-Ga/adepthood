@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
 from typing import cast
@@ -1349,6 +1350,39 @@ async def _insert_stage_two_user_practice(db_session: AsyncSession, user_id: int
     await db_session.commit()
     await db_session.refresh(user_practice)
     return cast("int", user_practice.id)
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_session_probe_emits_audit_log(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cross-tenant probe is denied *and* leaves an audit row.
+
+    The rejection has always worked; the audit row has not. Without it nothing
+    distinguishes someone enumerating other users' ``user_practice`` ids from
+    ordinary 403s, so the one signal that would reveal an active probe never
+    reached the logs. A test that only asserted the 403 passed the whole time
+    this was missing, which is why this one asserts the log.
+    """
+    _alice_headers, alice_id = await _signup(async_client, "alice_probe")
+    bob_headers, _bob_id = await _signup(async_client, "bob_probe")
+    alice_practice_id = await _create_user_practice(async_client, db_session, _alice_headers)
+
+    with caplog.at_level(logging.WARNING, logger="dependencies.ownership"):
+        resp = await async_client.post(
+            "/practice-sessions/",
+            json=_session_payload(alice_practice_id),
+            headers=bob_headers,
+        )
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    deny_logs = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert deny_logs, "expected a resource_access_denied audit log entry"
+    assert getattr(deny_logs[0], "resource", None) == "user_practice"
+    assert getattr(deny_logs[0], "resource_id", None) == alice_practice_id
+    assert getattr(deny_logs[0], "user_id", None) != alice_id
 
 
 @pytest.mark.asyncio

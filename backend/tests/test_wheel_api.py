@@ -19,6 +19,8 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
 )
@@ -107,7 +109,7 @@ async def _seed_habit_with_completion(
     goal = Goal(
         habit_id=habit.id,
         title="g",
-        tier="t",
+        tier="clear",
         target=1,
         target_unit="rep",
         frequency=1,
@@ -322,6 +324,10 @@ class _WheelVaultClient:
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Unused on the wheel path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
         raise NotImplementedError(request)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
