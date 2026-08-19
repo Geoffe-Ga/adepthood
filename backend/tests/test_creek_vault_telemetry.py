@@ -881,6 +881,10 @@ _HANDSHAKE_DEGRADE_CASES: Mapping[
         _ScriptedVault(contract_version=_SKEWED_CONTRACT_VERSION),
         VaultTelemetryOutcome.INCOMPATIBLE_VERSION,
     ),
+    HandshakeDegradeReason.AUTH: (
+        _ScriptedHandshake(_UNAUTHORIZED_REPLY),
+        VaultTelemetryOutcome.AUTH_FAILED,
+    ),
     HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE: (
         _ScriptedHandshake(_VAULT_REPORTED_UNAVAILABLE_REPLY),
         VaultTelemetryOutcome.UNAVAILABLE,
