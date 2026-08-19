@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     # A slow gate gets skipped and a skipped gate is worse than none, so the
     # budget is explicit: the lane boots a server, migrates a schema and runs
-    # three journeys in well under a minute of work.
+    # every registered journey in well under a minute of work.
     timeout-minutes: 10
     services:
       postgres:
