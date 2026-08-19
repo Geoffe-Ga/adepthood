@@ -22,7 +22,7 @@ import re
 from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 from fastapi import HTTPException
@@ -499,7 +499,12 @@ class TestGenerateResponseExceptionContract:
     ) -> None:
         """A real SDK connection error still normalizes to LLMProviderError."""
         _configure_openai_env(monkeypatch)
-        request = httpx.Request("POST", "https://api.openai.com")
+        # ``httpx2`` -- not ``httpx`` -- on purpose: openai 3.x re-typed its
+        # client against httpx2 (a separate distribution, not an httpx upgrade),
+        # so ``APIConnectionError`` now declares ``request: httpx2.Request``.
+        # The two Request classes are unrelated, and the rest of this suite
+        # still speaks legacy httpx because Starlette and anthropic do.
+        request = httpx2.Request("POST", "https://api.openai.com")
         original = openai.APIConnectionError(request=request)
         broken_call = AsyncMock(side_effect=original)
         with (
