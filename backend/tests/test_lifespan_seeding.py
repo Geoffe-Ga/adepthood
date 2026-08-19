@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
@@ -30,6 +31,7 @@ from models.stage_content import StageContent
 from observability import remove_app_log_handlers_for_tests
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
+from services import journal_encryption
 from services.content_repository import reset_content_repository_for_tests
 
 #: Total preset rows the practice seeder inserts — sourced from
@@ -42,6 +44,22 @@ _GUMROAD_WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secr
 _GUMROAD_ENV_VARS = (_GUMROAD_API_TOKEN_ENV, _GUMROAD_WEBHOOK_SECRET_ENV)
 _GUMROAD_UNCONFIGURED_MARKER = "gumroad_unconfigured"
 _GUMROAD_TOKEN_SENTINEL = "sentinel-gumroad-api-token"  # pragma: allowlist secret
+
+
+@pytest.fixture
+def production_journal_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Satisfy the production journal-encryption precondition for a boot test.
+
+    A production boot with no ``JOURNAL_ENCRYPTION_KEYS`` now refuses before it
+    reaches anything else, so a test about some *other* production startup rule
+    has to configure encryption to reach its own subject. The cached key
+    registry is cleared on both sides: ``monkeypatch`` restores the variable
+    but not the process-wide cache built from it.
+    """
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    yield
+    journal_encryption.reset_cache()
 
 
 def _expected_content_count() -> int:
@@ -347,6 +365,7 @@ async def test_seed_complete_logs_carry_seeder_name_and_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
 async def test_lifespan_completes_in_production_without_gumroad_config(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -370,6 +389,7 @@ async def test_lifespan_completes_in_production_without_gumroad_config(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
 async def test_lifespan_still_fails_fast_on_partial_gumroad_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
