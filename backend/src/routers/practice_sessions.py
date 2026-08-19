@@ -292,11 +292,13 @@ async def create_session(
 ) -> PracticeSession:
     """Log a practice session against a user-practice selection.
 
-    Inline 404→403 split (rather than ``require_owned_user_practice``)
-    because the ``user_practice_id`` arrives in the body, not as a path
-    or query parameter — FastAPI's DI cannot extract body fields into
-    sub-dependencies.  The ordering and exception types match the shared
-    dep so the IDOR matrix test sees the same 403 for cross-user calls.
+    Ownership of the body-carried ``user_practice_id`` is delegated to
+    :func:`resolve_owned_user_practice`, which owns the 404-then-403 rule and
+    emits the ``resource_access_denied`` audit row on a cross-tenant probe.
+    Only the ``require_``-prefixed *dependency* is unusable here: FastAPI's DI
+    cannot extract a body field into a sub-dependency.  The plain callable
+    underneath it is exactly what body-carried ids are meant to call, as
+    ``POST /journal/`` does.
 
     A user may assign a practice to a future stage for forward planning, but
     logging a real session there is gated: a not-yet-unlocked stage yields 403

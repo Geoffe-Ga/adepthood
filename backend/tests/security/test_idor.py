@@ -552,6 +552,7 @@ async def test_idor_practice_session_create_returns_403(
         headers=bob_headers,
     )
     assert baseline.status_code == HTTPStatus.CREATED
+    assert baseline.json()["user_practice_id"] == bob_practice_id
 
     smuggled = await _sessions_where(
         db_session, col(PracticeSession.user_practice_id) == alice_practice_id
@@ -559,10 +560,37 @@ async def test_idor_practice_session_create_returns_403(
     assert smuggled == [], "cross-user practice session persisted against the victim's practice"
 
     denials = _denial_records(caplog)
-    assert denials, "expected a resource_access_denied audit log entry"
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
     assert getattr(denials[0], "resource", None) == "user_practice"
     assert getattr(denials[0], "resource_id", None) == alice_practice_id
     assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_practice_session_create_missing_user_practice_is_404_and_unaudited(
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``user_practice_id`` that exists for nobody 404s, and audits nothing.
+
+    A missing row must never reach the ownership comparison -- inverting that
+    order makes the endpoint an existence oracle.  A denial record for a row
+    that never existed would likewise poison the audit signal that genuine
+    cross-tenant probes are meant to raise.  The sibling case is pinned for
+    ``POST /journal/`` but was unpinned for this endpoint.
+    """
+    headers, _ = await _signup(async_client, "ps_post_missing_up")
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(_DEFINITELY_MISSING_ID),
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "user_practice_not_found"
+    assert _denial_records(caplog) == []
 
 
 @pytest.mark.asyncio

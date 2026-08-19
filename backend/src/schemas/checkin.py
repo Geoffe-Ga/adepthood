@@ -1,4 +1,4 @@
-"""Check-in request/response schemas."""
+"""Check-in response schemas."""
 
 from __future__ import annotations
 
