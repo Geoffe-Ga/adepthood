@@ -21,11 +21,17 @@ tested here is refusal-first:
 * The Gumroad-verified path is untouched: the signup route still rejects a
   license-less request in the very environment where this command is fully
   permitted.
+
+And one more, because a guarded command that produces an unusable account has
+guarded nothing: the address is folded and validated the way the API folds and
+validates its own, proven by logging the seeded account in through the real
+route rather than by re-reading the row this command just wrote.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import NoReturn
 
@@ -38,6 +44,7 @@ from sqlmodel import select
 from domain.entitlements import has_course_access
 from models.entitlement import Entitlement
 from models.user import User
+from routers.auth import AuthRequest
 from scripts import create_dev_account
 
 # A machine a developer is actually sitting at: explicitly development, a
@@ -51,8 +58,32 @@ LOCAL_ENV: Mapping[str, str] = {
     "DATABASE_URL": LOCAL_DATABASE_URL,
 }
 
-SEED_EMAIL = "dev@localhost.test"
+SEED_EMAIL = create_dev_account.DEFAULT_DEV_EMAIL
 SEED_PASSWORD = "dev-account-password"  # pragma: allowlist secret
+
+# The same address as ``SEED_EMAIL``, spelled the way a person types one: the
+# auth router lower-cases and strips every inbound email, so this is what a
+# developer may pass and ``SEED_EMAIL`` is the only row that can ever match it.
+SEED_EMAIL_AS_TYPED = "  Dev@Example.COM\n"
+
+# Spellings the boundary must fold together. Each is fed to both the command and
+# the router so a one-sided change to either shows up as a disagreement rather
+# than as an account nobody can log in to.
+EQUIVALENT_EMAIL_SPELLINGS = [
+    SEED_EMAIL,
+    SEED_EMAIL_AS_TYPED,
+    "DEV@EXAMPLE.COM",
+    "\tDev@example.Com ",
+]
+
+# Addresses that read as reassuringly local and that ``EmailStr`` refuses: RFC
+# 6761 reserves these names, so no client can ever send one. An account keyed to
+# one is unreachable through the login route no matter what else is right.
+UNUSABLE_LOCAL_LOOKING_EMAILS = [
+    "dev@localhost.test",
+    "dev@localhost.localhost",
+    "dev@localhost",
+]
 
 # One case per veto, each built by mutating the *permitted* environment, so a
 # passing case proves that single variable is independently sufficient to
@@ -255,6 +286,121 @@ async def test_the_seeded_account_can_log_in_and_holds_course_access(
     assert user.id is not None
     assert bcrypt.checkpw(SEED_PASSWORD.encode(), stored.password_hash.encode())
     assert await has_course_access(db_session, user.id) is True
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_case_email_seeds_an_account_that_can_actually_log_in(
+    db_session: AsyncSession,
+    async_client: AsyncClient,
+) -> None:
+    """``--email Dev@Example.COM`` must produce credentials that work.
+
+    Login normalizes its payload and then looks the row up by exact string, so
+    a mixed-case row is unreachable by every spelling: the typed one is folded
+    away before the query, and the folded one does not match what was stored.
+    Asserted through the real login route rather than against the row, because
+    "the row exists" is precisely the fact that was already true while the
+    account was unusable.
+    """
+    await create_dev_account.seed_dev_account(
+        db_session,
+        email=SEED_EMAIL_AS_TYPED,
+        password=SEED_PASSWORD,
+        timezone="UTC",
+    )
+
+    response = await async_client.post(
+        "/auth/login",
+        json={"email": SEED_EMAIL_AS_TYPED, "password": SEED_PASSWORD},
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    stored = (
+        (await db_session.execute(select(User).where(User.email == SEED_EMAIL))).scalars().first()
+    )
+    assert stored is not None
+    assert response.json()["user_id"] == stored.id
+
+
+@pytest.mark.parametrize("address", UNUSABLE_LOCAL_LOOKING_EMAILS)
+@pytest.mark.asyncio
+async def test_an_address_the_api_rejects_is_refused_rather_than_stored(
+    address: str,
+    db_session: AsyncSession,
+) -> None:
+    """A row the login route cannot address is worse than no row at all.
+
+    ``dev@localhost.test`` looks like the obvious local address and is a
+    special-use reserved name, so ``EmailStr`` refuses it and the login request
+    never reaches the lookup. Seeding it would hand a developer credentials,
+    print a password, report success -- and produce 422 on every attempt to use
+    them, with nothing in the message pointing at the address.
+    """
+    with pytest.raises(create_dev_account.DevAccountRefusedError, match="could not be logged in"):
+        await create_dev_account.seed_dev_account(
+            db_session,
+            email=address,
+            password=SEED_PASSWORD,
+            timezone="UTC",
+        )
+
+    assert (await db_session.execute(select(User))).scalars().first() is None
+
+
+@pytest.mark.parametrize("spelling", EQUIVALENT_EMAIL_SPELLINGS)
+def test_the_command_normalizes_an_email_exactly_as_the_auth_boundary_does(
+    spelling: str,
+) -> None:
+    """Pin the command's rule to the router's, so neither can drift alone.
+
+    The command cannot import the router's rule: it lives as a private
+    ``field_validator`` on ``AuthRequest``, and the only other copy is an
+    equally private helper in the password-reset schema. Rather than reach into
+    either -- or edit a request-path module this change deliberately leaves
+    byte-for-byte alone -- the two are held together here, by comparing their
+    output on every spelling that matters. A one-sided edit fails this test.
+    """
+    boundary = AuthRequest(email=spelling, password=SEED_PASSWORD)
+
+    assert create_dev_account.normalize_email(spelling) == boundary.email
+
+
+@pytest.mark.asyncio
+async def test_a_case_variant_of_a_seeded_address_refuses_instead_of_colliding(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second run spelled differently exits 3, not with an IntegrityError.
+
+    ``ix_user_lower_email_unique`` makes case-insensitive uniqueness a database
+    guarantee, so a pre-check that compares case-sensitively does not prevent
+    the collision -- it only moves it to the INSERT, where it surfaces as an
+    unhandled traceback instead of the documented refusal.
+    """
+    await create_dev_account.seed_dev_account(
+        db_session,
+        email=SEED_EMAIL,
+        password=SEED_PASSWORD,
+        timezone="UTC",
+    )
+
+    @asynccontextmanager
+    async def _factory() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    monkeypatch.setattr(create_dev_account, "async_session_factory", _factory)
+
+    exit_code = await create_dev_account.seed_with_session(
+        email="DEV@EXAMPLE.COM",
+        password="a-different-password",  # pragma: allowlist secret
+        timezone="UTC",
+    )
+
+    assert exit_code == create_dev_account.REFUSED_EXIT_CODE
+    assert SEED_EMAIL in capsys.readouterr().err
+    users = (await db_session.execute(select(User))).scalars().all()
+    assert len(users) == 1
 
 
 @pytest.mark.asyncio

@@ -35,14 +35,24 @@ several independent conditions each veto on their own:
 Each veto names the variable it read and never renders its value: a database URL
 carries a credential, and so does a storefront token.
 
+**The address has to be one the API accepts.** This command writes a row that
+the login route later reads, and that route parses its payload before it looks
+anything up: it folds the address to ``strip().lower()`` and rejects anything
+``EmailStr`` will not parse. An account seeded outside those rules is an account
+nobody can sign in to -- the row exists, and every spelling of it misses. So the
+address is put through the same two rules here, before anything is written, and
+a spelling the API would reject is refused instead of stored.
+
 Usage, from ``backend/``::
 
-    PYTHONPATH=src python -m scripts.create_dev_account --email dev@localhost.test
+    PYTHONPATH=src python -m scripts.create_dev_account --email dev@example.com
 
 Exit codes:
     0 -- the account was created and the grant recorded.
-    3 -- refused: the environment did not prove itself local, or the email is
-         already taken. Nothing was written, and no database was contacted.
+    3 -- refused: the environment did not prove itself local, the address is not
+         one the API will accept, or it is already taken (compared without
+         regard to case, as the database's own unique index compares it).
+         Nothing was written.
 """
 
 from __future__ import annotations
@@ -57,8 +67,10 @@ from collections.abc import Mapping, Sequence
 from urllib.parse import urlparse
 
 import bcrypt
+from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from database import async_session_factory
 from domain.entitlements import grant_manual_course_access
@@ -106,6 +118,18 @@ _GENERATED_PASSWORD_BYTES = 12
 #: Recorded on the entitlement so a seeded account stays distinguishable from a
 #: real redemption in every later query, revenue reconciliation included.
 GRANT_REASON = "local development account seeded by scripts.create_dev_account"
+
+#: The address the API annotates its email fields with. Validating against the
+#: same type is the point: a spelling this rejects is one no client can ever
+#: send, so an account keyed to it could never be signed in to.
+_EMAIL_TYPE = TypeAdapter(EmailStr)
+
+#: RFC 2606 reserves ``example.com`` for exactly this, so the default can never
+#: collide with somebody's real address. It is deliberately not a ``.test`` or
+#: ``.localhost`` name: those read as reassuringly local and are special-use
+#: reserved, which means ``EmailStr`` refuses them and the seeded account would
+#: be unreachable through the very login route it exists to reach.
+DEFAULT_DEV_EMAIL = "dev@example.com"
 
 
 class DevAccountRefusedError(RuntimeError):
@@ -260,6 +284,43 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode("utf-8")
 
 
+def normalize_email(value: str) -> str:
+    """Fold ``value`` into the one spelling the API would ever store or look up.
+
+    Two rules, both borrowed rather than invented: the auth router lower-cases
+    and strips every inbound address at its request boundary, and it annotates
+    the field with :class:`~pydantic.EmailStr`. Applying either one here and not
+    the other still yields an account nobody can sign in to, so both apply.
+
+    The router's fold is a private ``field_validator`` and cannot be imported;
+    ``tests/scripts/test_create_dev_account.py`` holds the two together by
+    comparing their output, so a one-sided change fails rather than drifts.
+
+    Args:
+        value: The address as the developer typed it.
+
+    Returns:
+        The address as the API would store and compare it.
+
+    Raises:
+        DevAccountRefusedError: When the API would reject the address outright,
+            which would leave a row no login request could ever reach.
+    """
+    folded = value.strip().lower()
+    try:
+        return str(_EMAIL_TYPE.validate_python(folded))
+    except ValidationError as exc:
+        reason = exc.errors()[0]["msg"]
+        msg = (
+            f"{folded} is not an address this app accepts ({reason}), so an "
+            "account created for it could not be logged in to -- the login "
+            "route rejects the address before it looks anything up. Pass "
+            "--email with an address the API will parse, such as "
+            f"{DEFAULT_DEV_EMAIL}."
+        )
+        raise DevAccountRefusedError(msg) from exc
+
+
 async def _refuse_existing_email(session: AsyncSession, email: str) -> None:
     """Refuse when ``email`` already has an account.
 
@@ -267,19 +328,26 @@ async def _refuse_existing_email(session: AsyncSession, email: str) -> None:
     that does it on a laptop is a command that would do it wherever it was
     pointed.
 
+    Matched on ``lower(email)`` rather than on the column, because that is what
+    the ``ix_user_lower_email_unique`` index compares. A case-sensitive check
+    does not prevent the collision it appears to check for -- it only defers it
+    to the INSERT, where it arrives as a traceback instead of this refusal.
+
     Args:
         session: Open database session.
-        email: The address the caller asked for.
+        email: The address the caller asked for, already normalized.
 
     Raises:
         DevAccountRefusedError: When the address is already registered.
     """
-    result = await session.execute(select(User).where(User.email == email))
+    result = await session.execute(select(User).where(func.lower(col(User.email)) == email))
     if result.scalars().first() is None:
         return
     msg = (
         f"{email} already has an account; this command will not re-key an "
-        "existing one. Pass --email with a different address."
+        "existing one. Addresses are compared without regard to case, exactly "
+        "as the database's own unique index compares them. Pass --email with a "
+        "different address."
     )
     raise DevAccountRefusedError(msg)
 
@@ -315,9 +383,12 @@ async def seed_dev_account(
     stated reason and no sale link -- the NULL ``source_sale_id`` is what keeps
     a seeded account distinguishable from a purchase forever after.
 
+    The address is normalized first, so the row this writes is the row a later
+    login request will actually find.
+
     Args:
         session: Open database session.
-        email: Address for the new account.
+        email: Address for the new account, as the developer typed it.
         password: Plaintext password the developer will log in with.
         timezone: IANA timezone stored on the user row.
 
@@ -325,11 +396,12 @@ async def seed_dev_account(
         The persisted user.
 
     Raises:
-        DevAccountRefusedError: When the address is taken or the password cannot be
-            hashed without truncation.
+        DevAccountRefusedError: When the address is one the API would reject or
+            is taken, or the password cannot be hashed without truncation.
     """
-    await _refuse_existing_email(session, email)
-    user = User(email=email, password_hash=_hash_password(password), timezone=timezone)
+    normalized_email = normalize_email(email)
+    await _refuse_existing_email(session, normalized_email)
+    user = User(email=normalized_email, password_hash=_hash_password(password), timezone=timezone)
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -339,7 +411,7 @@ async def seed_dev_account(
         reason=GRANT_REASON,
         actor_admin_id=None,
     )
-    _announce(email)
+    _announce(normalized_email)
     return user
 
 
@@ -360,7 +432,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "deployment."
         ),
     )
-    parser.add_argument("--email", default="dev@localhost.test", help="address for the account")
+    parser.add_argument(
+        "--email",
+        default=DEFAULT_DEV_EMAIL,
+        help=f"address for the account (default: {DEFAULT_DEV_EMAIL})",
+    )
     parser.add_argument(
         "--password",
         default=None,
@@ -388,12 +464,13 @@ def _print_refusal(signals: Sequence[str]) -> None:
         sys.stderr.write(f"  - {signal}\n")
 
 
-async def _seed_with_session(args: argparse.Namespace, password: str) -> int:
+async def seed_with_session(*, email: str, password: str, timezone: str) -> int:
     """Open a session and seed, translating a refusal into an exit code.
 
     Args:
-        args: Parsed command line.
+        email: Address for the new account, as the developer typed it.
         password: The password to set, already resolved.
+        timezone: IANA timezone stored on the user row.
 
     Returns:
         The process exit code.
@@ -402,9 +479,9 @@ async def _seed_with_session(args: argparse.Namespace, password: str) -> int:
         try:
             await seed_dev_account(
                 session,
-                email=args.email,
+                email=email,
                 password=password,
-                timezone=args.timezone,
+                timezone=timezone,
             )
         except DevAccountRefusedError as exc:
             sys.stderr.write(f"refusing to seed a development account: {exc}\n")
@@ -433,7 +510,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     password = args.password or secrets.token_urlsafe(_GENERATED_PASSWORD_BYTES)
     if args.password is None:
         sys.stderr.write(f"generated password: {password}\n")
-    return asyncio.run(_seed_with_session(args, password))
+    return asyncio.run(
+        seed_with_session(email=args.email, password=password, timezone=args.timezone)
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover — exercised via tests/CLI

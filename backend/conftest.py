@@ -137,6 +137,15 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
         'CREATE UNIQUE INDEX IF NOT EXISTS "ix_stagecontent_stage_content_ref_unique_test" '
         "ON stagecontent (course_stage_id, url) WHERE url LIKE 'content://%'"
     ),
+    # user: one account per case-folded address. The column's own unique
+    # constraint is case-*sensitive*, so without this mirror a test database
+    # happily accepts ``dev@x.test`` alongside ``DEV@x.test`` — rows production
+    # rejects, which is exactly the difference a case-handling test needs to
+    # see. Mirrors production migration ``e8376b41c6a1``.
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_user_lower_email_unique_test" '
+        'ON "user" (lower(email))'
+    ),
 )
 
 # Concurrency-only indexes: the regular ``db_session`` fixture deliberately
