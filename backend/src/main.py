@@ -68,6 +68,7 @@ from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
+from services import journal_encryption
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -288,6 +289,56 @@ def validate_gumroad_config() -> None:
         )
         return
     msg = f"Missing required Gumroad configuration: {', '.join(missing)}"
+    raise RuntimeError(msg)
+
+
+# The one-liner an operator can paste to mint a key. A refusal that withholds
+# the remedy just moves the outage to whoever has to go read the source.
+JOURNAL_KEY_GENERATION_COMMAND = (
+    'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+)
+
+
+def validate_journal_encryption_config() -> None:
+    """Refuse a production boot that would store every journal in plaintext.
+
+    Journal encryption is switched on by key presence alone -- honest, and
+    exactly right on a laptop, where requiring a Fernet key to run the server or
+    the suite would be friction with no security benefit. On a server the same
+    default is the worst outcome this product has: entries save, the app looks
+    healthy, and the column an operator believed was encrypted is readable by
+    anyone who reaches the database. Nothing in the running system says so.
+
+    So production requires the key and non-production does not. The environment
+    gate is ``ENV``, the same explicit variable the rest of this module's
+    startup checks read, rather than anything inferred from an incidental
+    setting. Staging is deliberately left with development: it is a deploy for
+    material nobody has promised to protect, and taking one down over an unset
+    variable would only teach operators to set it to a throwaway key that then
+    rides to production.
+
+    The order of the two checks matters and is tested. ``is_enabled`` is
+    consulted first, so a configured-but-invalid key raises out of the
+    encryption service in every environment, exactly as it did before this
+    check existed. A typo in a key is not "encryption is off" and must never be
+    absorbed into an environment gate.
+
+    The failure names the variable and how to mint a value for it, and never
+    renders the configured value: this is the one variable in the deployment
+    whose contents decrypt every journal row in the database.
+    """
+    if journal_encryption.is_enabled():
+        return
+    if os.getenv("ENV", "development") != "production":
+        return
+    msg = (
+        f"{journal_encryption.KEYS_ENV_VAR} must be set in production. Without it "
+        "journal entries are written to the database as plaintext and this deploy "
+        "would silently store every user's writing in the clear. Generate a key "
+        f"with: {JOURNAL_KEY_GENERATION_COMMAND} -- the variable is plural because "
+        "keys are comma-separated for rotation (the first encrypts, every listed "
+        "key can still decrypt). backend/.env.example and DEPLOYMENT.md document it."
+    )
     raise RuntimeError(msg)
 
 
@@ -530,11 +581,15 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # (issue #272) instead of inline noqa comments.
     import models
     from routers.auth import _get_secret_key
-    from services import journal_encryption
 
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+
+    # ...and in production, refuse the boot outright: an unset key there is a
+    # deploy that stores every user's journal in plaintext, which the log line
+    # above states but nothing else in the running system ever would.
+    validate_journal_encryption_config()
 
     # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
     # deployment fails the orchestrator's health probe immediately rather than
