@@ -8,6 +8,13 @@ import type * as Api from '../../../api';
 import { rhythm, surface } from '../../../design/tokens';
 import ChapterReader from '../ChapterReader';
 
+import {
+  LONG_ESSAY_HEIGHT,
+  READER_VIEWPORT_HEIGHT,
+  SHORT_ESSAY_HEIGHT,
+  measureReader,
+} from './readerGeometry';
+
 interface TestNode {
   props: Record<string, unknown>;
 }
@@ -126,7 +133,7 @@ describe('ChapterReader', () => {
         source={{ kind: 'content', id: 1 }}
         fallbackTitle="x"
         onBack={jest.fn()}
-        footer={<Text>FOOTER_HERE</Text>}
+        renderFooter={() => <Text>FOOTER_HERE</Text>}
       />,
     );
     await findByText('FOOTER_HERE');
@@ -417,10 +424,127 @@ describe('ChapterReader', () => {
         source={{ kind: 'content', id: 1 }}
         fallbackTitle="x"
         onBack={jest.fn()}
-        footer={<Text>FOOTER_HERE</Text>}
+        renderFooter={() => <Text>FOOTER_HERE</Text>}
       />,
     );
     await findByTestId('reader-bottom-fade');
     await findByText('FOOTER_HERE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The end-of-essay signal that gates the reader's chapter controls
+// ---------------------------------------------------------------------------
+
+const CONTROLS = 'CONTROLS';
+
+type ScrollTarget = Parameters<typeof fireEvent.scroll>[0];
+
+const scrollTo = (scrollView: ScrollTarget, y: number): void => {
+  fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y } } });
+};
+
+describe('ChapterReader — chapter controls are due only at the essay’s end', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockContentBody.mockResolvedValue(HAPPY_CHAPTER);
+  });
+
+  const renderReader = (
+    source: React.ComponentProps<typeof ChapterReader>['source'] = { kind: 'content', id: 1 },
+  ) =>
+    render(
+      <ChapterReader
+        source={source}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+        renderFooter={(atEssayEnd) => (atEssayEnd ? <Text>{CONTROLS}</Text> : null)}
+      />,
+    );
+
+  it('withholds the controls while there is still essay below the fold', async () => {
+    const { findByTestId, queryByText } = renderReader();
+    measureReader(await findByTestId('reader-markdown'), LONG_ESSAY_HEIGHT);
+    expect(queryByText(CONTROLS)).toBeNull();
+  });
+
+  it('reveals the controls once the end of the essay comes into view', async () => {
+    const { findByTestId, findByText } = renderReader();
+    const scrollView = await findByTestId('reader-markdown');
+    measureReader(scrollView, LONG_ESSAY_HEIGHT);
+    scrollTo(scrollView, LONG_ESSAY_HEIGHT - READER_VIEWPORT_HEIGHT);
+    await findByText(CONTROLS);
+  });
+
+  it('withdraws them again when the reader scrolls back up into the essay', async () => {
+    const { findByTestId, findByText, queryByText } = renderReader();
+    const scrollView = await findByTestId('reader-markdown');
+    measureReader(scrollView, LONG_ESSAY_HEIGHT);
+    scrollTo(scrollView, LONG_ESSAY_HEIGHT - READER_VIEWPORT_HEIGHT);
+    await findByText(CONTROLS);
+    scrollTo(scrollView, 0);
+    await waitFor(() => {
+      expect(queryByText(CONTROLS)).toBeNull();
+    });
+  });
+
+  it('offers the controls immediately on a chapter too short to scroll', async () => {
+    // A non-scrolling essay is already at its end; hiding its controls behind a
+    // scroll that can never happen would strand the reader.
+    const { findByTestId, findByText } = renderReader();
+    measureReader(await findByTestId('reader-markdown'), SHORT_ESSAY_HEIGHT);
+    await findByText(CONTROLS);
+  });
+
+  it('offers the controls on a chapter that has not been written yet', async () => {
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Chapter One',
+      content_type: 'chapter',
+      body_markdown: '   \n',
+    });
+    const { findByTestId, findByText } = renderReader();
+    await findByTestId('reader-empty');
+    await findByText(CONTROLS);
+  });
+
+  it('offers the controls when the chapter failed to load, so the reader is not stranded', async () => {
+    mockContentBody.mockRejectedValueOnce(new Error('nope'));
+    const { findByTestId, findByText } = renderReader();
+    await findByTestId('reader-error');
+    await findByText(CONTROLS);
+  });
+
+  it('re-arms for the incoming chapter so the next essay starts without them', async () => {
+    const { findByTestId, findByText, queryByText, rerender } = renderReader();
+    const scrollView = await findByTestId('reader-markdown');
+    measureReader(scrollView, LONG_ESSAY_HEIGHT);
+    scrollTo(scrollView, LONG_ESSAY_HEIGHT - READER_VIEWPORT_HEIGHT);
+    await findByText(CONTROLS);
+
+    rerender(
+      <ChapterReader
+        source={{ kind: 'content', id: 2 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+        renderFooter={(atEssayEnd) => (atEssayEnd ? <Text>{CONTROLS}</Text> : null)}
+      />,
+    );
+    await waitFor(() => {
+      expect(queryByText(CONTROLS)).toBeNull();
+    });
+  });
+
+  it('overlays the controls without moving the fade or reflowing the prose', async () => {
+    const { findByTestId, findByText } = renderReader();
+    const scrollView = await findByTestId('reader-markdown');
+    measureReader(scrollView, LONG_ESSAY_HEIGHT);
+    scrollTo(scrollView, LONG_ESSAY_HEIGHT - READER_VIEWPORT_HEIGHT);
+    await findByText(CONTROLS);
+
+    const padding = StyleSheet.flatten(scrollView.props.contentContainerStyle);
+    expect(padding.paddingBottom).toBe(rhythm.bottomFadeHeight);
+    const fade = StyleSheet.flatten((await findByTestId('reader-bottom-fade')).props.style);
+    expect(fade.bottom).toBe(0);
+    expect(fade.height).toBe(rhythm.bottomFadeHeight);
   });
 });

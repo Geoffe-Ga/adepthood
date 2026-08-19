@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
@@ -29,6 +30,11 @@ export interface WriteNotePassage {
 }
 
 const SCROLL_EVENT_THROTTLE = 16;
+/**
+ * How near the essay's end counts as being at it, in px. Matched to the veil's
+ * height so the chapter controls arrive exactly as the fade starts its work.
+ */
+const READER_CONTROLS_REVEAL_THRESHOLD = rhythm.bottomFadeHeight;
 const PASSAGE_SELECT_TEST_ID = 'passage-select';
 const WRITE_NOTE_AFFORDANCE_LABEL = 'Write a note on a passage';
 const WRITE_NOTE_CONFIRM_LABEL = 'Write a note';
@@ -63,9 +69,13 @@ interface ChapterReaderProps {
   source: ChapterReaderSource;
   /** Title shown in the header until the live ``title`` from the manifest arrives. */
   fallbackTitle: string;
-  /** Optional footer rendered below the body — the content viewer passes its
-   *  mark-read / reflect actions; omitted for untracked site resources. */
-  footer?: React.ReactNode;
+  /** Optional chapter controls, rendered as an overlay pinned to the reader's
+   *  bottom edge — the content viewer passes its mark-read / reflect actions;
+   *  omitted for untracked site resources. Called with whether the essay's end
+   *  is in view, so the controls can stay out of the reader's way until there
+   *  is nothing left to read. Being an overlay rather than a layout sibling is
+   *  what keeps revealing them from moving the fade or reflowing the prose. */
+  renderFooter?: (_atEssayEnd: boolean) => React.ReactNode;
   onBack: () => void;
   /** When provided, offers a calm "write a note on a passage" affordance. */
   onWriteNote?: (_passage: WriteNotePassage) => void;
@@ -326,6 +336,93 @@ function usePassageSelection(
   };
 }
 
+interface EssayEndHandlers {
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onLayout: (_event: LayoutChangeEvent) => void;
+  onContentSizeChange: (_width: number, _height: number) => void;
+}
+
+/**
+ * Report whether the end of the essay is in view.
+ *
+ * The three numbers that answer that question arrive on three different
+ * callbacks — the viewport height on layout, the essay's height on
+ * content-size change, the scroll position on scroll — so each is held in a ref
+ * and the verdict is recomputed from all three whenever any one of them lands.
+ * Until both measurements are real the verdict is withheld: a zero-height
+ * reading would compute as "already at the end" and flash the controls on a
+ * long essay before its first layout.
+ *
+ * The verdict is one distance-from-end comparison, which cannot oscillate on a
+ * single scroll event: the controls it gates are a pure overlay, so revealing
+ * them changes neither the essay's height nor the viewport, and no input to the
+ * comparison depends on its output. Hysteresis would only be needed if showing
+ * the controls could reflow the content that decides whether to show them.
+ *
+ * ``hasNoEssay`` short-circuits all of that: an unwritten chapter has no end to
+ * scroll to, so its controls are due immediately.
+ */
+function useEssayEndSignal(
+  onEndReachedChange: (_reached: boolean) => void,
+  hasNoEssay: boolean,
+): EssayEndHandlers {
+  const viewportHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const scrollOffsetRef = useRef(0);
+
+  useEffect(() => {
+    if (hasNoEssay) onEndReachedChange(true);
+  }, [hasNoEssay, onEndReachedChange]);
+
+  const report = useCallback(() => {
+    const viewport = viewportHeightRef.current;
+    const content = contentHeightRef.current;
+    if (viewport <= 0 || content <= 0) return;
+    const distanceToEnd = content - (scrollOffsetRef.current + viewport);
+    onEndReachedChange(distanceToEnd <= READER_CONTROLS_REVEAL_THRESHOLD);
+  }, [onEndReachedChange]);
+
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+      report();
+    },
+    [report],
+  );
+
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      viewportHeightRef.current = event.nativeEvent.layout.height;
+      report();
+    },
+    [report],
+  );
+
+  const onContentSizeChange = useCallback(
+    (_width: number, height: number) => {
+      contentHeightRef.current = height;
+      report();
+    },
+    [report],
+  );
+
+  return { onScroll, onLayout, onContentSizeChange };
+}
+
+/** Fan one scroll event out to both listeners the reading sheet feeds. */
+function useMergedScroll(
+  first: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void,
+  second: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void,
+): (_event: NativeSyntheticEvent<NativeScrollEvent>) => void {
+  return useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      first(event);
+      second(event);
+    },
+    [first, second],
+  );
+}
+
 interface ReadingSheetProps {
   markdown: string;
   eyebrow: string | undefined;
@@ -333,6 +430,8 @@ interface ReadingSheetProps {
   canWriteNote: boolean;
   initialScrollOffset: number | undefined;
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onLayout: (_event: LayoutChangeEvent) => void;
+  onContentSizeChange: (_width: number, _height: number) => void;
   onBeginNote: () => void;
 }
 
@@ -344,6 +443,8 @@ const ReadingSheet = ({
   canWriteNote,
   initialScrollOffset,
   onScroll,
+  onLayout,
+  onContentSizeChange,
   onBeginNote,
 }: ReadingSheetProps): React.JSX.Element => (
   <ScrollView
@@ -351,6 +452,8 @@ const ReadingSheet = ({
     contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
     testID="reader-markdown"
     onScroll={onScroll}
+    onLayout={onLayout}
+    onContentSizeChange={onContentSizeChange}
     scrollEventThrottle={SCROLL_EVENT_THROTTLE}
     contentOffset={initialScrollOffset != null ? { x: 0, y: initialScrollOffset } : undefined}
   >
@@ -423,6 +526,9 @@ interface ReaderBodyProps {
   body: ContentBody;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  /** Told whether the essay's end is in view, so the reader can offer its
+   *  chapter controls only once there is nothing left to read. */
+  onEndReachedChange: (_reached: boolean) => void;
 }
 
 /** Renders the loaded body: empty notice, reading sheet, or selection surface. */
@@ -430,6 +536,7 @@ const ReaderBody = ({
   body,
   onWriteNote,
   initialScrollOffset,
+  onEndReachedChange,
 }: ReaderBodyProps): React.JSX.Element => {
   const markdown = useMemo(
     () => stripLeadingTitleHeading(body.body_markdown, body.title),
@@ -437,8 +544,11 @@ const ReaderBody = ({
   );
   const selection = usePassageSelection(markdown, body.title, onWriteNote);
   const eyebrow = READER_EYEBROWS[body.content_type];
+  const isEmpty = markdown.trim() === '';
+  const essayEnd = useEssayEndSignal(onEndReachedChange, isEmpty);
+  const handleScroll = useMergedScroll(selection.onScroll, essayEnd.onScroll);
 
-  if (markdown.trim() === '') {
+  if (isEmpty) {
     return <EmptyView />;
   }
 
@@ -458,7 +568,9 @@ const ReaderBody = ({
           title={body.title}
           canWriteNote={onWriteNote != null}
           initialScrollOffset={initialScrollOffset}
-          onScroll={selection.onScroll}
+          onScroll={handleScroll}
+          onLayout={essayEnd.onLayout}
+          onContentSizeChange={essayEnd.onContentSizeChange}
           onBeginNote={selection.beginSelection}
         />
       )}
@@ -471,34 +583,104 @@ const ReaderBody = ({
   );
 };
 
+interface ChapterControls {
+  revealed: boolean;
+  onEndReachedChange: (_reached: boolean) => void;
+}
+
+/**
+ * Whether the chapter controls are due.
+ *
+ * They are due once the reader has reached the end of the essay — and also on a
+ * chapter that failed to load, which has no end to reach and where these
+ * controls are the only way out. While a chapter is still loading they stay
+ * away, so navigating Next re-arms the reveal rather than letting the incoming
+ * essay inherit the outgoing one's "the reader is at the end".
+ */
+function useChapterControls(
+  fetchKey: string,
+  loading: boolean,
+  error: string | null,
+): ChapterControls {
+  const [atEssayEnd, setAtEssayEnd] = useState(false);
+  useEffect(() => {
+    setAtEssayEnd(false);
+  }, [fetchKey]);
+  const failedToLoad = !loading && error !== null;
+  return { revealed: atEssayEnd || failedToLoad, onEndReachedChange: setAtEssayEnd };
+}
+
+interface ReaderContentProps {
+  body: ContentBody | null;
+  loading: boolean;
+  error: string | null;
+  retry: () => void;
+  onWriteNote?: (_passage: WriteNotePassage) => void;
+  initialScrollOffset?: number;
+  onEndReachedChange: (_reached: boolean) => void;
+}
+
+/** The reader's one live region: spinner, error, or the loaded body. */
+const ReaderContent = ({
+  body,
+  loading,
+  error,
+  retry,
+  onWriteNote,
+  initialScrollOffset,
+  onEndReachedChange,
+}: ReaderContentProps): React.JSX.Element | null => {
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator testID="reader-loading" size="large" color={colors.text.secondary} />
+      </View>
+    );
+  }
+  if (error !== null) {
+    return <ErrorView message={error} onRetry={retry} />;
+  }
+  if (body === null) {
+    return null;
+  }
+  return (
+    <ReaderBody
+      body={body}
+      onWriteNote={onWriteNote}
+      initialScrollOffset={initialScrollOffset}
+      onEndReachedChange={onEndReachedChange}
+    />
+  );
+};
+
 const ChapterReader = ({
   source,
   fallbackTitle,
-  footer,
+  renderFooter,
   onBack,
   onWriteNote,
   initialScrollOffset,
 }: ChapterReaderProps): React.JSX.Element => {
   const { body, loading, error, retry } = useContentBody(source);
-  const headerTitle = body?.title || fallbackTitle;
+  const controls = useChapterControls(sourceKey(source), loading, error);
 
   return (
     <View style={styles.viewerContainer} testID="chapter-reader">
-      <ReaderHeader title={headerTitle} onBack={onBack} />
-      {loading && (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator testID="reader-loading" size="large" color={colors.text.secondary} />
+      <ReaderHeader title={body?.title || fallbackTitle} onBack={onBack} />
+      <ReaderContent
+        body={body}
+        loading={loading}
+        error={error}
+        retry={retry}
+        onWriteNote={onWriteNote}
+        initialScrollOffset={initialScrollOffset}
+        onEndReachedChange={controls.onEndReachedChange}
+      />
+      {renderFooter !== undefined && (
+        <View pointerEvents="box-none" style={styles.readerFooterOverlay}>
+          {renderFooter(controls.revealed)}
         </View>
       )}
-      {!loading && error !== null && <ErrorView message={error} onRetry={retry} />}
-      {!loading && error === null && body !== null && (
-        <ReaderBody
-          body={body}
-          onWriteNote={onWriteNote}
-          initialScrollOffset={initialScrollOffset}
-        />
-      )}
-      {footer}
     </View>
   );
 };
