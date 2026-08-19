@@ -26,7 +26,8 @@ Runs:
   2. Linting (ESLint)
   3. Formatting (Prettier)
   4. Type checking (TypeScript)
-  5. Tests (Jest)
+  5. Web bundle (expo export -- the only stage that runs the bundler)
+  6. Tests (Jest)
 
 OPTIONS:
     --verbose   Show detailed output
@@ -83,6 +84,10 @@ run_check "Security audit" "audit-gate.mjs"
 run_check "Linting" "lint.sh" --check
 run_check "Formatting" "format.sh" --check
 run_check "Type checking" "typecheck.sh"
+# The only stage that runs the bundler, and so the only one that can catch an
+# import or metro.config.js change the file-reading gates above are blind to.
+# Mirrors CI's "Web bundle builds" step so local Gate 2 predicts CI.
+run_check "Web bundle" "bundle.sh"
 run_check "Tests" "test.sh"
 
 echo "=== Quality Checks Summary ==="
