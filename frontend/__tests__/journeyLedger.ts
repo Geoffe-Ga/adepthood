@@ -34,25 +34,35 @@ const OPENAPI_SCHEMA = 'backend/openapi.json';
 const MODELS_DIR = 'backend/src/models';
 
 /**
- * Spellings that leave a spec present in the tree but absent from the run.
+ * Every `describe`/`it`/`test` registration, with the `x` prefix and the
+ * `.skip`/`.only`/`.each` chain that decides whether it runs.
  *
- * `.only` sits beside `.skip` here on purpose: a spec narrowed to one case
- * still exists, still passes, and still covers almost nothing.
+ * Matching registrations rather than searching for marker substrings is what
+ * keeps a comment or a test name that merely mentions `it.skip(` from reading
+ * as a skipped test.
  */
-const DISABLED_MARKERS: readonly string[] = [
-  'describe.skip',
-  'describe.only',
-  'xdescribe(',
-  'it.skip',
-  'it.only',
-  'xit(',
-  'test.skip',
-  'test.only',
-  'xtest(',
-];
+const REGISTRATION = /(?<![.\w])(x?)(describe|it|test)((?:\.\w+)*)\s*\(/g;
 
-/** An `it(` or `test(` that is neither prefixed (`xit`) nor suffixed (`.skip`). */
-const ENABLED_TEST = /(?<![.\w])(?:it|test)\s*\(/;
+/**
+ * Comments and quoted text: they can name a marker without registering one.
+ *
+ * Quoted strings are held to a single line, as JavaScript holds them, so an
+ * apostrophe the lexer cannot pair -- inside a regex literal, say, which this
+ * does not model -- blanks at most the rest of its own line.
+ */
+const INERT_SPANS =
+  /\/\*[\S\s]*?\*\/|\/\/[^\n]*|`(?:\\[\S\s]|[^\\`])*`|'(?:\\[^\n]|[^\n'\\])*'|"(?:\\[^\n]|[^\n"\\])*"/g;
+
+/** Modifiers that leave the registration in the file but out of the run. */
+const DISABLING = new Set(['skip', 'todo']);
+
+/**
+ * Modifiers that keep one registration and silently drop its siblings.
+ *
+ * `.only` is a problem even beside a live test -- in fact especially then,
+ * because the tests it silences are the ones the ledger is claiming.
+ */
+const NARROWING = new Set(['only']);
 
 const EXPORTED_SYMBOL = /^export\s+(?:const|function|async function|class)\s+(\w+)/gm;
 const TABLE_CLASS = /^class\s+(\w+)\([^)]*table\s*=\s*True/gm;
@@ -148,17 +158,32 @@ function crossingProblems(record: Record<string, unknown>, where: string): strin
   ]);
 }
 
+/**
+ * What an `uncovered` journey owes: a linked issue, and no claim on a spec.
+ *
+ * Both are reported together rather than the first one found, so an entry that
+ * gets both wrong does not have half its story hidden until the other half is
+ * fixed.
+ */
+function uncoveredProblems(record: Record<string, unknown>, where: string): string[] {
+  const issue = record['issue'];
+  const linked = typeof issue === 'number' && Number.isInteger(issue) && issue > 0;
+  return compact([
+    linked ? null : `${where}: an "${UNCOVERED}" journey must link an "issue" number.`,
+    nonEmptyString(record['coveredBy'])
+      ? `${where}: an "${UNCOVERED}" journey must not name a "coveredBy" spec; claiming a spec ` +
+        `while counting as a gap hides the spec from both tallies.`
+      : null,
+  ]);
+}
+
 function statusProblems(record: Record<string, unknown>, where: string): string[] {
   const status = record['status'];
   if (status === COVERED) {
     return compact([stringField(record, 'coveredBy', where)]);
   }
   if (status === UNCOVERED) {
-    const issue = record['issue'];
-    if (typeof issue === 'number' && Number.isInteger(issue) && issue > 0) {
-      return [];
-    }
-    return [`${where}: an "${UNCOVERED}" journey must link an "issue" number.`];
+    return uncoveredProblems(record, where);
   }
   return [`${where}: "status" must be "${COVERED}" or "${UNCOVERED}".`];
 }
@@ -246,6 +271,94 @@ function unregisteredSpecProblems(
     .map((spec) => `${spec} crosses the seam but no journey registers it.`);
 }
 
+type RunState = 'enabled' | 'disabled' | 'narrowed';
+
+interface Registration {
+  /** How the call is spelled, e.g. `it.skip` or `xdescribe`. */
+  readonly marker: string;
+  readonly isSuite: boolean;
+  readonly state: RunState;
+  /** Offset just past the opening `(`, where the registration's body starts. */
+  readonly bodyAt: number;
+}
+
+/** Blank out comments and string literals, preserving every offset. */
+function blankInertSpans(source: string): string {
+  return source.replace(INERT_SPANS, (span) => span.replace(/[^\n]/g, ' '));
+}
+
+function runState(prefix: string, suffix: string): RunState {
+  const modifiers = suffix.split('.').filter((part) => part !== '');
+  if (modifiers.some((modifier) => NARROWING.has(modifier))) {
+    return 'narrowed';
+  }
+  if (prefix === 'x' || modifiers.some((modifier) => DISABLING.has(modifier))) {
+    return 'disabled';
+  }
+  return 'enabled';
+}
+
+function registrations(code: string): Registration[] {
+  return [...code.matchAll(REGISTRATION)].map((match) => {
+    const [whole = '', prefix = '', name = '', suffix = ''] = match;
+    return {
+      marker: `${prefix}${name}${suffix}`,
+      isSuite: name === 'describe',
+      state: runState(prefix, suffix),
+      bodyAt: (match.index ?? 0) + whole.length,
+    };
+  });
+}
+
+/**
+ * Offset of the `}` closing the callback a suite was registered with.
+ *
+ * Brace counting, not parsing: comments and strings are already blanked, so
+ * the only braces left are real ones. A suite registered through a table --
+ * `describe.skip.each([{ ... }])` -- would have its span cut short at the
+ * table's first brace; that costs precision on a spelling no spec here uses.
+ */
+function suiteBodyEnd(code: string, bodyAt: number): number {
+  const open = code.indexOf('{', bodyAt);
+  if (open < 0) {
+    return code.length;
+  }
+  let depth = 0;
+  for (let index = open; index < code.length; index += 1) {
+    if (code[index] === '{') {
+      depth += 1;
+    } else if (code[index] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return code.length;
+}
+
+/**
+ * Whether at least one test in the file would actually run.
+ *
+ * Deliberately independent of whether some *other* test is skipped: a spec
+ * that parks one pending edge case beside a live journey still covers the
+ * journey. Only a test nested inside a skipped suite fails to count.
+ */
+function runsAnEnabledTest(code: string, found: readonly Registration[]): boolean {
+  const skipped = found
+    .filter((registration) => registration.isSuite && registration.state === 'disabled')
+    .map((registration) => ({
+      start: registration.bodyAt,
+      end: suiteBodyEnd(code, registration.bodyAt),
+    }));
+  return found.some(
+    (registration) =>
+      !registration.isSuite &&
+      registration.state === 'enabled' &&
+      !skipped.some((span) => registration.bodyAt > span.start && registration.bodyAt < span.end),
+  );
+}
+
 function coveringSpecProblem(entry: JourneyEntry, environment: LedgerEnvironment): string | null {
   const path = entry.coveredBy;
   if (path === null) {
@@ -254,15 +367,18 @@ function coveringSpecProblem(entry: JourneyEntry, environment: LedgerEnvironment
   if (!environment.fileExists(path)) {
     return `${entry.id} -> ${path} (not found).`;
   }
-  const text = environment.readFile(path);
-  const disabled = DISABLED_MARKERS.find((marker) => text.includes(marker));
-  if (disabled !== undefined) {
-    return `${entry.id} -> ${path} has no enabled test: it uses "${disabled}".`;
+  const code = blankInertSpans(environment.readFile(path));
+  const found = registrations(code);
+  const narrowed = found.find((registration) => registration.state === 'narrowed');
+  if (narrowed !== undefined) {
+    return `${entry.id} -> ${path} is narrowed to "${narrowed.marker}": its other tests do not run.`;
   }
-  if (!ENABLED_TEST.test(text)) {
-    return `${entry.id} -> ${path} has no enabled test.`;
+  if (runsAnEnabledTest(code, found)) {
+    return null;
   }
-  return null;
+  const disabled = found.find((registration) => registration.state === 'disabled');
+  const because = disabled === undefined ? '' : `: it uses "${disabled.marker}"`;
+  return `${entry.id} -> ${path} has no enabled test${because}.`;
 }
 
 function membershipProblems(

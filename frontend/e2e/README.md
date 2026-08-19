@@ -76,7 +76,19 @@ Honest gaps are the point. A journey may declare `status: "uncovered"` with a
 linked issue; the gate counts it and reports it and does not fail on it, because
 a gate that goes red for accurate bookkeeping is a gate that gets deleted.
 Omitting an uncovered journey to keep the number down is the one thing the
-ledger cannot catch and the one thing that would make it worthless.
+ledger cannot catch and the one thing that would make it worthless. An uncovered
+journey names no `coveredBy`: claiming a spec while counting as a gap would drop
+that spec out of the covered tally and out of the "no journey registers it"
+check at once, which is coverage disappearing quietly — the exact thing this
+ledger exists to prevent.
+
+"Turned off" is judged per test registration rather than by searching the file
+for marker text. A spec that parks one `it.skip` beside a live journey test
+still covers the journey; a spec whose only live test sits inside a
+`describe.skip` does not; and a spec narrowed by `.only` fails whatever else it
+contains, because the tests `.only` silences are exactly the ones the ledger is
+claiming. A comment or a test name that merely mentions `it.skip(` is not a
+skipped test.
 
 The checker lives at `frontend/__tests__/journeyLedger.ts` with the repository's
 other structural guards, and is exercised by `journeyLedger.test.ts` against

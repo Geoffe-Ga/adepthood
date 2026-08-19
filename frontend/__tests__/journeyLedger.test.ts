@@ -26,6 +26,12 @@ import type { LedgerEnvironment } from './journeyLedger';
  * The synthetic half is what keeps the real half honest. A gate whose only
  * assertion is "the committed ledger passes" is green for two reasons that look
  * identical: because the mapping holds, or because the checker matches nothing.
+ *
+ * One failure mode per fixture is not enough on its own, either. A fixture set
+ * where every file holds exactly one condition can enumerate every way the gate
+ * should fire and still never ask whether it fires when it should not, so the
+ * cases below deliberately combine conditions -- a skipped test beside a live
+ * one, a marker named in a comment beside the test it would have silenced.
  */
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
@@ -92,6 +98,14 @@ function baseEnvironment(overrides: Partial<LedgerEnvironment> = {}): LedgerEnvi
   };
 }
 
+/** An environment whose covering spec holds exactly `text` and nothing else. */
+function specSaying(text: string): LedgerEnvironment {
+  return baseEnvironment({
+    fileExists: (path) => path === SPEC || path === SCREEN,
+    readFile: (path) => (path === SPEC ? text : 'screen'),
+  });
+}
+
 function problems(ledger: unknown, environment: LedgerEnvironment = baseEnvironment()): string[] {
   return [...auditJourneyLedger(ledger, environment).problems];
 }
@@ -142,6 +156,84 @@ describe('the ledger gate accepts a well-formed mapping', () => {
   });
 });
 
+/**
+ * The cases that separate "this spec stopped running" from "this spec mentions
+ * skipping". Every other disabled-marker fixture here is single-condition -- a
+ * file holding one disabled test and nothing else -- and a gate whose fixtures
+ * are all single-condition cannot express its own false-positive case.
+ */
+describe('the ledger gate passes a spec that still runs a test', () => {
+  it('accepts a spec that skips one case beside a live one', () => {
+    const mixed = [
+      "it.skip('a pending edge case', () => {});",
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(problems([coveredEntry()], specSaying(mixed))).toEqual([]);
+  });
+
+  it('accepts a live test sitting outside a wholly skipped describe', () => {
+    const mixed = [
+      "describe.skip('pending redesign', () => { it('x', () => {}); });",
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(problems([coveredEntry()], specSaying(mixed))).toEqual([]);
+  });
+
+  it('accepts a spec whose comment merely mentions a disabled marker', () => {
+    const commented = [
+      '// The flaky case below used to be it.skip( until the retry landed.',
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(problems([coveredEntry()], specSaying(commented))).toEqual([]);
+  });
+
+  it('accepts a spec whose test name quotes a disabled marker', () => {
+    const quoted = "it('rejects a ledger entry pointing at it.skip( specs', () => {});";
+
+    expect(problems([coveredEntry()], specSaying(quoted))).toEqual([]);
+  });
+
+  /*
+   * The two below are the cases that a substring search cannot get right and a
+   * registration-scoped one can: here the mentioned marker, if believed, would
+   * flip the verdict rather than merely sit beside it.
+   */
+  it('accepts a spec whose comment mentions a narrowing marker', () => {
+    const commented = [
+      '// Reach for it.only( while debugging, but never commit it.',
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(problems([coveredEntry()], specSaying(commented))).toEqual([]);
+  });
+
+  it('accepts a spec whose comment mentions a skipped suite above a live test', () => {
+    const commented = [
+      '// Superseded: this file used to open with describe.skip( around everything.',
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(problems([coveredEntry()], specSaying(commented))).toEqual([]);
+  });
+
+  it('accepts a spec whose test name quotes a narrowing marker', () => {
+    const quoted = "it('warns when a spec uses it.only(', () => {});";
+
+    expect(problems([coveredEntry()], specSaying(quoted))).toEqual([]);
+  });
+
+  it('accepts a live test below a line whose apostrophe never closes', () => {
+    const apostrophe = ["const pattern = /it's fine/;", "it('creates a habit', () => {});"].join(
+      '\n',
+    );
+
+    expect(problems([coveredEntry()], specSaying(apostrophe))).toEqual([]);
+  });
+});
+
 describe('the ledger gate fails on a broken covering test', () => {
   it('fails when the covering spec does not exist', () => {
     const environment = baseEnvironment({ fileExists: (path) => path === SCREEN, specFiles: [] });
@@ -160,25 +252,25 @@ describe('the ledger gate fails on a broken covering test', () => {
 
   it('fails when every test in the covering spec is skipped', () => {
     const skipped = "describe.skip('habits', () => { it('x', () => {}); });";
-    const environment = baseEnvironment({
-      fileExists: (path) => path === SPEC || path === SCREEN,
-      readFile: (path) => (path === SPEC ? skipped : 'screen'),
-    });
 
-    expect(onlyProblem([coveredEntry()], environment)).toContain('no enabled test');
+    expect(onlyProblem([coveredEntry()], specSaying(skipped))).toContain('no enabled test');
   });
 
-  it.each(['it.skip(', 'test.skip(', 'xit(', 'xdescribe('])(
+  it.each(['it.skip(', 'test.skip(', 'xit(', 'xdescribe(', 'test.todo('])(
     'treats a spec whose only case uses %s as disabled',
     (opener) => {
-      const environment = baseEnvironment({
-        fileExists: (path) => path === SPEC || path === SCREEN,
-        readFile: (path) => (path === SPEC ? `${opener}'x', () => {});` : 'screen'),
-      });
-
-      expect(problems([coveredEntry()], environment)).toHaveLength(1);
+      expect(problems([coveredEntry()], specSaying(`${opener}'x', () => {});`))).toHaveLength(1);
     },
   );
+
+  it('fails a spec narrowed by .only even when an enabled test sits beside it', () => {
+    const narrowed = [
+      "it.only('the one case under debug', () => {});",
+      "it('creates a habit and checks in', () => {});",
+    ].join('\n');
+
+    expect(onlyProblem([coveredEntry()], specSaying(narrowed))).toContain('it.only');
+  });
 
   it('fails when the covering spec exists but contains no test at all', () => {
     const environment = baseEnvironment({
@@ -257,6 +349,18 @@ describe('the ledger gate rejects a malformed ledger', () => {
 
   it('fails when an uncovered entry links no issue', () => {
     expect(onlyProblem([coveredEntry(), uncoveredEntry({ issue: 0 })])).toContain('issue');
+  });
+
+  it('fails when an uncovered entry also names a covering spec', () => {
+    const contradiction = uncoveredEntry({ coveredBy: SPEC });
+
+    expect(onlyProblem([contradiction])).toContain('coveredBy');
+  });
+
+  it('reports both faults of an uncovered entry that claims a spec and links no issue', () => {
+    const doublyWrong = uncoveredEntry({ coveredBy: SPEC, issue: 0 });
+
+    expect(problems([doublyWrong])).toHaveLength(2);
   });
 
   it('fails on a status that is neither covered nor uncovered', () => {
