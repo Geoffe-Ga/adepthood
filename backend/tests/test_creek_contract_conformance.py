@@ -598,9 +598,18 @@ async def test_capability_error_states_degrade_as_unreachable(
 ) -> None:
     """Every non-200 capability document degrades the handshake rather than raising.
 
-    All four land on ``UNREACHABLE`` because the client raises for status before
-    reading the body, so Creek's typed error envelope is never consulted. That is
-    the observed behaviour; the envelope is what a fixed client would read.
+    All four still land on ``UNREACHABLE``, but no longer because the envelope
+    goes unread. The handshake now consults it, and asks it exactly one
+    question: is this a credential-rejected status carrying *no* code, and so a
+    key to rotate rather than a vault to go and look at? Every one of these four
+    fixtures carries a code -- the 403 refusal included -- so none of them is
+    that, and all four answer to the availability story.
+
+    What the envelope still does not do here is fan its codes out into the
+    reasons the handshake already has names for: ``unavailable`` into
+    ``VAULT_REPORTED_UNAVAILABLE``, ``incompatible_version`` into
+    ``INCOMPATIBLE_VERSION``. Both of those are reachable today only from a 200
+    body. That remaining collapse is what these cells record.
     """
     client = vault_clients(_static_handler(_read_json(cell.path), _STATUS_BY_STATE[cell.state]))
 
@@ -800,9 +809,11 @@ async def test_reflections_error_states_raise_their_classified_failure(
 ) -> None:
     """Each ratified reflection error is classified from the code Creek published on it.
 
-    The refusal cell is the one that separates this path from the write path's:
-    ``privacy_refused`` arrives at 403, and reading the status first would report
-    it as a rejected credential.
+    The refusal cell is the load-bearing one: ``privacy_refused`` arrives at 403,
+    and reading the status first would report it as a rejected credential. It
+    used to be what separated this path from the write path's; the write path is
+    aligned on code-first now, so the cell no longer marks a divergence -- it
+    pins the rule both paths keep.
     """
     recorder = _Recorder(
         reflect_payload=_read_json(f"examples/reflections/{state}.json"),

@@ -16,7 +16,8 @@ Two implementations of :class:`~domain.creek_vault.CreekVaultClient` live here:
   **static, capability-named message** that never echoes the entry body or the
   API key. It additionally records *which* failure mode degraded it
   (:class:`HandshakeDegradeReason`) so contract-version skew stays countable
-  apart from a vault that is merely unreachable, or one that is merely slow.
+  apart from a vault that is merely unreachable, one that is merely slow, and
+  one that refused our credential.
   Journal ingest, the wheel read, and the reflection are the capabilities whose
   ``/v1`` shapes Creek has ratified, so they are wired up -- a ``PUT`` of the
   entry's own URL, a parameterless ``GET`` of the whole-corpus aggregate, and a
@@ -856,21 +857,23 @@ class HandshakeDegradeReason(enum.StrEnum):
     should read it as "the call did not complete", not strictly as "the network
     is down".
 
-    ``AUTH`` is carved out of that width for the same reason ``TIMED_OUT`` is.
-    A refused credential and an unreachable vault are both "no usable vault" to
-    a caller, but their remedies are opposite: rotate a key, or go and see
-    whether the vault is up. Collapsed together -- as they were -- an operator
-    whose key was rotated out from under them spends the incident checking a
-    network that is perfectly healthy.
+    ``TIMED_OUT`` and ``AUTH`` are each carved out of exactly that width, and
+    both sit after the members that predate them because these values are
+    appended, never inserted or reordered -- they are the strings telemetry
+    counts by, so moving one silently re-labels a historical series.
 
-    ``TIMED_OUT`` is carved out of exactly that width, and is last because these
-    values are appended rather than reordered. A refused connection and a probe
-    that ran out of time are both "no usable vault" to a caller, but they are not
-    the same problem: a refusal says nothing answered, while a timeout says
-    something did answer and then could not finish, so one remedy is to restore
-    the vault and the other is to give it capacity. Collapsed together, the
-    second reads as the first and sends an operator hunting a network that is
-    perfectly fine.
+    A refused connection and a probe that ran out of time are both "no usable
+    vault" to a caller, but they are not the same problem: a refusal says nothing
+    answered, while a timeout says something did answer and then could not
+    finish, so one remedy is to restore the vault and the other is to give it
+    capacity. Collapsed together, the second reads as the first and sends an
+    operator hunting a network that is perfectly fine.
+
+    ``AUTH`` splits off for the same shape of reason. A refused credential and an
+    unreachable vault are both "no usable vault" too, but their remedies are
+    opposite: rotate a key, or go and see whether the vault is up. Collapsed
+    together -- as they were -- an operator whose key was rotated out from under
+    them spends the incident checking a network that is perfectly healthy.
     """
 
     UNREACHABLE = "unreachable"
@@ -1348,19 +1351,22 @@ def _read_failure(capability: CreekCapability, response: httpx.Response) -> Cree
     so a per-capability copy would only be a second place for it to drift. The
     capability enters solely through the static message each branch names.
 
-    Sibling to :func:`_ingest_failure`, with a deliberately different order: the
-    error **code** is consulted first and the status class only after. Creek
+    The error **code** is consulted first and the status class only after. Creek
     publishes ``privacy_refused`` at 403, and 403 is in
-    :data:`_CREDENTIAL_REJECTED_STATUSES`, so the status-first rule would report
-    a privacy refusal as a rejected credential -- sending an operator to rotate a
+    :data:`_CREDENTIAL_REJECTED_STATUSES`, so a status-first rule would report a
+    privacy refusal as a rejected credential -- sending an operator to rotate a
     key that was never refused, while the actual remedy (ask for less material)
     goes unmentioned. Reading the code first is what makes the two answers
     distinguishable at all.
 
-    The ingest path's status-first order is deliberately left alone rather than
-    aligned here. Its own conformance cell records that misreport as known and
-    names it, and changing the classification of a *write* failure is a separate
-    decision from teaching the read paths to classify correctly.
+    Code first, status second is now the rule on **every** ``/v1`` path rather
+    than a read-path convention: the reads held that order first, and
+    :func:`_write_failure` and :func:`_status_degrade_reason` were aligned to it,
+    so the same misreport is no longer reachable from a write or from the
+    handshake either. What survives of the status-first rule, on all three paths,
+    is its one sound case -- an *uncoded* credential status really is a credential
+    to rotate, because a gateway that rejects our bearer never reaches the vault's
+    error vocabulary.
     """
     code = _vault_error_code(response)
     if code is not None:
