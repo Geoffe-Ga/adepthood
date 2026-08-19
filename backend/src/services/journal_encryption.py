@@ -24,7 +24,10 @@ from functools import lru_cache
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Text, TypeDecorator
 
-_ENV_VAR = "JOURNAL_ENCRYPTION_KEYS"
+# Public because the startup configuration check in ``main`` names this
+# variable to the operator, and a message that names it by a different string
+# than the one the code reads is the failure mode that check exists to prevent.
+KEYS_ENV_VAR = "JOURNAL_ENCRYPTION_KEYS"
 # Marks our ciphertext so reads can tell an encrypted value from a legacy
 # plaintext row (pre-migration) without guessing.
 _PREFIX = "enc::v1::"
@@ -35,7 +38,7 @@ class JournalEncryptionError(RuntimeError):
 
 
 def _configured_keys() -> list[str]:
-    return [k.strip() for k in os.getenv(_ENV_VAR, "").split(",") if k.strip()]
+    return [k.strip() for k in os.getenv(KEYS_ENV_VAR, "").split(",") if k.strip()]
 
 
 @lru_cache(maxsize=1)
@@ -48,7 +51,7 @@ def _registry() -> MultiFernet | None:
         return MultiFernet([Fernet(key.encode()) for key in keys])
     except (ValueError, TypeError) as exc:
         # Fail fast: a configured-but-invalid key must never fall back to plaintext.
-        msg = f"{_ENV_VAR} contains an invalid Fernet key"
+        msg = f"{KEYS_ENV_VAR} contains an invalid Fernet key"
         raise JournalEncryptionError(msg) from exc
 
 
@@ -87,7 +90,7 @@ def decrypt(value: str) -> str:
     if registry is None:
         # Ciphertext at rest but no key to read it — surface it, never return
         # the raw token as if it were the user's text.
-        msg = f"encrypted journal content found but {_ENV_VAR} is not configured"
+        msg = f"encrypted journal content found but {KEYS_ENV_VAR} is not configured"
         raise JournalEncryptionError(msg)
     try:
         return registry.decrypt(value.removeprefix(_PREFIX).encode()).decode()
