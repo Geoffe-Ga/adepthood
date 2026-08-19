@@ -14,10 +14,11 @@ same sentence "this answer is safe to use":
   Creek's margin notes into adepthood's marginalia vocabulary, dropping whatever
   does not survive on its own terms rather than completing it with a default that
   would put words in the user's Higher Self neither they nor the vault wrote.
-* **Tier echoes.** The ratified ``/v1`` surface publishes no way to *declare* a
-  privacy ceiling, so :func:`_admissible_ceiling` verifies the one a vault says
-  it applied. An answer computed above the ceiling adepthood was willing to
-  accept was drawn from material this app never authorized, and is refused whole.
+* **Tier echoes.** A ceiling is declared on the way out, in the adapter's
+  ``X-Creek-Tier-Ceiling`` header; :func:`_admissible_ceiling` checks the
+  separate claim a vault makes on the way back about the one it *applied*. An
+  answer computed above the ceiling adepthood was willing to accept was drawn
+  from material this app never authorized, and is refused whole.
 * **The reflection document.** :func:`_parse_reflection_result` is the one place
   the ratified ``/v1`` reflection body is read. It was written to be the single
   parser two transports shared; only the HTTP one remains, so it is now simply
@@ -225,15 +226,14 @@ def _reflection_notes(raw: object) -> list[dict[str, str]]:
 def _admissible_ceiling(echoed: object, accepted: VaultTierCeiling) -> VaultTierCeiling | None:
     """Return a vault's echoed tier ceiling when we were willing to accept it, else ``None``.
 
-    Verification stands in for declaration here, because the ratified ``/v1``
-    surface gives adepthood no way to declare a ceiling at all: ``ReflectionRequest``
-    is ``additionalProperties: false`` with no such field, and ``GET /v1/wheel``
-    publishes no parameter. Inventing an undocumented query parameter or header
-    would be guessing at a contract -- the same reason
-    :func:`_journal_entry_body` sends only the three ratified fields and no
-    fourth. So the server applies its own published default (``open``, the most
-    restrictive of the two a remote caller may reach, which fails closed) and
-    adepthood checks the ceiling it says it applied.
+    Verification is the *second* half of a pair, not a substitute for the first.
+    The ceiling is declared on the way out, in ``X-Creek-Tier-Ceiling`` -- the
+    ratified surface publishes no request *field* for one (``ReflectionRequest``
+    is ``additionalProperties: false``, ``GET /v1/wheel`` takes no parameter),
+    which is why the header is where it goes and why inventing a fourth body
+    field would still be guessing. What this function checks is the separate
+    claim the vault makes on the way back: not what it was asked for, but what
+    it says it applied.
 
     That check is not a formality. An answer echoing a ceiling *above* the one
     adepthood was willing to accept says the vault worked over material this app
@@ -280,8 +280,10 @@ def _reflection_request_body(body: str) -> Mapping[str, object]:
     stored, and no tier-ceiling field under any spelling because the published
     request is ``additionalProperties: false`` and names none -- sending one
     would be guessing at a contract, exactly as :func:`_journal_entry_body`
-    declines to send a fourth field. ``max_notes`` asks for the schema's own
-    maximum (:data:`_REQUESTED_NOTE_BUDGET`).
+    declines to send a fourth field. The ceiling is still declared, in the
+    ``X-Creek-Tier-Ceiling`` header the adapter builds; "not in this body" was
+    never "not on this request". ``max_notes`` asks for the schema's own maximum
+    (:data:`_REQUESTED_NOTE_BUDGET`).
     """
     return {"content": body, "max_notes": _REQUESTED_NOTE_BUDGET}
 
