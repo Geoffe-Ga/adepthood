@@ -93,6 +93,25 @@ tier:
 Adepthood's client owns this mapping and applies it before every call
 into the vault; it is not something Creek Vault is expected to infer.
 
+**How the ceiling reaches Creek over `/v1`.** Every request carries an
+`X-Creek-Tier-Ceiling` header, derived from the material that call
+touches — the entry's own tier for a write or a reflection, `personal`
+for the whole-corpus wheel read, `open` for the content-free capability
+handshake. It is not optional: Creek admits an absent header at `open`
+(`creek_mcp/httpapi/middleware/ceiling.py`) and an `open` ceiling cannot
+admit a `personal` write, so a client that omits it has every
+default-classification entry refused `403 privacy_refused` and reads a
+wheel computed over open-tier material alone. That was the state of this
+client until issue #2246.
+
+The header's vocabulary is **narrower than the table above**: Creek caps
+every network consumer below intimate, so its wire enum publishes only
+`open` and `personal` and `INTIMATE` has no spelling on `/v1` at all.
+Adepthood encodes that as a separate `WireTierCeiling` type, with
+`wire_ceiling_for` the one translation into it — it refuses rather than
+narrowing, so an intimate ceiling cannot reach a request header even by
+mistake.
+
 ## Wheel-of-Wholeness projection (adepthood-owned)
 
 Creek's `creek.wheel` computes and owns the Frequency-wheel counts and
@@ -110,28 +129,37 @@ ten stages are `CourseStage` rows tied to the APTITUDE program.
 
 `/v1/wheel` is a bare `GET` with no query parameters and no body — the
 ratified surface publishes neither for this capability, and sending an
-undocumented one would be guessing at a contract
-(`_get_wheel`, `backend/src/services/creek_vault_client.py:1522-1541`).
-There is therefore no ceiling adepthood can *declare* on this call; the
-`personal` value in `_WHEEL_TIER_CEILING`
-(`creek_vault_client.py:230`) instead names the widest ceiling
-adepthood is willing to *accept* on the way back, and `_admissible_wheel`
-refuses a response that echoes anything wider
-(`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
-here, on either reading: only aggregate per-Frequency counts and
-shares cross this seam — never fragment content — no intimate *journal
-entry* reaches the vault from adepthood at all (see "Intimate-tier
-content: pointer only" below for the per-surface rule), and creek
-independently caps a network consumer below intimate regardless of what
-adepthood would ask for. The
-server instead applies its own published `open` default to what it
-*counts*, and `open` ranks unclassified content below `personal`: a
-not-yet-classified fragment is silently excluded from the count, so a
-young corpus — most of whose entries have no Frequency yet — reads back
-as an all-zero wheel even though it plainly isn't empty. That case, and
-how adepthood treats an all-zero answer as legitimate rather than a
-failure, is covered in "WHEEL over `/v1`" under "Per-capability
-fallback rules" below.
+undocumented one would be guessing at a contract (`_get_wheel`).
+
+The ceiling therefore travels in a **header**, not in the request shape:
+every `/v1` call declares `X-Creek-Tier-Ceiling`, and the wheel read
+declares `personal` from `_WHEEL_WIRE_CEILING`. That is what
+`_WHEEL_TIER_CEILING` has always named — the widest ceiling adepthood is
+willing to accept — and it is now also what adepthood *asks* Creek to
+count at. `_admissible_wheel` still refuses a response that echoes
+anything wider, so the declaration and the check agree rather than the
+check standing alone.
+
+Declaring it matters, because the alternative is not neutral. Absent the
+header Creek applies its published `open` default to what it *counts*,
+and `open` ranks unclassified content below `personal`: a not-yet-classified
+fragment is silently excluded, so a young corpus — most of whose entries
+have no Frequency yet — reads back as an all-zero wheel even though it
+plainly is not empty. Declaring `personal` is what stops that silent
+undercount. How adepthood treats a genuinely all-zero answer as
+legitimate rather than a failure is covered in "WHEEL over `/v1`" under
+"Per-capability fallback rules" below.
+
+`personal` is the honest maximum here, on either reading: only aggregate
+per-Frequency counts and shares cross this seam — never fragment content
+— no intimate *journal entry* reaches the vault from adepthood at all
+(see "Intimate-tier content: pointer only" below for the per-surface
+rule), and creek independently caps a network consumer below intimate
+regardless of what adepthood would ask for.
+
+Symbols above are named rather than cited by line number on purpose: the
+previous exact-range citations drifted the moment lines were inserted
+earlier in the file, which is a footgun this doc has already stepped on.
 
 ### The response projection
 
@@ -324,6 +352,13 @@ capability is still used for the others it supports:
   downgrading the tier to force a success. Note the asymmetry with
   JOURNAL, which remains skip-only — see the amendment for why that is
   deliberate and tracked in issue #2152.
+
+  **This path does not exist on `/v1` today**, and cannot as written:
+  the HTTP client refuses UPLOAD as unratified before any request, and
+  `/v1`'s ceiling vocabulary has no `intimate` member to declare even if
+  it did. Whenever the upload surface is ratified, "forwarded at the
+  `INTIMATE` ceiling" is a decision that has to be re-made against a
+  transport that cannot express it — not one this client can carry over.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -340,10 +375,12 @@ capability is still used for the others it supports:
   related-praxis or related-eddies fields — are ignored rather than
   erroring. Content already flagged by the care gate never calls the
   vault for a reflection at all, regardless of vault availability.
-- **REFLECT over `/v1`** — the ratified request carries no declarable
-  tier ceiling (`ReflectionRequest` is `additionalProperties: false`
-  and publishes none), so adepthood verifies the `tier_ceiling` and
-  `routed_tier` the vault echoes back instead of declaring one. A care
+- **REFLECT over `/v1`** — the ratified request *body* carries no tier
+  ceiling (`ReflectionRequest` is `additionalProperties: false` and
+  publishes none), so the entry's own ceiling is declared in the
+  `X-Creek-Tier-Ceiling` header instead, and adepthood still verifies
+  the `tier_ceiling` and `routed_tier` the vault echoes back: what was
+  asked for and what was applied are two separate claims. A care
   escalation is a **200, not an error**: it leaves the seam as
   `CreekVaultCareEscalationError` — deliberately outside the
   `CreekVaultError` hierarchy the read path degrades on — and the
@@ -373,16 +410,19 @@ capability is still used for the others it supports:
   (`_carries_signal`, `creek_vault_wheel.py:85-95`). Any of these causes
   `select_wheel_balance` to fall back to computing the balance locally
   (`creek_vault_wheel.py:170-183`).
-- **WHEEL over `/v1`** — the ratified HTTP surface publishes no way to
-  declare a tier ceiling at all (no field, no parameter), so the read
-  runs at the server's own `open` default rather than the `personal`
-  ceiling adepthood would ask for if it could. Adepthood verifies the
-  ceiling the vault echoes back instead, and refuses a payload claiming
-  a wider one. The
-  documented consequence of `open` therefore applies: a young or
-  wholly-unclassified corpus reads back as an all-zero wheel, which is
-  a valid answer rather than a failure, and falls back to the
-  locally-computed balance by the same `_carries_signal` rule above.
+- **WHEEL over `/v1`** — the ratified surface publishes no request field
+  and no query parameter for a ceiling, so the read declares `personal`
+  in the `X-Creek-Tier-Ceiling` header, and verifies the ceiling the
+  vault echoes back besides — refusing a payload claiming a wider one.
+  `personal` is the honest maximum: intimate content never reaches the
+  vault from adepthood, and Creek independently caps a network consumer
+  below intimate. It matters that it is declared rather than defaulted,
+  because Creek ranks unclassified fragments with `personal`, so a read
+  left at the server's `open` default counts only classified open-tier
+  material and reads back as an all-zero wheel on a young corpus. That
+  all-zero answer is still a valid one rather than a failure when the
+  corpus really is empty, and falls back to the locally-computed
+  balance by the same `_carries_signal` rule above.
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.

@@ -13,12 +13,18 @@ today depends on a vault being present. Every value type here is designed so a
 missing, unreachable, or capability-poor vault collapses to a well-defined
 "unavailable" state rather than an error the caller must special-case.
 
-Two invariants are load-bearing and deliberately encoded in the types:
+Three invariants are load-bearing and deliberately encoded in the types:
 
 * **Fail closed on tier.** :func:`tier_ceiling_for` raises rather than defaulting
   to :attr:`VaultTierCeiling.OPEN` for an unknown classification. Silently
   widening a tier would let sensitive content leave under a looser ceiling than
   the writer chose -- the opposite of "you choose your depth."
+* **Intimate is unspellable on the wire.** :class:`VaultTierCeiling` is
+  adepthood's vocabulary and carries ``INTIMATE``; :class:`WireTierCeiling` is
+  the narrower one Creek's ``/v1`` publishes and cannot name it at all. Every
+  request header is typed on the latter, and :func:`wire_ceiling_for` is the
+  only door between them -- so intimate content leaving under a ceiling nobody
+  can express is a type error rather than a review someone has to remember.
 * **Privacy over debuggability.** The error hierarchy exists so the service layer
   can normalize any transport failure to :class:`CreekVaultUnavailableError`
   *without* echoing the entry body or an API key into the message.
@@ -75,6 +81,28 @@ class VaultTierCeiling(enum.StrEnum):
     OPEN = "open"
     PERSONAL = "personal"
     INTIMATE = "intimate"
+
+
+class WireTierCeiling(enum.StrEnum):
+    """The subset of :class:`VaultTierCeiling` Creek's ``/v1`` wire can express.
+
+    Creek caps every *network* consumer below intimate -- the boundary is the
+    network, not the tier -- so the two members here are the only ceilings a
+    remote caller may declare, and its own wire enum has exactly these two. A
+    separate type rather than a comment saying so: adepthood's
+    :class:`VaultTierCeiling` carries an ``INTIMATE`` member that has no wire
+    spelling at all, and a type with no way to name it is the only guard that
+    cannot be forgotten. Everything that builds a request header is typed on
+    *this* enum, so putting an intimate ceiling on the wire is a type error
+    rather than a mistake caught at runtime -- and :func:`wire_ceiling_for` is
+    the one door between the two vocabularies.
+
+    Values are the wire strings Creek reads out of ``X-Creek-Tier-Ceiling``, so
+    they are contract and must not be reworded.
+    """
+
+    OPEN = "open"
+    PERSONAL = "personal"
 
 
 # Maps a journal classification *string* onto its tier ceiling. Keyed by the raw
@@ -254,6 +282,24 @@ class CreekVaultContractError(CreekVaultError):
         self.code = code
 
 
+class CreekCeilingUnrepresentableError(CreekVaultContractError):
+    """A call was about to declare a tier ceiling Creek's wire cannot express.
+
+    Raised by :func:`wire_ceiling_for` **before** anything is sent, so the
+    refusal is adepthood's own rather than one the vault has to make for it --
+    which is the whole point: the body of an intimate entry may not leave this
+    process to be refused elsewhere.
+
+    A :class:`CreekVaultContractError` because that is exactly what an operator
+    should read it as: a defect in the request adepthood was building, with a
+    remedy on adepthood's side. Its subtype is spelled out so the one refusal
+    that means "intimate nearly went on the wire" stays greppable apart from
+    every other contract fault. It inherits that type's degrade too, so a caller
+    that never expected it drops the replication and keeps the user's own save
+    intact rather than crashing their request.
+    """
+
+
 class CreekVaultPayloadError(CreekVaultError):
     """The vault answered, and its answer could not be read as the published shape.
 
@@ -325,6 +371,48 @@ class CreekCapabilityUnsupportedError(CreekVaultError):
     way the caller should fall back to its local pipeline for that one feature;
     degradation is per-capability, not all-or-nothing.
     """
+
+
+# The one translation from adepthood's tier vocabulary into the narrower one
+# Creek's wire speaks. Total over the two representable ceilings and *deliberately
+# partial* over the third: ``INTIMATE`` is absent rather than folded onto
+# ``PERSONAL``, because a mapping that quietly narrows an intimate ceiling would
+# make an intimate body sendable under a tier its writer never chose -- which is
+# the exact failure the wire vocabulary exists to prevent.
+_WIRE_CEILING_BY_TIER: Mapping[VaultTierCeiling, WireTierCeiling] = {
+    VaultTierCeiling.OPEN: WireTierCeiling.OPEN,
+    VaultTierCeiling.PERSONAL: WireTierCeiling.PERSONAL,
+}
+
+# What :func:`wire_ceiling_for` refuses with. Static, like every message in this
+# module: the refused ceiling is adepthood's own closed vocabulary rather than
+# user text, but there is exactly one value that can reach it, so naming it would
+# add nothing an operator does not already learn from the type.
+_UNREPRESENTABLE_CEILING_MESSAGE = "creek vault cannot express this tier ceiling on the wire"
+
+
+def wire_ceiling_for(ceiling: VaultTierCeiling) -> WireTierCeiling:
+    """Translate a tier ceiling into the one Creek's wire can carry, or refuse.
+
+    The single door between :class:`VaultTierCeiling` and
+    :class:`WireTierCeiling`, and the last of the guards keeping intimate
+    content off the network. The write path holds the first two -- it withholds
+    an intimate entry by its classification, then again by the tier that
+    classification resolves to -- and both run before any client is touched.
+    This one is different in kind rather than a third copy: it sits at the
+    moment a *request* is built, so it covers every capability, including the
+    ones the write path knows nothing about, and it is the only one that would
+    still catch a caller reaching the adapter directly.
+
+    Raises :class:`CreekCeilingUnrepresentableError` rather than narrowing to
+    :attr:`WireTierCeiling.PERSONAL`, for the reason
+    :func:`tier_ceiling_for` fails closed: a translation that widened or
+    narrowed on its own would move content across a boundary the writer chose.
+    """
+    try:
+        return _WIRE_CEILING_BY_TIER[ceiling]
+    except KeyError:
+        raise CreekCeilingUnrepresentableError(_UNREPRESENTABLE_CEILING_MESSAGE) from None
 
 
 @dataclass(frozen=True)
