@@ -5,6 +5,7 @@ import { ActivityIndicator, Animated, Text, TouchableOpacity, View } from 'react
 import { course as courseApi, type ContentItem } from '../../api';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '../../components/drawer/navIcon';
 import { accent, colors, ink } from '../../design/tokens';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 import type { ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
@@ -15,6 +16,12 @@ import styles from './Course.styles';
 const READ_TOAST_PAUSE_MS = 1800;
 const READ_TOAST_FADE_MS = 250;
 const READ_TOAST_SLIDE_DISTANCE = 12;
+
+// The chapter controls rise on the toast's own choreography, so the controls
+// arriving and the "✓ Read" confirmation arriving read as one gesture rather
+// than two competing animations at the same edge of the screen.
+const CONTROLS_FADE_MS = READ_TOAST_FADE_MS;
+const CONTROLS_SLIDE_DISTANCE = READ_TOAST_SLIDE_DISTANCE;
 
 const toastFade = (
   opacity: Animated.Value,
@@ -190,6 +197,70 @@ const FooterCenter = ({
   );
 };
 
+interface ControlsReveal {
+  present: boolean;
+  opacity: Animated.Value;
+  translateY: Animated.Value;
+}
+
+/**
+ * Mount-and-motion state for the reader's chapter controls.
+ *
+ * ``present`` leads the reveal and trails the withdrawal. It flips true the
+ * instant the essay's end is in view — before a pixel has moved — so the
+ * controls are in the tree, focusable, and announced without waiting on the
+ * animation; and it flips back to false only once the exit motion has finished,
+ * which is what lets them slide away rather than blink out. Under reduced
+ * motion both edges are instant and nothing animates at all.
+ */
+function useControlsReveal(revealed: boolean): ControlsReveal {
+  const reducedMotion = useReducedMotion();
+  const [present, setPresent] = useState(revealed);
+  const opacity = useRef(new Animated.Value(revealed ? 1 : 0)).current;
+  const translateY = useRef(new Animated.Value(revealed ? 0 : CONTROLS_SLIDE_DISTANCE)).current;
+  // Read inside the motion effect without making it a dependency: the effect
+  // must not restart merely because the mount it just requested landed.
+  const presentRef = useRef(present);
+  presentRef.current = present;
+
+  useEffect(() => {
+    if (revealed) setPresent(true);
+  }, [revealed]);
+
+  useEffect(() => {
+    // Hidden and staying hidden: there is nothing on screen to move.
+    if (!revealed && !presentRef.current) return undefined;
+    const restingOpacity = revealed ? 1 : 0;
+    const restingY = revealed ? 0 : CONTROLS_SLIDE_DISTANCE;
+    if (reducedMotion) {
+      opacity.setValue(restingOpacity);
+      translateY.setValue(restingY);
+      setPresent(revealed);
+      return undefined;
+    }
+    const reveal = Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: restingOpacity,
+        duration: CONTROLS_FADE_MS,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: restingY,
+        duration: CONTROLS_FADE_MS,
+        useNativeDriver: true,
+      }),
+    ]);
+    reveal.start(({ finished }) => {
+      if (finished && !revealed) setPresent(false);
+    });
+    return () => {
+      reveal.stop();
+    };
+  }, [revealed, reducedMotion, opacity, translateY]);
+
+  return { present, opacity, translateY };
+}
+
 interface ViewerFooterProps {
   isRead: boolean;
   marking: boolean;
@@ -197,6 +268,8 @@ interface ViewerFooterProps {
   onReflect?: () => void;
   nav: ChapterNav;
   toast: ReadToast;
+  /** Whether the essay's end is in view — the controls are due only then. */
+  revealed: boolean;
 }
 
 const ViewerFooter = ({
@@ -206,21 +279,35 @@ const ViewerFooter = ({
   onReflect,
   nav,
   toast,
-}: ViewerFooterProps): React.JSX.Element => (
-  <View style={styles.viewerFooter}>
-    {toast.visible && <MarkReadToast opacity={toast.opacity} translateY={toast.translateY} />}
-    <View style={styles.viewerFooterRow}>
-      <ChapterPrevButton nav={nav} />
-      <FooterCenter
-        isRead={isRead}
-        marking={marking}
-        onMarkRead={onMarkRead}
-        onReflect={onReflect}
-      />
-      <ChapterNextButton nav={nav} />
-    </View>
-  </View>
-);
+  revealed,
+}: ViewerFooterProps): React.JSX.Element | null => {
+  const { present, opacity, translateY } = useControlsReveal(revealed);
+  if (!present) return null;
+  return (
+    <Animated.View
+      testID="viewer-footer"
+      // On the way out the row is still on screen for the length of the slide.
+      // Neither a finger nor a screen reader should reach a control that is
+      // leaving, and both must reach it the moment it is asked for.
+      pointerEvents={revealed ? 'box-none' : 'none'}
+      accessibilityElementsHidden={!revealed}
+      importantForAccessibility={revealed ? 'auto' : 'no-hide-descendants'}
+      style={[styles.viewerFooter, { opacity, transform: [{ translateY }] }]}
+    >
+      {toast.visible && <MarkReadToast opacity={toast.opacity} translateY={toast.translateY} />}
+      <View style={styles.viewerFooterRow}>
+        <ChapterPrevButton nav={nav} />
+        <FooterCenter
+          isRead={isRead}
+          marking={marking}
+          onMarkRead={onMarkRead}
+          onReflect={onReflect}
+        />
+        <ChapterNextButton nav={nav} />
+      </View>
+    </Animated.View>
+  );
+};
 
 interface ContentViewerProps {
   item: ContentItem;
@@ -316,7 +403,7 @@ const ContentViewer = ({
       onBack={onBack}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
-      footer={
+      renderFooter={(atEssayEnd) => (
         <ViewerFooter
           isRead={isRead}
           marking={marking}
@@ -324,8 +411,9 @@ const ContentViewer = ({
           onReflect={onReflect}
           nav={nav}
           toast={toast}
+          revealed={atEssayEnd}
         />
-      }
+      )}
     />
   );
 };
