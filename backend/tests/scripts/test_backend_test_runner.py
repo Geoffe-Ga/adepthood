@@ -48,6 +48,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.git_env import detached_git_env
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TEST_SCRIPT = _REPO_ROOT / "scripts" / "backend" / "test.sh"
 
@@ -420,7 +422,7 @@ def _stage_runner(parent: Path, *, directory_name: str = _CHECKOUT_DIR_NAME) -> 
         shim.write_text(body)
         shim.chmod(_SHIM_MODE)
 
-    env = dict(os.environ)
+    env = detached_git_env()
     env[_PATH_ENV] = f"{shim_dir}{os.pathsep}{env[_PATH_ENV]}"
     env[_PYTEST_LOG_ENV] = str(log)
     env[_LOCK_FILE_ENV] = str(lock)
