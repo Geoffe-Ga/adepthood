@@ -2,6 +2,8 @@ import { StyleSheet } from 'react-native';
 
 import {
   accent,
+  BORDER_RADIUS,
+  colors,
   editorialType,
   ink,
   onShowcase,
@@ -20,6 +22,9 @@ const STAGE_PILL_SIZE = 40;
 const PROGRESS_BAR_HEIGHT = 6;
 const STAGE_COVER_ARC = 4;
 const CHAPTER_NAV_DISABLED_OPACITY = 0.5;
+// The edge of a glass pill: present enough to describe the shape, faint enough
+// not to draw a box around it.
+const GLASS_HAIRLINE_WIDTH = 1;
 
 // Shared uppercase small-caps label face (muted); consumers add per-use margins.
 const upperLabel = {
@@ -272,33 +277,54 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: ink.primary,
   },
+  // The reader's chapter controls float over the prose rather than sitting in
+  // the layout: an absolute overlay pinned to the reader's bottom edge, so
+  // revealing them moves neither the bottom fade nor a single line of text.
+  // ``box-none`` on the wrapper keeps the gaps between pills tappable prose.
+  readerFooterOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   // Reader footer — a column so the transient read toast can float above the
-  // single [prev icon] [center action] [next icon] navigation row.
+  // single [prev icon] [center action] [next icon] navigation row. No ground of
+  // its own: the row is a spacer for the glass pills, not a slab behind them.
   viewerFooter: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: surface.canvas,
   },
   viewerFooterRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.sm,
   },
+  // Glass: a translucent wash, a hairline edge, and a soft shadow — the Map
+  // magnifier's vocabulary, borrowed so the reader's chrome floats over prose
+  // instead of covering it.
   footerIconButton: {
     minWidth: touchTarget.minimum,
     minHeight: touchTarget.minimum,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: BORDER_RADIUS.circle,
+    borderWidth: GLASS_HAIRLINE_WIDTH,
+    borderColor: surface.hairline,
+    backgroundColor: colors.mystical.glowLight,
+    ...surfaceShadow.card,
   },
+  // The one control that stays solid: a call to action has to be legible over
+  // whatever prose happens to be under it, so the accent fill carries it.
   markReadButton: {
     flex: 1,
     minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
-    borderRadius: radius.md,
+    borderRadius: BORDER_RADIUS.circle,
     backgroundColor: accent.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...surfaceShadow.card,
   },
   markReadButtonDone: {
     backgroundColor: surface.sunken,
@@ -317,10 +343,11 @@ const styles = StyleSheet.create({
     minHeight: touchTarget.minimum,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
-    borderRadius: radius.md,
+    borderRadius: BORDER_RADIUS.circle,
     backgroundColor: accent.strong,
     alignItems: 'center',
     justifyContent: 'center',
+    ...surfaceShadow.card,
   },
   chapterNavBackDisabled: {
     opacity: CHAPTER_NAV_DISABLED_OPACITY,

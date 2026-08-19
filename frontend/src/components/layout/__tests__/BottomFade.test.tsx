@@ -34,6 +34,22 @@ const findAnyGradient = (component: Rendered): TestNode =>
 const findRect = (component: Rendered): TestNode =>
   component.root.find((node: TestNode) => typeof node.props.fill === 'string');
 
+interface RampStop {
+  offset: number;
+  opacity: number;
+  color: unknown;
+}
+
+/** Every gradient stop, in document order, as numbers we can reason about. */
+const readRamp = (component: Rendered): RampStop[] =>
+  component.root
+    .findAll((node: TestNode) => typeof node.props.offset === 'string' && 'stopColor' in node.props)
+    .map((node: TestNode) => ({
+      offset: Number(node.props.offset),
+      opacity: Number(node.props.stopOpacity),
+      color: node.props.stopColor,
+    }));
+
 describe('BottomFade', () => {
   it('fades from transparent to the canvas surface color, top to bottom', () => {
     const component = renderer.create(<BottomFade />);
@@ -107,6 +123,44 @@ describe('BottomFade', () => {
     const bottom = findStopAtOffset(component, '1').props;
     expect(bottom.stopColor).toBe(surface.desk);
     expect(bottom.stopOpacity).toBe('1');
+  });
+
+  it('ramps alpha over more than two stops, monotonically, from clear to opaque', () => {
+    const ramp = readRamp(renderer.create(<BottomFade />));
+    // Two stops can only interpolate linearly; a dissolve needs a curve.
+    expect(ramp.length).toBeGreaterThan(2);
+    expect(ramp.at(0)).toEqual(expect.objectContaining({ offset: 0, opacity: 0 }));
+    expect(ramp.at(-1)).toEqual(expect.objectContaining({ offset: 1, opacity: 1 }));
+    let previous: RampStop | undefined;
+    for (const stop of ramp) {
+      if (previous !== undefined) {
+        expect(stop.offset).toBeGreaterThan(previous.offset);
+        expect(stop.opacity).toBeGreaterThanOrEqual(previous.opacity);
+      }
+      previous = stop;
+    }
+  });
+
+  it('eases in, holding the veil far below a linear ramp until its last quarter', () => {
+    const ramp = readRamp(renderer.create(<BottomFade />));
+    const interior = ramp.filter(({ offset }) => offset > 0 && offset < 1);
+    expect(interior.length).toBeGreaterThan(0);
+    for (const { offset, opacity } of interior) {
+      // Sub-quadratic everywhere: the onset is gentler than even t^2, so the
+      // veil never announces itself with a straight-edged band of alpha.
+      expect(opacity).toBeLessThan(offset * offset);
+    }
+    // Half way down the veil a linear ramp is already at 0.5 -- clearly visible
+    // over prose. The eased ramp is still a whisper there.
+    const midpoint = ramp.find(({ offset }) => offset === 0.5);
+    expect(midpoint).toBeDefined();
+    expect(midpoint?.opacity).toBeLessThan(0.2);
+  });
+
+  it('keeps every stop on the single ground color it was given, never a grey fringe', () => {
+    for (const stop of readRamp(renderer.create(<BottomFade color={surface.desk} />))) {
+      expect(stop.color).toBe(surface.desk);
+    }
   });
 
   it('gives each instance a distinct gradient id and points its own Rect at it', () => {
