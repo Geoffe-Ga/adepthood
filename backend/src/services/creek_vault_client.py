@@ -273,18 +273,33 @@ _WHEEL_OK_STATUS = "ok"
 # rather than an iteration of whatever the vault sent, so a code creek adds
 # later is ignored exactly as an unknown capability string already is.
 #
-# That ``F{n}`` -> stage ``n`` correspondence is a deliberate, adepthood-owned
-# **projection**, not a semantic identity, and this is the definition site where
-# that has to be said. Creek publishes a frequency distribution over its
-# classified corpus; adepthood renders per-stage Aspect fullness from the
-# 36-week curriculum. They are different quantities over different material,
-# named in different vocabularies -- creek's ``Agency`` is not a course Aspect --
-# and the fact that each happens to have ten members is a coincidence of
-# cardinality, not evidence that the two line up. Conflating them would render a
-# Map that is wrong and confident, which is worse than one that is absent: the
-# read path relabels every Frequency name away into the curriculum's own words
-# before anything is rendered, precisely so nobody reads creek's ontology back as
-# adepthood's.
+# That ``F{n}`` -> stage ``n`` correspondence is a **semantic identity**, and
+# this is the definition site where that has to be said. The Frequencies, the
+# Aspects of Wholeness and the Stages are one set of ten developmental
+# positions under four names -- Aspect, Frequency, Stage, Wavelength Mode --
+# per ``NORTH-STAR.md``: "the shared ontology where Adepthood's Aspects equal
+# Creek's Frequencies equal the Wavelength Modes". Modes are these ten,
+# colour-keyed; the six Wavelength *phases* are a different axis entirely,
+# and ``graph/ontology-spine.md`` writes each row as
+# ``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``. F1 *is* stage 1, and
+# creek's ``Agency`` *is* the course Aspect Agency.
+#
+# (An earlier version of this comment argued the opposite -- that the two were
+# unrelated vocabularies and their both having ten members was "a coincidence of
+# cardinality". That was wrong, and it propagated: see ``domain.frequencies``,
+# which now carries the canonical table.)
+#
+# Colour is the primary key, not the name. The two labelings agree on six of the
+# ten positions and diverge on the middle four -- creek's ``Achievism`` against
+# the curriculum's ``Intellectual Understanding / Achievist``, and likewise F6,
+# F7, F8 -- so a join on names would mismatch exactly those four while looking
+# correct. ``backend/tests/services/test_frequency_classification.py`` asserts
+# both the colour join and that specific divergence.
+#
+# The read path still relabels each Frequency into the curriculum's own words
+# before rendering, which remains right for a different reason than the one
+# originally given: the curriculum's wording is what the user has been reading
+# all along, not because the ontology underneath is foreign.
 _WHEEL_FREQUENCY_CODES: tuple[str, ...] = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
 
 # Longest Frequency name adepthood will accept from a wheel entry. A *bound*,
