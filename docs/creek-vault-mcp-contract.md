@@ -129,28 +129,37 @@ ten stages are `CourseStage` rows tied to the APTITUDE program.
 
 `/v1/wheel` is a bare `GET` with no query parameters and no body — the
 ratified surface publishes neither for this capability, and sending an
-undocumented one would be guessing at a contract
-(`_get_wheel`, `backend/src/services/creek_vault_client.py:1522-1541`).
-There is therefore no ceiling adepthood can *declare* on this call; the
-`personal` value in `_WHEEL_TIER_CEILING`
-(`creek_vault_client.py:230`) instead names the widest ceiling
-adepthood is willing to *accept* on the way back, and `_admissible_wheel`
-refuses a response that echoes anything wider
-(`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
-here, on either reading: only aggregate per-Frequency counts and
-shares cross this seam — never fragment content — no intimate *journal
-entry* reaches the vault from adepthood at all (see "Intimate-tier
-content: pointer only" below for the per-surface rule), and creek
-independently caps a network consumer below intimate regardless of what
-adepthood would ask for. The
-server instead applies its own published `open` default to what it
-*counts*, and `open` ranks unclassified content below `personal`: a
-not-yet-classified fragment is silently excluded from the count, so a
-young corpus — most of whose entries have no Frequency yet — reads back
-as an all-zero wheel even though it plainly isn't empty. That case, and
-how adepthood treats an all-zero answer as legitimate rather than a
-failure, is covered in "WHEEL over `/v1`" under "Per-capability
-fallback rules" below.
+undocumented one would be guessing at a contract (`_get_wheel`).
+
+The ceiling therefore travels in a **header**, not in the request shape:
+every `/v1` call declares `X-Creek-Tier-Ceiling`, and the wheel read
+declares `personal` from `_WHEEL_WIRE_CEILING`. That is what
+`_WHEEL_TIER_CEILING` has always named — the widest ceiling adepthood is
+willing to accept — and it is now also what adepthood *asks* Creek to
+count at. `_admissible_wheel` still refuses a response that echoes
+anything wider, so the declaration and the check agree rather than the
+check standing alone.
+
+Declaring it matters, because the alternative is not neutral. Absent the
+header Creek applies its published `open` default to what it *counts*,
+and `open` ranks unclassified content below `personal`: a not-yet-classified
+fragment is silently excluded, so a young corpus — most of whose entries
+have no Frequency yet — reads back as an all-zero wheel even though it
+plainly is not empty. Declaring `personal` is what stops that silent
+undercount. How adepthood treats a genuinely all-zero answer as
+legitimate rather than a failure is covered in "WHEEL over `/v1`" under
+"Per-capability fallback rules" below.
+
+`personal` is the honest maximum here, on either reading: only aggregate
+per-Frequency counts and shares cross this seam — never fragment content
+— no intimate *journal entry* reaches the vault from adepthood at all
+(see "Intimate-tier content: pointer only" below for the per-surface
+rule), and creek independently caps a network consumer below intimate
+regardless of what adepthood would ask for.
+
+Symbols above are named rather than cited by line number on purpose: the
+previous exact-range citations drifted the moment lines were inserted
+earlier in the file, which is a footgun this doc has already stepped on.
 
 ### The response projection
 
