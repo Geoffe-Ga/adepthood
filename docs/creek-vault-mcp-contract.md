@@ -1,4 +1,4 @@
-# Creek Vault MCP contract (pointer + adepthood-owned projections)
+# Creek Vault contract pointer + adepthood-owned projections
 
 - **Status:** Superseded pointer doc. This file no longer restates
   Creek's wire contract; see
@@ -63,18 +63,37 @@ ADR 0004's Context section documents in detail. Instead:
   note) — nothing in this repository calls Creek over MCP any more, and
   nothing about Creek's MCP surface changed to make that so. The bundle
   describes `/v1` only.
-- This document is titled "MCP contract" for the link-stability reasons
-  ADR 0004's Decision 5 gives, not because MCP is a live application
-  transport here — it is not, as of the note above. Every `creek.*`
-  capability name below (`CreekCapability` in `domain/creek_vault.py`)
-  is adepthood's own vocabulary and telemetry key, chosen because it
-  was minted that way originally; it is not a claim about how the call
-  reaches Creek.
+- **This document's *filename* still says `mcp`; its title no longer
+  does, and neither says anything about how adepthood reaches Creek.**
+  The filename is retained for the link-stability reason ADR 0004's
+  Decision 5 gives and its 2026-08-07 note re-examines — the inbound
+  references have not moved, and one of them, the drift guard
+  `backend/tests/test_contract_version_docs.py`, reads this file by
+  path. The title was corrected on 2026-08-19 because it cost nothing
+  to correct and, unlike the path, it is what a reader sees first.
+  Every `creek.*` capability name below (`CreekCapability` in
+  `domain/creek_vault.py`) is adepthood's own vocabulary and telemetry
+  key, chosen because it was minted that way originally; it is not a
+  claim about how the call reaches Creek.
 - The version this document pins against is Creek's published
   `CONTRACT_VERSION`, which the vendored bundle's `manifest.json`
   restates and which
   `backend/tests/test_creek_contract_conformance.py` asserts equal to
   `domain/creek_vault.py`'s constant.
+- **The pin above is behind upstream, deliberately and visibly.** As of
+  2026-08-19 Creek publishes contract **0.8.0** (a 54-file bundle at
+  `docs/contracts/adepthood-v1/`) while adepthood vendors and pins
+  **0.2.0**. This is not an outage: `0.2` is still a member of
+  upstream's `supported_contract_minors`, so every capability adepthood
+  actually calls is still served exactly as before. It has one concrete
+  consequence, and it is the reason the gap is written down here rather
+  than left to the drift workflow. From contract 0.8.0 onward the
+  advertised capability list is keyed on the caller's minor, so a
+  `0.2`-pinned client is **never told about `upload`** and is refused
+  `incompatible_version` if it calls `POST /v1/uploads` anyway. Raising
+  the pin is therefore a prerequisite for the upload capability, not
+  bookkeeping. Tracked on epic
+  [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043).
 
 ## Shared ontology and tier mapping (adepthood-owned)
 

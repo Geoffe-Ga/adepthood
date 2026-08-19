@@ -909,3 +909,77 @@ upstream `879d961` (contract 0.2.0) while upstream `main` is at 0.3.0,
 so the scheduled `Creek contract drift` workflow is expected to go red
 on its next run — that is the gate working as designed, and
 re-vendoring is deliberately not bundled here.
+
+## Note, 2026-08-19 — the one-transport rule is ratified in prose, and the pin is now the whole gap
+
+Two loose threads this document left hanging are closed here, and one
+new gap is recorded rather than fixed.
+
+**The rule is now stated, not merely implied.** Decision 1 said MCP
+remains Creek's agent adapter; it did not say adepthood may never speak
+it. The owner settled that on 2026-08-18: *"Creek-Vault retains MCP for
+any hermes or openclaw agents that want to interact with it, not for
+applications. MCP for application data transfer is a major code smell."*
+So the boundary is not a fact about what shipped, it is a standing
+constraint: one application transport, HTTP/JSON `/v1`, and any future
+proposal to reach Creek from this repository over MCP is refused by this
+ADR rather than weighed on its merits. Epic
+[#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043) is the
+standing integration spine that rule is enforced from — the single place
+the seam's state, its cross-repo dependencies, and its follow-ups are
+tracked, so a second transport cannot be reintroduced through a
+follow-up nobody read this ADR against.
+
+**The 2026-08-07 note's dependency wart is half gone, and the surviving
+half is unrelated.** That note left `mcp==2.0.0` and `httpx2==2.9.1`
+pinned with nothing importing them, for a follow-up to remove. `mcp` is
+gone from `backend/requirements.txt` (#2118), and no requirements file
+names it any more. `httpx2` is present again at `2.12.0`, and that is
+**not** the wart returning: openai 3.x moved its HTTP layer onto that
+separate distribution, which `backend/requirements.txt` records at the
+pin itself. Nothing vault-related imports it.
+
+**Decision 5's second reason has fully expired; the title moved, the
+filename did not.** The 2026-08-07 note observed that "the shipped
+transport genuinely is still MCP" had expired and left the filename
+standing on link stability alone. That is still the right call — the
+inbound references have not moved, and one of them, the drift guard
+`backend/tests/test_contract_version_docs.py`, reads the file by path
+and matches on it — but it does not extend to the *title*, which cost
+nothing to correct and is what a reader meets first. The document is now
+titled "Creek Vault contract pointer + adepthood-owned projections". Its
+path is unchanged, so no reference broke and Decision 5's rejection of a
+rename stands as written.
+
+**The new gap: the pin is six minors behind, and that now withholds a
+capability.** `CONTRACT_VERSION` is `0.2.0` and the vendored bundle in
+`backend/tests/fixtures/creek_v1/` is the 0.2.0 copy. Upstream `main`
+publishes **0.8.0** — a 54-file bundle — so the scheduled `Creek
+contract drift` workflow is red, as designed.
+
+Read the severity precisely, because the honest answer is neither
+"nothing" nor "outage". `0.2` is still a member of upstream's
+`supported_contract_minors` — the window has been widened six times and
+never shifted — so every capability adepthood calls today is still
+served, and the refined Decision 4 rule accepts such a server correctly.
+What changed at 0.8.0 is that the advertised capability list stopped
+being minor-independent: `GET /v1/capabilities` keys what it lists on
+the caller's minor, so a `0.2`-pinned client is never told about
+`upload`, and `POST /v1/uploads` refuses it `incompatible_version` if it
+calls anyway. Creek's own acceptance criterion for that route states it
+outright: *"a `0.2`-pinned client does **not** see it (the version
+negotiation is the point)."*
+
+The consequence for this repository is a real dependency, not
+bookkeeping: adepthood's `upload()` cannot be implemented against a
+route its handshake will never advertise. Raising the pin — re-vendor
+the 0.8.0 bundle, move `CONTRACT_VERSION`, teach
+`_CAPABILITY_BY_WIRE_NAME` the `upload` name, re-run the conformance
+suite — is therefore a prerequisite of the upload work rather than a
+parallel chore. It is deliberately not bundled into this docs change, so
+that a re-vendor's conformance diff stays readable on its own.
+
+**What is not claimed.** Nobody has run this client end-to-end against a
+real local Creek `/v1` server. That rollout criterion, recorded as
+outstanding since 2026-08-07, is outstanding still, and it is the one
+condition #2043 stays open on.

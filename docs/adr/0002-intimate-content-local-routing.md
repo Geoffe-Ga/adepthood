@@ -143,3 +143,36 @@ where that tension gets settled, not this ADR.
 - BYOK reuses the existing `ApiKeySettings` UX and is surfaced to the
   user entirely under the one promise, with no technical tiers
   exposed.
+
+## Note, 2026-08-19 — the seam is HTTP/JSON; this ADR's MCP references are history
+
+Nothing about the intimate-routing rule this ADR records has changed.
+What has changed is the transport the rule is enforced at, so the three
+places above that name MCP need reading as archaeology rather than as a
+map of the current system.
+
+- **Context** describes this decision as folded into "the broader Creek
+  Vault MCP boundary decision, #927". True as written: #927 was the
+  decision, and it was an MCP boundary at the time.
+- **Decision 1** says each user's vault is "reachable over a network MCP
+  transport", with `TierCeiling` "enforced at that transport boundary".
+  The enforcement claim stands unchanged and is the load-bearing half.
+  The transport is now HTTP/JSON `/v1`, per
+  [ADR 0004](0004-creek-vault-http-application-boundary.md) Decision 1.
+  Adepthood's own MCP client was retired by #2049; MCP remains Creek's
+  adapter for *agents* — CrawDad, Claude Code, Hermes — and nothing in
+  this repository speaks it. The ceiling now reaches Creek as an
+  `X-Creek-Tier-Ceiling` header on every `/v1` request, and `INTIMATE`
+  has no spelling on that wire at all, which is a stronger form of the
+  same by-construction guarantee than "enforced at the boundary": there
+  is no representable request that could carry it.
+- **Consequences** says "Epic #949 builds Adepthood's client side of the
+  Creek Vault MCP handshake". #949 is superseded by epic
+  [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043), which
+  built that client side over HTTP/JSON instead and is now the standing
+  integration spine for the seam. #950's contract doc was superseded in
+  turn by Creek's own published `/v1` bundle, which adepthood vendors.
+
+The decisions themselves are left exactly as ratified, per the
+append-only convention: rewriting the evidence under a decision is how a
+decision record stops being a record.
