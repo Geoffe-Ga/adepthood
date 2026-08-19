@@ -55,6 +55,7 @@ hold a concurrency window open on purpose rather than by hoping for one.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -732,31 +733,54 @@ def checkout(tmp_path: Path) -> _Checkout:
     return _stage_checkout(tmp_path)
 
 
-def _tree_snapshot(root: Path) -> dict[Path, int | None]:
-    """Return everything a checkout holds, keyed by path and sized.
+def _tree_snapshot(root: Path) -> dict[Path, str | None]:
+    """Return everything a checkout holds, keyed by path and content.
 
-    The size travels with each path so the snapshot notices a file rewritten in
-    place, not only one created or removed. git's own directory is skipped for
-    the reason recorded at ``_GIT_DIR_NAME``: a detached maintenance process
-    edits it on its own schedule, and comparing that would decide the invariant
-    by a race rather than by the code.
+    The digest travels with each path so the snapshot notices a file rewritten
+    in place, not only one created or removed. Size alone was not enough: an
+    edit that happens to preserve the byte count -- a flipped flag, a swapped
+    character -- leaves the length identical and would have compared equal.
+    Hashing the bytes closes that, and the fixture checkouts are small enough
+    that reading them twice costs nothing worth counting.
+
+    git's own directory is skipped for the reason recorded at ``_GIT_DIR_NAME``:
+    a detached maintenance process edits it on its own schedule, and comparing
+    that would decide the invariant by a race rather than by the code.
 
     Args:
         root: Checkout root to list.
 
     Returns:
-        A mapping of checkout-relative path to size in bytes, or ``None`` for a
-        directory. Symlinks are measured without being followed, so a broken one
-        is recorded rather than raising.
+        A mapping of checkout-relative path to a digest of its content, or
+        ``None`` for a directory. A symlink is digested from its target text
+        rather than followed, so a broken one is recorded rather than raising,
+        and re-pointing one registers as the change it is.
     """
-    snapshot: dict[Path, int | None] = {}
+    snapshot: dict[Path, str | None] = {}
     for path in root.rglob("*"):
         relative = path.relative_to(root)
         if _GIT_DIR_NAME in relative.parts:
             continue
         info = path.lstat()
-        snapshot[relative] = None if stat.S_ISDIR(info.st_mode) else info.st_size
+        if stat.S_ISDIR(info.st_mode):
+            snapshot[relative] = None
+        elif stat.S_ISLNK(info.st_mode):
+            snapshot[relative] = _digest(str(path.readlink()).encode())
+        else:
+            snapshot[relative] = _digest(path.read_bytes())
     return snapshot
+
+
+def _digest(payload: bytes) -> str:
+    """Return a short stable digest of ``payload``.
+
+    Args:
+        payload: Bytes to digest.
+
+    Returns:
+        The hex sha256 of the payload.
+    """
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _receipt_field(text: str, key: str) -> str:
@@ -1684,8 +1708,22 @@ def test_the_tree_snapshot_notices_every_way_the_tree_could_be_touched(
         "comparison above proves nothing about what changed"
     )
 
-    (checkout.root / _SOURCE_FILE).write_text(f"{_MODULE_TEXT}{_MUTATION_TEXT}")
+    source = checkout.root / _SOURCE_FILE
+    source.write_text(f"{_MODULE_TEXT}{_MUTATION_TEXT}")
     assert _tree_snapshot(checkout.root) != before, "a file rewritten in place must be noticed"
+
+    # The case a size-keyed snapshot could not see. Appending changes the byte
+    # count, so length alone was enough above; an edit that preserves it is not
+    # visible unless the content itself is compared.
+    same_length = _MODULE_TEXT.replace("1", "2", 1)
+    assert len(same_length) == len(_MODULE_TEXT), (
+        "this case only tests what it claims if the rewrite is the same length"
+    )
+    source.write_text(same_length)
+    assert _tree_snapshot(checkout.root) != before, (
+        "a rewrite that preserves the byte count must still be noticed -- keying "
+        "the snapshot on size alone would have compared this equal"
+    )
 
 
 def test_an_unregistered_gate_name_cannot_be_evaluated(checkout: _Checkout) -> None:
