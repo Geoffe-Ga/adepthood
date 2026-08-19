@@ -97,6 +97,10 @@ cd frontend && npx tsc --noEmit     # Type check
   `pre-commit run --all-files` sweep for a wide rename, a suspected
   cross-file type error, or a hook-config change — `git commit` already
   re-runs the hooks on your staged diff
+- Register a journey in `frontend/e2e/journeys.json` for any PR that adds or
+  changes a user-facing feature — `status: "covered"` naming the seam-crossing
+  spec, or `status: "uncovered"` with a linked issue. Declaring a gap is
+  expected; hiding one is not
 - Use conventional commit messages (enforced by commitlint)
 - Keep commits small and atomic — one logical change each
 - Respect existing patterns and conventions in the codebase
@@ -113,6 +117,11 @@ cd frontend && npx tsc --noEmit     # Type check
 - Leave TODOs for problems solvable now
 
 ### Quality Thresholds
+- **Journey coverage:** every critical user journey is declared in
+  `frontend/e2e/journeys.json` and either covered by a seam-crossing spec or
+  marked `uncovered` with an issue. Every other threshold here is a *volume*
+  metric: none of them can distinguish 90% coverage of a feature nobody can
+  reach from 90% coverage of a feature that works
 - **Test coverage:** 90% minimum line coverage (backend pytest-cov; frontend jest)
 - **Branch coverage:** 80% minimum (backend CI gate, target 90%)
 - **Docstring coverage:** 85% minimum (backend, interrogate)
