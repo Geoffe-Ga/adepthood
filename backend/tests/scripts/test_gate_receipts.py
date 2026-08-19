@@ -250,7 +250,6 @@ _MUTATION_TEXT = "\nEXTRA = 2\n"
 _DEFAULT_BRANCH = "main"
 _INITIAL_COMMIT_MESSAGE = "stage the fixture checkout"
 _EMPTY_COMMIT_MESSAGE = "a commit that changes no file content"
-_GIT_DIR_NAME = ".git"
 
 _GIT_IDENTITY_ARGS = (
     "-c",
