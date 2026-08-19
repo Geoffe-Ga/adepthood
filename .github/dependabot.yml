@@ -94,13 +94,29 @@ updates:
       - dependency-name: "eslint-plugin-unicorn"
         versions: [">=65.0.0"]
       # react-native-worklets is not independently upgradable: Expo SDK 57 pins
-      # 0.10.1 (`expo install --check` reports the tree up to date at it), and
-      # react-native-reanimated 4.5.1 declares a peer of "0.10.x". The 0.11.3
-      # bump ERESOLVE-failed frontend CI for exactly that reason. It moves with
-      # the SDK via `expo install`, not on its own. Unpin when a reanimated
-      # release widens that peer range.
+      # 0.10.1, and react-native-reanimated 4.5.1 declares a peer of "0.10.x".
+      # The 0.11.3 bump ERESOLVE-failed frontend CI for exactly that reason. It
+      # moves with the SDK via `expo install`, not on its own.
+      #
+      # The floor was ">=0.11.0", which stated that intent without enforcing
+      # it: the whole 0.10.x line stayed proposable, so grouped bumps ratcheted
+      # the pin to 0.10.3 and then 0.10.4 while `expo install --check` kept
+      # expecting 0.10.1. reanimated's "0.10.x" peer is wide enough that npm
+      # never objected, so nothing failed -- the tree just quietly diverged
+      # from the SDK. A floor one patch above the expected version holds the
+      # whole line, which is what "moves with the SDK" requires. Raise it in
+      # step with whatever the next Expo SDK expects.
       - dependency-name: "react-native-worklets"
-        versions: [">=0.11.0"]
+        versions: [">=0.10.2"]
+      # @react-native/jest-preset is pinned by react-native, not chosen by us:
+      # react-native 0.86.2 declares peerOptional @react-native/jest-preset at
+      # the *exact* version "0.86.2", not a range. The 0.87.0 bump therefore had
+      # no satisfiable resolution and `npm ci` died with ERESOLVE before a
+      # single test ran, taking frontend-quality and e2e-journeys down with it.
+      # The preset moves only when react-native moves, which under Expo SDK 57
+      # means when the SDK moves. Unpin when react-native leaves the 0.86 line.
+      - dependency-name: "@react-native/jest-preset"
+        versions: [">=0.87.0"]
       # Expo SDK 57 expects async-storage 2.2.0; `expo install --check` on the
       # 3.1.1 bump reports "may not work correctly until you install the
       # expected versions". Nothing in the suite would catch it -- jest.config
