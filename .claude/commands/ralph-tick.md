@@ -301,7 +301,21 @@ These fix-workers are background too — launch, don't await.
 
 ### Step 3 — Groom gate (every Nth completion)
 
-When `completed_since_groom >= groom_interval`:
+**Currently disabled.** `state.json` carries `"groom_enabled": false`; skip this
+step entirely and leave the counter accruing. Grooming was filing more
+low-consequence issues than it was retiring, so the per-10-completions trigger
+is off by operator decision (2026-08-15).
+
+Note this is only the *local* trigger. `scan-groom.yml` still runs on its own
+daily 04:00 UTC cron, so grooming has not stopped — it has stopped being
+coupled to merge volume. Turning that off too is a separate change to the
+workflow's schedule.
+
+`groom_interval` is deliberately left at 10 rather than set to 0: the gate below
+is `>=`, so 0 would fire on *every* completion — the exact opposite of off. The
+boolean is the switch; the interval is only the cadence it uses when re-enabled.
+
+When `groom_enabled` is true and `completed_since_groom >= groom_interval`:
 1. Invoke **`/backlog-grooming`** as a Skill (label/close ops are safe while lanes build).
 2. Reset the counter and stamp:
    ```bash
