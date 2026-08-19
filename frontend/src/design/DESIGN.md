@@ -36,9 +36,22 @@ instead. Enforced by `__tests__/semanticTokens.test.ts`.
 is the paper ground rising to absorb the last inch of scrolling content — quiet
 and structural, not decorative. It gradients from transparent to `surface.canvas`
 exactly, never black, so the veil reads as more of the same ground rather than a
-grey shadow at the screen's end. An optional `color` prop overrides that ground
-for scrollers floated on a different surface — the Course chapter reader passes
-`surface.desk` so its fade dissolves into the desk rather than banding canvas.
+grey shadow at the screen's end. Two rules keep it a dissolve rather than a band:
+
+- **Ease the alpha, never ramp it linearly.** `BOTTOM_FADE_STOPS` samples a
+  cubic ease-in (`alpha = t³`). A constant-rate ramp puts a slope discontinuity
+  where the veil meets live prose, and the eye exaggerates that into a Mach
+  band — a visible line, with a grey slab under it. The eased ramp starts at a
+  near-zero slope (two percent through the first quarter) and only turns
+  assertive in its last quarter, where the ground behind it already matches.
+- **Fade into the ground actually beneath the veil.** The optional `color` prop
+  exists for scrollers floated on a different surface, and it must name what the
+  veil physically covers, not what the screen sits on. The Course chapter reader
+  passes `surface.canvas` — the reading sheet's own ground — because the sheet
+  is what the veil overlays for all but the very end of the scroll. A terminal
+  color that matches nothing underneath is what makes trailing text look like it
+  is fading into nothing.
+
 `ScreenScaffold` renders it automatically in `scroll` mode.
 
 ## Palette provenance

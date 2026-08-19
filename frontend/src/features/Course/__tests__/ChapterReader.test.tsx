@@ -372,7 +372,7 @@ describe('ChapterReader', () => {
     await findByText('Different Heading');
   });
 
-  it('renders a desk-colored bottom fade beneath the loaded body', async () => {
+  it('fades the body into the reading sheet it covers, not the desk behind the sheet', async () => {
     const { findByTestId } = render(
       <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />,
     );
@@ -382,7 +382,10 @@ describe('ChapterReader', () => {
     );
     expect(stops.length).toBeGreaterThan(0);
     for (const stop of stops) {
-      expect(stop.props.stopColor).toBe(surface.desk);
+      // The veil covers the sheet for all but the very end of the scroll, so
+      // the sheet's own ground is the only honest terminal color.
+      expect(stop.props.stopColor).toBe(surface.canvas);
+      expect(stop.props.stopColor).not.toBe(surface.desk);
     }
   });
 

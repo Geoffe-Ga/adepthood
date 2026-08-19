@@ -462,7 +462,11 @@ const ReaderBody = ({
           onBeginNote={selection.beginSelection}
         />
       )}
-      <BottomFade color={surface.desk} testID="reader-bottom-fade" />
+      {/* The veil covers the reading sheet for all but the last inch of the
+          scroll, so the sheet's own ground is the only color it can honestly
+          resolve to; fading toward the desk behind the sheet printed a band of
+          a color that was nowhere under the text. */}
+      <BottomFade color={surface.canvas} testID="reader-bottom-fade" />
     </View>
   );
 };
