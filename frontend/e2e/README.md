@@ -61,6 +61,40 @@ mechanically. It runs in the ordinary frontend suite and fails if a journey ever
 mocks the API module or `fetch`, if the launcher stubs anything besides the
 license check, or if the CI job acquires a way to be disarmed.
 
+## The ledger
+
+`journeys.json` beside these specs is the repository's journey coverage ledger:
+every critical journey, the surfaces it crosses (screen → client wrapper →
+route → table), and either the spec that covers it or the issue tracking the
+gap. It is not documentation. `npm run check:journeys` — and the
+`journey-ledger` job in `.github/workflows/e2e.yml` — audits every claim in it
+against the tree, and goes red when a covering spec is renamed, deleted or
+turned off, when a spec here is not declared, or when a crossed surface no
+longer exists under the name the ledger gives it.
+
+Honest gaps are the point. A journey may declare `status: "uncovered"` with a
+linked issue; the gate counts it and reports it and does not fail on it, because
+a gate that goes red for accurate bookkeeping is a gate that gets deleted.
+Omitting an uncovered journey to keep the number down is the one thing the
+ledger cannot catch and the one thing that would make it worthless. An uncovered
+journey names no `coveredBy`: claiming a spec while counting as a gap would drop
+that spec out of the covered tally and out of the "no journey registers it"
+check at once, which is coverage disappearing quietly — the exact thing this
+ledger exists to prevent.
+
+"Turned off" is judged per test registration rather than by searching the file
+for marker text. A spec that parks one `it.skip` beside a live journey test
+still covers the journey; a spec whose only live test sits inside a
+`describe.skip` does not; and a spec narrowed by `.only` fails whatever else it
+contains, because the tests `.only` silences are exactly the ones the ledger is
+claiming. A comment or a test name that merely mentions `it.skip(` is not a
+skipped test.
+
+The checker lives at `frontend/__tests__/journeyLedger.ts` with the repository's
+other structural guards, and is exercised by `journeyLedger.test.ts` against
+synthetic fixtures for each failure mode — so the gate is proven to fire, not
+merely proven to be green.
+
 ## No skips, ever
 
 An absent Postgres, a server that will not boot, or a health probe that answers
