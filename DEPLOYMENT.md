@@ -128,6 +128,7 @@ In the backend service's **Variables** tab, add:
 |----------|-------|-----------|
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
+| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
 | `PROD_DOMAIN` | `https://your-frontend-domain.com` | Yes |
 | `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
@@ -143,6 +144,14 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 Copy the output and paste it as the `SECRET_KEY` value. This is used to sign
 JWT tokens — keep it secret, keep it safe.
+
+**Generate a JOURNAL_ENCRYPTION_KEYS value:**
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+This encrypts journal entry text at rest. A production boot without it **fails**
+— see [Journal Encryption at Rest](#journal-encryption-at-rest) below for what
+that protects and how rotation works.
 
 **About PROD_DOMAIN:**
 This controls CORS (which origins can call your API). Set it to the URL where
@@ -364,6 +373,59 @@ WHERE table_name = 'walletaudit' AND grantee = 'adepthood';
 Issue #272 tracks the decision to keep this as a deploy-time recipe rather
 than a migration.
 
+## Journal Encryption at Rest
+
+Journal entry text is encrypted in the database column with Fernet keys read
+from `JOURNAL_ENCRYPTION_KEYS`. **Key presence is the switch**: with no key
+configured the column is plaintext, which is the right default on a laptop and
+unacceptable on a server. So a boot with `ENV=production` and no key **fails**,
+naming the variable — the deploy never goes live rather than quietly storing
+every user's writing in the clear.
+
+Outside production an empty value is normal and silent: requiring a key to run a
+local server or the test suite would be friction with no security benefit.
+
+**Generate a key:**
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Paste the output as the value. Treat it exactly like `SECRET_KEY`: it is held
+only in the platform's variable store, never committed, never logged (the
+startup failure names the variable and never its contents), and never shared
+across environments — a staging key that reaches production means one leak
+compromises both.
+
+**Rotation.** The variable is plural because rotation is comma-separated:
+
+```
+JOURNAL_ENCRYPTION_KEYS=<new-key>,<previous-key>
+```
+
+The **first** key encrypts every new write; **every** listed key can decrypt. So
+a rotation is: generate a new key, prepend it, redeploy. The registry is cached
+per worker, so the change takes effect on restart — rotation is a deploy-time
+operation, not a runtime one.
+
+Rows re-encrypt lazily, on their next write. Nothing rewrites the corpus for
+you, so **keep the previous key listed** until you are willing to lose whatever
+has not been rewritten under the new one. Dropping a key that some row still
+needs does not degrade to plaintext and does not return the ciphertext as if it
+were the user's text — the read raises. There is no recovery from a discarded
+key: the ciphertext is the only copy.
+
+**A malformed key fails fast in every environment**, production or not. A typo
+is never re-read as "encryption is off".
+
+**Verify after deploy.** The boot log carries one line per worker:
+
+```
+journal_encryption_enabled=True
+```
+
+`False` in a production log means the deploy predates this check or `ENV` is not
+`production` — either way, journals are being written in the clear.
+
 ## Environment Variables Reference
 
 ### Backend
@@ -372,6 +434,7 @@ than a migration.
 |----------|----------|---------|-------------|
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS (e.g., `https://app.adepthood.com`) |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
@@ -647,6 +710,7 @@ This runs:
 
 **Manual checklist:**
 - [ ] `SECRET_KEY` is a cryptographically random string (not `replace-me`)
+- [ ] `JOURNAL_ENCRYPTION_KEYS` holds a freshly generated Fernet key, unique to this environment
 - [ ] `ENV=production` on the backend
 - [ ] `PROD_DOMAIN` matches your frontend URL(s) exactly, with `https://`
 - [ ] `EXPO_PUBLIC_API_BASE_URL` on the frontend matches your backend URL
