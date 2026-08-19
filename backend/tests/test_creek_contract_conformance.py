@@ -64,11 +64,11 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
-    CreekVaultAuthError,
     CreekVaultCareEscalationError,
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultUnavailableError,
+    VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
@@ -598,9 +598,18 @@ async def test_capability_error_states_degrade_as_unreachable(
 ) -> None:
     """Every non-200 capability document degrades the handshake rather than raising.
 
-    All four land on ``UNREACHABLE`` because the client raises for status before
-    reading the body, so Creek's typed error envelope is never consulted. That is
-    the observed behaviour; the envelope is what a fixed client would read.
+    All four still land on ``UNREACHABLE``, but no longer because the envelope
+    goes unread. The handshake now consults it, and asks it exactly one
+    question: is this a credential-rejected status carrying *no* code, and so a
+    key to rotate rather than a vault to go and look at? Every one of these four
+    fixtures carries a code -- the 403 refusal included -- so none of them is
+    that, and all four answer to the availability story.
+
+    What the envelope still does not do here is fan its codes out into the
+    reasons the handshake already has names for: ``unavailable`` into
+    ``VAULT_REPORTED_UNAVAILABLE``, ``incompatible_version`` into
+    ``INCOMPATIBLE_VERSION``. Both of those are reachable today only from a 200
+    body. That remaining collapse is what these cells record.
     """
     client = vault_clients(_static_handler(_read_json(cell.path), _STATUS_BY_STATE[cell.state]))
 
@@ -631,17 +640,20 @@ async def test_journal_upsert_empty_is_an_unchanged_write(vault_clients: ClientF
 
 
 @pytest.mark.asyncio
-async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
+async def test_journal_upsert_refusal_reports_a_refusal_not_a_rejected_credential(
     vault_clients: ClientFactory,
 ) -> None:
-    """Creek ratifies this cell as a privacy refusal; the write path reports a bad key.
+    """Creek ratifies this cell as a privacy refusal, and the write path now says so.
 
     ``examples/journal-upsert/refusal.json`` carries ``privacy_refused`` at 403.
-    The ingest path decides a credential-rejected status *before* it reads any
-    code, so the refusal is classified on status alone and surfaces as an auth
-    failure. An operator reading that would go and rotate a credential that was
-    never refused. The read path resolved this by consulting the code first; the
-    write path has not, and this cell records that it has not.
+    The ingest path used to decide a credential-rejected status *before* reading
+    any code, so the refusal was classified on status alone and surfaced as an
+    auth failure -- sending an operator to rotate a credential that was never
+    refused, while the actual remedy went unmentioned. This cell recorded that
+    misreport as known until the write path was aligned with the read paths,
+    which had consulted the code first all along.
+
+    Inverted rather than deleted so the reversal stays legible here.
     """
     recorder = _Recorder(
         journal_payload=_read_json("examples/journal-upsert/refusal.json"),
@@ -649,8 +661,10 @@ async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
     )
     client = await _handshaken(vault_clients, recorder)
 
-    with pytest.raises(CreekVaultAuthError):
+    with pytest.raises(CreekVaultContractError) as raised:
         await client.ingest(_ingest_request())
+
+    assert raised.value.code is VaultErrorCode.PRIVACY_REFUSED
 
 
 @pytest.mark.asyncio
@@ -795,9 +809,11 @@ async def test_reflections_error_states_raise_their_classified_failure(
 ) -> None:
     """Each ratified reflection error is classified from the code Creek published on it.
 
-    The refusal cell is the one that separates this path from the write path's:
-    ``privacy_refused`` arrives at 403, and reading the status first would report
-    it as a rejected credential.
+    The refusal cell is the load-bearing one: ``privacy_refused`` arrives at 403,
+    and reading the status first would report it as a rejected credential. It
+    used to be what separated this path from the write path's; the write path is
+    aligned on code-first now, so the cell no longer marks a divergence -- it
+    pins the rule both paths keep.
     """
     recorder = _Recorder(
         reflect_payload=_read_json(f"examples/reflections/{state}.json"),

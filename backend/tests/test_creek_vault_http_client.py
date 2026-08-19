@@ -1012,6 +1012,50 @@ async def test_a_redirecting_vault_degrades_instead_of_forwarding_the_bearer(
     assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
+async def test_a_refused_credential_degrades_as_auth_not_as_an_outage(
+    http_clients: ClientFactory, status: HTTPStatus
+) -> None:
+    """A revoked or missing key is a configuration fault, not a vault outage.
+
+    Both remedies are real and they are opposite: rotate a credential, or go
+    look at whether the vault is up. Collapsed into ``UNREACHABLE`` -- as every
+    non-2xx status was -- the first reads as the second, and an operator whose
+    key was rotated out from under them spends the incident checking a network
+    that is perfectly healthy.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"code": "unauthenticated", "message": "no"})
+
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    result = await client.handshake()
+
+    assert result == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.AUTH
+
+
+@pytest.mark.asyncio
+async def test_a_server_fault_still_degrades_as_unreachable(
+    http_clients: ClientFactory,
+) -> None:
+    """The counterpart: only credential statuses become AUTH.
+
+    Without this, narrowing UNREACHABLE could be done by widening AUTH, and a
+    500 -- a vault-side fault with no credential remedy at all -- would start
+    telling operators to rotate a key.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(HTTPStatus.INTERNAL_SERVER_ERROR, json={"code": "internal_error"})
+
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    await client.handshake()
+
+    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+
+
 def test_the_total_deadline_exceeds_a_single_phase_budget() -> None:
     """The whole-request deadline leaves room for a slow connect *and* a slow read."""
     assert _VAULT_TOTAL_DEADLINE_SECONDS > _VAULT_TIMEOUT_SECONDS
@@ -1144,6 +1188,9 @@ def test_degrade_reason_wire_values_are_stable() -> None:
         "incompatible_version",
         "vault_reported_unavailable",
         "timed_out",
+        # Appended, never inserted: these are the strings telemetry counts by,
+        # so reordering them would silently re-label historical series.
+        "auth",
     ]
 
 
