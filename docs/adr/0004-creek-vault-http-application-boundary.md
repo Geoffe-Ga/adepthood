@@ -4,7 +4,7 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.2.0 (tracks Creek's published
+- **Pinned contract version:** 0.8.0 (tracks Creek's published
   constant; see the 2026-07-31 note at the end of this document — the
   `/v1` bundle creek-vault#1072 tracked has since shipped and is now
   vendored, and it publishes this same 0.2.0)
@@ -983,3 +983,62 @@ that a re-vendor's conformance diff stays readable on its own.
 real local Creek `/v1` server. That rollout criterion, recorded as
 outstanding since 2026-08-07, is outstanding still, and it is the one
 condition #2043 stays open on.
+
+## Note, 2026-08-19 — the pin moves to 0.8.0; `upload` becomes a real capability
+
+The gap the note above recorded is closed. `CONTRACT_VERSION` is `0.8.0`, and
+`backend/tests/fixtures/creek_v1/` is Creek's 0.8.0 bundle vendored at upstream
+commit `518291d7`. `python -m scripts.creek_contract_drift compare` returns
+clean over 56 files, so the scheduled drift workflow goes green again.
+
+**What actually moved on the wire, and what did not.** The comparison named 18
+changed files out of 54, and the shape of that set is the reassuring part: eight
+of them are the new `upload` capability's schemas and example matrix, which did
+not exist before, and the rest are the manifest, the README, the retry policy
+and four schema docstrings. **Not one of the journal-upsert, reflections or
+wheel example payloads moved.** The one live shape that changed is
+`JournalUpsertResponse`, which gained the optional `warnings` field at contract
+0.5.0 — it dumps with `exclude_none`, so a write that produced no advisory is
+byte-identical to before. Six minors of upstream movement cost this client no
+parsing change at all, which is the copy-and-pin integration working as
+designed.
+
+**Two vocabularies grew, and adepthood narrows both deliberately.** The published
+error enum went from nine codes to ten: `unsupported_source`, for an upload whose
+extension no ingestor claims. Adepthood does not classify it, and does not need
+to — `VaultErrorCode` has always been a *subset* of Creek's vocabulary, holding
+only the codes the read path acts on, and the conformance suite asserts the
+subset direction rather than equality. The capability enum went from four names
+to five.
+
+**`upload` is now recognised but still not called, and that is not an oversight.**
+`_CAPABILITY_BY_WIRE_NAME` maps `upload` to `CreekCapability.UPLOAD`, so a vault
+advertising it is believed and `supports()` answers `True`. `HttpCreekVaultClient.upload`
+still refuses. The refusal's *reason* changed and its text was rewritten to say
+so: it used to rest on there being no upload surface anywhere, and now rests on
+this adapter having no implementation of one. Building a request shape to fill
+the gap is the exact failure this seam exists to prevent — the pre-cutover client
+invented `/v1/uploads/{id}`, a route Creek has never served. #2252 owns the
+implementation, and it is unblocked by this change rather than by upstream.
+
+**Why the pin had to move at all**, since 0.2 was still being served: from 0.8.0
+the advertised capability list is keyed on the caller's contract minor, so a
+0.2-pinned client is never *told* about `upload` and is refused
+`incompatible_version` if it calls anyway. Upstream states this as an acceptance
+criterion, not an accident. Version negotiation stopped being purely defensive at
+0.8.0 and started deciding what a client is offered; a pin left behind now costs
+capability, not just currency.
+
+**Decision 4 is unchanged and was not widened.** The comparison is still
+membership of adepthood's minor in the server's advertised set, still exact-minor
+pre-1.0, still fail-closed on an absent or wrong-typed
+`supported_contract_minors`. The test that pins the widened-window case was
+rewritten to express the property one minor ahead of whatever the pin is, rather
+than the fixed `0.3`-serves-`0.2` pair it was born with, so the next re-vendor
+does not silently invert what it asserts.
+
+**What is still not claimed.** Nobody has run this client end-to-end against a
+real local Creek `/v1` server. Every assertion above is against Creek's published
+bytes and adepthood's fakes. That rollout criterion remains the one condition
+#2043 stays open on, and moving six minors on vendored fixtures does not touch
+it.

@@ -89,16 +89,16 @@ VENDOR_NAME = "vendor.json"
 RETRY_POLICY_NAME = "retry-policy.json"
 
 PINNED_REPO = "Geoffe-Ga/creek-vault"
-PINNED_COMMIT = "879d9611cb4c3b5599578f39772b906c8c170e02"  # pragma: allowlist secret
+PINNED_COMMIT = "518291d70857e03a18aa2951e14458998ca16404"  # pragma: allowlist secret
 PINNED_PATH = "docs/contracts/adepthood-v1"
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
-CREEK_MANIFEST_ENTRIES = 45
-VENDORED_FILES = 47
-EXAMPLE_CELLS = 28
-CAPABILITY_COUNT = 4
+CREEK_MANIFEST_ENTRIES = 54
+VENDORED_FILES = 56
+EXAMPLE_CELLS = 35
+CAPABILITY_COUNT = 5
 STATE_COUNT = 7
-UNREACHABLE_CELLS = 3
+UNREACHABLE_CELLS = 4
 REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
 
 _VAULT_URL = "https://vault.example.test"
@@ -465,7 +465,7 @@ def test_contract_version_agrees_across_both_manifests_and_the_domain_pin() -> N
     """One version string in three places; any two of them disagreeing is the bug."""
     assert _read_json(VENDOR_NAME)["contract_version"] == CONTRACT_VERSION
     assert _read_json(MANIFEST_NAME)["contract_version"] == CONTRACT_VERSION
-    assert CONTRACT_VERSION == "0.2.0"
+    assert CONTRACT_VERSION == "0.8.0"
 
 
 def test_ontology_version_agrees_across_both_manifests() -> None:
@@ -479,7 +479,7 @@ def test_ontology_version_agrees_across_both_manifests() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
+def test_the_example_matrix_is_the_published_five_by_seven_grid() -> None:
     """Non-vacuity first: an emptied bundle fails here rather than passing silently."""
     assert len(_CELLS) == EXAMPLE_CELLS
     assert len(_CAPABILITIES) == CAPABILITY_COUNT
@@ -490,7 +490,7 @@ def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
 
 
 def test_the_parametrised_case_list_covers_every_capability() -> None:
-    """The cases that drive the client must span all four capabilities, not one."""
+    """The cases that drive the client must span all five capabilities, not one."""
     assert _REACHABLE != ()
     assert frozenset(cell.capability for cell in _REACHABLE) == _CAPABILITIES
     assert frozenset(cell.state for cell in _REACHABLE) == _STATES
@@ -498,11 +498,12 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 
 def test_only_reflections_publishes_a_reachable_care_escalation() -> None:
-    """The care guard runs in one capability, so the other three cells are sentinels."""
+    """The care guard runs in one capability, so the other four cells are sentinels."""
     assert {cell.capability for cell in _UNREACHABLE} == {
         "capabilities",
         "journal-upsert",
         "wheel",
+        "upload",
     }
     assert {cell.state for cell in _UNREACHABLE} == {"care-escalation"}
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
@@ -514,7 +515,7 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The client's wire-name table must name exactly Creek's four published capabilities."""
+    """The client's wire-name table must name exactly Creek's five published capabilities."""
     assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
     assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
 

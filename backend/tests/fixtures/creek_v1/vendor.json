@@ -1,10 +1,10 @@
 {
   "bundle": "adepthood-v1",
-  "contract_version": "0.2.0",
+  "contract_version": "0.8.0",
   "files": [
     {
       "path": "README.md",
-      "sha256": "52679890bcc46f87f5467becc6c33fcb62867cd50c839de75a30b2832886d66c"
+      "sha256": "c4cfc4e54c90ba411b7b84b42215963e4c06cc002c4fe2de4b55f6bd628d1445"
     },
     {
       "path": "examples/capabilities/care-escalation.json",
@@ -12,7 +12,7 @@
     },
     {
       "path": "examples/capabilities/empty.json",
-      "sha256": "abff9182a8c5fe4f4a32ad1d96118dfd14d85dbf7b1a48406ff2c34be3145426"
+      "sha256": "a06b35198c4386b9e5722959fa59370d7224ae8841fd4fd3b77fbedfc5869ea2"
     },
     {
       "path": "examples/capabilities/incompatible-version.json",
@@ -28,7 +28,7 @@
     },
     {
       "path": "examples/capabilities/success.json",
-      "sha256": "5c4618983b0196b4484b2604fedd6b9bbb02c54b6e414223b4c879fed689e7a1"
+      "sha256": "128ce2b8b0fd4c5c4f1fde36189291d405a67f4c55770f3422ebead4490727dc"
     },
     {
       "path": "examples/capabilities/unavailable-service.json",
@@ -91,6 +91,34 @@
       "sha256": "7102f95c0f3e31cae0aa55b9b73a17b4ba3c32aa3548ee7df4ba79962577c524"
     },
     {
+      "path": "examples/upload/care-escalation.json",
+      "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
+    },
+    {
+      "path": "examples/upload/empty.json",
+      "sha256": "8405a1597da91b2b1c57570110ac302d52dec3b360862eddb3d6a5b98da7b159"
+    },
+    {
+      "path": "examples/upload/incompatible-version.json",
+      "sha256": "07bf423851cdaf6cf721ab0be7a1614253ddb54d8957d2567664a8897472d833"
+    },
+    {
+      "path": "examples/upload/malformed-input.json",
+      "sha256": "e67de3e48344f9b4d5b984d2817d46ece909e0381c3f6a0cfbb8e8773db8627f"
+    },
+    {
+      "path": "examples/upload/refusal.json",
+      "sha256": "63c4668a4cb759863a2d5778c3175591385f2aeff1839b95bf4718bc4893a2b7"
+    },
+    {
+      "path": "examples/upload/success.json",
+      "sha256": "b0a907041d41ce5f2b918afbe1612903d05b3701f95052594b53194df2d76dde"
+    },
+    {
+      "path": "examples/upload/unavailable-service.json",
+      "sha256": "c557c982eca814d9bfe391009cd5803f61261cfeb163edcc0e0ac4e67bfcd28e"
+    },
+    {
       "path": "examples/wheel/care-escalation.json",
       "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
     },
@@ -120,15 +148,15 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "75517971c71557e47e68fa92780421dbc27a351897878eb4588eb2f26226295f"
+      "sha256": "2bda415591b51e682383e31123fa2e970b70ff562738daa259e7188e2d860daa"
     },
     {
       "path": "retry-policy.json",
-      "sha256": "62f9e85767f6a0a1c23577ef076b7f731b9078d6284306e7c5803118a6e72b6a"
+      "sha256": "8e6d5be69156f8934c5a7ab523e115e0053017107e53ef31a4be83147d0657fb"
     },
     {
       "path": "schemas/CapabilitiesResponse.schema.json",
-      "sha256": "6858b7e7646166bc2ae3870edc3d31516d9a5acaba28fea3d353a838773443ef"
+      "sha256": "380b2b009dc319887f6b3df650cb577b9dea62b9ba5785332839eac5fd6daa0b"
     },
     {
       "path": "schemas/CareEscalationResponse.schema.json",
@@ -144,7 +172,7 @@
     },
     {
       "path": "schemas/ErrorEnvelope.schema.json",
-      "sha256": "c1bb9eacb78da59fe790ba3df123bda365c62e3ddbcb89ca2bc0f9a7507414af"
+      "sha256": "6f9d0a3288cdf9f207cd28da3742f90ae686e12da6b21f28f82743895e0a634e"
     },
     {
       "path": "schemas/JournalUpsertRequest.schema.json",
@@ -152,11 +180,11 @@
     },
     {
       "path": "schemas/JournalUpsertResponse.schema.json",
-      "sha256": "acbcdc550fe2e7aa46ed8e2d692c06f1a153b508b953d6b98345ef1bd2477b1e"
+      "sha256": "3ee3856e89c4739327d96c5ea035150912891a4ec3e0be344aeb1eaf2bbd912c"
     },
     {
       "path": "schemas/NotApplicableExample.schema.json",
-      "sha256": "b85a807991582faa458995db5c56ff3c6810f89d2bf345aa79d180be8ab508ae"
+      "sha256": "4e69aa485c3297cd037885a6a8aeadf4d862eac27619bccef3aee4f66702f421"
     },
     {
       "path": "schemas/ReflectionNote.schema.json",
@@ -173,6 +201,14 @@
     {
       "path": "schemas/TierModel.schema.json",
       "sha256": "2936160c5beb8595c47f61c9f1b4dea94f4dbf6074cd2f7805ee496c6359ff9d"
+    },
+    {
+      "path": "schemas/UploadRequest.schema.json",
+      "sha256": "fe5b52dc44f8de0bf940dda6520494073d808630b2a2beea3a1ec3630eb233e4"
+    },
+    {
+      "path": "schemas/UploadResponse.schema.json",
+      "sha256": "2818591a664cf6bae6a6ad108bbc82c5f547d3f3417f111cb3c90dcc77c61e38"
     },
     {
       "path": "schemas/VaultState.schema.json",
@@ -193,7 +229,7 @@
   ],
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "source": {
-    "commit": "879d9611cb4c3b5599578f39772b906c8c170e02",
+    "commit": "518291d70857e03a18aa2951e14458998ca16404",
     "path": "docs/contracts/adepthood-v1",
     "repo": "Geoffe-Ga/creek-vault"
   }

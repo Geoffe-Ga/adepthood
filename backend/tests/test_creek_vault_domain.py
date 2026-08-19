@@ -28,11 +28,15 @@ from domain.creek_vault import (
 from models.journal_entry import JournalClassification
 from scripts.creek_contract_drift import BUNDLE_ROOT
 
-# Creek's error vocabulary, closed at contract 0.2 and published as an enum in
-# the vendored envelope schema. Read at runtime rather than restated, so a code
-# adepthood invents is caught against the bundle instead of against a copy.
+# Creek's error vocabulary, published as an enum in the vendored envelope
+# schema. Read at runtime rather than restated, so a code adepthood invents is
+# caught against the bundle instead of against a copy. The count moved from 9
+# to 10 at contract 0.8: ``unsupported_source`` arrived with the upload route,
+# for an extension no ingestor claims. adepthood does not classify it, and the
+# subset assertion below is what says that is allowed -- it is Creek's
+# vocabulary, not ours, and we narrow it to what our read path acts on.
 _ERROR_ENVELOPE_SCHEMA = "schemas/ErrorEnvelope.schema.json"
-_PUBLISHED_ERROR_CODE_COUNT = 9
+_PUBLISHED_ERROR_CODE_COUNT = 10
 
 # Creek's reflection response, whose ``status`` enum publishes the two outcomes a
 # 200 may carry. An escalation is a different published document at the same
@@ -363,4 +367,4 @@ def test_contract_version_constant() -> None:
 
     It tracks Creek's published contract constant, and the docs restate it.
     """
-    assert CONTRACT_VERSION == "0.2.0"
+    assert CONTRACT_VERSION == "0.8.0"

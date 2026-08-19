@@ -258,9 +258,10 @@ def _handshake_payload(
     document shape rather than one shaped to the client's former bugs.
     Availability is nested under ``vault``, where Creek puts it.
 
-    A capability with no published name (UPLOAD, SAVE, CLASSIFY) is emitted
-    unchanged so a test can still assert that an unrecognised advertisement is
-    dropped rather than coerced.
+    A capability with no published name (SAVE, CLASSIFY) is emitted unchanged so
+    a test can still assert that an unrecognised advertisement is dropped rather
+    than coerced. ``UPLOAD`` left that group at contract 0.8.0 and now
+    translates like the rest.
 
     ``supported_contract_minors`` defaults to the single minor of
     ``contract_version``, which is the narrowest thing a server advertising that
@@ -274,6 +275,7 @@ def _handshake_payload(
         CreekCapability.JOURNAL.value: "journal-upsert",
         CreekCapability.REFLECT.value: "reflections",
         CreekCapability.WHEEL.value: "wheel",
+        CreekCapability.UPLOAD.value: "upload",
     }
     minor = _minor_of(contract_version)
     return {
@@ -901,6 +903,40 @@ async def test_healthy_handshake_narrows_capabilities_and_drops_unknown_ones(
     assert client.supports(CreekCapability.REFLECT) is True
     assert client.supports(CreekCapability.CLASSIFY) is False
     assert client.last_degrade_reason is None
+
+
+@pytest.mark.asyncio
+async def test_a_vault_advertising_upload_is_believed(
+    http_clients: ClientFactory,
+) -> None:
+    """Contract 0.8.0 publishes ``upload``, so the name is recognised rather than dropped.
+
+    Until the pin moved to 0.8.0 this name had nowhere to land: the published
+    vocabulary was a closed enum of four, so an advertised ``upload`` was
+    correctly discarded as an unknown forward-compatible string. It is a real
+    published capability now, and believing the handshake is the whole contract.
+    """
+    handler = _healthy_handler([CreekCapability.JOURNAL.value, CreekCapability.UPLOAD.value])
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    result = await client.handshake()
+    assert CreekCapability.UPLOAD in result.capabilities
+    assert client.supports(CreekCapability.UPLOAD) is True
+
+
+@pytest.mark.asyncio
+async def test_a_vault_that_does_not_advertise_upload_still_degrades(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault below contract 0.8 is never told about ``upload``, and must stay unsupported.
+
+    The capability list is keyed on the caller's minor upstream, so this is not
+    a hypothetical: it is what every pre-0.8 vault answers. The gate in
+    ``services.creek_vault_upload`` reads exactly this.
+    """
+    handler = _healthy_handler([CreekCapability.JOURNAL.value])
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    await client.handshake()
+    assert client.supports(CreekCapability.UPLOAD) is False
 
 
 @pytest.mark.asyncio
@@ -3841,19 +3877,25 @@ async def test_the_capability_document_fetch_is_exempt_from_the_header(
 async def test_a_server_serving_a_widened_window_is_still_compatible(
     http_clients: ClientFactory,
 ) -> None:
-    """Upstream's 0.3.0 widening keeps serving 0.2, so adepthood must accept it.
+    """A server past our pin that still serves it must be accepted, not refused.
 
-    The exact case that made the old rule wrong: upstream moved to 0.3.0 and
-    widened ``SUPPORTED_CONTRACT_MINORS`` to ``("0.3", "0.2")`` rather than
-    shifting it, so a client still speaking 0.2 is served as before. Gating on
-    the server's own ``contract_version`` refused that vault while it was
-    advertising that it would answer.
+    The case that made the old rule wrong, and the reason the rule is stated as
+    set membership rather than equality: upstream has moved its contract six
+    times and has *widened* ``SUPPORTED_CONTRACT_MINORS`` every time rather than
+    shifting it, so a client on an older minor keeps being served exactly as
+    before. Gating on the server's own ``contract_version`` refused such a vault
+    while it was advertising that it would answer.
+
+    Written one minor ahead of adepthood's pin rather than at a fixed pair, so
+    the property survives the next re-vendor: it asserts "the server is ahead of
+    us and still lists us", which is the invariant, not "0.3 serves 0.2", which
+    was merely the day's example.
     """
     handler = _json_handler(
         _handshake_payload(
             [CreekCapability.JOURNAL.value],
-            "0.3.0",
-            supported_contract_minors=["0.3", "0.2"],
+            "0.9.0",
+            supported_contract_minors=["0.9", CONTRACT_MINOR],
         )
     )
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))

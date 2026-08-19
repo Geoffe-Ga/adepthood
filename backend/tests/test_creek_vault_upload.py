@@ -547,20 +547,25 @@ def _stored_payload(
 
 
 class TestHttpClientUploadRefuses:
-    """There is no ``/v1`` upload surface, so the adapter refuses rather than guessing.
+    """The ``/v1`` upload route exists now; this adapter has not implemented it yet.
 
-    This class used to drive a ``PUT`` against ``/v1/uploads/{external_id}`` — a
-    route Creek has never served. The ratified ``/v1`` capability vocabulary is a
-    closed enum of exactly four names (``capabilities``, ``journal-upsert``,
-    ``reflections``, ``wheel``) under ``additionalProperties: false``, identical
-    across every supported contract minor. No upload name, no upload schema, no
-    upload route.
+    Read the change carefully, because the refusal survives for a *different*
+    reason than it was written for. This class used to rest on there being no
+    upload surface at all: the ratified capability vocabulary was a closed enum
+    of exactly four names, so no conformant vault could advertise one. Contract
+    0.8.0 ended that — ``upload`` is published, served by ``POST /v1/uploads``,
+    and the handshake table now recognises the name.
 
-    ``creek.upload`` does exist, as an **MCP tool** at contract 0.3.0
-    (Geoffe-Ga/Creek-Vault#1023, closed) — on the transport ADR 0004 retired.
-    Reaching it is a transport decision, not a parsing one, so it is not marked
-    xfail here: an xfail would name a *closed* upstream issue and could never
-    flip green.
+    What has *not* happened is the client-side implementation: no request is
+    built, no URL is chosen, no response is parsed. So the adapter still refuses,
+    and refusing beats guessing a wire shape, which is this seam's whole
+    discipline — the previous implementation invented ``/v1/uploads/{external_id}``,
+    a route Creek has never served, and that is the mistake being avoided rather
+    than repeated one contract later.
+
+    The tests below therefore pin two things that must stay true until the
+    implementation lands: an advertised capability is believed, and a believed
+    capability is still not called.
     """
 
     @pytest.mark.asyncio
@@ -581,14 +586,44 @@ class TestHttpClientUploadRefuses:
         assert CreekCapability.UPLOAD.value in str(caught.value)
 
     @pytest.mark.asyncio
-    async def test_upload_is_never_advertised_by_a_conformant_vault(
+    async def test_an_advertised_upload_is_believed_and_still_not_called(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Even a vault naming it gets it dropped: it is outside the published enum."""
+        """Contract 0.8.0 publishes the capability; the adapter recognises it and still refuses.
+
+        Both halves in one test on purpose. Split apart, a future change could
+        implement ``upload`` and delete the refusal half while the other went on
+        passing, which is exactly the moment the two need to be read together.
+        """
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
             http_client=vault_http_clients(_routed_handler(_stored_payload())),
+        )
+        await client.handshake()
+
+        assert client.supports(CreekCapability.UPLOAD) is True
+
+        with pytest.raises(CreekCapabilityUnsupportedError):
+            await client.upload(_upload_request())
+
+    @pytest.mark.asyncio
+    async def test_a_vault_below_contract_08_never_advertises_upload(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The degrade path must survive the capability becoming real.
+
+        Upstream keys the advertised list on the caller's contract minor, so a
+        vault that does not name ``upload`` is the ordinary older-server case
+        rather than a malformed one, and the write service's gate reads exactly
+        this.
+        """
+        client = HttpCreekVaultClient(
+            _VAULT_URL,
+            _VAULT_API_KEY,
+            http_client=vault_http_clients(
+                _routed_handler(_stored_payload(), capabilities=[CreekCapability.JOURNAL.value])
+            ),
         )
         await client.handshake()
 

@@ -540,18 +540,28 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
 # about the wire (see that enum's docstring). The translation therefore lives
 # here, at the parse boundary, and nowhere else.
 #
-# Only four of the seven members have a published name. UPLOAD, SAVE and
-# CLASSIFY are adepthood-side concepts Creek does not advertise at contract
-# 0.2.0, so :meth:`supports` is permanently ``False`` for them and every
-# capability-gated path degrades. That is the contract reporting a capability
-# that does not exist yet, not a hole in this table -- do not invent wire names
-# for them.
+# Five of the seven members have a published name. SAVE and CLASSIFY are
+# adepthood-side concepts Creek does not advertise at all, so :meth:`supports`
+# is permanently ``False`` for them and every capability-gated path degrades.
+# That is the contract reporting a capability that does not exist, not a hole in
+# this table -- do not invent wire names for them.
+#
+# ``upload`` is the one that moved. It was in that same list until contract
+# 0.8.0 published it as a real ``/v1`` capability served by ``POST /v1/uploads``.
+# Two things follow, and only the first is done here: the name is now
+# recognised, so a vault advertising it is believed; and what a vault advertises
+# is keyed upstream on the *caller's* contract minor, so a deployment pinned
+# below 0.8 is never told about it and degrades exactly as before. Recognising
+# the name is not the same as being able to call the route -- the adapter still
+# refuses the call itself, because inventing a request shape is what this seam
+# exists to prevent.
 _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
         "journal-upsert": CreekCapability.JOURNAL,
         "reflections": CreekCapability.REFLECT,
         "wheel": CreekCapability.WHEEL,
+        "upload": CreekCapability.UPLOAD,
     }
 )
 
@@ -1797,23 +1807,27 @@ class HttpCreekVaultClient:
         return result
 
     async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
-        """Refuse a document upload: Creek publishes no ``/v1`` surface for one.
+        """Refuse a document upload: the route exists, this adapter does not call it.
 
-        This looks like ``classify``'s refusal because it is the same situation.
-        The ratified ``/v1`` capability vocabulary is a closed enum of exactly
-        four names -- ``capabilities``, ``journal-upsert``, ``reflections``,
-        ``wheel`` -- under ``additionalProperties: false``, identical across every
-        supported contract minor. There is no upload name, no upload schema, and
-        no upload route, so no conformant vault can ever advertise or serve one.
+        The reason for this refusal changed with the contract pin, and the
+        distinction is the whole point of keeping it. It used to rest on there
+        being no upload surface at all -- the ratified ``/v1`` vocabulary was a
+        closed enum of four names under ``additionalProperties: false``, so no
+        conformant vault could advertise one, and the earlier implementation had
+        ``PUT`` a body at an invented ``/v1/uploads/{id}`` URL Creek never served.
 
-        ``creek.upload`` is real, but it is an **MCP tool** at contract 0.3.0
-        (Geoffe-Ga/Creek-Vault#1023), and adepthood's MCP client was retired by
-        ADR 0004. Reaching it would be a transport decision, not a parsing one.
+        Contract 0.8.0 published a real one: ``POST /v1/uploads``, taking
+        ``filename``, ``content_base64``, ``external_id`` and a required ``tier``.
+        :data:`_CAPABILITY_BY_WIRE_NAME` recognises the name, so a vault that
+        advertises it is believed and :meth:`supports` answers ``True``.
 
-        This previously ``PUT`` a body to an invented ``/v1/uploads/{id}`` URL.
-        Creek has never served that route. Guessing a wire shape is exactly what
-        this seam exists to refuse, so the guess is gone and the refusal is
-        counted under its own capability like every other.
+        What is still missing is this method: no request is built, no response is
+        parsed, and no idempotency behaviour is exercised. Answering a call by
+        guessing at those is the failure this seam exists to prevent, so it
+        refuses instead -- counted under its own capability like every other
+        refusal, so the gap is visible in telemetry rather than silent. A vault
+        below contract 0.8 is never advertised the capability at all and degrades
+        one step earlier, at the caller's gate.
         """
         with _CountingOutcome(CreekCapability.UPLOAD):
             return await self._upload()

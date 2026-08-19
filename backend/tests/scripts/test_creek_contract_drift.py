@@ -75,17 +75,17 @@ README_NAME = "README.md"
 VENDOR_NAME = "vendor.json"
 
 BUNDLE_NAME = "adepthood-v1"
-CONTRACT_VERSION = "0.2.0"
+CONTRACT_VERSION = "0.8.0"
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
 # The upstream commit the vendored bundle was fetched at. It is the whole point
 # of the sidecar: a branch name would let the "pinned" copy move underneath us.
-PINNED_COMMIT = "879d9611cb4c3b5599578f39772b906c8c170e02"  # pragma: allowlist secret
+PINNED_COMMIT = "518291d70857e03a18aa2951e14458998ca16404"  # pragma: allowlist secret
 
-# 45 generated files are listed inside Creek's manifest; the manifest and the
-# hand-written README are the two it cannot cover, and our sidecar covers all 47.
-CREEK_MANIFEST_ENTRIES = 45
-VENDORED_FILES = 47
+# 54 generated files are listed inside Creek's manifest; the manifest and the
+# hand-written README are the two it cannot cover, and our sidecar covers all 56.
+CREEK_MANIFEST_ENTRIES = 54
+VENDORED_FILES = 56
 
 # Two example paths whose drift must name two different capabilities in the
 # rendered report, so "a capability is named" cannot pass by naming a constant.
@@ -132,7 +132,7 @@ def _fetcher(manifest: bytes, readme: bytes) -> Fetcher:
     """Build an offline fetcher answering only the two URLs a comparison needs.
 
     ``compare_upstream`` needs the upstream manifest and the upstream README;
-    the 45 digests inside the fetched manifest cover everything else. Matching on
+    the digests inside the fetched manifest cover everything else. Matching on
     the trailing filename keeps this independent of however the module spells the
     raw-content URL, and an unscripted URL raises rather than answering, so a
     comparison that fetched something unexpected cannot look clean.
