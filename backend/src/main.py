@@ -68,6 +68,7 @@ from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
+from sentry import init_error_monitoring, shutdown_error_monitoring
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -523,6 +524,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # dropped, and a production seeding failure looks identical to a
     # successful boot.
     configure_logging()
+    # Immediately after the logger, and before anything that can fail: an
+    # exception thrown by the rest of boot belongs in the operator inbox too.
+    # Returns False (having said so once) when no DSN is configured, which is a
+    # fully supported way to run -- the local logs below are unaffected either
+    # way, so degrading here loses the inbox, never the diagnosis.
+    init_error_monitoring()
     # Deliberate lazy imports: ``models`` registers every SQLModel table
     # with the metadata exactly once at startup (the unused name is the
     # point), and ``_get_secret_key`` would import-cycle at module load.
@@ -590,6 +597,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # httpx client to be reclaimed during interpreter teardown. A no-op when no
     # vault was ever contacted, since the pool builds lazily.
     await close_creek_vault_http_pool()
+
+    # Switching off the SDK's default integrations also switched off its atexit
+    # flush, so the queue has to be drained here -- otherwise the report for the
+    # exception that prompted the restart is the one most likely to be dropped.
+    # Bounded wait: a slow vendor must not hold a rollover open.
+    shutdown_error_monitoring()
 
 
 app = FastAPI(lifespan=lifespan)

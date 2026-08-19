@@ -75,7 +75,7 @@ repos:
         files: ^backend/
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: ["types-jsonschema==4.26.0.20260518", "types-cachetools==7.0.0.20260713", "types-requests==2.33.0.20260712", "openai==2.53.0", "anthropic==0.120.2", "pydantic==2.13.4", "sqlmodel==0.0.39", "fastapi==0.141.1", "starlette==1.4.1", "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1", "aiosqlite==0.22.1", "PyJWT==2.13.0", "bcrypt==5.0.0", "cryptography==50.0.0", "slowapi==0.1.10", "limits==5.8.0", "alembic==1.19.0", "uvicorn==0.52.1"]
+        additional_dependencies: ["types-jsonschema==4.26.0.20260518", "types-cachetools==7.0.0.20260713", "types-requests==2.33.0.20260712", "openai==2.53.0", "anthropic==0.120.2", "pydantic==2.13.4", "sqlmodel==0.0.39", "fastapi==0.141.1", "starlette==1.4.1", "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1", "aiosqlite==0.22.1", "PyJWT==2.13.0", "bcrypt==5.0.0", "cryptography==50.0.0", "slowapi==0.1.10", "limits==5.8.0", "alembic==1.19.0", "uvicorn==0.52.1", "sentry-sdk==2.68.0"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
