@@ -87,8 +87,8 @@
       ],
       "tables": ["stagecontent", "contentcompletion"]
     },
-    "status": "uncovered",
-    "issue": 2298
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",
