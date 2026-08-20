@@ -118,5 +118,17 @@
     },
     "status": "uncovered",
     "issue": 2300
+  },
+  {
+    "id": "seed.upload-document",
+    "description": "A person chooses a document from their device and seeds it into the Higher Self corpus; the upload forwards to the vault rather than persisting locally, so authentication is the only table it crosses.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/upload"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 2252
   }
 ]
