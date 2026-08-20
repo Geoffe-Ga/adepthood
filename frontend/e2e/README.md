@@ -9,8 +9,8 @@ shipped features turned out to be wired to nothing.
 This lane is the one place they meet. It imports the production API client from
 `src/api/index.ts` — unmocked, with its real Zod response validation, its real
 retry and refresh loop, and a real `fetch` over a real socket — and drives it
-through three journeys against a live FastAPI app on a real Postgres whose
-schema was built by `alembic upgrade head`.
+through the journeys registered in `journeys.json` against a live FastAPI app on
+a real Postgres whose schema was built by `alembic upgrade head`.
 
 ## Running it locally
 
@@ -52,7 +52,7 @@ grant — still runs for real.
 
 The launcher also disarms the rate limiter. Signup is capped at three per minute
 per client address and every journey here shares `127.0.0.1`, so leaving it
-armed would make "how many journeys exist" a hidden global constraint: a fourth
+armed would make "how many journeys exist" a hidden global constraint: one more
 journey, or one retry, would start failing on a cap rather than on a defect.
 Rate limiting keeps its own tests in the backend suite.
 

@@ -48,13 +48,13 @@
       "client": ["practiceSessions"],
       "routes": [
         "POST /practice-sessions/",
-        "GET /practice-sessions/",
-        "GET /practice-sessions/week-count"
+        "GET /practice-sessions/week-count",
+        "GET /practice-sessions/insights"
       ],
       "tables": ["practicesession"]
     },
-    "status": "uncovered",
-    "issue": 2296
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice.e2e.test.ts"
   },
   {
     "id": "practice.adopt-custom-practice",

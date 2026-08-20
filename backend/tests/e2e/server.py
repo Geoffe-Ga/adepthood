@@ -234,7 +234,7 @@ def _prepare_app() -> None:
     path. The limiter is disarmed because this lane exercises wiring, not abuse
     controls: every journey shares one loopback address, so the 3/minute signup
     cap would make "how many journeys exist" a hidden global constraint and turn
-    a fourth journey into a flake. Rate limiting keeps its own tests.
+    the next journey added into a flake. Rate limiting keeps its own tests.
     """
     auth_router.verify_aptitude_license = _stub_license_check
     limiter.enabled = False
