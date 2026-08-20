@@ -27,6 +27,7 @@ const E2E_SCRIPT = 'test:e2e';
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'auth.e2e.test.ts',
+  'course.e2e.test.ts',
   'habits.e2e.test.ts',
   'journal.e2e.test.ts',
   'practice-catalog.e2e.test.ts',
@@ -236,7 +237,7 @@ describe('jest.e2e.config.js isolates the lane without weakening anything', () =
 });
 
 describe('e2e specs drive the unmocked production client', () => {
-  it('ships the three journeys the lane is built around', () => {
+  it('ships exactly the journeys the lane is built around', () => {
     expect(e2eFiles('.e2e.test.ts').sort()).toEqual(EXPECTED_JOURNEYS);
   });
 
