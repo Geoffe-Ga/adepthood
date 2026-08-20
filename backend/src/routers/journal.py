@@ -427,9 +427,17 @@ _UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "Your vault didn't answer, so the document wasn't sent. Check that your vault "
             "is running and reachable, then upload it again."
         ),
+        # Reached both when the vault never offered uploads and when it offers a
+        # route Adepthood cannot speak yet, so it must not pin the gap on the
+        # vault: telling someone to update software that is already current is
+        # an instruction that cannot work, which is the dead end this mapping
+        # exists to avoid. It names the one check they can make, then the real
+        # alternative, and promises no retry either way.
         VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
-            "Your vault accepts journal entries but not file uploads yet. Update your "
-            "vault to a version that supports uploads, then try again."
+            "File uploads aren't working between Adepthood and your vault yet, so nothing "
+            "was sent and nothing changed — journal entries still save as usual. Update "
+            "your vault if a newer version is out; if it's already current, keep the file "
+            "and add it after Adepthood's next update."
         ),
         VaultUploadStatus.DEGRADED: (
             "The upload didn't complete and the document wasn't stored. Nothing was "

@@ -241,6 +241,19 @@ def _minor_of(contract_version: str) -> str:
 # ``supported_contract_minors`` became a required field to vary.
 _ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
+# One minor past whatever adepthood pins, derived rather than written out. The
+# skew cases care about a server's position *relative to* the pin, and the pin
+# has already moved six minors; a literal pair would have to be rewritten on
+# every move and would silently stop testing the rule if it were not.
+_NEXT_MINOR_OFFSET = 1
+_MAJOR_INDEX = 0
+_MINOR_INDEX = 1
+_AHEAD_MINOR = (
+    f"{CONTRACT_VERSION.split('.')[_MAJOR_INDEX]}."
+    f"{int(CONTRACT_VERSION.split('.')[_MINOR_INDEX]) + _NEXT_MINOR_OFFSET}"
+)
+_AHEAD_CONTRACT_VERSION = f"{_AHEAD_MINOR}.0"
+
 
 def _handshake_payload(
     capabilities: Sequence[str],
@@ -258,9 +271,11 @@ def _handshake_payload(
     document shape rather than one shaped to the client's former bugs.
     Availability is nested under ``vault``, where Creek puts it.
 
-    A capability with no published name (UPLOAD, SAVE, CLASSIFY) is emitted
-    unchanged so a test can still assert that an unrecognised advertisement is
-    dropped rather than coerced.
+    A capability with no published name (SAVE, CLASSIFY) is emitted unchanged so
+    a test can still assert that an unrecognised advertisement is dropped rather
+    than coerced. UPLOAD used to be in that group and no longer is: contract
+    0.8.0 published ``upload``, so translating it is what keeps this helper's
+    documents real.
 
     ``supported_contract_minors`` defaults to the single minor of
     ``contract_version``, which is the narrowest thing a server advertising that
@@ -274,6 +289,7 @@ def _handshake_payload(
         CreekCapability.JOURNAL.value: "journal-upsert",
         CreekCapability.REFLECT.value: "reflections",
         CreekCapability.WHEEL.value: "wheel",
+        CreekCapability.UPLOAD.value: "upload",
     }
     minor = _minor_of(contract_version)
     return {
@@ -1012,6 +1028,50 @@ async def test_a_redirecting_vault_degrades_instead_of_forwarding_the_bearer(
     assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
+async def test_a_refused_credential_degrades_as_auth_not_as_an_outage(
+    http_clients: ClientFactory, status: HTTPStatus
+) -> None:
+    """A revoked or missing key is a configuration fault, not a vault outage.
+
+    Both remedies are real and they are opposite: rotate a credential, or go
+    look at whether the vault is up. Collapsed into ``UNREACHABLE`` -- as every
+    non-2xx status was -- the first reads as the second, and an operator whose
+    key was rotated out from under them spends the incident checking a network
+    that is perfectly healthy.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"code": "unauthenticated", "message": "no"})
+
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    result = await client.handshake()
+
+    assert result == HandshakeResult.unavailable()
+    assert client.last_degrade_reason is HandshakeDegradeReason.AUTH
+
+
+@pytest.mark.asyncio
+async def test_a_server_fault_still_degrades_as_unreachable(
+    http_clients: ClientFactory,
+) -> None:
+    """The counterpart: only credential statuses become AUTH.
+
+    Without this, narrowing UNREACHABLE could be done by widening AUTH, and a
+    500 -- a vault-side fault with no credential remedy at all -- would start
+    telling operators to rotate a key.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(HTTPStatus.INTERNAL_SERVER_ERROR, json={"code": "internal_error"})
+
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
+    await client.handshake()
+
+    assert client.last_degrade_reason is HandshakeDegradeReason.UNREACHABLE
+
+
 def test_the_total_deadline_exceeds_a_single_phase_budget() -> None:
     """The whole-request deadline leaves room for a slow connect *and* a slow read."""
     assert _VAULT_TOTAL_DEADLINE_SECONDS > _VAULT_TIMEOUT_SECONDS
@@ -1144,6 +1204,9 @@ def test_degrade_reason_wire_values_are_stable() -> None:
         "incompatible_version",
         "vault_reported_unavailable",
         "timed_out",
+        # Appended, never inserted: these are the strings telemetry counts by,
+        # so reordering them would silently re-label historical series.
+        "auth",
     ]
 
 
@@ -1445,7 +1508,7 @@ async def test_a_url_with_a_path_prefix_keeps_it_in_the_capability_url(
 async def test_classify_is_still_refused_when_advertised(
     http_clients: ClientFactory,
 ) -> None:
-    """Classify refuses, and at contract 0.2.0 it cannot even be advertised.
+    """Classify refuses, and it cannot even be advertised.
 
     Two guarantees, and the second is stronger than it used to be. Creek
     publishes no wire name for classify, so an advertisement of it is dropped at
@@ -3794,19 +3857,21 @@ async def test_the_capability_document_fetch_is_exempt_from_the_header(
 async def test_a_server_serving_a_widened_window_is_still_compatible(
     http_clients: ClientFactory,
 ) -> None:
-    """Upstream's 0.3.0 widening keeps serving 0.2, so adepthood must accept it.
+    """A server ahead of adepthood's pin that still serves it must be accepted.
 
-    The exact case that made the old rule wrong: upstream moved to 0.3.0 and
-    widened ``SUPPORTED_CONTRACT_MINORS`` to ``("0.3", "0.2")`` rather than
-    shifting it, so a client still speaking 0.2 is served as before. Gating on
-    the server's own ``contract_version`` refused that vault while it was
-    advertising that it would answer.
+    The shape that made the old rule wrong, and the one upstream keeps
+    reproducing: it moved to 0.3.0 and *widened* ``SUPPORTED_CONTRACT_MINORS``
+    to ``("0.3", "0.2")`` rather than shifting it, then widened it five more
+    times without ever dropping an entry. Gating on the server's own
+    ``contract_version`` refused such a vault while it was advertising that it
+    would answer. Driven one minor ahead of whatever adepthood pins, so the case
+    keeps testing the rule rather than a pair of numbers that were once current.
     """
     handler = _json_handler(
         _handshake_payload(
             [CreekCapability.JOURNAL.value],
-            "0.3.0",
-            supported_contract_minors=["0.3", "0.2"],
+            _AHEAD_CONTRACT_VERSION,
+            supported_contract_minors=[_AHEAD_MINOR, _minor_of(CONTRACT_VERSION)],
         )
     )
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))

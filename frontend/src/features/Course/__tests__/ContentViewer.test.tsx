@@ -2,17 +2,31 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type * as Api from '../../../api';
 import type { ContentItem } from '../../../api';
 import type { ChapterNav } from '../chapterNav';
 import ContentViewer from '../ContentViewer';
 
+import {
+  LONG_ESSAY_HEIGHT,
+  SHORT_ESSAY_HEIGHT,
+  measureReader,
+  readToTheEnd,
+  revealControls,
+} from './readerGeometry';
+
 jest.mock('../../../api', () => ({
   course: {
     markRead: jest.fn(),
     contentBody: jest.fn(),
   },
+}));
+
+let mockReduced = false;
+jest.mock('@/hooks/useReducedMotion', () => ({
+  useReducedMotion: () => mockReduced,
 }));
 
 const { course: courseApi } = jest.requireMock('../../../api') as {
@@ -61,12 +75,15 @@ function makeNav(overrides: Partial<ChapterNav> = {}): ChapterNav {
   };
 }
 
+type Rendered = ReturnType<typeof render>;
+
 describe('ContentViewer', () => {
   let onBack: jest.Mock;
   let onMarkRead: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockReduced = false;
     onBack = jest.fn();
     onMarkRead = jest.fn();
     courseApi.markRead.mockResolvedValue(HAPPY_COMPLETION);
@@ -95,7 +112,7 @@ describe('ContentViewer', () => {
     const { findByTestId, findByText } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     await findByText('Hi.');
   });
 
@@ -105,17 +122,18 @@ describe('ContentViewer', () => {
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     // Wait until the load settles so we don't hit "state update on unmounted".
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     fireEvent.press(getByTestId('reader-back-button'));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('marks content as read when the button is pressed', async () => {
     const item = makeItem();
-    const { getByTestId, getByText, findAllByText } = render(
+    const { getByTestId, getByText, findAllByText, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
     await findAllByText('Chapter One');
+    await readToTheEnd(findByTestId);
     expect(getByText('Mark as Read')).toBeTruthy();
 
     await act(async () => {
@@ -136,7 +154,7 @@ describe('ContentViewer', () => {
     const { getByTestId, queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
     // The toast celebrates the mark-read moment; a pre-read chapter shows none.
     expect(queryByTestId('read-toast')).toBeNull();
@@ -147,7 +165,7 @@ describe('ContentViewer', () => {
     const { getByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     fireEvent.press(getByTestId('mark-read-button'));
     expect(courseApi.markRead).not.toHaveBeenCalled();
   });
@@ -164,7 +182,7 @@ describe('ContentViewer', () => {
         nav={makeNav()}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(getByTestId('reflect-button')).toBeTruthy();
     expect(getByText('Reflect in Journal')).toBeTruthy();
     // Reflect occupies the center slot; the quiet done label yields to it.
@@ -183,7 +201,7 @@ describe('ContentViewer', () => {
         nav={makeNav()}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(queryByTestId('reflect-button')).toBeNull();
 
     await act(async () => {
@@ -207,7 +225,7 @@ describe('ContentViewer', () => {
         nav={makeNav()}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     fireEvent.press(getByTestId('reflect-button'));
     expect(onReflect).toHaveBeenCalledTimes(1);
   });
@@ -217,7 +235,7 @@ describe('ContentViewer', () => {
     const { queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(queryByTestId('reflect-button')).toBeNull();
   });
 
@@ -226,7 +244,7 @@ describe('ContentViewer', () => {
     const { getByTestId, queryByTestId, findByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(courseApi.contentBody).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -264,7 +282,7 @@ describe('ContentViewer', () => {
     const { findByTestId, queryByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(queryByTestId('reader-write-note-affordance')).toBeNull();
   });
 
@@ -306,7 +324,7 @@ describe('ContentViewer', () => {
     const { findByTestId, getByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(getByTestId('chapter-nav-back')).toBeTruthy();
     expect(getByTestId('mark-read-button')).toBeTruthy();
     expect(getByTestId('chapter-nav-next')).toBeTruthy();
@@ -323,7 +341,7 @@ describe('ContentViewer', () => {
         nav={makeNav({ onNext })}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     fireEvent.press(getByTestId('chapter-nav-next'));
     expect(onNext).toHaveBeenCalledTimes(1);
   });
@@ -339,7 +357,7 @@ describe('ContentViewer', () => {
         nav={makeNav({ onPrev })}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     fireEvent.press(getByTestId('chapter-nav-back'));
     expect(onPrev).toHaveBeenCalledTimes(1);
   });
@@ -349,7 +367,7 @@ describe('ContentViewer', () => {
     const { findByTestId, getByTestId } = render(
       <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     const backButton = getByTestId('chapter-nav-back');
     expect(backButton.props.accessibilityLabel).toBe('Previous chapter');
     // The footer control now shows a glyph, so its old text label is gone.
@@ -368,7 +386,7 @@ describe('ContentViewer', () => {
         nav={makeNav({ canPrev: false, onPrev })}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     const backButton = getByTestId('chapter-nav-back');
     expect(backButton.props.accessibilityLabel).toBe('Previous chapter');
     expect(backButton.props.accessibilityState.disabled).toBe(true);
@@ -387,7 +405,7 @@ describe('ContentViewer', () => {
         nav={makeNav({ nextIsDone: true, onNext })}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     const nextButton = getByTestId('chapter-nav-next');
     expect(nextButton.props.accessibilityLabel).toBe('Done');
     // Exit is a glyph, not a caption.
@@ -402,7 +420,7 @@ describe('ContentViewer', () => {
     const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
       <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
 
     await act(async () => {
       fireEvent.press(getByTestId('mark-read-button'));
@@ -416,6 +434,9 @@ describe('ContentViewer', () => {
     rerender(
       <ContentViewer item={chapterTwo} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
+
+    // The incoming chapter re-arms the reveal, so read it to its end too.
+    await readToTheEnd(findByTestId);
 
     // The mark-read UI must reflect chapter two's unread state, not chapter one's.
     await waitFor(() => {
@@ -433,13 +454,14 @@ describe('ContentViewer', () => {
     const { getByTestId, getByText, findByTestId, rerender, queryByText } = render(
       <ContentViewer item={unread} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(getByText('Mark as Read')).toBeTruthy();
 
     const alreadyRead = makeItem({ id: 4, is_read: true });
     rerender(
       <ContentViewer item={alreadyRead} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
+    await readToTheEnd(findByTestId);
 
     await waitFor(() => {
       expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
@@ -463,7 +485,7 @@ describe('ContentViewer', () => {
     const { getByTestId, getByText, findByTestId, rerender, queryByText, queryByTestId } = render(
       <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
 
     // Tap Mark as Read — the request is in flight (promise still unresolved).
     await act(async () => {
@@ -480,6 +502,7 @@ describe('ContentViewer', () => {
     await act(async () => {
       resolveMarkRead(HAPPY_COMPLETION);
     });
+    await readToTheEnd(findByTestId);
 
     await waitFor(() => {
       expect(getByText('Mark as Read')).toBeTruthy();
@@ -501,10 +524,108 @@ describe('ContentViewer', () => {
         nav={makeNav({ nextIsDone: false })}
       />,
     );
-    await findByTestId('reader-markdown');
+    await readToTheEnd(findByTestId);
     expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Next chapter');
     // The chevron replaces the old text label entirely.
     expect(queryByText('Next →')).toBeNull();
+  });
+
+  describe('chapter controls as reveal-on-end glass pills', () => {
+    const renderViewer = (): Rendered =>
+      render(
+        <ContentViewer item={makeItem()} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+      );
+
+    it('keeps the controls out of the tree while there is still essay to read', async () => {
+      const { findByTestId, queryByTestId } = renderViewer();
+      measureReader(await findByTestId('reader-markdown'), LONG_ESSAY_HEIGHT);
+      expect(queryByTestId('viewer-footer')).toBeNull();
+      expect(queryByTestId('mark-read-button')).toBeNull();
+      expect(queryByTestId('chapter-nav-back')).toBeNull();
+      expect(queryByTestId('chapter-nav-next')).toBeNull();
+    });
+
+    it('brings them in, labelled and pressable, once the essay ends', async () => {
+      const onNext = jest.fn();
+      const { findByTestId, getByTestId } = render(
+        <ContentViewer
+          item={makeItem()}
+          onBack={onBack}
+          onMarkRead={onMarkRead}
+          nav={makeNav({ onNext })}
+        />,
+      );
+      await readToTheEnd(findByTestId);
+
+      expect(getByTestId('mark-read-button').props.accessibilityLabel).toBe('Mark as Read');
+      expect(getByTestId('chapter-nav-back').props.accessibilityLabel).toBe('Previous chapter');
+      expect(getByTestId('chapter-nav-next').props.accessibilityLabel).toBe('Next chapter');
+      fireEvent.press(getByTestId('chapter-nav-next'));
+      expect(onNext).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes them to assistive tech the moment they are due, not when the motion ends', async () => {
+      const { findByTestId, getByTestId } = renderViewer();
+      await readToTheEnd(findByTestId);
+      const footer = getByTestId('viewer-footer');
+      // The reveal animation is still running here; a screen reader must not
+      // have to wait it out.
+      expect(footer.props.accessibilityElementsHidden).toBe(false);
+      expect(footer.props.importantForAccessibility).toBe('auto');
+      expect(footer.props.pointerEvents).not.toBe('none');
+    });
+
+    it('gives a chapter too short to scroll its controls straight away', async () => {
+      // Nothing to scroll means the reader is already at the end; hiding the
+      // controls behind a scroll that can never happen would strand them.
+      const { findByTestId, getByTestId } = renderViewer();
+      measureReader(await findByTestId('reader-markdown'), SHORT_ESSAY_HEIGHT);
+      expect(getByTestId('mark-read-button')).toBeTruthy();
+      expect(getByTestId('chapter-nav-next')).toBeTruthy();
+    });
+
+    it('takes them away again when the reader scrolls back up into the essay', async () => {
+      const { findByTestId, getByTestId, queryByTestId } = renderViewer();
+      const scrollView = await readToTheEnd(findByTestId);
+      expect(getByTestId('mark-read-button')).toBeTruthy();
+
+      fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 0 } } });
+      await waitFor(() => {
+        expect(queryByTestId('viewer-footer')).toBeNull();
+      });
+      expect(queryByTestId('mark-read-button')).toBeNull();
+    });
+
+    it('appears and disappears without motion when the OS asks for reduced motion', async () => {
+      mockReduced = true;
+      const { findByTestId, getByTestId, queryByTestId } = renderViewer();
+      const scrollView = await readToTheEnd(findByTestId);
+      expect(getByTestId('mark-read-button')).toBeTruthy();
+
+      // Nothing eased into place: the row sits at its resting opacity and
+      // offset from the first frame it exists.
+      const resting = StyleSheet.flatten(getByTestId('viewer-footer').props.style);
+      expect(resting.opacity).toBe(1);
+      expect(resting.transform).toEqual([{ translateY: 0 }]);
+
+      // And it leaves on the same tick, with no exit motion to wait out.
+      fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 0 } } });
+      expect(queryByTestId('viewer-footer')).toBeNull();
+    });
+
+    it('floats over the prose instead of sitting on a slab', async () => {
+      const { findByTestId, getByTestId } = renderViewer();
+      await readToTheEnd(findByTestId);
+
+      const row = StyleSheet.flatten(getByTestId('viewer-footer').props.style);
+      // An opaque ground behind the row is exactly the slab this replaces.
+      expect(row.backgroundColor).toBeUndefined();
+
+      const pill = StyleSheet.flatten(getByTestId('chapter-nav-back').props.style);
+      expect(String(pill.backgroundColor)).toMatch(/rgba\(.*0\.\d+\)$/);
+      expect(pill.borderWidth).toBeGreaterThan(0);
+      expect(pill.shadowRadius).toBeGreaterThan(0);
+    });
   });
 
   describe('read toast', () => {
@@ -523,7 +644,7 @@ describe('ContentViewer', () => {
       );
       // Flush the body fetch (a microtask; fake timers do not block it).
       await act(async () => {});
-      getByTestId('reader-markdown');
+      revealControls(getByTestId('reader-markdown'));
 
       await act(async () => {
         fireEvent.press(getByTestId('mark-read-button'));
@@ -544,7 +665,7 @@ describe('ContentViewer', () => {
         <ContentViewer item={chapterOne} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
       );
       await act(async () => {});
-      getByTestId('reader-markdown');
+      revealControls(getByTestId('reader-markdown'));
 
       await act(async () => {
         fireEvent.press(getByTestId('mark-read-button'));
@@ -564,6 +685,8 @@ describe('ContentViewer', () => {
         );
       });
       expect(queryByTestId('read-toast')).toBeNull();
+      // The incoming chapter re-arms the reveal, so read it to its end too.
+      revealControls(getByTestId('reader-markdown'));
       expect(getByText('Mark as Read')).toBeTruthy();
 
       // The orphaned dismiss timer was cleaned up: advancing time neither
@@ -581,7 +704,7 @@ describe('ContentViewer', () => {
         <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
       );
       await act(async () => {});
-      getByTestId('reader-markdown');
+      revealControls(getByTestId('reader-markdown'));
 
       await act(async () => {
         fireEvent.press(getByTestId('mark-read-button'));

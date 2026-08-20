@@ -129,6 +129,8 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
+const { revealControls } = require('./readerGeometry');
+
 function selectRiff(getByTestId: any): void {
   const input = getByTestId('passage-select-input');
   fireEvent(input, 'selectionChange', { nativeEvent: { selection: RIFF_SELECTION } });
@@ -243,6 +245,8 @@ describe('CourseScreen -- write a note on a passage', () => {
     const restored = await findByTestId('reader-markdown');
     expect(restored.props.contentOffset).toEqual({ x: 0, y: 300 });
     expect(mockContentBody).toHaveBeenCalledTimes(1);
+    // The chapter controls are due only at the essay's end.
+    revealControls(restored);
 
     // Next swaps in chapter 7 via handleContentPress, which clears the restore
     // offset so the incoming chapter opens at the top instead of inheriting the

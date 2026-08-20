@@ -2053,9 +2053,15 @@ export interface CourseProgress {
   next_unlock_day: number | null;
 }
 
+/**
+ * A read receipt for one chapter.
+ *
+ * No `user_id`: the server deliberately withholds it (the completion always
+ * belongs to the caller, and echoing the id aids enumeration), so declaring
+ * one here would type a field that never arrives.
+ */
 export interface ContentCompletion {
   id: number;
-  user_id: number;
   content_id: number;
   completed_at: string;
 }

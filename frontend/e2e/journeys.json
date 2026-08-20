@@ -1,0 +1,134 @@
+[
+  {
+    "id": "auth.signup-login-authenticated-read",
+    "description": "A user signs up, logs back in, and reads their own data with the session they were handed.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SignupScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "GET /journal/"],
+      "tables": ["user", "entitlement"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/auth.e2e.test.ts"
+  },
+  {
+    "id": "habits.create-check-in-streak",
+    "description": "A user creates a habit, checks in against one of its goals, and sees the streak move.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": [
+        "POST /habits/",
+        "GET /habits/",
+        "POST /goal_completions/",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits.e2e.test.ts"
+  },
+  {
+    "id": "journal.write-list-read-back",
+    "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "GET /journal/", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal.e2e.test.ts"
+  },
+  {
+    "id": "practice.log-session",
+    "description": "A practitioner logs a practice session and finds it in the week's record.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": [
+        "POST /practice-sessions/",
+        "GET /practice-sessions/week-count",
+        "GET /practice-sessions/insights"
+      ],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice.e2e.test.ts"
+  },
+  {
+    "id": "practice.adopt-custom-practice",
+    "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
+      "client": ["practices", "userPractices"],
+      "routes": [
+        "POST /practices/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/"
+      ],
+      "tables": ["practice", "userpractice"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-catalog.e2e.test.ts"
+  },
+  {
+    "id": "course.read-and-mark-progress",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course"],
+      "routes": [
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "GET /course/stages/{stage_number}/progress"
+      ],
+      "tables": ["stagecontent", "contentcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course.e2e.test.ts"
+  },
+  {
+    "id": "map.advance-stage",
+    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages", "wheel"],
+      "routes": [
+        "GET /stages",
+        "GET /stages/wheel",
+        "PUT /stages/progress",
+        "GET /stages/{stage_number}/progress"
+      ],
+      "tables": ["stageprogress", "coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 2299
+  },
+  {
+    "id": "depth.choose-rings",
+    "description": "Someone turns a depth ring on and the app they come back to is the one they chose.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ChooseDepthsSection.tsx",
+      "client": ["depthPreferences"],
+      "routes": ["GET /depth-preferences", "PATCH /depth-preferences"],
+      "tables": ["userdepthpreferences"]
+    },
+    "status": "uncovered",
+    "issue": 2300
+  },
+  {
+    "id": "seed.upload-document",
+    "description": "A person chooses a document from their device and seeds it into the Higher Self corpus; the upload forwards to the vault rather than persisting locally, so authentication is the only table it crosses.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/upload"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 2252
+  }
+]
