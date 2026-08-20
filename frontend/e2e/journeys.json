@@ -62,11 +62,16 @@
     "crosses": {
       "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
       "client": ["practices", "userPractices"],
-      "routes": ["POST /practices/", "POST /user-practices/", "GET /user-practices/"],
+      "routes": [
+        "POST /practices/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/"
+      ],
       "tables": ["practice", "userpractice"]
     },
-    "status": "uncovered",
-    "issue": 2297
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-catalog.e2e.test.ts"
   },
   {
     "id": "course.read-and-mark-progress",
