@@ -33,6 +33,18 @@ ENV EXPO_PUBLIC_API_BASE_URL=$EXPO_PUBLIC_API_BASE_URL
 ARG EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB
 ENV EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB=$EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB
 
+# And again for error monitoring, for exactly the same reason: undeclared here,
+# the DSN never reaches `expo export`, `resolveEnv` returns '', and the web
+# build reports its crashes to the console of a browser nobody is watching --
+# a green deploy that is silently unmonitored. All three are optional; an
+# unset DSN is a supported way to run, announced once at startup.
+ARG EXPO_PUBLIC_SENTRY_DSN
+ENV EXPO_PUBLIC_SENTRY_DSN=$EXPO_PUBLIC_SENTRY_DSN
+ARG EXPO_PUBLIC_SENTRY_ENVIRONMENT
+ENV EXPO_PUBLIC_SENTRY_ENVIRONMENT=$EXPO_PUBLIC_SENTRY_ENVIRONMENT
+ARG EXPO_PUBLIC_SENTRY_RELEASE
+ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
+
 RUN npx expo export --platform web
 
 # ---- Serve stage ----

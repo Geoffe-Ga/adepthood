@@ -21,9 +21,11 @@ interface ErrorBoundaryState {
  *
  * BUG-FE-UI-101: ``componentDidCatch`` previously logged to the console and
  * dropped the error on the floor — production crashes were invisible to ops.
- * Every catch now also forwards to {@link reportException} (a Sentry stub
- * today, the real SDK once the DSN lands) with the React component stack
- * attached as a structured context.
+ * Every catch now also forwards to {@link reportException} with the React
+ * component stack attached as a structured context. That reporter posts to
+ * Sentry when a DSN is configured and writes the console record either way;
+ * the payload it builds carries no user content — see
+ * ``observability/sentryEnvelope.ts``.
  *
  * The fallback UI surfaces a "Try again" button that resets ``error`` to
  * ``null`` so the subtree remounts without forcing the user to kill and

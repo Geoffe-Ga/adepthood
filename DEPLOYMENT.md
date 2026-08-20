@@ -389,6 +389,8 @@ than a migration.
 | `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
 | `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
 | `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
+| `SENTRY_DSN` | No (recommended in prod) | *(empty)* | Sentry DSN unhandled exceptions are reported to. Empty means no vendor: crashes are still caught, still answered with the sanitised 500 envelope, and still logged in full — only the operator inbox is lost. A value that will not parse degrades the same way with one boot warning; it never fails the deploy. See "Error monitoring" below for what a report does and does not contain. |
+| `SENTRY_RELEASE` | No | `RAILWAY_GIT_COMMIT_SHA`, else `unknown` | Version string every event is tagged with, so a regression can be pinned to a deploy. `ENV` is sent as the Sentry environment, which is what keeps a production alert distinguishable from a staging one. |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -409,6 +411,9 @@ than a migration.
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
+| `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
+| `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |
 
 ---
 
@@ -594,6 +599,36 @@ Railway pings `GET /health` every 30 seconds. A healthy response:
 ```
 
 A 503 means the database is unreachable.
+
+### Error monitoring
+
+Both sides report unhandled errors to **Sentry** when a DSN is configured
+(`SENTRY_DSN` on the backend, `EXPO_PUBLIC_SENTRY_DSN` on the frontend), and
+run normally with one startup line when it is not. Grep the boot log for
+`error_monitoring_enabled` / `error_monitoring_disabled` to see which state a
+deployment is in.
+
+Sentry is therefore a **third-party recipient of adepthood error reports**, and
+the privacy policy has to say so. What a report carries is deliberately narrow:
+
+- **Backend** — exception type, a credential-redacted and length-capped
+  message, the stack (file, function, line, source context), and the request
+  id / path / method. Every automatic capture channel is switched off:
+  no ASGI, logging, or HTTP instrumentation is installed at all, local
+  variables are not captured, request bodies are never captured, and the
+  breadcrumb buffer is sized to zero. A `before_send` scrubber then deletes
+  `request`, `extra`, `breadcrumbs` and frame `vars` wherever they appear.
+- **Frontend** — exception type, a credential-redacted and length-capped
+  message, the React component stack, and which error boundary caught it. The
+  payload is built field by field, so there is no channel for anything else;
+  there are no breadcrumbs anywhere in the design.
+- **Neither** — no journal, transcription or reflection content, no request
+  bodies, no credentials, and no user identity (not even an opaque id today).
+
+The one field neither side can close by configuration is an exception message,
+because it is authored at the throw site. Keep raised messages static and
+capability-named, the way `backend/src/dependencies/creek_vault.py` does; the
+length cap is a bound on that discipline slipping, not a substitute for it.
 
 ### Logs
 
