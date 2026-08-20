@@ -5,6 +5,36 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { rhythm, surface } from '@/design/tokens';
 
 /**
+ * The veil's alpha ramp, sampled from a cubic ease-in (`alpha = t³`).
+ *
+ * A two-stop linear ramp is what makes a fade read as a *band* rather than a
+ * dissolve. Alpha climbing at a constant rate means the composited color has a
+ * constant gradient, but its slope jumps from zero to that constant at the very
+ * top of the veil — a first-derivative discontinuity, which is precisely the
+ * edge-detector stimulus the visual system exaggerates into a Mach band. The
+ * eye therefore sees a line where the veil begins, and reads everything below
+ * it as a grey slab laid over the page.
+ *
+ * A cubic ease-in leaves the veil at a near-zero slope where it meets live
+ * prose — the first quarter changes alpha by two percent, well under the
+ * just-noticeable difference on a warm ground — so there is no onset to detect.
+ * The ramp only turns assertive in its last quarter, where whatever is behind
+ * it is already the same color it is fading to, so the steep segment has no
+ * contrast to reveal it.
+ *
+ * Keep the table here, in one place: it is the whole of the fade's perceptual
+ * behavior, and every screen that scrolls inherits it.
+ */
+export const BOTTOM_FADE_STOPS = [
+  { offset: '0', opacity: '0' },
+  { offset: '0.25', opacity: '0.02' },
+  { offset: '0.5', opacity: '0.13' },
+  { offset: '0.75', opacity: '0.42' },
+  { offset: '0.9', opacity: '0.73' },
+  { offset: '1', opacity: '1' },
+] as const;
+
+/**
  * A sibling overlay that dissolves the bottom edge of a scroll surface into the
  * canvas ground, so long content appears to fade out rather than clip at a hard
  * line. The transparent stop is `surface.canvas` at zero opacity, not black --
@@ -27,7 +57,7 @@ import { rhythm, surface } from '@/design/tokens';
  * the last line of real content.
  *
  * `color` overrides the ground the veil fades into (defaults to
- * `surface.canvas`); both gradient stops share it so only the opacity ramps.
+ * `surface.canvas`); every gradient stop shares it so only the opacity ramps.
  */
 export const BottomFade = ({
   testID = 'bottom-fade',
@@ -44,8 +74,9 @@ export const BottomFade = ({
       <Svg width="100%" height="100%">
         <Defs>
           <LinearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={color} stopOpacity="0" />
-            <Stop offset="1" stopColor={color} stopOpacity="1" />
+            {BOTTOM_FADE_STOPS.map(({ offset, opacity }) => (
+              <Stop key={offset} offset={offset} stopColor={color} stopOpacity={opacity} />
+            ))}
           </LinearGradient>
         </Defs>
         <Rect width="100%" height="100%" fill={`url(#${gradientId})`} />

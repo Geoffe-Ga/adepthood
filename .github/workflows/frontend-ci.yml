@@ -99,6 +99,25 @@ jobs:
         working-directory: frontend
         run: npx prettier -c .
 
+      # The only step in this job that runs the bundler. Every other one reads a
+      # file in isolation -- eslint reads syntax, tsc reads types, prettier reads
+      # formatting, Jest reads modules behind its own moduleNameMapper -- and
+      # none of them resolves the real import graph or reads metro.config.js at
+      # all. Without this step a green run here certifies only that Jest ran.
+      #
+      # Demonstrated rather than asserted: disabling Metro's package-exports
+      # resolution leaves eslint, tsc, and the Habits suite green while the app
+      # cannot bundle. See scripts/frontend/bundle.sh, which this mirrors so
+      # that local Gate 2 predicts this job.
+      #
+      # Not a native build: there is no frontend/ios or frontend/android
+      # directory, so newArchEnabled has still never been compiled. And
+      # expo-doctor is deliberately not gated -- it fails on SDK-pinned version
+      # drift, which is Dependabot's cadence, not this job's question.
+      - name: Web bundle builds
+        working-directory: frontend
+        run: npx expo export --platform web
+
       - name: Tests (with coverage thresholds)
         working-directory: frontend
         run: npx jest --coverage --passWithNoTests

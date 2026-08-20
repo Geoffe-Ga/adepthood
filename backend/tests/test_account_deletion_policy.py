@@ -19,6 +19,7 @@ nothing.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
@@ -37,6 +38,7 @@ from domain.account_deletion import (
     policy_gaps,
 )
 from models.goal_group import GoalGroup
+from models.wallet_audit import BUCKET_OFFERING, REASON_ADMIN_GRANT
 from tests.helpers.account_seed import (
     SeedAccount,
     seed_one_row_everywhere,
@@ -51,6 +53,12 @@ _PASSWORD = "securepassword123"  # pragma: allowlist secret
 # the person paid for. Asserted as an exact set — a second surviving mention is
 # a leak, and losing this one is a regression of a different kind.
 _EXPECTED_SURVIVING_EMAIL_COLUMNS = {"gumroadsale.email"}
+
+# The wallet movement the cross-account test writes. The amounts carry no
+# meaning beyond being distinguishable from each other -- what the test reads
+# back is the actor column, not the arithmetic.
+_EMPTY_WALLET = Decimal(0)
+_GRANTED_CREDITS = Decimal(5)
 
 # A synthetic schema large enough for the detectors to have something to say
 # and small enough to read: an account table and one table the policy knows.
@@ -362,3 +370,59 @@ async def test_anonymised_rows_survive_the_deletion(
         for name in anonymised
     }
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seeded_pair: tuple[dict[str, str], SeedAccount, SeedAccount],
+) -> None:
+    """A wallet row the erased account acted on, but does not own, loses the actor.
+
+    ``walletaudit`` is the only table the policy both erases *and* clears a
+    column on, and the two halves apply to different rows: the account's own
+    ledger goes, while a row recording what it did to somebody else's wallet
+    stays with ``actor_user_id`` nulled. The schema-driven seeder cannot reach
+    this shape — it fills every reference on a row with the same account, so the
+    erase always removes the row before the clear could matter. That makes the
+    cross-account row, the one ``REASON_ADMIN_GRANT`` exists for, the case where
+    an un-cleared actor id would survive an erasure unnoticed.
+    """
+    headers, doomed, bystander = seeded_pair
+    audit = SQLModel.metadata.tables["walletaudit"]
+    await db_session.execute(
+        sa.insert(audit).values(
+            user_id=bystander.user_id,
+            actor_user_id=doomed.user_id,
+            bucket=BUCKET_OFFERING,
+            reason=REASON_ADMIN_GRANT,
+            delta=_GRANTED_CREDITS,
+            balance_before=_EMPTY_WALLET,
+            balance_after=_GRANTED_CREDITS,
+        ),
+    )
+    await db_session.commit()
+    owned_by_bystander = sa.and_(
+        audit.c.user_id == bystander.user_id,
+        audit.c.actor_user_id == doomed.user_id,
+    )
+    assert await _count_where(db_session, audit, owned_by_bystander) == 1
+
+    resp = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": doomed.email},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    # The row survives, because the bystander's ledger is not the leaver's to
+    # erase -- but it no longer names the account that has been deleted.
+    assert await _count_where(db_session, audit, owned_by_bystander) == 0
+    survivor = sa.and_(
+        audit.c.user_id == bystander.user_id,
+        audit.c.reason == REASON_ADMIN_GRANT,
+        audit.c.actor_user_id.is_(None),
+    )
+    assert await _count_where(db_session, audit, survivor) == 1

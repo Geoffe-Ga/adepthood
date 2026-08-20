@@ -55,9 +55,11 @@ hold a concurrency window open on purpose rather than by hoping for one.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -65,6 +67,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+from tests.helpers.git_env import detached_git_env
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _VERIFIED_SCRIPT = _REPO_ROOT / "scripts" / "quality" / "verified.sh"
@@ -247,6 +251,7 @@ _MUTATION_TEXT = "\nEXTRA = 2\n"
 _DEFAULT_BRANCH = "main"
 _INITIAL_COMMIT_MESSAGE = "stage the fixture checkout"
 _EMPTY_COMMIT_MESSAGE = "a commit that changes no file content"
+
 _GIT_IDENTITY_ARGS = (
     "-c",
     "user.email=gate@example.invalid",
@@ -262,6 +267,20 @@ _DEGENERATE_MESSAGE_MARKERS = ("path", "match")
 
 # Well-formed-looking names that must be rejected before any interpolation.
 _INVALID_GATE_NAMES = ("../escape", "back end", "Backend", "back/end", "")
+
+# git's own directory is left out of every tree snapshot below, and has to be.
+# `git commit` leaves a detached `git maintenance run --auto` running behind it,
+# and that process creates and then removes `.git/objects/maintenance.lock` on a
+# schedule no test controls, so a listing that descended into `.git` would be
+# comparing git's private bookkeeping rather than anything a script did. Nothing
+# under `.git` is this script's to touch in the first place: it reads the tree by
+# asking git, and writes only into the receipts directory.
+_GIT_DIR_NAME = ".git"
+_MAINTENANCE_LOCK = Path(_GIT_DIR_NAME) / "objects" / "maintenance.lock"
+
+# A receipt-shaped file in a place no gate may write one: planted by hand to
+# show the snapshot below still notices a file that should not be there.
+_LEAKED_FILE = Path("backend") / "src" / "leaked.receipt"
 
 _PIP_SHIM = """#!/usr/bin/env bash
 if [ "${{1:-}}" = "freeze" ]; then
@@ -449,7 +468,8 @@ def _git(root: Path, *args: str) -> str:
     """Run a git command inside the staged checkout, failing the test on error.
 
     The global configuration is detached so an operator's hooks path, commit
-    template, or signing settings cannot reach into the fixture.
+    template, or signing settings cannot reach into the fixture, and the
+    inherited git state is stripped so the command cannot escape ``root``.
 
     Args:
         root: Working directory for the command.
@@ -458,7 +478,7 @@ def _git(root: Path, *args: str) -> str:
     Returns:
         Whatever the command printed on stdout, so a listing can be inspected.
     """
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}
+    env = detached_git_env(GIT_CONFIG_GLOBAL=os.devnull)
     result = subprocess.run(
         [_git_executable(), *_GIT_IDENTITY_ARGS, *args],
         cwd=root,
@@ -530,7 +550,7 @@ def _shim_env(shim_dir: Path) -> dict[str, str]:
         and the outcome-affecting variables pinned to known values.
     """
     _install_shims(shim_dir)
-    env = dict(os.environ)
+    env = detached_git_env()
     env[_PATH_ENV] = f"{shim_dir}{os.pathsep}{env[_PATH_ENV]}"
     env[_VIRTUALENV_ENV] = _BASELINE_VIRTUALENV
     env[_FAKE_PIP_FREEZE_ENV] = _BASELINE_PIP_FREEZE
@@ -711,6 +731,56 @@ def checkout(tmp_path: Path) -> _Checkout:
         The staged checkout under test.
     """
     return _stage_checkout(tmp_path)
+
+
+def _tree_snapshot(root: Path) -> dict[Path, str | None]:
+    """Return everything a checkout holds, keyed by path and content.
+
+    The digest travels with each path so the snapshot notices a file rewritten
+    in place, not only one created or removed. Size alone was not enough: an
+    edit that happens to preserve the byte count -- a flipped flag, a swapped
+    character -- leaves the length identical and would have compared equal.
+    Hashing the bytes closes that, and the fixture checkouts are small enough
+    that reading them twice costs nothing worth counting.
+
+    git's own directory is skipped for the reason recorded at ``_GIT_DIR_NAME``:
+    a detached maintenance process edits it on its own schedule, and comparing
+    that would decide the invariant by a race rather than by the code.
+
+    Args:
+        root: Checkout root to list.
+
+    Returns:
+        A mapping of checkout-relative path to a digest of its content, or
+        ``None`` for a directory. A symlink is digested from its target text
+        rather than followed, so a broken one is recorded rather than raising,
+        and re-pointing one registers as the change it is.
+    """
+    snapshot: dict[Path, str | None] = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if _GIT_DIR_NAME in relative.parts:
+            continue
+        info = path.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            snapshot[relative] = None
+        elif stat.S_ISLNK(info.st_mode):
+            snapshot[relative] = _digest(str(path.readlink()).encode())
+        else:
+            snapshot[relative] = _digest(path.read_bytes())
+    return snapshot
+
+
+def _digest(payload: bytes) -> str:
+    """Return a short stable digest of ``payload``.
+
+    Args:
+        payload: Bytes to digest.
+
+    Returns:
+        The hex sha256 of the payload.
+    """
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _receipt_field(text: str, key: str) -> str:
@@ -1569,7 +1639,7 @@ def test_an_invalid_gate_name_is_rejected_before_any_path_is_touched(
         checkout: The staged checkout.
         name: A malformed gate name.
     """
-    before = sorted(path.relative_to(checkout.root) for path in checkout.root.rglob("*"))
+    before = _tree_snapshot(checkout.root)
 
     result = checkout.run(_CHECK_COMMAND, name)
 
@@ -1577,10 +1647,82 @@ def test_an_invalid_gate_name_is_rejected_before_any_path_is_touched(
         f"the malformed gate name {name!r} must exit {_CANNOT_EVALUATE_EXIT_CODE}; "
         f"got exit {result.returncode} with stderr: {result.stderr!r}"
     )
-    after = sorted(path.relative_to(checkout.root) for path in checkout.root.rglob("*"))
-    assert after == before, (
+    assert _tree_snapshot(checkout.root) == before, (
         f"the malformed gate name {name!r} changed the tree; a rejected name "
-        "must not create, read, or remove anything"
+        "must not create, remove, or rewrite anything"
+    )
+
+
+def test_the_tree_snapshot_ignores_gits_own_background_bookkeeping(
+    checkout: _Checkout,
+) -> None:
+    """Git editing its own directory is not the script touching the tree.
+
+    Every ``git commit`` this fixture makes leaves a detached
+    ``git maintenance run --auto`` behind it, which takes and releases
+    ``.git/objects/maintenance.lock`` whenever it gets around to it. Listing
+    that directory made the untouched-tree assertion above a coin flip on the
+    timing of a process no test starts or waits for, so it is excluded and this
+    test is what holds the exclusion in place.
+
+    Args:
+        checkout: The staged checkout.
+    """
+    before = _tree_snapshot(checkout.root)
+
+    (checkout.root / _MAINTENANCE_LOCK).touch()
+
+    assert _tree_snapshot(checkout.root) == before, (
+        "a lock file git writes inside its own directory must not read as a "
+        "change to the tree the script is answerable for"
+    )
+
+
+def test_the_tree_snapshot_notices_every_way_the_tree_could_be_touched(
+    checkout: _Checkout,
+) -> None:
+    """Excluding ``.git`` must cost the untouched-tree assertion none of its teeth.
+
+    A snapshot narrowed until it proves nothing would be worse than the flake it
+    replaced, because the assertion it backs is the guard that a traversal-shaped
+    gate name never reaches the filesystem. So each way a script could touch the
+    tree - writing a file, removing one, rewriting one in place - is shown here
+    to move the snapshot.
+
+    Args:
+        checkout: The staged checkout.
+    """
+    before = _tree_snapshot(checkout.root)
+
+    leaked = checkout.root / _LEAKED_FILE
+    leaked.write_text(_MODULE_TEXT)
+    assert _tree_snapshot(checkout.root) != before, "a created file must be noticed"
+    leaked.unlink()
+
+    deletable = checkout.root / _DELETABLE_FILE
+    deletable.unlink()
+    assert _tree_snapshot(checkout.root) != before, "a removed file must be noticed"
+    deletable.write_text(_MODULE_TEXT)
+    assert _tree_snapshot(checkout.root) == before, (
+        "restoring the tree exactly must restore the snapshot exactly, or the "
+        "comparison above proves nothing about what changed"
+    )
+
+    source = checkout.root / _SOURCE_FILE
+    source.write_text(f"{_MODULE_TEXT}{_MUTATION_TEXT}")
+    assert _tree_snapshot(checkout.root) != before, "a file rewritten in place must be noticed"
+
+    # The case a size-keyed snapshot could not see. Appending changes the byte
+    # count, so length alone was enough above; an edit that preserves it is not
+    # visible unless the content itself is compared.
+    same_length = _MODULE_TEXT.replace("1", "2", 1)
+    assert len(same_length) == len(_MODULE_TEXT), (
+        "this case only tests what it claims if the rewrite is the same length"
+    )
+    source.write_text(same_length)
+    assert _tree_snapshot(checkout.root) != before, (
+        "a rewrite that preserves the byte count must still be noticed -- keying "
+        "the snapshot on size alone would have compared this equal"
     )
 
 
@@ -1854,3 +1996,83 @@ def test_help_documents_the_three_subcommands(checkout: _Checkout) -> None:
         assert command in result.stdout, (
             f"--help must document the {command!r} subcommand; got: {result.stdout!r}"
         )
+
+
+def _read_head_with_no_inherited_git_state(repo: Path) -> str:
+    """Return ``repo``'s HEAD commit, immune to any ambient git variables.
+
+    The assertions below are about where a *leaked* environment sends a git
+    command, so the observation itself must not be susceptible to the same leak.
+
+    Args:
+        repo: Repository whose HEAD is wanted.
+
+    Returns:
+        The commit id HEAD resolves to.
+    """
+    result = subprocess.run(
+        [_git_executable(), "rev-parse", "HEAD"],
+        cwd=repo,
+        env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+    )
+    return result.stdout.strip()
+
+
+def test_the_fixture_cannot_be_redirected_onto_an_ambient_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leaked ``GIT_DIR`` must not steer the fixture onto another repository.
+
+    Git exports ``GIT_DIR``/``GIT_INDEX_FILE``/``GIT_WORK_TREE`` into every hook
+    process, and the pre-push hook runs this suite. A fixture that inherits them
+    writes its commits into whatever repository is being pushed from. That is not
+    hypothetical: it put five ``stage the fixture checkout`` commits onto a live
+    branch and set ``core.bare=true`` on the shared checkout, breaking every
+    concurrent worktree at once.
+
+    The decoy stands in for the real repository. It must come back untouched.
+
+    Args:
+        tmp_path: Directory holding both repositories.
+        monkeypatch: Used to plant the leaked variables.
+    """
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    _git(decoy, "init")
+    _write(decoy, Path("kept.txt"), "do not touch me\n")
+    _git(decoy, "add", "-A")
+    _git(decoy, "commit", "-m", "the state a real branch is in")
+    decoy_head_before = _read_head_with_no_inherited_git_state(decoy)
+    decoy_bare_before = _git(decoy, "config", "--get", "core.bare").strip()
+
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(decoy / ".git" / "index"))
+
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _git(fixture, "init")
+    _write(fixture, Path("staged.txt"), "the fixture's own content\n")
+    _git(fixture, "add", "-A")
+    _git(fixture, "commit", "-m", "stage the fixture checkout")
+
+    assert (fixture / ".git").is_dir(), (
+        "the fixture's commit went somewhere other than its own directory; "
+        "an inherited GIT_DIR redirected it"
+    )
+    assert _read_head_with_no_inherited_git_state(decoy) == decoy_head_before, (
+        "the fixture wrote a commit into the ambient repository -- this is the "
+        "defect that rewrote a live branch under `git push`"
+    )
+    assert _git(decoy, "config", "--get", "core.bare").strip() == decoy_bare_before, (
+        "the fixture rewrote the ambient repository's core.bare, which is what "
+        "broke `git status` for every concurrent worktree"
+    )
+    assert (decoy / "kept.txt").read_text() == "do not touch me\n", (
+        "the fixture overwrote the ambient repository's working tree"
+    )

@@ -11,7 +11,6 @@ import { accent } from '@/design/tokens';
 
 const updated: UserPractice = {
   id: 17,
-  user_id: 1,
   practice_id: 9,
   stage_number: 3,
   start_date: '2026-05-01',

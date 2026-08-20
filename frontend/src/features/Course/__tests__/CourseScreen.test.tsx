@@ -171,6 +171,8 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
+const { readToTheEnd } = require('./readerGeometry');
+
 // Drain the microtask queue across several ticks so a resolved fetch fully
 // propagates through the loading -> loaded state chain before we assert,
 // regardless of chain depth -- no wall-clock polling.
@@ -582,7 +584,7 @@ describe('CourseScreen', () => {
     ];
     mockStageContent.mockResolvedValue(twoChapters);
 
-    const { getByText, getByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Chapter One')).toBeTruthy();
@@ -595,6 +597,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     await act(async () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
@@ -606,7 +610,7 @@ describe('CourseScreen', () => {
   });
 
   it('returns to the course list when Done is pressed on the last chapter', async () => {
-    const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, queryByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Welcome Essay')).toBeTruthy();
@@ -619,6 +623,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     await act(async () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
@@ -654,7 +660,7 @@ describe('CourseScreen', () => {
       },
     ]);
 
-    const { getByText, getByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Welcome Essay')).toBeTruthy();
@@ -668,6 +674,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     // Press reflect button
     await act(async () => {

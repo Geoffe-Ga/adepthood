@@ -16,6 +16,8 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import type { ImageRef } from 'expo-image-manipulator';
 
+import { decodedBase64ByteLength } from '@/utils/base64Size';
+
 /**
  * The longest edge, in pixels, worth sending for transcription. Larger pages
  * are downscaled (preserving aspect ratio) because the vision model resamples
@@ -39,10 +41,6 @@ export const TRANSCRIBE_JPEG_QUALITY = 0.8;
  */
 export const MAX_TRANSCRIBE_IMAGE_BYTES = 5 * 1024 * 1024;
 
-/** Every base64 group of 4 encoded characters carries 3 decoded bytes. */
-const BASE64_CHARS_PER_GROUP = 4;
-const BASE64_BYTES_PER_GROUP = 3;
-
 /** A page downscaled and re-encoded for the transcription request. */
 export interface PreparedPage {
   /** The JPEG image, base64-encoded, ready for the request body. */
@@ -53,21 +51,6 @@ export interface PreparedPage {
   byteLength: number;
   /** The manipulator-output file holding the prepared image on device. */
   uri: string;
-}
-
-/**
- * The decoded byte size of a base64 payload, computed without decoding it:
- * each 4-character group encodes 3 bytes, minus one byte for every trailing
- * `=` padding character.
- */
-function decodedBase64ByteLength(base64: string): number {
-  let paddingBytes = 0;
-  if (base64.endsWith('==')) {
-    paddingBytes = 2;
-  } else if (base64.endsWith('=')) {
-    paddingBytes = 1;
-  }
-  return (base64.length / BASE64_CHARS_PER_GROUP) * BASE64_BYTES_PER_GROUP - paddingBytes;
 }
 
 /**

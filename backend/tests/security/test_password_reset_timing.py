@@ -3,20 +3,32 @@
 The endpoint must return the same body shape and status (202) for every
 input -- registered or not -- and must spend a comparable amount of
 server-side time on each path so an attacker cannot harvest a leak
-corpus by timing the responses.  We verify timing parity with a
-paired-sample comparison: the median of N ``hit`` calls and N ``miss``
-calls should differ by less than the SPEC's ±50 ms tolerance.
+corpus by timing the responses.
 
-The request-path test derives its tolerance at runtime from the cost of
-one real cost-10 bcrypt on the host (``_consume_dummy_bcrypt``), so it
-tracks CPU speed instead of a hardcoded millisecond budget.  The miss
-path spends exactly one such bcrypt to mask enumeration; if that dummy
-is ever removed the hit/miss delta jumps by a whole budget, which the
-fractional tolerance below one bcrypt now catches.  The confirm-path
-test keeps a fixed generous budget because its cost-12 dummy already
-dominates the tolerance.  If either test flakes, raise the iteration
-count rather than relax the tolerance -- the constant-time guarantee is
-the actual security property.
+The two endpoints are verified by deliberately different means, because
+only one of them has arms that a stopwatch can fairly compare.
+
+The **request** path is checked with a paired-sample wall-clock
+comparison whose tolerance is derived at runtime from one real cost-10
+bcrypt on the host (``_consume_dummy_bcrypt``), so it tracks CPU speed
+instead of a hardcoded millisecond budget.  That works because its two
+arms are symmetric: hit and miss each spend exactly one cost-10 bcrypt,
+so contention inflates both by the same factor and the ratio survives.
+
+The **confirm** path is checked by auditing the bcrypt work each arm
+performs rather than how long it takes.  Its arms are *not* symmetric:
+the reuse arm verifies the reset-token digest (cost-10) and then the
+submitted password (cost-12), while the invalid-token arm spends only
+the cost-12 masking dummy -- the lookup-key pre-filter means a token
+matching no row is never bcrypt-compared.  Each verify is dispatched
+through ``asyncio.to_thread``, so an arm's wall time is its bcrypt CPU
+cost *plus* one thread-handoff queueing delay per dispatch.  On a
+contended host that queueing term dominates and does not scale with any
+single-bcrypt budget, so the healthy two-dispatch arm drifts arbitrarily
+far from the one-dispatch arm and no fixed or fractional millisecond
+tolerance can separate "busy machine" from "missing dummy".  Counting
+the verifies instead measures exactly the property the dummy exists to
+provide, and is immune to load by construction.
 """
 
 from __future__ import annotations
@@ -26,6 +38,7 @@ from datetime import UTC, datetime
 from statistics import median
 from typing import TYPE_CHECKING
 
+import bcrypt
 import pytest
 from sqlmodel import select
 
@@ -43,13 +56,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-# Number of iterations per arm (hit vs. miss).  Five is enough for a
-# stable median given bcrypt cost-10/12 dominates the per-call latency.
-_ITERATIONS = 5
-
-# The request-path test medians more samples because its tolerance is a
-# fraction of a single cost-10 bcrypt (~tens of ms), so it must smooth
-# scheduler jitter that the wide confirm-path budget would have absorbed.
+# Samples per arm for the request-path test.  Its tolerance is a fraction
+# of a single cost-10 bcrypt (~tens of ms), so it needs enough samples for
+# the median to shrug off a descheduled process distorting one of them.
 _REQUEST_ITERATIONS = 11
 
 # Samples used to estimate the host's single cost-10 bcrypt budget.
@@ -63,11 +72,21 @@ _BUDGET_SAMPLES = 9
 # mutation without flaking on a quiescent-but-busy CI box.
 _REQUEST_TOLERANCE_FRACTION = 0.5
 
-# Allowed median-delta in milliseconds for the confirm-path test.  The
-# SPEC sets ±50 ms; we use 250 ms here to absorb CI noise -- the confirm
-# dummy is cost-12 (~an order of magnitude over the tolerance), so this
-# fixed budget already fails if that dummy is removed.
-_TOLERANCE_MS = 250
+# bcrypt cost factor of a stored user password (``_hash_password`` uses
+# ``gensalt(rounds=12)``).  This is the verify the confirm reuse-branch
+# spends and the invalid-token branch must mask with an equal dummy.
+_PASSWORD_VERIFY_BCRYPT_COST = 12
+
+# How many cost-12 verifies each confirm arm must perform.  One apiece:
+# the reuse arm's real ``_verify_password`` and the invalid arm's
+# ``_consume_dummy_password_verify``.  Equality is the security property;
+# the shared literal keeps "what we require" and "what each arm does" in
+# one place.
+_EXPECTED_PASSWORD_VERIFIES = 1
+
+# Index of the cost field in a modular-crypt bcrypt digest: splitting
+# ``$2b$12$<salt+hash>`` on "$" yields ["", "2b", "12", "<salt+hash>"].
+_BCRYPT_COST_FIELD_INDEX = 2
 
 _PASSWORD = "correct-horse-battery-staple"  # pragma: allowlist secret
 
@@ -225,34 +244,78 @@ async def test_request_ip_ignores_x_forwarded_for_without_a_trusted_proxy(
     assert recorded != _FORWARDED_CLIENT_IP
 
 
-async def _measure_confirm(client: AsyncClient, token: str, new_password: str) -> float:
-    start = time.perf_counter()
+async def _confirm(client: AsyncClient, token: str, new_password: str) -> None:
+    """POST one password-reset confirm and assert it took a modelled branch.
+
+    Both arms under audit end in 400 (bad token, or a reused password);
+    200 is allowed so an accidental success surfaces as a clearer
+    downstream assertion than a bare status mismatch here.
+    """
     response = await client.post(
         "/auth/password-reset/confirm",
         json={"token": token, "new_password": new_password},
     )
-    duration_ms = (time.perf_counter() - start) * 1_000
-    # Both paths return 4xx -- the only thing being measured is bcrypt cost.
     assert response.status_code in {200, 400}, response.text
-    return duration_ms
+
+
+def _record_bcrypt_costs(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Patch ``bcrypt.checkpw`` to log the cost factor of every verify performed.
+
+    Returns the live list the patch appends to, so a caller can clear it
+    between arms and read back exactly the work one request provoked.
+    ``routers.auth`` resolves ``bcrypt.checkpw`` at call time off the
+    shared module object, so patching the attribute here reaches it.
+
+    The handler dispatches each verify through ``asyncio.to_thread``, so
+    the append happens on a worker thread; ``list.append`` is atomic
+    under the GIL, which is all the synchronisation this needs.
+    """
+    real_checkpw = bcrypt.checkpw
+    costs: list[int] = []
+
+    def recording_checkpw(password: bytes, hashed_password: bytes) -> bool:
+        cost_field = hashed_password.split(b"$")[_BCRYPT_COST_FIELD_INDEX]
+        costs.append(int(cost_field.decode()))
+        return real_checkpw(password, hashed_password)
+
+    monkeypatch.setattr(bcrypt, "checkpw", recording_checkpw)
+    return costs
 
 
 @pytest.mark.asyncio
-async def test_confirm_invalid_token_matches_password_reuse_timing(
+async def test_confirm_invalid_token_spends_the_same_password_verify_budget(
     async_client: AsyncClient,
     db_session: AsyncSession,
     email_sender: RecordingEmailSender,
-    disable_rate_limit: None,  # noqa: ARG001 -- need >5 confirms across the trial
+    monkeypatch: pytest.MonkeyPatch,
+    disable_rate_limit: None,  # noqa: ARG001 -- confirm is capped at 5/hour per IP
 ) -> None:
-    """Invalid-token confirm spends the same bcrypt budget as the reused-password branch.
+    """Invalid-token confirm spends the same cost-12 verify as the reused-password branch.
 
-    Without the dummy bcrypt on the invalid path, the ~250 ms cost-12
-    verify that ``_reject_if_password_reuse`` runs only on the
+    Without the dummy bcrypt on the invalid path, the cost-12 verify that
+    ``_reject_if_password_reuse`` runs only on the
     valid-token-with-password-reuse branch becomes a side channel an
-    attacker can use to detect whether a submitted token matches a
-    real active row (PR #287 round-5 BLOCKER 2).  Asserts the median
-    latency delta between the two paths is within the SPEC R4
-    tolerance.
+    attacker can use to detect whether a submitted token matches a real
+    active row.
+
+    The invariant is asserted on the bcrypt *work ledger* -- how many
+    cost-12 verifies each arm performs -- rather than on elapsed time.
+    That is a deliberate choice, not a convenience: the reuse arm makes
+    two thread-dispatched bcrypt calls to the invalid arm's one, so under
+    CPU contention the arms' queueing delays diverge without bound while
+    a masking dummy that is genuinely present looks, to a stopwatch,
+    exactly like one that has been deleted.  Counting the verifies asserts
+    the property the dummy exists to provide and cannot be perturbed by
+    load, so it holds on an idle laptop and on a machine running a dozen
+    parallel builds alike.  Deleting ``_consume_dummy_password_verify``
+    drops the invalid arm's count to zero and fails this test outright.
+
+    Nothing is given up by dropping the stopwatch: a sub-bcrypt
+    asymmetry such as one extra indexed query is ~1 ms, which sat far
+    inside the 250 ms tolerance the wall-clock version of this test
+    allowed, so that version could not have detected it either.  bcrypt
+    is the only term here big enough to be a usable oracle, and the
+    ledger accounts for all of it.
     """
     await _seed_user(db_session, "reuse@example.com")
     # Set up a real outstanding reset-token row that we will confirm
@@ -263,23 +326,27 @@ async def test_confirm_invalid_token_matches_password_reuse_timing(
     assert request_resp.status_code == 202
     valid_token = _extract_token_from_body(email_sender.sent[-1].body)
 
-    # Warm up so the first sample isn't an outlier.
-    await _measure_confirm(async_client, "x" * 43, "warmup-pw")
+    costs = _record_bcrypt_costs(monkeypatch)
 
-    invalid_path: list[float] = []
-    reuse_path: list[float] = []
-    for _ in range(_ITERATIONS):
-        # Invalid path: the token does not exist anywhere in the DB.
-        invalid_path.append(await _measure_confirm(async_client, "x" * 43, "irrelevant-pw"))
-        # Reuse path: real token, but new_password matches the current
-        # one so ``_reject_if_password_reuse`` raises 400 after one
-        # bcrypt verify.  We use the same valid_token for every run --
-        # confirm 400s on the reuse check before marking it used, so
-        # the row stays alive for the next iteration.
-        reuse_path.append(await _measure_confirm(async_client, valid_token, _PASSWORD))
+    # Invalid arm: the token matches no row, so the handler reaches
+    # ``_consume_dummy_password_verify`` and nothing else.
+    await _confirm(async_client, "x" * 43, "irrelevant-pw")
+    invalid_costs = list(costs)
 
-    delta = abs(median(invalid_path) - median(reuse_path))
-    assert delta < _TOLERANCE_MS, (
-        f"confirm timing leak: invalid median={median(invalid_path):.1f}ms "
-        f"reuse median={median(reuse_path):.1f}ms delta={delta:.1f}ms"
+    # Reuse arm: real token, but ``new_password`` equals the current one,
+    # so ``_reject_if_password_reuse`` 400s after its real cost-12 verify
+    # and before the row is marked used.
+    costs.clear()
+    await _confirm(async_client, valid_token, _PASSWORD)
+    reuse_costs = list(costs)
+
+    invalid_verifies = invalid_costs.count(_PASSWORD_VERIFY_BCRYPT_COST)
+    reuse_verifies = reuse_costs.count(_PASSWORD_VERIFY_BCRYPT_COST)
+    assert invalid_verifies == reuse_verifies == _EXPECTED_PASSWORD_VERIFIES, (
+        f"confirm timing leak: the invalid-token arm performed "
+        f"{invalid_verifies} cost-{_PASSWORD_VERIFY_BCRYPT_COST} bcrypt "
+        f"verify(s) and the password-reuse arm performed {reuse_verifies}; "
+        f"both must perform exactly {_EXPECTED_PASSWORD_VERIFIES} or the "
+        f"response time reveals whether a submitted token hit a real row "
+        f"(invalid arm costs={invalid_costs}, reuse arm costs={reuse_costs})"
     )

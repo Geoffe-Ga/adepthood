@@ -208,3 +208,20 @@ describe('SettingsHubScreen — Choose your depths section', () => {
     expect(getByTestId('settings-group-support')).toBeTruthy();
   });
 });
+
+describe('SettingsHubScreen — the corpus-seeding destination', () => {
+  test('offers a way to bring in what was written elsewhere', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-corpus')).toBeTruthy();
+    expect(getByTestId('settings-row-seed-corpus')).toBeTruthy();
+  });
+
+  test('tapping it opens the corpus screen', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-seed-corpus'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+});

@@ -92,13 +92,18 @@ _IDENTITY_SEPARATOR = "\x00"
 class UploadDegradeReason(enum.StrEnum):
     """Why one upload failed mid-flight, in terms an operator can act on.
 
-    The user sees a single :attr:`VaultUploadStatus.DEGRADED` -- that is the
-    point of degrading -- so these exist purely so the failures stay countable
-    apart, each with its own remedy: ``CONTRACT`` is a defect in adepthood's own
-    request, ``AUTH`` is a credential to rotate, ``UNAVAILABLE`` is
-    infrastructure, ``UNSUPPORTED_CAPABILITY`` is a vault that withdrew the
-    capability between the handshake and the call, and ``NOT_STORED`` is a vault
-    that answered successfully yet did not durably keep the document.
+    These exist so the failures stay countable apart, each with its own remedy:
+    ``CONTRACT`` is a defect in adepthood's own request, ``AUTH`` is a credential
+    to rotate, ``UNAVAILABLE`` is infrastructure, ``UNSUPPORTED_CAPABILITY`` is
+    an upload refused as unsupported *after* the handshake advertised it, and
+    ``NOT_STORED`` is a vault that answered successfully yet did not durably keep
+    the document.
+
+    All but one of them reach the user as a single
+    :attr:`VaultUploadStatus.DEGRADED` -- that is the point of degrading.
+    ``UNSUPPORTED_CAPABILITY`` is the exception: it answers
+    :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` instead, because a refused
+    capability is not a fault a retry clears. See :func:`_failed_outcome_for`.
     """
 
     CONTRACT = "contract"
@@ -225,6 +230,30 @@ def _degrade_fields(error: CreekVaultError) -> dict[str, object]:
     return fields
 
 
+def _failed_outcome_for(error: CreekVaultError) -> VaultUploadOutcome:
+    """Choose the outcome one failed upload call is answered with.
+
+    Every transport fault collapses to :attr:`VaultUploadStatus.DEGRADED`, whose
+    whole meaning is "it broke, try again" -- true of a dropped connection, a
+    rejected credential, a malformed request. It is not true of a refused
+    *capability*, and the difference is the sentence the router shows: a retry
+    that cannot succeed is a dead end, and telling someone to take one is worse
+    than telling them nothing.
+
+    So a :class:`CreekCapabilityUnsupportedError` answers
+    :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`, the same status the
+    pre-call gate returns, and for the same reason: uploads do not work between
+    this pair of versions. That the gate did not catch it means only that the
+    vault advertised the capability -- either because it withdrew it after the
+    handshake, or because adepthood recognises the name without yet speaking the
+    call. Neither is a fault the person holding the document can retry away, and
+    both leave them in exactly the same place.
+    """
+    if isinstance(error, CreekCapabilityUnsupportedError):
+        return _UNSUPPORTED_OUTCOME
+    return _DEGRADED_OUTCOME
+
+
 def _log_extra(request: VaultUploadRequest, fields: Mapping[str, object]) -> dict[str, object]:
     """Compose the structured payload every upload log record carries.
 
@@ -265,12 +294,16 @@ def _log_stored(request: VaultUploadRequest, result: VaultUploadResult) -> None:
 
 async def _try_upload(
     client: CreekVaultClient, request: VaultUploadRequest
-) -> VaultUploadResult | None:
-    """Attempt an upload, returning the result on durable storage or ``None``.
+) -> VaultUploadResult | VaultUploadOutcome:
+    """Attempt an upload, answering with the result or the outcome the failure earns.
 
     A :class:`CreekVaultError` (the seam's normalized transport failure) and a
-    ``stored=False`` result both collapse to ``None`` -- the caller treats either
-    as a degraded upload rather than propagating the error or fabricating a ref.
+    ``stored=False`` result both end the attempt here, as a finished outcome the
+    caller returns rather than a raise or a fabricated ref. The failing outcome
+    is returned instead of a bare ``None`` because not every failure means the
+    same thing to the user -- see :func:`_failed_outcome_for` -- and only this
+    frame still holds the error that decides which.
+
     Each path logs its own reason on the way out, because this is where the
     document is dropped and nothing downstream will hear of it again.
     """
@@ -278,10 +311,10 @@ async def _try_upload(
         result = await client.upload(request)
     except CreekVaultError as error:
         _log_degraded(request, _degrade_fields(error))
-        return None
+        return _failed_outcome_for(error)
     if not result.stored:
         _log_degraded(request, {"reason": UploadDegradeReason.NOT_STORED.value})
-        return None
+        return _DEGRADED_OUTCOME
     _log_stored(request, result)
     return result
 
@@ -303,8 +336,11 @@ async def store_upload(
        advertised ``creek.upload`` degrades to
        :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`. The two are separated
        because they are separate problems with separate fixes.
-    3. The upload runs; a transport failure or a ``stored=False`` result degrades
-       to :attr:`VaultUploadStatus.DEGRADED`.
+    3. The upload runs. A transport failure or a ``stored=False`` result degrades
+       to :attr:`VaultUploadStatus.DEGRADED`; a capability the vault advertised
+       and then refused lands on
+       :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` alongside step 2, since
+       an unavailable capability is unavailable however late that is discovered.
     4. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
        with the fragment ref and whatever tags the vault's own pipeline assigned.
 
@@ -333,9 +369,9 @@ async def store_upload(
         tier_ceiling=tier_ceiling,
         created_at=document.created_at,
     )
-    result = await _try_upload(client, request)
-    if result is None:
-        return _DEGRADED_OUTCOME
+    attempt = await _try_upload(client, request)
+    if isinstance(attempt, VaultUploadOutcome):
+        return attempt
     return VaultUploadOutcome(
-        status=VaultUploadStatus.ACCEPTED, vault_ref=result.vault_ref, tags=result.tags
+        status=VaultUploadStatus.ACCEPTED, vault_ref=attempt.vault_ref, tags=attempt.tags
     )
