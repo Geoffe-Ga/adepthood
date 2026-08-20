@@ -2,7 +2,13 @@ import 'react-native-reanimated';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import { initErrorMonitoring } from './observability/sentry';
 import { applyWebViewportLock } from './utils/webViewport';
+
+// Before the first component mounts, so a crash during the very first render
+// still has somewhere to go. Emits exactly one line and never throws: an
+// unconfigured build runs normally and reports crashes to the console only.
+initErrorMonitoring();
 
 applyWebViewportLock();
 

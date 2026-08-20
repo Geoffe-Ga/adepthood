@@ -110,9 +110,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     traceback for support to look up by request ID.
 
     BUG-OBS-002: every entry is also forwarded to :func:`sentry.capture_exception`
-    so the operator inbox gets the same alert signal.  ``capture_exception``
-    is the no-op stub today; once the DSN lands the call site already
-    works without modification.
+    so the operator inbox gets the same alert signal.  That call ships the
+    exception and the allow-listed request metadata below -- never the request
+    body -- and is a no-op on a deployment with no DSN configured, which is a
+    supported way to run: the ERROR record above is emitted either way.
 
     The trace ID is echoed in the response header (in addition to the body)
     so clients that opaquely surface failure to a user can ask them to copy

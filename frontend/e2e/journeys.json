@@ -130,5 +130,17 @@
     },
     "status": "uncovered",
     "issue": 2252
+  },
+  {
+    "id": "errors.boundary-recovers-and-reports",
+    "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2310
   }
 ]
