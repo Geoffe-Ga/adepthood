@@ -145,6 +145,22 @@ describe('with a DSN configured', () => {
     expect(consoleError).toHaveBeenCalled();
   });
 
+  it('does not throw when fetch fails synchronously rather than rejecting', () => {
+    // A rejected promise is caught by the .catch below; a *synchronous* throw
+    // is not, and would propagate out of reportException into the error
+    // boundary that called it — turning a handled crash into an unhandled one
+    // inside the very handler meant to contain it. React Native's fetch is a
+    // polyfill and a throwing one is a real shape.
+    fetchMock.mockImplementationOnce(() => {
+      throw new TypeError('Network request failed');
+    });
+
+    expect(() => {
+      reportException(new Error('render failed'));
+    }).not.toThrow();
+    expect(consoleError).toHaveBeenCalled();
+  });
+
   it('does not throw when the vendor is unreachable', async () => {
     fetchMock.mockRejectedValueOnce(new Error('Network request failed'));
 

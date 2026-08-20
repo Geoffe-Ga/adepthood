@@ -489,6 +489,55 @@ def test_init_with_dsn_enables_monitoring_with_one_line(
     assert TEST_DSN not in message
 
 
+# Each entry is a client option that, on its own, keeps a private channel shut.
+# Named individually because they overlap: with both the option set below and
+# ``scrub_event`` in place, removing either one alone still leaves the other
+# holding the door, so an end-to-end "the sentinel is absent" assertion cannot
+# tell which lock is doing the work — and cannot notice when one is dropped.
+PRIVACY_CRITICAL_OPTIONS = [
+    # Frame locals are where the entry body sits at the moment of the raise.
+    ("include_local_variables", False),
+    # The request body is the entry itself.
+    ("max_request_body_size", "never"),
+    # PII means the caller's address, cookies, and user identifiers.
+    ("send_default_pii", False),
+    # A rolling buffer of whatever ran before the failure.
+    ("max_breadcrumbs", 0),
+    # A stack on a message the SDK invented, from a frame nobody reviewed.
+    ("attach_stacktrace", False),
+    # Traces carry route parameters, which for this app are entry identifiers.
+    ("traces_sample_rate", 0.0),
+    # Automatic instrumentation observes requests and log records wholesale.
+    ("default_integrations", False),
+    ("auto_enabling_integrations", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("option", "expected"), PRIVACY_CRITICAL_OPTIONS, ids=[o for o, _ in PRIVACY_CRITICAL_OPTIONS]
+)
+def test_init_pins_every_privacy_critical_option(
+    monkeypatch: pytest.MonkeyPatch, option: str, expected: object
+) -> None:
+    """Pin the options one by one, so dropping any single one fails a test.
+
+    The end-to-end assertions are deliberately redundant with these — two locks
+    on each door is the design. The cost of that redundancy is that no
+    end-to-end test can fail when exactly one lock is removed, which is the
+    edit most likely to happen ("the scrubber handles it anyway"). This test
+    buys the redundancy back: each option is now load-bearing on its own.
+    """
+    monkeypatch.setenv(error_monitoring.SENTRY_DSN_ENV_VAR, TEST_DSN)
+    try:
+        assert error_monitoring.init_error_monitoring(transport=CapturingTransport()) is True
+        # The SDK types its options as a closed TypedDict, which cannot be
+        # indexed by a computed key; the parametrisation needs exactly that.
+        options = cast("dict[str, object]", sentry_sdk.get_client().options)
+        assert options[option] == expected
+    finally:
+        sentry_sdk.init(dsn=None)
+
+
 @pytest.mark.asyncio
 async def test_boot_initialises_and_drains_error_monitoring(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

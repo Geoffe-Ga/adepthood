@@ -100,18 +100,27 @@ function deliver(target: SentryTarget, body: string): void {
   if (typeof globalThis.fetch !== 'function') {
     return;
   }
-  globalThis
-    .fetch(target.envelopeUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': ENVELOPE_CONTENT_TYPE, 'X-Sentry-Auth': target.authHeader },
-      body,
-    })
-    .catch(() => {
-      // A monitoring outage must cost the user nothing. The crash itself is
-      // already on the console; the failed delivery carries no detail anybody
-      // holding the phone could act on, so it gets one static line and no retry.
-      console.warn('error_monitoring_delivery_failed');
-    });
+  // A monitoring outage must cost the user nothing. The crash itself is already
+  // on the console; the failed delivery carries no detail anybody holding the
+  // phone could act on, so it gets one static line and no retry.
+  //
+  // Both failure shapes are caught. A rejected promise is the usual one, but a
+  // polyfilled ``fetch`` can also throw synchronously, and that throw would
+  // otherwise leave ``reportException`` — which runs inside an error boundary's
+  // handler — and fail the boundary meant to contain the crash.
+  try {
+    globalThis
+      .fetch(target.envelopeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': ENVELOPE_CONTENT_TYPE, 'X-Sentry-Auth': target.authHeader },
+        body,
+      })
+      .catch(() => {
+        console.warn('error_monitoring_delivery_failed');
+      });
+  } catch {
+    console.warn('error_monitoring_delivery_failed');
+  }
 }
 
 /**
