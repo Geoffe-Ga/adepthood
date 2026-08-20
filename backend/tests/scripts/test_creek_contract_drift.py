@@ -75,17 +75,17 @@ README_NAME = "README.md"
 VENDOR_NAME = "vendor.json"
 
 BUNDLE_NAME = "adepthood-v1"
-CONTRACT_VERSION = "0.2.0"
+CONTRACT_VERSION = "0.8.0"
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
 # The upstream commit the vendored bundle was fetched at. It is the whole point
 # of the sidecar: a branch name would let the "pinned" copy move underneath us.
-PINNED_COMMIT = "879d9611cb4c3b5599578f39772b906c8c170e02"  # pragma: allowlist secret
+PINNED_COMMIT = "349a56d6fd36ed18971c53f6d2c3d527b047074c"  # pragma: allowlist secret
 
-# 45 generated files are listed inside Creek's manifest; the manifest and the
-# hand-written README are the two it cannot cover, and our sidecar covers all 47.
-CREEK_MANIFEST_ENTRIES = 45
-VENDORED_FILES = 47
+# 54 generated files are listed inside Creek's manifest; the manifest and the
+# hand-written README are the two it cannot cover, and our sidecar covers all 56.
+CREEK_MANIFEST_ENTRIES = 54
+VENDORED_FILES = 56
 
 # Two example paths whose drift must name two different capabilities in the
 # rendered report, so "a capability is named" cannot pass by naming a constant.
@@ -132,7 +132,7 @@ def _fetcher(manifest: bytes, readme: bytes) -> Fetcher:
     """Build an offline fetcher answering only the two URLs a comparison needs.
 
     ``compare_upstream`` needs the upstream manifest and the upstream README;
-    the 45 digests inside the fetched manifest cover everything else. Matching on
+    the digests inside the fetched manifest cover everything else. Matching on
     the trailing filename keeps this independent of however the module spells the
     raw-content URL, and an unscripted URL raises rather than answering, so a
     comparison that fetched something unexpected cannot look clean.
@@ -308,7 +308,7 @@ def test_input_bounds_admit_the_real_bundle_and_still_bound_a_hostile_one() -> N
 
 
 def test_verify_local_compares_every_vendored_file_and_finds_no_drift() -> None:
-    """The committed bundle matches its own recorded digests, and 47 files prove it.
+    """The committed bundle matches its own recorded digests, and the file count proves it.
 
     The count is the positive control: without it, a run that found no files at
     all would render exactly like a run that verified the whole bundle.
@@ -379,7 +379,7 @@ def test_verify_local_reports_a_recorded_file_that_is_gone(tmp_path: Path) -> No
 
 
 def test_compare_upstream_is_clean_when_upstream_serves_the_vendored_bytes() -> None:
-    """Two fetches plus the 45 digests inside them cover all 47 vendored files."""
+    """Two fetches plus the digests inside them cover every vendored file."""
     report = compare_upstream(BUNDLE_ROOT, fetch=_vendored_fetcher())
 
     assert report.compared == VENDORED_FILES
@@ -434,8 +434,8 @@ def test_compare_upstream_detects_a_rewritten_upstream_readme() -> None:
 def test_compare_upstream_detects_a_reserialised_upstream_manifest() -> None:
     """The manifest's own bytes are compared, not just the digests it carries.
 
-    Upstream is reserialised with different indentation, so all 45 listed digests
-    still agree and only the manifest itself moved. Nothing else in the bundle
+    Upstream is reserialised with different indentation, so every listed digest
+    still agrees and only the manifest itself moved. Nothing else in the bundle
     can catch that, because nothing else records the manifest's digest.
     """
     reindented = json.dumps(json.loads(_vendored_bytes(MANIFEST_NAME)), indent=4, sort_keys=True)
@@ -483,7 +483,7 @@ def test_compare_upstream_reports_a_file_creek_no_longer_publishes() -> None:
 def test_a_file_that_could_not_be_fetched_is_unverified_rather_than_deleted() -> None:
     """An unreachable file is unproven, and calling it deleted would be a false alarm.
 
-    Only the README fails here, so the manifest still covers 45 of the 47. The
+    Only the README fails here, so the manifest still covers every other file. The
     missing one must be reported as unverifiable and subtracted from the
     compared count, never reported as drift -- an upstream outage and an
     upstream deletion are different events with different remedies.
@@ -566,7 +566,7 @@ def test_render_report_says_nothing_was_verified_rather_than_borrowing_clean_wor
 
 
 def test_parse_manifest_reads_creeks_published_manifest() -> None:
-    """The vendored manifest parses into its 45 entries and its two version strings."""
+    """The vendored manifest parses into its entries and its two version strings."""
     manifest = parse_manifest(_vendored_bytes(MANIFEST_NAME))
 
     assert manifest.contract_version == CONTRACT_VERSION

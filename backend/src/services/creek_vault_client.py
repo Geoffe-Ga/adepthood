@@ -540,18 +540,26 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
 # about the wire (see that enum's docstring). The translation therefore lives
 # here, at the parse boundary, and nowhere else.
 #
-# Only four of the seven members have a published name. UPLOAD, SAVE and
-# CLASSIFY are adepthood-side concepts Creek does not advertise at contract
-# 0.2.0, so :meth:`supports` is permanently ``False`` for them and every
-# capability-gated path degrades. That is the contract reporting a capability
-# that does not exist yet, not a hole in this table -- do not invent wire names
-# for them.
+# Five of the seven members have a published name. SAVE and CLASSIFY are
+# adepthood-side concepts Creek does not advertise, so :meth:`supports` is
+# ``False`` for them and every capability-gated path degrades. That is the
+# contract reporting a capability that does not exist, not a hole in this table
+# -- do not invent wire names for them.
+#
+# ``upload`` is the fifth, published at contract 0.8.0, and it is the reason
+# this list must be read as a fact about a *negotiated* handshake rather than
+# about Creek in general. Every minor through 0.7 answered the same four names
+# to every caller; 0.8.0 keys the advertisement on the caller's declared minor,
+# so a vault's answer here now depends on what adepthood pinned. Recognising the
+# name is all this table does: whether the client can *call* the route is a
+# separate question, answered at that capability's own method.
 _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
         "journal-upsert": CreekCapability.JOURNAL,
         "reflections": CreekCapability.REFLECT,
         "wheel": CreekCapability.WHEEL,
+        "upload": CreekCapability.UPLOAD,
     }
 )
 
@@ -1797,23 +1805,28 @@ class HttpCreekVaultClient:
         return result
 
     async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
-        """Refuse a document upload: Creek publishes no ``/v1`` surface for one.
+        """Refuse a document upload: the route is published, but this adapter has none.
 
-        This looks like ``classify``'s refusal because it is the same situation.
-        The ratified ``/v1`` capability vocabulary is a closed enum of exactly
-        four names -- ``capabilities``, ``journal-upsert``, ``reflections``,
-        ``wheel`` -- under ``additionalProperties: false``, identical across every
-        supported contract minor. There is no upload name, no upload schema, and
-        no upload route, so no conformant vault can ever advertise or serve one.
+        The refusal is older than the route and used to rest on a stronger claim
+        than it can now: the ratified ``/v1`` capability vocabulary was a closed
+        enum of four names -- ``capabilities``, ``journal-upsert``,
+        ``reflections``, ``wheel`` -- answered identically to every caller on
+        every supported contract minor, so no conformant vault could advertise or
+        serve an upload at all.
 
-        ``creek.upload`` is real, but it is an **MCP tool** at contract 0.3.0
-        (Geoffe-Ga/Creek-Vault#1023), and adepthood's MCP client was retired by
-        ADR 0004. Reaching it would be a transport decision, not a parsing one.
+        Contract 0.8.0 published ``upload`` as a fifth name and
+        ``POST /v1/uploads`` as its route, and made the advertisement depend on
+        the caller: a client declaring a minor below ``0.8`` is not shown the
+        capability and is refused the route with ``incompatible_version``.
+        :data:`_CAPABILITY_BY_WIRE_NAME` therefore recognises the name, and
+        :meth:`supports` answers ``True`` for a vault that offers it.
 
-        This previously ``PUT`` a body to an invented ``/v1/uploads/{id}`` URL.
-        Creek has never served that route. Guessing a wire shape is exactly what
-        this seam exists to refuse, so the guess is gone and the refusal is
-        counted under its own capability like every other.
+        What has not happened is the request being built and sent. Until it is,
+        refusing is still right -- an adapter that recognises a route it cannot
+        speak must say so rather than improvise the body, which is the discipline
+        that removed the invented ``PUT`` to ``/v1/uploads/{id}`` this method
+        used to perform. The refusal is counted under its own capability like
+        every other, so the gap is visible in telemetry rather than inferred.
         """
         with _CountingOutcome(CreekCapability.UPLOAD):
             return await self._upload()

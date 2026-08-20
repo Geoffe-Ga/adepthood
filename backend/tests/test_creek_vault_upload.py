@@ -54,6 +54,7 @@ from domain.creek_vault import (
 )
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
 from services.creek_vault_upload import (
+    UploadDegradeReason,
     UploadedDocument,
     VaultUploadOutcome,
     store_upload,
@@ -74,6 +75,20 @@ _VAULT_API_KEY = "creek-vault-upload-path-key"  # pragma: allowlist secret
 # The path prefix the adapter probes for capabilities, mirrored here so the
 # routed handler below can tell a handshake apart from the upload under test.
 _CAPABILITIES_SEGMENT = "/v1/capabilities"
+
+# Creek's own published capability names, written out rather than read back
+# through the adapter's translation table: a test that sourced its wire names
+# from the mapping under test would agree with that mapping no matter what it
+# said. ``upload`` joined the list at contract 0.8.0 and is the one name whose
+# advertisement depends on the caller's declared minor.
+_UPLOAD_WIRE_NAME = "upload"
+_ADVERTISED_WIRE_NAMES = (
+    "capabilities",
+    "journal-upsert",
+    "reflections",
+    "wheel",
+    _UPLOAD_WIRE_NAME,
+)
 
 # Distinctive enough to spot anywhere it must not appear: a repr, a log record,
 # or an exception message. The bytes a user uploads are the most private thing
@@ -351,13 +366,23 @@ class TestStoreUploadDegradation:
         assert outcome.status is VaultUploadStatus.DEGRADED
 
     @pytest.mark.asyncio
-    async def test_capability_error_raised_mid_call_degrades(self) -> None:
-        """A vault withdrawing the capability between handshake and call still degrades."""
+    async def test_capability_error_raised_mid_call_reports_capability_unsupported(self) -> None:
+        """A capability refused after the handshake advertised it is still a refused capability.
+
+        The race this pins is real -- a vault can withdraw ``creek.upload``
+        between the probe and the call -- but it is no longer the only way here,
+        and the outcome it used to assert was wrong for both. ``DEGRADED`` tells
+        the user to try again, and a retry re-runs the same handshake against the
+        same vault: it succeeds only if the vault changed its mind in the
+        meantime, which is not something the person holding the document can do.
+        The pre-call gate's answer is the honest one on either route.
+        """
         client = RecordingUploadClient(
             upload_error=CreekCapabilityUnsupportedError(_SENTINEL_ERROR_TEXT)
         )
         outcome = await _store(client)
-        assert outcome.status is VaultUploadStatus.DEGRADED
+        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+        assert outcome.vault_ref is None
 
     @pytest.mark.asyncio
     async def test_not_stored_result_degrades_rather_than_inventing_a_ref(self) -> None:
@@ -458,6 +483,26 @@ class TestStoreUploadLogging:
         assert getattr(record, "reason", None)
 
     @pytest.mark.asyncio
+    async def test_a_refused_capability_is_still_recorded_for_an_operator(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Answering the user calmly must not make the gap invisible to whoever can close it.
+
+        This is the one failure whose status now reads as an ordinary,
+        undramatic state of affairs, so the record is the only place a
+        deployment sees how often documents are hitting it.
+        """
+        client = RecordingUploadClient(
+            upload_error=CreekCapabilityUnsupportedError(_SENTINEL_ERROR_TEXT)
+        )
+        with caplog.at_level(logging.WARNING):
+            await _store(client)
+
+        record = next(r for r in caplog.records if r.levelno == logging.WARNING)
+        assert getattr(record, "reason", None) == UploadDegradeReason.UNSUPPORTED_CAPABILITY.value
+        assert _SENTINEL_ERROR_TEXT not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_a_coded_contract_error_logs_its_code(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -547,52 +592,139 @@ def _stored_payload(
 
 
 class TestHttpClientUploadRefuses:
-    """There is no ``/v1`` upload surface, so the adapter refuses rather than guessing.
+    """The route exists now; this adapter has not been built onto it, so it still refuses.
 
     This class used to drive a ``PUT`` against ``/v1/uploads/{external_id}`` — a
-    route Creek has never served. The ratified ``/v1`` capability vocabulary is a
-    closed enum of exactly four names (``capabilities``, ``journal-upsert``,
-    ``reflections``, ``wheel``) under ``additionalProperties: false``, identical
-    across every supported contract minor. No upload name, no upload schema, no
-    upload route.
+    route Creek has never served — and the refusal replaced that guessed wire
+    shape. Refusing rather than guessing still holds. The *reason* it used to
+    give does not: the published capability vocabulary was a closed enum of four
+    names, the same four answered to every caller on every supported contract
+    minor, so the claim was that no conformant vault could ever advertise an
+    upload at all.
 
-    ``creek.upload`` does exist, as an **MCP tool** at contract 0.3.0
-    (Geoffe-Ga/Creek-Vault#1023, closed) — on the transport ADR 0004 retired.
-    Reaching it is a transport decision, not a parsing one, so it is not marked
-    xfail here: an xfail would name a *closed* upstream issue and could never
-    flip green.
+    Contract 0.8.0 falsifies that. ``upload`` is a published fifth name,
+    ``POST /v1/uploads`` is its route, and — this being the first bump whose
+    capability list is not minor-independent — the advertisement is keyed on the
+    caller's declared minor: a client below ``0.8`` is not shown it and is
+    refused the route with ``incompatible_version``.
+
+    So the refusal survives on a narrower and truer claim: adepthood recognises
+    the wire name but has not implemented the call. Recognising and calling are
+    separate changes; only the first is made here, and the tests below pin the
+    seam between them so the two cannot silently merge into one.
     """
 
     @pytest.mark.asyncio
-    async def test_upload_refuses_and_names_the_capability(
+    async def test_upload_refuses_even_when_the_vault_advertises_the_route(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Refusing beats inventing a wire shape, which is this seam's whole discipline."""
+        """The refusal is adepthood's own, not a capability gate the vault happened to trip."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
-            http_client=vault_http_clients(_routed_handler(_stored_payload())),
+            http_client=vault_http_clients(
+                _routed_handler(_stored_payload(), capabilities=list(_ADVERTISED_WIRE_NAMES))
+            ),
         )
         await client.handshake()
 
+        assert client.supports(CreekCapability.UPLOAD) is True
         with pytest.raises(CreekCapabilityUnsupportedError) as caught:
             await client.upload(_upload_request())
 
         assert CreekCapability.UPLOAD.value in str(caught.value)
 
     @pytest.mark.asyncio
-    async def test_upload_is_never_advertised_by_a_conformant_vault(
+    async def test_a_vault_advertising_the_upload_wire_name_is_believed(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Even a vault naming it gets it dropped: it is outside the published enum."""
+        """The published name maps onto the capability rather than being dropped as unknown."""
         client = HttpCreekVaultClient(
             _VAULT_URL,
             _VAULT_API_KEY,
-            http_client=vault_http_clients(_routed_handler(_stored_payload())),
+            http_client=vault_http_clients(
+                _routed_handler(_stored_payload(), capabilities=[_UPLOAD_WIRE_NAME])
+            ),
+        )
+        await client.handshake()
+
+        assert client.supports(CreekCapability.UPLOAD) is True
+
+    @pytest.mark.asyncio
+    async def test_a_vault_below_the_upload_threshold_is_not_credited_with_it(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The other direction: silence about ``upload`` must never read as support.
+
+        This is the shape a vault serving a pre-0.8 caller answers with, and the
+        one adepthood saw from every vault before the pin moved.
+        """
+        client = HttpCreekVaultClient(
+            _VAULT_URL,
+            _VAULT_API_KEY,
+            http_client=vault_http_clients(
+                _routed_handler(
+                    _stored_payload(),
+                    capabilities=[
+                        name for name in _ADVERTISED_WIRE_NAMES if name != _UPLOAD_WIRE_NAME
+                    ],
+                )
+            ),
         )
         await client.handshake()
 
         assert client.supports(CreekCapability.UPLOAD) is False
+
+
+class TestStoreUploadAgainstAnAdvertisingVault:
+    """The whole path, end to end, for the population a 0.8 vault actually puts on it.
+
+    Every other test of this seam pins one layer: the adapter's ``supports``
+    answer, or the service's reaction to a *scripted* client. Neither notices
+    that recognising ``upload`` moved a real deployment from one branch of
+    :func:`store_upload` to another -- the pre-call gate no longer fires, so the
+    refusal now arrives from inside the call instead. This class drives the real
+    adapter through the real service so the status the router will hand a person
+    is asserted where the two meet.
+    """
+
+    def _advertising_client(self, clients: _VaultClientFactory) -> HttpCreekVaultClient:
+        """Build an adapter pointed at a vault advertising the full 0.8 name list."""
+        return HttpCreekVaultClient(
+            _VAULT_URL,
+            _VAULT_API_KEY,
+            http_client=clients(
+                _routed_handler(_stored_payload(), capabilities=list(_ADVERTISED_WIRE_NAMES))
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_advertising_vault_reports_the_capability_as_unsupported(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The gap is permanent until adepthood builds the call, so it must not read as transient.
+
+        ``DEGRADED`` means "it broke, try again", and the router says exactly
+        that. A retry cannot succeed here for any vault at contract 0.8 or
+        above, which is every vault this recognition was added for -- so the
+        honest answer is the one that does not promise a retry.
+        """
+        outcome = await _store(self._advertising_client(vault_http_clients))
+        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+
+    @pytest.mark.asyncio
+    async def test_the_pre_call_gate_is_genuinely_passed_on_the_way_there(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """Guards the test above against passing for the old reason.
+
+        If ``supports`` ever answered ``False`` again the status would still be
+        ``CAPABILITY_UNSUPPORTED``, from the pre-call gate -- and this class
+        would silently stop covering the branch it exists for.
+        """
+        client = self._advertising_client(vault_http_clients)
+        await _store(client)
+        assert client.supports(CreekCapability.UPLOAD) is True
 
 
 class TestLocalFallbackUpload:

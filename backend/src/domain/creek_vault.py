@@ -46,7 +46,7 @@ from typing import Protocol
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.2.0"
+CONTRACT_VERSION = "0.8.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -512,10 +512,17 @@ class VaultUploadStatus(enum.StrEnum):
 
     Exactly one is always returned, and the three non-accepted values stay apart
     because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
-    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "your vault cannot
-    take files yet", and ``DEGRADED`` is "it broke, try again". Values are the
-    wire strings the API answers with, so they are contract and must not be
-    reworded casually.
+    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "uploads do not
+    work between these two versions yet", and ``DEGRADED`` is "it broke, try
+    again". Values are the wire strings the API answers with, so they are
+    contract and must not be reworded casually.
+
+    ``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is
+    behind. Either side can be: a vault too old to take files, or a vault
+    offering an upload route this client recognises but cannot yet speak. What
+    the user needs from the status is the same in both -- that no retry helps --
+    and splitting it would add a fourth wire value every consumer of this enum
+    would have to learn before it could render anything at all.
     """
 
     ACCEPTED = "accepted"
