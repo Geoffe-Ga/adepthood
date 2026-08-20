@@ -30,6 +30,7 @@ from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
+    CreekCapabilityUnsupportedError,
     CreekVaultClient,
     CreekVaultUnavailableError,
     HandshakeResult,
@@ -318,6 +319,32 @@ class TestUploadDegradation:
 
     @pytest.mark.parametrize(
         "vault",
+        [{"upload_error": CreekCapabilityUnsupportedError("refused")}],
+        indirect=True,
+    )
+    @pytest.mark.asyncio
+    async def test_a_refused_capability_reads_as_unsupported_not_as_a_retryable_break(
+        self, async_client: AsyncClient, vault: ScriptedUploadClient
+    ) -> None:
+        """The end of the path a vault takes once it advertises an upload this client cannot make.
+
+        A vault that offers the capability sails through the pre-call gate, so
+        the refusal arrives from the call instead -- and mapped as a plain
+        transport fault it would answer "please try again", for a condition no
+        retry reaches. This asserts the answer the person actually receives,
+        message included, rather than the status alone.
+        """
+        headers = await _signup(async_client, "uploader-refused")
+        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        assert response.status_code == HTTPStatus.ACCEPTED
+        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert (
+            response.json()["message"] == _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
+        )
+        assert len(vault.upload_calls) == 1
+
+    @pytest.mark.parametrize(
+        "vault",
         [
             {"available": False},
             {"capabilities": frozenset({CreekCapability.JOURNAL})},
@@ -535,6 +562,27 @@ class TestUploadMessagesAreExhaustive:
         message = _UPLOAD_MESSAGES[status]
         assert message.strip()
         assert "contact support" not in message.lower()
+
+    def test_the_unsupported_message_does_not_pin_the_gap_on_the_vault_alone(self) -> None:
+        """This status is reached from either side's version, so the sentence must own both.
+
+        It is answered both when the vault never offered uploads and when the
+        vault offers a route Adepthood cannot yet speak. "Update your vault"
+        alone is an instruction that cannot work in the second case, and the
+        person following it has no way to tell which case they are in.
+        """
+        message = _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
+        assert "Adepthood" in message
+
+    def test_the_unsupported_message_promises_no_retry(self) -> None:
+        """Nothing about this outcome changes between one attempt and the next.
+
+        The remedy is a version moving on one side or the other, which is not
+        something an upload can bring about -- so an invitation to try again is
+        a dead end dressed as an action.
+        """
+        message = _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED].lower()
+        assert "try again" not in message
 
 
 def _as_vault_client(client: CreekVaultClient) -> CreekVaultClient:

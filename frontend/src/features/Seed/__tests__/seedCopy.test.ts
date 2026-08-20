@@ -33,6 +33,14 @@ describe('what each outcome says', () => {
     expect(line.toLowerCase()).toContain('yet');
   });
 
+  test('the unsupported line does not pin the gap on the vault alone', () => {
+    // One status covers two versions: a vault too old to take files, and a
+    // vault offering an upload route this app cannot speak yet. Nothing here
+    // can tell which, so "update your vault" would be advice that sometimes
+    // cannot work — and the person following it has no way to know when.
+    expect(SEED_STATUS_LINES.capability_unsupported).toContain('Adepthood');
+  });
+
   test('the size refusal names the limit', () => {
     expect(SEED_STATUS_LINES.too_large).toContain(MAX_SEED_DOCUMENT_LABEL);
   });
