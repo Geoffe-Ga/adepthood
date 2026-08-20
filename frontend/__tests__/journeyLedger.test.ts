@@ -43,6 +43,13 @@ const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
 const LEDGER_JOB = 'journey-ledger';
 const LEDGER_SCRIPT = 'check:journeys';
 
+/**
+ * Journeys the lane covers today. A floor, not an equality: it ratchets up as
+ * each gap in the ledger is closed, so coverage that quietly went backwards
+ * fails here rather than passing as "still at least three".
+ */
+const SHIPPED_JOURNEYS = 4;
+
 const SPEC = 'frontend/e2e/habits.e2e.test.ts';
 const OTHER_SPEC = 'frontend/e2e/course.e2e.test.ts';
 const SCREEN = 'frontend/src/features/Habits/HabitsScreen.tsx';
@@ -406,13 +413,13 @@ describe('the committed ledger is true of this repository', () => {
   it('registers every journey spec the e2e lane ships', () => {
     const environment = realLedgerEnvironment(REPO_ROOT);
 
-    expect(environment.specFiles.length).toBeGreaterThanOrEqual(3);
+    expect(environment.specFiles.length).toBeGreaterThanOrEqual(SHIPPED_JOURNEYS);
   });
 
-  it('claims coverage for at least the three shipped journeys', () => {
+  it('claims coverage for at least the journeys already shipped', () => {
     const audit = auditJourneyLedger(readLedger(REPO_ROOT), realLedgerEnvironment(REPO_ROOT));
 
-    expect(audit.covered).toBeGreaterThanOrEqual(3);
+    expect(audit.covered).toBeGreaterThanOrEqual(SHIPPED_JOURNEYS);
   });
 
   it('reads a non-empty set of client symbols, routes and tables from the repo', () => {
