@@ -2,6 +2,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ChevronRight,
+  FileText,
   FolderUp,
   Globe,
   KeyRound,
@@ -14,6 +15,8 @@ import {
 import React, { useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 
+import { LEGAL_DOCUMENTS } from './legalLinks';
+
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -21,6 +24,7 @@ import { useAuth } from '@/context/AuthContext';
 import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 /**
  * Warm Settings landing hub (#835). Groups the scattered settings entries —
@@ -180,6 +184,26 @@ const SessionSection = ({ onLogout, onDeleteAccount }: SessionSectionProps): Rea
   </EditorialSection>
 );
 
+/**
+ * Legal group: the privacy policy and the terms, opened in the platform
+ * browser. They are read outside the app on purpose — they are hosted
+ * independently of this project's API, so they stay readable when it is not.
+ */
+const LegalSection = (): React.JSX.Element => (
+  <EditorialSection title="Legal" testID="settings-group-legal">
+    {LEGAL_DOCUMENTS.map((document) => (
+      <SettingsRow
+        key={document.id}
+        icon={FileText}
+        label={document.label}
+        description={document.description}
+        onPress={() => void openExternalUrl(document.url)}
+        testID={document.testID}
+      />
+    ))}
+  </EditorialSection>
+);
+
 /** Always-available Support & care destination (issue #892). */
 const SupportSection = ({ onSupportCare }: { onSupportCare: () => void }): React.JSX.Element => (
   <EditorialSection title="Support & care" testID="settings-group-support">
@@ -217,6 +241,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <ChooseDepthsSection />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
+      <LegalSection />
     </ScreenScaffold>
   );
 };
