@@ -5,6 +5,7 @@ import React from 'react';
 
 const mockNavigate = jest.fn();
 const mockLogout = jest.fn(() => Promise.resolve());
+const mockOpenExternalUrl = jest.fn((_url: string) => Promise.resolve(true));
 
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({ navigate: mockNavigate }),
@@ -14,6 +15,11 @@ jest.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ logout: mockLogout, token: 'hub-test-token' }),
 }));
 
+jest.mock('@/utils/openExternalUrl', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}));
+
+import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
 beforeEach(() => {
@@ -205,6 +211,60 @@ describe('SettingsHubScreen — Choose your depths section', () => {
     expect(getByTestId('settings-group-session')).toBeTruthy();
     expect(getByTestId('settings-row-logout')).toBeTruthy();
     expect(getByTestId('settings-group-privacy')).toBeTruthy();
+    expect(getByTestId('settings-group-support')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legal section — the privacy policy and terms must be reachable in the app
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Legal section', () => {
+  test('renders a row for every legal document', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-legal')).toBeTruthy();
+    for (const document of LEGAL_DOCUMENTS) {
+      expect(within(getByTestId('settings-group-legal')).getByTestId(document.testID)).toBeTruthy();
+    }
+  });
+
+  test('covers both the privacy policy and the terms of service', () => {
+    // App Store Review 5.1.1 wants the policy reachable; the terms are what
+    // the account and purchase language rests on. One without the other is
+    // the omission this catches.
+    expect(LEGAL_DOCUMENTS.map((document) => document.id).sort()).toEqual(['privacy', 'terms']);
+  });
+
+  test('tapping a legal row hands its https URL to the platform browser', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    for (const document of LEGAL_DOCUMENTS) {
+      fireEvent.press(getByTestId(document.testID));
+
+      expect(mockOpenExternalUrl).toHaveBeenCalledWith(document.url);
+      expect(document.url.startsWith('https://')).toBe(true);
+    }
+  });
+
+  test('a legal row navigates nowhere — the documents are read outside the app', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    for (const document of LEGAL_DOCUMENTS) {
+      fireEvent.press(getByTestId(document.testID));
+    }
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  test('regression: every pre-existing group still renders alongside Legal', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-account')).toBeTruthy();
+    expect(getByTestId('settings-group-corpus')).toBeTruthy();
+    expect(getByTestId('settings-group-privacy')).toBeTruthy();
+    expect(getByTestId('settings-group-depths')).toBeTruthy();
+    expect(getByTestId('settings-group-session')).toBeTruthy();
     expect(getByTestId('settings-group-support')).toBeTruthy();
   });
 });
