@@ -123,6 +123,32 @@ FREQUENCY_COLORS: Final[MappingProxyType[Frequency, str]] = MappingProxyType(
 )
 
 
+# The colour join, read the other way: colour to code. Generated from
+# ``FREQUENCY_COLORS`` rather than written out again, so the two directions
+# cannot disagree. This is the map any surface holding a colour -- a course
+# stage's ``spiral_dynamics_color``, a ``NN-colour`` content directory, a
+# design token -- uses to reach the frequency, and it exists so that nobody
+# reaches for the name instead: the two labelings agree on six of the ten
+# positions and diverge on F5..F8, so a name join mismatches exactly those four
+# while looking correct.
+_FREQUENCY_BY_COLOR: Final[MappingProxyType[str, Frequency]] = MappingProxyType(
+    {colour: code for code, colour in FREQUENCY_COLORS.items()}
+)
+
+
+def frequency_for_color(colour: str) -> Frequency | None:
+    """Return the frequency at ``colour``, or ``None`` if it names no position.
+
+    Case- and space-insensitive on the caller's side only ("Clear Light" is
+    two words in every surface that spells it), because a colour arriving from
+    a database row or a content path has been through more hands than the
+    vocabulary has. An unrecognised colour returns ``None`` rather than being
+    coerced onto the nearest position: an eleventh colour is a change to the
+    shared ontology, not a lookup miss to paper over.
+    """
+    return _FREQUENCY_BY_COLOR.get(" ".join(colour.split()).title())
+
+
 #: Every valid code, in canonical order. The whitelist any wire-facing parser
 #: should check against, so an eleventh code from either side is ignored rather
 #: than absorbed.

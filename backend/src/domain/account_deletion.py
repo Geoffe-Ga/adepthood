@@ -134,6 +134,13 @@ POLICY: Mapping[str, TablePolicy] = {
         "Suggestions derived from the account's own journal entries.",
     ),
     "contentcompletion": _erase("user_id", "Which chapters the account marked read."),
+    "corpusfragment": _erase(
+        "user_id",
+        "The account's ontologized corpus — its own writing, classified into "
+        "the ten frequencies. Derived from the journal rather than authored "
+        "separately, so erasing the journal while leaving this would keep a "
+        "readable copy of exactly what the deletion was asked to remove.",
+    ),
     "coursestage": _retain("The shared 36-week curriculum. Identical for every account."),
     "energyplan": _erase("user_id", "The account's energy budget and its history."),
     "entitlement": _erase(
