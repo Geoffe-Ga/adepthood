@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import { accent, BORDER_RADIUS, SPACING, surface, touchTarget, uiType } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -16,6 +16,16 @@ interface ButtonProps {
   testID?: string;
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
+  /**
+   * Optional leading node, drawn before the label inside the same row. It exists
+   * for a button whose mark is mandated from outside the design system — the
+   * Sign in with Google button — and is decorative by contract: the button's own
+   * ``accessibilityLabel`` stays the accessible name, so the caller is
+   * responsible for hiding the node from assistive technology.
+   */
+  icon?: React.ReactNode;
+  /** Optional override for the label, layered over the variant's own colour. */
+  labelStyle?: StyleProp<TextStyle>;
 }
 
 /**
@@ -33,6 +43,8 @@ export function Button({
   testID,
   accessibilityLabel,
   style,
+  icon,
+  labelStyle,
 }: ButtonProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const isDisabled = disabled || busy;
@@ -47,7 +59,8 @@ export function Button({
       testID={testID}
       style={[styles.base, styles[variant], isDisabled && styles.disabled, style]}
     >
-      <Text style={[styles.label, labelStyles[variant]]}>{label}</Text>
+      {icon}
+      <Text style={[styles.label, labelStyles[variant], labelStyle]}>{label}</Text>
     </TouchableOpacity>
   );
 }
