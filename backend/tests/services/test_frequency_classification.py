@@ -20,7 +20,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from domain.frequencies import FREQUENCY_COLORS, FREQUENCY_NAMES, Frequency, frequency_table
+from domain.frequencies import (
+    FREQUENCY_COLORS,
+    FREQUENCY_NAMES,
+    Frequency,
+    frequency_for_color,
+    frequency_table,
+)
 from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
 from services.botmason import LLMProviderError
@@ -400,3 +406,35 @@ def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> 
     }
 
     assert diverging == {Frequency.F5, Frequency.F6, Frequency.F7, Frequency.F8}
+
+
+def test_every_colour_resolves_back_to_the_position_it_names() -> None:
+    """The colour join reads both ways, and the two directions agree exactly.
+
+    Anything holding a colour — a course stage's ``spiral_dynamics_color``, an
+    ``NN-colour`` content directory, a design token — reaches its frequency
+    through this. A round trip over all ten is what makes that a fact rather
+    than an intention.
+    """
+    assert {colour: frequency_for_color(colour) for colour in FREQUENCY_COLORS.values()} == {
+        FREQUENCY_COLORS[code]: code for code in Frequency
+    }
+
+
+def test_a_colour_arrives_from_more_hands_than_the_vocabulary_does() -> None:
+    """Spacing and casing are normalised, because a stored colour has been copied.
+
+    ``Clear Light`` is two words in every surface that spells it, so a row that
+    picked up an extra space or a lowercase l on the way through a seeder or a
+    fixture still names the position it means.
+    """
+    assert frequency_for_color("  clear   light ") is Frequency.F10
+
+
+def test_a_colour_that_names_no_position_resolves_to_nothing() -> None:
+    """An unrecognised colour is not coerced onto the nearest position.
+
+    An eleventh colour is a change to the shared ontology — Creek declares the
+    set with ``extra="forbid"`` — not a lookup miss to paper over.
+    """
+    assert frequency_for_color("Chartreuse") is None
