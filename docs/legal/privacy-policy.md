@@ -61,11 +61,12 @@ that record.
 
 Your entries live in the operator's PostgreSQL database.
 
-Two things are encrypted in that database: **the body of every journal
-entry**, and **the text of a passage you promote out of one**. They are
-encrypted with a key the operator configures, and a production server
-refuses to start without one, so there is no version of this service that
-quietly stores entries in the clear.
+Three things are encrypted in that database: **the body of every journal
+entry**, **the text of a passage you promote out of one**, and **each
+fragment of your writing held in the corpus your reflections are drawn
+from**. They are encrypted with a key the operator configures, and a
+production server refuses to start without one, so there is no version of
+this service that quietly stores entries in the clear.
 
 That protection is real and it is narrow, so here is its shape. The keys
 belong to the operator, not to you. Encryption at rest defends against
@@ -73,7 +74,7 @@ someone who walks off with the database — a stolen backup, a copied disk.
 It does not put your writing beyond the reach of the person holding the
 key. **Anyone who operates Adepthood can read what is in its database.**
 
-And not everything in an entry lives in those two columns. **A margin note
+And not everything in an entry lives in those three columns. **A margin note
 — including the sentence of yours it quotes back at you — is stored as
 written**, as are course prompt answers, habit and practice records, and
 the rest of what you track. Treat "encrypted" as covering the entry body,
@@ -89,7 +90,7 @@ Every entry carries a tier you choose: **Public**, **Personal**, or
 
 **Personal** is the default. A Personal entry is yours, and it is the tier
 reflections read: its text is sent to a language-model provider when you
-ask for a reflection, and up to five of your recent entries may go along
+ask for a reflection, and up to three of your recent entries may go along
 with it as context.
 
 **Intimate** is the tier that changes what the software is allowed to do:
@@ -122,7 +123,7 @@ service, no tracking SDK, and no data broker anywhere in this app.
 **The language-model provider** (Anthropic or OpenAI, depending on how the
 deployment is configured, or on your own key if you supply one). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
-an essay, up to five recent non-Intimate entry bodies as context, and the
+an essay, up to three recent non-Intimate entry bodies as context, and the
 photograph of a handwritten page when you ask for it to be transcribed. It
 never receives an Intimate entry. If you bring your own key, the call goes
 to your account with that provider; the key is used for that one call and

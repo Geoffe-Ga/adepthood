@@ -13,11 +13,16 @@ without a journal-encryption key, that no journal body reaches the error
 monitor, and that an entry marked Intimate never leaves for a vault. Each is
 re-derived here by running the code, not by reading a comment about it.
 
-*A promise that was only ever true of a narrower thing.* Exactly two columns
+*A promise that was only ever true of a narrower thing.* Exactly three columns
 carry ciphertext today, and the policy's sentence about encryption was written
-against exactly those two. Encrypting a third column -- or dropping one -- makes
-that sentence stale in a direction the reader cannot detect, so the set is
+against exactly those three. Encrypting a fourth column -- or dropping one --
+makes that sentence stale in a direction the reader cannot detect, so the set is
 pinned and a change fails here first.
+
+That is not hypothetical: this guard was written naming two columns, and the
+ontologized corpus store landed ``corpusfragment.content`` as a third while this
+document was still in review. The policy said "two things are encrypted" for
+about an hour, and the build caught it rather than a reader.
 
 *A link that rots.* The in-app rows point at the documents by repository path.
 A rename that leaves the rows behind gives a store reviewer, and a user, a 404
@@ -40,6 +45,7 @@ from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
 from main import validate_journal_encryption_config
+from routers.journal import _RESONANCE_PRIOR_LIMIT
 from sentry import scrub_event
 from services import journal_encryption
 from services.creek_vault_client import LocalFallbackCreekVaultClient
@@ -61,7 +67,9 @@ _REPO_URL_PATH = re.compile(r"https://github\.com/Geoffe-Ga/adepthood/blob/main/
 # Every column in the live schema that stores ciphertext, as ``table.column``.
 # The policy's sentence about what is encrypted was written against exactly
 # this set; see :func:`test_exactly_two_columns_are_encrypted`.
-_ENCRYPTED_COLUMNS = frozenset({"journalentry.message", "promotedquote.anchor_text"})
+_ENCRYPTED_COLUMNS = frozenset(
+    {"journalentry.message", "promotedquote.anchor_text", "corpusfragment.content"}
+)
 
 # Claims a reader would take as a confidentiality guarantee against the
 # operator. None of them is true of this deployment: the journal keys are the
@@ -168,6 +176,37 @@ def test_exactly_two_columns_are_encrypted() -> None:
 def test_the_policy_does_not_claim_margin_notes_are_encrypted() -> None:
     """The policy says margin notes are stored as-is, matching the column set."""
     assert "margin note" in _read(_PRIVACY_POLICY)
+
+
+# Spelled-out numbers, because the policy is written for a reader rather than a
+# machine and says "up to three", never "up to 3".
+_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+
+
+def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
+    """The count of prior entries sent to the LLM provider is the code's own.
+
+    This is the one number in the document describing what leaves the deployment
+    for a third party, so a reader deciding whether to write something down is
+    deciding on it. It shipped as "five" against a limit that has been three
+    since the constant was introduced -- overstating rather than understating,
+    which is the harmless direction, and still wrong in a document whose whole
+    value is that a reader who believes it is not misled.
+
+    Pinned to ``_RESONANCE_PRIOR_LIMIT`` rather than to the literal ``three`` so
+    that raising the limit fails here, where the policy is, instead of quietly
+    widening what is shared.
+    """
+    policy = _read(_PRIVACY_POLICY)
+    expected = _NUMBER_WORDS[_RESONANCE_PRIOR_LIMIT]
+
+    assert f"up to {expected}" in policy, (
+        f"the policy must say 'up to {expected}' to match "
+        f"_RESONANCE_PRIOR_LIMIT = {_RESONANCE_PRIOR_LIMIT}"
+    )
+    wrong = {word for count, word in _NUMBER_WORDS.items() if count != _RESONANCE_PRIOR_LIMIT}
+    stale = sorted(word for word in wrong if f"up to {word}" in policy)
+    assert not stale, f"the policy also claims 'up to {stale}', contradicting itself"
 
 
 def test_the_error_monitor_never_receives_a_journal_body() -> None:
