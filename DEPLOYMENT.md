@@ -376,7 +376,8 @@ So key custody is part of backup custody, and it cuts both ways:
   dies with the Railway account. There must be a second copy of every key ever
   used — current *and* rotated-out — held somewhere the platform outage cannot
   reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
-  establishing that escrow is not something a deploy can do for you.
+  establishing that escrow is not something a deploy can do for you, and it is
+  tracked in issue #2319 until it is.
 - **Keys must never be stored with the backup.** A dump and its keys in the same
   bucket, archive, or download folder is one compromise away from being
   plaintext, which defeats the encryption entirely. Different system, different
@@ -406,7 +407,8 @@ Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
 
 `[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
 service → **Backups** → set schedule to Daily → confirm a backup appears within
-24 hours. Nothing in this repository can turn it on for you.
+24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
+it until someone does.
 
 **Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
 in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
