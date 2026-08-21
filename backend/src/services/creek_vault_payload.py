@@ -1,14 +1,15 @@
-"""Reading what a Creek Vault answered: bounds, tier echoes, and the reflection document.
+"""The Creek Vault wire shapes: what adepthood sends, and what it will read back.
 
-The pure half of the vault seam's read paths, split out of
+The pure half of the vault seam, split out of
 :mod:`services.creek_vault_client` so the adapters there are left holding
-transports, sessions, and a connection pool while the *rules* for reading an
-untrusted answer live in one place with no I/O in sight. Nothing here opens a
-socket, touches a session, or holds a credential; every function takes a value a
-vault already sent and answers with something adepthood is willing to render.
+transports, sessions, and a connection pool while the *rules* for building a
+request and reading an untrusted answer live in one place with no I/O in sight.
+Nothing here opens a socket, touches a session, or holds a credential; every
+function takes a value adepthood already holds or a vault already sent, and
+answers with something one side is willing to use.
 
-Three concerns, and they belong together because each is a different half of the
-same sentence "this answer is safe to use":
+Four concerns, and they belong together because each is a different half of the
+same sentence "this exchange is safe to make":
 
 * **Bounds and projection.** :func:`_bounded_text` and the note helpers turn
   Creek's margin notes into adepthood's marginalia vocabulary, dropping whatever
@@ -25,6 +26,16 @@ same sentence "this answer is safe to use":
   the only reading of that shape there is -- which is the same guarantee arrived
   at from the other side, since a second reading is how two readings of one
   reflection come to disagree.
+* **The two write shapes.** :func:`_journal_entry_body` and
+  :func:`_upload_document_body` build the only two requests that put a user's
+  own material on the wire, and :func:`_parse_http_ingest_result` /
+  :func:`_parse_http_upload_result` read what came back of them. They sit beside
+  the read rules rather than in the adapter because they are the same kind of
+  thing: a published shape, honoured exactly, with no field invented and none
+  omitted. Both answers are read conservatively -- an action we recognise *and*
+  a storable fragment id, or not stored at all -- because reporting a write we
+  cannot verify would let an entry look replicated when it is not, and would
+  tell an uploader their document is in their vault when it is nowhere.
 
 Every message this module can raise with is built by :func:`_capability_message`
 from a closed set of our own prefixes plus a
@@ -45,10 +56,16 @@ from domain.creek_vault import (
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultPayloadError,
+    VaultIngestAction,
+    VaultIngestRequest,
+    VaultIngestResult,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
+    WireTierCeiling,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
 
@@ -423,3 +440,176 @@ def _parse_reflection_result(
     if reflection is None:
         raise CreekVaultPayloadError(_REFLECT_UNREADABLE_MESSAGE)
     return reflection
+
+
+# Longest vault-issued fragment id adepthood will keep as an entry's durable
+# reference. Opaque handles are short by nature -- a UUID is 36 characters -- so
+# this is generous by nearly an order of magnitude, and it is a *bound*, not a
+# format: the vault owns the shape of its own ids. It exists because that string
+# is persisted verbatim into a journal entry's unbounded ``vault_ref`` text
+# column on every save, which without a ceiling lets a compromised vault grow
+# the operator's database by as much as it cares to answer with.
+_MAX_FRAGMENT_ID_LENGTH = 256
+
+# The one not-stored result every unreadable 2xx journal answer collapses to.
+# Interned because it is value-identical on each of those paths, and named so no
+# branch is tempted to invent a ``vault_ref`` the vault never issued.
+_NOT_STORED_RESULT = VaultIngestResult(stored=False, vault_ref=None, action=None)
+
+# The upload path's own not-stored answer. A separate constant rather than a
+# reuse because the two results are different types: an upload additionally
+# carries the tags a vault's ingest pipeline assigned, which is empty here for
+# the same reason the ref is absent -- nothing was written to have any.
+_NOT_STORED_UPLOAD = VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
+
+
+def _is_storable_ref(fragment_id: str) -> bool:
+    """Return whether a vault-issued id is safe to persist as an entry's ``vault_ref``.
+
+    Three conditions, and the last two are why this exists. Non-empty, because a
+    blank id is no reference at all. Within :data:`_MAX_FRAGMENT_ID_LENGTH`, so a
+    compromised vault cannot answer every journal save with an arbitrarily large
+    string that lands in an unbounded text column. And printable, because this
+    is the one vault-chosen string adepthood *stores* rather than drops:
+    ``str.isprintable`` rejects NUL (which a Postgres text column refuses
+    outright, turning a hostile response into a failed write of an
+    already-saved entry), CR/LF (log injection, should the ref ever be
+    rendered), and the zero-width and bidi-override codepoints the journal's own
+    write boundary already sanitizes out of user text.
+    """
+    return (
+        bool(fragment_id)
+        and len(fragment_id) <= _MAX_FRAGMENT_ID_LENGTH
+        and fragment_id.isprintable()
+    )
+
+
+def _usable_fragment_id(payload: Mapping[str, object]) -> str | None:
+    """Return the vault's fragment id when it is storable, else ``None``.
+
+    A missing, blank, non-string, oversized, or unprintable id is unusable as a
+    durable reference (see :func:`_is_storable_ref`), and coercing one
+    (``str(7)``) would fabricate a ref the vault never issued.
+    """
+    fragment_id = payload.get("fragment_id")
+    if isinstance(fragment_id, str) and _is_storable_ref(fragment_id):
+        return fragment_id
+    return None
+
+
+def _journal_entry_body(request: VaultIngestRequest) -> Mapping[str, object]:
+    """Map an ingest request onto the ratified ``/v1`` journal-entry fields.
+
+    Exactly three fields, and no more: the entry id travels in the URL (it is
+    the resource), and the write ceiling travels in :data:`_CEILING_HEADER`,
+    which is where Creek reads it from. Sending a field the ratified shape does
+    not name would be guessing. The body's ``tier`` and that header carry the
+    same value on this path -- a journal write stores at the writer's own tier --
+    but they are not one claim said twice: the header is what the caller is
+    *admitted* at, and Creek refuses the write outright when the tier here
+    outranks it.
+    """
+    return {
+        "content": request.body,
+        "timestamp": request.created_at.isoformat(),
+        "tier": request.tier.value,
+    }
+
+
+def _upload_document_body(
+    request: VaultUploadRequest, tier: WireTierCeiling
+) -> Mapping[str, object]:
+    """Map an upload request onto the published ``UploadRequest`` fields.
+
+    Exactly the five Creek publishes, and no more: the shape declares
+    ``additionalProperties: false``, so a field adepthood invented would be a
+    refused request rather than something a vault quietly ignores. The document
+    travels as base64 inside JSON, which is the shape Creek publishes and the
+    only one either end could use: a form-encoded file transport is banned
+    outright on both sides -- Creek's CI forbids the parser, and this
+    repository's own privacy tests forbid that surface anywhere in the tree,
+    because it spools user bytes to disk.
+
+    ``tier`` is a :class:`WireTierCeiling` rather than the request's own
+    :class:`~domain.creek_vault.VaultTierCeiling`, and it is a parameter rather
+    than a translation done here: the caller resolves it through
+    :func:`~domain.creek_vault.wire_ceiling_for` before the request exists, so
+    an intimate document is refused while its bytes are still a field on a
+    frozen dataclass. Creek made this field required and two-valued at 0.7.0 /
+    0.8.0 for the matching reason -- a defaulted tier filed intimate-derived
+    bytes in the clear.
+
+    ``timestamp`` is sent because the published shape names it and the journal
+    write sends its own for symmetry. Creek stores it nowhere: a binary document
+    has no frontmatter, so the fragment's timestamp comes from the ingestor.
+    """
+    return {
+        "filename": request.filename,
+        "content_base64": request.content_base64,
+        "external_id": request.external_id,
+        "timestamp": request.created_at.isoformat(),
+        "tier": tier.value,
+    }
+
+
+def _coerce_ingest_action(raw: object) -> VaultIngestAction | None:
+    """Map the vault's reported action onto our enum, or ``None`` if we do not know it.
+
+    Mirrors :func:`_coerce_capability`: an unknown or wrong-typed value is
+    dropped rather than raising, so the string a vault chose can never reach a
+    message or a log. An unknown action is not a durable write, though -- the
+    caller treats ``None`` as "we could not read this response".
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return VaultIngestAction(raw)
+    except ValueError:
+        return None
+
+
+def _parse_http_ingest_result(payload: object) -> VaultIngestResult:
+    """Project a 2xx ingest body onto a result, conservatively.
+
+    A durable write needs both halves: an action we recognize *and* a storable
+    fragment id. Anything less -- a body that is not a JSON object, an unknown
+    action, a blank or oversized or unprintable id -- parses to not-stored,
+    which the write path records as a degraded write. That is the safe
+    direction: reporting a write we cannot verify would let the entry look
+    replicated when it is not.
+    """
+    if isinstance(payload, Mapping):
+        action = _coerce_ingest_action(payload.get("action"))
+        fragment_id = _usable_fragment_id(payload)
+        if action is not None and fragment_id is not None:
+            return VaultIngestResult(stored=True, vault_ref=fragment_id, action=action)
+    return _NOT_STORED_RESULT
+
+
+def _parse_http_upload_result(payload: object) -> VaultUploadResult:
+    """Project a 2xx upload body onto a result, conservatively.
+
+    The sibling of :func:`_parse_http_ingest_result`, and deliberately built on
+    the same two-halves rule rather than a looser one: a durable upload needs an
+    action we recognize *and* a storable fragment id, and anything less parses to
+    not-stored. The stakes are higher here than on the journal path, which is why
+    the rule is not relaxed -- a journal entry is already in Postgres when its
+    replication degrades, while an uploaded document has no local copy at all, so
+    reporting a write we cannot verify would tell someone their file is in their
+    vault when it is nowhere.
+
+    ``UploadResponse`` publishes more than this reads -- ``affected_fragment_ids``
+    for the workbook that splits into several fragments, ``source_type``,
+    ``warnings``, an echoed ``tier_ceiling``. None of them is projected because
+    :class:`~domain.creek_vault.VaultUploadResult` has nowhere to put them and
+    inventing somewhere would publish a shape no caller asked for. ``tags`` stays
+    empty for the same reason it does on the fallback path: the vault does not
+    return per-fragment tags on this surface, and empty is the truth rather than
+    a failure.
+    """
+    if isinstance(payload, Mapping):
+        action = _coerce_ingest_action(payload.get("action"))
+        fragment_id = _usable_fragment_id(payload)
+        if action is not None and fragment_id is not None:
+            return VaultUploadResult(stored=True, vault_ref=fragment_id, action=action)
+    return _NOT_STORED_UPLOAD

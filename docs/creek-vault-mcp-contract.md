@@ -309,8 +309,13 @@ capability is still used for the others it supports:
   (`store_upload`, `backend/src/services/creek_vault_upload.py`) and an
   unadvertised capability is refused locally with no request sent
   (`_upload`, `backend/src/services/creek_vault_client.py`). Adepthood
-  `PUT`s the document to its own `/v1/uploads/{external_id}` URL,
-  carrying `filename`, `content_base64`, `timestamp`, and `tier`, and
+  `POST`s the document to the published `/v1/uploads` collection,
+  carrying `filename`, `content_base64`, `external_id`, `timestamp`, and
+  `tier` as JSON with the bytes base64-encoded — never a form-encoded
+  file part, which both sides ban outright. There is no per-document
+  URL: `external_id` is a field of the published request, so the vault
+  keys idempotence off the body it reads rather than off a path
+  adepthood assembled. Adepthood
   **names no source or content type**: the vault reads the extension
   off the filename and selects its own ingestor, so adepthood never
   parses, sniffs, or classifies the document. `external_id` is a
@@ -330,13 +335,16 @@ capability is still used for the others it supports:
   problem they have. An unreachable vault reports `VAULT_UNAVAILABLE`,
   and a call that failed mid-flight (or answered without durably
   storing) reports `DEGRADED`. `CAPABILITY_UNSUPPORTED` covers every way
-  the capability turns out to be unavailable: a vault that never
+  the route turns out to be closed to this caller: a vault that never
   advertised it, a vault that withdrew it between the handshake and the
-  call, and a vault advertising an upload route adepthood recognises but
-  cannot yet speak. The three are one status because they are one fact
-  to the person waiting — uploads do not work between these two
-  versions, and no retry changes that — while `DEGRADED` means the
-  opposite, that another attempt may well succeed. All three are
+  call, a vault refusing at the route with `unsupported_capability` or
+  `incompatible_version` — routine rather than theoretical from contract
+  0.8.0, which keys the advertised list on the caller's own declared
+  minor — and a document at the `intimate` tier, which the wire cannot
+  express at all. They are one status because they are one fact to the
+  person waiting: this document is not going over, and no retry of the
+  same request changes that. `DEGRADED` means the opposite, that another
+  attempt may well succeed. All are
   answered as a `202` carrying the status and a self-serve message —
   never a 5xx, since an optional integration being absent is not a
   server fault. As with JOURNAL, **a failed upload is dropped, not
@@ -348,23 +356,24 @@ capability is still used for the others it supports:
   answer today rather than a failure — adepthood deliberately builds no
   second, local classifier.
 
-  **Intimate documents are forwarded, unlike intimate journal entries.**
-  An `intimate` upload is sent at the `INTIMATE` tier ceiling rather than
-  withheld, per the 2026-08-08 amendment to ADR 0004's Decision 6: the
-  vault is the user's own corpus on operator-held infrastructure, and
-  this path calls no cloud LLM. The vault's router still enforces the
-  ceiling it is handed, so a vault declining to store at `INTIMATE`
-  refuses the write and adepthood degrades honestly rather than
-  downgrading the tier to force a success. Note the asymmetry with
-  JOURNAL, which remains skip-only — see the amendment for why that is
-  deliberate and tracked in issue #2152.
+  **Intimate documents are withheld, exactly as intimate journal entries
+  are.** An `intimate` upload never reaches a vault: `store_upload` asks
+  `wire_ceiling_for` whether the tier has a wire spelling before it
+  probes anything, and `UploadRequest.tier` is typed to the two ceilings
+  a remote caller may declare, so the answer is no and the document
+  stops there. The 2026-08-08 amendment to ADR 0004's Decision 6 ruled
+  otherwise, on the reasoning that the vault is the user's own corpus
+  rather than a third-party service; that reasoning about the
+  destination was never overturned, but upstream removed the premise
+  underneath it at contracts 0.7.0 and 0.8.0. This section previously
+  said as much itself, and the ADR's 2026-08-21 note records the
+  supersession. The asymmetry with JOURNAL is closed rather than
+  outstanding: both write paths withhold, for one reason, at one door.
 
-  **This path does not exist on `/v1` today**, and cannot as written:
-  the HTTP client refuses UPLOAD as unratified before any request, and
-  `/v1`'s ceiling vocabulary has no `intimate` member to declare even if
-  it did. Whenever the upload surface is ratified, "forwarded at the
-  `INTIMATE` ceiling" is a decision that has to be re-made against a
-  transport that cannot express it — not one this client can carry over.
+  A vault's router still enforces the ceiling it *is* handed, so a vault
+  declining to store at the declared ceiling refuses the write and
+  adepthood degrades honestly rather than downgrading the tier to force
+  a success.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -448,16 +457,17 @@ split is deliberate:
   classification short-circuits before any vault call at all, not even
   a handshake. No intimate journal *entry* is transmitted to any vault
   today, in any form.
-- **Document uploads — vault-only.** Per the 2026-08-08 amendment to
-  Decision 6, an `intimate` document sent to `POST /journal/upload`
-  **is** forwarded to the vault, at the `INTIMATE` tier ceiling. The
-  amendment's reasoning is that the vault is the user's own corpus on
-  operator-held infrastructure rather than a third-party service, and
-  that this path calls no cloud LLM.
+- **Document uploads — skip-only too, since 2026-08-21.** An `intimate`
+  document sent to `POST /journal/upload` is withheld before the vault
+  is probed, because `/v1`'s tier vocabulary has no `intimate` member
+  and adepthood's one door onto it refuses rather than narrowing. The
+  2026-08-08 amendment to Decision 6 ruled that this surface could
+  forward such a document; contracts 0.7.0 and 0.8.0 removed the premise
+  that made it possible, and ADR 0004's 2026-08-21 note records the
+  supersession.
 
-The asymmetry between the two is known and tracked in issue #2152;
-read Decision 6's amendment before treating either half as the general
-rule.
+There is no longer an asymmetry between the two surfaces: no intimate
+material of any kind is transmitted to any vault today, in any form.
 
 ## Vault tenancy: pointer only
 
