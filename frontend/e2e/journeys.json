@@ -132,6 +132,18 @@
     "issue": 2252
   },
   {
+    "id": "account.delete",
+    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
+      "client": ["users"],
+      "routes": ["DELETE /users/me"],
+      "tables": ["user", "journalentry", "accountdeletionaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2311
+  },
+  {
     "id": "errors.boundary-recovers-and-reports",
     "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written.",
     "crosses": {

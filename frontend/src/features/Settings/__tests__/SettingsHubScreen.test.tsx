@@ -54,6 +54,26 @@ describe('SettingsHubScreen', () => {
 
     expect(mockLogout).toHaveBeenCalledTimes(1);
   });
+
+  test('offers an in-app route to account deletion', () => {
+    // App Store Guideline 5.1.1(v): the path must be reachable in the app,
+    // not via a support email.
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-delete-account'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('DeleteAccount');
+  });
+
+  test('deleting the account is a separate row from logging out', () => {
+    // The two must never be the same tap: one ends a session, the other ends
+    // the account.
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-delete-account'));
+
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
   apiGoalGroupSchema,
+  accountDeletionReceiptSchema,
   authResponseSchema,
   contentItemSchema,
   acceptSuggestionResultSchema,
@@ -39,6 +40,7 @@ import {
   uiFlagsSchema,
   uploadDocumentSchema,
   wheelBalanceSchema,
+  type AccountDeletionReceiptT,
   type AcceptSuggestionResultT,
   type CareKindT,
   type CareResourceT,
@@ -364,6 +366,15 @@ interface RequestOptions<TResponse = unknown> {
   timeoutMs?: number;
   /** External abort signal; respected alongside the timeout. */
   signal?: AbortSignal;
+  /**
+   * Opt out of the automatic retry, whatever the method would otherwise
+   * allow. ``DELETE`` counts as safe-to-retry because deleting a habit twice
+   * is deleting it once — but an operation that is not merely idempotent but
+   * *irreversible* (account deletion) must be attempted exactly once, so a
+   * lost response is reported rather than turned into a second attempt that
+   * lands on an account no longer there.
+   */
+  retry?: boolean;
 }
 
 function resolveToken(token?: string): string | null {
@@ -693,6 +704,8 @@ interface RefreshRetryContext<T> {
    * "session expired".
    */
   initialDetail: string | null;
+  /** Whether this request may be attempted more than once (see RequestOptions.retry). */
+  canRetry: boolean;
 }
 
 /**
@@ -820,7 +833,7 @@ async function attemptRequest<T>(
     if (retried !== null) return { kind: 'ok', value: retried };
     throw new ApiError(res.status, detail);
   }
-  if (isTransientStatus(res.status) && isRetryableMethod(ctx.method, ctx.extraHeaders)) {
+  if (isTransientStatus(res.status) && ctx.canRetry) {
     const detail = await extractErrorDetail(res);
     return { kind: 'transient', error: new ApiError(res.status, detail) };
   }
@@ -862,8 +875,10 @@ async function request<T>(
     schema,
     timeoutMs,
     signal,
+    retry,
   }: RequestOptions<T> = {},
 ): Promise<T> {
+  const canRetry = retry !== false && isRetryableMethod(method, extraHeaders);
   const ctx: RefreshRetryContext<T> = {
     path,
     url: `${API_BASE_URL}${path}`,
@@ -874,6 +889,7 @@ async function request<T>(
     timeoutMs,
     signal,
     initialDetail: null,
+    canRetry,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying
@@ -883,7 +899,6 @@ async function request<T>(
     throw new ApiError(0, 'network_error');
   }
 
-  const canRetry = isRetryableMethod(method, extraHeaders);
   const totalAttempts = canRetry ? MAX_RETRIES + 1 : 1;
   let lastError: Error = new ApiError(0, 'network_error');
   for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
@@ -2939,6 +2954,18 @@ export interface TimezoneUpdatePayload {
   timezone: string;
 }
 
+/** The receipt ``DELETE /users/me`` returns once an account is gone. */
+export type AccountDeletionReceipt = AccountDeletionReceiptT;
+
+/**
+ * Confirmation body for ``DELETE /users/me``: the caller retypes their own
+ * address. A boolean the client could synthesise would make an accidental
+ * request indistinguishable from a deliberate one.
+ */
+export interface AccountDeletionPayload {
+  confirm_email: string;
+}
+
 // User profile client
 export const users = {
   /**
@@ -2956,6 +2983,31 @@ export const users = {
       body: payload,
       token,
       schema: timezoneReadSchema,
+    });
+  },
+  /**
+   * Erase the authenticated caller's account and personal data.
+   *
+   * Attempted exactly once. ``DELETE`` is normally in the retry set — deleting
+   * a habit twice is deleting it once — but this one is irreversible rather
+   * than merely idempotent, so ``retry: false`` keeps a lost response from
+   * becoming a second attempt that lands on an account that is no longer
+   * there and reports a 401 as if nothing had happened.
+   *
+   * The subject is resolved from the JWT alone, so this can only ever reach
+   * the caller's own account. On success the caller MUST clear the local
+   * session — the token it used is already dead server-side.
+   */
+  deleteMyAccount(
+    payload: AccountDeletionPayload,
+    token?: string,
+  ): Promise<AccountDeletionReceipt> {
+    return request<AccountDeletionReceipt>('/users/me', {
+      method: 'DELETE',
+      body: payload,
+      token,
+      schema: accountDeletionReceiptSchema,
+      retry: false,
     });
   },
 };
