@@ -3,6 +3,7 @@
 import { render, fireEvent } from '@testing-library/react-native';
 import { AppleAuthenticationButtonStyle } from 'expo-apple-authentication';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 jest.mock('../useGoogleAuth', () => ({ useGoogleAuth: jest.fn() }));
 jest.mock('../useAppleAuth', () => ({
@@ -23,12 +24,15 @@ jest.mock('@/utils/openExternalUrl', () => ({
   openExternalUrl: jest.fn(() => Promise.resolve(true)),
 }));
 
+import { GOOGLE_BUTTON_THEMES } from '../components/googleBranding';
+import { GOOGLE_LOGO_TEST_ID } from '../components/GoogleSignInButton';
 import { isGoogleAuthConfigured } from '../oauthConfig';
 import { SocialAuthButtons } from '../SocialAuthButtons';
 import { useAppleAuth, useAppleSignInAvailable } from '../useAppleAuth';
 import { useGoogleAuth } from '../useGoogleAuth';
 
 import { ThemeProvider, type ThemeMode } from '@/design/ThemeContext';
+import { accent } from '@/design/tokens';
 
 const mockIsConfigured = isGoogleAuthConfigured as jest.MockedFunction<
   typeof isGoogleAuthConfigured
@@ -244,6 +248,52 @@ describe('SocialAuthButtons — client-side license validation', () => {
     fireEvent.press(getByTestId(LICENSE_SUBMIT_ID));
 
     expect(getByRole('alert').props.accessibilityLiveRegion).toBe('polite');
+  });
+});
+
+// Google publishes its button's fill, stroke, text colour and mark as mandatory
+// for any app using Sign in with Google. The generic warm-outline primitive this
+// slot used to render is a substitution Google does not permit, so the slot has
+// to draw the branded button — proven here at the seam, not only in isolation.
+describe('SocialAuthButtons — Google branding compliance', () => {
+  it('renders the branded button, not the warm secondary primitive', () => {
+    const { getByTestId } = render(<SocialAuthButtons />);
+
+    const style = StyleSheet.flatten(getByTestId(GOOGLE_BUTTON_ID).props.style);
+
+    expect(style.backgroundColor).toBe(GOOGLE_BUTTON_THEMES.light.fill);
+    expect(style.borderColor).toBe(GOOGLE_BUTTON_THEMES.light.stroke);
+    expect(style.borderColor).not.toBe(accent.primary);
+  });
+
+  it('carries the standard colour mark inside the button', () => {
+    const { getByTestId } = render(<SocialAuthButtons />);
+
+    // The mark is hidden from assistive technology on purpose — the button
+    // around it already carries the name — so reaching it takes the opt-in.
+    expect(getByTestId(GOOGLE_LOGO_TEST_ID, { includeHiddenElements: true })).toBeTruthy();
+  });
+
+  it('follows the app into dark mode with Google’s dark theme', () => {
+    const { getByTestId } = render(
+      <ThemeProvider initialMode="dark">
+        <SocialAuthButtons />
+      </ThemeProvider>,
+    );
+
+    const style = StyleSheet.flatten(getByTestId(GOOGLE_BUTTON_ID).props.style);
+
+    expect(style.backgroundColor).toBe(GOOGLE_BUTTON_THEMES.dark.fill);
+    expect(style.borderColor).toBe(GOOGLE_BUTTON_THEMES.dark.stroke);
+  });
+
+  it('never swaps the approved phrase out for progress copy', () => {
+    setGoogleAuth({ submitting: true });
+
+    const { getByText, queryByText } = render(<SocialAuthButtons />);
+
+    expect(getByText(GOOGLE_LABEL)).toBeTruthy();
+    expect(queryByText('Connecting...')).toBeNull();
   });
 });
 
