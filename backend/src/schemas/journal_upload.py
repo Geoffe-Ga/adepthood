@@ -87,9 +87,11 @@ class UploadDocumentRequest(BaseModel):
 
     ``classification`` is the privacy tier the uploader chose, and it is honored
     end to end: the document is stored at exactly that tier, never quietly
-    downgraded so a call can succeed. An ``intimate`` document *is* forwarded to
-    the vault -- see :mod:`services.creek_vault_upload` for the ratified reasoning
-    -- and to nothing else; no tier on this path reaches a cloud LLM.
+    downgraded so a call can succeed. An ``intimate`` document is therefore
+    forwarded nowhere -- Creek's published upload request has no spelling for
+    that tier, and narrowing it would file the document at a depth its owner did
+    not choose. See :mod:`services.creek_vault_upload`. No tier on this path
+    reaches a cloud LLM either way.
     """
 
     filename: str = Field(

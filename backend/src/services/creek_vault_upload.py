@@ -28,26 +28,36 @@ user document bytes outside the vault is a privacy decision nobody has made. A
 failed upload is reported honestly to the person who made it, and they can try
 again.
 
-**Intimate documents are forwarded to the vault, and to nothing else.** A
-document classified ``intimate`` is uploaded at the ``INTIMATE`` tier ceiling
-like any other, because the vault is the user's *own* private corpus rather than
-a third-party service: the deployment points at one operator-held
-``CREEK_VAULT_URL``, and reaching it is not the cloud disclosure the privacy
-floor exists to prevent. What the floor still forbids -- an intimate document
-reaching a cloud LLM -- this path never does, since it calls no LLM at all.
+**Intimate documents do not leave this process.** They are withheld here, before
+the vault is contacted at all, and the reason is the wire rather than a policy
+this module invented: Creek's published ``UploadRequest.tier`` is typed to the
+two ceilings a remote caller may declare, so ``intimate`` has no spelling on
+``/v1`` and omission is not defaultable either. Adepthood's
+:func:`~domain.creek_vault.wire_ceiling_for` is the single door onto that
+vocabulary and refuses rather than narrowing, and this module asks it that
+question first -- exactly as :mod:`services.creek_vault_write` withholds an
+intimate journal entry before its client is touched.
 
-This was ratified as an amendment to Decision 6 of
-``docs/adr/0004-creek-vault-http-application-boundary.md``; read that decision
-for the transit topology, and the amendment for why the upload surface is
-treated as vault-only rather than skip-only. Note the asymmetry it leaves
-behind: :mod:`services.creek_vault_write` still withholds intimate *journal
-entries*, which is deliberately untouched here and tracked for reconciliation
-in issue #2152 -- widening a shipped write path is not something to do as a side
-effect of adding a new one.
+An earlier amendment to Decision 6 of
+``docs/adr/0004-creek-vault-http-application-boundary.md`` reasoned that an
+intimate document *could* be forwarded, because the vault is the user's own
+corpus behind one operator-held ``CREEK_VAULT_URL`` rather than a third-party
+service, and this path calls no LLM at any tier. That reasoning about the
+*destination* still stands and is not what changed. What changed is that the
+upload became a real HTTP call: while ``upload()`` refused unconditionally,
+"intimate is forwarded" was a statement nothing could test, and the first
+request built at that tier would have been refused at adepthood's own wire door
+regardless. The privacy answer is unchanged -- intimate bytes never egress --
+and it is now the answer the code actually gives.
+
+The asymmetry that amendment left behind is therefore closed rather than
+tracked: both write paths withhold intimate material, for one reason, at one
+door. Nothing here re-derives it.
 
 The vault's own router still enforces the ceiling it is handed, so a vault that
-declines to store at ``INTIMATE`` refuses the write and this path degrades
-honestly rather than silently downgrading the tier to make the call succeed.
+declines to store at the declared ceiling refuses the write and this path
+degrades honestly rather than silently downgrading the tier to make the call
+succeed.
 """
 
 from __future__ import annotations
@@ -62,14 +72,18 @@ from datetime import datetime
 from domain.creek_vault import (
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekCeilingUnrepresentableError,
     CreekVaultAuthError,
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
+    VaultErrorCode,
+    VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
     VaultUploadStatus,
     tier_ceiling_for,
+    wire_ceiling_for,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,22 +109,41 @@ class UploadDegradeReason(enum.StrEnum):
     These exist so the failures stay countable apart, each with its own remedy:
     ``CONTRACT`` is a defect in adepthood's own request, ``AUTH`` is a credential
     to rotate, ``UNAVAILABLE`` is infrastructure, ``UNSUPPORTED_CAPABILITY`` is
-    an upload refused as unsupported *after* the handshake advertised it, and
-    ``NOT_STORED`` is a vault that answered successfully yet did not durably keep
-    the document.
+    an upload refused as unsupported *after* the handshake advertised it,
+    ``CEILING_UNREPRESENTABLE`` is a document whose tier Creek's wire cannot
+    express, and ``NOT_STORED`` is a vault that answered successfully yet did not
+    durably keep the document.
 
-    All but one of them reach the user as a single
-    :attr:`VaultUploadStatus.DEGRADED` -- that is the point of degrading.
-    ``UNSUPPORTED_CAPABILITY`` is the exception: it answers
-    :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` instead, because a refused
-    capability is not a fault a retry clears. See :func:`_failed_outcome_for`.
+    Three of them reach the user as a single
+    :attr:`VaultUploadStatus.DEGRADED` -- that is the point of degrading. The
+    other two answer :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`, because
+    neither is a fault a retry clears. See :func:`_failed_outcome_for`, and note
+    that the two stay separate *here* even though they converge there: an
+    operator watching documents pile up needs to know whether the vault is
+    refusing them or the tier vocabulary is.
     """
 
     CONTRACT = "contract"
     AUTH = "auth"
     UNAVAILABLE = "unavailable"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
+    CEILING_UNREPRESENTABLE = "ceiling_unrepresentable"
     NOT_STORED = "not_stored"
+
+
+# Vault error codes that describe a *negotiation* rather than a mishap: the
+# capability is not served to this caller, at this version, and will not be
+# however many times they ask. They earn the same answer as an unadvertised
+# capability for the same reason -- no retry reaches them -- and are named here
+# rather than folded into the generic contract branch because that branch's whole
+# meaning is "it broke, try again".
+#
+# Deliberately not including ``invalid_request`` or ``privacy_refused``: both are
+# genuine defects in the request adepthood built or the material it asked for,
+# fixable on this side, and neither says the route is closed to this caller.
+_UNNEGOTIABLE_CODES: frozenset[VaultErrorCode] = frozenset(
+    {VaultErrorCode.UNSUPPORTED_CAPABILITY, VaultErrorCode.INCOMPATIBLE_VERSION}
+)
 
 
 # The two static log events this module emits. Static because a vault error's
@@ -230,26 +263,43 @@ def _degrade_fields(error: CreekVaultError) -> dict[str, object]:
     return fields
 
 
+def _is_unnegotiable(error: CreekVaultError) -> bool:
+    """Return whether ``error`` says the route is closed to this caller.
+
+    Two shapes say it. A :class:`CreekCapabilityUnsupportedError` is the vault
+    having withdrawn ``upload`` between the handshake and the call -- a real race
+    now that a 0.8 vault advertises it, and one the person holding the document
+    cannot influence. A contract error carrying one of :data:`_UNNEGOTIABLE_CODES`
+    is the vault refusing at the route itself, which from contract 0.8.0 is a
+    routine runtime state rather than a theoretical one: the capability list is
+    keyed on the caller's declared minor, so a vault can be reachable, advertise
+    honestly to others, and still answer this caller ``incompatible_version``.
+    """
+    if isinstance(error, CreekCapabilityUnsupportedError):
+        return True
+    return isinstance(error, CreekVaultContractError) and error.code in _UNNEGOTIABLE_CODES
+
+
 def _failed_outcome_for(error: CreekVaultError) -> VaultUploadOutcome:
     """Choose the outcome one failed upload call is answered with.
 
-    Every transport fault collapses to :attr:`VaultUploadStatus.DEGRADED`, whose
-    whole meaning is "it broke, try again" -- true of a dropped connection, a
-    rejected credential, a malformed request. It is not true of a refused
-    *capability*, and the difference is the sentence the router shows: a retry
-    that cannot succeed is a dead end, and telling someone to take one is worse
-    than telling them nothing.
+    The split is between failures a retry can clear and failures it cannot, and
+    it only became meaningful once the call was genuinely made. While
+    ``upload()`` refused unconditionally, every failure a real deployment reached
+    here was that refusal, so ``DEGRADED`` -- whose whole meaning is "it broke,
+    try again" -- was telling people to retry something no retry could reach.
+    That is why the refused-capability branch exists.
 
-    So a :class:`CreekCapabilityUnsupportedError` answers
-    :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`, the same status the
-    pre-call gate returns, and for the same reason: uploads do not work between
-    this pair of versions. That the gate did not catch it means only that the
-    vault advertised the capability -- either because it withdrew it after the
-    handshake, or because adepthood recognises the name without yet speaking the
-    call. Neither is a fault the person holding the document can retry away, and
-    both leave them in exactly the same place.
+    Now that a document actually goes over the wire, the other half of the split
+    is live for the first time: a dropped connection, a rejected credential, a
+    5xx, a body adepthood could not read are *mishaps* during a working upload,
+    and trying again is exactly the right advice. They keep ``DEGRADED``.
+    :func:`_is_unnegotiable` names the two shapes that do not: a capability
+    withdrawn under us, and a route refused to this caller's version. Both leave
+    the person in the same place as an unadvertised capability, so both answer
+    the same status the pre-call gate does.
     """
-    if isinstance(error, CreekCapabilityUnsupportedError):
+    if _is_unnegotiable(error):
         return _UNSUPPORTED_OUTCOME
     return _DEGRADED_OUTCOME
 
@@ -319,6 +369,66 @@ async def _try_upload(
     return result
 
 
+def _upload_request_for(
+    document: UploadedDocument, tier_ceiling: VaultTierCeiling
+) -> VaultUploadRequest:
+    """Build the seam's request for one document at the tier its owner chose.
+
+    Both the document's ``tier`` and the write ``tier_ceiling`` are the resolved
+    tier, so the vault stores at exactly the depth the uploader chose -- never
+    widened so a call can succeed, and never narrowed.
+
+    Built before the vault is probed, and deliberately: nothing here touches the
+    network, and having the request in hand is what lets the withheld path below
+    log which upload it withheld.
+    """
+    return VaultUploadRequest(
+        external_id=upload_external_id(document.owner_user_id, document.filename),
+        filename=document.filename,
+        content_base64=document.content_base64,
+        tier=tier_ceiling,
+        tier_ceiling=tier_ceiling,
+        created_at=document.created_at,
+    )
+
+
+def _expressible_on_the_wire(tier_ceiling: VaultTierCeiling) -> bool:
+    """Return whether ``tier_ceiling`` has a spelling Creek's ``/v1`` can carry.
+
+    Asked *through* :func:`~domain.creek_vault.wire_ceiling_for` rather than by a
+    membership test of this module's own. That function is the single door
+    between adepthood's three tiers and the two Creek publishes, and a second
+    reading of the same rule is how two readings of it come to disagree -- which
+    on this seam would mean an intimate document filed at a depth its owner never
+    chose.
+    """
+    try:
+        wire_ceiling_for(tier_ceiling)
+    except CreekCeilingUnrepresentableError:
+        return False
+    return True
+
+
+async def _vault_refusal(client: CreekVaultClient) -> VaultUploadOutcome | None:
+    """Probe the vault and name what stops the upload, or ``None`` if nothing does.
+
+    An unreachable vault and a vault that cannot take files are separated because
+    they are separate problems with separate fixes, and the person holding the
+    document needs to be told which one they have.
+
+    Gated on UPLOAD specifically, never on JOURNAL: a vault that takes journal
+    text has said nothing about whether it takes files, and treating one as the
+    other would put a user's document on the wire toward a surface that never
+    claimed it.
+    """
+    await client.handshake()
+    if not client.is_available():
+        return _UNAVAILABLE_OUTCOME
+    if not client.supports(CreekCapability.UPLOAD):
+        return _UNSUPPORTED_OUTCOME
+    return None
+
+
 async def store_upload(
     client: CreekVaultClient, document: UploadedDocument, /
 ) -> VaultUploadOutcome:
@@ -328,47 +438,34 @@ async def store_upload(
 
     1. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier, raising
        ``ValueError`` (fail closed) for an unknown classification -- this
-       propagates, since an unrecognized tier must never widen to OPEN. Every
-       tier is forwarded, ``intimate`` included; see the module docstring for
-       why the vault is not the disclosure the privacy floor guards against.
-    2. A handshake probes the vault. An unreachable one degrades to
-       :attr:`VaultUploadStatus.VAULT_UNAVAILABLE`; a reachable one that never
-       advertised ``creek.upload`` degrades to
-       :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED`. The two are separated
-       because they are separate problems with separate fixes.
-    3. The upload runs. A transport failure or a ``stored=False`` result degrades
-       to :attr:`VaultUploadStatus.DEGRADED`; a capability the vault advertised
-       and then refused lands on
-       :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` alongside step 2, since
-       an unavailable capability is unavailable however late that is discovered.
-    4. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
+       propagates, since an unrecognized tier must never widen to OPEN.
+    2. A tier Creek's wire cannot express stops here, before the vault is
+       contacted at all, exactly as the journal write withholds an intimate entry
+       before its client is touched. Today that is ``intimate`` and only
+       ``intimate``. The status is the one that promises no retry, because none
+       is possible: ``UploadRequest.tier`` is typed to the two ceilings a remote
+       caller may name, so this is a fact about the contract rather than about
+       today's weather.
+    3. A handshake probes the vault -- see :func:`_vault_refusal`.
+    4. The upload runs. A mishap during it degrades to
+       :attr:`VaultUploadStatus.DEGRADED`; a capability withdrawn under us, or a
+       route refused to our version, lands on
+       :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` alongside step 3. See
+       :func:`_failed_outcome_for` for why those two are not the same sentence.
+    5. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
        with the fragment ref and whatever tags the vault's own pipeline assigned.
 
-    Both the document's tier and the write ceiling are set to the resolved tier,
-    so the vault stores at exactly the depth the uploader chose -- never widened
-    so a call can succeed, and never narrowed. Never raises
-    :class:`~domain.creek_vault.CreekVaultError`: the router answers the user
-    from the status alone.
+    Never raises :class:`~domain.creek_vault.CreekVaultError`: the router answers
+    the user from the status alone.
     """
     tier_ceiling = tier_ceiling_for(document.classification)
-    await client.handshake()
-    if not client.is_available():
-        return _UNAVAILABLE_OUTCOME
-    # Gated on UPLOAD specifically, never on JOURNAL: a vault that takes journal
-    # text has said nothing about whether it takes files, and treating one as the
-    # other would put a user's document on the wire toward a surface that never
-    # claimed it. Kept a separate branch from the availability check above because
-    # the two are separate problems the user has to be told apart.
-    if not client.supports(CreekCapability.UPLOAD):
+    request = _upload_request_for(document, tier_ceiling)
+    if not _expressible_on_the_wire(tier_ceiling):
+        _log_degraded(request, {"reason": UploadDegradeReason.CEILING_UNREPRESENTABLE.value})
         return _UNSUPPORTED_OUTCOME
-    request = VaultUploadRequest(
-        external_id=upload_external_id(document.owner_user_id, document.filename),
-        filename=document.filename,
-        content_base64=document.content_base64,
-        tier=tier_ceiling,
-        tier_ceiling=tier_ceiling,
-        created_at=document.created_at,
-    )
+    refusal = await _vault_refusal(client)
+    if refusal is not None:
+        return refusal
     attempt = await _try_upload(client, request)
     if isinstance(attempt, VaultUploadOutcome):
         return attempt

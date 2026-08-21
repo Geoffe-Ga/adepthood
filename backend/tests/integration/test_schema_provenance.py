@@ -47,6 +47,7 @@ _ARRAY_COLUMNS = [
     ("habit", "notification_times"),
     ("goal", "days_of_week"),
     ("stageprogress", "completed_stages"),
+    ("corpusfragment", "embedding"),
 ]
 
 _MINIMUM_SERVER_VERSION_NUM = 160_000

@@ -4,6 +4,7 @@ from .account_deletion_audit import AccountDeletionAudit
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
+from .corpus_fragment import CorpusFragment
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
@@ -43,6 +44,7 @@ __all__ = [
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",
+    "CorpusFragment",
     "CourseStage",
     "EnergyPlan",
     "Entitlement",

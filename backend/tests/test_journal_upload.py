@@ -365,31 +365,67 @@ class TestUploadDegradation:
 
 
 class TestUploadIntimateTier:
-    """An intimate document reaches the vault, at its own tier, and nothing else."""
+    """An intimate document is answered honestly and forwarded nowhere at all.
+
+    The endpoint used to answer ``accepted`` here, on the reasoning that the
+    vault is the user's own corpus rather than the cloud the privacy floor
+    guards. That reasoning about the destination is untouched. What it could not
+    survive is the wire: Creek's published upload request types ``tier`` to the
+    two ceilings a remote caller may declare, so there is no request at this tier
+    to send, and the seam withholds the document rather than pretending
+    otherwise.
+    """
 
     @pytest.mark.asyncio
-    async def test_intimate_is_forwarded_to_the_vault(
+    async def test_intimate_is_answered_without_being_forwarded(
         self, async_client: AsyncClient, vault: ScriptedUploadClient
     ) -> None:
-        """The vault is the user's own corpus, not the cloud the privacy floor guards."""
+        """A 202 with a status the person can act on, and no document on any wire."""
         headers = await _signup(async_client, "uploader-intimate")
         response = await async_client.post(
             _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
         )
-        assert response.json()["status"] == VaultUploadStatus.ACCEPTED.value
-        assert vault.upload_calls[0].tier is VaultTierCeiling.INTIMATE
+        assert response.status_code == HTTPStatus.ACCEPTED
+        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert response.json()["vault_ref"] is None
+        assert vault.upload_calls == []
+
+    @pytest.mark.asyncio
+    async def test_the_answer_names_the_tier_rather_than_promising_a_retry(
+        self, async_client: AsyncClient, vault: ScriptedUploadClient
+    ) -> None:
+        """The one thing this response must never do is send someone round again.
+
+        A retry re-runs the identical request against the identical contract, so
+        "please try again" would be an instruction that cannot work. What the
+        person can actually do is choose a different tier, and the message has to
+        say so or they are left guessing.
+        """
+        headers = await _signup(async_client, "uploader-intimate-copy")
+        response = await async_client.post(
+            _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
+        )
+        message = response.json()["message"].lower()
+        assert "try again" not in message
+        assert "intimate" in message
+        assert vault.upload_calls == []
 
     @pytest.mark.parametrize("vault", [{"available": False}], indirect=True)
     @pytest.mark.asyncio
     async def test_intimate_is_not_rerouted_when_the_vault_is_unreachable(
         self, async_client: AsyncClient, vault: ScriptedUploadClient
     ) -> None:
-        """An unreachable vault is an honest failure, never a reason to send it elsewhere."""
+        """An unreachable vault is never a reason to send an intimate document elsewhere.
+
+        The status is the tier's rather than the vault's, because the tier is
+        decided first and settles it: whether the vault was reachable is a
+        question this document never had to ask.
+        """
         headers = await _signup(async_client, "uploader-intimate-down")
         response = await async_client.post(
             _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
         )
-        assert response.json()["status"] == VaultUploadStatus.VAULT_UNAVAILABLE.value
+        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert vault.upload_calls == []
 
 

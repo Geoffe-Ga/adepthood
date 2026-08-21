@@ -16,13 +16,18 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   uploading: 'Going over now…',
   ingested: 'In your vault. It will show up in reflections from here on.',
   vault_unavailable: "Your vault didn't answer. Check that it's running, then send this again.",
-  // Said whether the vault is the one without uploads or Adepthood is, because
-  // the backend answers a single status for both and neither the app nor the
-  // person can tell them apart from here. Naming only the vault would send
-  // someone to update software that may already be current.
+  // One status, three causes: a vault without uploads, a vault whose version
+  // this app cannot negotiate with, and a document marked Intimate, which has no
+  // spelling on the vault wire at all. Nothing here can tell which, and the
+  // backend answers a single status for all three — so the tier goes first,
+  // because it is the only one of the three with a remedy the person holding the
+  // file controls. Naming only the vault would send someone to update software
+  // that may already be current, or leave someone re-sending a tier that can
+  // never go.
   capability_unsupported:
-    "Uploads aren't working between Adepthood and your vault yet. Keep this one — it can " +
-    'go over once either side has caught up.',
+    'Marked Intimate? That tier stays on this device — pick another one if you want this ' +
+    "in your vault. Otherwise uploads aren't working between Adepthood and your vault yet; " +
+    'keep this one, it can go over once either side has caught up.',
   degraded: "This didn't finish, and nothing in your vault changed. You can send it again.",
   unsupported_format: 'Your vault has no reader for this kind of file yet.',
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,

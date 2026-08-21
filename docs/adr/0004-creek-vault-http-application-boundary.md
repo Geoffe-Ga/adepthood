@@ -234,6 +234,15 @@ authoritative source, one pointer, is the fix.
 
 ## Decision 6 — The intimate-transit rule is carried forward, and is entirely unshipped
 
+> **SUPERSEDED 2026-08-21 — see the note at the end of this ADR.** The
+> amendment below is kept verbatim as the record of what was ruled and
+> why. It no longer describes shipped behaviour: contract 0.7.0/0.8.0
+> made `intimate` unexpressible on the upload wire, so the upload path
+> withholds an intimate document exactly as the journal-entry path
+> does, and the "known asymmetry" recorded here is closed rather than
+> outstanding. Nothing about the *destination* reasoning was overturned
+> — the premise it rested on was removed upstream.
+>
 > **Amended 2026-08-08 (owner ruling, issue #1924 / PR #2149) — the
 > document-upload surface is vault-only, not skip-only.** Sub-decisions
 > (a)–(d) below are unchanged and still describe the *journal-entry*
@@ -976,3 +985,101 @@ or reintroduces a major-only comparison. The pin still names one minor,
 membership in the server's advertised set is still how compatibility is
 decided, and a server whose window moves past 0.8 will still be
 refused.
+
+## Note, 2026-08-21 — the upload call is implemented, and Decision 6's upload amendment is superseded by the wire
+
+The 2026-08-19 note closed by saying the upload *call* was not
+implemented and still refused, because recognising a route and speaking
+it are separate changes. This note records the second change, and one
+consequence of it that nobody chose and everybody has to live with.
+
+**The route.** `HttpCreekVaultClient.upload` now performs Creek's
+published exchange: a single `POST /v1/uploads` carrying
+`UploadRequest{filename, content_base64, external_id, timestamp, tier}`
+as JSON, with the document base64-encoded in the body. The shape is read
+off the vendored bundle at `backend/tests/fixtures/creek_v1/`, and the
+conformance suite drives every published example cell — success, empty,
+refusal, malformed-input, incompatible-version, unavailable-service —
+through the real adapter. There is no per-document URL: `external_id` is
+a field of the published request, so idempotence is keyed off the body
+the vault reads rather than off a path adepthood assembled. The invented
+`PUT /v1/uploads/{external_id}` that the long-standing refusal replaced
+is gone for good, and nothing on this path builds a path segment at all.
+
+**No MCP.** Decision 1 stands untouched. This is HTTP/JSON over `/v1`
+and nothing else; the retired MCP client is not resurrected, and
+`creek.upload`-the-MCP-tool remains Creek's adapter for agents.
+
+**Decision 6's 2026-08-08 upload amendment is superseded, and not on
+privacy grounds.** That owner ruling held that `POST /journal/upload`
+could forward an `intimate` document to the vault at the `INTIMATE`
+ceiling, because a Creek Vault is the user's own corpus on
+operator-held infrastructure rather than a third-party service. The
+reasoning about the *destination* is untouched and is not what changed.
+What changed is that upstream removed the premise from underneath it:
+contract 0.7.0 made `tier` required on the write shapes, and 0.8.0 typed
+`UploadRequest.tier` to the two-member `WireTierCeiling`. There is no
+way to say `intimate` on `/v1`, in either direction, and adepthood's own
+`wire_ceiling_for` refuses rather than narrowing — narrowing would file a
+document at a depth its owner never chose, which is the exact defect the
+wire vocabulary exists to prevent.
+
+So the amendment was already unreachable when it was written down; it
+survived only because `upload()` refused unconditionally and no request
+was ever built to test it against. Implementing the call is what made it
+visible. `services/creek_vault_upload.store_upload` now withholds an
+intimate document before the vault is probed at all, asking
+`wire_ceiling_for` the same question `services/creek_vault_write` asks
+before touching its client.
+
+**The known asymmetry is therefore closed rather than tracked.** Both
+write paths now withhold intimate material, for one reason, at one door.
+This is the *opposite* of the widening that issue was opened to
+consider, and it needs no privacy review to adopt: nothing that used to
+stay local now travels, and nothing that used to travel was ever
+actually able to.
+
+**What an uploader is told.** An intimate document answers
+`capability_unsupported` rather than `degraded`. Both are honest about
+the outcome; only one is honest about the remedy. `degraded` means "it
+broke, try again", and a retry re-runs an identical request against an
+identical contract — an instruction that cannot work. The
+`capability_unsupported` copy now names the tier first, because choosing
+a different one is the only remedy on this list that the person holding
+the document controls.
+
+**The degraded/unsupported split becomes meaningful for the first
+time.** While every upload refused before sending, every failure a real
+deployment reached was that refusal, so mapping it to `degraded` told
+users to retry something no retry could reach — which is why the 0.8.0
+re-vendoring changed it to `capability_unsupported`. Now that a document
+genuinely crosses the wire, the two halves are distinguishable again and
+both are live:
+
+- **Mishaps during a working upload keep `degraded`**, and the advice is
+  now true: a dropped connection, a 5xx, a rejected credential, a 2xx
+  body adepthood could not read, a vault that answered without storing.
+  Trying again is exactly right for all of them.
+- **Failures that say the route is closed to this caller answer
+  `capability_unsupported`**: a capability withdrawn between the
+  handshake and the call, and a vault refusing at the route with
+  `unsupported_capability` or `incompatible_version`. The second of
+  those is routine rather than theoretical from 0.8.0, because the
+  capability list is keyed on the caller's declared minor — a vault can
+  be reachable, serve the route to others, and still refuse this caller.
+- **`invalid_request` and `privacy_refused` stay on the degraded side**
+  deliberately. Both are defects in the request adepthood built or the
+  material it asked for, fixable on this side; neither says the route is
+  closed. Reading them as "no retry helps" would file adepthood's own
+  bug as a version gap.
+
+**Not covered end to end.** The `seed.upload-document` journey in
+`frontend/e2e/journeys.json` stays `uncovered`, and the reason is
+structural rather than an omission: the e2e lane's server process reads
+`CREEK_VAULT_OWNER_USER_ID` from its own environment at request time,
+and that environment is fixed before any account exists, so no account a
+spec can create is ever the vault's owner. Every e2e upload therefore
+takes the local-fallback path whatever else the lane does. A spec
+asserting only `vault_unavailable` would register as coverage while
+proving the journey's own outcome never happens, which is precisely the
+quiet coverage loss that ledger exists to prevent.
