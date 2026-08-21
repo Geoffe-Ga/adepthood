@@ -24,8 +24,11 @@ from security import TextTooLongError, sanitize_user_text
 # ``resonance.VALID_KINDS``); ``test_detection_service`` guards them against
 # ``models.completion_suggestion.CompletionTargetType`` drift.
 VALID_TARGET_TYPES = frozenset({"habit", "practice"})
-# Must match ``CompletionSuggestion.label``'s ``_LABEL_MAX`` (255) — a longer
-# detected label passes here but fails at DB insert in the endpoint layer.
+# Must match ``CompletionSuggestion.label``'s ``_LABEL_MAX`` (255). The column
+# is now ``EncryptedString`` (Text), because the label is journal text and is
+# encrypted at rest — so the DB no longer backstops the bound, and the sanitizer
+# below is the only thing enforcing it. ``test_detection_service`` pins the two
+# constants together.
 LABEL_MAX = 255
 MAX_HITS = 5
 

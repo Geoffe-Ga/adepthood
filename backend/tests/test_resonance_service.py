@@ -8,7 +8,8 @@ import pytest
 
 from domain import resonance
 from domain.resonance import generate_marginalia
-from models.marginalia import Marginalia, MarginaliaKind
+from models import marginalia
+from models.marginalia import MarginaliaKind
 
 _BODY = (
     "Today I walked by the river and felt the old fear rise again. "
@@ -38,11 +39,18 @@ def test_valid_kinds_match_the_model_enum() -> None:
     assert {k.value for k in MarginaliaKind} == resonance.VALID_KINDS
 
 
-def test_size_constants_match_the_model_columns() -> None:
-    """The domain's anchor/note caps must match the actual DB column lengths."""
-    columns = Marginalia.__table__.columns  # type: ignore[attr-defined]
-    assert columns["anchor_text"].type.length == resonance.ANCHOR_TEXT_MAX
-    assert columns["note"].type.length == resonance.NOTE_MAX
+def test_size_constants_match_the_model_caps() -> None:
+    """The domain's caps must match the model's, which is what bounds a write.
+
+    The columns are ``EncryptedString`` (a Fernet token exceeds any plaintext
+    bound), so the model no longer carries a DB length to compare against: the
+    caps declared beside the model are the contract, and this domain is the layer
+    that enforces them. Drift between the two is what silently truncates or
+    over-accepts a note, so it is pinned here.
+    """
+    assert resonance.ANCHOR_TEXT_MAX == marginalia.MARGINALIA_ANCHOR_TEXT_MAX
+    assert resonance.NOTE_MAX == marginalia.MARGINALIA_NOTE_MAX
+    assert resonance.ESSAY_MAX == marginalia.MARGINALIA_ESSAY_MAX
 
 
 @pytest.mark.asyncio
