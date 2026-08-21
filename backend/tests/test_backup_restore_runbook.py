@@ -29,6 +29,13 @@ that raises it rather than copied.
 column. Both are read off the model, so a rename that misses the runbook fails
 here instead of at 3am.
 
+*The shell the operator pastes.* Every command block is meant to be run
+verbatim, in order, by someone who did not write it. A variable the procedure
+expands but never assigns is therefore not a typo -- it is a step that silently
+reaches the wrong database, or none, precisely when nobody has the attention to
+spot an empty expansion. Review caught one such name by eye; three more were
+undefined on the same page, which is why this is pinned mechanically instead.
+
 The drill record is checked for shape rather than content: a runbook whose
 proven-restore claim cites a migration revision that exists in no file is a
 claim nobody can retrace.
@@ -72,6 +79,20 @@ _MIGRATION_REVISION = re.compile(r'^revision:\s*str\s*=\s*"([0-9a-z]+)"', re.MUL
 # Both objectives have to be stated for a restore to be plannable at all: how
 # much writing may be lost, and how long the app is down while it comes back.
 _REQUIRED_OBJECTIVES = ("Recovery point objective", "Recovery time objective")
+
+# Fenced ``bash`` blocks inside the runbook -- the text an operator actually
+# pastes, as opposed to prose that merely mentions a variable name.
+_BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+# ``$VAR`` and ``${VAR}``, but never ``$(command)``.
+_SHELL_REFERENCE = re.compile(r"\$\{?([A-Z][A-Z0-9_]*)\}?")
+# ``VAR=value`` at a statement start (line start, or after ``;``/``&&``), plus
+# the ``read -rs VAR`` form the dump step uses to keep a URL out of history.
+_SHELL_ASSIGNMENT = re.compile(
+    r"(?:^\s*|[;&|]\s*)([A-Z][A-Z0-9_]*)=|read\s+-\w+\s+([A-Z][A-Z0-9_]*)",
+    re.MULTILINE,
+)
+# Supplied by the environment the operator already has, never by the runbook.
+_AMBIENT_SHELL_VARS = frozenset({"HOME", "PATH", "PWD", "SHELL", "USER_ID"})
 
 
 @pytest.fixture
@@ -175,3 +196,26 @@ def test_runbook_states_recovery_objectives(runbook: str) -> None:
     """Both objectives are stated, so a restore can be planned rather than hoped."""
     missing = [name for name in _REQUIRED_OBJECTIVES if name not in runbook]
     assert not missing, f"runbook states no {missing}"
+
+
+def test_every_variable_the_runbook_expands_is_one_it_also_assigns(runbook: str) -> None:
+    """No command block expands a name the procedure never sets.
+
+    An operator pastes these blocks in order under pressure. An unset variable
+    does not announce itself -- ``psql -h "" -p "" -d ""`` fails obscurely, and
+    a half-defined connection can reach a *different* database that answers
+    normally. The restore steps once mixed two connection idioms and expanded
+    four names the document never assigned, which is the failure this pins shut.
+    """
+    blocks = _BASH_BLOCK.findall(runbook)
+    assert blocks, "the runbook has no ``bash`` command blocks to check"
+
+    shell = "\n".join(blocks)
+    assigned = {name for pair in _SHELL_ASSIGNMENT.findall(shell) for name in pair if name}
+    referenced = set(_SHELL_REFERENCE.findall(shell))
+
+    undefined = sorted(referenced - assigned - _AMBIENT_SHELL_VARS)
+    assert not undefined, (
+        f"the runbook expands {undefined} but never assigns them; "
+        "an operator pasting these blocks would run them empty"
+    )

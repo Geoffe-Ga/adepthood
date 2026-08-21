@@ -460,21 +460,26 @@ costs.
 1. **Stop writes.** Take the backend service down from the Railway dashboard
    (removing the active deployment is enough) before touching the data.
    Restoring under live traffic produces a database that disagrees with itself.
-2. **Provision an empty target.** A new Railway Postgres service, or locally:
+2. **Provision an empty target**, and name it once so every later step reaches
+   the same database. For a new Railway Postgres these come from its
+   `DATABASE_PUBLIC_URL`; locally they are your own cluster's.
    ```bash
-   createdb -h "$HOST" -p "$PORT" -U "$USER" adepthood_restored
+   HOST=localhost; PORT=5432; USER="$(whoami)"; TARGET_DB=adepthood_restored
+
+   createdb -h "$HOST" -p "$PORT" -U "$USER" "$TARGET_DB"
    ```
 3. **Decrypt the dump** (off-host leg only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
 4. **Restore.** `--exit-on-error` is not optional: without it `pg_restore`
    reports success-ish while skipping objects it could not create.
    ```bash
-   pg_restore -h "$HOST" -p "$PORT" -U "$USER" -d adepthood_restored \
+   pg_restore -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
      --no-owner --no-privileges --exit-on-error restore.dump
    ```
 5. **Check the schema revision the dump carried.** The `alembic_version` table
    travels inside the dump, so a restored database announces its own revision:
    ```bash
-   psql "$TARGET_URL" -c "SELECT version_num FROM alembic_version;"
+   psql -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
+     -c "SELECT version_num FROM alembic_version;"
    ```
    Compare it to the deployed code's head (`alembic heads` in `backend/`).
 6. **Reconcile the revision** — see "When the backup and the code disagree".
