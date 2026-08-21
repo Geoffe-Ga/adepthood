@@ -34,11 +34,20 @@ describe('what each outcome says', () => {
   });
 
   test('the unsupported line does not pin the gap on the vault alone', () => {
-    // One status covers two versions: a vault too old to take files, and a
-    // vault offering an upload route this app cannot speak yet. Nothing here
-    // can tell which, so "update your vault" would be advice that sometimes
-    // cannot work — and the person following it has no way to know when.
+    // One status covers three causes: a vault too old to take files, a vault
+    // whose version this app cannot negotiate with, and a document marked
+    // Intimate, which the vault wire cannot express at all. Nothing here can
+    // tell which, so "update your vault" would be advice that sometimes cannot
+    // work — and the person following it has no way to know when.
     expect(SEED_STATUS_LINES.capability_unsupported).toContain('Adepthood');
+  });
+
+  test('the unsupported line names the one remedy the person controls', () => {
+    // An Intimate document can never be uploaded at that tier, so a line that
+    // only said "wait for one of you to catch up" would leave the person waiting
+    // for something that is never coming. Choosing another tier is the fix, and
+    // it is theirs to make.
+    expect(SEED_STATUS_LINES.capability_unsupported).toContain('Intimate');
   });
 
   test('the size refusal names the limit', () => {

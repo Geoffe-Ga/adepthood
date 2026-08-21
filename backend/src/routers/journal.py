@@ -427,17 +427,23 @@ _UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "Your vault didn't answer, so the document wasn't sent. Check that your vault "
             "is running and reachable, then upload it again."
         ),
-        # Reached both when the vault never offered uploads and when it offers a
-        # route Adepthood cannot speak yet, so it must not pin the gap on the
-        # vault: telling someone to update software that is already current is
-        # an instruction that cannot work, which is the dead end this mapping
-        # exists to avoid. It names the one check they can make, then the real
-        # alternative, and promises no retry either way.
+        # Reached three ways, and the message has to serve all three without
+        # misdirecting any: the vault never offered uploads, it offers a route
+        # this pair of versions cannot negotiate, or the document is marked
+        # ``intimate`` and that tier has no spelling on the wire at all. Telling
+        # someone to update software that is already current is an instruction
+        # that cannot work, and so is telling the intimate case to update
+        # anything -- so the tier is named first, because it is the only one of
+        # the three with a remedy the person holding the document controls.
+        # Nothing here promises a retry of the same request, because none of the
+        # three is cleared by one.
         VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
-            "File uploads aren't working between Adepthood and your vault yet, so nothing "
-            "was sent and nothing changed — journal entries still save as usual. Update "
-            "your vault if a newer version is out; if it's already current, keep the file "
-            "and add it after Adepthood's next update."
+            "This document wasn't sent, and nothing in your vault changed — journal "
+            "entries still save as usual. If you marked it Intimate, that tier stays on "
+            "this device and never goes to a vault; choose a different tier if you want "
+            "it there. Otherwise file uploads aren't working between Adepthood and your "
+            "vault yet — update your vault if a newer version is out, and keep the file "
+            "until one of you has caught up."
         ),
         VaultUploadStatus.DEGRADED: (
             "The upload didn't complete and the document wasn't stored. Nothing was "
@@ -513,11 +519,13 @@ async def upload_document(
     if the vault will not take it, it went nowhere, and the response says so
     plainly rather than implying a success.
 
-    The size guard runs before anything else touches the payload. Every
-    classification is forwarded, ``intimate`` included, at the tier the uploader
-    chose -- see :mod:`services.creek_vault_upload` for why the vault is not the
-    disclosure the privacy floor guards against, and note that this path calls no
-    cloud LLM at any tier.
+    The size guard runs before anything else touches the payload. A document is
+    forwarded at exactly the tier the uploader chose and never at a wider one --
+    which is why an ``intimate`` document is forwarded nowhere at all: Creek's
+    published upload request cannot express that tier, so there is no honest
+    request to send and :mod:`services.creek_vault_upload` withholds it before
+    the vault is contacted. The response says so plainly rather than reporting a
+    storage that did not happen.
     """
     _guard_upload_size(payload.content_base64)
     outcome = await store_upload(

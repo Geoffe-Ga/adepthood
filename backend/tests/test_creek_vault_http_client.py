@@ -58,7 +58,6 @@ from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
     _CONTRACT_MINOR_COMPONENTS,
     _CONTRACT_VERSION_HEADER,
-    _MAX_FRAGMENT_ID_LENGTH,
     _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
@@ -79,6 +78,7 @@ from services.creek_vault_client import (
 )
 from services.creek_vault_payload import (
     _MARGINALIA_KIND_BY_CREEK_KIND,
+    _MAX_FRAGMENT_ID_LENGTH,
     _MAX_REFLECT_NOTES,
     _bounded_text,
 )

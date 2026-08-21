@@ -21,8 +21,10 @@ The endpoint sitting on top of all three is covered in
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
 
@@ -34,6 +36,7 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    CreekCeilingUnrepresentableError,
     CreekVaultAuthError,
     CreekVaultClient,
     CreekVaultContractError,
@@ -393,40 +396,100 @@ class TestStoreUploadDegradation:
 
 
 class TestStoreUploadIntimateTier:
-    """An intimate document goes to the vault, at the intimate tier, and nowhere else.
+    """An intimate document does not leave this process, and is not silently lost either.
 
-    The vault is the user's own corpus behind one operator-held
-    ``CREEK_VAULT_URL``, not a third-party service, so reaching it is not the
-    cloud disclosure the privacy floor guards against -- and this path calls no
-    LLM at all. Ratified as an amendment to Decision 6 of
-    ``docs/adr/0004-creek-vault-http-application-boundary.md``.
+    These tests used to assert the opposite -- that an intimate document was
+    forwarded, at the intimate ceiling, like any other. That was ratified as an
+    amendment to Decision 6 of
+    ``docs/adr/0004-creek-vault-http-application-boundary.md`` and it was
+    untestable in the only way that counts: the client refused every upload
+    unconditionally, so no request was ever built and no assertion here could
+    reach the wire. Creek's ``UploadRequest.tier`` is typed to the two ceilings a
+    remote caller may declare, so the first real request at that tier would have
+    been refused at adepthood's own door regardless of what these tests said.
+
+    So the behaviour is now the one the contract permits, decided where the
+    journal write decides the same thing -- before the client is touched -- and
+    asserted in both directions: withheld at ``intimate``, sent at ``personal``.
     """
 
     @pytest.mark.asyncio
-    async def test_intimate_is_forwarded_to_the_vault(self) -> None:
-        """The document reaches the vault like any other classification."""
+    async def test_intimate_is_never_handed_to_the_client_at_all(self) -> None:
+        """The client is not touched, so there is nothing for a transport to get wrong.
+
+        Asserted on the client rather than on a captured request: "no bytes on the
+        wire" is a claim about what was *called*, and a test that inspected an
+        outgoing request would already have conceded that one was built.
+        """
         client = RecordingUploadClient()
+
         outcome = await _store(client, classification="intimate")
-        assert outcome.status is VaultUploadStatus.ACCEPTED
-        assert len(client.upload_calls) == 1
+
+        assert client.upload_calls == []
+        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+        assert outcome.vault_ref is None
 
     @pytest.mark.asyncio
-    async def test_intimate_is_labelled_at_the_intimate_tier(self) -> None:
-        """Never widened so a call can succeed: the vault stores at the chosen depth."""
+    async def test_intimate_is_withheld_before_the_vault_is_even_probed(self) -> None:
+        """The refusal is adepthood's own and needs no vault to make it.
+
+        The same shape :mod:`services.creek_vault_write` uses for an intimate
+        journal entry: decided locally, before any handshake, so an unreachable
+        vault and an intimate document never have to be told apart.
+        """
         client = RecordingUploadClient()
+
         await _store(client, classification="intimate")
-        assert client.upload_calls[0].tier is VaultTierCeiling.INTIMATE
-        assert client.upload_calls[0].tier_ceiling is VaultTierCeiling.INTIMATE
+
+        assert client.handshake_calls == 0
 
     @pytest.mark.asyncio
-    async def test_a_vault_refusing_the_intimate_tier_degrades_honestly(self) -> None:
-        """A refused ceiling must not be retried at a lower one to force a success."""
+    async def test_a_lower_tier_from_the_same_document_still_goes(self) -> None:
+        """Non-vacuity: the withholding is about the tier, not about this test's setup."""
+        client = RecordingUploadClient()
+
+        outcome = await _store(client, classification="personal")
+
+        assert outcome.status is VaultUploadStatus.ACCEPTED
+        assert client.upload_calls[0].tier is VaultTierCeiling.PERSONAL
+
+    @pytest.mark.asyncio
+    async def test_the_withheld_upload_is_still_countable_by_an_operator(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A document that silently goes nowhere is the one failure nobody would see.
+
+        The reason is its own value rather than the generic contract label, so a
+        deployment can tell "your tier vocabulary is refusing these" apart from
+        "your vault is refusing these" without reading any of them.
+        """
+        with caplog.at_level(logging.WARNING):
+            await _store(RecordingUploadClient(), classification="intimate")
+
+        record = next(r for r in caplog.records if r.levelno == logging.WARNING)
+        assert getattr(record, "reason", None) == UploadDegradeReason.CEILING_UNREPRESENTABLE.value
+        assert getattr(record, "capability", None) == CreekCapability.UPLOAD.value
+        assert _SENTINEL_B64_FRAGMENT not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_vault_refusing_the_declared_ceiling_degrades_honestly(self) -> None:
+        """A refused ceiling must not be retried at a lower one to force a success.
+
+        Driven at ``personal`` now that ``intimate`` never reaches a vault to be
+        refused. The rule is unchanged and is the one that matters: Creek
+        re-derives a fragment's tier from the bytes themselves, so a document
+        whose own content outranks the ceiling its uploader declared is refused
+        with ``privacy_refused`` -- and answering that by asking again for less is
+        a downgrade the uploader never chose.
+        """
         client = RecordingUploadClient(
             upload_error=CreekVaultContractError(
                 _SENTINEL_ERROR_TEXT, code=VaultErrorCode.PRIVACY_REFUSED
             )
         )
-        outcome = await _store(client, classification="intimate")
+
+        outcome = await _store(client, classification="personal")
+
         assert outcome.status is VaultUploadStatus.DEGRADED
         assert len(client.upload_calls) == 1
 
@@ -537,35 +600,63 @@ class TestStoreUploadLogging:
         assert not hasattr(record, "code")
 
 
-def _routed_handler(
-    upload_payload: object,
-    *,
-    capabilities: list[str] | None = None,
-    upload_status: int = HTTPStatus.OK,
-    upload_error: Exception | None = None,
-    upload_text: str | None = None,
-) -> _VaultHandler:
+@dataclass
+class _UploadRoutes:
     """Answer the capability probe with a handshake and everything else as the upload.
 
     The shared helpers in ``test_creek_vault_http_client`` answer *every*
     request identically, which cannot express "handshake succeeded, then the
     upload did X" -- the two-step shape every adapter test here needs.
-    """
-    advertised = capabilities or [CreekCapability.JOURNAL.value, CreekCapability.UPLOAD.value]
 
-    def _handle(request: httpx.Request) -> httpx.Response:
+    A callable object rather than a closure so the uploads it served survive the
+    call. What this seam puts on the wire *is* the thing under test: a body
+    carrying a field Creek does not publish, or a document sent toward a vault
+    that never advertised the route, are failures no assertion about the answer
+    could ever catch.
+
+    ``resend_payload`` answers every upload after the first, which is how an
+    idempotent re-send is expressed: one vault, two calls, and the second
+    reporting that nothing new was written.
+    """
+
+    upload_payload: object = None
+    capabilities: list[str] | None = None
+    upload_status: int = HTTPStatus.OK
+    upload_error: Exception | None = None
+    upload_text: str | None = None
+    resend_payload: object | None = None
+    uploads: list[httpx.Request] = field(default_factory=list)
+
+    @property
+    def advertised(self) -> list[str]:
+        """Return the capability names the handshake answers with."""
+        if self.capabilities is not None:
+            return self.capabilities
+        return [CreekCapability.JOURNAL.value, CreekCapability.UPLOAD.value]
+
+    @property
+    def bodies(self) -> list[object]:
+        """Return each recorded upload's decoded JSON body, in the order sent."""
+        return [json.loads(request.content) for request in self.uploads]
+
+    def _answer(self) -> httpx.Response:
+        """Answer one recorded upload from the script this handler was built with."""
+        if self.upload_text is not None:
+            return httpx.Response(self.upload_status, text=self.upload_text)
+        if self.resend_payload is not None and len(self.uploads) > 1:
+            return httpx.Response(self.upload_status, json=self.resend_payload)
+        return httpx.Response(self.upload_status, json=self.upload_payload)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
         """Route the capability probe to the handshake payload, all else to the upload."""
         if request.url.path.endswith(_CAPABILITIES_SEGMENT):
             return httpx.Response(
-                HTTPStatus.OK, json=_vault_capability_payload(capabilities=advertised)
+                HTTPStatus.OK, json=_vault_capability_payload(capabilities=self.advertised)
             )
-        if upload_error is not None:
-            raise upload_error
-        if upload_text is not None:
-            return httpx.Response(upload_status, text=upload_text)
-        return httpx.Response(upload_status, json=upload_payload)
-
-    return _handle
+        self.uploads.append(request)
+        if self.upload_error is not None:
+            raise self.upload_error
+        return self._answer()
 
 
 @pytest_asyncio.fixture
@@ -591,48 +682,316 @@ def _stored_payload(
     return {"action": action, "fragment_id": _FRAGMENT_ID, **extra}
 
 
-class TestHttpClientUploadRefuses:
-    """The route exists now; this adapter has not been built onto it, so it still refuses.
+# Creek's published upload route, written out rather than read back from the
+# adapter: a test that sourced the URL from the code under test would agree with
+# whatever that code invented, which is exactly how the earlier
+# ``PUT /v1/uploads/{external_id}`` -- a route Creek has never served -- survived
+# as long as it did.
+_UPLOADS_SEGMENT = "/v1/uploads"
+_UPLOAD_URL = f"{_VAULT_URL}{_UPLOADS_SEGMENT}"
 
-    This class used to drive a ``PUT`` against ``/v1/uploads/{external_id}`` — a
-    route Creek has never served — and the refusal replaced that guessed wire
-    shape. Refusing rather than guessing still holds. The *reason* it used to
-    give does not: the published capability vocabulary was a closed enum of four
-    names, the same four answered to every caller on every supported contract
-    minor, so the claim was that no conformant vault could ever advertise an
-    upload at all.
+# The published ``UploadRequest`` field set, exactly. Upstream declares
+# ``additionalProperties: false``, so a sixth field is a rejected request rather
+# than a harmless extra, and an absent ``tier`` is not defaultable -- both halves
+# are asserted because each fails in its own direction.
+_UPLOAD_REQUEST_FIELDS = frozenset(
+    {"filename", "content_base64", "external_id", "timestamp", "tier"}
+)
 
-    Contract 0.8.0 falsifies that. ``upload`` is a published fifth name,
-    ``POST /v1/uploads`` is its route, and — this being the first bump whose
-    capability list is not minor-independent — the advertisement is keyed on the
-    caller's declared minor: a client below ``0.8`` is not shown it and is
-    refused the route with ``incompatible_version``.
+# The two headers a write declares itself with. Spelled out here for the reason
+# the route is: these are Creek's contract, not adepthood's choice.
+_CEILING_HEADER = "X-Creek-Tier-Ceiling"
+_CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
 
-    So the refusal survives on a narrower and truer claim: adepthood recognises
-    the wire name but has not implemented the call. Recognising and calling are
-    separate changes; only the first is made here, and the tests below pin the
-    seam between them so the two cannot silently merge into one.
+# The minor a 0.8.0-pinned caller declares. Creek keys the upload capability on
+# it from 0.8.0 onward, so sending the wrong one is refused at the route.
+_CONTRACT_MINOR = "0.8"
+
+
+def _decoded_body(request: httpx.Request) -> dict[str, object]:
+    """Return one recorded request's JSON body as an object."""
+    body = json.loads(request.content)
+    assert isinstance(body, dict)
+    return body
+
+
+async def _handshaken(clients: _VaultClientFactory, handler: _UploadRoutes) -> HttpCreekVaultClient:
+    """Return an adapter that has completed a handshake against ``handler``."""
+    client = HttpCreekVaultClient(_VAULT_URL, _VAULT_API_KEY, http_client=clients(handler))
+    assert (await client.handshake()).available is True
+    return client
+
+
+def _intimate_request() -> VaultUploadRequest:
+    """Build the one request whose ceiling has no spelling on Creek's wire."""
+    return VaultUploadRequest(
+        external_id=upload_external_id(_OWNER_ID, _FILENAME),
+        filename=_FILENAME,
+        content_base64=_CONTENT_B64,
+        tier=VaultTierCeiling.INTIMATE,
+        tier_ceiling=VaultTierCeiling.INTIMATE,
+        created_at=_CREATED_AT,
+    )
+
+
+class TestHttpClientUpload:
+    """The adapter speaks Creek's published upload route, and speaks only that.
+
+    The unconditional refusal this class replaces was right while it stood.
+    Through contract 0.7 the ratified ``/v1`` vocabulary was a closed set of four
+    capability names answered identically to every caller, so no conformant vault
+    could advertise or serve an upload and an adapter that sent one would have
+    been improvising a wire format. Contract 0.8.0 publishes ``upload`` as a
+    fifth name, ``POST /v1/uploads`` as its route, and ``UploadRequest`` /
+    ``UploadResponse`` as its shapes -- all three vendored under
+    ``tests/fixtures/creek_v1/``. Every assertion below is read off that bundle
+    rather than off this adapter, which is the same discipline that deleted the
+    invented ``PUT``.
     """
 
     @pytest.mark.asyncio
-    async def test_upload_refuses_even_when_the_vault_advertises_the_route(
+    async def test_a_document_is_posted_to_the_published_collection_url(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """The refusal is adepthood's own, not a capability gate the vault happened to trip."""
-        client = HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=vault_http_clients(
-                _routed_handler(_stored_payload(), capabilities=list(_ADVERTISED_WIRE_NAMES))
-            ),
-        )
-        await client.handshake()
+        """One ``POST`` of the collection, with no identifier smuggled into the path.
 
-        assert client.supports(CreekCapability.UPLOAD) is True
+        The idempotency key is a *field* of the published request, not a path
+        segment, so there is no per-document URL to address and nothing for a
+        filename or an id to redirect by its shape.
+        """
+        handler = _UploadRoutes(_stored_payload())
+        client = await _handshaken(vault_http_clients, handler)
+
+        await client.upload(_upload_request())
+
+        assert len(handler.uploads) == 1
+        sent = handler.uploads[0]
+        assert sent.method == "POST"
+        assert str(sent.url) == _UPLOAD_URL
+        assert sent.url.query == b""
+
+    @pytest.mark.asyncio
+    async def test_the_body_is_exactly_the_published_upload_request(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """Five published fields, JSON and base64, and nothing adepthood invented.
+
+        The field set is asserted as a whole rather than field by field: an
+        omission and an addition are both contract faults, and ``UploadRequest``
+        forbids unknown properties outright, so a sixth field would be a refused
+        request rather than something the vault quietly ignores.
+        """
+        handler = _UploadRoutes(_stored_payload())
+        client = await _handshaken(vault_http_clients, handler)
+        request = _upload_request()
+
+        await client.upload(request)
+
+        body = _decoded_body(handler.uploads[0])
+        assert frozenset(body) == _UPLOAD_REQUEST_FIELDS
+        assert body["filename"] == _FILENAME
+        assert body["content_base64"] == _CONTENT_B64
+        assert body["external_id"] == request.external_id
+        assert body["timestamp"] == _CREATED_AT.isoformat()
+        assert body["tier"] == VaultTierCeiling.PERSONAL.value
+
+    @pytest.mark.asyncio
+    async def test_the_ceiling_and_the_declared_minor_travel_in_their_headers(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The write declares what it is admitted at and which minor it speaks.
+
+        The declared minor is load-bearing from 0.8.0 in a way it was not before:
+        Creek keys the upload capability on the caller's own declared minor and
+        refuses a caller below the threshold outright, so a request that omitted
+        it would be refused by a vault that serves the route perfectly well.
+        """
+        handler = _UploadRoutes(_stored_payload())
+        client = await _handshaken(vault_http_clients, handler)
+
+        await client.upload(_upload_request())
+
+        headers = handler.uploads[0].headers
+        assert headers["Authorization"] == f"Bearer {_VAULT_API_KEY}"
+        assert headers[_CEILING_HEADER] == VaultTierCeiling.PERSONAL.value
+        assert headers[_CONTRACT_VERSION_HEADER] == _CONTRACT_MINOR
+
+    @pytest.mark.asyncio
+    async def test_a_durable_upload_reads_back_the_vaults_own_fragment(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The result carries the vault's fragment id and the action it reported."""
+        handler = _UploadRoutes(_stored_payload())
+        client = await _handshaken(vault_http_clients, handler)
+
+        result = await client.upload(_upload_request())
+
+        assert result == VaultUploadResult(
+            stored=True, vault_ref=_FRAGMENT_ID, action=VaultIngestAction.CREATED, tags=()
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_resend_addresses_one_fragment_and_creates_nothing_new(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """Idempotence survives the wire: the same id twice, and the vault says so.
+
+        Both halves matter. The id is what makes the second call an edit rather
+        than a duplicate, and ``unchanged`` is the vault reporting that it was --
+        a result adepthood must keep rather than flatten into "stored", since a
+        continuous re-send is the steady state this path is built for.
+        """
+        handler = _UploadRoutes(
+            _stored_payload(), resend_payload=_stored_payload(VaultIngestAction.UNCHANGED.value)
+        )
+        client = await _handshaken(vault_http_clients, handler)
+
+        first = await client.upload(_upload_request())
+        second = await client.upload(_upload_request())
+
+        sent_ids = [_decoded_body(upload)["external_id"] for upload in handler.uploads]
+        assert len(sent_ids) == 2
+        assert sent_ids[0] == sent_ids[1]
+        assert first.action is VaultIngestAction.CREATED
+        assert second.action is VaultIngestAction.UNCHANGED
+        assert second.vault_ref == first.vault_ref
+
+    @pytest.mark.asyncio
+    async def test_upload_requires_the_advertised_capability_without_egress(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A vault that never advertised uploads gets no document, only a refusal.
+
+        The no-egress half is the load-bearing one, and it is why this test
+        survives the refusal being retired: refusing after sending would already
+        have put a user's whole document on a wire toward a surface nobody
+        claimed to serve.
+        """
+        handler = _UploadRoutes(
+            _stored_payload(),
+            capabilities=[name for name in _ADVERTISED_WIRE_NAMES if name != _UPLOAD_WIRE_NAME],
+        )
+        client = await _handshaken(vault_http_clients, handler)
+
         with pytest.raises(CreekCapabilityUnsupportedError) as caught:
             await client.upload(_upload_request())
 
         assert CreekCapability.UPLOAD.value in str(caught.value)
+        assert handler.uploads == []
+        assert _SENTINEL_B64_FRAGMENT not in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_an_intimate_document_never_reaches_the_wire(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The wire cannot express ``intimate``, so the request is refused before it exists.
+
+        Not a fourth guard of this seam's own: ``wire_ceiling_for`` is the single
+        door between adepthood's three tiers and the two Creek publishes, and it
+        raises rather than narrowing. Narrowing would be the worst available
+        outcome -- an intimate document filed under a depth its owner never
+        chose, in a request every downstream check would find well-formed.
+        """
+        handler = _UploadRoutes(_stored_payload())
+        client = await _handshaken(vault_http_clients, handler)
+
+        with pytest.raises(CreekCeilingUnrepresentableError):
+            await client.upload(_intimate_request())
+
+        assert handler.uploads == []
+
+    @pytest.mark.asyncio
+    async def test_a_version_refusal_is_a_contract_error_carrying_its_code(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """Creek refuses a below-threshold caller at the route, and the code survives.
+
+        This is a real runtime state rather than a theoretical one: the
+        capability list is keyed on the caller's minor from 0.8.0, so a vault can
+        serve the route and still refuse *this* caller. The code is what tells an
+        operator that no retry reaches it.
+        """
+        handler = _UploadRoutes(
+            {"code": VaultErrorCode.INCOMPATIBLE_VERSION.value, "message": _SENTINEL_ERROR_TEXT},
+            upload_status=HTTPStatus.CONFLICT,
+        )
+        client = await _handshaken(vault_http_clients, handler)
+
+        with pytest.raises(CreekVaultContractError) as caught:
+            await client.upload(_upload_request())
+
+        assert caught.value.code is VaultErrorCode.INCOMPATIBLE_VERSION
+        assert _SENTINEL_ERROR_TEXT not in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_a_privacy_refusal_reads_as_a_refusal_not_a_rejected_credential(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """Creek publishes ``privacy_refused`` at 403, which is also an auth status.
+
+        Deciding on the status class first would send an operator to rotate a key
+        that was never refused. The code is authoritative, exactly as it is on
+        the journal write.
+        """
+        handler = _UploadRoutes(
+            {"code": VaultErrorCode.PRIVACY_REFUSED.value, "message": _SENTINEL_ERROR_TEXT},
+            upload_status=HTTPStatus.FORBIDDEN,
+        )
+        client = await _handshaken(vault_http_clients, handler)
+
+        with pytest.raises(CreekVaultContractError) as caught:
+            await client.upload(_upload_request())
+
+        assert caught.value.code is VaultErrorCode.PRIVACY_REFUSED
+
+    @pytest.mark.asyncio
+    async def test_a_transport_failure_normalises_without_echoing_the_document(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A dropped call becomes one static, capability-named message and nothing else.
+
+        The original exception's text can carry the URL or the request body, so
+        neither its message nor its traceback context may ride along.
+        """
+        handler = _UploadRoutes(
+            _stored_payload(), upload_error=httpx.ConnectError(_SENTINEL_ERROR_TEXT)
+        )
+        client = await _handshaken(vault_http_clients, handler)
+
+        with pytest.raises(CreekVaultUnavailableError) as caught:
+            await client.upload(_upload_request())
+
+        assert CreekCapability.UPLOAD.value in str(caught.value)
+        assert _SENTINEL_ERROR_TEXT not in str(caught.value)
+        assert _SENTINEL_B64_FRAGMENT not in repr(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_a_2xx_the_parser_cannot_read_is_not_a_durable_write(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A 200 that does not say a fragment was stored must not look like one.
+
+        A proxy error page served as 200 is the usual cause, and reporting it as
+        a success would tell someone their document is in their vault when it is
+        nowhere at all -- and this path has no local copy to fall back on.
+        """
+        handler = _UploadRoutes(None, upload_text="<html>gateway timeout</html>")
+        client = await _handshaken(vault_http_clients, handler)
+
+        with pytest.raises(CreekVaultUnavailableError):
+            await client.upload(_upload_request())
+
+    @pytest.mark.asyncio
+    async def test_a_2xx_missing_the_fragment_id_reports_not_stored(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A readable body that names no fragment is a write we cannot verify."""
+        handler = _UploadRoutes({"action": VaultIngestAction.CREATED.value})
+        client = await _handshaken(vault_http_clients, handler)
+
+        result = await client.upload(_upload_request())
+
+        assert result == VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
 
     @pytest.mark.asyncio
     async def test_a_vault_advertising_the_upload_wire_name_is_believed(
@@ -643,7 +1002,7 @@ class TestHttpClientUploadRefuses:
             _VAULT_URL,
             _VAULT_API_KEY,
             http_client=vault_http_clients(
-                _routed_handler(_stored_payload(), capabilities=[_UPLOAD_WIRE_NAME])
+                _UploadRoutes(_stored_payload(), capabilities=[_UPLOAD_WIRE_NAME])
             ),
         )
         await client.handshake()
@@ -663,7 +1022,7 @@ class TestHttpClientUploadRefuses:
             _VAULT_URL,
             _VAULT_API_KEY,
             http_client=vault_http_clients(
-                _routed_handler(
+                _UploadRoutes(
                     _stored_payload(),
                     capabilities=[
                         name for name in _ADVERTISED_WIRE_NAMES if name != _UPLOAD_WIRE_NAME
@@ -683,48 +1042,126 @@ class TestStoreUploadAgainstAnAdvertisingVault:
     answer, or the service's reaction to a *scripted* client. Neither notices
     that recognising ``upload`` moved a real deployment from one branch of
     :func:`store_upload` to another -- the pre-call gate no longer fires, so the
-    refusal now arrives from inside the call instead. This class drives the real
-    adapter through the real service so the status the router will hand a person
-    is asserted where the two meet.
+    call itself is what decides. This class drives the real adapter through the
+    real service so the status the router will hand a person is asserted where
+    the two meet.
+
+    It replaces a pair that pinned the opposite outcome. While the adapter
+    refused unconditionally, an advertising vault still ended at
+    ``CAPABILITY_UNSUPPORTED`` -- correctly, because no retry could reach a call
+    adepthood had not built. That is the sentence this issue retires.
     """
 
-    def _advertising_client(self, clients: _VaultClientFactory) -> HttpCreekVaultClient:
-        """Build an adapter pointed at a vault advertising the full 0.8 name list."""
-        return HttpCreekVaultClient(
-            _VAULT_URL,
-            _VAULT_API_KEY,
-            http_client=clients(
-                _routed_handler(_stored_payload(), capabilities=list(_ADVERTISED_WIRE_NAMES))
-            ),
+    def _routes(
+        self,
+        *,
+        upload_payload: object | None = None,
+        upload_status: int = HTTPStatus.OK,
+        upload_error: Exception | None = None,
+    ) -> _UploadRoutes:
+        """Build routes for a vault advertising the full 0.8 name list."""
+        return _UploadRoutes(
+            _stored_payload() if upload_payload is None else upload_payload,
+            capabilities=list(_ADVERTISED_WIRE_NAMES),
+            upload_status=upload_status,
+            upload_error=upload_error,
         )
 
+    def _client(self, clients: _VaultClientFactory, routes: _UploadRoutes) -> HttpCreekVaultClient:
+        """Point a real adapter at ``routes``."""
+        return HttpCreekVaultClient(_VAULT_URL, _VAULT_API_KEY, http_client=clients(routes))
+
     @pytest.mark.asyncio
-    async def test_an_advertising_vault_reports_the_capability_as_unsupported(
+    async def test_an_advertising_vault_accepts_the_document(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """The gap is permanent until adepthood builds the call, so it must not read as transient.
+        """The whole path lands: one document over the wire, one fragment back."""
+        routes = self._routes()
+        outcome = await _store(self._client(vault_http_clients, routes))
 
-        ``DEGRADED`` means "it broke, try again", and the router says exactly
-        that. A retry cannot succeed here for any vault at contract 0.8 or
-        above, which is every vault this recognition was added for -- so the
-        honest answer is the one that does not promise a retry.
-        """
-        outcome = await _store(self._advertising_client(vault_http_clients))
-        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+        assert outcome.status is VaultUploadStatus.ACCEPTED
+        assert outcome.vault_ref == _FRAGMENT_ID
+        assert len(routes.uploads) == 1
 
     @pytest.mark.asyncio
     async def test_the_pre_call_gate_is_genuinely_passed_on_the_way_there(
         self, vault_http_clients: _VaultClientFactory
     ) -> None:
-        """Guards the test above against passing for the old reason.
+        """Guards the test above against passing for the wrong reason.
 
-        If ``supports`` ever answered ``False`` again the status would still be
-        ``CAPABILITY_UNSUPPORTED``, from the pre-call gate -- and this class
-        would silently stop covering the branch it exists for.
+        If ``supports`` ever answered ``False`` again the service would return
+        before any request was built, and this class would silently stop
+        covering the branch it exists for.
         """
-        client = self._advertising_client(vault_http_clients)
+        routes = self._routes()
+        client = self._client(vault_http_clients, routes)
         await _store(client)
+
         assert client.supports(CreekCapability.UPLOAD) is True
+        assert routes.uploads != []
+
+    @pytest.mark.asyncio
+    async def test_a_transport_failure_mid_call_now_genuinely_degrades(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A working upload that broke is the one failure a retry *can* clear.
+
+        This branch was unreachable while the adapter refused before sending:
+        every failure a real deployment saw arrived as a refused capability. Now
+        that the call is made, "the vault dropped it" and "the vault will not take
+        files" are two different sentences again, and only the first ends at
+        ``DEGRADED``.
+        """
+        routes = self._routes(upload_error=httpx.ConnectError(_SENTINEL_ERROR_TEXT))
+        outcome = await _store(self._client(vault_http_clients, routes))
+
+        assert outcome.status is VaultUploadStatus.DEGRADED
+        assert routes.uploads != []
+
+    @pytest.mark.asyncio
+    async def test_a_version_refusal_at_the_route_does_not_promise_a_retry(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """A caller below the upload threshold is a dead end, not a transient fault.
+
+        The capability list is keyed on the caller's declared minor from 0.8.0,
+        so a vault can advertise, be reached, and still refuse this caller at the
+        route. ``DEGRADED`` would tell them to retry something no retry reaches.
+        """
+        routes = self._routes(
+            upload_payload={
+                "code": VaultErrorCode.INCOMPATIBLE_VERSION.value,
+                "message": _SENTINEL_ERROR_TEXT,
+            },
+            upload_status=HTTPStatus.CONFLICT,
+        )
+        outcome = await _store(self._client(vault_http_clients, routes))
+
+        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+        assert outcome.vault_ref is None
+
+    @pytest.mark.asyncio
+    async def test_an_intimate_document_is_withheld_before_the_vault_is_probed(
+        self, vault_http_clients: _VaultClientFactory
+    ) -> None:
+        """The one classification that cannot cross this wire never starts the journey.
+
+        Not a fourth guard of the service's own: the decision is
+        :func:`~domain.creek_vault.wire_ceiling_for`'s, asked before anything
+        else happens, exactly as the journal write asks its own question before
+        the client is touched. The status is the one that promises no retry,
+        because none is possible -- Creek's ``UploadRequest.tier`` is typed to
+        the two ceilings a remote caller may name, and ``intimate`` is not one of
+        them at any version either side could reach today.
+        """
+        routes = self._routes()
+        client = self._client(vault_http_clients, routes)
+
+        outcome = await _store(client, classification="intimate")
+
+        assert outcome.status is VaultUploadStatus.CAPABILITY_UNSUPPORTED
+        assert outcome.vault_ref is None
+        assert routes.uploads == []
 
 
 class TestLocalFallbackUpload:

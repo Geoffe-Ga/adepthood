@@ -71,6 +71,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     wire_ceiling_for,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
@@ -103,6 +105,7 @@ _API_KEY = "creek-vault-conformance-key"  # pragma: allowlist secret
 _CAPABILITIES_PATH = "/v1/capabilities"
 _WHEEL_PATH = "/v1/wheel"
 _REFLECTIONS_PATH = "/v1/reflections"
+_UPLOADS_PATH = "/v1/uploads"
 
 # The ceiling every reflections cell is driven at. Creek's own reflection
 # examples echo ``personal`` in both tier fields, so accepting less would reject
@@ -116,6 +119,14 @@ _PATTERN_MARGINALIA_KIND = "connection"
 
 _ENTRY_ID = 7
 _ENTRY_BODY = "a floor-level journal entry"
+
+# The one document every upload cell is driven with. The bytes are synthetic and
+# the id is adepthood's own generated shape rather than a filename, which is what
+# the seam actually sends: a filename is the user's words about their life and
+# does not belong in an id.
+_UPLOAD_EXTERNAL_ID = "adepthood-upload-conformance"
+_UPLOAD_FILENAME = "field-notes.pdf"
+_UPLOAD_CONTENT_B64 = "ZXhhbXBsZSBkb2N1bWVudCBieXRlcw=="
 _CREATED_AT = datetime(2026, 7, 31, 6, 12, tzinfo=UTC)
 
 # The vault-issued fragment id Creek's two ratified journal bodies answer with.
@@ -281,7 +292,10 @@ class _Recorder:
     wheel_status: int = HTTPStatus.OK
     reflect_payload: object = None
     reflect_status: int = HTTPStatus.OK
+    upload_payload: object = None
+    upload_status: int = HTTPStatus.OK
     calls: list[str] = field(default_factory=list)
+    bodies: list[object] = field(default_factory=list)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Answer one request, recording the method and path it arrived on."""
@@ -294,6 +308,9 @@ class _Recorder:
             return httpx.Response(self.wheel_status, json=self.wheel_payload)
         if request.url.path == _REFLECTIONS_PATH:
             return httpx.Response(self.reflect_status, json=self.reflect_payload)
+        if request.url.path == _UPLOADS_PATH:
+            self.bodies.append(json.loads(request.content))
+            return httpx.Response(self.upload_status, json=self.upload_payload)
         return httpx.Response(self.journal_status, json=self.journal_payload)
 
 
@@ -316,6 +333,23 @@ def _ingest_request() -> VaultIngestRequest:
         tier_ceiling=VaultTierCeiling.PERSONAL,
         created_at=_CREATED_AT,
     )
+
+
+def _upload_request(tier: VaultTierCeiling = VaultTierCeiling.PERSONAL) -> VaultUploadRequest:
+    """Build the one upload request every document cell is driven with."""
+    return VaultUploadRequest(
+        external_id=_UPLOAD_EXTERNAL_ID,
+        filename=_UPLOAD_FILENAME,
+        content_base64=_UPLOAD_CONTENT_B64,
+        tier=tier,
+        tier_ceiling=tier,
+        created_at=_CREATED_AT,
+    )
+
+
+def _upload_example(state: str) -> dict[str, object]:
+    """Return one vendored upload example by its published state name."""
+    return _read_json(f"examples/upload/{state}.json")
 
 
 @pytest_asyncio.fixture
@@ -713,6 +747,147 @@ async def test_journal_upsert_error_states_raise_their_classified_failure(
 
     with pytest.raises(expected):
         await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+async def test_upload_success_cell_is_a_created_write(vault_clients: ClientFactory) -> None:
+    """Creek's ratified upload body reads back as a durable, newly created fragment.
+
+    The fragment id is read out of the published example rather than restated, so
+    a fixture that moved underneath this suite fails here as well as at the
+    checksum.
+    """
+    published = _upload_example("success")
+    recorder = _Recorder(upload_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    result = await client.upload(_upload_request())
+
+    assert result == VaultUploadResult(
+        stored=True,
+        vault_ref=str(published["fragment_id"]),
+        action=VaultIngestAction.CREATED,
+        tags=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_upload_empty_cell_is_an_unchanged_resend(vault_clients: ClientFactory) -> None:
+    """Creek's empty state is a stored no-op re-send, which is what idempotence looks like.
+
+    Re-sending an unmodified document is the steady state of this path, not an
+    error and not a loss, and a client must be able to tell it apart from a write
+    without diffing the document itself.
+    """
+    published = _upload_example("empty")
+    recorder = _Recorder(upload_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    result = await client.upload(_upload_request())
+
+    assert result.stored is True
+    assert result.action is VaultIngestAction.UNCHANGED
+    assert result.vault_ref == str(published["fragment_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("refusal", CreekVaultContractError),
+        ("malformed-input", CreekVaultContractError),
+        ("incompatible-version", CreekVaultContractError),
+        ("unavailable-service", CreekVaultUnavailableError),
+    ],
+)
+async def test_upload_error_states_raise_their_classified_failure(
+    state: str,
+    expected: type[Exception],
+    vault_clients: ClientFactory,
+) -> None:
+    """Each ratified upload error is classified from the code Creek published on it.
+
+    The incompatible-version cell is the one 0.8.0 made routine rather than
+    theoretical: the capability list is keyed on the caller's declared minor, so a
+    vault can serve this route perfectly well and still refuse *this* caller. The
+    refusal cell is the other load-bearing one -- ``privacy_refused`` arrives at
+    403, and deciding on the status class first would report it as a rejected
+    credential and send an operator to rotate a key that was never refused.
+    """
+    recorder = _Recorder(
+        upload_payload=_upload_example(state), upload_status=_STATUS_BY_STATE[state]
+    )
+    client = await _handshaken(vault_clients, recorder)
+
+    with pytest.raises(expected):
+        await client.upload(_upload_request())
+
+
+@pytest.mark.asyncio
+async def test_upload_refuses_without_egress_when_unadvertised(
+    vault_clients: ClientFactory,
+) -> None:
+    """An upload the handshake never advertised is refused locally, whatever the wire says.
+
+    The permanent half of the refusal ``upload()`` used to answer with
+    unconditionally. Its shape is ratified now, but a vault that did not offer the
+    capability still gets no request -- and here that is a whole document rather
+    than one entry, with no local copy anywhere if it went astray.
+    """
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = vault_clients(recorder)
+
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.upload(_upload_request())
+
+    assert recorder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_upload_puts_the_published_request_on_the_wire(
+    vault_clients: ClientFactory,
+) -> None:
+    """The body adepthood sends is exactly the field set ``UploadRequest`` declares.
+
+    Read off the vendored schema rather than restated, and asserted as a whole
+    set: the shape forbids unknown properties, so an invented field is a refused
+    request, and a missing ``tier`` is a document filed at a depth nobody chose.
+    """
+    published = _read_json("schemas/UploadRequest.schema.json")["properties"]
+    assert isinstance(published, dict)
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = await _handshaken(vault_clients, recorder)
+
+    await client.upload(_upload_request())
+
+    assert recorder.calls[-1] == f"POST {_UPLOADS_PATH}"
+    sent = recorder.bodies[-1]
+    assert isinstance(sent, dict)
+    assert frozenset(sent) == frozenset(published)
+    assert sent[_TIER_FIELD] == VaultTierCeiling.PERSONAL.value
+    assert sent["external_id"] == _UPLOAD_EXTERNAL_ID
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_upload_is_refused_before_any_request_exists(
+    vault_clients: ClientFactory,
+) -> None:
+    """The tier with no wire spelling stops at adepthood's own door, carrying the document.
+
+    The published request types ``tier`` to the two ceilings a remote caller may
+    declare, and :func:`wire_ceiling_for` refuses rather than narrowing -- so the
+    document never becomes a request at all, and the no-egress assertion is what
+    proves it.
+    """
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = await _handshaken(vault_clients, recorder)
+    handshake_calls = list(recorder.calls)
+
+    with pytest.raises(CreekCeilingUnrepresentableError):
+        await client.upload(_upload_request(VaultTierCeiling.INTIMATE))
+
+    assert recorder.calls == handshake_calls
+    assert recorder.bodies == []
 
 
 @pytest.mark.asyncio
