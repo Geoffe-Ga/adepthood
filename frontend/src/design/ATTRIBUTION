@@ -16,14 +16,16 @@ Clean-room stance
 - Palette: the warm grounds (`surface.*`, `ink.*`) are derived from Adepthood's
   own pre-existing `colors.paper` journal palette. The terracotta `accent.*` is
   derived from Adepthood's own `colors.tier.clear` (#be6e46), darkened to clear
-  WCAG AA as text. No swatch is taken from any third-party product or brand
-  palette.
+  WCAG AA as text. No swatch in the design language is taken from any
+  third-party product or brand palette. (`googleBrand` also lives in
+  `tokens.ts`, but is not part of the language — see "Third-party marks".)
 - Showcase palette (#826): `showcase.*`/`onShowcase.*` are an original warm-umber
   derivation of Adepthood's own warm ink (`colors.paper.ink`) — a brown umber,
   not navy and not Material's `#121212`. No third-party product/brand swatch.
 - Marks: no Anthropic (or any other company's) name, logo, wordmark, or brand
   swatch is presented as Adepthood's own. "Candle & Ink" is an internal name
-  for this language.
+  for this language. The one third-party mark in the app is Google's, used
+  under Google's own terms and recorded below.
 - Fonts: no proprietary/commercial font files are bundled, self-hosted, or
   embedded (#800). Both faces are platform-system stacks — serif
   (`fonts.serif`: Georgia / system serif) and sans (`fonts.sans`: system UI /
@@ -31,5 +33,30 @@ Clean-room stance
   stacks for brand parity. If an OFL/Apache face is ever bundled, its license
   file must be committed and listed here.
 
-Summary: original palette, no proprietary fonts, no third-party marks; the only
-external input is the MIT-licensed reference doc, used for format guidance only.
+Third-party marks used under their owner's terms
+------------------------------------------------
+- Google "Sign in with Google" button. Google requires — does not merely
+  suggest — that apps using their identity service render this button to
+  their published branding guidelines
+  (https://developers.google.com/identity/branding-guidelines), and prohibits
+  a monochrome "G", a custom icon, and the standard "G" on any fill other
+  than their three approved themes. Adepthood therefore reproduces:
+    * the standard colour "Super G" mark, as vector paths matching the asset
+      Google supplies in signin-assets.zip, unaltered in geometry or colour
+      (`features/Auth/components/GoogleSignInButton.tsx`);
+    * Google's approved light and dark button palettes, and their four logo
+      colours (`googleBrand` in `tokens.ts`).
+  These values are NOT part of Candle & Ink and are not Adepthood's own. They
+  are used solely to draw Google's own sign-in button, are never applied to
+  any other surface, and must not be tuned or harmonised with the warm
+  palette. `features/Auth/components/__tests__/googleBranding.test.ts` pins
+  every value against Google's published table so drift fails the build.
+- Apple "Sign in with Apple" button. Rendered by Apple's own
+  `AppleAuthenticationButton` component rather than reproduced, so no Apple
+  mark or swatch is copied into this repo at all.
+
+Summary: original palette, no proprietary fonts, and the only third-party
+marks are Google's and Apple's sign-in buttons — each drawn to its owner's
+mandatory guidelines and recorded above, neither presented as Adepthood's own.
+The only other external input is the MIT-licensed reference doc, used for
+format guidance only.

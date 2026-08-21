@@ -825,6 +825,38 @@ export const onShowcase = {
 } as const;
 
 /**
+ * Google's brand colours for the "Sign in with Google" button.
+ *
+ * NOT part of Candle & Ink, and the one set of values in this file that is not
+ * Adepthood's own. Google publishes them as mandatory for any app using their
+ * identity service, and explicitly prohibits substitutions: a monochrome "G", a
+ * recoloured "G", or the standard "G" on any fill other than the ones below.
+ * They live here because this file is the audited home for every colour literal
+ * in the app and sits beside ``ATTRIBUTION``, which records their provenance —
+ * not because they are ours.
+ *
+ * Do not tune, theme, or harmonise these with the warm palette above. Anything
+ * that reaches for them outside the Google sign-in button is a bug.
+ * ``features/Auth/components/googleBranding.ts`` composes them, and its tests
+ * pin every value against Google's published table.
+ */
+export const googleBrand = {
+  /** Light theme: white fill, grey stroke, near-black text. */
+  lightFill: '#FFFFFF',
+  lightStroke: '#747775',
+  lightText: '#1F1F1F',
+  /** Dark theme: near-black fill, lighter grey stroke, off-white text. */
+  darkFill: '#131314',
+  darkStroke: '#8E918F',
+  darkText: '#E3E3E3',
+  /** The four colours of the standard "Super G" mark. */
+  logoBlue: '#4285F4',
+  logoGreen: '#34A853',
+  logoYellow: '#FBBC05',
+  logoRed: '#EA4335',
+} as const;
+
+/**
  * Elevation for a showcase band lifting off a light screen — ink-tinted,
  * downward; iOS/web shadow* props + Android ``elevation``.
  */

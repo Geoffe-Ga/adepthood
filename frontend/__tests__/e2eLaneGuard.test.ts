@@ -26,8 +26,10 @@ const SERVER_LAUNCHER = join(REPO_ROOT, 'backend', 'tests', 'e2e', 'server.py');
 const E2E_SCRIPT = 'test:e2e';
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
+  'account-deletion.e2e.test.ts',
   'auth.e2e.test.ts',
   'course.e2e.test.ts',
+  'depth.e2e.test.ts',
   'habits.e2e.test.ts',
   'journal.e2e.test.ts',
   'practice-catalog.e2e.test.ts',

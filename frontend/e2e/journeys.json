@@ -92,7 +92,7 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved.",
+    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved. Still uncovered, and not for want of a spec: the routes live on the server, but no frontend code calls them. The API client exports no wrapper for PUT /stages/progress or GET /stages/{stage_number}/progress, and the optimistic advance machinery MapScreen would have used was deleted rather than wired up. A spec would have to hand-roll the request, which registers as coverage of a screen-to-client seam that does not exist.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
@@ -105,7 +105,7 @@
       "tables": ["stageprogress", "coursestage"]
     },
     "status": "uncovered",
-    "issue": 2299
+    "issue": 2323
   },
   {
     "id": "depth.choose-rings",
@@ -116,8 +116,8 @@
       "routes": ["GET /depth-preferences", "PATCH /depth-preferences"],
       "tables": ["userdepthpreferences"]
     },
-    "status": "uncovered",
-    "issue": 2300
+    "status": "covered",
+    "coveredBy": "frontend/e2e/depth.e2e.test.ts"
   },
   {
     "id": "seed.upload-document",
@@ -140,12 +140,12 @@
       "routes": ["DELETE /users/me"],
       "tables": ["user", "journalentry", "accountdeletionaudit"]
     },
-    "status": "uncovered",
-    "issue": 2311
+    "status": "covered",
+    "coveredBy": "frontend/e2e/account-deletion.e2e.test.ts"
   },
   {
     "id": "errors.boundary-recovers-and-reports",
-    "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written.",
+    "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written. Still uncovered because the e2e lane cannot mount a screen at all: it runs on the node environment with node_modules untransformed, so importing the boundary dies on @react-navigation/native's ESM and react-native's Flow syntax, and the lane's own guard pins the moduleNameMapper to the @/ alias so the React Native preset cannot be added to a spec. Observing the outgoing crash envelope is banned in this lane by the same guard. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
@@ -153,6 +153,6 @@
       "tables": ["journalentry"]
     },
     "status": "uncovered",
-    "issue": 2310
+    "issue": 2324
   }
 ]
