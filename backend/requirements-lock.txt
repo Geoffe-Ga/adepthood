@@ -8,7 +8,7 @@ annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
-anthropic==0.121.0
+anthropic==0.122.0
     # via -r backend/requirements.txt
 anyio==4.14.2
     # via
@@ -93,7 +93,7 @@ mako==1.4.1
     # via alembic
 markupsafe==3.0.3
     # via mako
-openai==3.1.0
+openai==3.2.0
     # via -r backend/requirements.txt
 packaging==26.3
     # via
@@ -112,7 +112,7 @@ pydantic==2.13.4
     #   sqlmodel
 pydantic-core==2.46.4
     # via pydantic
-pygments==2.20.0
+pygments==2.21.0
     # via pytest
 pyjwt==2.13.0
     # via -r backend/requirements.txt
@@ -173,7 +173,7 @@ tzdata==2026.3
     # via -r backend/requirements.txt
 urllib3==2.7.0
     # via sentry-sdk
-uvicorn==0.52.1
+uvicorn==0.52.3
     # via -r backend/requirements.txt
 wrapt==2.3.0
     # via deprecated
