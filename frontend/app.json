@@ -4,15 +4,17 @@
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/adaptive-icon.png"
-      }
+      },
+      "package": "com.creekmasons.adepthood"
     },
     "icon": "./assets/icon.png",
     "ios": {
+      "bundleIdentifier": "com.creekmasons.adepthood",
       "supportsTablet": true,
       "requireFullScreen": true,
       "usesAppleSignIn": true
     },
-    "name": "frontend",
+    "name": "Adepthood",
     "orientation": "portrait",
     "plugins": [
       [
@@ -33,7 +35,8 @@
         }
       ]
     ],
-    "slug": "frontend",
+    "scheme": "adepthood",
+    "slug": "adepthood",
     "userInterfaceStyle": "light",
     "version": "1.0.0",
     "web": {
