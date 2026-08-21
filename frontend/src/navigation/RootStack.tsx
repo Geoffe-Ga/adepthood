@@ -10,6 +10,7 @@ import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetai
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
+import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -36,6 +37,7 @@ export type RootStackParamList = {
   SeedCorpus: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
+  DeleteAccount: undefined;
   SupportCare: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
@@ -110,9 +112,10 @@ const JournalScreens = (): React.JSX.Element => (
   </>
 );
 
-const RootStack = (): React.JSX.Element => (
-  <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
-    <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+/** The Settings hub and everything reachable from it, grouped the way the
+ *  Journal routes are so ``RootStack`` stays readable as the hub grows. */
+const SettingsScreens = (): React.JSX.Element => (
+  <>
     <Stack.Screen name="Settings" component={SettingsHubScreen} options={{ title: 'Settings' }} />
     <Stack.Screen
       name="SeedCorpus"
@@ -130,10 +133,22 @@ const RootStack = (): React.JSX.Element => (
       options={{ title: 'Time zone' }}
     />
     <Stack.Screen
+      name="DeleteAccount"
+      component={DeleteAccountScreen}
+      options={{ title: 'Delete account' }}
+    />
+    <Stack.Screen
       name="SupportCare"
       component={SupportCareScreen}
       options={{ title: 'Support & care' }}
     />
+  </>
+);
+
+const RootStack = (): React.JSX.Element => (
+  <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
+    <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+    {SettingsScreens()}
     <Stack.Screen
       name="SharePreview"
       component={SharePreviewScreen}
