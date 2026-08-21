@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
+import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { LicenseKeyField } from './components/LicenseKeyField';
 import { validateLicenseKey } from './licenseKeyValidation';
 import { isGoogleAuthConfigured } from './oauthConfig';
@@ -20,7 +21,9 @@ import { useTheme } from '@/design/ThemeContext';
 import { BORDER_RADIUS } from '@/design/tokens';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
-const GOOGLE_LABEL = 'Continue with Google';
+// Google's button owns its own wording — only three strings are permitted on
+// it, so that phrase is a compliance constant living beside the rest of the
+// mandated branding, not screen copy this file is free to set.
 const APPLE_LABEL = 'Continue with Apple';
 
 /** The help page is static config — appending the typed key would leak it into browser history. */
@@ -133,7 +136,11 @@ function LicenseStep({
 
 interface ProviderFlowProps {
   state: SocialAuthView & { submitLicenseKey: (_key: string) => void };
-  /** The provider's own button — Google's is ours to draw, Apple's is Apple's. */
+  /**
+   * The provider's own button. Both are drawn to their owner's mandatory
+   * guidelines: Apple's is Apple's own component, Google's is ours to render but
+   * theirs to specify — neither is the app's to style.
+   */
   button: React.ReactNode;
   errorTestID: string;
   license: LicenseStepIds;
@@ -209,14 +216,10 @@ function GoogleSignIn(): React.JSX.Element {
       errorTestID="social-auth-error"
       license={GOOGLE_LICENSE_IDS}
       button={
-        <Button
-          accessibilityLabel={GOOGLE_LABEL}
-          busy={state.submitting}
-          disabled={state.submitting}
-          label={state.submitting ? 'Connecting...' : GOOGLE_LABEL}
+        <GoogleSignInButton
           onPress={state.signIn}
+          submitting={state.submitting}
           testID="social-auth-google"
-          variant="secondary"
         />
       }
     />
