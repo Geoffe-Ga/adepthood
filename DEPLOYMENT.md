@@ -346,6 +346,242 @@ without generating its migration — CI will reject it.
 
 ---
 
+## Backups and Restore
+
+The database holds every user's journal. A journal-first product that loses a
+user's journal has destroyed the only thing it asked them to trust it with, so
+this section is written to be followed by someone who did not set the system up,
+on the worst day of the project.
+
+### Read this first: a backup without the keys is not a backup
+
+Journal text is stored as ciphertext (see
+[Journal Encryption at Rest](#journal-encryption-at-rest)). The keys that
+decrypt it are **not in the database and not in any database backup** — they
+live in the `JOURNAL_ENCRYPTION_KEYS` service variable, which is part of the
+Railway service configuration, not part of the Postgres volume.
+
+**A database backup restored without those keys is unrecoverable.** Not "hard to
+read", not "needs a specialist" — the ciphertext is the only copy of the user's
+writing and Fernet has no recovery path. A restore that reaches this state fails
+loudly rather than handing back garbage:
+
+```
+encrypted journal content found but JOURNAL_ENCRYPTION_KEYS is not configured
+```
+
+So key custody is part of backup custody, and it cuts both ways:
+
+- **Keys must survive whatever kills the database.** The Railway variable store
+  dies with the Railway account. There must be a second copy of every key ever
+  used — current *and* rotated-out — held somewhere the platform outage cannot
+  reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
+  establishing that escrow is not something a deploy can do for you, and it is
+  tracked in issue #2319 until it is.
+- **Keys must never be stored with the backup.** A dump and its keys in the same
+  bucket, archive, or download folder is one compromise away from being
+  plaintext, which defeats the encryption entirely. Different system, different
+  credentials.
+- **Keep retired keys.** Rows re-encrypt lazily, so a restored backup can carry
+  rows written under a key that production stopped using months ago. Discarding
+  a key discards every un-rewritten row that needed it.
+
+`SECRET_KEY` is in the same category, with a smaller blast radius: losing it
+invalidates every issued JWT (everyone is logged out) but destroys no data.
+
+### What is backed up, on what schedule, and where it lands
+
+Two independent legs, because each one fails in a way the other survives.
+
+| Leg | Mechanism | Schedule | Retention | Survives |
+| --- | --- | --- | --- | --- |
+| Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
+| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
+
+**Railway's own backups are not off-host in the sense that matters.** They are
+copy-on-write volume backups restorable only **into the same project and
+environment**, with no documented export path. That makes them excellent for the
+mistakes you make and useless for the platform going away — which is exactly why
+the second leg exists. Railway's own schedule choices are Daily (kept 6 days),
+Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
+
+`[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
+service → **Backups** → set schedule to Daily → confirm a backup appears within
+24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
+it until someone does.
+
+**Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
+in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
+from deciding to restore to the app serving reads again. Both are modest on
+purpose; a smaller RPO means continuous archiving (WAL shipping), which is not
+configured and should not be claimed.
+
+### Taking an off-host dump
+
+**Use the public connection string, not the injected one.** The `DATABASE_URL`
+Railway injects into the backend service points at `postgres.railway.internal`,
+which resolves only from inside the project's private network — a laptop cannot
+reach it, and neither can `railway run`. For an external dump, take
+`DATABASE_PUBLIC_URL` (the TCP-proxy address, `…proxy.rlwy.net:<port>`) from the
+Railway dashboard → PostgreSQL service → **Variables**. Paste it into the shell
+rather than committing it anywhere.
+
+`umask 077` first, so the dump is never world-readable — not even for the
+seconds before it is encrypted.
+
+```bash
+umask 077
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+
+# Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
+read -rs PGURL && export PGURL
+
+pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
+
+# Encrypt before it leaves the machine. Passphrase lives in the password
+# manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
+gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
+shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
+```
+
+Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
+custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
+and it lets you restore selectively.
+
+> This leg is **manual today**. It is written down honestly rather than
+> described as automated: a weekly calendar reminder is the current mechanism,
+> and automating it needs a credential store and a destination bucket that do
+> not yet exist.
+
+### Restoring, step by step
+
+The single most important rule: **restore into a fresh, empty database.** Never
+into one that already has tables. See the failure table below for what that
+costs.
+
+1. **Stop writes.** Take the backend service down from the Railway dashboard
+   (removing the active deployment is enough) before touching the data.
+   Restoring under live traffic produces a database that disagrees with itself.
+2. **Provision an empty target**, and name it once so every later step reaches
+   the same database. For a new Railway Postgres these come from its
+   `DATABASE_PUBLIC_URL`; locally they are your own cluster's.
+   ```bash
+   HOST=localhost; PORT=5432; USER="$(whoami)"; TARGET_DB=adepthood_restored
+
+   createdb -h "$HOST" -p "$PORT" -U "$USER" "$TARGET_DB"
+   ```
+3. **Decrypt the dump** (off-host leg only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
+4. **Restore.** `--exit-on-error` is not optional: without it `pg_restore`
+   reports success-ish while skipping objects it could not create.
+   ```bash
+   pg_restore -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
+     --no-owner --no-privileges --exit-on-error restore.dump
+   ```
+5. **Check the schema revision the dump carried.** The `alembic_version` table
+   travels inside the dump, so a restored database announces its own revision:
+   ```bash
+   psql -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
+     -c "SELECT version_num FROM alembic_version;"
+   ```
+   Compare it to the deployed code's head (`alembic heads` in `backend/`).
+6. **Reconcile the revision** — see "When the backup and the code disagree".
+7. **Supply the keys.** Set `JOURNAL_ENCRYPTION_KEYS` on the service that will
+   read this database, listing **every key that could have encrypted a row in
+   this dump**, newest first. The current production key alone is not enough if
+   the dump predates a rotation.
+8. **Verify before cutting over** (next section). A restore is not finished when
+   `pg_restore` exits; it is finished when a journal entry decrypts.
+9. **Point the app at it** and bring the backend service back up. Watch the boot
+   log for `journal_encryption_enabled=True` and `/health` for
+   `{"status": "healthy", "database": "connected"}`.
+
+### Verifying a restore
+
+Three questions SQL can answer, and a fourth it cannot. The fourth is the only
+one that actually proves the restore.
+
+```sql
+-- 1. Did the rows arrive?
+SELECT count(*) FROM "user";
+SELECT count(*) FROM journalentry;
+
+-- 2. Is the journal text still encrypted (not silently blanked or mangled)?
+--    Encrypted values carry the marker `enc::v1::`; anything else is a
+--    pre-encryption legacy row.
+SELECT count(*) FILTER (WHERE message LIKE 'enc::v1::%') AS encrypted,
+       count(*) FILTER (WHERE message NOT LIKE 'enc::v1::%') AS plaintext
+FROM journalentry;
+
+-- 3. What revision does this database think it is at?
+SELECT version_num FROM alembic_version;
+```
+
+The fourth question — *did the writing survive?* — cannot be answered in SQL,
+because SQL only ever sees the ciphertext. **Read one entry back through the
+application with the keys configured**: the `EncryptedString` column type
+decrypts on read, so an entry
+that comes back as prose is proof that the dump, the restore, and the key list
+all agree. An entry that raises is proof they do not.
+
+### When the backup and the code disagree
+
+| Situation | What you see | What to do |
+| --- | --- | --- |
+| Backup **older** than the deployed code | `column "display_name" of relation "user" does not exist` (or any `UndefinedColumnError`) the moment the app writes | Run `alembic upgrade head` against the restored database *before* pointing the app at it. Forward migration of restored data is the supported path and was exercised in the drill below. |
+| Backup **newer** than the deployed code | `alembic_version` names a revision absent from `migrations/versions/` | Deploy the commit that contains that revision first. Do **not** `alembic downgrade` to make it fit — that discards columns, and the data in them. |
+| Restored into a **non-empty** database | `relation "…" already exists`, then `pg_restore: warning: errors ignored on restore: N`, exit code 1 | Do not try to salvage it. Drop the database, create an empty one, restore again. A partially-merged restore can look plausible and be wrong. |
+| Keys missing | `encrypted journal content found but JOURNAL_ENCRYPTION_KEYS is not configured` | Set the variable and restart. The data is fine; the reader is not. |
+| Keys wrong or incomplete | `journal ciphertext failed to decrypt (key rotated out?)` | A key that encrypted some rows is missing from the list. Add the retired key. There is no other fix. |
+
+### The proven restore (drill record)
+
+- **Date performed:** 2026-08-21
+- **Schema at drill time:** `c2d3e4f5a6b8`
+- **Performed against:** a scratch PostgreSQL 16.15 cluster on a developer
+  laptop — *not* production, and not Railway.
+
+What was run, and what was observed:
+
+1. `alembic upgrade head` against an empty Postgres 16 database — the whole
+   migration history applied cleanly, ending at `c2d3e4f5a6b8`.
+2. Seeded one user and one journal entry through the application's own models,
+   with `JOURNAL_ENCRYPTION_KEYS` set to a throwaway Fernet key. The entry
+   carried a tz-aware timestamp and a `vault_tags` JSON array containing
+   non-ASCII text (`✨ éñ`).
+3. Read the row with raw SQL, bypassing the ORM: `message` was
+   `enc::v1::gAAAAAB…` — genuinely ciphertext at rest, not a flag.
+4. `pg_dump -Fc` → a 143,900-byte custom-format dump.
+5. `createdb` + `pg_restore --no-owner --no-privileges --exit-on-error` into a
+   fresh database — **exit 0, no warnings**.
+6. In the restored database: the raw `message` ciphertext was **byte-identical**
+   to the source, `vault_tags` came back as a JSON array with its non-ASCII text
+   intact, the timestamp kept its UTC offset, and `alembic_version` read
+   `c2d3e4f5a6b8` — the revision travelled inside the dump.
+7. Read back through the ORM **with the key**: the plaintext matched the seeded
+   string exactly.
+8. Read back **with no key**: raised `encrypted journal content found but
+   JOURNAL_ENCRYPTION_KEYS is not configured`.
+9. Read back **with a different valid key**: raised `journal ciphertext failed
+   to decrypt (key rotated out?)`. Steps 8 and 9 are the empirical basis for the
+   warning at the top of this section.
+10. Older-backup drill: seeded a second database at revision `c7d8e9f0a1b3`,
+    dumped it, restored into a fresh database (exit 0), ran `alembic upgrade
+    head` (9 revisions applied), and confirmed the entry written under the old
+    schema still decrypted correctly at head.
+11. Non-empty-target drill: re-ran `pg_restore` into the already-restored
+    database. Exit 1, 249 errors ignored, 210 of them `already exists`. Row
+    counts happened to survive intact, which is precisely why this state is
+    dangerous — it looks fine and is not trustworthy.
+
+**What this drill did not prove.** It ran against a local cluster, so the
+Railway-side restore path (steps 1 and 2 of the procedure), the encrypted
+off-host copy, and the platform Backups tab are documented from Railway's
+reference and from the local drill's logic — not from a production rehearsal.
+The next drill should be run against a Railway staging database restored from a
+real platform backup, and this record updated with its date.
+
+---
+
 ## Wallet Audit Hardening (Post-Deploy)
 
 The `walletaudit` table is the forensic record for every wallet mutation
