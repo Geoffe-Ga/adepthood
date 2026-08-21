@@ -49,3 +49,10 @@ httpx==0.28.1
 # the OS certificate store rather than certifi.
 openai==3.1.0
 anthropic==0.121.0
+# Error monitoring. Wholly optional at runtime: with SENTRY_DSN unset the SDK
+# is never initialised and every capture is a no-op, so local dev and CI carry
+# the import cost and nothing else. Installed rather than vendored because the
+# envelope wire format is the vendor's to change, not ours -- a hand-rolled
+# client that silently stops being accepted would reproduce the invisibility
+# this dependency exists to remove.
+sentry-sdk==2.68.0

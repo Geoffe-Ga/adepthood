@@ -35,9 +35,11 @@ interface FeatureErrorBoundaryState {
  * not take down Habits, Practice, Course, or Map. When caught, the user sees
  * a scoped recovery card with a "Try again" button that remounts the subtree.
  *
- * BUG-FE-UI-101: every catch is forwarded to the Sentry shim with the
- * boundary name and the React component stack so an alert in Sentry
- * carries enough context to land in the right tab without a repro.
+ * BUG-FE-UI-101: every catch is forwarded to the error reporter with the
+ * boundary name and the React component stack, so an alert in Sentry carries
+ * enough context to land in the right tab without a repro — and nothing else,
+ * because the payload is built by allow-list in
+ * ``observability/sentryEnvelope.ts``.
  *
  * BUG-FE-UI-102: the boundary subscribes to ``navigation.addListener('focus',
  * …)`` so that when the user switches tabs and comes back to a crashed
