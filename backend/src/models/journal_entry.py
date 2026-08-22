@@ -201,7 +201,12 @@ class JournalEntry(SQLModel, table=True):
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     # Long-form page metadata: an optional title and a draft/finished lifecycle.
     # ``message`` remains the body. ``updated_at`` tracks the last edit.
-    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    # Encrypted at rest alongside the body: a title is the user's own words about
+    # the entry and is often the most disclosing line on the page, so leaving it
+    # in the clear beside the ciphertext would give a stolen dump an index of
+    # everything the body protects. Nothing filters or orders by it, so the cap
+    # (enforced by the request schemas + the sanitizer) is all the column needs.
+    title: str | None = Field(default=None, sa_column=Column(EncryptedString(), nullable=True))
     status: str = Field(default=EntryStatus.DRAFT, max_length=20)
     # Privacy tier; defaults to ``personal``. The DB CHECK in ``__table_args__``
     # pins the persisted value to the JournalClassification set.

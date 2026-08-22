@@ -1,7 +1,7 @@
 """add uservaultconfig table
 
-Revision ID: d5e6f7a8b9c0
-Revises: c3d4e5f6a7b9
+Revision ID: a4c7e91b3d05
+Revises: d4e5f6a7b8ca
 Create Date: 2026-08-21 00:00:00.000000
 
 Adds ``uservaultconfig`` — one row per account naming the Creek Vault that
@@ -37,8 +37,8 @@ import sqlmodel
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "d5e6f7a8b9c0"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "c3d4e5f6a7b9"  # pragma: allowlist secret
+revision: str = "a4c7e91b3d05"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "d4e5f6a7b8ca"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

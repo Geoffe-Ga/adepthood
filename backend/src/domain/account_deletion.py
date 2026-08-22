@@ -204,7 +204,12 @@ POLICY: Mapping[str, TablePolicy] = {
         ),
         owned_by=OwnedBy("email", key=OwnerKey.EMAIL),
     ),
-    "marginalia": _erase("user_id", "Margin notes the account wrote against the reading."),
+    "marginalia": _erase(
+        "user_id",
+        "Margin notes anchored to the account's own entries, holding the "
+        "passage each one marks and the commentary written about it. Encrypted "
+        "at rest like the entry itself, and erased outright with it.",
+    ),
     "mettareturnarc": _erase("user_id", "The account's return arcs."),
     "mettareturnhabitrelease": _erase("user_id", "Habits the account released during an arc."),
     "mettareturnofferdismissal": _erase("user_id", "Return offers the account waved away."),
