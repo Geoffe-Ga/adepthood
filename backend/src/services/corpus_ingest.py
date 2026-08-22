@@ -1,4 +1,4 @@
-"""Turn a journal entry into a corpus fragment, or decline to.
+"""Turn one piece of a person's writing into a corpus fragment, or decline to.
 
 This is the writer the ontologized corpus did not have. Until it existed
 :func:`services.corpus_store.record_fragment` had no production caller at all,
@@ -44,14 +44,25 @@ contacted and its answer discarded. Sending the body to a cloud provider and
 then declining to keep the result would already have done the thing consent
 exists to permit. See :mod:`services.corpus_consent` for why the default is no.
 
-**INTIMATE is not re-decided here.** An intimate entry is dropped before the
-classifier, which is the ordering :mod:`services.frequency_classification` and
-:mod:`services.creek_vault_write` both use and for the reason they both give.
-That is not a fourth reading of the rule: the store's three barriers are what
-would refuse the tier if this module offered it, and this module simply never
-does. Re-tiering an entry to intimate withdraws whatever it had already put in
-the corpus, mirroring the vault path's clearing of a ref an entry no longer
-consents to expose.
+**INTIMATE is not re-decided here.** The tier is refused by *calling through*
+to :func:`services.frequency_classification.classify_frequencies`, which raises
+before a provider call is even constructed, and to
+:func:`services.corpus_store.record_fragment`, whose allowlist refuses before a
+row object exists. Both refusals are caught and reported as
+:attr:`IngestOutcome.TIER_REFUSED`. That is deliberately not a fourth reading of
+the rule: this module states no tier predicate of its own, so a tier the store
+stops admitting is a tier this module stops offering, with no edit here.
+Re-tiering an entry to intimate withdraws whatever it had already put in the
+corpus, mirroring the vault path's clearing of a ref an entry no longer consents
+to expose.
+
+**Two sources, one writer.** Journal writing composed in this app and a document
+imported from outside it are the same act as far as the corpus is concerned:
+the same consent gate, the same one-call ceiling, the same tier refusal, the
+same store. :func:`ingest_content` is that shared spine and
+:mod:`services.corpus_import` is its second caller. What stays here is only
+what is genuinely about a journal *row* -- its id, its soft-delete, and the
+replacement of the fragment it had before.
 
 **An unclassified entry is not corpus material.** A provider outage and a reply
 that recognises no frequency both leave the corpus untouched. The corpus earns
@@ -65,7 +76,11 @@ already scopes out of the writer.
 
 from __future__ import annotations
 
+import enum
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,7 +89,10 @@ from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
-from services.frequency_classification import classify_frequencies
+from services.frequency_classification import (
+    IntimateContentRefusedError,
+    classify_frequencies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +108,126 @@ INGEST_SOURCE: Final[CorpusSource] = CorpusSource.JOURNAL
 CLASSIFICATION_CALLS_PER_INGEST: Final[int] = 1
 
 
-def _is_ingestable(entry: JournalEntry) -> bool:
-    """Whether this entry is one the corpus may hold a fragment of.
+class IngestOutcome(enum.StrEnum):
+    """What became of one attempt to put writing into a corpus.
 
-    Both tests read the persisted row rather than anything a client sent. A
-    soft-deleted entry is invisible to every other read path and must not be
-    classified back into view, and an intimate entry is refused before a
-    provider is reached at all.
+    Four outcomes and exactly one of them stores anything. They are named
+    rather than collapsed into ``fragment is None`` because a *caller with a
+    user in front of it* has to say which of them happened: "you have not
+    agreed to this yet", "that tier never enters the corpus" and "nothing in
+    this recognised a frequency" are three different sentences with three
+    different next steps, and a bare ``None`` is none of them.
     """
-    return entry.deleted_at is None and entry.classification != JournalClassification.INTIMATE.value
+
+    STORED = "stored"
+    NO_CONSENT = "no_consent"
+    TIER_REFUSED = "tier_refused"
+    UNCLASSIFIED = "unclassified"
+
+
+@dataclass(frozen=True)
+class IngestRequest:
+    """One piece of writing offered to a corpus, apart from whose it is.
+
+    A value rather than four parameters, for the reason
+    :class:`services.corpus_store.FragmentDraft` is one: the account is
+    supplied at the call, where a scoping mistake is visible, rather than
+    buried in a payload that could be built once and reused.
+
+    ``source_entry_id`` names the journal row this writing came from when there
+    was one. An imported document has none, which is exactly the difference
+    between the two sources.
+    """
+
+    content: str
+    tier: JournalClassification
+    source: CorpusSource
+    source_entry_id: int | None = None
+
+
+@dataclass(frozen=True)
+class IngestResult:
+    """What one ingest did, and the fragment if it made one.
+
+    ``fragment`` is populated only for :attr:`IngestOutcome.STORED`, so a
+    caller reads the outcome and never has to infer it from a field's presence.
+    """
+
+    outcome: IngestOutcome
+    fragment: CorpusFragment | None = None
+
+
+# The three non-storing results are value-identical every time, so they are
+# interned rather than rebuilt on each path.
+_NO_CONSENT_RESULT = IngestResult(IngestOutcome.NO_CONSENT)
+_TIER_REFUSED_RESULT = IngestResult(IngestOutcome.TIER_REFUSED)
+_UNCLASSIFIED_RESULT = IngestResult(IngestOutcome.UNCLASSIFIED)
+
+# What the journal path's log line calls each non-storing outcome. A mapping
+# rather than a chain of branches so it is total by construction: an outcome
+# added later fails here loudly instead of being logged under someone else's
+# name.
+_JOURNAL_LOG_OUTCOMES: Final[Mapping[IngestOutcome, str]] = MappingProxyType(
+    {
+        IngestOutcome.NO_CONSENT: "no_consent",
+        IngestOutcome.TIER_REFUSED: "withdrawn",
+        IngestOutcome.UNCLASSIFIED: "unclassified",
+    }
+)
+
+
+async def _classify_and_record(
+    session: AsyncSession, *, user_id: int, request: IngestRequest
+) -> IngestResult:
+    """Classify this writing and store it, or report that it recognised nothing.
+
+    The single provider call :data:`CLASSIFICATION_CALLS_PER_INGEST` names is
+    made here and nowhere else, which is what makes that constant assertable
+    rather than aspirational.
+    """
+    classification = await classify_frequencies(request.content, classification=request.tier)
+    if not classification.is_classified():
+        return _UNCLASSIFIED_RESULT
+    fragment = await record_fragment(
+        session,
+        user_id=user_id,
+        draft=FragmentDraft(
+            content=request.content,
+            tier=request.tier,
+            source=request.source,
+            classification=classification,
+            source_entry_id=request.source_entry_id,
+        ),
+    )
+    return IngestResult(IngestOutcome.STORED, fragment)
+
+
+async def ingest_content(
+    session: AsyncSession, *, user_id: int, request: IngestRequest
+) -> IngestResult:
+    """Put one piece of writing into ``user_id``'s corpus, or say why not.
+
+    The shared spine both sources run through. Consent is checked first and
+    against *this request's own source*, so agreeing to ontologize journal
+    entries is not agreement to ontologize imported documents -- ADR 0005
+    rejects reading one permission off another in as many words.
+
+    Nothing is committed: a fragment is almost always written alongside the
+    thing it was derived from, and the caller owns that transaction.
+
+    Never raises. The tier refusals raised by the classifier and by the store
+    are caught here and reported, because a tier that cannot be ontologized is
+    an ordinary answer to give a person rather than a fault to propagate at
+    them -- and catching *both* is what keeps this module from stating a tier
+    rule of its own.
+    """
+    consent = await load_consent(session, user_id=user_id, source=request.source)
+    if not consent.granted:
+        return _NO_CONSENT_RESULT
+    try:
+        return await _classify_and_record(session, user_id=user_id, request=request)
+    except IntimateContentRefusedError:
+        return _TIER_REFUSED_RESULT
 
 
 async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> CorpusFragment | None:
@@ -110,6 +239,15 @@ async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> Co
     outcome; none of them raises, because classification enriches a corpus and
     is never why a journal write fails.
 
+    Consent is read here as well as inside :func:`ingest_content`, and the
+    duplication is deliberate: it is what keeps the purge below from running
+    for an account that has agreed to nothing. Since
+    :data:`services.corpus_consent.CONSENT_GRANTED_BY_DEFAULT` is ``False``,
+    that is the *majority* of journal writes, and they stay at exactly one
+    query -- the second read happens only on the path that is about to make a
+    provider call anyway. The authoritative gate is still the one in
+    ``ingest_content``, so a third source added later cannot forget it.
+
     Nothing is committed. The caller owns the transaction, so the withdrawal of
     the previous fragment and the arrival of its replacement land together.
     """
@@ -120,27 +258,25 @@ async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> Co
     if not consent.granted:
         return None
     removed = await delete_fragments_for_entry(session, user_id=entry.user_id, entry_id=entry_id)
-    if not _is_ingestable(entry):
+    if entry.deleted_at is not None:
+        # A soft-deleted row is invisible to every other read path and must not
+        # be classified back into view. Read off the persisted row rather than
+        # off anything a client sent.
         _log_outcome(entry.user_id, entry_id, "withdrawn", removed)
         return None
-    classification = await classify_frequencies(
-        entry.message,
-        classification=JournalClassification(entry.classification),
-    )
-    if not classification.is_classified():
-        _log_outcome(entry.user_id, entry_id, "unclassified", removed)
-        return None
-    return await record_fragment(
+    result = await ingest_content(
         session,
         user_id=entry.user_id,
-        draft=FragmentDraft(
+        request=IngestRequest(
             content=entry.message,
             tier=JournalClassification(entry.classification),
             source=INGEST_SOURCE,
-            classification=classification,
             source_entry_id=entry_id,
         ),
     )
+    if result.outcome is not IngestOutcome.STORED:
+        _log_outcome(entry.user_id, entry_id, _JOURNAL_LOG_OUTCOMES[result.outcome], removed)
+    return result.fragment
 
 
 async def withdraw_journal_entry(session: AsyncSession, *, user_id: int, entry_id: int) -> int:

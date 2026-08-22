@@ -16,6 +16,11 @@ outcome, which is the only record either side keeps.
 
 from __future__ import annotations
 
+import base64
+import binascii
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from pydantic import BaseModel, Field, field_validator
 
 from domain.creek_vault import VaultUploadStatus
@@ -32,6 +37,46 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # ``+ 4`` absorbs the padding block so a legitimately max-sized document is not
 # rejected by rounding. The same shape ``routers/transcription.py`` uses.
 MAX_UPLOAD_BASE64_CHARS = (MAX_UPLOAD_BYTES * 4) // 3 + 4
+
+
+class DocumentTooLargeError(ValueError):
+    """Raised when a submitted document exceeds :data:`MAX_UPLOAD_BYTES`."""
+
+
+class DocumentEncodingError(ValueError):
+    """Raised when a submitted document is not decodable base64."""
+
+
+def decode_document(content_base64: str) -> bytes:
+    """Decode one submitted document, refusing an oversized or unreadable one.
+
+    Two gates, cheapest first, mirroring ``routers/transcription.py``: the
+    *encoded* length is checked against :data:`MAX_UPLOAD_BASE64_CHARS` so a
+    huge payload is rejected without allocating the decoded bytes at all, and
+    the decoded length is then checked against the real ceiling so a payload
+    that slipped past the first by rounding still cannot exceed it.
+
+    Lives here, beside the ceiling it enforces, and raises plain exceptions
+    rather than :class:`fastapi.HTTPException`: two surfaces accept a document
+    -- the vault upload and the corpus import -- and a ceiling enforced twice
+    is a ceiling that can come to disagree with itself.
+    :func:`dependencies.document_payload.guard_document_payload` is the single
+    place these become HTTP answers.
+
+    A malformed encoding is deliberately a different exception from an
+    oversized one: they are different defects with different fixes, and bytes
+    we could not decode must not travel anywhere as if they were a document.
+    """
+    if len(content_base64) > MAX_UPLOAD_BASE64_CHARS:
+        raise DocumentTooLargeError
+    try:
+        raw = base64.b64decode(content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise DocumentEncodingError from exc
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise DocumentTooLargeError
+    return raw
+
 
 # Longest filename accepted. Generous for real documents, and short enough that a
 # name cannot itself become a payload.
@@ -146,3 +191,55 @@ class UploadDocumentResponse(BaseModel):
         default_factory=list, description="Tags the vault's ingest pipeline assigned."
     )
     message: str = Field(description="Self-serve explanation for the person who uploaded it.")
+
+
+# What each upload outcome tells the person who sent the document. Every line
+# names what happened, why, and the one thing they can do next -- none of them
+# ends at "contact support", because every one of these has a self-serve remedy.
+UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
+    {
+        VaultUploadStatus.ACCEPTED: (
+            "Your document is in your vault. It will show up in reflections from here on."
+        ),
+        VaultUploadStatus.VAULT_UNAVAILABLE: (
+            "Your vault didn't answer, so the document wasn't sent. Check that your vault "
+            "is running and reachable, then upload it again."
+        ),
+        # Reached three ways, and the message has to serve all three without
+        # misdirecting any: the vault never offered uploads, it offers a route
+        # this pair of versions cannot negotiate, or the document is marked
+        # ``intimate`` and that tier has no spelling on the wire at all. Telling
+        # someone to update software that is already current is an instruction
+        # that cannot work, and so is telling the intimate case to update
+        # anything -- so the tier is named first, because it is the only one of
+        # the three with a remedy the person holding the document controls.
+        # Nothing here promises a retry of the same request, because none of the
+        # three is cleared by one.
+        VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
+            "This document wasn't sent, and nothing in your vault changed — journal "
+            "entries still save as usual. If you marked it Intimate, that tier stays on "
+            "this device and never goes to a vault; choose a different tier if you want "
+            "it there. Otherwise file uploads aren't working between Adepthood and your "
+            "vault yet — update your vault if a newer version is out, and keep the file "
+            "until one of you has caught up."
+        ),
+        VaultUploadStatus.DEGRADED: (
+            "The upload didn't complete and the document wasn't stored. Nothing was "
+            "changed in your vault — please try again."
+        ),
+    }
+)
+
+
+# Matched to ``transcription.TRANSCRIBE_RATE_LIMIT`` rather than to the stricter
+# resonance limit, because this endpoint is the same *class* of thing: a base64
+# payload a person submits deliberately, in bursts, with no LLM spend attached.
+# Someone adding a folder of documents legitimately makes a dozen calls in a row,
+# and one document per request is the shipped contract (batching is a follow-up),
+# so a tighter cap would throttle ordinary use rather than abuse.
+#
+# It is bounded at all because an upload is heavier than an ordinary write: 10 MB
+# per call, twice what transcription accepts, and every accepted call is forwarded
+# to an external network dependency. A plain ``POST /journal/`` carries neither
+# cost, which is why it is unrated and this is not.
+UPLOAD_RATE_LIMIT = "20/minute"
