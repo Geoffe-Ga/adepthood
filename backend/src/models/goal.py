@@ -54,6 +54,18 @@ class Goal(SQLModel, table=True):
     autogenerate compares against. It also means the SQLite test fixture builds
     the constraint too, so a bad tier fails in tests rather than only in
     production.
+
+    ``title`` and ``description`` are user-authored and deliberately **not**
+    encrypted at rest, unlike the columns holding a person's prose. A goal is
+    the thing being measured -- a target, a unit, a cadence -- and its title is
+    the label on that target, read back in every list, chart and streak
+    calculation. ``description`` is the closer call: it admits 2,000 characters
+    and someone will use them, so the argument for encrypting it is real and it
+    is only outweighed by keeping the goal row a single legible unit with its
+    own numbers. The consequence of deciding it this way is that the privacy
+    policy has to name both columns among what is stored as written, and it
+    does, singling out ``description`` as the one that can run long enough to be
+    writing. Revisiting this means moving both, not just the long one.
     """
 
     __table_args__ = (CheckConstraint(_TIER_CONSTRAINT_SQL, name=TIER_CONSTRAINT_NAME),)

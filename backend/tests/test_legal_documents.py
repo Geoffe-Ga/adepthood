@@ -13,17 +13,21 @@ without a journal-encryption key, that no journal body reaches the error
 monitor, and that an entry marked Intimate never leaves for a vault. Each is
 re-derived here by running the code, not by reading a comment about it.
 
-*A promise whose breadth is only as true as the column set.* Ten columns carry
-ciphertext today, and the policy now makes the broad claim -- what you write is
-encrypted -- rather than the narrow one it shipped with. Dropping a column
-quietly shrinks a published guarantee; adding one without widening the policy
-leaves a reader believing they have less than they do. The set is pinned and
-either direction fails here first.
+*A promise whose breadth is only as true as the column set.* Thirteen columns
+carry ciphertext today, and the policy now makes the broad claim -- what you
+write is encrypted -- rather than the narrow one it shipped with. Dropping a
+column quietly shrinks a published guarantee; adding one without widening the
+policy leaves a reader believing they have less than they do. The set is pinned
+and either direction fails here first.
 
-That is not hypothetical, twice over. This guard was written naming two columns;
-the ontologized corpus store landed ``corpusfragment.content`` as a third while
-the policy was still in review, and the encryption sweep then took it to ten.
-Each time the build caught the stale sentence rather than a reader.
+That is not hypothetical, three times over. This guard was written naming two
+columns; the ontologized corpus store landed ``corpusfragment.content`` as a
+third while the policy was still in review, and the encryption sweep then took
+it to eleven. The sweep looked for *copies* of journal text, which is why it
+walked past the reflection and the insight a person writes after a practice --
+original prose rather than a copy of anything -- and why those two arrived
+separately, with the policy's plaintext carve-out narrowing as they did. Each
+time the build caught the stale sentence rather than a reader.
 
 *A promise that is only true because of a default.* The corpus is filled from
 what somebody writes only if they turn it on, and the classification that
@@ -91,6 +95,8 @@ _ENCRYPTED_COLUMNS = frozenset(
         "marginalia.anchor_text",
         "marginalia.essay",
         "marginalia.note",
+        "practicesession.insight",
+        "practicesession.reflection",
         "promotedquote.anchor_text",
         "promptresponse.response",
         "uservaultconfig.api_key",
@@ -211,23 +217,70 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
     assert _encrypted_columns() == _ENCRYPTED_COLUMNS
 
 
+# The one sentence in the policy that lists what is *not* encrypted, identified
+# by the phrase it ends on. Everything it names must genuinely be plaintext, and
+# nothing it names may be a column the schema encrypts -- the two halves of
+# :func:`test_the_policy_names_the_prose_that_is_still_plaintext`.
+_CARVE_OUT_TAIL = "stored as written"
+
+# What the carve-out sentence has to keep naming: the user-authored strings the
+# schema still holds in the clear. Each is a label or a target rather than
+# composed prose, except a goal description, which can run long enough to be
+# writing -- which is exactly why the policy has to name it rather than let the
+# broad claim be read as covering it.
+_PLAINTEXT_STRINGS_THE_POLICY_MUST_NAME = (
+    "habit names",
+    "goal titles and descriptions",
+    "goal groups and practices",
+)
+
+# The table whose prose the carve-out used to confess. The negative half of the
+# guard is scoped to it rather than to the whole encrypted set because the words
+# for the rest -- "title", "note", "label" -- are ordinary English the sentence
+# legitimately needs for the goal titles and habit labels it *does* name.
+_SESSION_PROSE_PREFIX = "practicesession."
+
+
+def _carve_out_sentence(prose: str) -> str:
+    """Return the policy sentence that ends on :data:`_CARVE_OUT_TAIL`."""
+    tail_at = prose.index(_CARVE_OUT_TAIL)
+    end = tail_at + len(_CARVE_OUT_TAIL)
+    start = prose.rfind(". ", 0, tail_at)
+    return prose[start + 2 : end] if start != -1 else prose[:end]
+
+
 def test_the_policy_names_the_prose_that_is_still_plaintext() -> None:
-    """The carve-out names practice-session prose, which is genuinely in the clear.
+    """The carve-out names everything in the clear, and nothing that is not.
 
     This assertion is deliberately pointed at the *weakest* claim in the
-    document. Its predecessor asserted the policy said margin notes were stored
-    as written -- true when written, false the moment margin notes were
-    encrypted, and it would have kept passing on the phrase alone while
-    guarding the opposite of the truth.
+    document. Two ancestors of it have already gone stale in the direction a
+    phrase match cannot see. The first asserted the policy said margin notes
+    were stored as written -- true when written, false the moment margin notes
+    were encrypted, and it would have kept passing on the phrase alone while
+    guarding the opposite of the truth. The second named practice-session prose
+    as plaintext, which was honest until the columns became ciphertext and then
+    understated the protection by two columns.
 
-    A reflection and an insight written after a practice are prose a person
-    composed, held unencrypted (see the issue the policy cites). Until that
-    closes, the policy has to say so, and this fails if the admission is
-    dropped while the columns are still plaintext.
+    So the sentence is checked from both sides. Every string it names has to
+    still be plaintext, and no column the schema encrypts may be named in it --
+    the second half read out of ``_ENCRYPTED_COLUMNS``, which
+    :func:`test_exactly_the_pinned_columns_are_encrypted` holds against the live
+    schema, so an encryption that lands without narrowing the sentence fails
+    here rather than shipping an out-of-date confession.
     """
-    policy = _read(_PRIVACY_POLICY)
-    assert "reflection and the insight" in policy
-    assert "stored as written" in policy
+    carve_out = _carve_out_sentence(_prose(_PRIVACY_POLICY))
+
+    for named in _PLAINTEXT_STRINGS_THE_POLICY_MUST_NAME:
+        assert named in carve_out, f"the carve-out stopped naming {named}: {carve_out!r}"
+
+    still_confessed = sorted(
+        column
+        for column in _ENCRYPTED_COLUMNS
+        if column.startswith(_SESSION_PROSE_PREFIX) and column.split(".")[-1] in carve_out
+    )
+    assert not still_confessed, (
+        f"the carve-out calls {still_confessed} plaintext; the schema encrypts them: {carve_out!r}"
+    )
 
 
 # Spelled-out numbers, because the policy is written for a reader rather than a
