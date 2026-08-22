@@ -24,3 +24,18 @@ STAGE_DURATIONS_DAYS: tuple[int, ...] = (21, 21, 21, 21, 21, 21, 21, 21, 42, 42)
 
 # 252 days — exactly the 36-week curriculum (sum of the stage durations).
 TOTAL_PROGRAM_DAYS = sum(STAGE_DURATIONS_DAYS)
+
+DAYS_PER_WEEK = 7
+
+# Weeks each stage lasts, in stage order: (3, 3, 3, 3, 3, 3, 3, 3, 6, 6).
+# Derived from the schedule above rather than written out again, because a
+# second copy is what let a uniform three-weeks-per-stage tiling — and the
+# two invented stages it needed to reach 36 weeks — survive review once.
+# The stage count and the week count are different numbers on purpose: ten
+# stages, thirty-six weeks.
+WEEKS_PER_STAGE: tuple[int, ...] = tuple(
+    duration // DAYS_PER_WEEK for duration in STAGE_DURATIONS_DAYS
+)
+
+# 36 — the program's length in weeks.
+TOTAL_PROGRAM_WEEKS = sum(WEEKS_PER_STAGE)

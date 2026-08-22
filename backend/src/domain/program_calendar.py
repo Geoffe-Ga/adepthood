@@ -17,14 +17,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_STAGES
+from domain.constants import DAYS_PER_WEEK, STAGE_DURATIONS_DAYS, TOTAL_STAGES
 from domain.dates import ensure_aware, to_user_date
 from domain.weekly_prompts import TOTAL_WEEKS
 
 if TYPE_CHECKING:
     from models.stage_progress import StageProgress
-
-_DAYS_PER_WEEK = 7
 
 
 def elapsed_days(anchor: datetime, now: datetime, *, tz: str | None = None) -> int:
@@ -55,7 +53,7 @@ def calendar_week(anchor: datetime, now: datetime | None = None, *, tz: str | No
     and ``now``'s local date in ``tz`` (UTC when ``tz`` is None).
     """
     moment = now if now is not None else datetime.now(UTC)
-    week = elapsed_days(anchor, moment, tz=tz) // _DAYS_PER_WEEK + 1
+    week = elapsed_days(anchor, moment, tz=tz) // DAYS_PER_WEEK + 1
     return min(week, TOTAL_WEEKS)
 
 

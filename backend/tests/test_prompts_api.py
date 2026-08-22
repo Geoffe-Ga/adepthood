@@ -9,6 +9,7 @@ import pytest
 from httpx import AsyncClient
 
 from domain import weekly_prompts
+from domain.journal_prompt_parser import JournalPrompt
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -636,15 +637,15 @@ async def test_history_total_aware_has_more_false_at_boundary(
 
 
 @pytest.mark.asyncio
-async def test_history_question_uses_live_dict(
+async def test_history_question_uses_live_curriculum(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The persisted ``question`` snapshot is overridden by the live dict.
+    """The persisted ``question`` snapshot is overridden by the live content.
 
-    Submit a response, then patch ``WEEKLY_PROMPTS`` via ``monkeypatch.setitem``
-    -- the fixture restores the dict on test exit so the mutation cannot
-    leak into a parallel run.
+    Submit a response, then swap the parsed prompt list the week resolves
+    through -- history must re-read it rather than echo the snapshot it stored
+    at submit time, so a content sync reaches old rows too.
     """
     headers = await _signup(async_client)
     await async_client.post(
@@ -653,7 +654,8 @@ async def test_history_question_uses_live_dict(
         headers=headers,
     )
 
-    monkeypatch.setitem(weekly_prompts.WEEKLY_PROMPTS, 1, "REVISED prompt for week 1.")
+    revised = (JournalPrompt(ordinal=1, title="REVISED prompt for week 1.", body=""),)
+    monkeypatch.setattr(weekly_prompts, "prompts_for_color", lambda _colour: revised)
     resp = await async_client.get("/prompts/history", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
