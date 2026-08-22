@@ -44,6 +44,12 @@ reason   = "stage_number is a curriculum position; progress is read for the call
 
 [[route]]
 method   = "GET"
+path     = "/prompts/stage/{stage_number}"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; the prompt set is the same for everyone"
+
+[[route]]
+method   = "GET"
 path     = "/prompts/{week_number}"
 category = "not_object_scoped"
 reason   = "week_number is a curriculum position; the prompt set is the same for everyone"

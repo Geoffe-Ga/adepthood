@@ -2,8 +2,8 @@
  * Stage-number constants shared by the practice catalog, detail, and wizard
  * screens (custom-practices-07).
  *
- * The 36-week APTITUDE program has exactly ten stages (Beige → Coral); the
- * backend ``schemas.practice.PracticeCreate`` mirrors the same range via
+ * The 36-week APTITUDE program has exactly ten stages (Beige → Clear Light);
+ * the backend ``schemas.practice.PracticeCreate`` mirrors the same range via
  * ``Field(ge=1, le=MAX_STAGE_NUMBER)``. Centralising the bounds here means
  * a future stage-count change is a one-line edit instead of a three-file
  * grep.
