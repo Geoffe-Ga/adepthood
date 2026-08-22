@@ -54,7 +54,11 @@ from services.corpus_store import (
     resolve_stage_frequency,
     retrieve_fragments,
 )
-from services.frequency_classification import FrequencyClassification, IntimateContentRefusedError
+from services.frequency_classification import (
+    ClassificationSource,
+    FrequencyClassification,
+    IntimateContentRefusedError,
+)
 
 _OWNER = 1
 _STRANGER = 2
@@ -77,6 +81,7 @@ def _classified(**weights: float) -> FrequencyClassification:
     return FrequencyClassification(
         weights=MappingProxyType(parsed),
         overall_confidence=confidence,
+        source=ClassificationSource.OPERATOR,
     )
 
 
