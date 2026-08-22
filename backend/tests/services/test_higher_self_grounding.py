@@ -47,7 +47,7 @@ from models.course_stage import CourseStage
 from models.journal_entry import JournalClassification, JournalEntry
 from models.stage_progress import StageProgress
 from services.corpus_store import FragmentDraft, record_fragment
-from services.frequency_classification import FrequencyClassification
+from services.frequency_classification import ClassificationSource, FrequencyClassification
 from services.higher_self_grounding import (
     GROUNDING_LIMIT,
     GROUNDING_STATEMENT_BUDGET,
@@ -75,6 +75,7 @@ def _classified(**weights: float) -> FrequencyClassification:
     return FrequencyClassification(
         weights=MappingProxyType(parsed),
         overall_confidence=max(parsed.values(), default=0.0),
+        source=ClassificationSource.OPERATOR,
     )
 
 
