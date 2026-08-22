@@ -120,10 +120,23 @@ shares — ten buckets, `F1` through `F10`
 Adepthood's `WheelBalanceResponse` (`backend/src/schemas/wheel.py`) is a
 *ten-stage aspect-fullness* projection, and the projection from one onto the
 other is Adepthood's to own — Creek must not invent our stage/aspect
-vocabulary on our behalf. The fact that both land on ten buckets is a
-numeric coincidence, **not a semantic identity**: `F1..F10` are
-Creek's frequency classification of corpus content, while adepthood's
-ten stages are `CourseStage` rows tied to the APTITUDE program.
+vocabulary on our behalf. That both land on ten buckets is **a semantic
+identity, not an accident of size**: `F1..F10`, the APTITUDE Stages, the
+Aspects of Wholeness and the Wavelength Modes are one set of ten
+developmental positions under several names, and the `CourseStage` rows
+are those same ten. Creek classifies corpus content into them; adepthood
+renders them as course stages. That is one ontology seen from two sides,
+not two ontologies of equal size.
+
+**Colour is the primary key, not the name.** The two labelings agree on
+six of the ten positions and diverge on the middle four, so a join on
+names mismatches exactly those four while looking correct.
+`domain.frequencies.frequency_for_color` is the single door, and
+`backend/tests/services/test_frequency_classification.py` asserts both
+the colour join and that divergence. Owning the projection therefore
+means owning the *rendering* — which of the ten names a position is
+shown under, and what `WheelBalanceResponse` looks like on the wire
+adepthood publishes — not disputing that the positions coincide.
 
 ### The request
 

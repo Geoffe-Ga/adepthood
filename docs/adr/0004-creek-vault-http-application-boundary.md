@@ -423,7 +423,7 @@ rely on it.
 | `reflect` params `{consumer, body, tier_ceiling}` (`backend/src/services/creek_vault_client.py:277-279`) | `reflect(content, entry_ref, privacy_tier_ceiling)` (`creek-tools/creek_mcp/server.py:332-346`) | RESOLVED by the `/v1` cutover (#2047); the client this row describes is retired — archaeology only, per the 2026-08-07 note | adepthood #2047 |
 | `wheel` params `{"consumer": CONSUMER_ID}` (`creek_vault_client.py:426`) | `wheel(privacy_tier_ceiling)` only (`server.py:349-358`) | RESOLVED by the `/v1` cutover (#2047); `CONSUMER_ID` no longer exists in the codebase — archaeology only, per the 2026-08-07 note | adepthood #2047 |
 | `reflect` result read as scalar `payload.get("reflection")` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
-| `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity | adepthood #1937 |
+| `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity — **AMENDED 2026-08-21:** the first clause stands; the second is overturned, the mapping *is* an identity (see the note at the end of this ADR) | adepthood #1937 |
 | Major-only version gate, a no-op pre-1.0 (`_CONTRACT_MAJOR`, `creek_vault_client.py:79,242`) | `CONTRACT_VERSION = "0.2.0"` (`creek-tools/creek_mcp/contract.py:18`) | Exact-minor comparison per Decision 4; pin lives here, comparison code lands in #2045 | both repos |
 | Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning) for *partitioning one shared vault*, which remains unbuildable here. Per-user vault *instances* need no such change and shipped per the 2026-08-21 note; the interim single-tenant binding survives one release as a deployment-wide default | `creek-vault` / adepthood #2134, #2233 |
 
@@ -1158,3 +1158,55 @@ to describe the credential before this could ship.
 **The divergence-table row is unchanged and still open.** No creek-side
 contract change was made or is implied by this note. What changed is
 that adepthood stopped needing one to give each user a vault.
+
+## Note, 2026-08-21 — the F1..F10-to-stage mapping is an identity, and the divergence table said the opposite
+
+**AMENDED 2026-08-21.** The divergence-table row for `wheel` closed with
+a clause that is wrong: that "the F1-F10-to-ten-stage numeric
+coincidence is NOT a semantic identity". The owner ratified the opposite
+on this date. The row is left as it was written, with a pointer to this
+note, because an ADR that edits away a ruling it once made stops being a
+record of what was decided.
+
+**What is overturned.** Only that clause. The rest of the row is
+untouched and still governs: the stage/aspect projection is Adepthood's
+to own, Creek must not invent our vocabulary on our behalf, and the row
+remains PENDING on creek-vault#1072 for the ratified `/v1` shape.
+Decision 1, Decision 6 and every other ruling in this document are
+unaffected — nothing here is about the transport or the tier ceiling.
+
+**What is ratified instead.** `F1..F10`, the APTITUDE Stages, the
+Adepthood Aspects of Wholeness and the Archetypal Wavelength Modes are
+**one set of ten developmental positions under several names**, not four
+vocabularies that happen to be the same size. `graph/ontology-spine.md`
+writes each row out — `Beige = Stage 1 = F1 = BEIGE = 01-beige =
+Survival` — and `NORTH-STAR.md` states the same shared ontology. F1 *is*
+stage 1.
+
+**Colour is the primary key, not the name.** This is the part worth
+carrying forward, because it is what makes the identity usable rather
+than merely true: the labelings agree on six of the ten positions and
+diverge on the middle four — creek's `Achievism` against the
+curriculum's `Intellectual Understanding / Achievist`, and likewise F6,
+F7, F8 — so a join on names mismatches exactly those four while looking
+correct. `domain.frequencies.frequency_for_color` is the single door,
+and `backend/tests/services/test_frequency_classification.py` asserts
+both the colour join and that specific divergence.
+
+**Owning the projection therefore means owning the rendering, not
+disputing the positions.** Adepthood decides which of the ten names a
+position is shown under and what a `WheelBalanceResponse` looks like on
+the wire it publishes; it does not get to treat Creek's tenth bucket as
+landing somewhere other than the tenth stage.
+
+**Why this is worth a note rather than a quiet edit.** The retracted
+reading has propagated twice already. A comment in
+`creek_vault_client.py` argued it — "different quantities over different
+material", their both having ten members dismissed as a mere accident of
+size — that comment was copied into `domain/frequencies.py`, and it was
+then cited in review as evidence that correct code was a latent bug. Commit `fa447e5d` corrected
+the code side. This document was the last and most authoritative place
+the wrong version survived, which made it the most likely to seed a
+third round. `backend/tests/test_ontology_record.py` now fails if a
+living document states the retracted claim, or if an ADR states it
+without naming the amendment that reversed it.

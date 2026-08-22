@@ -4464,9 +4464,31 @@
       "PromptDetail": {
         "description": "A single weekly prompt with its question and response status.",
         "properties": {
+          "default_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Title"
+          },
           "has_responded": {
             "title": "Has Responded",
             "type": "boolean"
+          },
+          "prompt_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Ordinal"
           },
           "question": {
             "title": "Question",
@@ -4545,6 +4567,18 @@
       "PromptSubmit": {
         "description": "Payload for submitting a response to a weekly prompt.",
         "properties": {
+          "prompt_ordinal": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Ordinal"
+          },
           "response": {
             "maxLength": 10000,
             "minLength": 1,
@@ -5750,6 +5784,68 @@
           "current_stage"
         ],
         "title": "StageProgressUpdate",
+        "type": "object"
+      },
+      "StagePromptDetail": {
+        "description": "One of a stage's prompts: what to write, and how often to write it.\n\n``cadence`` is opaque display prose the course author writes (\"Daily\",\n\"At least 4x per week\", \"Whenever they arise\") and is passed through\nverbatim — it is deliberately not a schedule, an enum, or a recurrence\nrule, because the curriculum states it as prose and varies it per prompt.\n``None`` where the chapter states no cadence at all.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "cadence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cadence"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "title",
+          "body"
+        ],
+        "title": "StagePromptDetail",
+        "type": "object"
+      },
+      "StagePromptsResponse": {
+        "description": "Every prompt of one stage, in curriculum order.",
+        "properties": {
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/StagePromptDetail"
+            },
+            "title": "Prompts",
+            "type": "array"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "integer"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "stage_name",
+          "prompts"
+        ],
+        "title": "StagePromptsResponse",
         "type": "object"
       },
       "SuggestionStatus": {
@@ -12842,6 +12938,65 @@
         ]
       }
     },
+    "/prompts/stage/{stage_number}": {
+      "get": {
+        "description": "Every prompt of one stage, in curriculum order, each with its cadence.\n\nWeeks and prompts are not 1:1 — a stage carries three to five prompts\nacross three or six weeks — so this is the read path the week-scoped\nendpoints cannot express: the 25-curiosities list is a one-time build and\nthe Wavelength check-in is a daily, and one undifferentiated question per\nweek says neither.\n\nGated on the stage's *first* week through the same\n:func:`_check_week_unlocked` the weekly endpoints use, so opening four\nprompts at once cannot leak a stage the user has not reached.  404\nprecedes 403 so an unknown stage is never reported as merely locked.",
+        "operationId": "get_stage_prompts_prompts_stage__stage_number__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stage_number",
+            "required": true,
+            "schema": {
+              "title": "Stage Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagePromptsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Stage Prompts",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
     "/prompts/{week_number}": {
       "get": {
         "description": "Get a specific week's prompt and the user's response (if any).\n\nGated on the user's current week.  Without this check a fresh\n(week-1) user could enumerate ``/prompts/1`` … ``/prompts/36`` and\nlift every future question.  404 precedes 403 so unknown weeks\n(outside 1..``TOTAL_WEEKS``) don't get re-interpreted as \"locked\".",
@@ -12903,7 +13058,7 @@
     },
     "/prompts/{week_number}/respond": {
       "post": {
-        "description": "Submit a response to a weekly prompt. Prevents duplicate responses.\n\nRefuses ``week_number > user_week`` so a single POST cannot leapfrog\nthe weekly pacing by driving ``max(week_number)`` up in one request.\nPaired with the ``count + 1``-based ``_get_user_week`` this makes\nthe server-derived week a monotone function of *contiguous*\ncompletion, not the highest value the client has ever submitted.\n\nDuplicate submissions are caught exclusively by the\n``uq_promptresponse_user_week`` constraint and surfaced as 409\nConflict (BUG-PROMPT-004).  The earlier 400-on-pre-check / 409-on-race\nsplit exposed clients to two distinct status codes for what is\nsemantically one condition; the constraint is the only observer that\nsees both rows in a TOCTOU race anyway, so we let it own the\ndecision and the response code stays uniform.",
+        "description": "Submit a response to a weekly prompt. Prevents duplicate responses.\n\nRefuses ``week_number > user_week`` so a single POST cannot leapfrog\nthe weekly pacing by driving ``max(week_number)`` up in one request.\nPaired with the ``count + 1``-based ``_get_user_week`` this makes\nthe server-derived week a monotone function of *contiguous*\ncompletion, not the highest value the client has ever submitted.\n\nDuplicate submissions are caught exclusively by the\n``uq_promptresponse_user_week`` constraint and surfaced as 409\nConflict (BUG-PROMPT-004).  The earlier 400-on-pre-check / 409-on-race\nsplit exposed clients to two distinct status codes for what is\nsemantically one condition; the constraint is the only observer that\nsees both rows in a TOCTOU race anyway, so we let it own the\ndecision and the response code stays uniform.\n\n``prompt_ordinal`` names which of the stage's prompts the response\nanswers; omitted, it is the prompt the week itself draws, so clients\nwritten against the one-prompt-per-week contract are unaffected.  An\nordinal the stage does not carry is a 404 — the same shape an unknown week\nalready gets — rather than a silent wrap-around onto a different prompt.",
         "operationId": "submit_prompt_response_prompts__week_number__respond_post",
         "parameters": [
           {

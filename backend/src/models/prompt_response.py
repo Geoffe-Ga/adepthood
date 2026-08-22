@@ -35,6 +35,11 @@ class PromptResponse(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     week_number: int
+    # Which of the stage's prompts this row answers, 1-based. A stage carries
+    # three to five prompts, so the week alone no longer identifies one.
+    # ``None`` on rows written before prompts became individually addressable;
+    # those fall back to the prompt their week draws.
+    prompt_ordinal: int | None = Field(default=None)
     question: str = Field(max_length=1_000)
     response: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     timestamp: datetime = Field(

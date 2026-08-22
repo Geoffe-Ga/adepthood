@@ -26,6 +26,39 @@ class PromptDetail(BaseModel):
     has_responded: bool
     response: str | None = None
     timestamp: datetime | None = None
+    # The compose default the client shows before the user types a title —
+    # served rather than derived client-side so no client keeps its own copy
+    # of the stage-band table. ``None`` only for a retired week whose stored
+    # response no longer maps onto the curriculum.
+    default_title: str | None = None
+    # Which of the stage's prompts this week serves, or the one a stored
+    # response answered. ``None`` on rows written before prompts became
+    # individually addressable.
+    prompt_ordinal: int | None = None
+
+
+class StagePromptDetail(BaseModel):
+    """One of a stage's prompts: what to write, and how often to write it.
+
+    ``cadence`` is opaque display prose the course author writes ("Daily",
+    "At least 4x per week", "Whenever they arise") and is passed through
+    verbatim — it is deliberately not a schedule, an enum, or a recurrence
+    rule, because the curriculum states it as prose and varies it per prompt.
+    ``None`` where the chapter states no cadence at all.
+    """
+
+    ordinal: int
+    title: str
+    body: str
+    cadence: str | None = None
+
+
+class StagePromptsResponse(BaseModel):
+    """Every prompt of one stage, in curriculum order."""
+
+    stage: int
+    stage_name: str
+    prompts: list[StagePromptDetail]
 
 
 class PromptSubmit(BaseModel):
@@ -35,6 +68,11 @@ class PromptSubmit(BaseModel):
     # Optional compose title. When omitted or blank the router falls back to
     # the week's default band label; the length cap mirrors the DB column.
     title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    # Which of the stage's prompts the response answers, 1-based. Omitted
+    # means the prompt the week itself draws, so clients written against the
+    # one-prompt-per-week contract keep working unchanged. An ordinal the
+    # stage does not carry is a 404 from the router, not a wrap-around.
+    prompt_ordinal: int | None = Field(default=None, ge=1)
 
     @field_validator("response")
     @classmethod
