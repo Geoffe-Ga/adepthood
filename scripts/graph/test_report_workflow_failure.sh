@@ -58,7 +58,15 @@ case "$*" in
   *"issue list"*)
     expr="" prev=""
     for a in "$@"; do [[ "$prev" == "--jq" ]] && expr="$a"; prev="$a"; done
-    payload="${ISSUE_LIST_JSON:-[]}"
+    # The script searches twice: once narrowed by --label (durable against a
+    # large backlog) and, only if that finds nothing, once unfiltered (which is
+    # what finds an issue the unlabelled-create fallback filed). LABELLED_JSON
+    # lets a test answer the two passes differently and prove both exist.
+    if [[ "$*" == *"--label"* ]]; then
+      payload="${LABELLED_JSON-${ISSUE_LIST_JSON:-[]}}"
+    else
+      payload="${ISSUE_LIST_JSON:-[]}"
+    fi
     if [[ -n "$expr" ]]; then
       printf '%s' "$payload" | jq -rc "$expr"
     else
@@ -156,6 +164,31 @@ out="$(ISSUE_LIST_JSON="$OTHER" run)"
 calls="$(cat "$CALLS")"
 contains "another workflow's tracker does not absorb this failure" "issue create" "$calls"
 lacks "another workflow's tracker is not commented on" "issue comment 99" "$calls"
+
+# --- the label pass finds what recency has scrolled past --------------------
+# This is the durability the label narrowing buys. ISSUE_LIST_JSON is empty --
+# standing in for a tracking issue that has aged out of the most recent
+# ISSUE_SCAN_LIMIT open issues, which is reachable in a repo filing from
+# several mouths at once. Without the labelled pass the script would conclude
+# nothing tracks this and file a duplicate on every subsequent failure.
+: > "$CALLS"
+out="$(LABELLED_JSON="$EXISTING" ISSUE_LIST_JSON='[]' run)"; ec=$?
+check "a tracking issue past the scan limit still exits 0" "0" "$ec"
+calls="$(cat "$CALLS")"
+contains "a tracking issue past the scan limit is commented on" "issue comment" "$calls"
+lacks "a tracking issue past the scan limit is not duplicated" "issue create" "$calls"
+
+# --- an unlabelled tracking issue is still found ----------------------------
+# The create path retries WITHOUT labels when a repo lacks the label, because
+# "the marker, not the label, is what makes it findable". An issue filed that
+# way carries no label, so a label-only search would miss it and re-file it on
+# every failure -- the exact duplication this script exists to prevent.
+: > "$CALLS"
+out="$(LABELLED_JSON='[]' ISSUE_LIST_JSON="$EXISTING" run)"; ec=$?
+check "an unlabelled tracking issue still exits 0" "0" "$ec"
+calls="$(cat "$CALLS")"
+contains "an unlabelled tracking issue is commented on" "issue comment" "$calls"
+lacks "an unlabelled tracking issue is not duplicated" "issue create" "$calls"
 
 # --- a search that could not run is not "nothing is tracking this" ----------
 # The guard this covers is the one the script argues for in its own comment: a

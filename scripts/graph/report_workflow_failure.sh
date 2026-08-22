@@ -105,14 +105,36 @@ detail="$(printf '**Workflow:** `%s`\n**Failing step:** `%s`\n**Run:** %s\n\nFir
 
 # --- is anything already tracking this? -------------------------------------
 # A failed search is NOT "no tracking issue". Exit rather than file a duplicate.
+# Searched twice, on purpose, and the order matters.
+#
+# The label pass is DURABLE: few issues ever carry the tracking label, so the
+# match survives however large the open backlog grows. Recency alone does not
+# -- this repo files issues from several mouths at once, and a tracking issue
+# older than ISSUE_SCAN_LIMIT open issues would scroll out of an unfiltered
+# scan and be re-filed on every failure, which is the one outcome this whole
+# script exists to prevent.
+#
+# But the label pass CANNOT be the only one. The create below deliberately
+# retries unlabelled when a repo is missing the label, on the stated grounds
+# that "the marker, not the label, is what makes it findable" -- so an issue
+# filed by that fallback carries no label, and a label-only search would miss
+# it and duplicate it forever. The unfiltered pass is what catches those.
+#
 # The marker is passed as a jq VARIABLE rather than spliced into the filter
-# text. `--workflow` is a caller-supplied value, and a filter built by string
-# interpolation is one odd character away from either a syntax error or a
-# filter that matches something other than the literal marker. `gh --jq` has no
-# --arg, so the search pipes through jq proper.
-existing="$(gh issue list "${repo_args[@]+"${repo_args[@]}"}" \
-  --state open --limit "$ISSUE_SCAN_LIMIT" --json number,body \
-  | jq -r --arg marker "$marker" '.[] | select((.body // "") | contains($marker)) | .number')" || {
+# text. `--workflow` is caller-supplied, and a filter built by interpolation is
+# one odd character from a syntax error or a match on something other than the
+# literal marker. `gh --jq` has no --arg, so both searches pipe through jq.
+find_tracking_issue() { # find_tracking_issue [extra gh args...]
+  gh issue list "${repo_args[@]+"${repo_args[@]}"}" \
+    --state open --limit "$ISSUE_SCAN_LIMIT" --json number,body "$@" \
+    | jq -r --arg marker "$marker" '.[] | select((.body // "") | contains($marker)) | .number'
+}
+
+existing="$(find_tracking_issue --label "$TRACKING_LABEL")" || {
+  echo "::error::report-workflow-failure: could not search for the tracking issue of $workflow — refusing to file one, because a failed search read as 'none exists' turns one tracking issue into one per run." >&2
+  exit "$EXIT_FAILED"
+}
+[[ -n "$existing" ]] || existing="$(find_tracking_issue)" || {
   echo "::error::report-workflow-failure: could not search for the tracking issue of $workflow — refusing to file one, because a failed search read as 'none exists' turns one tracking issue into one per run." >&2
   exit "$EXIT_FAILED"
 }
