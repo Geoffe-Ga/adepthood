@@ -15,9 +15,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index
 from sqlmodel import Field, Relationship, SQLModel
 
+from services.journal_encryption import EncryptedString
+
 if TYPE_CHECKING:
     from .journal_entry import JournalEntry
 
+# Plaintext caps on the two journal-text columns. No longer DB bounds (both hold
+# ciphertext, which exceeds the plaintext): ``domain.detection`` enforces them at
+# the write boundary, and keeps them in step via its own drift guard.
 _ANCHOR_TEXT_MAX = 280
 _LABEL_MAX = 255
 _ENUM_MAX = 20
@@ -122,10 +127,14 @@ class CompletionSuggestion(SQLModel, table=True):
         default=None,
         sa_column=Column(ForeignKey("userpractice.id", ondelete="CASCADE"), nullable=True),
     )
-    label: str = Field(max_length=_LABEL_MAX)
+    # Both are journal text and both are encrypted at rest: ``anchor_text`` is a
+    # verbatim copy of a passage that is ciphertext in ``journalentry.message``,
+    # and ``label`` is that same passage sanitized (``domain.detection`` derives
+    # it from the quote, not from the habit's name).
+    label: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     anchor_start: int = Field(ge=0)
     anchor_end: int = Field(ge=1)  # DB CHECK also enforces anchor_end > anchor_start
-    anchor_text: str = Field(max_length=_ANCHOR_TEXT_MAX)
+    anchor_text: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     status: str = Field(default=SuggestionStatus.PENDING, max_length=_ENUM_MAX)
     accepted_at: datetime | None = Field(
         default=None,
