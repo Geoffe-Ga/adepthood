@@ -65,6 +65,21 @@ The server notes the date, your account id, and how many records went — and
 nothing else. Not a line of what the archive said. The same rule as the
 deletion receipt, for the same reason.
 
+## Deleting one page
+
+**Journal → the page's Delete.** The shelf asks once, and then the page leaves
+your journal. Its copy in the ontologized corpus is withdrawn at the same
+moment, so that writing stops being retrieved as context for anything you write
+afterwards.
+
+There is no restore inside the app. The row is not shredded the instant you
+confirm — it is marked deleted and swept later, which is how the usage audit
+trail stays intact — but nothing in the app exposes it and no support path will
+bring it back, so treat a deleted page as gone from Adepthood. If you might
+want it later, [take a copy](#taking-a-copy-of-your-writing) first.
+
+Deleting a page does not touch anything else about your account.
+
 ## Deleting your account
 
 **Settings → Delete account.** You retype the email address you sign in with,

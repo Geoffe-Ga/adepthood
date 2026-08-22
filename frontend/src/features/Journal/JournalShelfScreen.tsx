@@ -14,6 +14,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import { deleteEntryLabel } from './deleteEntryCopy';
+import DeleteEntryDialog from './DeleteEntryDialog';
 import { excerpt } from './excerpt';
 import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
@@ -25,6 +27,7 @@ import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './rec
 import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
+import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
 import { usePagedJournal } from './usePagedJournal';
 
 import { prompts } from '@/api';
@@ -91,6 +94,8 @@ interface ShelfState {
   hasMore: boolean;
   onSearch: (_query: string) => void;
   loadMore: () => void;
+  /** The confirm-then-remove flow behind each row's delete affordance. */
+  deletion: EntryDeletion;
 }
 
 /** Out-of-range queries are dropped before hitting the API (avoids a 422). */
@@ -102,8 +107,9 @@ function isSearchable(next: string): boolean {
 
 /** Loads the shelf with offset paging + debounced search (via SearchBar). */
 function useShelf(): ShelfState {
-  const { items, total, hasMore, loading, error, load } = usePagedJournal();
+  const { items, setItems, total, adjustTotal, hasMore, loading, error, load } = usePagedJournal();
   const [query, setQuery] = useState('');
+  const deletion = useEntryDeletion({ items, setItems, adjustTotal });
 
   useEffect(() => {
     void load(undefined, 0);
@@ -123,41 +129,62 @@ function useShelf(): ShelfState {
     if (hasMore && !loading) void load(searchParam(query), items.length);
   }, [hasMore, loading, load, query, items.length]);
 
-  return { items, total, loading, error, query, hasMore, onSearch, loadMore };
+  return { items, total, loading, error, query, hasMore, onSearch, loadMore, deletion };
 }
 
-function PageCard({
-  entry,
-  onOpen,
-  now,
-}: {
+/** The page's own name, or the stand-in the shelf shows when it has none. */
+function cardTitle(entry: JournalMessage): string {
+  return entry.title?.trim() ? entry.title : 'Untitled';
+}
+
+interface PageCardProps {
   entry: JournalMessage;
   onOpen: (_id: number) => void;
+  onDelete: (_entry: JournalMessage) => void;
   now: number;
-}): React.JSX.Element {
+}
+
+/**
+ * One page on the shelf: a paper tile holding a tappable reading face and,
+ * beneath it, the delete affordance. The two are siblings rather than nested
+ * touchables — a button inside an ``accessible`` touchable is grouped away
+ * from VoiceOver, which would leave the delete reachable only by sight.
+ */
+function PageCard({ entry, onOpen, onDelete, now }: PageCardProps): React.JSX.Element {
   const press = usePressScale(useReducedMotion());
+  const title = cardTitle(entry);
   return (
     <Animated.View style={{ transform: [{ scale: press.scale }] }}>
-      <TouchableOpacity
-        style={styles.card}
-        onPress={() => onOpen(entry.id)}
-        onPressIn={press.onPressIn}
-        onPressOut={press.onPressOut}
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${entry.title ?? 'untitled'} entry`}
-        testID={`journal-shelf-card-${entry.id}`}
-      >
-        <View style={styles.cardTitleRow}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {entry.title?.trim() ? entry.title : 'Untitled'}
+      <View style={styles.card} testID={`journal-shelf-card-${entry.id}`}>
+        <TouchableOpacity
+          onPress={() => onOpen(entry.id)}
+          onPressIn={press.onPressIn}
+          onPressOut={press.onPressOut}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${entry.title ?? 'untitled'} entry`}
+          testID={`journal-shelf-open-${entry.id}`}
+        >
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {title}
+            </Text>
+            <Text style={styles.cardDate}>{formatDate(entry.timestamp)}</Text>
+          </View>
+          <Text style={styles.cardExcerpt} numberOfLines={2}>
+            {excerpt(entry.message, EXCERPT_MAX)}
           </Text>
-          <Text style={styles.cardDate}>{formatDate(entry.timestamp)}</Text>
-        </View>
-        <Text style={styles.cardExcerpt} numberOfLines={2}>
-          {excerpt(entry.message, EXCERPT_MAX)}
-        </Text>
-        <Text style={styles.cardCaption}>{pageCaption(entry, now)}</Text>
-      </TouchableOpacity>
+          <Text style={styles.cardCaption}>{pageCaption(entry, now)}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.cardDeleteButton}
+          onPress={() => onDelete(entry)}
+          accessibilityRole="button"
+          accessibilityLabel={deleteEntryLabel(title)}
+          testID={`journal-shelf-delete-${entry.id}`}
+        >
+          <Text style={styles.cardDeleteLabel}>Delete</Text>
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -409,7 +436,7 @@ function ShelfBody({ shelf, nav, prompt, week, now }: ShelfBodyProps): React.JSX
   const resultCount = searching ? total : undefined;
 
   const renderItem = ({ item }: SectionListRenderItemInfo<JournalMessage, ShelfSection>) => (
-    <PageCard entry={item} onOpen={nav.openEntry} now={now} />
+    <PageCard entry={item} onOpen={nav.openEntry} onDelete={shelf.deletion.request} now={now} />
   );
 
   return (
@@ -448,6 +475,19 @@ function ShelfBody({ shelf, nav, prompt, week, now }: ShelfBodyProps): React.JSX
   );
 }
 
+/**
+ * A refused delete, said where the row it concerns went back to. Renders
+ * nothing on the healthy path, so the shelf stays quiet until it has to speak.
+ */
+function DeleteFailureNotice({ message }: { message: string | null }): React.JSX.Element | null {
+  if (message === null) return null;
+  return (
+    <Text style={styles.deleteError} testID="journal-delete-error">
+      {message}
+    </Text>
+  );
+}
+
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const shelf = useShelf();
@@ -455,10 +495,12 @@ function JournalShelfScreen(): React.JSX.Element {
   const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
   const nav = useShelfNavigation(navigation, prompt, week);
   const shelfDrawer = useShelfDrawer(nav);
+  const { deletion } = shelf;
   const now = Date.now();
 
   return (
     <ScreenScaffold testID="journal-shelf">
+      <DeleteFailureNotice message={deletion.error} />
       <ShelfBody shelf={shelf} nav={nav} prompt={prompt} week={week} now={now} />
       <BottomFade />
       <JournalScreenDrawer
@@ -466,6 +508,11 @@ function JournalShelfScreen(): React.JSX.Element {
         onSelectEntry={shelfDrawer.onSelectEntry}
         onNewEntry={shelfDrawer.onNewEntry}
         onPhotograph={shelfDrawer.onPhotograph}
+      />
+      <DeleteEntryDialog
+        visible={deletion.pending !== null}
+        onConfirm={deletion.confirm}
+        onCancel={deletion.cancel}
       />
     </ScreenScaffold>
   );
