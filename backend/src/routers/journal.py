@@ -99,6 +99,7 @@ from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
+from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
 from services.creek_vault_reflect import select_reflection_llm
 from services.creek_vault_upload import UploadedDocument, store_upload
 from services.creek_vault_write import (
@@ -213,10 +214,11 @@ def _resolve_backdated_timestamp(entry_date: date | None) -> datetime | None:
     )
 
 
-# PATCH fields whose change re-sends the entry to the Creek Vault. A body edit
-# ('message') or a privacy-tier change ('classification') alters what the vault
-# should hold; a title/status/chord-only PATCH must issue zero vault calls.
-_VAULT_REINGEST_FIELDS = frozenset({"message", "classification"})
+# PATCH fields whose change re-sends the entry to the Creek Vault and re-writes
+# its corpus fragment. A body edit ('message') or a privacy-tier change
+# ('classification') alters what both should hold; a title/status/chord-only
+# PATCH must issue zero vault calls and cost zero classifications.
+_REINGEST_FIELDS = frozenset({"message", "classification"})
 
 
 def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> bool:
@@ -290,6 +292,27 @@ async def _record_vault_outcome(
     await session.refresh(entry)
 
 
+async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
+    """Write the committed entry into its account's corpus, if it may be.
+
+    Best-effort and deliberately last. The entry is already committed by the
+    time this runs, so a classification that is slow, refused or unavailable
+    can cost latency but can never cost somebody their writing —
+    :func:`services.corpus_ingest.ingest_journal_entry` returns ``None`` for
+    every one of those outcomes rather than raising.
+
+    An account that has not consented never reaches a provider at all, which is
+    why the ordinary path here is one indexed read and no network call. The
+    commit is unconditional because that read opens a transaction either way,
+    and ending it here returns the pooled connection rather than holding it for
+    the remainder of the request.
+    """
+    if entry.id is None:
+        return
+    await ingest_journal_entry(session, entry)
+    await session.commit()
+
+
 async def _authorize_practice_links(
     session: AsyncSession, payload: JournalMessageCreate, current_user: int
 ) -> None:
@@ -351,6 +374,7 @@ async def create_journal_entry(
         raise
     await session.refresh(entry)
     await _record_vault_outcome(session, entry, vault_client)
+    await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
 
@@ -704,9 +728,11 @@ async def update_journal_entry(
         raise
     await session.refresh(entry)
     # Re-ingest only when the body or privacy tier changed; a title/status/chord
-    # PATCH leaves the vault's copy untouched (and issues zero vault calls).
-    if payload.model_fields_set & _VAULT_REINGEST_FIELDS:
+    # PATCH leaves the vault's copy and the corpus fragment untouched (and
+    # issues zero vault calls and zero classifications).
+    if payload.model_fields_set & _REINGEST_FIELDS:
         await _record_vault_outcome(session, entry, vault_client)
+        await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
 
@@ -1534,6 +1560,12 @@ async def delete_journal_entry(
     entry_id = entry.id
     entry.deleted_at = datetime.now(UTC)
     session.add(entry)
+    if entry_id is not None:
+        # The corpus copy goes with the entry. A fragment that outlived a
+        # delete would keep the deleted writing in circulation as context for
+        # newer reflections -- soft-deletion hides an entry from every read
+        # path, and the corpus is a read path.
+        await withdraw_journal_entry(session, user_id=current_user, entry_id=entry_id)
     await session.commit()
     logger.info(
         "journal_entry_soft_deleted",

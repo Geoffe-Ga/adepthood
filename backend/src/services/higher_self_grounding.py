@@ -20,10 +20,11 @@ so raising it fails the build in the file where the promise is written. It
 bounds both sources; neither may hand back more.
 
 **An empty corpus is a legitimate state.** Every account begins with one, and
-today every account stays there — no surface in this deployment writes a
-fragment yet. Answering an empty corpus with silence would ship a Higher Self
-that has nothing to say to a new user, so the recency window is a documented
-fallback rather than dead code.
+an account that has not consented to ontologizing what it writes stays there
+(:mod:`services.corpus_consent`). So does an account whose only fragment is the
+one being excluded on this request. Answering an empty corpus with silence
+would ship a Higher Self that has nothing to say to a new user, so the recency
+window is a documented fallback rather than dead code.
 
 **Position, not recency.** The retrieval is biased toward where the reader
 currently stands on the ten-fold ontology, resolved from their course stage by
@@ -32,6 +33,15 @@ replaces: NORTH-STAR §2 asks for a corpus "calibrated to where you are right
 now", and the newest three things somebody wrote is not calibration. No stage,
 or a stage whose colour names no position, is not an error — it is a retrieval
 with no bias to apply, which the store documents as a supported mode.
+
+**Nothing is grounded in itself.** ``exclude_entry_id`` keeps the entry under
+reflection out of its own context, and it now reaches both sources: the corpus
+side through ``CorpusFragment.source_entry_id``, the fallback through the
+journal id it always used. Before the corpus had a writer this mattered only in
+theory, because nothing put a journal entry into the corpus. It stopped being
+theoretical on the same commit that added the writer — the entry would be
+classified, stored, retrieved by its own reflection, and the model asked to
+draw a ``connection`` note between a passage and itself.
 
 **INTIMATE is not re-decided here.** The corpus cannot hold an intimate
 fragment and cannot return one — three independent barriers in
@@ -58,7 +68,7 @@ from sqlmodel import col, select
 from domain.frequencies import Frequency
 from domain.stage_progress import get_user_progress
 from models.journal_entry import JournalClassification, JournalEntry
-from services.corpus_store import resolve_stage_frequency, retrieve_fragments
+from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
 
 # How many pieces of the reader's own writing may accompany their entry to the
 # language-model provider. Published in ``docs/legal/privacy-policy.md`` and
@@ -147,15 +157,19 @@ async def gather_grounding(
     than layers, and for the published bound both of them obey.
 
     ``exclude_entry_id`` keeps the entry under reflection out of its own
-    context. It applies to the recency window only: a corpus fragment carries no
-    reference back to the entry it was derived from, so the corpus side cannot
-    yet recognise the entry as its own. Nothing writes journal entries into the
-    corpus today, which is why that is a gap to close alongside the writer
-    rather than a leak to patch here.
+    context, on both sources: the corpus recognises the entry through the
+    fragment's ``source_entry_id`` and the window through the journal id. An
+    account whose only fragment is the excluded one has an empty corpus for
+    this request and is answered by the window, which is the same legitimate
+    state a brand-new account is in.
     """
     bias = await _current_frequency(session, user_id)
     fragments = await retrieve_fragments(
-        session, user_id=user_id, frequency_bias=bias, limit=GROUNDING_LIMIT
+        session,
+        user_id=user_id,
+        query=RetrievalQuery(
+            frequency_bias=bias, exclude_entry_id=exclude_entry_id, limit=GROUNDING_LIMIT
+        ),
     )
     if fragments:
         return Grounding(

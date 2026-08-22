@@ -806,6 +806,78 @@
         "title": "ContractionVariant",
         "type": "string"
       },
+      "CorpusConsentListResponse": {
+        "description": "Every source, decided or not.\n\nA list rather than a map, so the order the ontology's own enum declares is\nthe order a client renders — and so a source added later appears in the\nsurface without a client change.",
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/CorpusConsentResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "title": "CorpusConsentListResponse",
+        "type": "object"
+      },
+      "CorpusConsentResponse": {
+        "description": "What an account has currently decided about one source.\n\n``decided_at`` is ``null`` for a source never answered about, which is a\ndifferent state from one answered \"no\": one is a question still open, the\nother is a refusal on the record, and a client rendering them the same way\ncannot tell a new account from one that has already declined.",
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "granted": {
+            "title": "Granted",
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/CorpusSource"
+          }
+        },
+        "required": [
+          "source",
+          "granted",
+          "decided_at"
+        ],
+        "title": "CorpusConsentResponse",
+        "type": "object"
+      },
+      "CorpusConsentUpdate": {
+        "description": "The decision an account is making about one source.\n\n``granted`` is required rather than defaulted. A consent request whose\nmeaning depends on a default is a consent request that can be sent by\naccident, and the direction the default would have to pick is the one this\nendpoint exists to make explicit.",
+        "properties": {
+          "granted": {
+            "title": "Granted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "granted"
+        ],
+        "title": "CorpusConsentUpdate",
+        "type": "object"
+      },
+      "CorpusSource": {
+        "description": "Where a fragment came from.\n\n``journal`` is writing composed in this app. ``upload`` is a file the user\nhanded over directly, and ``import`` is material pulled from a service they\nwrite on elsewhere — the two the import surface will produce. Recorded\nbecause \"what did I actually give this thing?\" is a question a user is\nentitled to an answer to, and a column is the only place that answer can\ncome from later.",
+        "enum": [
+          "journal",
+          "upload",
+          "import"
+        ],
+        "title": "CorpusSource",
+        "type": "string"
+      },
       "CountUpConfig": {
         "additionalProperties": false,
         "description": "Open-ended timer that counts up; user decides when to stop.",
@@ -7597,6 +7669,124 @@
         "summary": "Signup",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/corpus/consent": {
+      "get": {
+        "description": "Report what this account has decided about each source, decided or not.\n\nNever a 404 for an account that has answered nothing: \"you have not been\nasked yet\" is an answer about a resource every account has, not a missing\nresource, and answering it plainly is what lets a client render the\nquestion without first handling an error.",
+        "operationId": "list_corpus_consent_corpus_consent_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusConsentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Corpus Consent",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/consent/{source}": {
+      "put": {
+        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller: this is the whole transaction,\nand on a revocation it is the purge as well as the event. Leaving either\nuncommitted would be a permission withdrawn on screen and not in the\ndatabase.",
+        "operationId": "put_corpus_consent_corpus_consent__source__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CorpusSource"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorpusConsentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusConsentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Corpus Consent",
+        "tags": [
+          "corpus"
         ]
       }
     },

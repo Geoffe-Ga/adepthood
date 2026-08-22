@@ -13,6 +13,12 @@
 # row somebody owns, so a cross-user probe would be answered 200 by design.
 
 [[route]]
+method   = "PUT"
+path     = "/corpus/consent/{source}"
+category = "not_object_scoped"
+reason   = "source names a member of the CorpusSource enum, not a row; the decision is recorded against the caller"
+
+[[route]]
 method   = "GET"
 path     = "/course/site-resources/{slug}/body"
 category = "not_object_scoped"
