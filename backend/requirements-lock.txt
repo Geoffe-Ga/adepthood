@@ -8,7 +8,7 @@ annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
-anthropic==0.122.0
+anthropic==0.123.0
     # via -r backend/requirements.txt
 anyio==4.14.2
     # via
@@ -69,7 +69,7 @@ httpx==0.28.1
     #   anthropic
 httpx2==2.12.0
     # via openai
-idna==3.18
+idna==3.19
     # via
     #   anyio
     #   email-validator
@@ -93,7 +93,7 @@ mako==1.4.1
     # via alembic
 markupsafe==3.0.3
     # via mako
-openai==3.2.0
+openai==3.3.0
     # via -r backend/requirements.txt
 packaging==26.3
     # via
@@ -173,7 +173,7 @@ tzdata==2026.3
     # via -r backend/requirements.txt
 urllib3==2.7.0
     # via sentry-sdk
-uvicorn==0.52.3
+uvicorn==0.52.4
     # via -r backend/requirements.txt
 wrapt==2.3.0
     # via deprecated
