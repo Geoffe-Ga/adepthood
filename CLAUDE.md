@@ -226,3 +226,6 @@ hand freely — remove the marker to take a rule out of the playbook's
 jurisdiction.
 
 <!-- playbook rules are inserted below this line -->
+
+- **When** a FastAPI request body or query schema carries an id referencing an object other than the path's own resource (any `*_id` field), **do** authorize the caller's ownership of it unconditionally whenever it is non-null, using the `resolve_owned_*` helpers in `backend/src/dependencies/ownership.py` with their 404-missing / 403-not-owner convention and `log_ownership_denied`, and add a cross-tenant regression test in `backend/tests/security/test_idor.py` asserting both the rejection and that no row was persisted. <!-- playbook added=2026-08-10 evidence=#2064,#2065,#2121,#2122,#2123 -->
+- **When** adding or editing a command inside `scripts/**/*.sh` that a `check-all.sh` or pre-commit gate presents as enforcing, **do** run it once by hand to confirm it both executes and exits non-zero on a real violation, never wrap it in `|| true`, and add a meta-test under `backend/tests/scripts/` asserting the script fails on a deliberately violating fixture. <!-- playbook added=2026-08-10 evidence=#2024,#2055,#2015,#2006 -->
