@@ -24,6 +24,7 @@ on:
       - ".claude/**"
       - "scripts/ralph/PROMPT.md"
       - ".github/workflows/weekly-playbook.yml"
+      - ".github/workflows/graph-semantic.yml"
       - ".github/workflows/graph-tests.yml"
   pull_request:
     paths:
@@ -32,6 +33,7 @@ on:
       - ".claude/**"
       - "scripts/ralph/PROMPT.md"
       - ".github/workflows/weekly-playbook.yml"
+      - ".github/workflows/graph-semantic.yml"
       - ".github/workflows/graph-tests.yml"
 
 permissions:

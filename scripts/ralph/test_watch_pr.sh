@@ -138,17 +138,33 @@ check "behind is a terminal token" "WATCH 103 behind" "$(watch 103 1 30)"
 # must END the watch promptly: Gate 4 has already spoken and the orchestrator
 # owes the lane an address-feedback worker, so sleeping out the timeout on it
 # is the exact latency the watcher exists to remove. The fix lives entirely in
-# pr-ready.sh's vocabulary: the token falls outside IN_FLIGHT_TOKENS, so the
-# in-flight set itself must stay exactly (pending, awaiting-review) — adding
-# the new token there would silence this wake again.
+# pr-ready.sh's vocabulary: the token falls outside IN_FLIGHT_TOKENS, and adding
+# it there would silence this wake again — which is what the assertion below
+# pins, rather than the exact membership of the set (that has grown once since,
+# for `transport-error`, and pinning the literal line made a correct addition
+# look like a regression).
 run_watch changes pending awaiting-review changes-requested
 rc=0
 out="$(watch 112 1 30)" || rc=$?
 check "a fresh non-LGTM verdict ends the watch with its token" "WATCH 112 changes-requested" "$out"
 check "a changes-requested watch exits 0" "0" "$rc"
 check "watcher stopped polling the moment the verdict token arrived" "3" "$(cat "$COUNT_FILE")"
-check "IN_FLIGHT_TOKENS still lists exactly pending and awaiting-review" "1" \
-  "$(grep -c 'IN_FLIGHT_TOKENS=("pending" "awaiting-review")' "$SRC" || true)"
+check "changes-requested is still OUTSIDE the in-flight set" "" \
+  "$(grep -o 'IN_FLIGHT_TOKENS=(.*changes-requested.*)' "$SRC" || true)"
+
+# --- a transport error is not a state of the PR ------------------------------
+# `transport-error` means pr-ready.sh could not reach GitHub, so the lane is
+# still in whatever state it was in and there is nothing for a woken
+# orchestrator to act on. Ending the watch on it would convert a momentary
+# network blip into the full 1200–1800s fallback latency this script exists to
+# remove — the same failure as a watcher that died on an API error, which the
+# error path below already refuses to do.
+run_watch transport pending transport-error ready
+rc=0
+out="$(watch 113 1 30)" || rc=$?
+check "a transport error does NOT end the watch" "WATCH 113 ready" "$out"
+check "a watch that rode out a transport error exits 0" "0" "$rc"
+check "the watcher kept polling through the transport error" "3" "$(cat "$COUNT_FILE")"
 
 # --- pidfile idempotence: blind re-launch every wake must be free ------------
 sleep 60 &
