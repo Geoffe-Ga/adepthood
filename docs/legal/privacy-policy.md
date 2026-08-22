@@ -96,8 +96,13 @@ Every entry carries a tier you choose: **Public**, **Personal**, or
 
 **Personal** is the default. A Personal entry is yours, and it is the tier
 reflections read: its text is sent to a language-model provider when you
-ask for a reflection, and up to three of your recent entries may go along
-with it as context.
+ask for a reflection, and up to three other pieces of your own writing may
+go along with it as context. Those three are **passages chosen out of the
+corpus of your own writing** — the writing you have brought into Adepthood,
+sorted by which of the ten frequencies it speaks in and picked for the one
+you are standing in now — or, while that corpus is still empty, **your
+recent entries**. It is one source or the other, never both, and never more
+than three either way.
 
 **Intimate** is the tier that changes what the software is allowed to do:
 
@@ -106,7 +111,9 @@ with it as context.
   refused from the stored tier on the server, before a provider client is
   built or your wallet is touched.
 - An Intimate entry is **never used as context** for another entry's
-  reflection. The query that gathers recent entries excludes them.
+  reflection. Neither source can produce one: the query that gathers recent
+  entries excludes them, and an Intimate entry is never put into the corpus
+  in the first place — the database refuses to hold one at that tier.
 - An Intimate entry is **never replicated to a Creek Vault**. The write
   path stops before it opens a connection.
 
@@ -129,8 +136,10 @@ service, no tracking SDK, and no data broker anywhere in this app.
 **The language-model provider** (Anthropic or OpenAI, depending on how the
 deployment is configured, or on your own key if you supply one). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
-an essay, up to three recent non-Intimate entry bodies as context, and the
-photograph of a handwritten page when you ask for it to be transcribed. It
+an essay, up to three other pieces of your own non-Intimate writing as
+context — passages chosen out of the corpus of your own writing, or your
+recent entries while that corpus is empty — and the photograph of a
+handwritten page when you ask for it to be transcribed. It
 never receives an Intimate entry. If you bring your own key, the call goes
 to your account with that provider; the key is used for that one call and
 is never stored on the server.

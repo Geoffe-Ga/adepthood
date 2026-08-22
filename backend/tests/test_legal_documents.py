@@ -46,11 +46,11 @@ from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
 from main import validate_journal_encryption_config
-from routers.journal import _RESONANCE_PRIOR_LIMIT
 from sentry import scrub_event
 from services import journal_encryption
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
+from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
 from services.journal_encryption import EncryptedString
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +118,17 @@ def _restored_encryption_cache() -> Iterator[None]:
 def _read(document: Path) -> str:
     """Return one document's text, lowercased for claim matching."""
     return document.read_text(encoding="utf-8").lower()
+
+
+def _prose(document: Path) -> str:
+    """Return one document's text as unwrapped prose, for phrase matching.
+
+    These documents are hard-wrapped, so a sentence a reader sees as one line
+    is several in the file and a phrase can straddle two of them. Collapsing
+    whitespace is what keeps a guard about *what the policy says* from turning
+    into a guard about where an editor happened to break a line.
+    """
+    return " ".join(_read(document).split())
 
 
 def _encrypted_columns() -> frozenset[str]:
@@ -211,7 +222,7 @@ _NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
 
 
 def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
-    """The count of prior entries sent to the LLM provider is the code's own.
+    """The count of writing sent to the LLM provider as context is the code's own.
 
     This is the one number in the document describing what leaves the deployment
     for a third party, so a reader deciding whether to write something down is
@@ -220,20 +231,50 @@ def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
     which is the harmless direction, and still wrong in a document whose whole
     value is that a reader who believes it is not misled.
 
-    Pinned to ``_RESONANCE_PRIOR_LIMIT`` rather than to the literal ``three`` so
-    that raising the limit fails here, where the policy is, instead of quietly
-    widening what is shared.
+    Pinned to ``GROUNDING_LIMIT`` rather than to the literal ``three`` so that
+    raising the limit fails here, where the policy is, instead of quietly
+    widening what is shared. That constant moved out of the journal router when
+    grounding gained a second source; it is still the single bound, and
+    ``tests/services/test_higher_self_grounding.py`` is where both sources are
+    held to it.
     """
-    policy = _read(_PRIVACY_POLICY)
-    expected = _NUMBER_WORDS[_RESONANCE_PRIOR_LIMIT]
+    policy = _prose(_PRIVACY_POLICY)
+    expected = _NUMBER_WORDS[GROUNDING_LIMIT]
 
     assert f"up to {expected}" in policy, (
-        f"the policy must say 'up to {expected}' to match "
-        f"_RESONANCE_PRIOR_LIMIT = {_RESONANCE_PRIOR_LIMIT}"
+        f"the policy must say 'up to {expected}' to match GROUNDING_LIMIT = {GROUNDING_LIMIT}"
     )
-    wrong = {word for count, word in _NUMBER_WORDS.items() if count != _RESONANCE_PRIOR_LIMIT}
+    wrong = {word for count, word in _NUMBER_WORDS.items() if count != GROUNDING_LIMIT}
     stale = sorted(word for word in wrong if f"up to {word}" in policy)
     assert not stale, f"the policy also claims 'up to {stale}', contradicting itself"
+
+
+# The sentence in the policy that discloses each source the grounding can draw
+# from. Keyed by the enum rather than listed loose, so a third source added to
+# the code raises a KeyError here until somebody writes down what it exposes.
+_GROUNDING_DISCLOSURES = {
+    GroundingSource.RECENT_ENTRIES: "your recent entries",
+    GroundingSource.CORPUS: "passages chosen out of the corpus of your own writing",
+}
+
+
+def test_the_policy_describes_every_source_the_context_can_come_from() -> None:
+    """A reader is told what the context is, not only how much of it there is.
+
+    The count did not change when grounding gained its second source, but what
+    the count counts did: a passage the retrieval chose out of the account's
+    ontologized corpus is not "one of your recent entries". A policy describing
+    only the window would keep a true number over a false description, which is
+    the direction that misleads -- the reader would picture something narrower
+    than what is actually sent.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    missing = sorted(
+        source.value for source in GroundingSource if _GROUNDING_DISCLOSURES[source] not in policy
+    )
+
+    assert not missing, f"the policy does not disclose these grounding sources: {missing}"
 
 
 def test_the_error_monitor_never_receives_a_journal_body() -> None:
