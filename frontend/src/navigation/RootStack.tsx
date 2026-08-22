@@ -10,6 +10,7 @@ import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetai
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
 import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
+import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
@@ -35,6 +36,7 @@ export type RootStackParamList = {
   Tabs: NavigatorScreenParams<RootTabParamList>;
   Settings: undefined;
   SeedCorpus: undefined;
+  CorpusConsent: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   DeleteAccount: undefined;
@@ -121,6 +123,11 @@ const SettingsScreens = (): React.JSX.Element => (
       name="SeedCorpus"
       component={SeedCorpusScreen}
       options={{ title: 'Your corpus' }}
+    />
+    <Stack.Screen
+      name="CorpusConsent"
+      component={CorpusConsentScreen}
+      options={{ title: 'What reflections draw on' }}
     />
     <Stack.Screen
       name="ApiKeySettings"
