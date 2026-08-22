@@ -1,4 +1,4 @@
-# Creek Vault MCP contract (pointer + adepthood-owned projections)
+# Creek Vault contract pointer (and adepthood-owned projections)
 
 - **Status:** Superseded pointer doc. This file no longer restates
   Creek's wire contract; see
@@ -13,9 +13,18 @@
 
 ## Purpose
 
-This filename is retained deliberately for link stability — two backend
-source docstrings, `graph/ontology-spine.md`, and a drift-guard test
-reference it by path — even though its role has changed. It is no longer a draft contract
+**The filename says `mcp`; the transport does not.** MCP is not, and is
+not becoming, how adepthood reaches the vault — see the Status line
+above and the ADR it points at. The path is retained for link
+stability alone: three `backend/src` module docstrings,
+`graph/ontology-spine.md`, a drift-guard test that reads this file by
+path, and four citations inside ADR 0004's ratified text, which is
+amended by dated note rather than rewritten and so cannot be
+repointed. Renaming would trade one MCP-named path for a stub at the
+old path plus dead links inside the decision record; the title, which
+costs nothing to correct, was corrected instead (2026-08-22).
+
+This document's role has changed. It is no longer a draft contract
 awaiting cross-repo ratification. It is now a **pointer**: Creek
 Vault's own published contract is the single source of truth for
 every request/response shape, and this document holds only the pinned
@@ -63,9 +72,9 @@ ADR 0004's Context section documents in detail. Instead:
   note) — nothing in this repository calls Creek over MCP any more, and
   nothing about Creek's MCP surface changed to make that so. The bundle
   describes `/v1` only.
-- This document is titled "MCP contract" for the link-stability reasons
-  ADR 0004's Decision 5 gives, not because MCP is a live application
-  transport here — it is not, as of the note above. Every `creek.*`
+- This document's *path* still says `mcp`, for the link-stability
+  reasons the Purpose section gives; its title no longer does, and MCP
+  is not a live application transport here. Every `creek.*`
   capability name below (`CreekCapability` in `domain/creek_vault.py`)
   is adepthood's own vocabulary and telemetry key, chosen because it
   was minted that way originally; it is not a claim about how the call

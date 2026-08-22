@@ -128,7 +128,7 @@ non-zero when it cannot classify a lane (including when a bot PR about to merge
 has a hold it can neither find nor rule out), and an unchecked `$STATUS` would
 just come back empty:
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | unknown | draft | blocked | conflicted | pending | ci-failed | changes-requested | awaiting-review | review-self-skipped | optout
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | unknown | draft | blocked | conflicted | pending | ci-failed | transport-error | changes-requested | awaiting-review | review-self-skipped | optout
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -218,16 +218,26 @@ Then act on `$STATUS`:
   is genuinely missing or stale (predates HEAD; a fresh non-LGTM prints
   `changes-requested` instead). Leave the lane; its Step 5 wake (webhook
   subscription, or the local `watch-pr.sh` watcher) fires when CI or the
-  verdict changes. **Exception — missing review usually means a merge
-  conflict:** if the verdict never arrives and the `claude-review` check is
-  absent from the rollup entirely, check
-  `gh pr view N --json mergeable,mergeStateStatus` FIRST. A `CONFLICTING`/`DIRTY`
-  PR has no merge ref, so GitHub creates **no `pull_request`-event runs at all**
-  (any green checks are `push`-event runs on the branch) — no amount of
-  re-kicking (`gh run rerun`, empty commits) will produce a review. Resolve the
-  conflict (`fleet.sh sync` → conflict-fix worker → push); the post-resolution
-  push triggers the PR's real CI + review.
-- **`ci-failed`** — a check failed. Advance it via Step 2 (`ci-debugging`).
+  verdict changes. **A missing review used to mean "check for a merge conflict
+  by hand"; the helper now says so itself.** A `CONFLICTING`/`DIRTY` PR has no
+  merge ref, so GitHub creates **no `pull_request`-event runs at all** (any green
+  checks are `push`-event runs on the branch), `claude-review` never appears, and
+  no amount of re-kicking (`gh run rerun`, empty commits) will produce a review.
+  That case therefore prints **`conflicted`**, not `awaiting-review`: resolve the
+  conflict (`fleet.sh sync` → conflict-fix worker → push) and the post-resolution
+  push triggers the PR's real CI + review. So `awaiting-review` now means what it
+  says — a review that genuinely can still arrive.
+- **`ci-failed`** — a check failed, **and a second query confirmed it** by naming
+  a check whose conclusion is failing. Advance it via Step 2 (`ci-debugging`).
+- **`transport-error`** — `pr-ready.sh` could not get a trustworthy answer out of
+  `gh`: no network, a TLS failure, an expired token, a rate-limit block, a 5xx,
+  or a PR reporting no checks at all. It is **not** a claim about CI, so there is
+  nothing to debug. **Do not dispatch a `ci-debugging` worker** — just retry on a
+  later wake; `watch-pr.sh` counts it as in-flight and keeps polling. This used to
+  print `ci-failed`, which sent a worker to read logs for a build that had never
+  failed. The reason `gh` gave is on the helper's stderr if you need it. If it
+  persists across several wakes it is a real environment problem (check `gh auth
+  status`), not a lane problem.
 - **`optout`** — the PR, the issue it closes, or (on a Dependabot PR whose body
   links no issue) the bridge issue whose `<!-- dependabot-pr:<N> -->` marker names
   it, carries `do-not-auto-merge`.
@@ -423,7 +433,8 @@ exits on state-change IS a wake. So:
    scripts/ralph/watch-pr.sh "$PR_NUM"      # polls pr-ready.sh; exits on state-change
    ```
    It polls `pr-ready.sh` (default every 30s) and exits the moment the lane
-   leaves `pending`/`awaiting-review`, printing `WATCH <PR> <token>` — the wake
+   leaves `pending`/`awaiting-review`/`transport-error`, printing
+   `WATCH <PR> <token>` — the wake
    that lands you back at Step 0 with the lane's fresh classification. It is
    **idempotent** via a pidfile (`/tmp/ralph-watch-<repo>-<PR>.pid`): a PR
    already under a live watch prints `already-watching` and exits immediately,

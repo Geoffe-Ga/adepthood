@@ -7,6 +7,7 @@
  * loads never race and a stale page never clobbers a fresher one.
  */
 import { useCallback, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
 import { journal } from '@/api';
 import type { JournalMessage } from '@/api';
@@ -17,7 +18,15 @@ export const PAGE_SIZE = 20;
 
 export interface PagedJournal {
   items: JournalMessage[];
+  /**
+   * Local list surgery, for an optimistic removal and the revert that undoes
+   * it. Fetching still belongs to ``load``/``loadAll``; this is the seam a
+   * caller uses to drop a row it has just asked the server to delete.
+   */
+  setItems: Dispatch<SetStateAction<JournalMessage[]>>;
   total: number;
+  /** Move the reported total by ``delta``, never below zero. */
+  adjustTotal: (_delta: number) => void;
   hasMore: boolean;
   loading: boolean;
   error: string | null;
@@ -36,6 +45,15 @@ export interface PagedJournal {
   loadAll: (_startOffset: number) => Promise<void>;
 }
 
+/**
+ * Move a total by ``delta``, clamped at zero. A revert that lands after a
+ * fresher page would otherwise be able to drive the reported count below
+ * nothing.
+ */
+function applyDelta(setTotal: Dispatch<SetStateAction<number>>, delta: number): void {
+  setTotal((prev) => Math.max(0, prev + delta));
+}
+
 /** Offset-paged fetch with a stale-response guard; the caller layers intent on top. */
 export function usePagedJournal(): PagedJournal {
   const [items, setItems] = useState<JournalMessage[]>([]);
@@ -44,6 +62,7 @@ export function usePagedJournal(): PagedJournal {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const adjustTotal = useCallback((delta: number) => applyDelta(setTotal, delta), []);
 
   const load = useCallback(async (search: string | undefined, offset: number) => {
     // Only the newest in-flight request may settle; stale ones are dropped.
@@ -94,5 +113,5 @@ export function usePagedJournal(): PagedJournal {
     }
   }, []);
 
-  return { items, total, hasMore, loading, error, load, loadAll };
+  return { items, setItems, total, adjustTotal, hasMore, loading, error, load, loadAll };
 }

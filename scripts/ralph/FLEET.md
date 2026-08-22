@@ -155,9 +155,10 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `unknown` | GitHub has not finished computing mergeability — routine for a few seconds after every push. | Wait for a later wake. A sync would merge nothing and push nothing, so the next wake would be identical. |
 | `draft` | the PR is a draft: a deliberate human hold. | Leave the lane alone, same standing as `optout`. The loop must not fight a human who parked a PR. |
 | `blocked` | a required check or review is missing. | A sync cannot supply it. Wait, or escalate if it stays blocked — do not dispatch a worker. |
-| `conflicted` | the branch conflicts with its base (`DIRTY`/`CONFLICTING`). | Needs a real conflict resolution — drop to Gate 1. `fleet.sh sync` will exit 3 on the conflict rather than fix it. |
+| `conflicted` | the branch conflicts with its base (`DIRTY`/`CONFLICTING`). Outranks `awaiting-review`: a conflicting PR has no merge ref, so GitHub runs no `pull_request`-event workflow, `claude-review` never appears, and no verdict can ever arrive. | Needs a real conflict resolution — drop to Gate 1. `fleet.sh sync` will exit 3 on the conflict rather than fix it. |
 | `pending` | CI still running. | Wait for a later wake. |
-| `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
+| `ci-failed` | a check failed or errored, **and a second query corroborated it** by naming a check with a failing conclusion. | Dispatch a `ci-debugging` worker into the lane. |
+| `transport-error` | `gh` could not be asked, or answered non-zero with no failing check to corroborate it: no network, TLS failure, expired token, rate-limit block, a 5xx, or a PR reporting no checks at all. **Not a claim about CI** — it is "I could not tell". | Retry on a later wake. **Do not dispatch a `ci-debugging` worker**: that is the bug this token exists to stop, an agent reading logs for a failure that never happened on a PR that was about to go green. `watch-pr.sh` counts it as in-flight and keeps polling. |
 | `changes-requested` | a fresh verdict (posted after HEAD) that is not `LGTM` — `CHANGES_REQUESTED` or `COMMENTS`. Gate 4 failed. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
 | `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
 | `review-self-skipped` | this PR edits `.github/workflows/claude-code-review.yml`, so `claude-code-action` self-skipped as anti-tamper and no verdict will ever be posted. The check reports `SUCCESS`, not `SKIPPED`, so the reviewless path does not apply either. | **Terminal — hand it to a human.** Stop re-checking the lane; it is not waiting on anything. A human who reviews it and posts a fresh `LGTM` still lands it via `ready`. Common on Dependabot bumps of `anthropics/claude-code-action`. |
@@ -278,12 +279,19 @@ Seven offline suites cover the fleet — six shell, one Python — all run in CI
   unreadable label answer or an unprovable hold fails closed (exit 2, not "no
   hold") — the freshness guard (`CLEAN` is not proof of
   being current) and its laziness (only a would-be-`ready` lane pays for the
-  compare probe), the `ready-unreviewed` path, and the `changes-requested`
-  split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting).
+  compare probe), the `ready-unreviewed` path, the `changes-requested`
+  split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting),
+  the `ci-failed`/`transport-error` split (a non-zero `gh` exit must be
+  corroborated by a check with a failing conclusion before it may route a lane
+  to ci-debugging — the transport cases are proved by stubbing `gh` to write a
+  connection error to stderr and exit 1, never by the happy path), and that a
+  conflicting PR reports `conflicted` rather than waiting forever on a verdict
+  GitHub can never produce for it.
 - `scripts/ralph/test_watch_pr.sh` covers `watch-pr.sh`, the per-lane hot
   watcher local sessions background: pidfile idempotence, the
   in-flight→terminal-token exit (including that `changes-requested` ends the
-  watch), API-error tolerance, the `gone` exit, and the timeout.
+  watch and that `transport-error` does *not*), API-error tolerance, the `gone`
+  exit, and the timeout.
 - `scripts/ralph/test_exec_bits.sh` asserts every `scripts/ralph/*.sh` is
   committed `100755` (`git ls-files -s`), so a directly-invoked script can
   never again ship exiting 126 — the mode CI's `bash <script>` launches mask.

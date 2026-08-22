@@ -9,7 +9,8 @@
 # task's exit re-invokes the session, so a watcher process that exits on
 # state-change IS a wake. This script is that watcher: it polls
 # `pr-ready.sh <PR>` every INTERVAL seconds and exits the moment the lane
-# leaves its in-flight states (`pending`, `awaiting-review`), printing one
+# leaves its in-flight states (`pending`, `awaiting-review`, `transport-error`),
+# printing one
 # `WATCH <PR> <token>` line that the woken orchestrator reads as the lane's
 # fresh classification.
 #
@@ -41,14 +42,21 @@ readonly DEFAULT_TIMEOUT_SECONDS=1800
 # dies on API errors, because a dead watcher is a silent latency regression.
 readonly MAX_QUIET_ERRORS=3
 
-# The two pr-ready.sh tokens that mean "still in flight — keep waiting". Every
-# other token (ready, ready-unreviewed, behind, ci-failed, changes-requested,
-# optout) is terminal for the watch: the orchestrator has something to act on
-# RIGHT NOW. changes-requested — a fresh non-LGTM verdict — is DELIBERATELY
-# outside this set (upstream report Creek-Vault#1097): a lane whose review
-# wants changes needs the orchestrator sooner, not a timeout, so the wake falls
-# out of pr-ready.sh's vocabulary with no change here. Do not add it.
-readonly IN_FLIGHT_TOKENS=("pending" "awaiting-review")
+# The pr-ready.sh tokens that mean "still in flight — keep waiting". Every other
+# token (ready, ready-unreviewed, behind, ci-failed, changes-requested, optout)
+# is terminal for the watch: the orchestrator has something to act on RIGHT NOW.
+# changes-requested — a fresh non-LGTM verdict — is DELIBERATELY outside this set
+# (upstream report Creek-Vault#1097): a lane whose review wants changes needs the
+# orchestrator sooner, not a timeout, so the wake falls out of pr-ready.sh's
+# vocabulary with no change here. Do not add it.
+#
+# transport-error IS in the set, for the opposite reason: it is not a state of
+# the PR at all, it is pr-ready.sh reporting that it could not reach GitHub. The
+# lane is still in whatever state it was in, and waking the orchestrator with a
+# token that describes the network would hand it nothing to act on — so the
+# watcher keeps polling, exactly as it already does when pr-ready.sh exits
+# non-zero. These failures are usually momentary and the next poll resolves them.
+readonly IN_FLIGHT_TOKENS=("pending" "awaiting-review" "transport-error")
 
 die() {
   echo "watch-pr: $1" >&2

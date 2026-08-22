@@ -70,8 +70,27 @@ const styles = StyleSheet.create({
     color: ink.muted,
     paddingTop: spacing(0.5),
   },
+  // Sits below the reading face, right-aligned, on the 44dp tap floor. The
+  // interactive `action` face rather than `caption`: it is meant to be pressed.
+  cardDeleteButton: {
+    minHeight: touchTarget.minimum,
+    alignSelf: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: SPACING.lg,
+  },
+  cardDeleteLabel: {
+    ...editorialType.action,
+    color: colors.danger,
+    fontWeight: '400',
+  },
   searchRow: {
     marginBottom: SPACING.sm,
+  },
+  deleteError: {
+    ...editorialType.note,
+    color: colors.danger,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
   },
   emptyWrap: {
     flex: 1,

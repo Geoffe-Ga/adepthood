@@ -41,6 +41,23 @@
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
   },
   {
+    "id": "journal.delete-entry",
+    "description": "A writer deletes one page from the shelf, the server stops serving it, and another account cannot delete it for them.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
+  },
+  {
     "id": "practice.log-session",
     "description": "A practitioner logs a practice session and finds it in the week's record.",
     "crosses": {
@@ -130,6 +147,18 @@
     },
     "status": "uncovered",
     "issue": 2317
+  },
+  {
+    "id": "account.export-my-data",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
+      "client": ["users", "journal", "auth"],
+      "routes": ["POST /journal/", "GET /users/me/export", "GET /users/me/export/journal.md"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
   },
   {
     "id": "corpus.decide-what-may-be-sorted",
