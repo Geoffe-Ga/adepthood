@@ -244,6 +244,15 @@ what produced this document; repeating it in this document would be
 the same defect, so the pointer says plainly that the target is
 unwritten.**
 
+**AMENDED 2026-08-22:** the target is now written. The shape lives in
+[ADR 0006](0006-consent-as-an-auditable-event.md), which records the
+contract as it shipped rather than designing one: an append-only
+`corpusconsentevent` row per decision, per source, content-free. The
+paragraph above stands as written — it is the record of what was true
+when this decision was made, and the missing number is the reason this
+document exists at all. Two of the three questions it defers are
+answered there; retention is not, and stays open below.
+
 **Rejected — treating the tier a user picked as consent for import.**
 The tier is a choice about a piece of writing the user is composing in
 this app. It is not a decision about whether a body of writing that
@@ -276,12 +285,14 @@ ADR 0002, or ADR 0004 decides them and an agent may not invent them:
   of rows written before it.
 - **Where the consent-event contract lives.** ADR 0012 is unwritten
   (Decision 5). Until it exists, #2232 has a requirement with no
-  ratified shape.
+  ratified shape. — **AMENDED 2026-08-22:** closed. It lives in
+  [ADR 0006](0006-consent-as-an-auditable-event.md).
 - **Whether ontologizing an entry the user wrote in this app is itself
   a consented act** needing its own record, distinct from the
   per-source consent Decision 5 requires for imports. #2230 defers
   backfill of existing entries as separate work, which is where this
-  question would first bite.
+  question would first bite. — Closed by ADR 0006 Decision 3: yes, and
+  `journal` carries its own per-source consent like any other source.
 
 ## Consequences
 
