@@ -13,16 +13,17 @@ without a journal-encryption key, that no journal body reaches the error
 monitor, and that an entry marked Intimate never leaves for a vault. Each is
 re-derived here by running the code, not by reading a comment about it.
 
-*A promise that was only ever true of a narrower thing.* Exactly three columns
-carry ciphertext today, and the policy's sentence about encryption was written
-against exactly those three. Encrypting a fourth column -- or dropping one --
-makes that sentence stale in a direction the reader cannot detect, so the set is
-pinned and a change fails here first.
+*A promise whose breadth is only as true as the column set.* Ten columns carry
+ciphertext today, and the policy now makes the broad claim -- what you write is
+encrypted -- rather than the narrow one it shipped with. Dropping a column
+quietly shrinks a published guarantee; adding one without widening the policy
+leaves a reader believing they have less than they do. The set is pinned and
+either direction fails here first.
 
-That is not hypothetical: this guard was written naming two columns, and the
-ontologized corpus store landed ``corpusfragment.content`` as a third while this
-document was still in review. The policy said "two things are encrypted" for
-about an hour, and the build caught it rather than a reader.
+That is not hypothetical, twice over. This guard was written naming two columns;
+the ontologized corpus store landed ``corpusfragment.content`` as a third while
+the policy was still in review, and the encryption sweep then took it to ten.
+Each time the build caught the stale sentence rather than a reader.
 
 *A link that rots.* The in-app rows point at the documents by repository path.
 A rename that leaves the rows behind gives a store reviewer, and a user, a 404
@@ -68,7 +69,18 @@ _REPO_URL_PATH = re.compile(r"https://github\.com/Geoffe-Ga/adepthood/blob/main/
 # The policy's sentence about what is encrypted was written against exactly
 # this set; see :func:`test_exactly_two_columns_are_encrypted`.
 _ENCRYPTED_COLUMNS = frozenset(
-    {"journalentry.message", "promotedquote.anchor_text", "corpusfragment.content"}
+    {
+        "completionsuggestion.anchor_text",
+        "completionsuggestion.label",
+        "corpusfragment.content",
+        "journalentry.message",
+        "journalentry.title",
+        "marginalia.anchor_text",
+        "marginalia.essay",
+        "marginalia.note",
+        "promotedquote.anchor_text",
+        "promptresponse.response",
+    }
 )
 
 # Claims a reader would take as a confidentiality guarantee against the
@@ -162,20 +174,35 @@ def test_production_refuses_to_boot_unencrypted(monkeypatch: pytest.MonkeyPatch)
         validate_journal_encryption_config()
 
 
-def test_exactly_two_columns_are_encrypted() -> None:
-    """Ciphertext covers the entry body and a promoted passage, and nothing else.
+def test_exactly_the_pinned_columns_are_encrypted() -> None:
+    """Ciphertext covers the journal and everything derived from it, and no more.
 
-    The policy is specific about this because the truthful version is narrower
-    than "your writing is encrypted": a margin note, and the sentence it quotes
-    back, are stored as they are. If this set changes, the policy's paragraph on
-    encryption is stale and must be rewritten before the schema change ships.
+    The policy's promise is now the broad one -- what you write is encrypted --
+    so this set is what makes that sentence true rather than aspirational.
+    Dropping a column silently narrows a published guarantee, and adding one
+    without widening the policy leaves a reader believing less protection than
+    they have. Either direction is a rewrite before the schema change ships.
     """
     assert _encrypted_columns() == _ENCRYPTED_COLUMNS
 
 
-def test_the_policy_does_not_claim_margin_notes_are_encrypted() -> None:
-    """The policy says margin notes are stored as-is, matching the column set."""
-    assert "margin note" in _read(_PRIVACY_POLICY)
+def test_the_policy_names_the_prose_that_is_still_plaintext() -> None:
+    """The carve-out names practice-session prose, which is genuinely in the clear.
+
+    This assertion is deliberately pointed at the *weakest* claim in the
+    document. Its predecessor asserted the policy said margin notes were stored
+    as written -- true when written, false the moment margin notes were
+    encrypted, and it would have kept passing on the phrase alone while
+    guarding the opposite of the truth.
+
+    A reflection and an insight written after a practice are prose a person
+    composed, held unencrypted (see the issue the policy cites). Until that
+    closes, the policy has to say so, and this fails if the admission is
+    dropped while the columns are still plaintext.
+    """
+    policy = _read(_PRIVACY_POLICY)
+    assert "reflection and the insight" in policy
+    assert "stored as written" in policy
 
 
 # Spelled-out numbers, because the policy is written for a reader rather than a
