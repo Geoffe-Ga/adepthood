@@ -30,6 +30,8 @@ from dataclasses import dataclass
 
 from sqlalchemy import MetaData, Table
 
+from domain.ownership import OwnedBy, OwnerKey
+
 # The table the account itself lives in — the anchor every ownership predicate
 # eventually resolves against.
 USER_TABLE = "user"
@@ -41,33 +43,6 @@ class Disposition(enum.StrEnum):
     ERASE = "erase"
     ANONYMISE = "anonymise"
     RETAIN = "retain"
-
-
-class OwnerKey(enum.StrEnum):
-    """Which attribute of the account a table's ownership column carries.
-
-    Almost everything carries the surrogate ``user.id``. ``login_attempt`` is
-    the exception: it is written before any account is resolved, so it can only
-    key off the address that was typed.
-    """
-
-    ID = "id"
-    EMAIL = "email"
-
-
-@dataclass(frozen=True)
-class OwnedBy:
-    """How to find the rows in a table that belong to one account.
-
-    ``through`` names a parent table when a table has no direct reference to
-    the account and is reached via its owner instead (``goal`` through
-    ``habit``). Resolution recurses, so the parent's own policy decides how the
-    parent's rows are found.
-    """
-
-    column: str
-    key: OwnerKey = OwnerKey.ID
-    through: str | None = None
 
 
 @dataclass(frozen=True)
@@ -244,7 +219,12 @@ POLICY: Mapping[str, TablePolicy] = {
         rationale="The steps of the account's own recipes; meaningless without them.",
         owned_by=OwnedBy("recipe_id", through="practicerecipe"),
     ),
-    "practicesession": _erase("user_id", "Every sit the account logged."),
+    "practicesession": _erase(
+        "user_id",
+        "Every sit the account logged, including the reflection and the "
+        "insight written after it. Those two are encrypted at rest like the "
+        "journal, and erased outright with the rest of the row.",
+    ),
     "practicesessionspend": _erase("user_id", "Wallet spend records for the account's sessions."),
     "practicesharelink": TablePolicy(
         disposition=Disposition.ANONYMISE,

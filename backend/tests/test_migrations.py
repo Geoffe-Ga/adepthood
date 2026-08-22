@@ -3598,3 +3598,196 @@ def test_journal_text_encryption_migration_is_a_no_op_without_a_key(
 
     command.downgrade(cfg, _JOURNAL_TEXT_BASE_REVISION)
     assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+
+
+# -- a6b7c8d9e0f2: encrypt the prose written in a practice session -----------
+
+_SESSION_PROSE_BASE_REVISION = "b5f1a2c3d4e6"  # pragma: allowlist secret
+_SESSION_PROSE_REVISION = "a6b7c8d9e0f2"  # pragma: allowlist secret
+
+# The plaintext seeded before the upgrade, per ``table.column``. Recognisable
+# prose, so a mangled downgrade cannot pass itself off as a near-miss, and long
+# enough that a ciphertext truncated back into the old ``VARCHAR`` bound would
+# come back short rather than come back wrong.
+_SEEDED_SESSION_PROSE: dict[str, str] = {
+    "practicesession.reflection": (
+        "Twenty minutes in, the grief I had been outrunning sat down beside me."
+    ),
+    "practicesession.insight": "It is not the silence I am afraid of, it is what it keeps saying.",
+}
+
+# Read back with raw SQL, never the ORM: an ``EncryptedString`` round-trip is
+# identical whether or not the bytes underneath were ever encrypted.
+_SESSION_PROSE_READS: dict[str, str] = {
+    "practicesession.reflection": "SELECT reflection FROM practicesession WHERE id = 1",
+    "practicesession.insight": "SELECT insight FROM practicesession WHERE id = 1",
+}
+
+
+def _bootstrap_practice_session_table(sync_url: str) -> None:
+    """Pre-create ``practicesession`` with the bounded columns the migration widens.
+
+    Two rows: one with prose in both columns, one logged without any, so both
+    branches of the transform are observed. FKs are omitted deliberately -- the
+    migration touches only these two columns, and SQLite does not enforce them.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE practicesession ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " user_practice_id INTEGER NOT NULL,"
+                " duration_minutes FLOAT NOT NULL,"
+                " timestamp DATETIME NOT NULL,"
+                " reflection VARCHAR(5000),"
+                " mode VARCHAR(32) NOT NULL,"
+                " completed BOOLEAN NOT NULL,"
+                " insight VARCHAR(2000)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes, timestamp,"
+                "  reflection, mode, completed, insight)"
+                " VALUES (1, 1, 1, 20.0, '2025-01-01 08:00:00',"
+                "  :reflection, 'meditation_timer', 1, :insight)"
+            ),
+            {
+                "reflection": _SEEDED_SESSION_PROSE["practicesession.reflection"],
+                "insight": _SEEDED_SESSION_PROSE["practicesession.insight"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes, timestamp,"
+                "  reflection, mode, completed, insight)"
+                " VALUES (2, 1, 1, 20.0, '2025-01-02 08:00:00',"
+                "  NULL, 'meditation_timer', 1, NULL)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_session_prose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Config]:
+    """Stamped SQLite config just before ``a6b7c8d9e0f2``, with a real key set.
+
+    A key must be configured or the encrypt/decrypt helpers are passthroughs and
+    the round-trip would prove nothing. The registry is process-cached, so it is
+    reset on both sides of the test.
+    """
+    db_path = tmp_path / "session_prose_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+    _bootstrap_practice_session_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _SESSION_PROSE_BASE_REVISION)
+    yield cfg
+    journal_encryption.reset_cache()
+
+
+def _stored_session_prose(db_url: str) -> dict[str, str]:
+    """Read both migrated columns of the seeded row with raw SQL, no ORM."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return {
+                name: conn.execute(text(sql)).scalar_one()
+                for name, sql in _SESSION_PROSE_READS.items()
+            }
+    finally:
+        engine.dispose()
+
+
+def _session_prose_nulls(db_url: str) -> list[Any]:
+    """Both migrated columns of the session logged without anything written."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return [
+                conn.execute(
+                    text("SELECT reflection FROM practicesession WHERE id = 2")
+                ).scalar_one(),
+                conn.execute(text("SELECT insight FROM practicesession WHERE id = 2")).scalar_one(),
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_session_prose_encryption_migration_round_trips_on_real_rows(
+    alembic_sqlite_config_session_prose: Config,
+) -> None:
+    """Round-trip ``a6b7c8d9e0f2`` on a seeded row, not on an empty table.
+
+    Phase 1: upgrade rewrites the seeded plaintext into marked ciphertext that
+    decrypts back to exactly what was written.
+    Phase 2: downgrade restores the plaintext verbatim -- the property that makes
+    the rollback survivable. A downgrade that left the ciphertext sitting in a
+    plaintext column would be data loss dressed as a rollback, and fails here.
+    Phase 3: re-upgrade is idempotent and does not double-encrypt.
+    """
+    cfg = alembic_sqlite_config_session_prose
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade encrypts the seeded row in place.
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    encrypted = _stored_session_prose(db_url)
+    for name, plaintext in _SEEDED_SESSION_PROSE.items():
+        stored = encrypted[name]
+        assert stored.startswith(_CIPHERTEXT_MARKER), f"{name} was left in the clear"
+        assert plaintext not in stored, f"{name} still leaks its plaintext"
+        assert journal_encryption.decrypt(stored) == plaintext
+    assert _session_prose_nulls(db_url) == [None, None]
+
+    # Phase 2: downgrade returns the plaintext, not mangled ciphertext.
+    command.downgrade(cfg, _SESSION_PROSE_BASE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE
+    assert _session_prose_nulls(db_url) == [None, None]
+
+    # Phase 3: re-upgrade encrypts once more, decrypting to the same plaintext
+    # (a double-encrypted value would decrypt to a marked token, not prose).
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    re_encrypted = _stored_session_prose(db_url)
+    for name, plaintext in _SEEDED_SESSION_PROSE.items():
+        assert journal_encryption.decrypt(re_encrypted[name]) == plaintext
+
+
+def test_session_prose_encryption_migration_is_a_no_op_without_a_key(
+    alembic_sqlite_config_session_prose: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On an un-keyed environment the rows are untouched, not blanked or marked.
+
+    Key presence is the switch, so a laptop or a CI run with no key must come
+    through the migration with its text exactly as it was -- the property that
+    lets this migration ship ahead of the key.
+    """
+    cfg = alembic_sqlite_config_session_prose
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    monkeypatch.delenv(journal_encryption.KEYS_ENV_VAR, raising=False)
+    journal_encryption.reset_cache()
+
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE
+
+    command.downgrade(cfg, _SESSION_PROSE_BASE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE

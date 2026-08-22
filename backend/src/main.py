@@ -41,6 +41,7 @@ from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
 from routers.corpus import router as corpus_router
 from routers.course import router as course_router
+from routers.data_export import router as data_export_router
 from routers.depth_preferences import router as depth_preferences_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
@@ -740,6 +741,7 @@ app.include_router(goals_router)
 app.include_router(gumroad_router)
 app.include_router(stages_router)
 app.include_router(users_router)
+app.include_router(data_export_router)
 app.include_router(depth_preferences_router)
 app.include_router(ui_flags_router)
 app.include_router(invitations_router)
