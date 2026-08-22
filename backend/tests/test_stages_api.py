@@ -514,22 +514,29 @@ async def test_stages_progress_isolated_per_user(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    alice_headers, _alice_id = await _signup(async_client, "alice")
+    _alice_headers, alice_id = await _signup(async_client, "alice")
     bob_headers, _bob_id = await _signup(async_client, "bob")
     await _seed_stages(db_session, count=3)
 
-    # Alice starts at stage 1
-    await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 1},
-        headers=alice_headers,
+    # Alice is genuinely ahead: a persisted record that has entered stage 3.
+    # Seeding her at stage 1 would have made this test pass whether or not
+    # progress leaked, because stage 1 is also where Bob starts.
+    db_session.add(
+        StageProgress(
+            user_id=alice_id,
+            current_stage=3,
+            completed_stages=[1, 2],
+            cycle_number=1,
+            highest_stage_reached=3,
+        ),
     )
+    await db_session.commit()
 
-    # Bob's stages should not show Alice's progress
+    # Bob has no record of his own, so nothing past stage one is open to him.
     resp = await async_client.get("/stages", headers=bob_headers)
     data = resp.json()
-    # Stage 2 should be locked for Bob (no progress record)
     assert data[1]["is_unlocked"] is False
+    assert data[2]["is_unlocked"] is False
 
 
 # ── POST /stages/begin-again ─────────────────────────────────────────────
