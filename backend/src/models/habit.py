@@ -24,6 +24,15 @@ class Habit(SQLModel, table=True):
     ``is_carryover`` marks a habit the user brought into APTITUDE from before
     the program: ``True`` keeps it on its own partition (tracked without
     consuming a program stage), ``False`` a regular program habit.
+
+    ``name`` is user-authored and deliberately **not** encrypted at rest, unlike
+    the columns holding a person's prose. It is a short label rather than
+    writing, and it has to stay legible to the database: ``routers.habits``
+    compares ``lower(trim(name))`` against the caller's other habits to refuse a
+    duplicate, and a partial unique index enforces the same thing underneath.
+    Fernet ciphertext differs on every encryption of the same input, so an
+    encrypted ``name`` would silently defeat both. The privacy policy names this
+    column among what is stored as written rather than implying otherwise.
     """
 
     id: int | None = Field(default=None, primary_key=True)

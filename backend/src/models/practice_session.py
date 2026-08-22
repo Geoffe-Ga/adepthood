@@ -5,10 +5,7 @@ from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from domain.practice_modes import PracticeMode
-
-# Insight is the short user-captured takeaway distinct from the long-form
-# ``reflection``.  The cap mirrors the ritual-04 spec ("≤2k").
-_INSIGHT_MAX_LENGTH = 2_000
+from services.journal_encryption import EncryptedString
 
 
 class PracticeSession(SQLModel, table=True):
@@ -29,6 +26,22 @@ class PracticeSession(SQLModel, table=True):
       iff their duration is positive.
     * ``insight`` is a short user-captured takeaway, distinct from the
       long-form ``reflection``.
+
+    ``reflection`` and ``insight`` are the only columns here holding prose a
+    person composed, and both are encrypted at rest via ``EncryptedString``.
+    They are not copies of a journal entry -- which is why the sweep that
+    encrypted every copy of journal text left them behind -- but they are the
+    same category of private, deliberate writing, and a stolen dump reads them
+    the same way.  Neither carries a Field ``max_length``: the column is
+    ``Text``, because a Fernet token is ~1.67x the plaintext plus the marker and
+    would not fit the bound.  The user-visible caps are unchanged and still
+    enforced at the write boundary, by ``PRACTICE_REFLECTION_MAX_LENGTH`` and
+    ``PRACTICE_INSIGHT_MAX_LENGTH`` on the request schema -- which is the layer
+    the OpenAPI ``maxLength`` the client reads is generated from.
+
+    Every other column is a measurement or a machine-chosen value and stays
+    plaintext: encrypting ``mode`` would buy nothing (it is one of a published
+    enum) and would break the rollup that filters on it.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -39,7 +52,7 @@ class PracticeSession(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    reflection: str | None = Field(default=None, max_length=5_000)
+    reflection: str | None = Field(default=None, sa_column=Column(EncryptedString(), nullable=True))
     mode: str = Field(
         default=PracticeMode.MEDITATION_TIMER.value,
         max_length=32,
@@ -57,4 +70,4 @@ class PracticeSession(SQLModel, table=True):
         default=True,
         description="False if the user cancelled before reaching the target.",
     )
-    insight: str | None = Field(default=None, max_length=_INSIGHT_MAX_LENGTH)
+    insight: str | None = Field(default=None, sa_column=Column(EncryptedString(), nullable=True))
