@@ -18,6 +18,16 @@ database, so a fragment of intimate writing is not a row that exists and then
 gets filtered — it is a row that cannot be written by any caller, including one
 added later that forgets the guard in :mod:`services.corpus_store`.
 
+**A fragment knows which row it came from.** ``source_entry_id`` names the
+journal entry a fragment was derived from, and it exists for one specific
+failure: without it, asking for a reflection on an entry retrieves that same
+entry back out of the corpus as its own "earlier writing", and the model is
+told to draw a connection between a passage and itself. The recency window has
+always excluded the entry under reflection; this column is what lets the corpus
+path apply the same exclusion. It is also what makes an edit *replace* a
+fragment rather than accumulate a second one, and what lets a deleted entry
+take its corpus copy with it.
+
 The ontology itself is not redefined here. ``frequency_weights`` is keyed by
 the ``F1``..``F10`` codes of :mod:`domain.frequencies`, which are the same ten
 developmental positions as the APTITUDE Stages, the Aspects of Wholeness and
@@ -140,6 +150,13 @@ class CorpusFragment(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    # The journal row this fragment was derived from, when there was one. NULL
+    # for material that came from outside the app -- an upload, an import --
+    # which is why every query that filters on it has to treat NULL as "not
+    # that entry" rather than as an unknown.
+    source_entry_id: int | None = Field(
+        default=None, foreign_key="journalentry.id", ondelete="CASCADE", index=True
+    )
     source: str = Field(max_length=_SOURCE_WIDTH)
     # Privacy tier, pinned by ``ck_corpusfragment_tier_retrievable`` to the two
     # tiers this store is permitted to hold.

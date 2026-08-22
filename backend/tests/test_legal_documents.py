@@ -6,7 +6,7 @@ overstated one is a false promise made to every person who writes something
 private here. So the guarantees the policy makes are pinned from the code side,
 the way ``test_account_deletion_policy`` pins ``docs/your-data.md``.
 
-Three failure modes are guarded.
+Four failure modes are guarded.
 
 *A promise the code stops keeping.* The policy says production refuses to boot
 without a journal-encryption key, that no journal body reaches the error
@@ -24,6 +24,12 @@ That is not hypothetical, twice over. This guard was written naming two columns;
 the ontologized corpus store landed ``corpusfragment.content`` as a third while
 the policy was still in review, and the encryption sweep then took it to ten.
 Each time the build caught the stale sentence rather than a reader.
+
+*A promise that is only true because of a default.* The corpus is filled from
+what somebody writes only if they turn it on, and the classification that
+follows costs one provider call per entry. Both sentences are pinned to the
+constants that make them true, so widening either is a rewrite of the document
+before it is a change to the code.
 
 *A link that rots.* The in-app rows point at the documents by repository path.
 A rename that leaves the rows behind gives a store reviewer, and a user, a 404
@@ -48,6 +54,8 @@ from domain.account_deletion import POLICY, Disposition
 from main import validate_journal_encryption_config
 from sentry import scrub_event
 from services import journal_encryption
+from services.corpus_consent import CONSENT_GRANTED_BY_DEFAULT
+from services.corpus_ingest import CLASSIFICATION_CALLS_PER_INGEST
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
@@ -253,6 +261,45 @@ def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
     wrong = {word for count, word in _NUMBER_WORDS.items() if count != GROUNDING_LIMIT}
     stale = sorted(word for word in wrong if f"up to {word}" in policy)
     assert not stale, f"the policy also claims 'up to {stale}', contradicting itself"
+
+
+def test_the_policy_says_the_corpus_is_off_until_the_reader_turns_it_on() -> None:
+    """The corpus is opt-in in the document because it is opt-in in the code.
+
+    ADR 0005 leaves open whether ontologizing an entry written in this app is
+    itself a consented act. It is answered conservatively — the corpus stays
+    empty until somebody says otherwise — and this is where that answer is
+    published. Flipping ``CONSENT_GRANTED_BY_DEFAULT`` would put every entry
+    every existing account has written into an operator-readable store on the
+    strength of a deploy, while the sentence below went on telling readers it
+    had not, so the constant is asserted here rather than in a service test.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    assert CONSENT_GRANTED_BY_DEFAULT is False, (
+        "the policy promises the corpus is off until the reader turns it on; "
+        "rewrite that promise before changing the default"
+    )
+    assert "unless you turn it on" in policy
+    assert "off for every account until you say otherwise" in policy
+
+
+def test_the_policy_states_the_classification_calls_a_save_costs() -> None:
+    """A reader is told that saving an entry can itself reach the provider.
+
+    This is the one thing the corpus writer changed about what leaves the
+    deployment, and it is easy to miss: everything else the provider receives
+    is something the reader asked for. Classification happens on the save, so
+    the count is pinned to the code's own ceiling — raising it widens what is
+    sent, and fails here, in the file where the promise is written.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    expected = _NUMBER_WORDS[CLASSIFICATION_CALLS_PER_INGEST]
+
+    assert f"{expected} call per entry" in policy, (
+        f"the policy must state '{expected} call per entry' to match "
+        f"CLASSIFICATION_CALLS_PER_INGEST = {CLASSIFICATION_CALLS_PER_INGEST}"
+    )
 
 
 # The sentence in the policy that discloses each source the grounding can draw

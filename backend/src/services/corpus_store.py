@@ -5,9 +5,10 @@ own writing lives once it has been classified into the ten frequencies, and the
 only sanctioned way to get it back out.
 
 **The retrieval contract, stated once.** :func:`retrieve_fragments` takes an
-account, an optional query embedding, an optional frequency bias and a limit,
-and returns scored fragments best-first. The two optionals are independent
-axes and either may be omitted:
+account and a :class:`RetrievalQuery` — an optional query embedding, an
+optional frequency bias, an optional journal entry to exclude, and a limit —
+and returns scored fragments best-first. The two ranking optionals are
+independent axes and either may be omitted:
 
 * **Neither.** The newest writing, bounded by the limit. This is the only mode
   that reduces to recency, and it is the documented fallback rather than a
@@ -34,6 +35,15 @@ leaking. The table's own CHECK is the second barrier and
 for the exclusion to be structural rather than advisory; three independent
 barriers is what that means here.
 
+**Writing can be taken back out.** :func:`delete_fragments_for_entry` and
+:func:`delete_fragments_for_source` are the two withdrawals this store
+supports, and both are statement-level and scoped to one account. The first is
+what makes an edit *replace* a fragment rather than accumulate a second one,
+and what lets a deleted journal entry take its corpus copy with it; the second
+is what makes withdrawing consent for a source mean something, since a
+permission that can be revoked while the material stays is a preference rather
+than a permission.
+
 **Cost.** One statement per retrieval, bounded by :data:`CANDIDATE_POOL_SIZE`.
 The pool is ordered *in the database* by the biased frequency, so the fragments
 that reach the Python scorer are the ones nearest the caller's position on the
@@ -47,11 +57,13 @@ the database, not to change this signature.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Final, cast
 
-from sqlalchemy import ColumnElement, func
+from sqlalchemy import ColumnElement, CursorResult, delete, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -79,6 +91,14 @@ CANDIDATE_POOL_SIZE = 200
 
 # The tier values as the column stores them.
 _RETRIEVABLE_TIER_VALUES = tuple(tier.value for tier in RETRIEVABLE_TIERS)
+
+logger = logging.getLogger(__name__)
+
+# What a purge reports when the driver did not say how many rows it removed.
+# Zero, because a caller writing this into an audit row needs a number, and
+# reporting the driver's ``-1`` would put a sentinel where a count belongs --
+# the log line above is where the ambiguity is recorded.
+_ROW_COUNT_UNAVAILABLE = 0
 
 # Weight assumed for a frequency a fragment does not carry, when the pool is
 # ordered in SQL. Matches :func:`domain.corpus.frequency_affinity`, which reads
@@ -111,6 +131,34 @@ class RetrievedFragment:
 
 
 @dataclass(frozen=True)
+class RetrievalQuery:
+    """What one retrieval is asking for, apart from whose corpus it asks of.
+
+    A value rather than four parameters, for the reason :class:`FragmentDraft`
+    is one on the write side: the account is supplied separately, at the call,
+    where a scoping mistake is visible, and everything that is genuinely *the
+    question* travels together. See the module docstring for the four modes the
+    two optional ranking axes make.
+
+    ``exclude_entry_id`` drops every fragment derived from one journal entry.
+    It is how a caller gathering context *for* an entry keeps that entry from
+    being handed back as its own earlier writing.
+    """
+
+    query_embedding: Sequence[float] | None = None
+    frequency_bias: Frequency | None = None
+    exclude_entry_id: int | None = None
+    limit: int = DEFAULT_RETRIEVAL_LIMIT
+
+
+#: The question a caller asks when it wants this account's newest writing and
+#: has nothing else to say about it. Shared because it is immutable, and named
+#: because a default argument that constructs a value is a defect waiting for a
+#: mutable field.
+WHOLE_CORPUS: Final[RetrievalQuery] = RetrievalQuery()
+
+
+@dataclass(frozen=True)
 class FragmentDraft:
     """Everything about one fragment except whose it is.
 
@@ -125,6 +173,9 @@ class FragmentDraft:
     source: CorpusSource
     classification: FrequencyClassification
     embedding: Sequence[float] | None = None
+    # The journal row this fragment was derived from, when there was one. Left
+    # ``None`` by an import surface, whose material never had one.
+    source_entry_id: int | None = None
 
 
 async def record_fragment(
@@ -150,6 +201,7 @@ async def record_fragment(
         raise IntimateContentRefusedError
     fragment = CorpusFragment(
         user_id=user_id,
+        source_entry_id=draft.source_entry_id,
         source=draft.source.value,
         tier=draft.tier.value,
         content=draft.content,
@@ -179,10 +231,25 @@ def _affinity_ordering(bias: Frequency) -> ColumnElement[float]:
     )
 
 
+def _not_derived_from(entry_id: int) -> ColumnElement[bool]:
+    """Match every fragment that did not come from ``entry_id``.
+
+    Written as "NULL, or a different id" rather than as a plain inequality
+    because SQL inequality is unknown against NULL and drops the row. Most of a
+    mature corpus is expected to be imported material, whose ``source_entry_id``
+    is NULL, so the obvious spelling would make one exclusion erase almost
+    everything an account has.
+    """
+    return or_(
+        col(CorpusFragment.source_entry_id).is_(None),
+        col(CorpusFragment.source_entry_id) != entry_id,
+    )
+
+
 async def _candidate_pool(
     session: AsyncSession,
     user_id: int,
-    bias: Frequency | None,
+    query: RetrievalQuery,
 ) -> list[CorpusFragment]:
     """Load the bounded pool this retrieval will score, in one statement.
 
@@ -191,13 +258,20 @@ async def _candidate_pool(
     a row carrying any other tier — one that reached the table past a relaxed
     CHECK, or during a ``NOT VALID`` window in some future migration — is
     outside the query rather than filtered by it.
+
+    The query's ``exclude_entry_id`` is applied here, in SQL, rather than to the
+    scored results: a fragment filtered afterwards would still have consumed one
+    of :data:`CANDIDATE_POOL_SIZE` slots, so on a large corpus excluding one
+    entry would silently cost a fragment that had earned its place.
     """
     statement = select(CorpusFragment).where(
         col(CorpusFragment.user_id) == user_id,
         col(CorpusFragment.tier).in_(_RETRIEVABLE_TIER_VALUES),
     )
-    if bias is not None:
-        statement = statement.order_by(_affinity_ordering(bias).desc())
+    if query.exclude_entry_id is not None:
+        statement = statement.where(_not_derived_from(query.exclude_entry_id))
+    if query.frequency_bias is not None:
+        statement = statement.order_by(_affinity_ordering(query.frequency_bias).desc())
     result = await session.execute(
         statement.order_by(
             col(CorpusFragment.created_at).desc(),
@@ -256,33 +330,94 @@ async def retrieve_fragments(
     session: AsyncSession,
     *,
     user_id: int,
-    query_embedding: Sequence[float] | None = None,
-    frequency_bias: Frequency | None = None,
-    limit: int = DEFAULT_RETRIEVAL_LIMIT,
+    query: RetrievalQuery = WHOLE_CORPUS,
 ) -> list[RetrievedFragment]:
     """Return ``user_id``'s best-matching fragments, best first.
 
-    See the module docstring for the four modes the two optional axes make, and
-    for why a fragment with no embedding is excluded from a semantic query. The
-    limit is clamped to :data:`MAX_RETRIEVAL_LIMIT`; a non-positive limit is
-    honoured as the empty request it is, without touching the database.
+    See the module docstring for the four modes the query's two optional
+    ranking axes make, and for why a fragment with no embedding is excluded
+    from a semantic query. The limit is clamped to
+    :data:`MAX_RETRIEVAL_LIMIT`; a non-positive limit is honoured as the empty
+    request it is, without touching the database.
 
     Ordering is stable: fragments that score equally keep the order the
     database returned them in, which is newest first.
     """
-    effective_limit = min(limit, MAX_RETRIEVAL_LIMIT)
+    effective_limit = min(query.limit, MAX_RETRIEVAL_LIMIT)
     if effective_limit <= 0:
         return []
-    candidates = await _candidate_pool(session, user_id, frequency_bias)
+    candidates = await _candidate_pool(session, user_id, query)
     scored = [
         retrieved
         for retrieved in (
-            _score(candidate, query_embedding, frequency_bias) for candidate in candidates
+            _score(candidate, query.query_embedding, query.frequency_bias)
+            for candidate in candidates
         )
         if retrieved is not None
     ]
     scored.sort(key=lambda retrieved: retrieved.score, reverse=True)
     return scored[:effective_limit]
+
+
+async def _delete_where(
+    session: AsyncSession, *, user_id: int, predicate: ColumnElement[bool]
+) -> int:
+    """Delete this account's fragments matching ``predicate``; return the count.
+
+    The account scope is applied here rather than left to each caller, because
+    every other key this store deletes on — a journal id, a source — is global
+    and would reach into somebody else's corpus on its own.
+
+    Statement-level rather than a load-then-delete loop: a purge is bounded by
+    however much somebody has written, and reading all of it into memory to
+    delete it would make the cost of withdrawing consent scale with how much
+    the account had trusted the feature with. Nothing is committed; the caller
+    owns the transaction, as it does for :func:`record_fragment`.
+
+    A driver that declines to report a row count answers ``-1``. That is
+    logged and returned as :data:`_ROW_COUNT_UNAVAILABLE`, because the count
+    a caller gets is written into an audit row, and a sentinel sitting there
+    would read as a real number to everything downstream.
+    """
+    # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
+    # ``rowcount`` is the number of rows removed.
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            delete(CorpusFragment).where(col(CorpusFragment.user_id) == user_id, predicate)
+        ),
+    )
+    removed = int(result.rowcount)
+    if removed < _ROW_COUNT_UNAVAILABLE:
+        logger.warning("corpus_purge_row_count_unavailable", extra={"user_id": user_id})
+        return _ROW_COUNT_UNAVAILABLE
+    return removed
+
+
+async def delete_fragments_for_entry(session: AsyncSession, *, user_id: int, entry_id: int) -> int:
+    """Remove every fragment derived from one journal entry; return the count.
+
+    Called when the entry is edited (the replacement is written straight
+    after), when it is re-tiered to intimate, and when it is deleted. The count
+    is what a log line can report to show the withdrawal reached the corpus.
+    """
+    return await _delete_where(
+        session, user_id=user_id, predicate=col(CorpusFragment.source_entry_id) == entry_id
+    )
+
+
+async def delete_fragments_for_source(
+    session: AsyncSession, *, user_id: int, source: CorpusSource
+) -> int:
+    """Remove every fragment this account got from one source; return the count.
+
+    Per source rather than wholesale, because consent is recorded per source:
+    withdrawing permission to ontologize what somebody writes here must not
+    erase documents they uploaded deliberately.
+    """
+    return await _delete_where(
+        session, user_id=user_id, predicate=col(CorpusFragment.source) == source.value
+    )
 
 
 async def resolve_stage_frequency(session: AsyncSession, stage_number: int) -> Frequency | None:
