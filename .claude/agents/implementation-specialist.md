@@ -97,3 +97,11 @@ Turn the regression test green, refactor the boundary branch for clarity, confir
 
 **References**: [shared/adepthood-constraints.md](shared/adepthood-constraints.md),
 [taxonomy map](README.md)
+
+## Playbook (auto-curated)
+
+<!-- playbook rules are inserted below this line -->
+
+- **When** implementing or changing a client that calls an external service whose contract is vendored in this repo (e.g. `backend/tests/fixtures/creek_v1/`), **do** read that bundle's `schemas/` and `examples/` plus the upstream ADR for required *request* headers and version-negotiation fields before writing the call, and pin the result with a conformance test against those vendored bytes rather than a hand-written payload. <!-- playbook added=2026-08-10 evidence=#1934,#1935,#1936,#1937,#2157,#2174 -->
+- **When** writing a React `useEffect` that kicks off a fetch because a Zustand store's collection is empty, **do** gate it on the store's explicit attempted/settled flag (`hasAttempted`, cleared by `reset()` so logout re-arms) rather than on `length === 0` combined with `loading`/`error`, because a load that succeeds with an empty list re-satisfies an emptiness guard and re-fires forever. <!-- playbook added=2026-08-10 evidence=#1962,#1995,#2002,#2003 -->
+- **When** a per-request FastAPI dependency or router path reads configuration for, or calls, an optional external service, **do** degrade to the local fallback with a WARNING naming the offending value and the remedy instead of raising out of the request, keep the degrade set wide enough to cover the base exception types the transport can actually raise, and pin with a test that the user's write still persists. <!-- playbook added=2026-08-10 evidence=#2119,#2078,#1967 -->
