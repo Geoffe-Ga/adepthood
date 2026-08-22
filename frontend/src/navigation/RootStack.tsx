@@ -12,6 +12,7 @@ import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
+import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -40,6 +41,7 @@ export type RootStackParamList = {
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   DeleteAccount: undefined;
+  ExportData: undefined;
   SupportCare: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
@@ -138,6 +140,11 @@ const SettingsScreens = (): React.JSX.Element => (
       name="TimezoneSettings"
       component={TimezoneSettingsScreen}
       options={{ title: 'Time zone' }}
+    />
+    <Stack.Screen
+      name="ExportData"
+      component={ExportDataScreen}
+      options={{ title: 'Export my data' }}
     />
     <Stack.Screen
       name="DeleteAccount"

@@ -4,6 +4,7 @@ import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
   apiGoalGroupSchema,
   accountDeletionReceiptSchema,
+  dataExportArchiveSchema,
   authResponseSchema,
   contentItemSchema,
   corpusConsentListSchema,
@@ -43,6 +44,7 @@ import {
   uploadDocumentSchema,
   wheelBalanceSchema,
   type AccountDeletionReceiptT,
+  type DataExportArchiveT,
   type AcceptSuggestionResultT,
   type CareKindT,
   type CareResourceT,
@@ -359,6 +361,9 @@ export function resetLlmApiKey(): void {
   llmApiKeyReset?.();
 }
 
+/** How a successful response body is read. */
+type ResponseType = 'json' | 'text';
+
 interface RequestOptions<TResponse = unknown> {
   method?: string;
   body?: unknown;
@@ -379,6 +384,12 @@ interface RequestOptions<TResponse = unknown> {
    * lands on an account no longer there.
    */
   retry?: boolean;
+  /**
+   * How to read a successful body. Defaults to ``'json'``. ``'text'`` is for
+   * routes that do not serve JSON at all — the Markdown journal export — where
+   * ``res.json()`` would throw on a perfectly good response.
+   */
+  responseType?: ResponseType;
 }
 
 function resolveToken(token?: string): string | null {
@@ -593,8 +604,14 @@ function validateWithSchema<T>(
   throw new ApiValidationError(path, status, parsed.error.issues);
 }
 
-async function parseResponse<T>(res: Response, path = '', schema?: z.ZodType<T>): Promise<T> {
+async function parseResponse<T>(
+  res: Response,
+  path = '',
+  schema?: z.ZodType<T>,
+  responseType: ResponseType = 'json',
+): Promise<T> {
   if (res.status === 204) return undefined as T;
+  if (responseType === 'text') return (await res.text()) as T;
   const data: unknown = await res.json();
   if (schema) return validateWithSchema(path, res.status, schema, data);
   return data as T;
@@ -702,6 +719,12 @@ interface RefreshRetryContext<T> {
   timeoutMs: number | undefined;
   signal: AbortSignal | undefined;
   /**
+   * How to read a successful body, or ``undefined`` for the default.
+   * ``parseResponse`` owns that default so ``request`` stays one branch
+   * simpler; see {@link RequestOptions.responseType}.
+   */
+  responseType: ResponseType | undefined;
+  /**
    * Detail string of the original 401 response.  Threaded through so
    * the unauthorized callback fires with the correct
    * {@link UnauthorizedReason} (BUG-API-018) instead of a generic
@@ -765,7 +788,7 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
     }
     return handleErrorResponse(retryRes);
   }
-  return parseResponse<T>(retryRes, ctx.path, ctx.schema);
+  return parseResponse<T>(retryRes, ctx.path, ctx.schema, ctx.responseType);
 }
 
 async function handleUnauthorizedRetry<T>(
@@ -821,7 +844,7 @@ async function attemptRequest<T>(
   });
 
   if (res.ok) {
-    const value = await parseResponse<T>(res, ctx.path, ctx.schema);
+    const value = await parseResponse<T>(res, ctx.path, ctx.schema, ctx.responseType);
     return { kind: 'ok', value };
   }
   if (res.status === 401) {
@@ -880,6 +903,7 @@ async function request<T>(
     timeoutMs,
     signal,
     retry,
+    responseType,
   }: RequestOptions<T> = {},
 ): Promise<T> {
   const canRetry = retry !== false && isRetryableMethod(method, extraHeaders);
@@ -892,6 +916,7 @@ async function request<T>(
     schema,
     timeoutMs,
     signal,
+    responseType,
     initialDetail: null,
     canRetry,
   };
@@ -2961,6 +2986,19 @@ export interface TimezoneUpdatePayload {
 /** The receipt ``DELETE /users/me`` returns once an account is gone. */
 export type AccountDeletionReceipt = AccountDeletionReceiptT;
 
+/** The whole archive ``GET /users/me/export`` streams back. */
+export type DataExportArchive = DataExportArchiveT;
+
+/**
+ * How long an export may take before the client gives up.
+ *
+ * Deliberately far above the default: the request is proportional to how much
+ * the person has written, and the account this feature exists for is the one
+ * with the most in it. A timeout tuned for a list endpoint would fail exactly
+ * the user the feature is for.
+ */
+const EXPORT_TIMEOUT_MS = 120_000;
+
 /**
  * Confirmation body for ``DELETE /users/me``: the caller retypes their own
  * address. A boolean the client could synthesise would make an accidental
@@ -3012,6 +3050,34 @@ export const users = {
       token,
       schema: accountDeletionReceiptSchema,
       retry: false,
+    });
+  },
+  /**
+   * Download everything the caller has written, as one JSON archive.
+   *
+   * The subject is resolved from the JWT alone, so this can only ever return
+   * the caller's own data. The server streams it; this client buffers what
+   * arrives, which is the trade a mobile client makes anyway in order to hand
+   * the result to the file system.
+   */
+  exportMyData(token?: string): Promise<DataExportArchive> {
+    return request<DataExportArchive>('/users/me/export', {
+      token,
+      schema: dataExportArchiveSchema,
+      timeoutMs: EXPORT_TIMEOUT_MS,
+    });
+  },
+  /**
+   * Download the caller's journal as Markdown -- the half a person can read.
+   *
+   * ``responseType: 'text'`` because the body is Markdown, not JSON: the
+   * default parse would throw on a completely healthy response.
+   */
+  exportMyJournalAsMarkdown(token?: string): Promise<string> {
+    return request<string>('/users/me/export/journal.md', {
+      token,
+      responseType: 'text',
+      timeoutMs: EXPORT_TIMEOUT_MS,
     });
   },
 };

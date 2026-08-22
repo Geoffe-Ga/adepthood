@@ -13,6 +13,12 @@ class GoalGroup(SQLModel, table=True):
     Invariant: shared templates (``shared_template=True``) must have
     ``user_id IS NULL``, and user-owned groups must have a non-null
     ``user_id``.  Enforced at the DB level via a CHECK constraint.
+
+    ``name`` and ``description`` follow :class:`~models.goal.Goal`'s decision
+    and are deliberately **not** encrypted at rest: they label a grouping of
+    targets rather than record anything composed, and a shared template's pair
+    belongs to no account at all.  The privacy policy names them among what is
+    stored as written.
     """
 
     __table_args__ = (

@@ -75,6 +75,10 @@ fixing rather than a cosmetic detail.
 
 ## Decision 1 — HTTP/JSON `/v1` is the application boundary; MCP remains Creek's agent adapter
 
+> **AMENDED 2026-08-22:** shipped and closed out — the cutover is
+> complete, the `mcp` pin is gone, and MCP is agent-facing only. See
+> the note at the end of this document.
+
 Adepthood's backend is a deterministic consumer: it knows at build
 time that it needs exactly four operations — capability discovery,
 journal upsert, reflection, and wheel/balance read. It never needs to
@@ -196,6 +200,10 @@ cannot detect the very drift class (minor-version breakage) that
 matters most before 1.0.
 
 ## Decision 5 — Supersede the draft contract doc
+
+> **AMENDED 2026-08-22:** the path is still retained, on link
+> stability alone; the *title* is not. See the note at the end of this
+> document.
 
 Creek's published contract (its `contract.py` constants today; its
 ratified `/v1` document once creek-vault#1072 ships) becomes the
@@ -1210,3 +1218,52 @@ the wrong version survived, which made it the most likely to seed a
 third round. `backend/tests/test_ontology_record.py` now fails if a
 living document states the retracted claim, or if an ADR states it
 without naming the amendment that reversed it.
+
+## Note, 2026-08-22 — Decision 1 is complete; Decision 5's second reason is retired
+
+Two of this document's decisions have outlived the conditions their
+present tense describes. Neither is edited; both are read forward from
+here.
+
+**Decision 1 is done, not merely decided.** The HTTP/JSON `/v1`
+boundary is the only way this repository reaches a vault. Adepthood's
+own MCP client was deleted (the 2026-08-07 note above), and the `mcp`
+and `httpx2` pins that note left behind as acknowledged dead weight
+have since been dropped from `backend/requirements*.txt` by the
+follow-up it named. Nothing in the running system speaks MCP to Creek
+and nothing imports the package.
+
+The owner restated the boundary on 2026-08-18, and the restatement is
+the rule going forward rather than a summary of this decision:
+*"Creek-Vault retains MCP for any hermes or openclaw agents that want
+to interact with it, not for applications. MCP for application data
+transfer is a major code smell."* Creek's `creek-tools/creek_mcp/`
+server is untouched and stays the adapter for CrawDad, Claude Code,
+Hermes, and openclaw. What is settled is that adepthood is not one of
+its clients, in any tense, and no living document may describe it as
+one. `backend/tests/test_contract_version_docs.py` fails a document
+outside `docs/adr/` and `plan/` that presents MCP as the vault
+transport — the ratified records and the dated plan files are excluded
+because amending history is not the same as correcting it.
+
+**Decision 5 keeps the filename and loses the title.** Decision 5 gave
+two reasons for retaining `docs/creek-vault-mcp-contract.md`: link
+stability, and that "the shipped transport genuinely is still MCP
+until the HTTP cutover in Decision 1 lands". The 2026-08-07 note
+already recorded the second reason expiring. The first has grown
+rather than shrunk: the inbound references are now three `backend/src`
+module docstrings, `graph/ontology-spine.md`, the drift-guard test —
+and four citations in this document's own ratified text, which is
+append-only and therefore cannot be repointed. A rename would leave
+either dead links inside a decision record or a stub at the old path,
+which is one MCP-named file traded for two.
+
+So the path stays and the *title* goes: that document is now headed
+"Creek Vault contract pointer", and its Purpose section says in its
+own voice that the filename is a retained path and not a claim about a
+transport. Decision 5's "Rejected — deleting or renaming the file"
+paragraph stands as written; its reasoning is unchanged, and only its
+second premise — "nothing about the filename is wrong while MCP
+remains the shipped transport" — is superseded here. Nothing about the
+filename is *load-bearing*; that is a weaker claim, and it is the one
+that now holds.

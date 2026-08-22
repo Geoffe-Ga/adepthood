@@ -87,6 +87,24 @@ describe('SettingsHubScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('DeleteAccount');
   });
 
+  test('offers an in-app route to a copy of everything the user wrote', () => {
+    // The counterpart to deletion, and the reason deletion is a reasonable
+    // thing to offer at all: an endpoint no screen reaches is not a feature.
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-export-data'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('ExportData');
+  });
+
+  test('exporting is a separate row from deleting', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-export-data'));
+
+    expect(mockNavigate).not.toHaveBeenCalledWith('DeleteAccount');
+  });
+
   test('deleting the account is a separate row from logging out', () => {
     // The two must never be the same tap: one ends a session, the other ends
     // the account.
