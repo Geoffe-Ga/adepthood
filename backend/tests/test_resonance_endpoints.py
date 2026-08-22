@@ -21,7 +21,7 @@ from models.user import User
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 from services.corpus_store import FragmentDraft, record_fragment
-from services.frequency_classification import FrequencyClassification
+from services.frequency_classification import ClassificationSource, FrequencyClassification
 from services.higher_self_grounding import GroundingSource
 
 _BODY = "I walked by the river and the willow bent without breaking."
@@ -390,7 +390,9 @@ async def _seed_fragment(session: AsyncSession, user_id: int, content: str) -> i
             tier=JournalClassification.PERSONAL,
             source=CorpusSource.JOURNAL,
             classification=FrequencyClassification(
-                weights=MappingProxyType({Frequency.F1: 0.9}), overall_confidence=0.9
+                weights=MappingProxyType({Frequency.F1: 0.9}),
+                overall_confidence=0.9,
+                source=ClassificationSource.OPERATOR,
             ),
         ),
     )
