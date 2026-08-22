@@ -127,7 +127,7 @@ class _HistoryFilters:
 
 
 def _history_detail(pr: PromptResponse) -> PromptDetail:
-    """Serialize a ``PromptResponse``; live dict wins, snapshot is the retired-week fallback."""
+    """Serialize a ``PromptResponse``; live content wins, snapshot is the retired-week fallback."""
     return PromptDetail(
         week_number=pr.week_number,
         question=get_prompt_for_week(pr.week_number) or pr.question,

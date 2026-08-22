@@ -1,143 +1,98 @@
-"""Seed data for 36 weekly reflection prompts across the APTITUDE program.
+"""Map a program week onto the journaling prompt the curriculum gives it.
 
-Weeks are grouped by developmental stage:
-  Weeks 1-3:   Beige (Survival / Grounding)
-  Weeks 4-6:   Purple (Belonging / Tribe)
-  Weeks 7-9:   Red (Power / Agency)
-  Weeks 10-12: Blue (Order / Structure)
-  Weeks 13-15: Orange (Achievement / Strategy)
-  Weeks 16-18: Green (Community / Empathy)
-  Weeks 19-21: Yellow (Integration / Systems)
-  Weeks 22-24: Turquoise (Holistic / Global)
-  Weeks 25-27: Coral (Transcendence / Purpose)
-  Weeks 28-30: Teal (Adaptive / Flow)
-  Weeks 31-33: Indigo (Depth / Contemplation)
-  Weeks 34-36: Ultraviolet (Mastery / Contribution)
+The prompt text lives in ``backend/content`` and nowhere else; this module
+only decides *which* prompt a week gets. It holds no prompt strings and no
+stage names of its own — the ten positions come from
+:mod:`domain.frequencies` and the week schedule from
+:data:`domain.constants.WEEKS_PER_STAGE`.
+
+Two things the old table got wrong, both worth naming so they do not return:
+
+* **The bands are the ten APTITUDE positions, Beige through Clear Light.**
+  They are reached by colour, never by name, because the Stage / Aspect /
+  Mode labelings diverge at F5..F8 and a join on name mismatches exactly
+  those four while looking correct.
+* **Ten stages does not mean thirty weeks.** Eight stages run three weeks and
+  two run six, so the program is thirty-six weeks long. That schedule is a
+  cross-stack contract pinned on both sides; the week count is derived from
+  it rather than asserted here.
+
+A stage carries three to five prompts across three or six weeks, so weeks
+inside a stage cycle through that stage's prompts in curriculum order. That
+is an interim tiling of a one-prompt-per-week API onto a
+several-prompts-per-stage curriculum; exposing the whole set per stage is
+separate work.
 """
 
 from __future__ import annotations
 
-WEEKLY_PROMPTS: dict[int, str] = {
-    # Beige — Survival / Grounding
-    1: ("What does safety mean to you right now? Describe a moment today when you felt grounded."),
-    2: ("What basic needs are you neglecting? How does your body signal when something is off?"),
-    3: ("Reflect on your relationship with rest. When do you allow yourself to truly stop?"),
-    # Purple — Belonging / Tribe
-    4: ("Who are the people that make you feel you belong? What do you offer them in return?"),
-    5: ("Describe a ritual or tradition that connects you to something larger than yourself."),
-    6: ("When have you felt most at home in a group? What made that experience meaningful?"),
-    # Red — Power / Agency
-    7: ("Where in your life do you feel powerful? Where do you feel powerless?"),
-    8: ("Describe a time you stood up for yourself. What did it cost you? What did it give you?"),
-    9: ("What anger or frustration are you carrying? What is it trying to protect?"),
-    # Blue — Order / Structure
-    10: ("What rules or structures help you thrive? Which ones feel like they hold you back?"),
-    11: (
-        "Reflect on a commitment you have kept faithfully. "
-        "What gives you the discipline to maintain it?"
-    ),
-    12: (
-        "How do you define integrity? Where does your life "
-        "align with that definition, and where does it fall short?"
-    ),
-    # Orange — Achievement / Strategy
-    13: (
-        "What goal are you pursuing right now? Is it truly yours, or inherited from someone else?"
-    ),
-    14: (
-        "Describe your relationship with success. "
-        "When does ambition serve you, and when does it consume you?"
-    ),
-    15: (
-        "What would you attempt if you knew you could not fail? "
-        "What stops you from attempting it anyway?"
-    ),
-    # Green — Community / Empathy
-    16: ("When was the last time you truly listened to someone without planning your response?"),
-    17: ("Reflect on a time you changed your mind because of empathy. How did that feel?"),
-    18: ("What community needs are you aware of but not acting on? What holds you back?"),
-    # Yellow — Integration / Systems
-    19: ("How do the different parts of your life connect? Where do you see patterns repeating?"),
-    20: ("Describe a belief you once held strongly but have since released. What replaced it?"),
-    21: (
-        "If you could redesign one system in your life "
-        "(routine, relationship, work), what would you change and why?"
-    ),
-    # Turquoise — Holistic / Global
-    22: ("How does your personal growth connect to the wellbeing of those around you?"),
-    23: ("Reflect on a moment of awe or wonder you experienced recently. What did it reveal?"),
-    24: "What legacy are you building, whether you intend to or not?",
-    # Coral — Transcendence / Purpose
-    25: (
-        "What feels like your deepest purpose right now? "
-        "How has it evolved since you started this program?"
-    ),
-    26: ("Describe a moment when you felt aligned with something beyond yourself."),
-    27: "What are you willing to sacrifice for what matters most to you?",
-    # Teal — Adaptive / Flow
-    28: "When do you experience flow? What conditions make it possible?",
-    29: (
-        "Reflect on a recent change that felt uncomfortable. "
-        "What did you learn from adapting to it?"
-    ),
-    30: "How do you balance structure and spontaneity in your daily life?",
-    # Indigo — Depth / Contemplation
-    31: ("What question have you been avoiding? Sit with it now and write whatever comes."),
-    32: ("Describe your inner landscape today. What textures, colors, or feelings do you notice?"),
-    33: "What has silence taught you during this program?",
-    # Ultraviolet — Mastery / Contribution
-    34: ("What wisdom have you gained that you wish you could give to your past self?"),
-    35: (
-        "How will you continue the practices you have built here? "
-        "What needs to change for them to endure?"
-    ),
-    36: ("Write a letter to the person you are becoming. What do you want them to remember?"),
-}
+from domain.constants import TOTAL_PROGRAM_WEEKS, WEEKS_PER_STAGE
+from domain.frequencies import FREQUENCY_COLORS
+from domain.journal_prompt_parser import JournalPrompt, prompts_for_color
 
-TOTAL_WEEKS = 36
+#: The ten stage colours in developmental order — the band labels a week's
+#: default journal title is built from. Taken straight from the frequency
+#: vocabulary so this module cannot drift from it.
+PROMPT_BANDS: tuple[str, ...] = tuple(FREQUENCY_COLORS.values())
 
-# Archetypal Wavelength band labels in developmental order. Each band spans
-# ``WEEKS_PER_BAND`` consecutive weeks, so the 12 bands tile the 36-week
-# program exactly (12 * 3 == TOTAL_WEEKS).
-PROMPT_BANDS: tuple[str, ...] = (
-    "Beige",
-    "Purple",
-    "Red",
-    "Blue",
-    "Orange",
-    "Green",
-    "Yellow",
-    "Turquoise",
-    "Coral",
-    "Teal",
-    "Indigo",
-    "Ultraviolet",
-)
+#: Total length of the program in weeks (36). Re-exported under the name the
+#: prompts router and the program calendar already import.
+TOTAL_WEEKS = TOTAL_PROGRAM_WEEKS
 
-# Weeks per Wavelength band; three weeks each tile the 36-week program.
-WEEKS_PER_BAND = 3
+# ``WEEKS_PER_STAGE`` is re-exported deliberately: it is the companion of
+# ``PROMPT_BANDS`` (weeks each band spans, same order) and callers reading one
+# almost always need the other. There is no single weeks-per-band number —
+# the last two bands are twice as long as the rest.
+__all__ = [
+    "PROMPT_BANDS",
+    "TOTAL_WEEKS",
+    "WEEKS_PER_STAGE",
+    "get_prompt_for_week",
+    "prompt_title_for_week",
+]
 
-# There is exactly one prompt per week, so the default title always reads
-# "... Prompt #1". Named so the ordinal in the title isn't a bare literal.
-PROMPTS_PER_WEEK = 1
+
+def _resolve_week(week_number: int) -> tuple[str, int, JournalPrompt] | None:
+    """The week's band, its place inside that band, and the prompt it draws.
+
+    ``None`` for a week outside ``1..TOTAL_WEEKS``. The walk always lands on a
+    band for an in-range week, since the spans sum to ``TOTAL_WEEKS``.
+    """
+    if not 1 <= week_number <= TOTAL_WEEKS:
+        return None
+    week_in_band = week_number
+    band_index = 0
+    while week_in_band > WEEKS_PER_STAGE[band_index]:
+        week_in_band -= WEEKS_PER_STAGE[band_index]
+        band_index += 1
+    band = PROMPT_BANDS[band_index]
+    prompts = prompts_for_color(band)
+    return band, week_in_band, prompts[(week_in_band - 1) % len(prompts)]
 
 
 def get_prompt_for_week(week_number: int) -> str | None:
-    """Return the prompt question for a given week, or None if out of range."""
-    return WEEKLY_PROMPTS.get(week_number)
+    """Return the week's prompt as the curriculum writes it, or ``None``.
+
+    ``None`` means the week is outside ``1..TOTAL_WEEKS``. A week that is in
+    range but whose chapter cannot be parsed raises
+    :class:`domain.journal_prompt_parser.JournalPromptParseError` rather than
+    degrading to an empty prompt.
+    """
+    resolved = _resolve_week(week_number)
+    return None if resolved is None else resolved[2].text
 
 
 def prompt_title_for_week(week_number: int) -> str | None:
-    """Return the default journal title for a week, or None if out of range.
+    """Return the default journal title for a week, or ``None`` if out of range.
 
-    Mirrors :func:`get_prompt_for_week`'s range contract: weeks outside
-    ``1..TOTAL_WEEKS`` yield ``None``. Otherwise the title is the week's
-    Wavelength band label plus its position within that band, e.g. week 8
-    (the second Red week) becomes ``"Red week 2 Prompt #1"``. This is the
-    default a user sees in the compose title; they may override it.
+    Mirrors :func:`get_prompt_for_week`'s range contract. The title is the
+    week's band label, its position within that band, and which of the band's
+    prompts the week draws — e.g. week 8 (the second Red week, drawing Red's
+    second prompt) becomes ``"Red week 2 Prompt #2"``. This is the default a
+    user sees in the compose title; they may override it.
     """
-    if week_number < 1 or week_number > TOTAL_WEEKS:
+    resolved = _resolve_week(week_number)
+    if resolved is None:
         return None
-    band = PROMPT_BANDS[(week_number - 1) // WEEKS_PER_BAND]
-    week_in_band = ((week_number - 1) % WEEKS_PER_BAND) + 1
-    return f"{band} week {week_in_band} Prompt #{PROMPTS_PER_WEEK}"
+    band, week_in_band, prompt = resolved
+    return f"{band} week {week_in_band} Prompt #{prompt.ordinal}"

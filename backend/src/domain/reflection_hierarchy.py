@@ -47,20 +47,18 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
-from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_STAGES
+from domain.constants import (
+    DAYS_PER_WEEK,
+    TOTAL_PROGRAM_WEEKS,
+    TOTAL_STAGES,
+    WEEKS_PER_STAGE,
+)
 from domain.program_calendar import elapsed_days
 
-# Seven days to a program week; the whole calendar is a multiple of this.
-_DAYS_PER_WEEK = 7
-
-# Weeks each stage lasts, derived straight from the day schedule so a
-# curriculum edit never needs a matching edit here: (3,)*8 + (6, 6).
-_WEEKS_PER_STAGE: tuple[int, ...] = tuple(
-    duration // _DAYS_PER_WEEK for duration in STAGE_DURATIONS_DAYS
-)
-
-# The full curriculum length in weeks (36) — the sum of the per-stage spans.
-TOTAL_PROGRAM_WEEKS = sum(_WEEKS_PER_STAGE)
+# ``DAYS_PER_WEEK``, ``WEEKS_PER_STAGE`` and ``TOTAL_PROGRAM_WEEKS`` used to be
+# derived here from ``STAGE_DURATIONS_DAYS``. They now come from
+# :mod:`domain.constants`, which owns the schedule, so the week grid has one
+# definition rather than one per module that needs it.
 
 # Two consecutive stages make one component; the second (even) stage of a
 # pair is the one whose end closes the component.
@@ -181,8 +179,8 @@ def _stage_week_span(stage_number: int) -> tuple[int, int]:
     cumulative-window idiom the calendar uses for day-in-stage math; callers pass
     a validated stage number, so no out-of-range guard is needed.
     """
-    start = sum(_WEEKS_PER_STAGE[: stage_number - 1]) + 1
-    end = start + _WEEKS_PER_STAGE[stage_number - 1] - 1
+    start = sum(WEEKS_PER_STAGE[: stage_number - 1]) + 1
+    end = start + WEEKS_PER_STAGE[stage_number - 1] - 1
     return (start, end)
 
 
@@ -208,7 +206,7 @@ def _stage_component(stage_number: int) -> int:
 def _stage_ending_at_week(week: int) -> int | None:
     """Return the stage that closes on ``week``, or None if none does."""
     start = 1
-    for index, weeks in enumerate(_WEEKS_PER_STAGE, start=1):
+    for index, weeks in enumerate(WEEKS_PER_STAGE, start=1):
         end = start + weeks - 1
         if end == week:
             return index
@@ -258,9 +256,9 @@ def due_reflection(
     """
     reference = now if now is not None else datetime.now(UTC)
     elapsed = elapsed_days(anchor, reference)
-    if elapsed % _DAYS_PER_WEEK + 1 != _DAYS_PER_WEEK:
+    if elapsed % DAYS_PER_WEEK + 1 != DAYS_PER_WEEK:
         return None
-    week = elapsed // _DAYS_PER_WEEK + 1
+    week = elapsed // DAYS_PER_WEEK + 1
     if week > TOTAL_PROGRAM_WEEKS:
         return None
     level, token = _closing_level(week)
