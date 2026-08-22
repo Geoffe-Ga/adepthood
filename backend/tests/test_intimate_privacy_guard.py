@@ -424,11 +424,13 @@ async def test_intimate_prior_body_excluded_from_resonance_prompt(
 ) -> None:
     """Intimate sibling body must not appear in the cloud prompt for a personal entry.
 
-    Regression guard for the ``_recent_prior_bodies`` side-channel (issue #895):
-    before the fix, the helper loaded ALL sibling entries' bodies — including
-    intimate ones — and embedded them verbatim in the ``<prior>`` block sent to
-    the cloud LLM.  The fix adds ``classification != INTIMATE`` to the WHERE
-    clause.  This test would be RED without that filter.
+    Regression guard for the recency-window side-channel (issue #895): before
+    the fix, the query loaded ALL sibling entries' bodies — including intimate
+    ones — and embedded them verbatim in the ``<prior>`` block sent to the cloud
+    LLM.  The fix adds ``classification != INTIMATE`` to the WHERE clause.  This
+    test would be RED without that filter.  The query now lives in
+    ``services.higher_self_grounding._recent_entry_bodies``; this test reaches it
+    through the endpoint, so it pins the guard wherever the query is written.
 
     Setup:
       - Older **intimate** entry whose body contains ``_INTIMATE_SENTINEL``.
@@ -439,7 +441,7 @@ async def test_intimate_prior_body_excluded_from_resonance_prompt(
       - None of the captured prompts contain ``_INTIMATE_SENTINEL`` (the
         intimate body was excluded from ``<prior>``).
 
-    Without the fix, ``_recent_prior_bodies`` would return the intimate entry's
+    Without the fix, ``_recent_entry_bodies`` would return the intimate entry's
     body (``_INTIMATE_SENTINEL``), ``build_prompt`` would embed it in the
     ``<prior>`` block, and the second assertion would fail — pinning the fix.
     """
@@ -478,7 +480,7 @@ async def test_intimate_prior_body_excluded_from_resonance_prompt(
     for i, captured in enumerate(spy.captured_prompts):
         assert _INTIMATE_SENTINEL not in captured, (
             f"Intimate sentinel found in prompt #{i} sent to the cloud LLM. "
-            "``_recent_prior_bodies`` is leaking intimate sibling bodies — "
+            "``_recent_entry_bodies`` is leaking intimate sibling bodies — "
             "the ``classification != INTIMATE`` filter is missing or not applied."
         )
 
