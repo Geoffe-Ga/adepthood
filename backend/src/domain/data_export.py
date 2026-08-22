@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 from domain.ownership import OwnedBy
 from models.completion_suggestion import CompletionSuggestion
 from models.content_completion import ContentCompletion
+from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment
 from models.energy_plan import EnergyPlan
 from models.goal import Goal
@@ -174,6 +175,16 @@ MANIFEST: Mapping[str, ExportRule] = {
         "chapters_read",
         ContentCompletion,
         "Which chapters of the course the account marked read.",
+    ),
+    "corpusconsentevent": _include(
+        "corpus_consent_history",
+        CorpusConsentEvent,
+        "Every decision the account made about letting a source into the "
+        "corpus, and when. The corpus itself is exported, so the record of "
+        "what was agreed to -- and of a revocation, and how many fragments it "
+        "removed -- belongs with it; an archive that shows the writing but not "
+        "the consent behind it answers half the question a person asks when "
+        "they ask what is held.",
     ),
     "corpusfragment": _include(
         "corpus_fragments",
