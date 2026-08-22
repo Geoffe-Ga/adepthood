@@ -24,6 +24,12 @@ class UserPractice(SQLModel, table=True):
     remains a single row.  Mirrors the constraint from migration
     ``f6a7b8c9d0e1`` so SQLite tests inherit the same enforcement via
     ``metadata.create_all``.
+
+    ``custom_name`` is user-authored and deliberately **not** encrypted at rest,
+    unlike ``PracticeSession.reflection`` and ``PracticeSession.insight``. It is
+    a display label standing in the same list as the shared catalogue's own
+    practice names, chosen so a row reads as what it is -- not prose composed
+    about anything. The privacy policy names it among what is stored as written.
     """
 
     __table_args__ = (
