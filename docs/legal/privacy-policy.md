@@ -99,7 +99,9 @@ sentence above be read as covering the whole app. Issue #2330 tracks
 closing that gap.
 
 Deleting an entry inside the app hides it from every list immediately; the
-row is cleared when the account is deleted.
+row is cleared when the account is deleted. If that entry had been sorted
+into the corpus described below, its copy there is removed at the same
+moment, so nothing you have deleted goes on being read back to you.
 
 ## The three tiers, and what each one means
 
@@ -132,13 +134,41 @@ than three either way.
 There is one exception, and it is the reason this section exists rather
 than a one-line promise. A **document you upload** through "Bring in your
 writing" *is* forwarded to your Creek Vault at whatever tier you picked,
-Intimate included — see the next section for what a vault is and why that
-is a different thing from sending it to an AI. That upload path calls no
+Intimate included — see "Who else receives your data" below for what a
+vault is and why that is a different thing from sending it to an AI. That upload path calls no
 language model at any tier. If you have not configured a vault, the upload
 has nowhere to go and the screen tells you so.
 
 **Public** behaves as Personal does for everything above; the name
 anticipates sharing that does not exist yet.
+
+## The corpus, and how anything gets into it
+
+**Nothing you write is put into that corpus unless you turn it on.** It is
+off for every account until you say otherwise, and asking is a separate
+question from the tier you pick for a piece of writing — a tier is a
+decision about one entry, not permission to sort your journal into a
+searchable store. There is a switch per kind of material, and today the
+only kind is what you write in Adepthood itself.
+
+Turning it on has two consequences worth knowing before you do.
+
+The first is that **each entry is sent once to the language-model provider
+to be sorted** — one call per entry you write, and one more if you go back
+and change its wording or its tier. That call reads the entry and answers
+with which of the ten frequencies it speaks in; the answer, and your text,
+are then stored in the corpus. Nothing else in Adepthood does this, so with
+the switch off no entry of yours is ever sent anywhere at save time.
+
+The second is that **turning it back off deletes what it collected.** The
+corpus copies of your writing are removed, not merely hidden, and the
+entries themselves are untouched in your journal. Your decisions about this
+are kept as a dated record — which kind of material, what you decided, when
+— so that "did I agree to this, and when?" has an answer. That record holds
+no words of yours.
+
+An Intimate entry is never sorted into the corpus whatever this switch
+says; the tier section above is where that promise is written out in full.
 
 ## Who else receives your data
 
@@ -150,8 +180,10 @@ deployment is configured, or on your own key if you supply one). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
 an essay, up to three other pieces of your own non-Intimate writing as
 context — passages chosen out of the corpus of your own writing, or your
-recent entries while that corpus is empty — and the photograph of a
-handwritten page when you ask for it to be transcribed. It
+recent entries while that corpus is empty — the photograph of a
+handwritten page when you ask for it to be transcribed, and, **only if you
+have turned the corpus on**, the body of each non-Intimate entry once as it
+is saved, so that it can be sorted into the ten frequencies. It
 never receives an Intimate entry. If you bring your own key, the call goes
 to your account with that provider; the key is used for that one call and
 is never stored on the server.

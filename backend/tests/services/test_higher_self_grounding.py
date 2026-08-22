@@ -62,6 +62,10 @@ _STRANGER = 2
 # never appears in any assertion about what was gathered.
 _ENTRY_UNDER_REFLECTION = 9_000
 
+# Some other entry of the same account's, so "the entry itself" and "an earlier
+# morning" can never be the same row by accident.
+_OTHER_ENTRY = 9_001
+
 _INTIMATE_SENTINEL = "the thing I have told nobody"
 
 
@@ -79,6 +83,7 @@ async def _store_fragment(
     content: str,
     *,
     user_id: int = _OWNER,
+    source_entry_id: int | None = None,
     **weights: float,
 ) -> CorpusFragment:
     """Record one personal-tier fragment against ``user_id`` and commit it."""
@@ -90,6 +95,7 @@ async def _store_fragment(
             tier=JournalClassification.PERSONAL,
             source=CorpusSource.JOURNAL,
             classification=_classified(**weights),
+            source_entry_id=source_entry_id,
         ),
     )
     await session.commit()
@@ -537,3 +543,57 @@ def test_the_published_limit_fits_inside_the_prompt_builder_cap() -> None:
     widen the real exposure without touching the document.
     """
     assert GROUNDING_LIMIT <= MAX_PRIOR_ENTRIES
+
+
+# ---------------------------------------------------------------------------
+# Not reading itself
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_entry_under_reflection_is_not_returned_as_its_own_context(
+    db_session: AsyncSession,
+) -> None:
+    """A reflection is never grounded in the passage it is reflecting on.
+
+    Before the corpus had a writer this was unreachable, because nothing put a
+    journal entry into the corpus. It became reachable the moment one existed:
+    the entry would be classified, stored, retrieved by its own reflection, and
+    the model asked to draw a connection between a sentence and itself. The
+    exclusion is the same one the recency window has always applied; it now has
+    a ``source_entry_id`` to apply it through.
+    """
+    await _store_fragment(
+        db_session, "the entry itself", source_entry_id=_ENTRY_UNDER_REFLECTION, F1=0.9
+    )
+    await _store_fragment(db_session, "an earlier morning", source_entry_id=_OTHER_ENTRY, F1=0.8)
+
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert grounding.bodies == ("an earlier morning",)
+
+
+@pytest.mark.asyncio
+async def test_an_account_whose_only_fragment_is_the_entry_falls_back(
+    db_session: AsyncSession,
+) -> None:
+    """Excluding the last fragment leaves an empty corpus, not an empty grounding.
+
+    The fallback exists for an account with nothing in the corpus yet, and an
+    account whose only fragment has just been excluded is in that state for
+    this request. Answering with silence would give somebody's very first
+    reflection nothing to read.
+    """
+    await _store_fragment(
+        db_session, "the entry itself", source_entry_id=_ENTRY_UNDER_REFLECTION, F1=0.9
+    )
+    await _write_entry(db_session, "an earlier morning", entry_id=_OTHER_ENTRY)
+
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert grounding.source is GroundingSource.RECENT_ENTRIES
+    assert grounding.bodies == ("an earlier morning",)

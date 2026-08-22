@@ -109,6 +109,14 @@ POLICY: Mapping[str, TablePolicy] = {
         "Suggestions derived from the account's own journal entries.",
     ),
     "contentcompletion": _erase("user_id", "Which chapters the account marked read."),
+    "corpusconsentevent": _erase(
+        "user_id",
+        "The account's decisions about what of its writing could be "
+        "ontologized. The corpus those decisions governed goes with the "
+        "account, so a log of permissions over writing that no longer exists "
+        "is a record about nobody — and it names the account directly, which "
+        "the deletion receipt deliberately does not.",
+    ),
     "corpusfragment": _erase(
         "user_id",
         "The account's ontologized corpus — its own writing, classified into "
