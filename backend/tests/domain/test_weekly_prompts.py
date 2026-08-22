@@ -24,6 +24,8 @@ from domain.weekly_prompts import (
     WEEKS_PER_STAGE,
     get_prompt_for_week,
     prompt_title_for_week,
+    resolve_week_prompt,
+    stage_prompts,
 )
 
 _MANIFEST = Path(__file__).resolve().parents[2] / "content" / "manifest.json"
@@ -37,6 +39,17 @@ _EXPECTED_STAGE_COUNT = 10
 # Ten stages, but eight run three weeks and two run six: 8*3 + 2*6 == 36.
 _EXPECTED_TOTAL_WEEKS = 36
 _LAST_STAGE_FIRST_WEEK = 31
+
+# Beige is the shortest chapter in the snapshot; Red is the first stage that
+# carries four prompts, and Orange is the one whose four all state a cadence.
+_BEIGE_PROMPT_COUNT = 3
+_RED_STAGE_NUMBER = 3
+_RED_FIRST_WEEK = 7
+_ORANGE_STAGE_NUMBER = 5
+
+# Each stage's first program week, in stage order: eight three-week stages
+# then two six-week ones.
+_STAGE_FIRST_WEEKS = [1, 4, 7, 10, 13, 16, 19, 22, 25, 31]
 
 
 def _manifest_stages() -> set[int]:
@@ -157,3 +170,97 @@ def test_module_hardcodes_no_prompt_text_or_stage_name() -> None:
     assert "25 Curiosities" not in source
     for fabricated in _FABRICATED_BANDS:
         assert fabricated not in source
+
+
+# ── Stage-scoped resolution (all of a stage's prompts, with cadence) ─────
+
+
+def test_stage_prompts_returns_every_prompt_of_a_four_prompt_stage() -> None:
+    """Red is the first stage whose chapter carries four prompts."""
+    stage = stage_prompts(_RED_STAGE_NUMBER)
+
+    assert stage is not None
+    assert stage.band == "Red"
+    assert stage.first_week == _RED_FIRST_WEEK
+    assert [p.ordinal for p in stage.prompts] == [1, 2, 3, 4]
+
+
+def test_stage_prompts_returns_beiges_three() -> None:
+    """Beige is the floor: three prompts, not the four a fixed count would assume."""
+    stage = stage_prompts(1)
+
+    assert stage is not None
+    assert stage.band == "Beige"
+    assert stage.first_week == 1
+    assert len(stage.prompts) == _BEIGE_PROMPT_COUNT
+
+
+def test_stage_prompts_carries_the_cadence_the_chapter_states() -> None:
+    """Cadence is opaque display prose, passed through from the content."""
+    stage = stage_prompts(_ORANGE_STAGE_NUMBER)
+
+    assert stage is not None
+    assert [p.cadence for p in stage.prompts] == ["At least 4x per week"] * 4
+
+
+def test_stage_prompts_first_week_tiles_the_whole_program() -> None:
+    """Each stage starts the week after the previous one ends, with no gap."""
+    boundaries = [stage_prompts(number) for number in range(1, len(PROMPT_BANDS) + 1)]
+
+    assert all(stage is not None for stage in boundaries)
+    starts = [stage.first_week for stage in boundaries if stage is not None]
+    assert starts == _STAGE_FIRST_WEEKS
+
+
+@pytest.mark.parametrize("stage_number", [0, -1, 11])
+def test_stage_prompts_out_of_range_is_none(stage_number: int) -> None:
+    """An eleventh stage is an ontology change, not a lookup that returns something."""
+    assert stage_prompts(stage_number) is None
+
+
+# ── Addressing a specific prompt within a week's stage ──────────────────
+
+
+def test_resolve_week_prompt_defaults_to_the_prompt_the_week_draws() -> None:
+    resolved = resolve_week_prompt(1)
+
+    assert resolved is not None
+    assert resolved.band == "Beige"
+    assert resolved.prompt.ordinal == 1
+    assert resolved.default_title == "Beige week 1 Prompt #1"
+
+
+def test_resolve_week_prompt_honours_an_explicit_ordinal() -> None:
+    """A user in Beige week 1 may answer Beige's third prompt instead of its first."""
+    resolved = resolve_week_prompt(1, ordinal=_BEIGE_PROMPT_COUNT)
+
+    assert resolved is not None
+    assert resolved.prompt.ordinal == _BEIGE_PROMPT_COUNT
+    assert resolved.default_title == f"Beige week 1 Prompt #{_BEIGE_PROMPT_COUNT}"
+    assert resolved.question == prompts_for_color("Beige")[_BEIGE_PROMPT_COUNT - 1].text
+
+
+def test_resolve_week_prompt_rejects_an_ordinal_the_stage_does_not_carry() -> None:
+    """Beige has three prompts, so its fourth does not exist."""
+    assert resolve_week_prompt(1, ordinal=_BEIGE_PROMPT_COUNT + 1) is None
+
+
+@pytest.mark.parametrize("week_number", [0, 37])
+def test_resolve_week_prompt_out_of_range_is_none(week_number: int) -> None:
+    assert resolve_week_prompt(week_number, ordinal=1) is None
+
+
+def test_get_prompt_for_week_accepts_an_ordinal() -> None:
+    """The week-scoped accessor stays week-scoped, and gains an optional ordinal."""
+    default = get_prompt_for_week(1)
+    third = get_prompt_for_week(1, ordinal=_BEIGE_PROMPT_COUNT)
+
+    assert default is not None
+    assert third is not None
+    assert third != default
+    assert get_prompt_for_week(1, ordinal=_BEIGE_PROMPT_COUNT + 1) is None
+
+
+def test_prompt_title_for_week_names_the_addressed_prompt() -> None:
+    assert prompt_title_for_week(1, ordinal=2) == "Beige week 1 Prompt #2"
+    assert prompt_title_for_week(1, ordinal=_BEIGE_PROMPT_COUNT + 1) is None
