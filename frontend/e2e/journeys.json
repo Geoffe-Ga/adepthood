@@ -92,14 +92,14 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved. Still uncovered, and not for want of a spec: the routes live on the server, but no frontend code calls them. The API client exports no wrapper for PUT /stages/progress or GET /stages/{stage_number}/progress, and the optimistic advance machinery MapScreen would have used was deleted rather than wired up. A spec would have to hand-roll the request, which registers as coverage of a screen-to-client seam that does not exist.",
+    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. Still uncovered because no spec does that yet.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
       "routes": [
         "GET /stages",
+        "GET /stages/program-calendar",
         "GET /stages/wheel",
-        "PUT /stages/progress",
         "GET /stages/{stage_number}/progress"
       ],
       "tables": ["stageprogress", "coursestage"]
