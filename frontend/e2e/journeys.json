@@ -132,6 +132,18 @@
     "issue": 2317
   },
   {
+    "id": "account.export-my-data",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
+      "client": ["users", "journal", "auth"],
+      "routes": ["POST /journal/", "GET /users/me/export", "GET /users/me/export/journal.md"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
+  },
+  {
     "id": "account.delete",
     "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt.",
     "crosses": {

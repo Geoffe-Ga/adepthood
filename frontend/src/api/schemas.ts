@@ -134,6 +134,27 @@ export const accountDeletionReceiptSchema = z.object({
 export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchema>;
 
 /**
+ * Response for ``GET /users/me/export``: the whole archive.
+ *
+ * Validated at the envelope only. The collections underneath are the user's
+ * own rows across two dozen tables, and a schema that pinned their shapes
+ * would be a second copy of the backend's models that goes stale the first
+ * time a column is added — turning an ordinary migration into a client that
+ * refuses to hand somebody their journal back. What the client actually
+ * depends on is the envelope: that this is an Adepthood archive, of a version
+ * it understands, with named collections in it.
+ */
+export const dataExportArchiveSchema = z.object({
+  format: z.literal('adepthood-export'),
+  format_version: z.number().int().positive(),
+  exported_at: z.string().min(1),
+  records: z.record(z.string(), z.array(z.unknown())),
+  not_included: z.record(z.string(), z.string()),
+});
+
+export type DataExportArchiveT = z.infer<typeof dataExportArchiveSchema>;
+
+/**
  * Response for ``POST /auth/password-reset/request``.  Always 202 with
  * the same body shape regardless of whether the email is registered --
  * the message is the SPEC R4 anti-enumeration constant.

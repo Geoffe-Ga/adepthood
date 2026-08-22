@@ -1,6 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
+  Download,
   FileText,
   FolderUp,
   Globe,
@@ -112,6 +113,23 @@ const CorpusSection = ({ onSeedCorpus }: { onSeedCorpus: () => void }): React.JS
   </EditorialSection>
 );
 
+/**
+ * Your data group: the copy you can take away. It sits above Session on
+ * purpose -- deletion is down there, and the only honest order is "here is how
+ * to keep your writing" before "here is how to destroy it".
+ */
+const YourDataSection = ({ onExportData }: { onExportData: () => void }): React.JSX.Element => (
+  <EditorialSection title="Your data" testID="settings-group-your-data">
+    <SettingsRow
+      icon={Download}
+      label="Export my data"
+      description="Download everything you have written, as JSON and as a readable journal."
+      onPress={onExportData}
+      testID="settings-row-export-data"
+    />
+  </EditorialSection>
+);
+
 interface SessionSectionProps {
   onLogout: () => void;
   onDeleteAccount: () => void;
@@ -185,6 +203,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
   const openSeedCorpus = useCallback(() => navigation.navigate('SeedCorpus'), [navigation]);
+  const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
   const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
@@ -200,6 +219,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <PrivacySection />
       <ChooseDepthsSection />
       <SanghaSection />
+      <YourDataSection onExportData={openExportData} />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
       <LegalSection />

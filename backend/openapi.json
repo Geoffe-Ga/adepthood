@@ -14021,6 +14021,102 @@
         ]
       }
     },
+    "/users/me/export": {
+      "get": {
+        "description": "Stream everything the caller has written, as a JSON archive.\n\nStreamed rather than assembled and returned, because the account this\nfeature exists for — the one with years of journal in it — is exactly the\none a buffered response would fail.",
+        "operationId": "export_my_data_users_me_export_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export My Data",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/users/me/export/journal.md": {
+      "get": {
+        "description": "Stream the caller's journal as Markdown — the readable half of the pair.",
+        "operationId": "export_my_journal_as_markdown_users_me_export_journal_md_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export My Journal As Markdown",
+        "tags": [
+          "export"
+        ]
+      }
+    },
     "/users/me/timezone": {
       "put": {
         "description": "Update the authenticated caller's IANA timezone.\n\nValidation mirrors signup (see :class:`~schemas.timezone.TimezoneUpdate`):\nan unknown or oversized name is rejected with 422 and blank input coerces\nto ``\"UTC\"``.  The dependency resolves the caller from their JWT, so only\nthat user's own row is ever mutated.",
