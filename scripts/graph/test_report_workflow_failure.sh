@@ -157,6 +157,22 @@ calls="$(cat "$CALLS")"
 contains "another workflow's tracker does not absorb this failure" "issue create" "$calls"
 lacks "another workflow's tracker is not commented on" "issue comment 99" "$calls"
 
+# --- a search that could not run is not "nothing is tracking this" ----------
+# The guard this covers is the one the script argues for in its own comment: a
+# failed search read as "none exists" turns one tracking issue into one per run.
+# It was uncovered until now, and the search's exit status travels through a
+# pipe, so nothing else would notice it being swallowed.
+: > "$CALLS"
+out="$(ISSUE_LIST_JSON='[]' ISSUE_LIST_EC=1 run)"; ec=$?
+if [[ "$ec" -ne 0 ]]; then
+  ok "a search that could not run exits non-zero"
+else
+  bad "a search that could not run exits non-zero (got 0)"
+fi
+calls="$(cat "$CALLS")"
+lacks "a search that could not run files nothing" "issue create" "$calls"
+lacks "a search that could not run comments on nothing" "issue comment" "$calls"
+
 # --- a write failure is reported, not swallowed -----------------------------
 # An alarm that fails silently is the thing being fixed.
 out="$(ISSUE_LIST_JSON='[]' CREATE_EC=1 run)"; ec=$?

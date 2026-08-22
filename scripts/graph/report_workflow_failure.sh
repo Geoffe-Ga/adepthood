@@ -105,9 +105,14 @@ detail="$(printf '**Workflow:** `%s`\n**Failing step:** `%s`\n**Run:** %s\n\nFir
 
 # --- is anything already tracking this? -------------------------------------
 # A failed search is NOT "no tracking issue". Exit rather than file a duplicate.
+# The marker is passed as a jq VARIABLE rather than spliced into the filter
+# text. `--workflow` is a caller-supplied value, and a filter built by string
+# interpolation is one odd character away from either a syntax error or a
+# filter that matches something other than the literal marker. `gh --jq` has no
+# --arg, so the search pipes through jq proper.
 existing="$(gh issue list "${repo_args[@]+"${repo_args[@]}"}" \
   --state open --limit "$ISSUE_SCAN_LIMIT" --json number,body \
-  --jq ".[] | select((.body // \"\") | contains(\"$marker\")) | .number")" || {
+  | jq -r --arg marker "$marker" '.[] | select((.body // "") | contains($marker)) | .number')" || {
   echo "::error::report-workflow-failure: could not search for the tracking issue of $workflow — refusing to file one, because a failed search read as 'none exists' turns one tracking issue into one per run." >&2
   exit "$EXIT_FAILED"
 }
