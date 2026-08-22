@@ -61,12 +61,15 @@ that record.
 
 Your entries live in the operator's PostgreSQL database.
 
-Three things are encrypted in that database: **the body of every journal
-entry**, **the text of a passage you promote out of one**, and **each
-fragment of your writing held in the corpus your reflections are drawn
-from**. They are encrypted with a key the operator configures, and a
-production server refuses to start without one, so there is no version of
-this service that quietly stores entries in the clear.
+Everything you write in the journal is encrypted in that database, and so
+is everything derived from it: **the body and title of every entry**, **the
+text of a passage you promote out of one**, **each fragment of your writing
+held in the corpus your reflections are drawn from**, **every margin note —
+including the sentence of yours it quotes back at you**, **the suggestions
+drawn from your entries**, and **your answers to the weekly prompts**. They
+are encrypted with a key the operator configures, and a production server
+refuses to start without one, so there is no version of this service that
+quietly stores your writing in the clear.
 
 That protection is real and it is narrow, so here is its shape. The keys
 belong to the operator, not to you. Encryption at rest defends against
@@ -74,11 +77,14 @@ someone who walks off with the database — a stolen backup, a copied disk.
 It does not put your writing beyond the reach of the person holding the
 key. **Anyone who operates Adepthood can read what is in its database.**
 
-And not everything in an entry lives in those three columns. **A margin note
-— including the sentence of yours it quotes back at you — is stored as
-written**, as are course prompt answers, habit and practice records, and
-the rest of what you track. Treat "encrypted" as covering the entry body,
-not the whole app.
+The line falls between what you **write** and what you **track**. Your
+journal writing is encrypted. The records you keep are not: habit names,
+goal titles and descriptions, the name you give a practice, and your
+practice logs — **including the reflection and the insight you write after
+a session** — are stored as written. Those last two are prose you composed,
+held in the clear, and this document would rather say so than let the
+sentence above be read as covering the whole app. Issue #2330 tracks
+closing that gap.
 
 Deleting an entry inside the app hides it from every list immediately; the
 row is cleared when the account is deleted.

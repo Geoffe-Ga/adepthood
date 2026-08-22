@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from domain import detection
+from domain import detection, resonance
 from domain.detection import (
     MAX_HITS,
     CompletionDetected,
@@ -14,7 +14,11 @@ from domain.detection import (
     build_detection_prompt,
     detect_completions,
 )
-from models.completion_suggestion import _LABEL_MAX, CompletionTargetType
+from models.completion_suggestion import (
+    _ANCHOR_TEXT_MAX,
+    _LABEL_MAX,
+    CompletionTargetType,
+)
 
 _BODY = (
     "This morning I meditated for twenty minutes by the window. "
@@ -53,13 +57,24 @@ def test_valid_target_types_match_the_model_enum() -> None:
     assert {t.value for t in CompletionTargetType} == detection.VALID_TARGET_TYPES
 
 
-def test_label_max_matches_the_db_column() -> None:
-    """LABEL_MAX must equal the CompletionSuggestion.label column cap (#843 review).
+def test_label_max_matches_the_model_cap() -> None:
+    """LABEL_MAX must equal the CompletionSuggestion.label cap (#843 review).
 
-    A larger domain cap would let a detected label pass here and then fail at DB
-    insert in the endpoint layer.
+    The column is ``EncryptedString`` (Text), so the DB no longer refuses an
+    over-long label the way it once did: this sanitizer is the only enforcement
+    left, and drift between the two constants would silently widen it.
     """
     assert detection.LABEL_MAX == _LABEL_MAX
+
+
+def test_anchor_text_max_matches_the_model_cap() -> None:
+    """The quote bound this module applies must equal the anchor_text cap.
+
+    ``detection`` reuses ``resonance._quote_span``, whose ``ANCHOR_TEXT_MAX``
+    is what actually refuses an over-long anchor now that the column holds
+    ciphertext and cannot bound the plaintext itself.
+    """
+    assert resonance.ANCHOR_TEXT_MAX == _ANCHOR_TEXT_MAX
 
 
 @pytest.mark.asyncio
