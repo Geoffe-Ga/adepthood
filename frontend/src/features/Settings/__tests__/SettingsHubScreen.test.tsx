@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, afterEach, beforeEach, jest */
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
@@ -18,6 +18,22 @@ jest.mock('@/context/AuthContext', () => ({
 jest.mock('@/utils/openExternalUrl', () => ({
   openExternalUrl: (url: string) => mockOpenExternalUrl(url),
 }));
+
+// The Sangha invite is configuration with no default, so the hub renders no
+// Sangha surface unless a test supplies one. Everything else in config is left
+// real: the depth-preferences store reaches the API client, which needs it.
+let mockSanghaInviteUrl = '';
+
+jest.mock('@/config', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/config');
+  // `defineProperty` rather than a `get` in the object literal: Babel's
+  // object-spread helper reads a literal getter once while building the
+  // object, which would freeze the invite at its value on the first require.
+  return Object.defineProperty({ ...actual }, 'SANGHA_INVITE_URL', {
+    enumerable: true,
+    get: (): string => mockSanghaInviteUrl,
+  });
+});
 
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
@@ -283,5 +299,51 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
     fireEvent.press(getByTestId('settings-row-seed-corpus'));
 
     expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Digital Sangha's front door, mounted in the hub.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the Digital Sangha door', () => {
+  const SANGHA_URL = 'https://discord.gg/hub-test-sangha';
+
+  afterEach(() => {
+    mockSanghaInviteUrl = '';
+  });
+
+  test('says nothing about the Sangha when no invite is configured', () => {
+    // The default for this file: an unconfigured build must never ship a row
+    // that opens nothing.
+    const { queryByTestId } = render(<SettingsHubScreen />);
+
+    expect(queryByTestId('settings-group-sangha')).toBeNull();
+  });
+
+  test('mounts the section once an invite is configured', () => {
+    mockSanghaInviteUrl = SANGHA_URL;
+
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-sangha')).toBeTruthy();
+  });
+
+  test('hands the invite to the platform browser rather than opening it inside', () => {
+    mockSanghaInviteUrl = SANGHA_URL;
+
+    const { getByTestId } = render(<SettingsHubScreen />);
+    fireEvent.press(getByTestId('settings-row-sangha-discord'));
+
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith(SANGHA_URL);
+  });
+
+  test('navigates nowhere: the door leaves the app instead of embedding it', () => {
+    mockSanghaInviteUrl = SANGHA_URL;
+
+    const { getByTestId } = render(<SettingsHubScreen />);
+    fireEvent.press(getByTestId('settings-row-sangha-discord'));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

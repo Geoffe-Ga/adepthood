@@ -45,6 +45,14 @@ ENV EXPO_PUBLIC_SENTRY_ENVIRONMENT=$EXPO_PUBLIC_SENTRY_ENVIRONMENT
 ARG EXPO_PUBLIC_SENTRY_RELEASE
 ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
 
+# And the Digital Sangha's Discord invite, for the third time the same reason.
+# This one has no default at all -- undeclared here, `resolveEnv` returns '',
+# the resolver refuses to render a door, and the web build ships with the
+# Sangha silently missing. The Gumroad URLs are absent from this list on
+# purpose: they carry safe defaults, so an undeclared ARG costs nothing.
+ARG EXPO_PUBLIC_SANGHA_INVITE_URL
+ENV EXPO_PUBLIC_SANGHA_INVITE_URL=$EXPO_PUBLIC_SANGHA_INVITE_URL
+
 RUN npx expo export --platform web
 
 # ---- Serve stage ----

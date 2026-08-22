@@ -177,6 +177,22 @@ asks the operating system's push service for a token, which is kept on your
 device. The reminders themselves are scheduled locally — their text never
 leaves your phone, and no server holds your push token.
 
+## Links that leave the app
+
+Some places in Adepthood hand you to somebody else's website — the privacy
+policy and terms you are reading, and the Discord invite for the Digital
+Sangha. Following one opens your ordinary browser or the other app, and from
+that point you are their visitor under their terms and their privacy policy,
+not this one.
+
+The Discord invite is worth saying plainly. Adepthood sends Discord nothing
+about you: no account is linked, no identifier is passed, no message is
+posted, and nothing you write here is carried across. Adepthood is not told
+whether you followed the link, whether you stayed, or who you spoke to, and
+what you do there never comes back. It is a door, and it only opens outward.
+Discord is optional in the same way every other depth is: turning the Sangha
+off in Settings removes the door, and the choice is remembered.
+
 ## What is on your device
 
 Your session token and, if you supply one, your model provider key are held
