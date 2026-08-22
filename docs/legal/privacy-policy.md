@@ -66,10 +66,22 @@ is everything derived from it: **the body and title of every entry**, **the
 text of a passage you promote out of one**, **each fragment of your writing
 held in the corpus your reflections are drawn from**, **every margin note —
 including the sentence of yours it quotes back at you**, **the suggestions
-drawn from your entries**, and **your answers to the weekly prompts**. They
-are encrypted with a key the operator configures, and a production server
-refuses to start without one, so there is no version of this service that
-quietly stores your writing in the clear.
+drawn from your entries**, and **your answers to the weekly prompts**. One
+thing that is not your writing is encrypted alongside them: **the access key
+for a private vault, if you connect one**. They are encrypted with a key the
+operator configures, and a production server refuses to start without one, so
+there is no version of this service that quietly stores your writing in the
+clear.
+
+**If you connect your own vault**, Adepthood stores the address you gave it
+and the key that opens it, and uses them only to send your own entries to
+your own vault. Once stored, the key is never sent back out — no screen and
+no API response will show it to you or to anyone else — and it is deleted
+along with everything else when you delete your account. The same caveat
+below applies to it as to your writing: it is encrypted with the operator's
+key, so it is protected against a stolen disk and not against the operator.
+If you have not connected a vault, none of this applies to you and nothing of
+yours leaves for one.
 
 That protection is real and it is narrow, so here is its shape. The keys
 belong to the operator, not to you. Encryption at rest defends against

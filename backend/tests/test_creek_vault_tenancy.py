@@ -144,8 +144,16 @@ def configured_vault(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _client_for(user_id: int) -> CreekVaultClient:
-    """Resolve the vault client the request-time gate hands to ``user_id``."""
-    return vault_dependency.get_creek_vault_client(user_id)
+    """Resolve the deployment-wide vault client ``user_id`` is handed.
+
+    The environment half of the request-time gate, reached directly because that
+    is the whole of what this family is about: these tests are driven against a
+    bare environment with no database in sight, and the per-user half -- a
+    connection stored against an account, which outranks everything here -- has
+    its own suite in ``test_per_user_vault_config.py``. Every user in this module
+    has connected nothing, which is exactly the state that reaches this path.
+    """
+    return vault_dependency.deployment_vault_client(user_id)
 
 
 def _record_text(record: logging.LogRecord) -> str:

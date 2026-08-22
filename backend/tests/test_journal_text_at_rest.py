@@ -77,6 +77,23 @@ _JOURNAL_TEXT_COLUMNS: frozenset[str] = frozenset(
     }
 )
 
+# Columns encrypted for a reason other than holding journal text. They are named
+# here rather than folded into the set above because the distinction is the
+# whole subject of this module: the argument for encrypting journal text is that
+# a plaintext copy beside the ciphertext is the copy a stolen dump yields, and
+# that argument does not apply to a value the user never wrote. Keeping them
+# apart is what lets the inventory above stay readable as "the journal's own
+# text" while the assertion below still refuses to let any encrypted column go
+# undeclared.
+_OTHER_ENCRYPTED_COLUMNS: frozenset[str] = frozenset(
+    {
+        # A credential for a third-party service the user connected. Encrypted
+        # because it is a live secret at rest, not because it is anyone's
+        # writing.
+        "uservaultconfig.api_key",
+    }
+)
+
 _ANCHOR = "the willow bending without breaking"
 _NOTE = "A recurring image of yielding strength."
 _ESSAY = "The willow is this entry's whole argument, in one plant."
@@ -194,8 +211,15 @@ def test_the_pinned_inventory_is_exactly_what_the_schema_encrypts() -> None:
     A journal-text column that ships plaintext, and an encrypted column quietly
     reverted to plaintext, both fail here — the second being the one an ORM
     round-trip cannot see.
+
+    The comparison is against both inventories together rather than against
+    ``_JOURNAL_TEXT_COLUMNS`` alone, so that a column encrypted for some *other*
+    reason has to be declared as such instead of quietly widening the set this
+    module is named after. A subset check would have been the smaller edit and
+    the wrong one: it would stop failing when a genuinely new encrypted column
+    appeared, which is half of what this guard is for.
     """
-    assert _encrypted_columns() == _JOURNAL_TEXT_COLUMNS
+    assert _encrypted_columns() == _JOURNAL_TEXT_COLUMNS | _OTHER_ENCRYPTED_COLUMNS
 
 
 @pytest.mark.asyncio

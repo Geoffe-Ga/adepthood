@@ -6554,6 +6554,53 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VaultConnectionRequest": {
+        "description": "Where a user's own vault lives and the credential that opens it.\n\n``api_key`` is write-only by construction: it exists on this request and on\nno response, so there is no code path that could return it and no reviewer\nwho has to check that none does.",
+        "properties": {
+          "api_key": {
+            "maxLength": 4096,
+            "title": "Api Key",
+            "type": "string"
+          },
+          "vault_url": {
+            "maxLength": 2048,
+            "title": "Vault Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vault_url",
+          "api_key"
+        ],
+        "title": "VaultConnectionRequest",
+        "type": "object"
+      },
+      "VaultConnectionResponse": {
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.",
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "vault_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vault Url"
+          }
+        },
+        "required": [
+          "connected",
+          "vault_url"
+        ],
+        "title": "VaultConnectionResponse",
+        "type": "object"
+      },
       "VaultDisposition": {
         "description": "What the deletion did — and did not do — outside adepthood.",
         "properties": {
@@ -14108,6 +14155,155 @@
         "summary": "Create Plan",
         "tags": [
           "energy"
+        ]
+      }
+    },
+    "/vault/connection": {
+      "delete": {
+        "description": "Remove this account's vault connection, credential included.\n\nIdempotent, and 204 either way: an account that had no connection ends up in\nthe state it asked for, so reporting a 404 would describe the plumbing\nrather than the outcome.",
+        "operationId": "delete_vault_connection_vault_connection_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vault Connection",
+        "tags": [
+          "vault"
+        ]
+      },
+      "get": {
+        "description": "Report whether this account has connected a vault, and where it points.\n\nNever a 404 for an account that has connected nothing: \"you have no vault\"\nis an answer about a resource that exists conceptually for every account,\nnot a missing resource, and answering it plainly is what lets a client\nrender the connect affordance without first handling an error.",
+        "operationId": "get_vault_connection_vault_connection_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultConnectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Vault Connection",
+        "tags": [
+          "vault"
+        ]
+      },
+      "put": {
+        "description": "Set or replace this account's vault connection, refusing a URL it cannot use.\n\nThe URL is judged before anything is written, so a refused connection leaves\nno row behind and the account keeps whatever it had -- a half-applied\nreplacement would pair a new URL with an old credential and send one vault's\nsecret to another.\n\n``PUT`` rather than ``POST`` because the resource is singular and the\noperation is idempotent: an account has at most one vault, and sending the\nsame body twice leaves the same one connection.",
+        "operationId": "put_vault_connection_vault_connection_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VaultConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultConnectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Vault Connection",
+        "tags": [
+          "vault"
         ]
       }
     },

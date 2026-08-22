@@ -410,6 +410,24 @@ _UNUSABLE_URL_EVENT = (
     "creek vault URL is unusable; using the local fallback -- "
     "fix CREEK_VAULT_URL or unset it to run without a vault"
 )
+# The same defect on the per-user path, and a separate message because the
+# remedy is a different person's. The deployment-wide record tells an operator
+# which variable to edit; this one is about a vault somebody connected for
+# themselves, which no operator can fix by editing an environment. Neither the
+# URL nor the account is named: the URL is the field most likely to have a
+# credential in it, and the account did nothing wrong -- an ordinary user whose
+# vault moved is not an incident, and filing them in a warning stream by id
+# would read as one.
+_UNUSABLE_STORED_URL_EVENT = (
+    "a connected creek vault URL is unusable; that user gets the local fallback -- "
+    "they can reconnect their vault to fix it"
+)
+
+# What the per-user degrade record says the configuration came from, in place of
+# the environment variable name its deployment-wide sibling carries. A field
+# rather than prose so the two records stay countable together on ``url_defect``
+# while still being separable by where the bad value was stored.
+_STORED_VAULT_SOURCE = "user_vault_connection"
 
 
 def _protocol_fields(protocol: str) -> Mapping[str, str]:
@@ -511,6 +529,24 @@ def _url_defect_fields(finding: VaultUrlFinding) -> Mapping[str, str]:
     """
     return {
         "env_var": CREEK_VAULT_URL_ENV_VAR,
+        "url_defect": finding.defect.value,
+        "url_detail": finding.detail,
+    }
+
+
+def _stored_url_defect_fields(finding: VaultUrlFinding) -> Mapping[str, str]:
+    """Build the structured fields the per-user unusable-URL degrade carries.
+
+    The same two defect fields as :func:`_url_defect_fields`, so one dashboard
+    filter counts "the vault URL is unusable" across both paths, and
+    ``config_source`` in place of ``env_var`` because there is no variable to
+    name -- the value came out of a row. What is absent is the same in both:
+    the configured URL, which is the setting most likely to have a credential
+    pasted into it, and here also the account, which is nobody an operator
+    should be reading about in a warning stream for having a vault that moved.
+    """
+    return {
+        "config_source": _STORED_VAULT_SOURCE,
         "url_defect": finding.defect.value,
         "url_detail": finding.detail,
     }
@@ -1457,6 +1493,17 @@ class HttpCreekVaultClient:
         self._last_handshake = HandshakeResult.unavailable()
         self._degrade_reason: HandshakeDegradeReason | None = None
 
+    @property
+    def base_url(self) -> str:
+        """The vault this adapter reaches, trailing slash stripped.
+
+        Read-only, and the credential has no counterpart: which vault an adapter
+        was built for is answerable -- it is how a caller can tell one user's
+        adapter from another's -- while what opens it is not, which is why this
+        class still has no ``__repr__`` of its own.
+        """
+        return self._url
+
     def _active_client(self) -> httpx.AsyncClient:
         """Return the injected client, or borrow the shared pool's (built on demand).
 
@@ -2178,3 +2225,52 @@ def build_creek_vault_client() -> CreekVaultClient:
     # ``try`` around it would swallow a genuine bug in it as if it were a
     # misconfiguration.
     return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""))
+
+
+def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
+    """Return the adapter for a vault one user connected for themselves.
+
+    The per-user twin of :func:`build_creek_vault_client`, and the differences
+    between them are exactly the differences between the two configurations.
+
+    There is no protocol selector. That variable survives on the deployment-wide
+    path so a stale ``CREEK_VAULT_PROTOCOL=mcp`` left in an environment is never
+    silently reinterpreted as the transport it is not; nothing analogous exists
+    here, because nobody ever stored a transport choice against an account. MCP
+    is Creek Vault's *agent* surface and was never an application transport, so
+    application traffic on this path is HTTP ``/v1`` and only that.
+
+    There is no "unset means no vault" branch either. A row exists or it does
+    not, and the caller that has none never reaches this function -- whereas an
+    unset environment variable is a state the deployment-wide factory has to be
+    able to read.
+
+    What is shared is the judgement: :func:`~services.creek_vault_url.classify_vault_url`,
+    the same four rules in the same order, so a URL cannot be usable for a
+    deployment and unusable for a user. A defective one degrades **this caller
+    only** to the local fallback rather than raising, for the reason every
+    degrade in this seam exists: this runs inside a per-request dependency,
+    where a raise means the handler body never executes and the writer loses the
+    entry they were saving. Their vault being misconfigured must cost them the
+    optional capability, never the writing.
+
+    The write path already refuses every URL this can, so reaching the degrade
+    means a row got here some other way -- a restored backup, a rule tightened
+    after the row was written. It is still checked, because the alternative is
+    trusting a stored string to have been validated by a version of the code
+    that may not have existed when it was stored.
+
+    The degrade is counted under
+    :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED` rather than under a
+    thirteenth outcome of its own. That is true of the request -- there was no
+    usable vault behind it -- and a new member would be one the write path
+    ordinarily makes unreachable, which is the same objection
+    :class:`~services.creek_vault_url.VaultUrlDefect` states against a member no
+    rule can produce. What distinguishes this degrade from a user who simply
+    connected nothing is the WARNING, which the other path does not emit.
+    """
+    finding = classify_vault_url(url)
+    if finding is not None:
+        _LOGGER.warning(_UNUSABLE_STORED_URL_EVENT, extra=_stored_url_defect_fields(finding))
+        return LocalFallbackCreekVaultClient()
+    return HttpCreekVaultClient(url, api_key)

@@ -64,6 +64,7 @@ from routers.transcription import router as transcription_router
 from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
+from routers.vault_config import router as vault_config_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
@@ -742,6 +743,7 @@ app.include_router(depth_preferences_router)
 app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
+app.include_router(vault_config_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can

@@ -67,7 +67,12 @@ _REPO_URL_PATH = re.compile(r"https://github\.com/Geoffe-Ga/adepthood/blob/main/
 
 # Every column in the live schema that stores ciphertext, as ``table.column``.
 # The policy's sentence about what is encrypted was written against exactly
-# this set; see :func:`test_exactly_two_columns_are_encrypted`.
+# this set; see :func:`test_exactly_the_pinned_columns_are_encrypted`.
+#
+# All but the last hold the account's own writing, or something derived from
+# it. ``uservaultconfig.api_key`` is different in kind and the policy says so:
+# it is a credential the account supplied for a service of its own, encrypted
+# for the same reason but not a thing they wrote.
 _ENCRYPTED_COLUMNS = frozenset(
     {
         "completionsuggestion.anchor_text",
@@ -80,6 +85,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "marginalia.note",
         "promotedquote.anchor_text",
         "promptresponse.response",
+        "uservaultconfig.api_key",
     }
 )
 
@@ -186,7 +192,7 @@ def test_production_refuses_to_boot_unencrypted(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_exactly_the_pinned_columns_are_encrypted() -> None:
-    """Ciphertext covers the journal and everything derived from it, and no more.
+    """Ciphertext covers the journal, everything derived from it, and no more.
 
     The policy's promise is now the broad one -- what you write is encrypted --
     so this set is what makes that sentence true rather than aspirational.

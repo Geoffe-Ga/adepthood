@@ -269,6 +269,13 @@ POLICY: Mapping[str, TablePolicy] = {
     "userdepthpreferences": _erase("user_id", "Which optional depths the account had chosen."),
     "userpractice": _erase("user_id", "The account's assigned practices and its customisations."),
     "useruiflags": _erase("user_id", "One-time interface state."),
+    "uservaultconfig": _erase(
+        "user_id",
+        "The vault the account connected and the credential that opens it. "
+        "The credential is a live secret belonging to a third-party service "
+        "the account controls, so leaving the row behind would keep a working "
+        "key to somebody else's system after they asked to be forgotten.",
+    ),
     "walletaudit": _erase(
         "user_id",
         "The account's own wallet ledger goes with the wallet. Rows recording "

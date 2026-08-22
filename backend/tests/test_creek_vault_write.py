@@ -17,7 +17,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import deployment_vault_client
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -360,17 +360,19 @@ async def test_local_fallback_client_returns_unavailable_for_non_intimate_entry(
     )
 
 
-def test_get_creek_vault_client_returns_local_fallback_by_default(
+def test_deployment_vault_client_returns_local_fallback_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With no CREEK_VAULT_URL configured, the FastAPI provider yields the local fallback.
+    """With no CREEK_VAULT_URL configured, the deployment-wide path yields the fallback.
 
-    The provider now takes the caller's user id, since a configured vault belongs
-    to exactly one user; with no vault configured there is nobody it could belong
-    to, so the id chosen here is immaterial.
+    The deployment-wide half takes the caller's user id, since the vault it
+    describes belongs to exactly one user; with no vault configured there is
+    nobody it could belong to, so the id chosen here is immaterial. A user who
+    connected a vault of their own never reaches this path -- that resolution is
+    covered in ``test_per_user_vault_config.py``.
     """
     monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
-    client = get_creek_vault_client(_ANY_USER_ID)
+    client = deployment_vault_client(_ANY_USER_ID)
     assert isinstance(client, LocalFallbackCreekVaultClient)
 
 
