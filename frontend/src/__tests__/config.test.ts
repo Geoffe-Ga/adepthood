@@ -138,6 +138,52 @@ describe('config', () => {
     });
   });
 
+  describe('Digital Sangha invite URL', () => {
+    const ORIGINAL_ENV = { ...process.env };
+    const CUSTOM_INVITE_URL = 'https://discord.gg/example-sangha';
+
+    beforeEach(() => {
+      jest.resetModules();
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.EXPO_PUBLIC_SANGHA_INVITE_URL;
+    });
+
+    afterEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      jest.resetModules();
+    });
+
+    // Unlike the Gumroad links there is deliberately no default: the server
+    // and its permanent invite belong to the owner, and a placeholder would
+    // ship a dead link inside a binary that cannot be patched.
+    it('resolves to the empty string when no invite is configured', () => {
+      const config = loadConfig();
+
+      expect(config.SANGHA_INVITE_URL).toBe('');
+    });
+
+    it('never records a CONFIG_ERROR for a missing invite', () => {
+      const config = loadConfig();
+
+      expect(config.CONFIG_ERROR).toBeNull();
+    });
+
+    it('uses EXPO_PUBLIC_SANGHA_INVITE_URL verbatim when it is set', () => {
+      process.env.EXPO_PUBLIC_SANGHA_INVITE_URL = CUSTOM_INVITE_URL;
+
+      const config = loadConfig();
+
+      expect(config.SANGHA_INVITE_URL).toBe(CUSTOM_INVITE_URL);
+    });
+
+    it('does not borrow either Gumroad URL as a stand-in', () => {
+      const config = loadConfig();
+
+      expect(config.SANGHA_INVITE_URL).not.toBe(config.GUMROAD_PRODUCT_URL);
+      expect(config.SANGHA_INVITE_URL).not.toBe(config.GUMROAD_HELP_URL);
+    });
+  });
+
   // ``resolveEnv`` generalises the double-read workaround the Gumroad URLs
   // already use: babel-preset-expo rewrites a *static* ``process.env.EXPO_
   // PUBLIC_…`` reference to a build-time literal (the only route into a

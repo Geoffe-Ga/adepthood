@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import ast
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+
+from services import journal_encryption
 
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations" / "versions"
 
@@ -3325,3 +3329,272 @@ def test_cross_tenant_quarantine_migration_is_idempotent_on_sqlite(
     assert _quarantine_rows(db_url) == snapshot
     assert _goal_group_links(db_url) == _EXPECTED_GOAL_LINKS
     assert _journal_practice_links(db_url) == _EXPECTED_JOURNAL_LINKS
+
+
+# -- d4e5f6a7b8ca: encrypt every remaining journal-text column ---------------
+
+_JOURNAL_TEXT_BASE_REVISION = "c3d4e5f6a7b9"  # pragma: allowlist secret
+_JOURNAL_TEXT_REVISION = "d4e5f6a7b8ca"  # pragma: allowlist secret
+
+# The marker real ciphertext carries, spelled out so the round-trip pins the
+# on-disk format rather than trusting the helper that produced it.
+_CIPHERTEXT_MARKER = "enc::v1::"
+
+# The plaintext seeded before the upgrade, per ``table.column``. Every value is
+# recognisable prose, so a mangled downgrade cannot pass as a near-miss.
+_SEEDED_JOURNAL_TEXT: dict[str, str] = {
+    "journalentry.title": "What I could not say out loud",
+    "marginalia.anchor_text": "the willow bending without breaking",
+    "marginalia.note": "A recurring image of yielding strength.",
+    "marginalia.essay": "The willow is this entry's whole argument, in one plant.",
+    "completionsuggestion.label": "I walked the long way home",
+    "completionsuggestion.anchor_text": "I walked the long way home",
+    "promptresponse.response": "The week I stopped pretending it was fine.",
+}
+
+
+def _bootstrap_journal_text_tables(sync_url: str) -> None:
+    """Pre-create the four tables the encryption migration rewrites.
+
+    Each carries one row with plaintext in every target column, plus a second
+    row leaving the nullable columns NULL, so both branches of the transform are
+    observed. FKs are omitted deliberately: the migration touches only these
+    columns, and SQLite does not enforce them anyway.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " title VARCHAR(200)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE marginalia ("
+                " id INTEGER PRIMARY KEY,"
+                " journal_entry_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " kind VARCHAR(20) NOT NULL,"
+                " anchor_start INTEGER NOT NULL,"
+                " anchor_end INTEGER NOT NULL,"
+                " anchor_text VARCHAR(280) NOT NULL,"
+                " note VARCHAR(600) NOT NULL,"
+                " essay VARCHAR(10000)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE completionsuggestion ("
+                " id INTEGER PRIMARY KEY,"
+                " journal_entry_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " target_type VARCHAR(20) NOT NULL,"
+                " label VARCHAR(255) NOT NULL,"
+                " anchor_start INTEGER NOT NULL,"
+                " anchor_end INTEGER NOT NULL,"
+                " anchor_text VARCHAR(280) NOT NULL"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE promptresponse ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " week_number INTEGER NOT NULL,"
+                " question VARCHAR(1000) NOT NULL,"
+                " response VARCHAR(10000) NOT NULL"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message, title)"
+                " VALUES (1, 1, 'user', 'a page of thoughts', :title)"
+            ),
+            {"title": _SEEDED_JOURNAL_TEXT["journalentry.title"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO promptresponse (id, user_id, week_number, question, response)"
+                " VALUES (1, 1, 1, 'What is alive in you this week?', :response)"
+            ),
+            {"response": _SEEDED_JOURNAL_TEXT["promptresponse.response"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message, title)"
+                " VALUES (2, 1, 'user', 'an untitled page', NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO marginalia"
+                " (id, journal_entry_id, user_id, kind, anchor_start, anchor_end,"
+                "  anchor_text, note, essay)"
+                " VALUES (1, 1, 1, 'symbol', 11, 45, :anchor, :note, :essay)"
+            ),
+            {
+                "anchor": _SEEDED_JOURNAL_TEXT["marginalia.anchor_text"],
+                "note": _SEEDED_JOURNAL_TEXT["marginalia.note"],
+                "essay": _SEEDED_JOURNAL_TEXT["marginalia.essay"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO marginalia"
+                " (id, journal_entry_id, user_id, kind, anchor_start, anchor_end,"
+                "  anchor_text, note, essay)"
+                " VALUES (2, 1, 1, 'theme', 0, 6, :anchor, :note, NULL)"
+            ),
+            {
+                "anchor": _SEEDED_JOURNAL_TEXT["marginalia.anchor_text"],
+                "note": _SEEDED_JOURNAL_TEXT["marginalia.note"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO completionsuggestion"
+                " (id, journal_entry_id, user_id, target_type, label,"
+                "  anchor_start, anchor_end, anchor_text)"
+                " VALUES (1, 1, 1, 'habit', :label, 0, 26, :anchor)"
+            ),
+            {
+                "label": _SEEDED_JOURNAL_TEXT["completionsuggestion.label"],
+                "anchor": _SEEDED_JOURNAL_TEXT["completionsuggestion.anchor_text"],
+            },
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_journal_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Config]:
+    """Stamped SQLite config just before ``d4e5f6a7b8ca``, with a real key set.
+
+    A key must be configured or the encrypt/decrypt helpers are passthroughs and
+    the round-trip would prove nothing. The registry is process-cached, so it is
+    reset on both sides of the test.
+    """
+    db_path = tmp_path / "journal_text_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+    _bootstrap_journal_text_tables(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    yield cfg
+    journal_encryption.reset_cache()
+
+
+def _stored_journal_text(db_url: str) -> dict[str, str]:
+    """Read every migrated column of the seeded rows with raw SQL, no ORM."""
+    engine = create_engine(_sync_url(db_url))
+    queries = {
+        "journalentry.title": "SELECT title FROM journalentry WHERE id = 1",
+        "marginalia.anchor_text": "SELECT anchor_text FROM marginalia WHERE id = 1",
+        "marginalia.note": "SELECT note FROM marginalia WHERE id = 1",
+        "marginalia.essay": "SELECT essay FROM marginalia WHERE id = 1",
+        "completionsuggestion.label": "SELECT label FROM completionsuggestion WHERE id = 1",
+        "completionsuggestion.anchor_text": (
+            "SELECT anchor_text FROM completionsuggestion WHERE id = 1"
+        ),
+        "promptresponse.response": "SELECT response FROM promptresponse WHERE id = 1",
+    }
+    try:
+        with engine.connect() as conn:
+            return {name: conn.execute(text(sql)).scalar_one() for name, sql in queries.items()}
+    finally:
+        engine.dispose()
+
+
+def _nullable_journal_text_nulls(db_url: str) -> list[Any]:
+    """The nullable migrated columns of the rows that left them NULL."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return [
+                conn.execute(text("SELECT title FROM journalentry WHERE id = 2")).scalar_one(),
+                conn.execute(text("SELECT essay FROM marginalia WHERE id = 2")).scalar_one(),
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_journal_text_encryption_migration_round_trips_on_real_rows(
+    alembic_sqlite_config_journal_text: Config,
+) -> None:
+    """Round-trip ``d4e5f6a7b8ca`` on seeded data, not on an empty table.
+
+    Phase 1: upgrade rewrites every seeded plaintext into marked ciphertext that
+    decrypts back to exactly what was written.
+    Phase 2: downgrade restores the plaintext verbatim -- the property that makes
+    the rollback survivable. A downgrade that left the ciphertext in place, or
+    truncated it into the restored ``String`` bound, fails here.
+    Phase 3: re-upgrade is idempotent and does not double-encrypt.
+    """
+    cfg = alembic_sqlite_config_journal_text
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade encrypts every seeded row in place.
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    encrypted = _stored_journal_text(db_url)
+    for name, plaintext in _SEEDED_JOURNAL_TEXT.items():
+        stored = encrypted[name]
+        assert stored.startswith(_CIPHERTEXT_MARKER), f"{name} was left in the clear"
+        assert plaintext not in stored, f"{name} still leaks its plaintext"
+        assert journal_encryption.decrypt(stored) == plaintext
+    assert _nullable_journal_text_nulls(db_url) == [None, None]
+
+    # Phase 2: downgrade returns the plaintext, not mangled ciphertext.
+    command.downgrade(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+    assert _nullable_journal_text_nulls(db_url) == [None, None]
+
+    # Phase 3: re-upgrade encrypts once more, decrypting to the same plaintext
+    # (a double-encrypted value would decrypt to a marked token, not prose).
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    re_encrypted = _stored_journal_text(db_url)
+    for name, plaintext in _SEEDED_JOURNAL_TEXT.items():
+        assert journal_encryption.decrypt(re_encrypted[name]) == plaintext
+
+
+def test_journal_text_encryption_migration_is_a_no_op_without_a_key(
+    alembic_sqlite_config_journal_text: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On an un-keyed environment the rows are untouched, not blanked or marked.
+
+    Key presence is the switch, so a laptop or a CI run with no key must come
+    through the migration with its text exactly as it was -- the property that
+    lets this migration ship ahead of the key.
+    """
+    cfg = alembic_sqlite_config_journal_text
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    monkeypatch.delenv(journal_encryption.KEYS_ENV_VAR, raising=False)
+    journal_encryption.reset_cache()
+
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+
+    command.downgrade(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT

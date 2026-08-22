@@ -74,3 +74,20 @@ export const GUMROAD_HELP_URL = resolveEnv(
   'EXPO_PUBLIC_GUMROAD_HELP_URL',
   DEFAULT_GUMROAD_HELP_URL,
 );
+
+/**
+ * Permanent Discord invite for the Digital Sangha.
+ *
+ * Unlike the Gumroad links this has no default, and its absence is not a
+ * misconfiguration: the server and its never-expiring invite belong to the
+ * owner, and a placeholder here would ship a dead link inside a store binary
+ * that cannot be patched. Empty means the app does not mention the Sangha at
+ * all, which is an absent invitation rather than a broken one — so, like the
+ * Gumroad links and unlike ``API_BASE_URL``, it never contributes to
+ * ``CONFIG_ERROR``.
+ */
+export const SANGHA_INVITE_URL = resolveEnv(
+  process.env.EXPO_PUBLIC_SANGHA_INVITE_URL,
+  'EXPO_PUBLIC_SANGHA_INVITE_URL',
+  '',
+);

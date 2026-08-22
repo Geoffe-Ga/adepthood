@@ -232,6 +232,7 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://adepthood.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
+| `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows no Sangha door |
 | `PORT` | `80` | nginx listens on 80 |
 
 > **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
@@ -507,9 +508,13 @@ SELECT count(*) FROM journalentry;
 
 -- 2. Is the journal text still encrypted (not silently blanked or mangled)?
 --    Encrypted values carry the marker `enc::v1::`; anything else is a
---    pre-encryption legacy row.
+--    pre-encryption legacy row. Both the body and the title are encrypted, so
+--    check both — a restore can carry one and mangle the other.
 SELECT count(*) FILTER (WHERE message LIKE 'enc::v1::%') AS encrypted,
-       count(*) FILTER (WHERE message NOT LIKE 'enc::v1::%') AS plaintext
+       count(*) FILTER (WHERE message NOT LIKE 'enc::v1::%') AS plaintext,
+       count(*) FILTER (WHERE title LIKE 'enc::v1::%') AS encrypted_titles,
+       count(*) FILTER (WHERE title IS NOT NULL
+                          AND title NOT LIKE 'enc::v1::%') AS plaintext_titles
 FROM journalentry;
 
 -- 3. What revision does this database think it is at?
@@ -611,12 +616,20 @@ than a migration.
 
 ## Journal Encryption at Rest
 
-Journal entry text is encrypted in the database column with Fernet keys read
-from `JOURNAL_ENCRYPTION_KEYS`. **Key presence is the switch**: with no key
-configured the column is plaintext, which is the right default on a laptop and
-unacceptable on a server. So a boot with `ENV=production` and no key **fails**,
-naming the variable — the deploy never goes live rather than quietly storing
-every user's writing in the clear.
+Journal text is encrypted in the database columns with Fernet keys read from
+`JOURNAL_ENCRYPTION_KEYS`. That is not the entry body alone: every column that
+holds a copy, a quote, or a paraphrase of an entry is encrypted with the same
+keys — the body and title on `journalentry`, the anchored passage on
+`promotedquote`, the passage plus the note and essay on `marginalia`, the
+passage plus its label on `completionsuggestion`, the weekly answer on
+`promptresponse` (mirrored into an entry byte-for-byte), and the ontologized
+copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
+the copy a stolen dump yields, so the set is pinned by a test rather than by this
+list. **Key presence is the switch**: with no key configured the columns are
+plaintext, which is the right default on a laptop and unacceptable on a server.
+So a boot with `ENV=production` and no key **fails**, naming the variable — the
+deploy never goes live rather than quietly storing every user's writing in the
+clear.
 
 Outside production an empty value is normal and silent: requiring a key to run a
 local server or the test suite would be friction with no security benefit.
@@ -710,6 +723,7 @@ journal_encryption_enabled=True
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
+| `EXPO_PUBLIC_SANGHA_INVITE_URL` | No | Permanent, never-expiring Discord invite for the Digital Sangha, opened from Settings in the platform browser. Must be `https`; anything else resolves to nothing. There is deliberately no default — unset means the app never mentions the Sangha, which is an absent invitation rather than a dead link inside a shipped binary. |
 | `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
 | `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
 | `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |
