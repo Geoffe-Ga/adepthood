@@ -338,3 +338,23 @@ ADR 0002, or ADR 0004 decides them and an agent may not invent them:
   bundled here. This ADR consumes that ontology and does not redefine
   it, and it makes no change to `WheelBalanceResponse` or the
   F1..F10 → stage projection (#2228's constraint).
+
+## Note, 2026-08-21 — Decision 4's statement about the vault binding has been overtaken
+
+Issue #2233. Decision 4 above says ADR 0004 Decision 7's single-user
+vault binding "is untouched — a deployment with a configured vault
+still serves exactly one bound user from it." That was true of *this*
+ADR, which changed nothing about it, and it is no longer true of the
+codebase: vault configuration has moved to the account. Each user
+connects a vault of their own, with their own URL and their own
+encrypted credential, and `CREEK_VAULT_OWNER_USER_ID` survives one
+release only as a deployment-wide default for accounts that have
+connected nothing. See ADR 0004's note of 2026-08-21 for the full
+reasoning, including why per-user vault *instances* never needed the
+creek-side contract change that partitioning one shared vault still
+does.
+
+Nothing else in Decision 4 changes. The confidential vault is still
+the upgrade rather than the floor, INTIMATE still never enters the
+operator-side corpus, and the operator-readability of that corpus is
+unaffected by whose vault sits behind it.

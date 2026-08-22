@@ -425,7 +425,7 @@ rely on it.
 | `reflect` result read as scalar `payload.get("reflection")` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
 | `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity | adepthood #1937 |
 | Major-only version gate, a no-op pre-1.0 (`_CONTRACT_MAJOR`, `creek_vault_client.py:79,242`) | `CONTRACT_VERSION = "0.2.0"` (`creek-tools/creek_mcp/contract.py:18`) | Exact-minor comparison per Decision 4; pin lives here, comparison code lands in #2045 | both repos |
-| Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning); interim single-tenant binding shipped per Decision 7 | `creek-vault` / adepthood #2134 |
+| Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning) for *partitioning one shared vault*, which remains unbuildable here. Per-user vault *instances* need no such change and shipped per the 2026-08-21 note; the interim single-tenant binding survives one release as a deployment-wide default | `creek-vault` / adepthood #2134, #2233 |
 
 ## Deprecation and change control
 
@@ -1083,3 +1083,78 @@ takes the local-fallback path whatever else the lane does. A spec
 asserting only `vault_unavailable` would register as coverage while
 proving the journey's own outcome never happens, which is precisely the
 quiet coverage loss that ledger exists to prevent.
+
+## Note, 2026-08-21 — Decision 7 is lifted: vault configuration moves to the account
+
+Issue #2233. Decision 7 stands as written for what it decided, and is
+**amended, not retracted**: `CREEK_VAULT_OWNER_USER_ID` is no longer the
+only way a user can reach a vault, and (d)'s claim that lifting the
+binding "needs a change on Creek's side of the contract, not
+adepthood's" was true of one reading of the problem and false of the
+other. Both readings are worth separating here, because conflating them
+is what kept this open.
+
+**Partitioning one shared vault by user** — still not buildable from
+this side, exactly as 7(a) says. No tenant field is admitted by
+`ReflectionRequest` or `JournalUpsertRequest`, `/v1/wheel` is
+parameterless, and `CapabilitiesResponse` advertises no partitioning
+guarantee to verify at handshake. Nothing in this note assumes one.
+
+**Per-user vault *instances*** — buildable, and now built. Each account
+supplies the URL of a vault that is already theirs alone plus the
+credential that opens it. No tenant field is wanted, because there is
+nothing to disambiguate: one vault, one owner, which is the contract's
+own assumption throughout. That shape is also what ADR 0002 Decision 1
+and creek-vault ADR-0007 Decision 1 ratified in the first place — a
+persistent per-user VM with a durable, user-owned volume — so this is
+the architecture working as designed rather than a workaround for it.
+7(d)'s error was to answer the second question with the first
+question's evidence.
+
+**What shipped.** `uservaultconfig` holds one row per account: the URL,
+judged on write by `services.creek_vault_url.classify_vault_url` (the
+same four rules, in the same order, the deployment-wide path uses), and
+the credential, encrypted at rest through the same `EncryptedString`
+column type the journal body uses. There is no second key scheme and no
+second URL validator. The credential is write-only: no response schema
+in `schemas/vault_config.py` has a field to carry one, so it is absent
+from every body by construction rather than by omission.
+`dependencies.creek_vault.get_creek_vault_client` resolves the caller's
+own row first and the environment only after, because a user who
+connected their own vault must never be handed a shared corpus because
+an operator also set a default.
+
+**The environment path survives one release**, unchanged, as a
+deployment-wide default for accounts that have connected nothing:
+Decision 7(b) and 7(c) still describe it exactly. `CREEK_VAULT_OWNER_USER_ID`
+is retired only once operators have had a release to move their users
+across, which is why it is still read, still fails closed, and still
+warns when a configured vault is bound to nobody.
+
+**What is unchanged.** MCP stays Creek's agent surface and is not an
+application transport; the per-user path speaks HTTP `/v1` and nothing
+else, and carries no protocol selector at all, so there is no stored
+setting anywhere that could revive one. And the 2026-08-07 note's
+warning still holds with full force for any deployment that ran a
+shared vault with more than one active user: a corpus that is already
+mixed is not un-mixed by anything here. Per-user instances govern where
+new material goes; they do not reach into a vault that already holds
+several people's writing.
+
+**What is proven, and how.**
+`backend/tests/test_per_user_vault_config.py` reads the credential
+column with raw SQL and asserts the stored bytes carry the `enc::v1::`
+marker and not the key that was sent — an ORM round-trip would have
+passed against a plaintext column and proven nothing. It drives two
+accounts, two connected vaults and one app end to end with the
+transport faked *per URL*, so a resolution that handed one account the
+other's adapter shows up as a body in the wrong vault. It pins that a
+stored URL the classifier refuses degrades that account alone, to the
+local fallback, without raising on a journal save. And
+`backend/tests/test_legal_documents.py` now pins four encrypted columns
+rather than three, which is what forces `docs/legal/privacy-policy.md`
+to describe the credential before this could ship.
+
+**The divergence-table row is unchanged and still open.** No creek-side
+contract change was made or is implied by this note. What changed is
+that adepthood stopped needing one to give each user a vault.

@@ -66,9 +66,19 @@ _REPO_URL_PATH = re.compile(r"https://github\.com/Geoffe-Ga/adepthood/blob/main/
 
 # Every column in the live schema that stores ciphertext, as ``table.column``.
 # The policy's sentence about what is encrypted was written against exactly
-# this set; see :func:`test_exactly_two_columns_are_encrypted`.
+# this set; see :func:`test_exactly_these_columns_are_encrypted`.
+#
+# Three of the four hold the account's own writing. The fourth is different in
+# kind and the policy says so: it is a credential the account supplied for a
+# service of its own, which is encrypted for the same reason but is not a thing
+# they wrote.
 _ENCRYPTED_COLUMNS = frozenset(
-    {"journalentry.message", "promotedquote.anchor_text", "corpusfragment.content"}
+    {
+        "journalentry.message",
+        "promotedquote.anchor_text",
+        "corpusfragment.content",
+        "uservaultconfig.api_key",
+    }
 )
 
 # Claims a reader would take as a confidentiality guarantee against the
@@ -162,8 +172,8 @@ def test_production_refuses_to_boot_unencrypted(monkeypatch: pytest.MonkeyPatch)
         validate_journal_encryption_config()
 
 
-def test_exactly_two_columns_are_encrypted() -> None:
-    """Ciphertext covers the entry body and a promoted passage, and nothing else.
+def test_exactly_these_columns_are_encrypted() -> None:
+    """Ciphertext covers the named columns and nothing else.
 
     The policy is specific about this because the truthful version is narrower
     than "your writing is encrypted": a margin note, and the sentence it quotes

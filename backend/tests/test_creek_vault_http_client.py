@@ -2961,16 +2961,19 @@ async def _drive_fallback_unconfigured(
 async def _drive_fallback_not_owner(
     _http_clients: ClientFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Drive a user who is not the bound owner of a configured vault.
+    """Drive a user who is not the bound owner of a configured deployment-wide vault.
 
     Through the real gate rather than by constructing the fallback with the
     outcome by hand: that gate is the only thing in adepthood that ever chooses
     this outcome, so driving anything else would count a path production does not
-    have.
+    have. It is the deployment-wide half of the gate specifically, because that
+    is where the outcome is chosen -- a user who has connected a vault of their
+    own never reaches it, and one who has not arrives here with no database read
+    left to do.
     """
     monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
     monkeypatch.setenv(vault_dependency.OWNER_ENV_VAR, str(_VAULT_OWNER_ID))
-    client = vault_dependency.get_creek_vault_client(_NON_OWNER_ID)
+    client = vault_dependency.deployment_vault_client(_NON_OWNER_ID)
     assert (await client.ingest(_ingest_request())).stored is False
 
 

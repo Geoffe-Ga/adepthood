@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .stage_progress import StageProgress
     from .user_depth_preferences import UserDepthPreferences
     from .user_ui_flags import UserUiFlags
+    from .user_vault_config import UserVaultConfig
 
 
 def _default_reset_date() -> datetime:
@@ -149,6 +150,10 @@ class User(SQLModel, table=True):
         sa_relationship_kwargs={"passive_deletes": True},
     )
     ui_flags: Optional["UserUiFlags"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"passive_deletes": True},
+    )
+    vault_config: Optional["UserVaultConfig"] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"passive_deletes": True},
     )
