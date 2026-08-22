@@ -132,6 +132,18 @@
     "issue": 2317
   },
   {
+    "id": "account.export-my-data",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
+      "client": ["users", "journal", "auth"],
+      "routes": ["POST /journal/", "GET /users/me/export", "GET /users/me/export/journal.md"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
+  },
+  {
     "id": "corpus.decide-what-may-be-sorted",
     "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question.",
     "crosses": {

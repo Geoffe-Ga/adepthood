@@ -1,15 +1,24 @@
 """Drift guards between the Creek Vault contract in code and the docs that pin it.
 
-Three kinds of restatement rot silently without a guard, and all three are
+Four kinds of restatement rot silently without a guard, and all four are
 covered here.
 
 *Version restatements.* ``CONTRACT_VERSION`` in ``domain.creek_vault`` is the
 single source of truth for the version adepthood advertises at handshake.  The
-MCP contract document and the ADR that pins the HTTP application boundary both
-restate that version in a bolded bullet.  These meta-tests read the two markdown
-files and assert the restated versions still equal the constant, that the version
-is strict semver (no draft suffix), and that the contract doc keeps a live
-pointer to the ADR.
+contract pointer document and the ADR that pins the HTTP application boundary
+both restate that version in a bolded bullet.  These meta-tests read the two
+markdown files and assert the restated versions still equal the constant, that
+the version is strict semver (no draft suffix), and that the contract doc keeps
+a live pointer to the ADR.
+
+*Transport restatements.* The seam is HTTP/JSON ``/v1`` and has been since the
+cutover; MCP is Creek's adapter for agents and was never meant to carry
+application data.  A document that still advertises the old arrangement is not
+a stale detail, because the pattern it advertises is the one this repository
+ruled out by name -- so the living documents are swept for it.  Ratified
+records and the dated files under ``plan/`` are outside that sweep: their
+present-tense sentences about the pre-cutover world are evidence, amended by
+dated note rather than rewritten.
 
 *Ownership pointers.* The intimate-transit sub-decisions live in the boundary
 ADR's Decision 6; the contract doc explicitly disclaims owning them.  A docstring
@@ -106,6 +115,35 @@ _TENANCY_SUB_DECISIONS = (
 
 # The one environment variable the tenancy rule reaches an operator through.
 _VAULT_OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
+
+# The vision document names the seam in one phrase, which is the phrase most
+# readers will ever see about it.
+_NORTH_STAR = _REPO_ROOT / "NORTH-STAR.md"
+_HTTP_SEAM_PHRASE = "Creek Vault HTTP/JSON seam"
+
+# The construction that presents MCP as adepthood's own way of reaching the
+# vault.  Deliberately requires whitespace between the two words, so the
+# retained filename `creek-vault-mcp-contract.md` -- a path, not a claim about
+# a transport -- does not trip it.
+_MCP_AS_VAULT_TRANSPORT = re.compile(r"creek[- ]?vault\s+mcp", re.IGNORECASE)
+
+# Documents that describe the system as it is now, and must therefore say
+# HTTP.  `plan/` is outside this on purpose: those are dated records of what
+# was believed on a day, and correcting them would falsify the log.
+_CURRENT_PROSE_TREES = ("docs", "graph")
+_CURRENT_PROSE_ROOT_DOCS = ("NORTH-STAR.md", "README.md", "CLAUDE.md", "AGENTS.md")
+
+# Ratified records are amended by dated note, never rewritten, so their
+# present-tense sentences about the pre-cutover world are history rather than
+# claims -- see the notes appended to each of them.
+_HISTORICAL_PROSE = (_REPO_ROOT / "docs" / "adr",)
+
+# A sweep that visited nothing would present as a clean one.
+_MINIMUM_PROSE_FILES_SCANNED = 10
+
+# The retitled pointer doc.  Its path still says MCP for link stability into
+# the ratified record; its title no longer has to.
+_CONTRACT_DOC_TITLE_FORBIDS = "mcp"
 
 
 def _module_docstrings() -> Iterator[tuple[Path, str]]:
@@ -227,6 +265,55 @@ def test_no_backend_source_cites_the_contract_doc_as_a_decision_owner() -> None:
         f"These module docstrings cite {_CONTRACT_DOC_PATH} as a decision's owner, but "
         f"that document disclaims owning decisions -- cite {_ADR_DOC_PATH} instead: "
         f"{offenders}."
+    )
+
+
+def _current_prose_files() -> list[Path]:
+    """Every document that describes the seam as it stands today."""
+    files = [
+        path
+        for tree in _CURRENT_PROSE_TREES
+        for path in (_REPO_ROOT / tree).rglob("*.md")
+        if not any(historical in path.parents for historical in _HISTORICAL_PROSE)
+    ]
+    files.extend(_REPO_ROOT / name for name in _CURRENT_PROSE_ROOT_DOCS)
+    return [path for path in files if path.is_file()]
+
+
+def test_north_star_names_the_seam_that_ships() -> None:
+    """The vision document calls the Creek seam HTTP/JSON, because that is what it is."""
+    text = _NORTH_STAR.read_text(encoding="utf-8")
+    assert _HTTP_SEAM_PHRASE in text, (
+        f"{_NORTH_STAR.name} must name the seam as {_HTTP_SEAM_PHRASE!r}; it is the one "
+        f"phrase most readers will ever see about how adepthood reaches the vault."
+    )
+
+
+def test_no_current_document_presents_mcp_as_the_vault_transport() -> None:
+    """MCP is Creek's adapter for agents; no live document may sell it as ours.
+
+    Application data transfer over MCP is the pattern this repository ruled out
+    by name, so a document advertising it is not a stale detail -- it is an
+    invitation to rebuild the thing that was retired.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    for path in _current_prose_files():
+        scanned += 1
+        offenders += [
+            f"{path.relative_to(_REPO_ROOT)}: {match.group(0)!r}"
+            for match in _MCP_AS_VAULT_TRANSPORT.finditer(path.read_text(encoding="utf-8"))
+        ]
+    assert not offenders, "\n".join(offenders)
+    assert scanned >= _MINIMUM_PROSE_FILES_SCANNED, f"only {scanned} files scanned -- scan broke"
+
+
+def test_contract_doc_title_does_not_advertise_mcp() -> None:
+    """The pointer doc keeps its path for link stability, but not its old title."""
+    title = _CONTRACT_DOC.read_text(encoding="utf-8").splitlines()[0]
+    assert _CONTRACT_DOC_TITLE_FORBIDS not in title.lower(), (
+        f"The contract doc's title still advertises MCP ({title!r}); the path is retained "
+        f"for the inbound references the ADR names, which is not a reason to keep the title."
     )
 
 
