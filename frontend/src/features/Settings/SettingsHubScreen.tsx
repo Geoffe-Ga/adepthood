@@ -1,7 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  ChevronRight,
   FileText,
   FolderUp,
   Globe,
@@ -10,19 +9,20 @@ import {
   LogOut,
   ShieldCheck,
   Trash2,
-  type LucideIcon,
 } from 'lucide-react-native';
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { LEGAL_DOCUMENTS } from './legalLinks';
+import { SettingsRow } from './shared/SettingsRow';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
-import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
+import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
+import SanghaSection from '@/features/Settings/SanghaSection';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
@@ -34,7 +34,6 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
  */
 
 const ICON_SIZE = 22;
-const CHEVRON_SIZE = 20;
 
 /** Entry-visibility promise: the three privacy tiers are the user's choice. */
 const PRIVACY_VISIBILITY_LINE =
@@ -43,45 +42,6 @@ const PRIVACY_VISIBILITY_LINE =
 const PRIVACY_INTIMATE_LINE = 'Entries you mark Intimate are never sent to any AI.';
 /** Full-sentence a11y label so screen-reader users hear both promises at once. */
 const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`;
-
-interface SettingsRowProps {
-  icon: LucideIcon;
-  label: string;
-  description: string;
-  onPress: () => void;
-  testID: string;
-  destructive?: boolean;
-}
-
-const SettingsRow = ({
-  icon: Icon,
-  label,
-  description,
-  onPress,
-  testID,
-  destructive = false,
-}: SettingsRowProps): React.JSX.Element => {
-  const { width } = useWindowDimensions();
-  const t = typeRamp(width);
-  const tint = destructive ? accent.strong : accent.primary;
-  return (
-    <TouchableOpacity
-      style={styles.row}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={description}
-      testID={testID}
-    >
-      <Icon color={tint} size={ICON_SIZE} />
-      <View style={styles.rowText}>
-        <Text style={[t.label, styles.rowLabel]}>{label}</Text>
-        <Text style={[t.caption, styles.rowDescription]}>{description}</Text>
-      </View>
-      {destructive ? null : <ChevronRight color={ink.muted} size={CHEVRON_SIZE} />}
-    </TouchableOpacity>
-  );
-};
 
 interface AccountSectionProps {
   onApiKey: () => void;
@@ -239,6 +199,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <CorpusSection onSeedCorpus={openSeedCorpus} />
       <PrivacySection />
       <ChooseDepthsSection />
+      <SanghaSection />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
       <LegalSection />
@@ -247,25 +208,6 @@ const SettingsHubScreen = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: touchTarget.minimum,
-    paddingVertical: rhythm.blockGap,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: surface.hairline,
-  },
-  rowText: {
-    flex: 1,
-    marginLeft: rhythm.blockGap,
-  },
-  rowLabel: {
-    color: ink.primary,
-  },
-  rowDescription: {
-    color: ink.soft,
-    marginTop: rhythm.blockGap / 3,
-  },
   privacyStatement: {
     flexDirection: 'row',
     alignItems: 'flex-start',

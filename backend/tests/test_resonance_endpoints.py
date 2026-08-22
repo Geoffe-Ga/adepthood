@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from http import HTTPStatus
+from types import MappingProxyType
 
 import pytest
 from httpx import AsyncClient
@@ -11,11 +13,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from models.journal_entry import JournalEntry
+from domain.frequencies import Frequency
+from models.corpus_fragment import CorpusSource
+from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
+from services.corpus_store import FragmentDraft, record_fragment
+from services.frequency_classification import FrequencyClassification
+from services.higher_self_grounding import GroundingSource
 
 _BODY = "I walked by the river and the willow bent without breaking."
 
@@ -334,3 +341,139 @@ async def test_list_marginalia_other_users_entry_is_404(
     await async_client.post(f"/journal/{entry_id}/resonance", headers=alice)
     resp = await async_client.get(f"/journal/{entry_id}/marginalia", headers=bob)
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
+# What the reflection is grounded in, end to end through the endpoint
+# ---------------------------------------------------------------------------
+
+_CORPUS_SENTINEL = "the corpus remembers the willow"
+_OLDER_ENTRY_SENTINEL = "an older entry about the far bank"
+
+
+def _capturing_llm(monkeypatch: pytest.MonkeyPatch, prompts: list[str]) -> None:
+    """Patch the resonance LLM seam to record every prompt it is handed."""
+    payload = json.dumps(
+        {"notes": [{"kind": "theme", "quote": "I walked by the river", "note": "You return."}]}
+    )
+
+    async def _complete(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del history, system_prompt, api_key
+        prompts.append(prompt)
+        return LLMResponse(
+            text=payload,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+
+
+async def _user_id(session: AsyncSession, email: str) -> int:
+    """The id of the account that signed up with ``email``."""
+    user = (await session.execute(select(User).where(col(User.email) == email))).scalar_one()
+    assert user.id is not None
+    return user.id
+
+
+async def _seed_fragment(session: AsyncSession, user_id: int, content: str) -> int:
+    """Put one personal-tier fragment into ``user_id``'s corpus."""
+    fragment = await record_fragment(
+        session,
+        user_id=user_id,
+        draft=FragmentDraft(
+            content=content,
+            tier=JournalClassification.PERSONAL,
+            source=CorpusSource.JOURNAL,
+            classification=FrequencyClassification(
+                weights=MappingProxyType({Frequency.F1: 0.9}), overall_confidence=0.9
+            ),
+        ),
+    )
+    await session.commit()
+    assert fragment.id is not None
+    return fragment.id
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_is_grounded_in_the_corpus_when_the_account_has_one(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The endpoint sends corpus passages, and stops sending the recency window.
+
+    Both halves matter and only together: asserting the fragment arrived would
+    pass just as well if the older entry rode along beside it, which is the
+    shape that would send strictly more of somebody's writing to the provider
+    than the privacy policy says it does.
+    """
+    prompts: list[str] = []
+    _capturing_llm(monkeypatch, prompts)
+    headers = await _signup(async_client, "grounded")
+    await _create_entry(async_client, headers, body=_OLDER_ENTRY_SENTINEL)
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_fragment(
+        db_session, await _user_id(db_session, "grounded@example.com"), _CORPUS_SENTINEL
+    )
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    sent = "\n".join(prompts)
+    assert _CORPUS_SENTINEL in sent
+    assert _OLDER_ENTRY_SENTINEL not in sent
+
+
+@pytest.mark.asyncio
+async def test_an_account_with_no_corpus_still_gets_the_recency_window(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new account is not silently given a Higher Self that has read nothing."""
+    prompts: list[str] = []
+    _capturing_llm(monkeypatch, prompts)
+    headers = await _signup(async_client, "ungrounded")
+    await _create_entry(async_client, headers, body=_OLDER_ENTRY_SENTINEL)
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert _OLDER_ENTRY_SENTINEL in "\n".join(prompts)
+
+
+@pytest.mark.asyncio
+async def test_the_grounding_is_recorded_by_id_and_never_by_content(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An operator can say what grounded a reflection without reading a word of it.
+
+    The record is the only place grounding is visible at all, so it has to name
+    the fragments; it is also a log file, outside every tier rule and the
+    at-rest encryption, so it must not carry their text.
+    """
+    prompts: list[str] = []
+    _capturing_llm(monkeypatch, prompts)
+    headers = await _signup(async_client, "recorded")
+    entry_id = await _create_entry(async_client, headers)
+    fragment_id = await _seed_fragment(
+        db_session, await _user_id(db_session, "recorded@example.com"), _CORPUS_SENTINEL
+    )
+
+    with caplog.at_level(logging.INFO):
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    grounded = [
+        record for record in caplog.records if record.message == "journal_resonance_grounded"
+    ]
+    assert len(grounded) == 1
+    fields = grounded[0].__dict__
+    assert fields["grounding_source"] == GroundingSource.CORPUS.value
+    assert fields["fragment_ids"] == [fragment_id]
+    assert _CORPUS_SENTINEL not in str(fields)
