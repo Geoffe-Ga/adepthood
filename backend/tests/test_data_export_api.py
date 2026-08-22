@@ -364,3 +364,34 @@ async def test_journal_markdown_requires_authentication(async_client: AsyncClien
     resp = await async_client.get(_JOURNAL_MARKDOWN_PATH)
 
     assert resp.status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}
+
+
+@pytest.mark.asyncio
+async def test_the_json_archive_leaves_out_entries_the_user_deleted(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Deleting writing has to mean the same thing in both files.
+
+    The Markdown route already honours this. The JSON route pages every
+    included table through one generic query, so a soft-delete column it does
+    not know about is a row it hands back -- decrypted, from an archive the
+    person asked for by pressing "export everything".
+    """
+    headers, user_id = await _signup(async_client, "tidyjson")
+    db_session.add(
+        JournalEntry(
+            sender="user",
+            user_id=user_id,
+            message=_THEIRS,
+            deleted_at=datetime.now(UTC),
+        ),
+    )
+    await db_session.commit()
+    await _write_entry(async_client, headers, _MINE)
+
+    resp = await async_client.get(_EXPORT_PATH, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _MINE in resp.text
+    assert _THEIRS not in resp.text

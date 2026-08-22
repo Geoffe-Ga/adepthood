@@ -31,7 +31,7 @@ from domain.data_export import (
     included_rules,
     manifest_gaps,
 )
-from services.data_export import _encode
+from services.data_export import _SOFT_DELETE_COLUMN, _encode
 from services.journal_encryption import EncryptedString
 
 # Columns that hold a live secret. None of them belongs in a plaintext archive
@@ -177,3 +177,22 @@ def test_the_serialiser_renders_every_type_the_manifest_is_allowed(
         "so nothing here ever asks the serialiser whether it can render one"
     )
     assert _encode(sample)
+
+
+def test_the_archive_knows_which_exported_tables_can_be_soft_deleted() -> None:
+    """The filter is structural, so this pins what it currently covers.
+
+    ``_page`` excludes ``deleted_at IS NOT NULL`` for any included table that
+    carries the column, rather than each rule opting in — opting in is exactly
+    what failed, since the Markdown route remembered and the JSON route did
+    not. This test is the record of which tables that reaches today, so a new
+    soft-deletable table shows up here as a diff and gets a deliberate look
+    rather than silently inheriting a policy nobody chose for it.
+    """
+    soft_deletable = {
+        name for name in included_rules() if _SOFT_DELETE_COLUMN in SQLModel.metadata.tables[name].c
+    }
+    assert soft_deletable == {"journalentry", "user"}, (
+        f"the set of soft-deletable exported tables changed to {sorted(soft_deletable)}; "
+        "confirm the archive should omit that table's deleted rows, then update this"
+    )

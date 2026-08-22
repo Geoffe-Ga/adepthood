@@ -133,6 +133,14 @@ def _row_values(row: object, table: Table) -> dict[str, Any]:
     return {column.name: getattr(row, column.name) for column in table.columns}
 
 
+# Soft-delete marker. Applied here rather than declared per table on purpose:
+# the Markdown route remembered to filter and this generic one did not, so the
+# thing that failed was somebody having to remember. A table that grows a
+# ``deleted_at`` later is excluded from the archive without anyone revisiting
+# the manifest, which is the only version of this that stays true.
+_SOFT_DELETE_COLUMN = "deleted_at"
+
+
 async def _page(
     session: AsyncSession,
     table: Table,
@@ -156,6 +164,8 @@ async def _page(
         .order_by(table.c[_ID_COLUMN])
         .limit(EXPORT_PAGE_SIZE)
     )
+    if _SOFT_DELETE_COLUMN in table.c:
+        statement = statement.where(table.c[_SOFT_DELETE_COLUMN].is_(None))
     result = await session.execute(statement)
     return list(result.scalars().all())
 
