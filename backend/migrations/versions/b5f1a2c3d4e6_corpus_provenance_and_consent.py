@@ -1,7 +1,7 @@
 """corpus provenance and per-source consent
 
 Revision ID: b5f1a2c3d4e6
-Revises: a4c7e91b3d05
+Revises: b7d2e5f10a34
 Create Date: 2026-08-21 00:00:00.000000
 
 Two changes, shipped together because the writer that makes either of them
@@ -47,7 +47,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b5f1a2c3d4e6"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "a4c7e91b3d05"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "b7d2e5f10a34"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
