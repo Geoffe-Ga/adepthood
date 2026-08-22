@@ -143,3 +143,31 @@ where that tension gets settled, not this ADR.
 - BYOK reuses the existing `ApiKeySettings` UX and is surfaced to the
   user entirely under the one promise, with no technical tiers
   exposed.
+
+## Note, 2026-08-22 — the seam this record describes is HTTP, not MCP
+
+Two sentences above are true of the day they were written and false of
+the system today, and both are left as written because a decision
+record that edits its own evidence stops being one.
+
+The Context section notes that this ADR's options "were folded into
+the broader Creek Vault MCP boundary decision, #927, and ratified
+there on 2026-06-30". That is history and reads correctly as history:
+it names what the boundary decision was called at the time.
+
+The Consequences bullet — "Epic #949 builds Adepthood's client side of
+the Creek Vault MCP handshake" — is present tense and is no longer
+what happened. That client was built, then retired.
+[ADR 0004](0004-creek-vault-http-application-boundary.md) moved the
+application boundary to HTTP/JSON `/v1`, its 2026-08-07 note records
+the client's deletion, and its 2026-08-22 note records the owner's
+restatement of the rule: MCP is Creek's adapter for agents — hermes,
+openclaw, CrawDad, Claude Code — and never adepthood's transport for
+application data. Read that bullet as naming the *seam*, whose
+routing argument is unaffected, rather than the protocol, which
+changed.
+
+Nothing in Decisions 1–4 depends on which protocol crosses the seam.
+The chokepoint, the custody model, and the intimate-tier rule are
+claims about where routing is decided and who holds the keys, and
+those survive the transport swap untouched.
