@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from domain.ownership import OwnedBy
@@ -75,6 +77,24 @@ EXPORT_FORMAT_VERSION = 1
 # out on a decade of journalling), large enough that a full export is not a
 # thousand queries.
 EXPORT_PAGE_SIZE = 100
+
+# Every Python type an exported column is allowed to present. The first six
+# are what JSON has literals for; the last three are what the archive's
+# serialiser renders. The rows are streamed, so a type outside this tuple does
+# not fail the request -- the 200 is already sent -- it truncates the file
+# mid-write. Pinning the manifest to this tuple moves that failure to the
+# suite, where it is a red test rather than a half-written archive.
+EXPORTABLE_TYPES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bool,
+    list,
+    dict,
+    datetime,
+    date,
+    Decimal,
+)
 
 
 @dataclass(frozen=True)

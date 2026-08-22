@@ -14,21 +14,65 @@ are what a new model trips.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
+from decimal import Decimal
+
 import pytest
+from sqlalchemy import Column
+from sqlalchemy.types import TypeEngine
 from sqlmodel import SQLModel
 
 from domain.data_export import (
+    EXPORTABLE_TYPES,
     MANIFEST,
     Included,
     Omitted,
     included_rules,
     manifest_gaps,
 )
+from services.data_export import _encode
 from services.journal_encryption import EncryptedString
 
 # Columns that hold a live secret. None of them belongs in a plaintext archive
 # a user is invited to keep on their own device.
 _CREDENTIAL_COLUMNS = frozenset({"password_hash", "api_key", "token", "token_hash"})
+
+# One value per type the manifest is allowed to export, so the serialiser can
+# be exercised on each rather than asserted about.
+_SAMPLE_VALUES: Mapping[type, object] = {
+    str: "a",
+    int: 1,
+    float: 1.5,
+    bool: True,
+    datetime: datetime(2026, 1, 1, tzinfo=UTC),
+    date: date(2026, 1, 1),
+    Decimal: Decimal("1.5"),
+    list: [1, "a"],
+    dict: {"a": 1},
+}
+
+
+def _exported_python_type(column: Column[object]) -> type | None:
+    """The Python type a column hands the serialiser, seen through decorators.
+
+    ``AutoString`` and ``EncryptedString`` both decorate ``String`` and both
+    raise from ``python_type`` rather than answering, so asking the column
+    directly would mark 57 perfectly ordinary text columns unrenderable. What
+    reaches ``json.dumps`` is the implementation type. ``None`` means nothing
+    in the chain would say — which is not a column to wave through, it is
+    precisely the unknown this guard exists to catch.
+    """
+    try:
+        return column.type.python_type
+    except NotImplementedError:
+        implementation: TypeEngine[object] | None = getattr(column.type, "impl_instance", None)
+    if implementation is None:
+        return None
+    try:
+        return implementation.python_type
+    except NotImplementedError:
+        return None
 
 
 def test_manifest_covers_the_live_schema() -> None:
@@ -86,3 +130,50 @@ def test_the_journal_is_exported() -> None:
     rule = MANIFEST["journalentry"]
     assert isinstance(rule, Included)
     assert rule.key == "journal_entries"
+
+
+@pytest.mark.parametrize("table_name", sorted(included_rules()))
+def test_every_exported_column_is_one_the_archive_can_render(table_name: str) -> None:
+    """A type the serialiser has never seen would truncate a live archive.
+
+    The rows are streamed, so the ``200`` and the opening braces are already on
+    the wire before the first unrenderable value is reached. A ``TypeError``
+    there does not become a ``500``; it becomes a half-written file the user is
+    told is their data. Catching it against the schema is the only place the
+    failure is still cheap.
+    """
+    rule = included_rules()[table_name]
+    withheld = rule.dropped()
+    presented = {
+        column.name: _exported_python_type(column)
+        for column in SQLModel.metadata.tables[table_name].columns
+        if column.name not in withheld
+    }
+    offenders = {
+        name: python_type
+        for name, python_type in presented.items()
+        if python_type not in EXPORTABLE_TYPES
+    }
+    assert not offenders, (
+        f"{table_name} exports {offenders}, which _json_default cannot render; "
+        "teach the serialiser the type or drop the column from the manifest"
+    )
+
+
+@pytest.mark.parametrize("python_type", EXPORTABLE_TYPES)
+def test_the_serialiser_renders_every_type_the_manifest_is_allowed(
+    python_type: type,
+) -> None:
+    """``EXPORTABLE_TYPES`` is a promise about ``_json_default``, not a wish.
+
+    The test above trusts that tuple to describe what the archive can write. If
+    the tuple were widened without teaching the serialiser, that test would go
+    on passing while exports broke — so this one closes the loop from the other
+    side.
+    """
+    sample = _SAMPLE_VALUES.get(python_type)
+    assert sample is not None, (
+        f"{python_type.__name__} was added to EXPORTABLE_TYPES without a sample, "
+        "so nothing here ever asks the serialiser whether it can render one"
+    )
+    assert _encode(sample)
