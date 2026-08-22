@@ -120,7 +120,7 @@ export const CORPUS_SOURCE_COPY: Record<string, CorpusSourceCopy> = {
  * same list from the backend, so adding a writer turns that test red until the
  * surface catches up.
  */
-export const SOURCES_ADEPTHOOD_SORTS: readonly string[] = ['journal'];
+export const SOURCES_ADEPTHOOD_SORTS: readonly string[] = ['journal', 'upload'];
 
 /** Copy for a source the server serves and this release has not met. */
 function unknownSourceCopy(source: string): CorpusSourceCopy {
