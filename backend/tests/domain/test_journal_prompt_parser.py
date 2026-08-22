@@ -138,3 +138,41 @@ def test_unknown_colour_raises() -> None:
 def test_prompts_for_color_is_cached() -> None:
     """Repeat reads reuse the parsed list rather than re-reading markdown."""
     assert prompts_for_color("Teal") is prompts_for_color("Teal")
+
+
+def test_clear_lights_fourth_prompt_still_reads_its_qualifier_as_a_cadence() -> None:
+    """Pin the one known false positive, so it cannot change unnoticed.
+
+    Cadence is located by position -- the trailing parenthetical -- and never by
+    wording, which is deliberate: cadence text is prose the course author writes
+    and this module does not get to interpret it. Clear Light's fourth prompt
+    ends in a parenthetical that qualifies the *title* instead of naming a
+    cadence, so it is read as one.
+
+    That is a content-side divergence to fix upstream, not a special case to
+    encode here -- but "known and documented" is not the same as "guarded".
+    Without this, a positional-parsing tweak could silently change the reading
+    in either direction and nothing would notice: fixing it would look like an
+    unrelated refactor, and breaking the other three would look like this.
+
+    So this test pins the wrong answer on purpose. **When the content is
+    corrected upstream, this test fails, and that failure is the signal to
+    delete it** -- not to reintroduce the reading.
+    """
+    prompts = prompts_for_color("Clear Light")
+    fourth = prompts[3]
+
+    assert fourth.title == "Write as the Adept"
+    assert fourth.cadence == "Aspirational Identity", (
+        "Clear Light prompt 4's parenthetical is a title qualifier, not a "
+        "cadence. If this now reads differently, the content was fixed "
+        "upstream -- delete this test rather than restoring the old reading."
+    )
+
+    # The other three carry real cadences, which is what makes the fourth a
+    # divergence in the content rather than a parser that cannot find cadences.
+    assert [p.cadence for p in prompts[:3]] == [
+        "Whenever they arise",
+        "At least 4x per week",
+        "Daily",
+    ]
