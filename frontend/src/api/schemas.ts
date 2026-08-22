@@ -872,6 +872,38 @@ export const uiFlagsSchema = z.object({
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;
 
 // ---------------------------------------------------------------------------
+// Corpus consent (what an account has agreed to have sorted into its corpus)
+// ---------------------------------------------------------------------------
+
+/**
+ * One account's current decision about one source (mirrors the backend
+ * ``CorpusConsentResponse``).
+ *
+ * ``source`` is a plain string rather than an enum of the three the API serves
+ * today: the backend reports every source it knows, in its own order, so that a
+ * kind of material added later reaches the consent surface without a client
+ * release. A client that validated against a frozen list would reject the whole
+ * response the day that happened — turning an added row into a broken screen.
+ *
+ * ``decided_at`` is nullable because "never asked" is a state, not a missing
+ * field. Requiring a datetime here would make a brand-new account's honest
+ * answer look like a malformed response.
+ */
+export const corpusConsentSchema = z.object({
+  source: z.string().min(1),
+  granted: z.boolean(),
+  decided_at: isoDateTime.nullable(),
+});
+
+/** Every source, decided or not, in the order the backend declares them. */
+export const corpusConsentListSchema = z.object({
+  sources: z.array(corpusConsentSchema),
+});
+
+export type CorpusConsentT = z.infer<typeof corpusConsentSchema>;
+export type CorpusConsentListT = z.infer<typeof corpusConsentListSchema>;
+
+// ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
 // ---------------------------------------------------------------------------
 

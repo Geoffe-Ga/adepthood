@@ -7,6 +7,8 @@ import {
   dataExportArchiveSchema,
   authResponseSchema,
   contentItemSchema,
+  corpusConsentListSchema,
+  corpusConsentSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionSuggestionSchema,
@@ -50,6 +52,8 @@ import {
   type CompletionSuggestionT,
   type ContractionReflectionT,
   type ContractionVariantT,
+  type CorpusConsentListT,
+  type CorpusConsentT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type UiFlagsT,
@@ -3149,6 +3153,53 @@ export const uiFlags = {
       body: partial,
       token,
       schema: uiFlagsResponseSchema,
+    });
+  },
+};
+
+// Corpus consent (which kinds of material may be sorted into the corpus)
+
+/** What an account has currently decided about one source. */
+export type CorpusConsent = CorpusConsentT;
+
+// Validated at the edge so a decision that arrived as something other than a
+// boolean raises ApiValidationError rather than rendering as a switch position
+// nobody chose. Neither path has a trailing slash — the router mounts
+// ``/corpus/consent`` directly, so a slash would cost a 307 on every read.
+const corpusConsentListResponseSchema =
+  corpusConsentListSchema as unknown as z.ZodType<CorpusConsentListT>;
+const corpusConsentResponseSchema = corpusConsentSchema as unknown as z.ZodType<CorpusConsent>;
+
+export const corpusConsent = {
+  /**
+   * Every source and what the caller has decided about it, decided or not.
+   *
+   * The envelope is unwrapped here so callers hold the list the backend
+   * ordered; the order is the ontology's own, and re-sorting it client-side
+   * would put the surface's rows in an order nothing owns.
+   */
+  async list(token?: string): Promise<CorpusConsent[]> {
+    const response = await request<CorpusConsentListT>('/corpus/consent', {
+      token,
+      schema: corpusConsentListResponseSchema,
+    });
+    return response.sources;
+  },
+  /**
+   * Record one decision and return the state it produced.
+   *
+   * Deliberately not retried. The verb is idempotent — re-sending an answer
+   * already on the record appends nothing — but a withdrawal deletes that
+   * source's fragments, and a request whose response was lost is one a person
+   * should be told about rather than one the client silently sends again.
+   */
+  set(source: string, granted: boolean, token?: string): Promise<CorpusConsent> {
+    return request<CorpusConsent>(`/corpus/consent/${encodeURIComponent(source)}`, {
+      method: 'PUT',
+      body: { granted },
+      token,
+      schema: corpusConsentResponseSchema,
+      retry: false,
     });
   },
 };

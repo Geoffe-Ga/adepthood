@@ -321,6 +321,27 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The consent decision itself: a live pair of endpoints nothing rendered until
+// this row existed, which is how every account's corpus stayed empty.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the corpus-consent destination', () => {
+  test('offers the decision about what may be sorted into the corpus', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-row-corpus-consent')).toBeTruthy();
+  });
+
+  test('tapping it opens the consent screen', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-corpus-consent'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The Digital Sangha's front door, mounted in the hub.
 // ---------------------------------------------------------------------------
 

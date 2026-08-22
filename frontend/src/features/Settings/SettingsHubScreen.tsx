@@ -1,6 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
+  BookOpen,
   Download,
   FileText,
   FolderUp,
@@ -14,6 +15,7 @@ import {
 import React, { useCallback } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
+import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
 
@@ -96,12 +98,23 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
+interface CorpusSectionProps {
+  onSeedCorpus: () => void;
+  onCorpusConsent: () => void;
+}
+
 /**
- * Corpus group: the way in for writing that already exists elsewhere. Phrased
- * as an offer, not a task — the journal works fine on its own, and this only
- * widens what reflections can draw on for people who want that.
+ * Corpus group: the way in for writing that already exists elsewhere, and the
+ * decision about whether any of it is sorted for reflections to draw on.
+ * Phrased as an offer, not a task — the journal works fine on its own, and both
+ * rows only widen what reflections can reach for people who want that. The
+ * consent row is off until somebody turns it on, so it is a question rather
+ * than a setting to correct.
  */
-const CorpusSection = ({ onSeedCorpus }: { onSeedCorpus: () => void }): React.JSX.Element => (
+const CorpusSection = ({
+  onSeedCorpus,
+  onCorpusConsent,
+}: CorpusSectionProps): React.JSX.Element => (
   <EditorialSection title="Your corpus" testID="settings-group-corpus">
     <SettingsRow
       icon={FolderUp}
@@ -109,6 +122,13 @@ const CorpusSection = ({ onSeedCorpus }: { onSeedCorpus: () => void }): React.JS
       description="Add notes, exports, and documents you have already written elsewhere."
       onPress={onSeedCorpus}
       testID="settings-row-seed-corpus"
+    />
+    <SettingsRow
+      icon={BookOpen}
+      label={CORPUS_CONSENT_ROW_LABEL}
+      description={CORPUS_CONSENT_ROW_DESCRIPTION}
+      onPress={onCorpusConsent}
+      testID="settings-row-corpus-consent"
     />
   </EditorialSection>
 );
@@ -204,6 +224,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
   const openSeedCorpus = useCallback(() => navigation.navigate('SeedCorpus'), [navigation]);
   const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
+  const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
@@ -215,7 +236,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
-      <CorpusSection onSeedCorpus={openSeedCorpus} />
+      <CorpusSection onSeedCorpus={openSeedCorpus} onCorpusConsent={openCorpusConsent} />
       <PrivacySection />
       <ChooseDepthsSection />
       <SanghaSection />

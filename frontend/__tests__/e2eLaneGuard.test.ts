@@ -28,6 +28,7 @@ const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
   'auth.e2e.test.ts',
+  'corpus-consent.e2e.test.ts',
   'course.e2e.test.ts',
   'data-export.e2e.test.ts',
   'depth.e2e.test.ts',

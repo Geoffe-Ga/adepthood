@@ -21,6 +21,15 @@ on:
         required: false
         default: "5"
 
+permissions:
+  contents: read
+  issues: write
+  # OIDC token for the claude action's auth exchange. A called reusable
+  # workflow cannot hold more than its caller, and `_claude-scan.yml` asks
+  # for this -- omitting it here rejects the whole file before any job is
+  # created, which is a startup failure with no log to read.
+  id-token: write
+
 jobs:
   run:
     uses: ./.github/workflows/_claude-scan.yml
