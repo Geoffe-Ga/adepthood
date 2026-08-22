@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Table, delete, select, update
+from sqlalchemy import CursorResult, Table, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import SQLModel
@@ -34,11 +34,11 @@ from sqlmodel import SQLModel
 from domain.account_deletion import (
     POLICY,
     Disposition,
-    OwnerKey,
     TablePolicy,
     erasure_order,
     policy_gaps,
 )
+from domain.ownership import OwnedBy, owner_predicate
 from models.account_deletion_audit import AccountDeletionAudit
 from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 
@@ -84,26 +84,37 @@ class DeletionReceipt:
     vault_guidance: str = VAULT_GUIDANCE_NONE
 
 
+def _policy_parent(name: str) -> tuple[Table, OwnedBy]:
+    """A parent table and how the policy says *that* table is owned.
+
+    Handed to :func:`~domain.ownership.owner_predicate` so the recursion asks
+    this policy — rather than assuming one — how ``habit`` is reached from
+    ``goal``.
+    """
+    owned = POLICY[name].owned_by
+    if owned is None:  # pragma: no cover - guarded by the policy-gap check
+        msg = f"table {name!r} is reached as a parent but declares no ownership column"
+        raise ErasurePolicyGapError(msg)
+    return SQLModel.metadata.tables[name], owned
+
+
 def _owner_predicate(table: Table, policy: TablePolicy, account: Account) -> ColumnElement[bool]:
     """Build the WHERE clause that selects exactly ``account``'s rows in ``table``.
 
-    Recurses through ``OwnedBy.through`` so a table with no reference to the
-    account (``goal``) is reached by way of the one that has (``habit``).
+    The predicate itself is :mod:`domain.ownership`'s, shared with the export
+    path so the two features can never disagree about which rows are whose.
     """
     owned = policy.owned_by
     if owned is None:  # pragma: no cover - guarded by the policy-gap check
         msg = f"table {table.name!r} is swept but declares no ownership column"
         raise ErasurePolicyGapError(msg)
-    column = table.c[owned.column]
-    if owned.through is not None:
-        parent = SQLModel.metadata.tables[owned.through]
-        parent_rows = select(parent.c.id).where(
-            _owner_predicate(parent, POLICY[owned.through], account),
-        )
-        return column.in_(parent_rows)
-    if owned.key is OwnerKey.EMAIL:
-        return column == account.email
-    return column == account.user_id
+    return owner_predicate(
+        table,
+        owned,
+        user_id=account.user_id,
+        email=account.email,
+        parent_lookup=_policy_parent,
+    )
 
 
 async def _erase_rows(session: AsyncSession, table: Table, account: Account) -> int:
