@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 
 import pytest
@@ -61,6 +61,9 @@ _STRANGER = 2
 # The entry the reflection is about. It is excluded from its own context, so it
 # never appears in any assertion about what was gathered.
 _ENTRY_UNDER_REFLECTION = 9_000
+
+# Four 21-day stages have closed by day 84, so day 90 sits inside stage 5.
+_DAYS_INTO_THE_FIFTH_STAGE = 90
 
 # Some other entry of the same account's, so "the entry itself" and "an earlier
 # morning" can never be the same row by accident.
@@ -334,6 +337,53 @@ async def test_retrieval_is_biased_to_where_the_user_currently_stands(
     this and the window it replaces.
     """
     await _seed_stage_position(db_session, stage_number=5, code=Frequency.F5)
+    await _store_fragment(db_session, "on position", F5=0.9)
+    await _store_fragment(db_session, "merely newer", F1=0.9)
+
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert grounding.bodies[0] == "on position"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_follows_the_calendar_when_the_record_lags_behind_it(
+    db_session: AsyncSession,
+) -> None:
+    """Position is what the program *offers*, so the calendar paces it.
+
+    This reader's record still says stage 1 -- they have not opened the Map
+    since -- but the schedule has carried them to the stage whose colour names
+    F5. Reading ``current_stage`` here would ground the reflection three
+    stages behind the writing it is reflecting on.
+    """
+    anchor = datetime.now(UTC) - timedelta(days=_DAYS_INTO_THE_FIFTH_STAGE)
+    db_session.add(
+        CourseStage(
+            title="Stage 5",
+            subtitle="",
+            stage_number=5,
+            overview_url="",
+            category="",
+            aspect="Curriculum wording 5",
+            spiral_dynamics_color=FREQUENCY_COLORS[Frequency.F5],
+            growing_up_stage="",
+            divine_gender_polarity="",
+            relationship_to_free_will="",
+            free_will_description="",
+        )
+    )
+    db_session.add(
+        StageProgress(
+            user_id=_OWNER,
+            current_stage=1,
+            completed_stages=[],
+            stage_started_at=anchor,
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
     await _store_fragment(db_session, "on position", F5=0.9)
     await _store_fragment(db_session, "merely newer", F1=0.9)
 
