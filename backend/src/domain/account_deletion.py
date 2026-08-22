@@ -219,7 +219,12 @@ POLICY: Mapping[str, TablePolicy] = {
         rationale="The steps of the account's own recipes; meaningless without them.",
         owned_by=OwnedBy("recipe_id", through="practicerecipe"),
     ),
-    "practicesession": _erase("user_id", "Every sit the account logged."),
+    "practicesession": _erase(
+        "user_id",
+        "Every sit the account logged, including the reflection and the "
+        "insight written after it. Those two are encrypted at rest like the "
+        "journal, and erased outright with the rest of the row.",
+    ),
     "practicesessionspend": _erase("user_id", "Wallet spend records for the account's sessions."),
     "practicesharelink": TablePolicy(
         disposition=Disposition.ANONYMISE,

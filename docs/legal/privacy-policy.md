@@ -66,9 +66,12 @@ is everything derived from it: **the body and title of every entry**, **the
 text of a passage you promote out of one**, **each fragment of your writing
 held in the corpus your reflections are drawn from**, **every margin note —
 including the sentence of yours it quotes back at you**, **the suggestions
-drawn from your entries**, and **your answers to the weekly prompts**. One
-thing that is not your writing is encrypted alongside them: **the access key
-for a private vault, if you connect one**. They are encrypted with a key the
+drawn from your entries**, and **your answers to the weekly prompts**. So is
+the writing you do away from the journal: **the reflection and the insight
+you write after sitting a practice**, which are not part of any entry and are
+protected for the same reason. One thing that is not your writing is
+encrypted alongside all of it: **the access key for a private vault, if you
+connect one**. They are encrypted with a key the
 operator configures, and a production server refuses to start without one, so
 there is no version of this service that quietly stores your writing in the
 clear.
@@ -89,14 +92,22 @@ someone who walks off with the database — a stolen backup, a copied disk.
 It does not put your writing beyond the reach of the person holding the
 key. **Anyone who operates Adepthood can read what is in its database.**
 
-The line falls between what you **write** and what you **track**. Your
-journal writing is encrypted. The records you keep are not: habit names,
-goal titles and descriptions, the name you give a practice, and your
-practice logs — **including the reflection and the insight you write after
-a session** — are stored as written. Those last two are prose you composed,
-held in the clear, and this document would rather say so than let the
-sentence above be read as covering the whole app. Issue #2330 tracks
-closing that gap.
+The line falls between what you **write** and what you **record**. Every
+piece of prose you compose is encrypted, wherever in the app you composed
+it — the journal is where most of it happens, not where the protection
+stops. What you record around that writing is not: habit names, goal titles
+and descriptions, the names you give goal groups and practices, and the
+measurements in a practice log — how long you sat, in what mode, whether you
+finished — are stored as written.
+
+One of those is in the clear for a reason worth stating plainly. A habit name
+is checked against your other habit names so the app can refuse a duplicate,
+and encrypted text comes out different every time even for the same words, so
+a name it could not read is a name it could not check. The others are labels
+and numbers rather than writing — except a goal description, which can run
+long enough to be writing, and which is stored in the clear all the same.
+This page names it here rather than let the paragraph above be read as
+covering it.
 
 Deleting an entry inside the app hides it from every list immediately; the
 row is cleared when the account is deleted. If that entry had been sorted
