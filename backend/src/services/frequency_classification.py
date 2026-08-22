@@ -16,6 +16,16 @@ enriches a corpus; it must never be why someone's journal entry fails to save.
 The only exception raised from here is :class:`IntimateContentRefusedError`, which
 is a defect at the call site rather than a runtime condition.
 
+**This is the floor, not the authority.** A user running their own Creek Vault
+has it classify their corpus, and its answer wins; ``services.frequency_source``
+is where that precedence rule lives and it is the only module that knows about
+both sides. Nothing here imports the vault seam, and a test pins that: the
+dependency runs selector to classifier and never back, so a deployment with no
+vault at all still gets a classifier that does not know one exists. What this
+module does owe the rule is its half of the record --
+:class:`ClassificationSource`, so a stored classification can say afterwards
+which side produced it.
+
 Weighting is by conviction, not length: a short, certain assertion outweighs a
 long, hedged one. That judgement belongs to the model, so the prompt says so —
 and the parser preserves whatever weights come back rather than normalising
@@ -25,6 +35,7 @@ them into a distribution, since normalising would destroy exactly the signal
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import re
@@ -92,19 +103,45 @@ class IntimateContentRefusedError(Exception):
     """
 
 
+class ClassificationSource(enum.StrEnum):
+    """Which side produced a classification.
+
+    Two independent models can answer "what frequency is this" for the same
+    fragment -- the user's own Creek Vault, and this operator-side classifier --
+    and :mod:`services.frequency_source` decides which of them wins. This is the
+    record of which one actually did, because after the fact the two answers are
+    indistinguishable: both are weights over the same ten codes.
+
+    ``NONE`` is not a missing value. It is the positive statement that *nobody*
+    classified this fragment -- what :data:`UNCLASSIFIED` carries -- which is a
+    different fact from an operator-side model having read the fragment and
+    recognised nothing in it. Values are lowercase words because they are
+    destined for a column and a log field, not for display.
+    """
+
+    VAULT = "vault"
+    OPERATOR = "operator"
+    NONE = "none"
+
+
 @dataclass(frozen=True)
 class FrequencyClassification:
-    """Per-frequency weights plus how sure the model was overall.
+    """Per-frequency weights, how sure the classifier was, and which one it was.
 
     ``weights`` omits frequencies the fragment does not carry rather than
     listing them at zero, so an empty mapping means "nothing recognised".
     Deliberately not normalised to sum to one: conviction is the quantity of
     interest, and a fragment carrying two frequencies strongly is not the same
     as one carrying them weakly.
+
+    ``source`` has no default on purpose. Every classification carries
+    provenance, and a default would let a path added later attribute the vault's
+    answer to this module -- silently, and unrecoverably once the row is stored.
     """
 
     weights: MappingProxyType[Frequency, float]
     overall_confidence: float
+    source: ClassificationSource
 
     def is_classified(self) -> bool:
         """Whether any frequency was recognised at all."""
@@ -117,6 +154,7 @@ class FrequencyClassification:
 UNCLASSIFIED = FrequencyClassification(
     weights=MappingProxyType({}),
     overall_confidence=0.0,
+    source=ClassificationSource.NONE,
 )
 
 
@@ -181,7 +219,11 @@ def _parse_reply(text: str) -> FrequencyClassification | None:
     confidence = _coerce_weight(payload.get("overall_confidence"))
     if weights is None or confidence is None:
         return None
-    return FrequencyClassification(weights=weights, overall_confidence=confidence)
+    return FrequencyClassification(
+        weights=weights,
+        overall_confidence=confidence,
+        source=ClassificationSource.OPERATOR,
+    )
 
 
 async def classify_frequencies(

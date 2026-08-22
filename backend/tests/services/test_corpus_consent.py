@@ -41,7 +41,7 @@ from services.corpus_consent import (
     set_consent,
 )
 from services.corpus_store import FragmentDraft, record_fragment, retrieve_fragments
-from services.frequency_classification import FrequencyClassification
+from services.frequency_classification import ClassificationSource, FrequencyClassification
 
 _OWNER = 1
 _STRANGER = 2
@@ -59,6 +59,7 @@ async def _fragment(session: AsyncSession, content: str, source: CorpusSource) -
             classification=FrequencyClassification(
                 weights=MappingProxyType({Frequency.F5: 0.9}),
                 overall_confidence=0.9,
+                source=ClassificationSource.OPERATOR,
             ),
         ),
     )
