@@ -291,7 +291,9 @@ describe('JournalShelfScreen', () => {
   it('opens the tapped entry by id', async () => {
     mockList.mockResolvedValue(page([entry(7)]));
     const { findByTestId } = render(<JournalShelfScreen />);
-    fireEvent.press(await findByTestId('journal-shelf-card-7'));
+    // The reading face inside the tile, not the tile itself: the tile is now a
+    // plain container holding that face beside the row's delete affordance.
+    fireEvent.press(await findByTestId('journal-shelf-open-7'));
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 7 });
   });
 
@@ -498,10 +500,12 @@ describe('JournalShelfScreen', () => {
 
   it('falls back to "Untitled" and a matching a11y label when the entry has no title', async () => {
     mockList.mockResolvedValue(page([entry(1, { title: null })]));
-    const { findByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId, getByTestId } = render(<JournalShelfScreen />);
     const card = await findByTestId('journal-shelf-card-1');
     expect(within(card).getByText('Untitled')).toBeTruthy();
-    expect(card.props.accessibilityLabel).toBe('Open untitled entry');
+    expect(getByTestId('journal-shelf-open-1').props.accessibilityLabel).toBe(
+      'Open untitled entry',
+    );
   });
 
   it('drops the "saved" phrase from the caption for an unparseable timestamp', async () => {

@@ -41,6 +41,23 @@
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
   },
   {
+    "id": "journal.delete-entry",
+    "description": "A writer deletes one page from the shelf, the server stops serving it, and another account cannot delete it for them.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
+  },
+  {
     "id": "practice.log-session",
     "description": "A practitioner logs a practice session and finds it in the week's record.",
     "crosses": {
