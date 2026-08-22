@@ -361,6 +361,33 @@ def count_open_backlog(repo: str, *, token: str, max_items: int = 1000) -> int:
 # --------------------------------------------------------------------------- #
 
 
+HEADLINE_SOURCE_CLAUDE = "claude"
+HEADLINE_SOURCE_HEURISTIC = "heuristic"
+
+
+def _log_headline_source(source: str, reason: str = "") -> None:
+    """Record which headline path this recap took, and why.
+
+    The Claude headline is optional by design: a dead key, a revoked key, an
+    absent SDK, or any API error all degrade to the heuristic and the recap
+    still reports success with a duller headline. That is the right behaviour —
+    a recap must not fail over a headline — but it made the degradation
+    invisible. If the credential died weeks ago, every recap since has quietly
+    used the fallback and nothing anywhere said so, so the workflow's green run
+    history is no evidence about the credential in either direction.
+
+    One line turns that into a searchable fact. It goes to stderr because
+    ``--dry-run`` writes the rendered embed as JSON to stdout, and a log line
+    there would corrupt it.
+
+    Only the exception TYPE is ever passed as a reason, never its message: an
+    SDK is free to quote the credential it just rejected, and this runs in a
+    public Actions log.
+    """
+    suffix = f" ({reason})" if reason else ""
+    sys.stderr.write(f"recap: headline: {source}{suffix}\n")
+
+
 def _heuristic_headline(title: str) -> str:
     """Fallback ten-word headline: the cleaned PR title, clipped to ten words."""
     cleaned = title.strip()
@@ -378,9 +405,15 @@ def generate_headline(title: str, body: str) -> str:
     """Ask Claude for a ten-word "what this unlocked" headline.
 
     Falls back to a heuristic if the Anthropic SDK or API key is unavailable, so
-    the recap never fails just because the headline can't be generated.
+    the recap never fails just because the headline can't be generated. Every
+    path says which one it took via :func:`_log_headline_source`, so a
+    degradation that would otherwise be silent leaves a record.
     """
-    if _anthropic_mod is None or not os.environ.get("ANTHROPIC_API_KEY"):
+    if _anthropic_mod is None:
+        _log_headline_source(HEADLINE_SOURCE_HEURISTIC, "the anthropic SDK is not installed")
+        return _heuristic_headline(title)
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        _log_headline_source(HEADLINE_SOURCE_HEURISTIC, "no ANTHROPIC_API_KEY in the environment")
         return _heuristic_headline(title)
 
     prompt = (
@@ -402,9 +435,17 @@ def generate_headline(title: str, body: str) -> str:
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(block.text for block in response.content if block.type == "text").strip()
-    except Exception:  # any SDK/API failure degrades to the heuristic, never fails the recap
+    except Exception as exc:  # any SDK/API failure degrades to the heuristic, never fails the recap
+        # The type only. A rejected-credential error may quote the credential.
+        _log_headline_source(HEADLINE_SOURCE_HEURISTIC, f"{type(exc).__name__} from the anthropic SDK")
         return _heuristic_headline(title)
-    return text or _heuristic_headline(title)
+    if not text:
+        # A call that SUCCEEDED and returned nothing usable degrades too, and it
+        # is the degradation most easily mistaken for a working integration.
+        _log_headline_source(HEADLINE_SOURCE_HEURISTIC, "the API returned an empty headline")
+        return _heuristic_headline(title)
+    _log_headline_source(HEADLINE_SOURCE_CLAUDE)
+    return text
 
 
 # --------------------------------------------------------------------------- #

@@ -134,7 +134,8 @@ Bash task's completion re-invokes the session):
 
 - **In Ralph repos**: launch `scripts/ralph/watch-pr.sh <N>` with
   `run_in_background: true`. It polls `pr-ready.sh`, exits the moment the lane
-  leaves `pending`/`awaiting-review` (verdict posted, CI failed, ready, gone),
+  leaves `pending`/`awaiting-review`/`transport-error` (verdict posted, CI
+  failed, ready, gone),
   and prints `WATCH <N> <token>` for the woken session to act on. It is
   idempotent via a pidfile, so re-launching every turn is safe.
 - **Elsewhere**: launch `gh pr checks <N> --watch` plus a verdict-comment poll
