@@ -539,6 +539,124 @@ def test_generate_headline_falls_back_on_sdk_error(monkeypatch: pytest.MonkeyPat
     assert recap.generate_headline("feat: add energy ledger", "Body") == "add energy ledger"
 
 
+# ---------- headline provenance ----------
+#
+# generate_headline degrades to the heuristic on a dead key, a revoked key, a
+# missing SDK, or any API error, and returns a perfectly plausible headline
+# either way — so the recap has reported "success" for however long the
+# credential has been dead, and nothing anywhere said which path it took. That
+# silence is the same defect this module's sibling workflow was filed for: a
+# dependency that degrades invisibly cannot be noticed, only stumbled upon.
+#
+# One line naming the path turns it into a searchable fact. It goes to stderr so
+# it never contaminates --dry-run's JSON on stdout.
+
+
+def test_claude_headline_records_that_claude_wrote_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(recap, "_anthropic_mod", _FakeAnthropic())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    recap.generate_headline("feat: add energy ledger", "Body text")
+
+    assert "headline: claude" in capsys.readouterr().err
+
+
+def test_missing_key_records_the_degradation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(recap, "_anthropic_mod", _FakeAnthropic())
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    recap.generate_headline("feat: add energy ledger", "Body")
+
+    err = capsys.readouterr().err
+    assert "headline: heuristic" in err
+    # The REASON is what distinguishes "we never configured this" from "the key
+    # died three weeks ago", which is the whole point of logging it at all.
+    assert "no ANTHROPIC_API_KEY" in err
+
+
+def test_absent_sdk_records_the_degradation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(recap, "_anthropic_mod", None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    recap.generate_headline("feat: add energy ledger", "Body")
+
+    err = capsys.readouterr().err
+    assert "headline: heuristic" in err
+    assert "anthropic SDK" in err
+
+
+def test_api_error_records_the_error_type(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class _Boom:
+        def Anthropic(self) -> object:  # noqa: N802 - mirrors the SDK's class name
+            raise RuntimeError("api down")
+
+    monkeypatch.setattr(recap, "_anthropic_mod", _Boom())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    recap.generate_headline("feat: add energy ledger", "Body")
+
+    err = capsys.readouterr().err
+    assert "headline: heuristic" in err
+    assert "RuntimeError" in err
+
+
+def test_headline_log_never_echoes_the_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "sk-ant-" + "notarealkey0123456789"  # pragma: allowlist secret
+
+    class _Boom:
+        def Anthropic(self) -> object:  # noqa: N802 - mirrors the SDK's class name
+            raise RuntimeError(f"bad credential {secret}")
+
+    monkeypatch.setattr(recap, "_anthropic_mod", _Boom())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+
+    recap.generate_headline("feat: add energy ledger", "Body")
+
+    captured = capsys.readouterr()
+    # Only the exception TYPE is logged, never its message: an SDK is free to put
+    # the credential it rejected into the text, and a recap runs in a public log.
+    assert secret not in captured.err
+    assert secret not in captured.out
+
+
+def test_empty_claude_response_records_the_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class _Blank:
+        class _Client:
+            def __init__(self) -> None:
+                self.messages = _Blank._Messages()
+
+        class _Messages:
+            def create(self, **_kwargs: Any) -> _Response:
+                return _Response([_Block("   ")])
+
+        def Anthropic(self) -> "_Blank._Client":  # noqa: N802 - mirrors the SDK's class name
+            return _Blank._Client()
+
+    monkeypatch.setattr(recap, "_anthropic_mod", _Blank())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # pragma: allowlist secret
+
+    headline = recap.generate_headline("feat: add energy ledger", "Body")
+
+    assert headline == "add energy ledger"
+    err = capsys.readouterr().err
+    # A call that SUCCEEDED and returned nothing usable is a degradation too, and
+    # the one most likely to be mistaken for a working integration.
+    assert "headline: heuristic" in err
+    assert "empty" in err
+
+
 # ---------- parse_benchmark_trend ----------
 
 

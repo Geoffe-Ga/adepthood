@@ -47,9 +47,12 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from main import app
-from routers.journal import _UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT
 from routers.transcription import TRANSCRIBE_RATE_LIMIT
-from schemas.journal_upload import MAX_UPLOAD_BASE64_CHARS
+from schemas.journal_upload import (
+    MAX_UPLOAD_BASE64_CHARS,
+    UPLOAD_MESSAGES,
+    UPLOAD_RATE_LIMIT,
+)
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -339,7 +342,7 @@ class TestUploadDegradation:
         assert response.status_code == HTTPStatus.ACCEPTED
         assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert (
-            response.json()["message"] == _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
+            response.json()["message"] == UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
         )
         assert len(vault.upload_calls) == 1
 
@@ -590,12 +593,12 @@ class TestUploadMessagesAreExhaustive:
 
     def test_every_status_has_a_message(self) -> None:
         """A missing entry is a 500 on a path that must never 500."""
-        assert set(_UPLOAD_MESSAGES) == set(VaultUploadStatus)
+        assert set(UPLOAD_MESSAGES) == set(VaultUploadStatus)
 
     @pytest.mark.parametrize("status", list(VaultUploadStatus))
     def test_no_message_sends_the_user_to_support(self, status: VaultUploadStatus) -> None:
         """Each outcome names a next step the user can take themselves."""
-        message = _UPLOAD_MESSAGES[status]
+        message = UPLOAD_MESSAGES[status]
         assert message.strip()
         assert "contact support" not in message.lower()
 
@@ -607,7 +610,7 @@ class TestUploadMessagesAreExhaustive:
         alone is an instruction that cannot work in the second case, and the
         person following it has no way to tell which case they are in.
         """
-        message = _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
+        message = UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
         assert "Adepthood" in message
 
     def test_the_unsupported_message_promises_no_retry(self) -> None:
@@ -617,7 +620,7 @@ class TestUploadMessagesAreExhaustive:
         something an upload can bring about -- so an invitation to try again is
         a dead end dressed as an action.
         """
-        message = _UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED].lower()
+        message = UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED].lower()
         assert "try again" not in message
 
 

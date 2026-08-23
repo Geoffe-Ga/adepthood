@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from types import MappingProxyType
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -19,6 +15,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
+from dependencies.document_payload import guard_document_payload
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -30,7 +27,6 @@ from domain.contraction import build_contraction_invitation, detect_contraction
 from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
-    VaultUploadStatus,
 )
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
@@ -48,7 +44,6 @@ from errors import (
     conflict,
     forbidden,
     not_found,
-    payload_too_large,
     unprocessable,
 )
 from models.completion_suggestion import (
@@ -79,8 +74,8 @@ from schemas.journal import (
     JournalMessageResponse,
 )
 from schemas.journal_upload import (
-    MAX_UPLOAD_BASE64_CHARS,
-    MAX_UPLOAD_BYTES,
+    UPLOAD_MESSAGES,
+    UPLOAD_RATE_LIMIT,
     UploadDocumentRequest,
     UploadDocumentResponse,
 )
@@ -440,81 +435,6 @@ async def _encrypted_search_page(
     )
 
 
-# What each upload outcome tells the person who sent the document. Every line
-# names what happened, why, and the one thing they can do next -- none of them
-# ends at "contact support", because every one of these has a self-serve remedy.
-_UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
-    {
-        VaultUploadStatus.ACCEPTED: (
-            "Your document is in your vault. It will show up in reflections from here on."
-        ),
-        VaultUploadStatus.VAULT_UNAVAILABLE: (
-            "Your vault didn't answer, so the document wasn't sent. Check that your vault "
-            "is running and reachable, then upload it again."
-        ),
-        # Reached three ways, and the message has to serve all three without
-        # misdirecting any: the vault never offered uploads, it offers a route
-        # this pair of versions cannot negotiate, or the document is marked
-        # ``intimate`` and that tier has no spelling on the wire at all. Telling
-        # someone to update software that is already current is an instruction
-        # that cannot work, and so is telling the intimate case to update
-        # anything -- so the tier is named first, because it is the only one of
-        # the three with a remedy the person holding the document controls.
-        # Nothing here promises a retry of the same request, because none of the
-        # three is cleared by one.
-        VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
-            "This document wasn't sent, and nothing in your vault changed — journal "
-            "entries still save as usual. If you marked it Intimate, that tier stays on "
-            "this device and never goes to a vault; choose a different tier if you want "
-            "it there. Otherwise file uploads aren't working between Adepthood and your "
-            "vault yet — update your vault if a newer version is out, and keep the file "
-            "until one of you has caught up."
-        ),
-        VaultUploadStatus.DEGRADED: (
-            "The upload didn't complete and the document wasn't stored. Nothing was "
-            "changed in your vault — please try again."
-        ),
-    }
-)
-
-
-# Matched to ``transcription.TRANSCRIBE_RATE_LIMIT`` rather than to the stricter
-# resonance limit, because this endpoint is the same *class* of thing: a base64
-# payload a person submits deliberately, in bursts, with no LLM spend attached.
-# Someone adding a folder of documents legitimately makes a dozen calls in a row,
-# and one document per request is the shipped contract (batching is a follow-up),
-# so a tighter cap would throttle ordinary use rather than abuse.
-#
-# It is bounded at all because an upload is heavier than an ordinary write: 10 MB
-# per call, twice what transcription accepts, and every accepted call is forwarded
-# to an external network dependency. A plain ``POST /journal/`` carries neither
-# cost, which is why it is unrated and this is not.
-UPLOAD_RATE_LIMIT = "20/minute"
-
-
-def _guard_upload_size(content_base64: str) -> None:
-    """Refuse an oversized document before any of it is decoded.
-
-    Two gates, cheapest first, mirroring ``routers/transcription.py``: the
-    encoded length is checked against :data:`MAX_UPLOAD_BASE64_CHARS` so a huge
-    payload is rejected without allocating the decoded bytes at all, and the
-    decoded length is then checked against the real ceiling so a payload that
-    slipped past the first by rounding still cannot exceed it.
-
-    A malformed encoding is a 422 rather than a 413: it is a different defect
-    with a different fix, and forwarding bytes we could not decode would hand
-    the vault a file its ingestor cannot open.
-    """
-    if len(content_base64) > MAX_UPLOAD_BASE64_CHARS:
-        raise payload_too_large("document_too_large")
-    try:
-        raw = base64.b64decode(content_base64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise unprocessable("invalid_document_encoding") from exc
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise payload_too_large("document_too_large")
-
-
 @router.post(
     "/upload",
     response_model=UploadDocumentResponse,
@@ -552,7 +472,12 @@ async def upload_document(
     the vault is contacted. The response says so plainly rather than reporting a
     storage that did not happen.
     """
-    _guard_upload_size(payload.content_base64)
+    # The decoded bytes are discarded: this path forwards the *encoded* document
+    # to the vault and parses nothing. The ceiling itself is stated once, in
+    # ``guard_document_payload``, which the corpus import surface also calls --
+    # an upload ceiling enforced in two places is one that can come to disagree
+    # with itself.
+    guard_document_payload(payload.content_base64)
     outcome = await store_upload(
         vault_client,
         UploadedDocument(
@@ -567,7 +492,7 @@ async def upload_document(
         status=outcome.status,
         vault_ref=outcome.vault_ref,
         tags=list(outcome.tags),
-        message=_UPLOAD_MESSAGES[outcome.status],
+        message=UPLOAD_MESSAGES[outcome.status],
     )
 
 

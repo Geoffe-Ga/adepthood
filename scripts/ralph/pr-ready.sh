@@ -19,9 +19,18 @@
 #   blocked          a required check or review is missing → a sync cannot supply
 #                    it; a human or the review gate must
 #   conflicted       the branch conflicts with its base → needs a real conflict
-#                    resolution (Gate 1), not a sync
+#                    resolution (Gate 1), not a sync. OUTRANKS `awaiting-review`:
+#                    a conflicting PR has no merge ref, so no `pull_request`-event
+#                    run and no `claude-review` check ever exists, and the verdict
+#                    the lane would wait for can never arrive
 #   pending          CI still running → wait for a later wake
-#   ci-failed        CI has a failing/errored check → Step 2 (ci-debugging)
+#   ci-failed        CI has a failing/errored check, CORROBORATED by the rollup
+#                    naming it → Step 2 (ci-debugging)
+#   transport-error  `gh` could not be asked, or answered non-zero with no failing
+#                    check to corroborate it (no network, TLS, expired token,
+#                    rate limit, 5xx, a PR with no checks at all) → RETRY on a
+#                    later wake; do NOT dispatch a debugger. Distinct from
+#                    `unknown`, which is a real answer about mergeability
 #   changes-requested  a FRESH verdict (posted after the PR's HEAD commit) that
 #                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
 #                    (address-feedback): Gate 4 has spoken and wants changes
@@ -76,6 +85,23 @@
 # that could merge a PR with pending/failing checks. CI state here is keyed off
 # the `gh pr checks` EXIT CODE, which is authoritative: 0 = all passed, 8 = some
 # pending, anything else = failure. No text parsing of the checks table at all.
+#
+# WHY `transport-error` EXISTS: that exit code is authoritative ABOUT CHECKS, and
+# it was being read as authoritative about everything — including whether the call
+# reached GitHub at all. `gh` also exits non-zero with no network, a TLS failure,
+# an expired or rotated token, a secondary-rate-limit block, a 5xx, or a PR that
+# reports no checks whatsoever, and every one of those printed `ci-failed` — which
+# is not an idle label but a route to Step 2, so a dropped connection dispatched a
+# worker to debug a build that had never failed. Observed on a live lane:
+# `ci-failed` while the real state was nine SUCCESS and one IN_PROGRESS, and
+# earlier in the same session a bare x509 certificate error. So a non-zero exit is
+# now believed only when a second, independent query names a check that actually
+# reports a failing conclusion; everything else says "I could not tell", which is
+# a wait, not a debugging dispatch. The stderr `gh` wrote is kept and echoed
+# rather than discarded — it is the one thing that says WHICH failure happened,
+# and discarding it is why this went unnoticed. `unknown` was NOT reused: it means
+# "GitHub has not finished computing mergeability", a real answer about a
+# different question, and conflating the two would make both unreadable.
 #
 # WHY `ready-unreviewed` EXISTS: `claude-code-review.yml` cannot run while a PR
 # is untouched by anyone but Dependabot (GitHub withholds the OAuth secret from
@@ -136,8 +162,22 @@
 set -euo pipefail
 
 # `gh pr checks` exit code that means "checks still pending" (gh's documented
-# contract: 0 = pass, 8 = pending, other = failure).
+# contract: 0 = pass, 8 = pending, other = failure). "Failure" there covers the
+# command failing as well as a check failing, which is why the other end of that
+# mapping needs corroborating — see `failing_checks_confirmed`.
 readonly CHECKS_PENDING_EC=8
+
+# The rollup conclusions that constitute a genuinely red lane. FAILURE is the
+# common one; the rest are the terminal-but-not-passing states GitHub also
+# reports, and a lane sitting in any of them needs a debugger just as much.
+# NEUTRAL and SKIPPED are deliberately absent: neither is a failure.
+readonly FAILING_CONCLUSIONS_RE='FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE'
+
+# The `mergeStateStatus` values that mean the branch conflicts with its base.
+# Named once and consulted from both places that care, because the two used to
+# be spelled out separately and a drift between them is invisible.
+readonly CONFLICT_MERGE_STATE_DIRTY="DIRTY"
+readonly CONFLICT_MERGE_STATE_CONFLICTING="CONFLICTING"
 
 # The per-PR/per-issue human hold. `pick-next.sh` already excludes issues wearing
 # it from work entirely; this honours the same meaning on the PR side.
@@ -334,13 +374,51 @@ if [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
   fi
 fi
 
+# True when a second, independent query names at least one check that actually
+# reports a failing conclusion. Returns non-zero when it cannot ask, when the
+# answer is malformed, and when nothing failed — so `ci-failed` is claimed only
+# on positive evidence and every other outcome falls through to
+# `transport-error`.
+#
+# Both shapes in the rollup are read: a CheckRun carries `conclusion`, a legacy
+# commit-status context carries `state` instead, and a filter reading only the
+# first would call a genuinely red PR a network blip. jq's `//` handles the
+# absent/null field for us. LAZY — only a lane whose `gh pr checks` already went
+# non-zero pays for it, so a green or pending lane costs exactly what it did.
+failing_checks_confirmed() {
+  local failures
+  failures="$(gh pr view "${gh_args[@]}" --json statusCheckRollup \
+    --jq "[.statusCheckRollup[]? | ((.conclusion // .state // \"\") | ascii_upcase)
+           | select(test(\"^($FAILING_CONCLUSIONS_RE)$\"))] | length" \
+    2>/dev/null)" || return 1
+  [[ "$failures" =~ ^[0-9]+$ ]] || return 1
+  [[ "$failures" -gt 0 ]]
+}
+
 # --- CI state from the exit code, not the text table -----------------------
+# Stderr is CAPTURED, not discarded. `gh` narrates a transport failure there and
+# says nothing when a check merely reports FAILURE, so throwing it away was what
+# made a dropped connection indistinguishable from a broken build — and the
+# message is the one thing that tells a human which happened.
 ci_ec=0
-gh pr checks "${gh_args[@]}" >/dev/null 2>&1 || ci_ec=$?
+ci_err="$(gh pr checks "${gh_args[@]}" 2>&1 >/dev/null)" || ci_ec=$?
 if [[ "$ci_ec" -eq "$CHECKS_PENDING_EC" ]]; then
   echo "pending"; exit 0
 elif [[ "$ci_ec" -ne 0 ]]; then
-  echo "ci-failed"; exit 0
+  # A non-zero that is not 8 means "something went wrong", which is NOT the same
+  # as "a check went red". `gh` also exits non-zero with no network, a TLS
+  # failure, an expired token, a secondary-rate-limit block, a 5xx, or a PR that
+  # reports no checks at all — and every one of those used to print `ci-failed`,
+  # dispatching a ci-debugging worker to read logs for a failure that never
+  # happened, on a PR that was often about to go green. So the verdict is only
+  # believed when a second query corroborates it by naming a failing check;
+  # otherwise the honest answer is "I could not tell", which is its own token.
+  if failing_checks_confirmed; then
+    echo "ci-failed"; exit 0
+  fi
+  [[ -z "$ci_err" ]] ||
+    printf 'pr-ready: gh pr checks exited %s: %s\n' "$ci_ec" "${ci_err%%$'\n'*}" >&2
+  echo "transport-error"; exit 0
 fi
 
 # --- CI is green: check mergeability + a FRESH LGTM verdict -----------------
@@ -367,8 +445,33 @@ verdict_line="$(gh pr view "${gh_args[@]}" \
 verdict_date="${verdict_line%%|*}"
 verdict_lgtm="${verdict_line#*|}"
 
+# True when the branch conflicts with its base. Read off the `mergeStateStatus`
+# already in hand, so it costs no extra round trip.
+is_conflicted() {
+  [[ "$merge_state" == "$CONFLICT_MERGE_STATE_DIRTY" ||
+     "$merge_state" == "$CONFLICT_MERGE_STATE_CONFLICTING" ]]
+}
+
+# A conflict makes the verdict UNREACHABLE, so it outranks every wait for one.
+# GitHub builds no merge ref for a conflicting PR, and `pull_request`-event
+# workflows run against that ref — so `claude-review` never appears in the rollup
+# at all (any green checks are `push`-event runs on the branch), and no amount of
+# re-kicking can produce a verdict. Waiting is therefore not merely slow, it can
+# never end. Emitting `conflicted` here instead sends the lane to the one action
+# that unblocks it. Observed on a live lane that reported `awaiting-review` while
+# the PR was in fact CONFLICTING; ralph-tick.md had to carry this as a manual
+# "check mergeStateStatus FIRST" instruction because the helper would not say it.
+#
+# Returns 0 when it does NOT fire, so a bare call is safe under `set -e` — a
+# function ending on a false test would abort the whole script instead.
+exit_if_conflicted() {
+  is_conflicted || return 0
+  echo "conflicted"; exit 0
+}
+
 # Without a HEAD commit time we cannot prove the verdict is fresh — fail closed.
 if [[ -z "$head_date" ]]; then
+  exit_if_conflicted
   echo "awaiting-review"; exit 0
 fi
 
@@ -462,6 +565,10 @@ if [[ "$verdict_lgtm" != "true" || -z "$verdict_date" ]] || ! [[ "$verdict_date"
   if [[ "$verdict_lgtm" == "false" && -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]]; then
     echo "changes-requested"; exit 0
   fi
+  # A verdict that already ARRIVED (above) still speaks; from here down every
+  # remaining branch is a wait for one that has not, and on a conflicting PR no
+  # such verdict can ever come.
+  exit_if_conflicted
   review_edits_own_workflow && { echo "review-self-skipped"; exit 0; }
   review_gate_absent || { echo "awaiting-review"; exit 0; }
   ready_token="ready-unreviewed"
@@ -504,15 +611,22 @@ else
   # hurry GitHub's mergeability computation. Collapsed together, every wake
   # synced a no-op and dispatched a worker with nothing to do -- and against
   # DRAFT the loop fought a human indefinitely.
-  case "$merge_state" in
-    UNKNOWN) echo "unknown" ;;
-    DRAFT) echo "draft" ;;
-    BLOCKED) echo "blocked" ;;
-    DIRTY | CONFLICTING) echo "conflicted" ;;
-    # CLEAN-but-stale, BEHIND, and anything not enumerated above. The fallback
-    # is deliberately `behind` rather than a new "unclassified" token: a sync is
-    # always safe, so an unrecognised state costs one wasted sync instead of
-    # wedging the lane on a token no caller knows how to route.
-    *) echo "behind" ;;
-  esac
+  # The conflict arm is `is_conflicted` rather than a second `DIRTY |
+  # CONFLICTING` pattern: the same two states are consulted before the
+  # awaiting-review wait as well, and two hand-maintained copies of that list is
+  # exactly the drift that would silently restore the wait-forever bug.
+  if is_conflicted; then
+    echo "conflicted"
+  else
+    case "$merge_state" in
+      UNKNOWN) echo "unknown" ;;
+      DRAFT) echo "draft" ;;
+      BLOCKED) echo "blocked" ;;
+      # CLEAN-but-stale, BEHIND, and anything not enumerated above. The fallback
+      # is deliberately `behind` rather than a new "unclassified" token: a sync is
+      # always safe, so an unrecognised state costs one wasted sync instead of
+      # wedging the lane on a token no caller knows how to route.
+      *) echo "behind" ;;
+    esac
+  fi
 fi

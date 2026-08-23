@@ -51,6 +51,48 @@ The workflow **hard-fails** if the `ANTHROPIC_API_KEY` repo secret is
 missing — it refuses to publish a docs-blind graph mislabeled as
 `code+semantic`.
 
+### Preflight, and why the failures used to be undiagnosable
+
+Before the extraction, `scripts/graph/anthropic_preflight.sh` makes **one**
+minimal authenticated request (`GET /v1/models?limit=1` — cheap, and it buys
+no tokens) and prints the HTTP status.
+
+It exists because this workflow failed six weekly runs in a row with every
+one of its thirteen chunks reporting the same string, `Connection error.`,
+and nothing else. That string fits three faults equally well, and they have
+three different owners: a dead credential (the repo owner's — rotate the
+secret, never work around it), a runner that cannot egress, and a broken
+client inside `graphify` itself. Nothing in the extractor's output tells them
+apart, so a month of failures looked like one undiagnosable problem. The
+preflight separates them in about a second and encodes the answer in its exit
+code: `2` = credential rejected (401/403), `3` = unreachable (no HTTP
+response at all), `4` = the API answered and refused (rate limit, insufficient
+credit, outage), `0` = reachable and authenticated — which rules the first two
+out, so a chunk failure after a green preflight is the extractor's client.
+
+The key travels in a request header, never in the URL, and the script prints
+only the status; any key-shaped string in the third-party response body is
+redacted before it is echoed.
+
+**A note on inferring the credential's health from elsewhere:** `ralph-recap.yml`
+uses the same secret and its runs are green, which looks decisive and is not.
+The recap treats the key as *optional* and silently degrades to a heuristic
+headline on a dead key, so its green history is evidence about the credential
+in neither direction. `recap.py` now logs `headline: claude` or
+`headline: heuristic` with a reason for exactly this purpose.
+
+### When it fails, something says so
+
+`graph-semantic.yml`'s `report-failure` job runs on `failure()` and calls
+`scripts/graph/report_workflow_failure.sh`, which opens **or updates a single
+tracking issue** — matched by a `<!-- workflow-failure:<workflow> -->` marker
+in the issue body, so repeat failures become comments, never new issues. A bot
+that files weekly is noise, and noise is how the original six failures went
+unread for a month while `CLAUDE.md` was telling every agent to prefer the
+graph over grep sweeps. If the search for that issue cannot be completed, the
+script files **nothing** and exits non-zero: reading a failed lookup as "no
+tracking issue exists" is how one issue becomes one per run.
+
 **Cost**: the first run is the expensive one — it pays for the full corpus
 (the vendored course content alone is ~130k+ words), on the order of
 single-digit dollars. graphify's semantic cache is SHA256 content-keyed per

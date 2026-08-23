@@ -868,6 +868,21 @@
         "title": "CorpusConsentUpdate",
         "type": "object"
       },
+      "CorpusImportStatus": {
+        "description": "What became of a document routed to the account's own ontologized corpus.\n\nEight outcomes, one of which stores anything. They are enumerated rather\nthan flattened into a boolean because each has a *different next step* for\nthe person holding the document -- turn the setting on, choose another\ntier, export it as markdown, split it, or nothing at all -- and a surface\nthat could not tell them apart would answer every one of them with \"it\ndidn't work\".\n\n:attr:`FORMAT_UNREADABLE` and :attr:`NOT_TEXT` look alike and are not. The\nfirst is a format adepthood never claimed to open, and a connected vault\nwould have opened it; the second is a file whose name says text and whose\nbytes are not.",
+        "enum": [
+          "stored",
+          "consent_required",
+          "tier_refused",
+          "format_unreadable",
+          "not_text",
+          "empty_document",
+          "document_too_long",
+          "unclassified"
+        ],
+        "title": "CorpusImportStatus",
+        "type": "string"
+      },
       "CorpusSource": {
         "description": "Where a fragment came from.\n\n``journal`` is writing composed in this app. ``upload`` is a file the user\nhanded over directly, and ``import`` is material pulled from a service they\nwrite on elsewhere — the two the import surface will produce. Recorded\nbecause \"what did I actually give this thing?\" is a question a user is\nentitled to an answer to, and a column is the only place that answer can\ncome from later.",
         "enum": [
@@ -1033,6 +1048,86 @@
           }
         },
         "title": "DepthPreferencesUpdate",
+        "type": "object"
+      },
+      "DocumentImportResponse": {
+        "description": "What became of one imported document, and where it went.\n\n``destination`` is the discriminator: a ``vault`` answer carries\n``vault_status`` and possibly a ``vault_ref`` and ``tags``, and a\n``corpus`` answer carries ``corpus_status`` and possibly a ``fragment_id``.\nThe other side is ``null`` in each case, which is a stronger statement than\nan absent field -- it says that vocabulary did not apply, rather than that\nnobody filled it in.",
+        "properties": {
+          "corpus_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CorpusImportStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the local corpus did, for a corpus destination."
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ImportDestination",
+            "description": "Which corpus the document reached."
+          },
+          "fragment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The stored corpus fragment's id, present only when stored.",
+            "title": "Fragment Id"
+          },
+          "message": {
+            "description": "Self-serve explanation for the person who imported it.",
+            "title": "Message",
+            "type": "string"
+          },
+          "stored": {
+            "description": "Whether the document was durably kept anywhere.",
+            "title": "Stored",
+            "type": "boolean"
+          },
+          "tags": {
+            "description": "Tags the vault's ingest pipeline assigned.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "vault_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The vault's fragment handle, present only when accepted.",
+            "title": "Vault Ref"
+          },
+          "vault_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultUploadStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the vault did, for a vault destination."
+          }
+        },
+        "required": [
+          "destination",
+          "stored",
+          "message"
+        ],
+        "title": "DocumentImportResponse",
         "type": "object"
       },
       "EnergyPlan": {
@@ -2403,6 +2498,15 @@
         ],
         "title": "HabitWithGoals",
         "type": "object"
+      },
+      "ImportDestination": {
+        "description": "Where one imported document actually went.\n\nResolved per account rather than per deployment: an account that has\nconnected a vault of their own reaches it, and an account that has\nconnected none reaches their local corpus. Neither is a fallback from the\nother -- they are two different places writing can live, and a person is\nentitled to be told which of them theirs is in.",
+        "enum": [
+          "vault",
+          "corpus"
+        ],
+        "title": "ImportDestination",
+        "type": "string"
       },
       "IntervalBellConfig": {
         "additionalProperties": false,
@@ -7864,6 +7968,66 @@
           }
         },
         "summary": "Put Corpus Consent",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/import": {
+      "post": {
+        "description": "Import one document into whichever corpus this account has.\n\n202 for every outcome, including the ones that stored nothing, for the\nreason ``POST /journal/upload`` answers 202: adepthood accepted the request\nand acted on it, and what became of the document is in the body where a\nclient can render a specific sentence rather than infer one from a status\ncode. A vault that is missing, unreachable or unable to take files is a\nnormal condition of an optional integration, and so is an account that has\nnot yet agreed to ontologize uploads.\n\nBounded and synchronous, and it stays that way honestly: one request is one\ndocument, one document is one fragment, and one fragment is one\nclassification call. Nothing here needs backgrounding because nothing here\nfans out -- an import that *did* fan out, over a whole-account archive,\nwould need a queue and observable progress, which is why\n:mod:`domain.document_text` refuses a document too long for one fragment\nrather than quietly splitting it into a job nobody can watch.\n\nThe commit is here rather than in the service because this is the whole\ntransaction: the fragment, and nothing else, land together or not at all.",
+        "operationId": "import_corpus_document_corpus_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadDocumentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Corpus Document",
         "tags": [
           "corpus"
         ]

@@ -143,11 +143,19 @@ fi
 #   .claude/**             the graph SKILL, agent instructions, hooks, settings
 #   scripts/ralph/PROMPT.md, .github/workflows/weekly-playbook.yml
 #                          test_memory_loop.sh groups 5 and 6
+#   .github/workflows/graph-semantic.yml
+#                          test_anthropic_preflight.sh and
+#                          test_report_workflow_failure.sh, which pin that the
+#                          workflow actually INVOKES the preflight and the
+#                          failure reporter. Both couplings are exactly the kind
+#                          that fails silently: a diagnostic nothing calls is the
+#                          same silent gap as the failures it exists to explain.
 REQUIRED_PATHS=(
   "prompts/scans/**"
   ".claude/**"
   "scripts/ralph/PROMPT.md"
   ".github/workflows/weekly-playbook.yml"
+  ".github/workflows/graph-semantic.yml"
 )
 paths_under() { # paths_under <push|pull_request>
   awk -v key="  $1:" '
