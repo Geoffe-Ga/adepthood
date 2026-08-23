@@ -32,10 +32,10 @@ const styles = StyleSheet.create({
     ...surfaceShadow.card,
     justifyContent: 'center',
   },
+  // A quiet label under the tile's one emphatic line (the stat itself).
   title: {
     ...editorialType.caption,
     color: ink.muted,
-    textTransform: 'uppercase',
   },
   stat: {
     ...editorialType.heading,

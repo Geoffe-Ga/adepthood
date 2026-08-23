@@ -2,7 +2,7 @@
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * serif ``ScreenHeader``, the weekly prompt, a ``ReflectionInvitationBand``, a
+ * "New entry" action row, the weekly prompt, a ``ReflectionInvitationBand``, a
  * ``MorningPagesTip``, and ``SearchBar`` on the warm palette. Below it, entries group by recency (This
  * week / This month / Earlier) as lifted paper tiles with a reading-time +
  * "saved … ago" caption, over an inviting empty state with a call to action.
@@ -36,7 +36,6 @@ import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
-import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
@@ -333,7 +332,12 @@ interface TopMatterProps {
   resultCount?: number;
 }
 
-/** The scrolling head of the shelf: title + New entry, the prompt band, search. */
+/** The scrolling head of the shelf: the New entry action, the prompt band, search.
+ *
+ * No screen title: the bottom tab already names this screen and the hero
+ * greeting already carries ``accessibilityRole="header"``, so a serif display
+ * "Journal" was a second display-scale moment stacked under the greeting.
+ */
 function ShelfTopMatter({
   prompt,
   week,
@@ -349,10 +353,9 @@ function ShelfTopMatter({
       <StatTileRow />
       <ReturnStack />
       <InvitationStack />
-      <ScreenHeader
-        title="Journal"
-        action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
-      />
+      <View style={styles.actionRow}>
+        <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
+      </View>
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}
       <ReflectionInvitationBand />
       <MorningPagesTip onBegin={onNew} />

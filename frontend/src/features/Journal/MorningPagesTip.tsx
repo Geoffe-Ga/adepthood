@@ -134,7 +134,6 @@ const styles = StyleSheet.create({
   label: {
     ...editorialType.caption,
     color: ink.muted,
-    textTransform: 'uppercase',
   },
   title: {
     ...editorialType.heading,
