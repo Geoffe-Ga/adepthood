@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from '@jest/globals';
 
+import { REPO_ROOT, backendPath } from '@/testing/backendSource';
+
 /**
  * Tripwires for the real-wire e2e lane, modelled on the backend's
  * `tests/test_integration_lane_guard.py`.
@@ -12,16 +14,20 @@ import { describe, expect, it } from '@jest/globals';
  * claims to exercise. This file runs on the DEFAULT frontend suite (no server,
  * no database), reads the lane's files as plain text, and asserts both that the
  * wiring is present and that none of the known ways to disarm it are.
+ *
+ * One of those files is Python: the launcher lives in the backend tree, so a
+ * backend-only commit can add the stub this file forbids. The path comes from
+ * `@/testing/backendSource` for that reason -- it is what makes backend CI run
+ * this file on such a commit rather than months later.
  */
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(FRONTEND_ROOT, '..');
 
 const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
 const E2E_CONFIG = join(FRONTEND_ROOT, 'jest.e2e.config.js');
 const E2E_DIR = join(FRONTEND_ROOT, 'e2e');
-const SERVER_LAUNCHER = join(REPO_ROOT, 'backend', 'tests', 'e2e', 'server.py');
+const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
 
 const E2E_SCRIPT = 'test:e2e';
 const LICENSE_STUB = 'verify_aptitude_license';

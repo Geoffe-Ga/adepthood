@@ -19,11 +19,13 @@ set -euo pipefail
 PICK="$(cd "$(dirname "$0")" && pwd)/pick-next.sh"
 PASS=0
 FAIL=0
+ok()  { PASS=$((PASS + 1)); printf '  ok  - %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL  - %s\n' "$1"; }
 check() { # check <desc> <expected> <actual>
   if [[ "$2" == "$3" ]]; then
-    PASS=$((PASS + 1)); printf '  ok  - %s\n' "$1"
+    ok "$1"
   else
-    FAIL=$((FAIL + 1)); printf 'FAIL  - %s (expected [%s], got [%s])\n' "$1" "$2" "$3"
+    bad "$(printf '%s (expected [%s], got [%s])' "$1" "$2" "$3")"
   fi
 }
 
@@ -59,6 +61,8 @@ case "$args" in
       cat "$STUBDIR/issue_list.tsv" 2>/dev/null || true
     fi ;;
   *"pr list"*)
+    # pick-next asks for `number,body` in ONE call and splits the result, so the
+    # stub emits the same "<pr-number>\t<one-line body>" shape its --jq builds.
     cat "$STUBDIR/pr_bodies" 2>/dev/null || true ;;
   *"issue view"*)
     # find the numeric arg (the issue number) and print its labels csv
@@ -84,18 +88,21 @@ new_scenario() {
 }
 candidate() { printf '%s\t%s\n' "$1" "$2" >> "$STUBDIR/issue_list.tsv"; }   # <num> <labels-csv>
 set_labels() { printf '%s' "$2" > "$STUBDIR/labels/$1"; }                    # <num> <labels-csv>
-pr_closes()  { printf 'Closes #%s\n' "$1" >> "$STUBDIR/pr_bodies"; }
+# An open PR, in the "<pr-number>\t<body>" shape pick-next's pr-list --jq emits.
+pr_open()    { printf '%s\t%s\n' "$1" "$2" >> "$STUBDIR/pr_bodies"; }        # <pr-num> <body>
+# The legacy helper: an open PR whose body links an issue, PR number unimportant.
+pr_closes()  { pr_open "9$1" "Closes #$1"; }
 worktree()   { mkdir -p "$REPO/.ralph/worktrees/issue-$1"; }
 run_pick()   { (cd "$REPO" && PATH="$BIN:$PATH" "$PICK"); }
 
 # JSON-mode helpers: build the fixture the stub feeds to pick-next's REAL --jq
 # filter (mirrors `gh issue list --json number,labels`), so require/exclude
 # filtering AND the priority-tier sort are exercised, not bypassed.
-ij_add()      { # <num> <labels-csv>  — append one issue object
+ij_add()      { # <num> <labels-csv> [body]  — append one issue object
   local names
   names=$(jq -cn --arg s "$2" '$s | split(",") | map(select(length>0) | {name: .})')
-  jq -cn --argjson n "$1" --argjson l "$names" '{number:$n, labels:$l}' \
-    >> "$STUBDIR/issue_json.lines"
+  jq -cn --argjson n "$1" --argjson l "$names" --arg b "${3:-}" \
+    '{number:$n, labels:$l, body:$b}' >> "$STUBDIR/issue_json.lines"
 }
 ij_finalize() { jq -s . "$STUBDIR/issue_json.lines" > "$STUBDIR/issue_json"; }
 
@@ -244,6 +251,102 @@ check "mixed P0/priority-critical share tier 0 (oldest wins)" "40" "$(run_pick)"
 new_scenario prio_high_beats_medium
 ij_add 5 "priority-medium"; ij_add 9 "priority-high"; ij_finalize
 check "priority-high (tier 1) beats priority-medium (tier 2)" "9" "$(run_pick)"
+
+# --- the bridge marker route -------------------------------------------------
+# Dependabot regenerates its PR body from its own template on every rebase and
+# group recomputation, erasing the `Closes #<issue>` line the bridge appended.
+# Once that happens the body scan no longer sees the bridge issue as in flight,
+# so the picker offers it as BUILD work — and a build lane on a `dependencies`
+# issue opens a SECOND PR on a brand-new branch for a bump that already has one.
+# Confirmed live on merged PRs #2112/#2114, whose bodies carry zero reference
+# matches while their bridge issues #2113/#2115 still carry the marker.
+#
+# The durable link is the `<!-- dependabot-pr:N -->` marker, which lives in the
+# ISSUE body and therefore survives a PR-body rewrite. These cases pin the route
+# that reads it. Note the direction inverts relative to pr-ready.sh's lookup:
+# that one goes PR -> bridge issue, this one goes bridge issue -> open PR.
+
+# 20) A bridge issue whose marker names an OPEN PR is in flight even with no
+#     `Closes` line anywhere — the exact post-rewrite state.
+new_scenario bridge_marker_holds
+ij_add 10 "dependencies" "<!-- dependabot-pr:2112 -->"; ij_add 30 ""; ij_finalize
+pr_open 2112 "Bumps foo from 1 to 2."
+check "marker naming an open PR holds the bridge issue" "30" "$(run_pick)"
+
+# 21) The body-link route is unchanged: this ADDS a route, it does not replace
+#     one. Same issue, no marker, but the PR still says Closes.
+new_scenario bridge_body_link_still_works
+ij_add 10 "dependencies"; ij_add 30 ""; ij_finalize
+pr_open 2112 "Closes #10"
+check "the body-link route still holds it" "30" "$(run_pick)"
+
+# 22) A marker naming a CLOSED/merged PR must not wedge the picker: the bridge
+#     reconciler closes those issues, and a stale marker must not outlive them.
+new_scenario bridge_marker_closed_pr
+ij_add 10 "dependencies" "<!-- dependabot-pr:2112 -->"; ij_add 30 ""; ij_finalize
+# No open PR #2112 at all — only an unrelated one.
+pr_open 4000 "Bumps bar."
+check "a marker naming a non-open PR does not hold the issue" "10" "$(run_pick)"
+
+# 23) A `dependencies` issue with no marker is unaffected.
+new_scenario bridge_no_marker
+ij_add 10 "dependencies"; ij_add 30 ""; ij_finalize
+pr_open 2112 "Bumps foo."
+check "a bridge issue with no marker is still available" "10" "$(run_pick)"
+
+# 24) A NON-dependencies issue carrying a marker-shaped string is unaffected —
+#     the route is scoped to the bridge label, not to any body that looks like it.
+new_scenario bridge_marker_wrong_label
+ij_add 10 "bug" "<!-- dependabot-pr:2112 -->"; ij_add 30 ""; ij_finalize
+pr_open 2112 "Bumps foo."
+check "a non-dependencies issue is unaffected by the marker" "10" "$(run_pick)"
+
+# 25) The near-miss guard: PR #21120's marker must not answer for PR #2112.
+new_scenario bridge_marker_near_miss
+ij_add 10 "dependencies" "<!-- dependabot-pr:21120 -->"; ij_add 30 ""; ij_finalize
+pr_open 2112 "Bumps foo."
+check "PR #21120's marker is not PR #2112's" "10" "$(run_pick)"
+
+# --- the exclude-label trap ---------------------------------------------------
+# RALPH_EXCLUDE_LABELS REPLACES the default list, so a caller who set it to add
+# one label silently re-admitted `epic`, `blocked`, `wontfix` and the rest. The
+# documented workaround was "repeat all nine defaults", which is a trap dressed
+# as documentation. RALPH_EXTRA_EXCLUDE_LABELS adds without replacing.
+
+# 26) The trap itself, pinned so it cannot be re-introduced by accident: an
+#     override really does drop the defaults.
+new_scenario exclude_override_replaces
+ij_add 10 "blocked"; ij_add 11 ""; ij_finalize
+check "an override replaces the defaults (blocked re-admitted)" "10" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_EXCLUDE_LABELS=dependencies "$PICK")"
+
+# 27) The additive variable keeps every default AND adds the new one.
+new_scenario exclude_extra_adds
+ij_add 10 "blocked"; ij_add 11 "dependencies"; ij_add 12 ""; ij_finalize
+check "the extra list adds without dropping the defaults" "12" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_EXTRA_EXCLUDE_LABELS=dependencies "$PICK")"
+
+# 28) Both set: the override still replaces, and extra still adds to whatever
+#     the effective base list is.
+new_scenario exclude_extra_with_override
+ij_add 10 "blocked"; ij_add 11 "dependencies"; ij_add 12 ""; ij_finalize
+check "extra adds on top of an explicit override" "10" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_EXCLUDE_LABELS=wontfix \
+      RALPH_EXTRA_EXCLUDE_LABELS=dependencies "$PICK")"
+
+# --- cross-file coupling: the bridge marker -----------------------------------
+# The marker shape now exists in four places. A silent drift restores exactly the
+# double-PR failure this route was added to stop, with nothing to report it.
+MARKER_PREFIX='<!-- dependabot-pr:'
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+for peer in ".github/workflows/dependabot-to-ralph-issue.yml" "scripts/ralph/pr-ready.sh" \
+            "scripts/ralph/bridge-issue-exists.sh" "scripts/ralph/pick-next.sh"; do
+  if grep -qF "$MARKER_PREFIX" "$ROOT/$peer"; then
+    ok "$peer still uses the same bridge marker shape"
+  else
+    bad "$peer no longer carries $MARKER_PREFIX — the bridge link has drifted"
+  fi
+done
 
 echo
 echo "pick-next tests: $PASS passed, $FAIL failed"
