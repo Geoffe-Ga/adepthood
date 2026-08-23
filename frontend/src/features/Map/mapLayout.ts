@@ -1,5 +1,3 @@
-// frontend/features/Map/mapLayout.ts
-
 /**
  * Presentation data for the Map screen's "spiral of becoming" layout.
  *
@@ -74,19 +72,54 @@ export const TITLE_LETTER_SPACING = 1;
 const TITLE_GLYPH_EM_WIDTH = 0.72;
 
 /**
- * Largest font size (capped at ``TITLE_MAX_FONT_SIZE``) at which ``title``
- * fits ``width`` on a single line. The native ``adjustsFontSizeToFit`` is not
- * implemented by react-native-web, so the watermark sizes itself from the
- * measured cell width instead — EMPTINESS / UNITY must never truncate or
- * hyphenate on any target. An unmeasured width (0) renders at the ceiling
- * until layout reports.
+ * Conservative average advance width of a mixed-case glyph, in ems.
+ * Deliberately generous (err toward smaller) so a single-line fit only ever
+ * settles on a guaranteed-fitting size. Shared by the right-column aspect
+ * labels and the left-column stage copy, whose budgets are the same number.
  */
-export const fittedTitleFontSize = (title: string, width: number): number => {
-  if (width <= 0 || title.length === 0) return TITLE_MAX_FONT_SIZE;
-  const glyphBudget = width - TITLE_LETTER_SPACING * title.length;
-  const fitted = Math.floor(glyphBudget / (title.length * TITLE_GLYPH_EM_WIDTH));
-  return Math.max(TITLE_MIN_FONT_SIZE, Math.min(TITLE_MAX_FONT_SIZE, fitted));
+export const MIXED_CASE_GLYPH_EM_WIDTH = 0.62;
+
+/** How a single line of copy is allowed to shrink: its glyph budget and its bounds. */
+interface FitBudget {
+  /** Average glyph advance width in ems. */
+  em: number;
+  /** Size below which the line would stop reading. */
+  min: number;
+  /** The line's standard size; copy that already fits renders at exactly this. */
+  max: number;
+  /** Per-glyph letter spacing the style renders with, in px. */
+  letterSpacing: number;
+}
+
+/**
+ * Largest size within ``budget`` at which ``text`` fits ``width`` on one line.
+ *
+ * The one estimator behind every fitted line on the Map — title watermark,
+ * aspect label, stage copy — which differ only in the budget they hand it. The
+ * native ``adjustsFontSizeToFit`` is a no-op on react-native-web, so this
+ * deterministic size is the real single-line guarantee everywhere. An
+ * unmeasured width (<= 0) or empty text renders at the ceiling until layout
+ * reports.
+ */
+const fitToWidth = (text: string, width: number, budget: FitBudget): number => {
+  if (width <= 0 || text.length === 0) return budget.max;
+  const glyphBudget = width - budget.letterSpacing * text.length;
+  const fitted = Math.floor(glyphBudget / (text.length * budget.em));
+  return Math.max(budget.min, Math.min(budget.max, fitted));
 };
+
+/**
+ * Largest font size (capped at ``TITLE_MAX_FONT_SIZE``) at which ``title``
+ * fits ``width`` on a single line — EMPTINESS / UNITY must never truncate or
+ * hyphenate on any target.
+ */
+export const fittedTitleFontSize = (title: string, width: number): number =>
+  fitToWidth(title, width, {
+    em: TITLE_GLYPH_EM_WIDTH,
+    min: TITLE_MIN_FONT_SIZE,
+    max: TITLE_MAX_FONT_SIZE,
+    letterSpacing: TITLE_LETTER_SPACING,
+  });
 
 /** Ceiling for a right-column aspect label — the legacy fixed size (15px). */
 export const RIGHT_LABEL_MAX_FONT_SIZE = 15;
@@ -94,30 +127,25 @@ export const RIGHT_LABEL_MAX_FONT_SIZE = 15;
 /** Floor below which an aspect label would stop reading as a label. */
 export const RIGHT_LABEL_MIN_FONT_SIZE = 9;
 
-/**
- * Conservative average advance width of a mixed-case serif glyph, in ems.
- * Deliberately generous (err toward smaller) so the single-line fit only ever
- * settles on a guaranteed-fitting size for the lowercase-heavy aspect words.
- */
-export const RIGHT_LABEL_GLYPH_EM_WIDTH = 0.62;
-
 /** Line-height multiple the aspect label renders at — the legacy 19/15 rhythm. */
 export const RIGHT_LABEL_LINE_HEIGHT_RATIO = 19 / RIGHT_LABEL_MAX_FONT_SIZE;
 
 /** Largest size (<= ceiling) at which ``line`` fits ``width`` on one line. */
-const fittedLabelLineFontSize = (line: string, width: number): number => {
-  if (width <= 0 || line.length === 0) return RIGHT_LABEL_MAX_FONT_SIZE;
-  const fitted = Math.floor(width / (line.length * RIGHT_LABEL_GLYPH_EM_WIDTH));
-  return Math.max(RIGHT_LABEL_MIN_FONT_SIZE, Math.min(RIGHT_LABEL_MAX_FONT_SIZE, fitted));
-};
+const fittedLabelLineFontSize = (line: string, width: number): number =>
+  fitToWidth(line, width, {
+    em: MIXED_CASE_GLYPH_EM_WIDTH,
+    min: RIGHT_LABEL_MIN_FONT_SIZE,
+    max: RIGHT_LABEL_MAX_FONT_SIZE,
+    letterSpacing: 0,
+  });
 
 /** Whether ``line`` at ``fontSize`` fits within ``width`` by the em estimate. */
 const labelLineFits = (line: string, fontSize: number, width: number): boolean =>
-  line.length * fontSize * RIGHT_LABEL_GLYPH_EM_WIDTH <= width;
+  line.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH <= width;
 
 /**
- * Fits a right-column aspect label to its measured cell width, mirroring the
- * ``fittedTitleFontSize`` idiom. The label is preferred on a single
+ * Fits a right-column aspect label to its measured cell width. The label is
+ * preferred on a single
  * un-hyphenated line, shrinking from the ceiling toward the floor until it fits;
  * only when even the floor size overflows does it fall back to the row's
  * pre-hyphenated ``fallbackLines`` (each fitted to the same cell). An unmeasured
@@ -156,25 +184,17 @@ export const ARROW_LABEL_MAX_FONT_SIZE = 12;
 export const STAGE_TEXT_MIN_FONT_SIZE = 9;
 
 /**
- * Conservative average advance width of a mixed-case sans glyph, in ems.
- * Deliberately generous (err toward smaller) so the fit only ever settles on a
- * guaranteed-fitting size for the stage copy and arrow labels.
- */
-export const STAGE_TEXT_GLYPH_EM_WIDTH = 0.62;
-
-/**
  * Largest size (<= ``maxFontSize``, the line's standard size) at which ``text``
- * fits ``width`` on one line, mirroring the ``fittedTitleFontSize`` idiom. The
- * standard size is the ceiling — text that already fits (or an unmeasured
- * width of 0) renders at exactly that size — and the floor guards legibility.
- * The native ``adjustsFontSizeToFit`` is a no-op on react-native-web, so this
- * deterministic size is the real single-line guarantee everywhere.
+ * fits ``width`` on one line. The standard size is the ceiling — text that
+ * already fits renders at exactly that size — and the floor guards legibility.
  */
-export const fitStageText = (text: string, width: number, maxFontSize: number): number => {
-  if (width <= 0 || text.length === 0) return maxFontSize;
-  const fitted = Math.floor(width / (text.length * STAGE_TEXT_GLYPH_EM_WIDTH));
-  return Math.max(STAGE_TEXT_MIN_FONT_SIZE, Math.min(maxFontSize, fitted));
-};
+export const fitStageText = (text: string, width: number, maxFontSize: number): number =>
+  fitToWidth(text, width, {
+    em: MIXED_CASE_GLYPH_EM_WIDTH,
+    min: STAGE_TEXT_MIN_FONT_SIZE,
+    max: maxFontSize,
+    letterSpacing: 0,
+  });
 
 /**
  * The title line each top stage carries in its own grid row (no absolute

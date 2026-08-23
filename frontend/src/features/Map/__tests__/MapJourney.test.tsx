@@ -4,7 +4,9 @@ import React from 'react';
 import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
+import { BEGIN_AGAIN_COPY } from '../beginAgain';
 import MapScreen from '../MapScreen';
+import { STAGE_COUNT } from '../stageData';
 
 import type { StageHistoryData } from './mapTestHarness';
 import { mockMakeStage, mockMapState, mockNavigate, resetMapMocks } from './mapTestHarness';
@@ -203,6 +205,27 @@ describe('MapScreen — journey narrative', () => {
     expect(celebration).toBeTruthy();
     // Names the next stage that unlocked.
     expect(findText(tree, 'Stage 4 unlocked')).toBe(true);
+    act(() => tree.unmount());
+  });
+
+  it('celebrates the whole arc, not a next stage, when the final stage completes', () => {
+    // Stage 10 is terminal: there is no eleventh stage, and the Begin Again
+    // block is showing beside the banner as it fires.
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
+
+    mockMapState.stages = mockMapState.stages.map((s) =>
+      s.stageNumber === STAGE_COUNT ? { ...s, progress: 1 } : s,
+    );
+    act(() => {
+      tree.update(<MapScreen />);
+    });
+
+    expect(tree.root.findByProps({ testID: 'stage-celebration' })).toBeTruthy();
+    expect(findText(tree, 'The next stage unlocked')).toBe(false);
+    expect(findText(tree, BEGIN_AGAIN_COPY.celebration)).toBe(true);
     act(() => tree.unmount());
   });
 });

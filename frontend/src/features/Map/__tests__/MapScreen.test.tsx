@@ -322,6 +322,30 @@ describe('MapScreen', () => {
     expect(hotspot.props.accessibilityLabel as string).toContain('reads thin');
   });
 
+  it('announces the padlock a locked grid node already shows', () => {
+    // Stages 3-10 are locked (isUnlocked: stageNumber <= 2, derived stage 1),
+    // and both grid tap targets render a padlock a screen reader could not see.
+    const tree = create(<MapScreen />);
+
+    for (const column of [0, 1]) {
+      const hotspot = tree.root.findByProps({ testID: `stage-hotspot-3-${column}` });
+      expect(hotspot.props.accessibilityLabel as string).toMatch(/, locked$/);
+    }
+  });
+
+  it('announces the stage the person is in, and neither marker on an open stage', () => {
+    const tree = create(<MapScreen />);
+
+    for (const column of [0, 1]) {
+      const current = tree.root.findByProps({ testID: `stage-hotspot-1-${column}` });
+      expect(current.props.accessibilityLabel as string).toMatch(/, current$/);
+      // Stage 2 is unlocked but is not where the person stands.
+      const open = tree.root.findByProps({ testID: `stage-hotspot-2-${column}` });
+      expect(open.props.accessibilityLabel as string).not.toContain(', current');
+      expect(open.props.accessibilityLabel as string).not.toContain(', locked');
+    }
+  });
+
   it('Map spiral grid remains visible while wheel data is loading', () => {
     mockMapState.wheelLoading = true;
     const tree = create(<MapScreen />);

@@ -162,6 +162,28 @@ describe('useStageStore', () => {
     });
   });
 
+  describe('loadGeneration', () => {
+    it('beginLoad() hands out a new generation each time it is called', () => {
+      const { useStageStore } = require('../useStageStore');
+      const first = useStageStore.getState().beginLoad();
+      const second = useStageStore.getState().beginLoad();
+
+      expect(second).toBeGreaterThan(first);
+      expect(useStageStore.getState().loadGeneration).toBe(second);
+    });
+
+    it('reset() moves the generation on rather than back, so an in-flight load can never match again', () => {
+      const { useStageStore } = require('../useStageStore');
+      const before = useStageStore.getState().beginLoad();
+
+      act(() => {
+        useStageStore.getState().reset();
+      });
+
+      expect(useStageStore.getState().loadGeneration).toBeGreaterThan(before);
+    });
+  });
+
   describe('cycleNumber', () => {
     it('defaults to 1', () => {
       const { useStageStore } = require('../useStageStore');
