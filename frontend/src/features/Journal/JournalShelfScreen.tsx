@@ -2,7 +2,7 @@
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * serif ``ScreenHeader``, the weekly prompt, a ``ReflectionInvitationBand``, a
+ * "New entry" action row, the weekly prompt, a ``ReflectionInvitationBand``, a
  * ``MorningPagesTip``, and ``SearchBar`` on the warm palette. Below it, entries group by recency (This
  * week / This month / Earlier) as lifted paper tiles with a reading-time +
  * "saved … ago" caption, over an inviting empty state with a call to action.
@@ -10,7 +10,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -36,7 +36,6 @@ import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
-import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
@@ -105,15 +104,31 @@ function isSearchable(next: string): boolean {
   );
 }
 
-/** Loads the shelf with offset paging + debounced search (via SearchBar). */
+/** Loads the shelf with offset paging + debounced search (via SearchBar).
+ *
+ * The first page is read on every focus, not just on mount: the shelf stays
+ * mounted while the user pushes to the entry screen, so a page written there
+ * would never reach a list that loaded once — the same reason the weekly prompt
+ * card re-fetches, applied to the list it sits above. The read is skipped while
+ * a confirmed delete is still in flight, where the local list is deliberately
+ * ahead of the server and a landing page would resurrect the removed row.
+ */
 function useShelf(): ShelfState {
   const { items, setItems, total, adjustTotal, hasMore, loading, error, load } = usePagedJournal();
   const [query, setQuery] = useState('');
   const deletion = useEntryDeletion({ items, setItems, adjustTotal });
+  const { isRemoving } = deletion;
+  // Read inside the focus effect so the live query survives a return to the
+  // shelf without making the effect fire on every keystroke.
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
-  useEffect(() => {
-    void load(undefined, 0);
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      if (isRemoving()) return;
+      void load(searchParam(queryRef.current), 0);
+    }, [load, isRemoving]),
+  );
 
   const onSearch = useCallback(
     (next: string) => {
@@ -317,7 +332,12 @@ interface TopMatterProps {
   resultCount?: number;
 }
 
-/** The scrolling head of the shelf: title + New entry, the prompt band, search. */
+/** The scrolling head of the shelf: the New entry action, the prompt band, search.
+ *
+ * No screen title: the bottom tab already names this screen and the hero
+ * greeting already carries ``accessibilityRole="header"``, so a serif display
+ * "Journal" was a second display-scale moment stacked under the greeting.
+ */
 function ShelfTopMatter({
   prompt,
   week,
@@ -333,10 +353,9 @@ function ShelfTopMatter({
       <StatTileRow />
       <ReturnStack />
       <InvitationStack />
-      <ScreenHeader
-        title="Journal"
-        action={<Button label="New entry" onPress={onNew} testID="journal-new-entry" />}
-      />
+      <View style={styles.actionRow}>
+        <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
+      </View>
       {prompt ? <PromptCard week={week} question={prompt.question} onOpen={onPrompt} /> : null}
       <ReflectionInvitationBand />
       <MorningPagesTip onBegin={onNew} />

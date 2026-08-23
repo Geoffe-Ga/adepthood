@@ -33,6 +33,19 @@ on:
       - "scripts/frontend/audit-gate.mjs"
       - ".github/workflows/frontend-ci.yml"
 
+# What the ``frontend/**`` narrowing gives up, written down. A handful of Jest
+# tests read backend source on purpose -- the APTITUDE colour table, the upload
+# cap, the consent copy, the e2e launcher's one permitted stub -- and a
+# backend-only change never triggers this workflow, so those guards were blind
+# to exactly the change they exist to catch. One such change merged green and
+# turned ``main`` red on the next frontend PR.
+#
+# The answer is NOT to widen these paths: backend-ci.yml now has a
+# ``cross-boundary-drift`` job that runs just those guards (a second of Jest,
+# no audit gate, no bundler), discovering them at run time by their import of
+# ``frontend/src/testing/backendSource.ts``. Nothing else about the narrowing
+# changes, and a new drift guard is covered the day it is written.
+
 # ``.pre-commit-config.yaml`` is deliberately NOT a trigger path. It used to be,
 # on the reasoning that the frontend eslint/prettier/jest hooks are defined
 # there -- but the cost outweighed it: a change to that one file pulled the

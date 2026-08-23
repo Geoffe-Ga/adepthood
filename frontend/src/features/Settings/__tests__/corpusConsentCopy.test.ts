@@ -12,6 +12,7 @@ import {
 } from '../corpusConsentCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
+import { backendPythonFiles, readBackendSource } from '@/testing/backendSource';
 
 /**
  * What the consent screen is allowed to say, held to what the code does.
@@ -21,25 +22,18 @@ import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
  * writing. So the promises are read back out of the backend that keeps them:
  * the default is off because a Python constant says so, and only the sources
  * something actually sorts are offered as a decision.
+ *
+ * The reads go through `@/testing/backendSource`, which is what makes backend
+ * CI run this file on the change that would break it -- a source gaining its
+ * first writer is a backend-only diff, and this test going red only afterwards
+ * is how it once turned `main` red.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
-const CONSENT_SERVICE = path.join(REPO_ROOT, 'backend', 'src', 'services', 'corpus_consent.py');
-const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
-const OPENAPI = path.join(REPO_ROOT, 'backend', 'openapi.json');
+const CONSENT_SERVICE = ['src', 'services', 'corpus_consent.py'];
 const SOURCE_ENUM_MODULE = path.join('models', 'corpus_fragment.py');
 
 const DEFAULT_CONSTANT = /^CONSENT_GRANTED_BY_DEFAULT:\s*Final\[bool]\s*=\s*(True|False)$/m;
 const NAMED_SOURCE = /CorpusSource\.([A-Z_]+)/g;
-
-/** Every ``.py`` under ``backend/src``, so the sweep is the population. */
-function pythonFiles(directory: string): string[] {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) return pythonFiles(full);
-    return entry.name.endsWith('.py') ? [full] : [];
-  });
-}
 
 /**
  * The sources some backend module names when it writes a fragment.
@@ -50,7 +44,7 @@ function pythonFiles(directory: string): string[] {
  */
 function sourcesWithAWriter(): string[] {
   const named = new Set<string>();
-  for (const file of pythonFiles(BACKEND_SRC)) {
+  for (const file of backendPythonFiles('src')) {
     if (file.endsWith(SOURCE_ENUM_MODULE)) continue;
     for (const match of fs.readFileSync(file, 'utf-8').matchAll(NAMED_SOURCE)) {
       named.add(String(match[1]).toLowerCase());
@@ -60,7 +54,7 @@ function sourcesWithAWriter(): string[] {
 }
 
 function servedSources(): string[] {
-  const schema = JSON.parse(fs.readFileSync(OPENAPI, 'utf-8')) as {
+  const schema = JSON.parse(readBackendSource('openapi.json')) as {
     components: { schemas: Record<string, { enum?: string[] }> };
   };
   return schema.components.schemas['CorpusSource']?.enum ?? [];
@@ -68,7 +62,7 @@ function servedSources(): string[] {
 
 describe('the corpus-consent copy, against what the backend actually does', () => {
   test('says the corpus is off until it is turned on because the server has it off', () => {
-    const match = DEFAULT_CONSTANT.exec(fs.readFileSync(CONSENT_SERVICE, 'utf-8'));
+    const match = DEFAULT_CONSTANT.exec(readBackendSource(...CONSENT_SERVICE));
 
     expect(match?.[1]).toBe('False');
   });
