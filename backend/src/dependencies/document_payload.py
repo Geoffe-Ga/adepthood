@@ -1,12 +1,14 @@
 """The one place a submitted document's size becomes an HTTP answer.
 
-Two surfaces accept a document from a person: ``POST /journal/upload``, which
-forwards it to their vault, and ``POST /corpus/import``, which routes it to
-whichever destination they actually have. Both are bounded by the same ceiling,
-and the ceiling is stated once -- in
-:func:`schemas.journal_upload.decode_document`, beside the constants it
-enforces. This module is the thin translation of that one decision into the two
-status codes it earns.
+One surface accepts a document from a person -- ``POST /corpus/import``, which
+routes it to whichever destination they actually have -- and this module stays
+separate from it rather than folding back into the router, because the ceiling
+belongs to the document rather than to the route that happens to carry it. It
+is stated once, in :func:`schemas.journal_upload.decode_document`, beside the
+constants it enforces; this is the thin translation of that one decision into
+the two status codes it earns. ``POST /journal/upload`` was the second such
+surface until it was retired, having no caller and no destination the import
+route did not already reach.
 
 The decoded bytes are *returned* rather than discarded, so the import path does
 not decode the same payload a second time to read it. A ten-megabyte document

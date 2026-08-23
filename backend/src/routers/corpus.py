@@ -118,10 +118,9 @@ async def put_corpus_consent(
 def _vault_response(result: VaultImportResult) -> DocumentImportResponse:
     """Render a vault answer, in the vault path's own shipped copy.
 
-    The sentence is not rewritten for this surface. The person is in exactly
-    the situation ``POST /journal/upload`` would have put them in, and telling
-    them two different things about one outcome would be worse than telling
-    them nothing.
+    The sentence is not rewritten for this surface: it is the vault's own
+    account of what it did, and telling somebody two different things about one
+    outcome would be worse than telling them nothing.
     """
     return DocumentImportResponse(
         destination=ImportDestination.VAULT,
@@ -176,11 +175,10 @@ async def import_corpus_document(
 ) -> DocumentImportResponse:
     """Import one document into whichever corpus this account has.
 
-    202 for every outcome, including the ones that stored nothing, for the
-    reason ``POST /journal/upload`` answers 202: adepthood accepted the request
-    and acted on it, and what became of the document is in the body where a
-    client can render a specific sentence rather than infer one from a status
-    code. A vault that is missing, unreachable or unable to take files is a
+    202 for every outcome, including the ones that stored nothing: adepthood
+    accepted the request and acted on it, and what became of the document is in
+    the body where a client can render a specific sentence rather than infer one
+    from a status code. A vault that is missing, unreachable or unable to take files is a
     normal condition of an optional integration, and so is an account that has
     not yet agreed to ontologize uploads.
 

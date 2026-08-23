@@ -123,13 +123,15 @@ describe('an account with no vault', () => {
     await expect(importSeedDocument(document(), 'personal')).resolves.toBe(expected);
   });
 
-  test('never falls back to the vault surface when the answer is corpus', async () => {
+  test('reaches the import route once and no other surface', async () => {
     mockFetch.mockReturnValue(corpusReply('consent_required'));
 
     await importSeedDocument(document(), 'personal');
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls.map((call) => call[0])).not.toContain('http://test/journal/upload');
+    // Asserted as "exactly this one call" rather than as "not the old vault
+    // route": that route has since been retired, so naming it would be a guard
+    // against a URL nothing could reach either way.
+    expect(mockFetch.mock.calls.map((call) => call[0])).toEqual(['http://test/corpus/import']);
   });
 });
 
