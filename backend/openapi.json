@@ -4403,7 +4403,7 @@
         "type": "object"
       },
       "ProgramCalendarResponse": {
-        "description": "The server's date-derived program calendar (issue #386).\n\nExposes the anchor and both gating views so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule; ``current_stage`` is the\nadvancement-chain value.  Effective unlock is the max of the two —\nthe same reconciliation the gating endpoints apply.  ``cycle_number``\nis exposed so the frontend can seed its \"Cycle N\" indicator on cold start.",
+        "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.",
         "properties": {
           "calendar_stage": {
             "title": "Calendar Stage",
@@ -5871,23 +5871,6 @@
           }
         },
         "title": "StageProgressResponse",
-        "type": "object"
-      },
-      "StageProgressUpdate": {
-        "additionalProperties": false,
-        "description": "Payload asserting the client's expected ``current_stage`` after advance.\n\nThe router ignores this value as a write; it is only used as a\nserver-vs-client sanity assertion.  ``extra='forbid'`` blocks the\nadjacent injection vector where a client attempts to set\n``completed_stages`` directly in the same PUT body, which the server\nderives from its own state.",
-        "properties": {
-          "current_stage": {
-            "maximum": 10.0,
-            "minimum": 1.0,
-            "title": "Current Stage",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "current_stage"
-        ],
-        "title": "StageProgressUpdate",
         "type": "object"
       },
       "StagePromptDetail": {
@@ -13408,7 +13391,7 @@
     },
     "/stages": {
       "get": {
-        "description": "List all stages with per-user progress overlay.\n\nEach stage's ``progress`` field is populated from\n``compute_stage_progress_batch`` — three grouped queries for the whole\nlist regardless of stage count — so the frontend can render progress bars\nwithout a follow-up call and the endpoint no longer scales N-by-M with\ncourse length (issue #473). Only unlocked stages feed the batch; locked\nstages report ``0.0`` progress as before.\n\nBUG-INFRA-016: returns ``Page[StageResponse]`` when ``?paginate=true``\nis set; otherwise the legacy bare list is returned for one release while\nthe frontend migrates to the envelope.",
+        "description": "List all stages with per-user progress overlay.\n\nEach stage's ``progress`` field is populated from\n``compute_stage_progress_batch`` — three grouped queries for the whole\nlist regardless of stage count — so the frontend can render progress bars\nwithout a follow-up call and the endpoint no longer scales N-by-M with\ncourse length (issue #473). Only unlocked stages feed the batch; locked\nstages report ``0.0`` progress as before.\n\nBUG-INFRA-016: returns ``Page[StageResponse]`` when ``?paginate=true``\nis set; otherwise the legacy bare list is returned for one release while\nthe frontend migrates to the envelope.\n\nListing the stages is a visit, so it records entry into whatever window\nthe calendar has opened before the unlock overlay is computed.",
         "operationId": "list_stages_stages_get",
         "parameters": [
           {
@@ -13541,7 +13524,7 @@
     },
     "/stages/program-calendar": {
       "get": {
-        "description": "The server's view of the date-derived program calendar (issue #386).\n\nRegistered ABOVE ``/{stage_number}`` so the static path wins route\nmatching.  A user with no progress row yet sees the day-zero shape.",
+        "description": "The server's view of the date-derived program calendar.\n\nRegistered ABOVE ``/{stage_number}`` so the static path wins route\nmatching.  A user with no progress row yet sees the day-zero shape.\n\nAsking where the calendar has got to is a visit, so ``current_stage`` in\nthe response is the record *after* entry has been noted: someone who has\nbeen away for two months reads back the stage they have just walked into,\nnot the one they left.",
         "operationId": "get_program_calendar_stages_program_calendar_get",
         "parameters": [
           {
@@ -13584,66 +13567,6 @@
           }
         },
         "summary": "Get Program Calendar",
-        "tags": [
-          "stages"
-        ]
-      }
-    },
-    "/stages/progress": {
-      "put": {
-        "description": "Advance the user to the next stage.\n\nThe request body is treated as an **assertion** of what the client\nexpects the new ``current_stage`` to be, not an authoritative write.\nThe new state is derived server-side:\n\n- **Create** (no prior row): ``current_stage`` is forced to 1; the\n  payload must assert 1 or it's rejected as ``must_start_at_stage_one``.\n- **Update**: the server marks ``existing.current_stage`` complete and\n  derives the sole legal next stage via :func:`next_stage_for` — the pure\n  ``current_stage + 1`` rule, with :class:`AllStagesCompletedError` at the\n  curriculum end mapped to a 409 ``all_stages_completed``. The payload's\n  ``current_stage`` must equal that derived value — otherwise the request\n  is a skip/rewind/stale-client scenario and returns\n  ``stage_advance_mismatch``.\n\nThe ``completed_stages`` list is never read from the payload (the schema's\n``extra='forbid'`` would 422 such a field anyway), so the client cannot\nmint credit for stages it hasn't actually completed.\n\nA ``SELECT … FOR UPDATE`` row-lock prevents two concurrent advance\nrequests from both reading the same ``current_stage`` and passing the\nderivation check (TOCTOU race).\n\nBUG-STAGE-003: when several first-advance requests race, a winner\nthat committed between two losers' SELECT and INSERT means one\nloser sees ``existing is None`` (handled inside\n:func:`_create_initial_progress`) and another sees the winner's\nbootstrap row.  Both losers must observe the same idempotent\nbootstrap response — so the ``payload.current_stage == 1`` +\nbootstrap-state check returns the existing row instead of trying to\nadvance past it.\n\nEdge case: if the winner *also* finished a second advance (stage 1 →\n2) between two concurrent first-advance attempts, a loser arriving\nwith ``payload.current_stage == 1`` against an ``existing`` already\nat stage 2 falls through to :func:`_advance_existing_progress` and\nis rejected with ``stage_advance_mismatch`` (400).  This is a\ndeliberate non-idempotent outcome: the client's stale assertion no\nlonger matches the server-derived next stage, and quietly returning\nan out-of-date bootstrap record would mask a real client / server\ndrift.",
-        "operationId": "update_progress_stages_progress_put",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StageProgressUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StageProgressRecord"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Progress",
         "tags": [
           "stages"
         ]
@@ -14068,7 +13991,7 @@
     },
     "/user-practices/current/frequency": {
       "get": {
-        "description": "Return the banner payload for a stage (ritual-05).\n\nCollapses four lookups (``StageProgress`` → ``CourseStage`` →\n``UserPractice`` → ``Practice``) into one response so the client\nnever has to assemble the banner copy from parts. The template\nlives server-side in :mod:`schemas.frequency` so a wording change\nis a single-file edit.\n\nStage resolution:\n\n* ``stage_number`` query param (when provided) wins. Clients that\n  resolve the active stage on their own pass it here so the banner\n  tracks the practice they're showing, instead of whatever\n  ``StageProgress.current_stage`` happens to hold.\n* Otherwise fall back to ``StageProgress.current_stage`` (or stage\n  1 for a fresh user with no progress row).\n\nResolution order for the practice slot:\n\n1. The user's active ``UserPractice`` for the resolved stage (open\n   row, ``end_date IS NULL``). ``effective_name`` from\n   :mod:`domain.practice_resolution` honours ``custom_name``.\n2. The seeded preset for the stage (via\n   :data:`seed_practices.STAGE_TO_PRESET_NAME`) — ``user_practice_id``\n   is ``None`` to signal \"showing the unselected default\" to the\n   client.",
+        "description": "Return the banner payload for a stage (ritual-05).\n\nCollapses four lookups (``StageProgress`` → ``CourseStage`` →\n``UserPractice`` → ``Practice``) into one response so the client\nnever has to assemble the banner copy from parts. The template\nlives server-side in :mod:`schemas.frequency` so a wording change\nis a single-file edit.\n\nStage resolution:\n\n* ``stage_number`` query param (when provided) wins. Clients that\n  resolve the active stage on their own pass it here so the banner\n  tracks the practice they're showing, instead of whatever\n  ``StageProgress.current_stage`` happens to hold.\n* Otherwise the server resolves it through\n  :func:`domain.stage_authority.open_through`. The practice ramp is\n  one of the things ``NORTH-STAR.md`` line 34 says the 36-week cadence\n  paces, so the banner follows whichever of the calendar and the\n  record reaches further — never the record alone, which would hold a\n  returning user at a step-up the calendar opened weeks ago. A fresh\n  user with no progress row gets stage 1.\n\nResolution order for the practice slot:\n\n1. The user's active ``UserPractice`` for the resolved stage (open\n   row, ``end_date IS NULL``). ``effective_name`` from\n   :mod:`domain.practice_resolution` honours ``custom_name``.\n2. The seeded preset for the stage (via\n   :data:`seed_practices.STAGE_TO_PRESET_NAME`) — ``user_practice_id``\n   is ``None`` to signal \"showing the unselected default\" to the\n   client.",
         "operationId": "get_current_frequency_user_practices_current_frequency_get",
         "parameters": [
           {

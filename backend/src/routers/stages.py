@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -18,8 +17,8 @@ from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
+from domain.stage_authority import record_stage_entry
 from domain.stage_progress import (
-    AllStagesCompletedError,
     compute_stage_progress,
     compute_stage_progress_batch,
     get_stage_habit_history,
@@ -27,10 +26,9 @@ from domain.stage_progress import (
     get_user_progress,
     get_user_progress_for_update,
     is_stage_unlocked,
-    next_stage_for,
     stage_exists,
 )
-from errors import bad_request, conflict, forbidden, not_found
+from errors import conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
 from routers.auth import get_current_user
@@ -43,7 +41,6 @@ from schemas.stage import (
     StageManifestation,
     StageProgressRecord,
     StageProgressResponse,
-    StageProgressUpdate,
     StageResponse,
 )
 from schemas.wheel import WheelAspect, WheelBalanceResponse
@@ -132,6 +129,21 @@ async def _stage_responses_with_progress(
     return [_overlay_stage(s, unlocked, batch) for s in stages]
 
 
+async def _record_visit(session: AsyncSession, user_id: int, tz: str) -> StageProgress | None:
+    """Note that the caller showed up, returning their (possibly advanced) row.
+
+    Reading the Map is how someone shows up inside the program, so it is where
+    :func:`domain.stage_authority.record_stage_entry` runs: entry into a window
+    the calendar has already opened is recorded here, server-side, with nobody
+    asking for it. A user with no progress row yet is left alone — these are
+    read endpoints and provisioning a row is the course's job, not the Map's.
+    """
+    progress = await get_user_progress(session, user_id)
+    if progress is None:
+        return None
+    return await record_stage_entry(session, progress, tz=tz)
+
+
 @router.get("", response_model=None)
 async def list_stages(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -151,7 +163,11 @@ async def list_stages(
     BUG-INFRA-016: returns ``Page[StageResponse]`` when ``?paginate=true``
     is set; otherwise the legacy bare list is returned for one release while
     the frontend migrates to the envelope.
+
+    Listing the stages is a visit, so it records entry into whatever window
+    the calendar has opened before the unlock overlay is computed.
     """
+    await _record_visit(session, current_user, user_tz)
     query = select(CourseStage).order_by(col(CourseStage.stage_number).asc())
     stages, total = await paginate_query(session, query, pagination)
     responses = await _stage_responses_with_progress(session, current_user, stages, user_tz)
@@ -167,12 +183,17 @@ async def get_program_calendar(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> ProgramCalendarResponse:
-    """The server's view of the date-derived program calendar (issue #386).
+    """The server's view of the date-derived program calendar.
 
     Registered ABOVE ``/{stage_number}`` so the static path wins route
     matching.  A user with no progress row yet sees the day-zero shape.
+
+    Asking where the calendar has got to is a visit, so ``current_stage`` in
+    the response is the record *after* entry has been noted: someone who has
+    been away for two months reads back the stage they have just walked into,
+    not the one they left.
     """
-    progress = await get_user_progress(session, current_user)
+    progress = await _record_visit(session, current_user, user_tz)
     if progress is None:
         return ProgramCalendarResponse(
             program_started_at=None,
@@ -248,100 +269,6 @@ async def get_stage_history(
     )
 
 
-def _bootstrap_record(existing: StageProgress) -> StageProgressRecord:
-    """Build the ``StageProgressRecord`` for an idempotent bootstrap return."""
-    return StageProgressRecord(
-        id=existing.id,
-        user_id=existing.user_id,
-        current_stage=existing.current_stage,
-        completed_stages=existing.completed_stages,
-        cycle_number=existing.cycle_number,
-    )
-
-
-def _is_bootstrap_state(existing: StageProgress) -> bool:
-    """Return True when ``existing`` matches the freshly-created bootstrap row."""
-    return existing.current_stage == 1 and not existing.completed_stages
-
-
-async def _create_initial_progress(
-    session: AsyncSession,
-    user_id: int,
-    payload: StageProgressUpdate,
-) -> StageProgressRecord:
-    """Handle the no-prior-row case: must assert stage 1, then create.
-
-    Two concurrent first-advance requests for the same user could both
-    read ``progress is None`` and both attempt to insert a fresh
-    ``StageProgress`` row (BUG-STAGE-003).  The
-    ``UniqueConstraint(user_id)`` on ``stageprogress`` rejects the
-    second insert; we catch the ``IntegrityError``, re-fetch the
-    winner under ``FOR UPDATE``, and return the same bootstrap record
-    so the loser observes a consistent final state instead of
-    surfacing as a 500.
-    """
-    if payload.current_stage != 1:
-        raise bad_request("must_start_at_stage_one")
-    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
-    session.add(progress)
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        existing = await get_user_progress_for_update(session, user_id)
-        if existing is None:
-            # Defensive: the unique-constraint loser must see the
-            # winner's row.  If it is gone the database state is
-            # corrupt; surface 409 and preserve the original
-            # ``IntegrityError`` chain so the constraint name + stack
-            # reach Sentry / structured logs.
-            raise conflict("stage_progress_race_unrecoverable") from exc
-        if _is_bootstrap_state(existing):
-            return _bootstrap_record(existing)
-        # The winner already advanced past stage 1 — treat the loser's
-        # payload as an advance-from-1 request and let the normal
-        # derivation reject it with the appropriate 400 if the client
-        # raced past stage 1 with a stale assertion.
-        return await _advance_existing_progress(session, existing, payload)
-    await session.refresh(progress)
-    logger.info("stage_progress_started", extra={"user_id": user_id})
-    return _bootstrap_record(progress)
-
-
-async def _advance_existing_progress(
-    session: AsyncSession,
-    existing: StageProgress,
-    payload: StageProgressUpdate,
-) -> StageProgressRecord:
-    """Validate the payload against the server-derived next stage, then commit."""
-    try:
-        derived_next = next_stage_for(existing)
-    except AllStagesCompletedError as exc:
-        raise conflict("all_stages_completed") from exc
-    candidate_completed = list(range(1, derived_next))
-    if payload.current_stage != derived_next:
-        raise bad_request("stage_advance_mismatch")
-
-    existing.completed_stages = candidate_completed
-    existing.current_stage = derived_next
-    existing.highest_stage_reached = max(existing.highest_stage_reached, derived_next)
-    existing.stage_started_at = datetime.now(UTC)
-    session.add(existing)
-    await session.commit()
-    await session.refresh(existing)
-    logger.info(
-        "stage_advanced",
-        extra={"user_id": existing.user_id, "current_stage": existing.current_stage},
-    )
-    return StageProgressRecord(
-        id=existing.id,
-        user_id=existing.user_id,
-        current_stage=existing.current_stage,
-        completed_stages=existing.completed_stages,
-        cycle_number=existing.cycle_number,
-    )
-
-
 _FIRST_STAGE = 1
 _FIRST_CYCLE_COMPLETED: tuple[int, ...] = ()
 
@@ -404,60 +331,3 @@ async def begin_again(
         extra={"user_id": existing.user_id, "cycle_number": existing.cycle_number},
     )
     return record
-
-
-@router.put("/progress", response_model=StageProgressRecord)
-async def update_progress(
-    payload: StageProgressUpdate,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> StageProgressRecord:
-    """Advance the user to the next stage.
-
-    The request body is treated as an **assertion** of what the client
-    expects the new ``current_stage`` to be, not an authoritative write.
-    The new state is derived server-side:
-
-    - **Create** (no prior row): ``current_stage`` is forced to 1; the
-      payload must assert 1 or it's rejected as ``must_start_at_stage_one``.
-    - **Update**: the server marks ``existing.current_stage`` complete and
-      derives the sole legal next stage via :func:`next_stage_for` — the pure
-      ``current_stage + 1`` rule, with :class:`AllStagesCompletedError` at the
-      curriculum end mapped to a 409 ``all_stages_completed``. The payload's
-      ``current_stage`` must equal that derived value — otherwise the request
-      is a skip/rewind/stale-client scenario and returns
-      ``stage_advance_mismatch``.
-
-    The ``completed_stages`` list is never read from the payload (the schema's
-    ``extra='forbid'`` would 422 such a field anyway), so the client cannot
-    mint credit for stages it hasn't actually completed.
-
-    A ``SELECT … FOR UPDATE`` row-lock prevents two concurrent advance
-    requests from both reading the same ``current_stage`` and passing the
-    derivation check (TOCTOU race).
-
-    BUG-STAGE-003: when several first-advance requests race, a winner
-    that committed between two losers' SELECT and INSERT means one
-    loser sees ``existing is None`` (handled inside
-    :func:`_create_initial_progress`) and another sees the winner's
-    bootstrap row.  Both losers must observe the same idempotent
-    bootstrap response — so the ``payload.current_stage == 1`` +
-    bootstrap-state check returns the existing row instead of trying to
-    advance past it.
-
-    Edge case: if the winner *also* finished a second advance (stage 1 →
-    2) between two concurrent first-advance attempts, a loser arriving
-    with ``payload.current_stage == 1`` against an ``existing`` already
-    at stage 2 falls through to :func:`_advance_existing_progress` and
-    is rejected with ``stage_advance_mismatch`` (400).  This is a
-    deliberate non-idempotent outcome: the client's stale assertion no
-    longer matches the server-derived next stage, and quietly returning
-    an out-of-date bootstrap record would mask a real client / server
-    drift.
-    """
-    existing = await get_user_progress_for_update(session, current_user)
-    if existing is None:
-        return await _create_initial_progress(session, current_user, payload)
-    if payload.current_stage == 1 and _is_bootstrap_state(existing):
-        return _bootstrap_record(existing)
-    return await _advance_existing_progress(session, existing, payload)

@@ -18,6 +18,7 @@ from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
+from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
 from errors import bad_request, conflict, not_found
 from models.course_stage import CourseStage
@@ -38,13 +39,6 @@ from schemas.practice import (
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practices import STAGE_TO_PRESET_NAME
 from seed_stages import STAGE_DEFINITIONS
-
-# Stage 1 is always the curriculum's entry point — users without a
-# ``StageProgress`` row see the stage-1 banner because they have not yet
-# advanced. Mirrors ``domain.stage_progress._STAGE_1`` (kept duplicated
-# rather than imported so this router doesn't reach into a private
-# constant in another module).
-_DEFAULT_STAGE_NUMBER = 1
 
 logger = logging.getLogger(__name__)
 
@@ -503,6 +497,7 @@ async def _frequency_from_preset(
 async def get_current_frequency(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
     stage_number: Annotated[
         int | None,
         Query(
@@ -531,8 +526,13 @@ async def get_current_frequency(
       resolve the active stage on their own pass it here so the banner
       tracks the practice they're showing, instead of whatever
       ``StageProgress.current_stage`` happens to hold.
-    * Otherwise fall back to ``StageProgress.current_stage`` (or stage
-      1 for a fresh user with no progress row).
+    * Otherwise the server resolves it through
+      :func:`domain.stage_authority.open_through`. The practice ramp is
+      one of the things ``NORTH-STAR.md`` line 34 says the 36-week cadence
+      paces, so the banner follows whichever of the calendar and the
+      record reaches further — never the record alone, which would hold a
+      returning user at a step-up the calendar opened weeks ago. A fresh
+      user with no progress row gets stage 1.
 
     Resolution order for the practice slot:
 
@@ -546,7 +546,7 @@ async def get_current_frequency(
     """
     if stage_number is None:
         progress = await get_user_progress(session, current_user)
-        stage_number = progress.current_stage if progress is not None else _DEFAULT_STAGE_NUMBER
+        stage_number = open_through(progress, tz=user_tz)
 
     course_stage = await _load_course_stage(session, stage_number)
     active = await _load_active_user_practice(session, current_user, stage_number)
