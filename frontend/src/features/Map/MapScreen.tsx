@@ -71,7 +71,7 @@ import {
 } from './services/stageService';
 import { type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
-import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
 import { Button } from '@/components/Button';
@@ -142,6 +142,8 @@ interface StageCellProps {
   stage: StageData;
   display: StageDisplay;
   locked: boolean;
+  /** The stage the person is standing in; both tap targets announce it. */
+  current: boolean;
   onPress: (_stage: StageData) => void;
 }
 
@@ -221,6 +223,7 @@ const StageTextBlock = ({
   stage,
   display,
   locked,
+  current,
   fullness,
   showTopDivider,
   onPress,
@@ -236,7 +239,7 @@ const StageTextBlock = ({
       ]}
       onPress={() => onPress(stage)}
       accessibilityRole="button"
-      accessibilityLabel={stageNodeLabel(display, fullness)}
+      accessibilityLabel={stageNodeLabel(display, fullness, { locked, current })}
     >
       {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
       <View
@@ -383,6 +386,7 @@ const StageCenterCell = ({
   stage,
   display,
   locked,
+  current,
   onPress,
   rowIndex,
   showTopDivider,
@@ -398,7 +402,7 @@ const StageCenterCell = ({
     onPress={() => onPress(stage)}
     onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
-    accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
+    accessibilityLabel={stageCenterCellLabel(stage.title, stage.subtitle, { locked, current })}
   >
     <CenterContent display={display} locked={locked} />
     {locked ? <LockGlyph /> : null}
@@ -452,6 +456,7 @@ const RowLeftColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
+        current={stage.stageNumber === currentStage}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
         // A row's top stage sits on the row boundary the group row already
         // rules; only the stacked stage(s) below it carry the within-row line.
@@ -483,6 +488,7 @@ const RowCenterColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
+        current={stage.stageNumber === currentStage}
         onPress={onPress}
         rowIndex={rowIndex}
         // Match the left column: only stages stacked below a row's top stage
