@@ -88,9 +88,21 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
   body_markdown: '# Welcome to Beige\n\nintro\n',
 });
 
+// GET /stages/program-calendar — the server's one answer to which stage this
+// person is in; the screen reads it instead of counting completions.
+const mockProgramCalendar = jest.fn(() =>
+  Promise.resolve({
+    program_started_at: null as string | null,
+    calendar_stage: 1,
+    calendar_week: 1,
+    current_stage: 1,
+    cycle_number: 1,
+  }),
+);
 jest.mock('../../../api', () => ({
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
+    programCalendar: () => mockProgramCalendar(),
   },
   course: {
     stageContentAll: (...args: unknown[]) => mockStageContent(...args),

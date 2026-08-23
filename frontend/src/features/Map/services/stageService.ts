@@ -10,7 +10,7 @@
 import { stages as stagesApi } from '../../../api';
 import type { Stage } from '../../../api';
 import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
-import { deriveCurrentStage, FULLY_COMPLETE } from '../../../domain/stageProgression';
+import { FULLY_COMPLETE } from '../../../domain/stageProgression';
 import { useStageStore } from '../../../store/useStageStore';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
@@ -53,7 +53,7 @@ export const toStageData = (apiStage: Stage): StageData => {
   };
 };
 
-/** Unlocked on the map when the server `is_unlocked` flag is set OR the date-derived current stage has reached it, so the padlock matches the Practice/Course stage. */
+/** Unlocked on the map when the server `is_unlocked` flag is set OR the server's current stage has reached it, so the padlock matches the Practice/Course stage. */
 export const isStageUnlocked = (
   stage: Pick<StageData, 'isUnlocked' | 'stageNumber'>,
   currentStage: number | null,
@@ -72,13 +72,46 @@ export const isEndOfCycle = (
 ): boolean =>
   currentStage === STAGE_COUNT && (stagesByNumber[STAGE_COUNT]?.progress ?? 0) >= FULLY_COMPLETE;
 
-/** Seed the cycle indicator from the program calendar; a failure here must never break the stage list, so it is swallowed and the prior cycleNumber stands. */
-const seedCycleNumber = async (token?: string): Promise<void> => {
+/**
+ * Whether the request that quoted ``generation`` has since been superseded.
+ *
+ * A request in flight outlives whatever happened while it was away: a sign-out
+ * that emptied the store, or a newer load started before it settled. Both move
+ * the store's generation on, and a response that no longer quotes the current
+ * one is dropped rather than written -- otherwise the previous account's stages
+ * repopulate a signed-out store, and an overtaken retry paints progress older
+ * than what is already on screen.
+ */
+const isStale = (generation: number): boolean =>
+  useStageStore.getState().loadGeneration !== generation;
+
+/**
+ * Seed the current stage and the cycle indicator from the program calendar.
+ *
+ * ``current_stage`` is the server's one answer to which stage this person is
+ * in: the union of the stage its calendar has opened and the stage its record
+ * says they have entered, already reconciled server-side before the response
+ * is written. The client takes it rather than recomputing anything from the
+ * stage list, because a completion count is a different quantity from both --
+ * someone who has been away for two months has several stages open and nothing
+ * newly complete, and counting completions would report the stage they last
+ * finished.
+ *
+ * A failure here must never break the stage list, so it is swallowed and the
+ * values already in the store stand.
+ */
+const seedFromProgramCalendar = async (
+  token: string | undefined,
+  generation: number,
+): Promise<void> => {
   try {
     const calendar = await stagesApi.programCalendar(token);
-    useStageStore.getState().setCycleNumber(calendar.cycle_number);
+    if (isStale(generation)) return;
+    const store = useStageStore.getState();
+    store.setCurrentStage(calendar.current_stage);
+    store.setCycleNumber(calendar.cycle_number);
   } catch {
-    // Non-fatal: cold-start cycle seeding is best-effort; keep the current value.
+    // Non-fatal: cold-start seeding is best-effort; keep the current values.
   }
 };
 
@@ -89,6 +122,7 @@ export const stageService = {
    */
   loadStages: async (token?: string): Promise<void> => {
     const store = useStageStore.getState();
+    const generation = store.beginLoad();
     store.setLoading(true);
     store.setError(null);
     // Marked at request start, not on settle, so the attempt lands in the same
@@ -96,19 +130,23 @@ export const stageService = {
     store.markAttempted();
     try {
       const apiStages = await stagesApi.listAll(token);
+      if (isStale(generation)) return;
       // Sort descending by stage_number (10 at top, 1 at bottom) to match
       // the background artwork.
       const sorted = [...apiStages].sort((a, b) => b.stage_number - a.stage_number);
       useStageStore.getState().setStages(sorted.map(toStageData));
-      useStageStore.getState().setCurrentStage(deriveCurrentStage(apiStages));
-      useStageStore.getState().setLoading(false);
     } catch (err) {
+      if (isStale(generation)) return;
       const message = err instanceof Error ? err.message : 'Failed to load stages';
       useStageStore.getState().setError(message);
       useStageStore.getState().setLoading(false);
       return;
     }
-    await seedCycleNumber(token);
+    // Awaited before the load settles so the first painted grid already carries
+    // the server's stage, rather than flashing a stale one.
+    await seedFromProgramCalendar(token, generation);
+    if (isStale(generation)) return;
+    useStageStore.getState().setLoading(false);
   },
 
   /**
@@ -118,10 +156,13 @@ export const stageService = {
    * rather than rejecting unhandled, since the call site discards the promise.
    */
   beginAgain: async (token?: string): Promise<void> => {
+    const generation = useStageStore.getState().beginLoad();
     try {
       const record = await stagesApi.beginAgain(token);
+      if (isStale(generation)) return;
       useStageStore.getState().setCycleNumber(record.cycle_number);
     } catch (err) {
+      if (isStale(generation)) return;
       const message = err instanceof Error ? err.message : 'Failed to begin again';
       useStageStore.getState().setError(message);
       return;

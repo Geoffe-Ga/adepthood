@@ -6,7 +6,7 @@ import { Image } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import styles from '../Map.styles';
-import MapScreen from '../MapScreen';
+import MapScreen, { MAP_LOADING_TIMEOUT_MS } from '../MapScreen';
 
 import { mockLoadStages, mockMapState, resetMapMocks } from './mapTestHarness';
 
@@ -71,8 +71,68 @@ describe('MapScreen — cold start and metadata edge cases', () => {
   it('shows the full-screen loader when no stages are cached yet', () => {
     mockMapState.loading = true;
     mockMapState.stages = [];
-    const tree = create(<MapScreen />);
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
     expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
+    // The loading state arms a real timer; leaving the tree mounted holds the
+    // Jest worker open long after the assertion is done.
+    act(() => tree.unmount());
+  });
+
+  it('holds the bare spinner for as long as the bounded wait runs', () => {
+    // A normal fast load must never flicker the timeout copy on its way past.
+    jest.useFakeTimers();
+    mockMapState.loading = true;
+    mockMapState.stages = [];
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(MAP_LOADING_TIMEOUT_MS - 1);
+    });
+
+    expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ testID: 'map-loading-retry' })).toHaveLength(0);
+    act(() => tree.unmount());
+    jest.useRealTimers();
+  });
+
+  it('offers a way forward once the cold-start spinner outlasts the bounded wait', () => {
+    // A GET /stages that never settles used to hold the screen for good:
+    // ``loading`` never flips back, so the spinner was the whole app.
+    jest.useFakeTimers();
+    mockMapState.loading = true;
+    mockMapState.stages = [];
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(MAP_LOADING_TIMEOUT_MS);
+    });
+
+    const container = tree.root.findByProps({ testID: 'map-loading-timeout' });
+    expect(container.props.accessibilityRole).toBe('alert');
+    expect(container.props.accessibilityLiveRegion).toBe('polite');
+
+    const retry = tree.root.findByProps({ testID: 'map-loading-retry' });
+    expect(retry.props.accessibilityRole).toBe('button');
+    expect(retry.props.accessibilityLabel).toBe(TRY_AGAIN);
+
+    expect(mockLoadStages).not.toHaveBeenCalled();
+    act(() => retry.props.onPress());
+    expect(mockLoadStages).toHaveBeenCalledTimes(1);
+
+    // Retrying puts the spinner back rather than leaving the dead end on screen.
+    expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ testID: 'map-loading-timeout' })).toHaveLength(0);
+    act(() => tree.unmount());
+    jest.useRealTimers();
   });
 
   it('shows the full-screen error when the load fails with nothing cached', () => {

@@ -92,11 +92,13 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
-      "client": ["course"],
+      "client": ["course", "stages"],
       "routes": [
+        "GET /stages",
+        "GET /stages/program-calendar",
         "GET /course/stages/{stage_number}/content",
         "GET /course/content/{content_id}/body",
         "POST /course/content/{content_id}/mark-read",

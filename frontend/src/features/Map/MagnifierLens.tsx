@@ -1,5 +1,3 @@
-// frontend/features/Map/MagnifierLens.tsx
-
 /**
  * The Map's glass magnifier — the "you are here" box grown into a draggable
  * lens. A translucent pill floats over the center column, magnifying the wave
