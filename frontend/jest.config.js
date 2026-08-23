@@ -23,7 +23,14 @@ module.exports = {
   // global.  Tracked for a follow-up that opts component test files
   // into ``@jest-environment jsdom`` per-file via the docblock pragma.
   testEnvironment: 'node',
-  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect', '<rootDir>/jest.setup.js'],
+  setupFilesAfterEnv: [
+    '@testing-library/jest-native/extend-expect',
+    '<rootDir>/jest.setup.js',
+    // Runs on every suite, not just the cross-boundary ones: its job is to
+    // catch a suite that reads backend source without the marker that makes it
+    // discoverable by scripts/frontend/cross-boundary-drift.sh.
+    '<rootDir>/jest.setup.crossBoundary.js',
+  ],
   roots: ['<rootDir>/src', '<rootDir>/__tests__'],
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {

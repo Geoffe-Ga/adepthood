@@ -11,6 +11,12 @@ import {
 } from './journeyLedger';
 import type { LedgerEnvironment } from './journeyLedger';
 
+// The audit below reads backend/openapi.json and every model module, so this
+// is a cross-boundary guard: a route or table added in a backend-only commit
+// is exactly what it exists to catch. Taking the repository root from the
+// helper is what makes backend CI run it on such a commit.
+import { REPO_ROOT } from '@/testing/backendSource';
+
 /**
  * The journey coverage ledger and its gate.
  *
@@ -35,7 +41,6 @@ import type { LedgerEnvironment } from './journeyLedger';
  */
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(FRONTEND_ROOT, '..');
 
 const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');

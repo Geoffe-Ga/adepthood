@@ -1,7 +1,5 @@
 /* eslint-env jest */
 /* global describe, test, expect */
-import * as fs from 'fs';
-import * as path from 'path';
 
 import { SEED_STATUS_LINES } from '../seedCopy';
 import type { SeedItemStatus } from '../seedRun';
@@ -11,6 +9,7 @@ import {
   documentImportSchema,
   importDestinationSchema,
 } from '@/api/schemas';
+import { backendPath, readBackendSource } from '@/testing/backendSource';
 
 /**
  * The import vocabulary, held to the one the server actually answers with.
@@ -27,20 +26,19 @@ import {
  * exported, rather than rendering as a blank row on somebody's screen.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
-const OPENAPI = path.join(REPO_ROOT, 'backend', 'openapi.json');
-
 /** How each destination's wire status is spelled in the run's vocabulary. */
 const CORPUS_RENAMES: Record<string, SeedItemStatus> = { stored: 'in_corpus' };
 const VAULT_RENAMES: Record<string, SeedItemStatus> = { accepted: 'ingested' };
 
 function enumFromSchema(name: string): string[] {
-  const document = JSON.parse(fs.readFileSync(OPENAPI, 'utf-8')) as {
+  const document = JSON.parse(readBackendSource('openapi.json')) as {
     components: { schemas: Record<string, { enum?: string[] }> };
   };
   const values = document.components.schemas[name]?.enum;
   if (values === undefined) {
-    throw new Error(`${OPENAPI} exports no "${name}" enum; the import surface has moved.`);
+    throw new Error(
+      `${backendPath('openapi.json')} exports no "${name}" enum; the import surface has moved.`,
+    );
   }
   return values;
 }
@@ -78,7 +76,7 @@ describe('the corpus vocabulary this client accepts', () => {
 
 describe('the import response this client parses', () => {
   test('requires exactly the fields the server declares required', () => {
-    const document = JSON.parse(fs.readFileSync(OPENAPI, 'utf-8')) as {
+    const document = JSON.parse(readBackendSource('openapi.json')) as {
       components: { schemas: Record<string, { required?: string[] }> };
     };
     const required = document.components.schemas['DocumentImportResponse']?.required ?? [];
