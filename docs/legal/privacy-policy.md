@@ -17,8 +17,8 @@ what is written down.
 
 - **Effective:** `[OPERATOR]` — this policy takes effect on the day
   Adepthood is first published.
-- **Companion page:** [Your data](../your-data.md) covers deletion in more
-  detail.
+- **Companion page:** [Your data](../your-data.md) covers taking a copy and
+  deleting, in more detail.
 
 ## Who runs Adepthood
 
@@ -109,10 +109,10 @@ long enough to be writing, and which is stored in the clear all the same.
 This page names it here rather than let the paragraph above be read as
 covering it.
 
-Deleting an entry inside the app hides it from every list immediately; the
-row is cleared when the account is deleted. If that entry had been sorted
-into the corpus described below, its copy there is removed at the same
-moment, so nothing you have deleted goes on being read back to you.
+Deleting an entry inside the app hides it from every list immediately, and
+takes with it the copy in the corpus described below, so nothing you have
+deleted goes on being read back to you. "Deleting one page" further down
+says how far that reaches and what is left behind.
 
 ## The three tiers, and what each one means
 
@@ -147,8 +147,13 @@ than a one-line promise. A **document you upload** through "Bring in your
 writing" *is* forwarded to your Creek Vault at whatever tier you picked,
 Intimate included — see "Who else receives your data" below for what a
 vault is and why that is a different thing from sending it to an AI. That upload path calls no
-language model at any tier. If you have not configured a vault, the upload
+language model at any tier. If you have not connected a vault, that upload
 has nowhere to go and the screen tells you so.
+
+A document has one other destination, and it is not a vault: your own
+corpus here. That route is the next section's subject, it is governed by
+its own switch rather than by the tier you picked, and it is closed to an
+Intimate document exactly as the corpus is closed to an Intimate entry.
 
 **Public** behaves as Personal does for everything above; the name
 anticipates sharing that does not exist yet.
@@ -159,8 +164,22 @@ anticipates sharing that does not exist yet.
 off for every account until you say otherwise, and asking is a separate
 question from the tier you pick for a piece of writing — a tier is a
 decision about one entry, not permission to sort your journal into a
-searchable store. There is a switch per kind of material, and today the
-only kind is what you write in Adepthood itself.
+searchable store.
+
+There is a switch per kind of material, and there are two kinds. The first
+is **what you write in Adepthood itself**: the entries you compose here.
+The second is **documents you bring in**, a file you hand over rather than
+type. They are separate decisions, separately dated, and each is off until
+you make it — agreeing that your entries may be sorted is not agreeing that
+your documents may be.
+
+A document reaches this corpus only when you have **no Creek Vault
+connected**. If you have one, a document you bring in goes there and
+nowhere else: nothing about it is sorted or stored here and none of this
+section applies to it. If you have not, the document is read, sorted and
+stored the way an entry of yours would be — and only if the switch for
+documents is on. An Intimate document is refused by the corpus exactly as
+an Intimate entry is, and reaches no language model on the way.
 
 Turning it on has two consequences worth knowing before you do.
 
@@ -194,8 +213,11 @@ context — passages chosen out of the corpus of your own writing, or your
 recent entries while that corpus is empty — the photograph of a
 handwritten page when you ask for it to be transcribed, and, **only if you
 have turned the corpus on**, the body of each non-Intimate entry once as it
-is saved, so that it can be sorted into the ten frequencies. It
-never receives an Intimate entry. If you bring your own key, the call goes
+is saved, so that it can be sorted into the ten frequencies — and the text
+of a document you bring in, once, on the same terms, when that document is
+going to your own corpus here rather than to a vault. It never receives an
+Intimate entry, and it is not sent an Intimate document that is being
+sorted here either. If you bring your own key, the call goes
 to your account with that provider; the key is used for that one call and
 is never stored on the server.
 
@@ -274,6 +296,24 @@ can decline; nothing else in the app changes.
 It does not ask for the microphone and does not record audio. The only
 audio it uses is the bells it plays during a practice.
 
+## Deleting one page
+
+**Journal → the page's Delete.** You can delete a single entry without
+touching anything else about your account. The shelf asks once, and then
+that page leaves your journal: it is gone from every list, and from
+everything a reflection is allowed to read.
+
+Two things about that are worth stating exactly. **The copy in the corpus
+goes with it** — if the entry had been sorted, its fragments are removed in
+the same moment, so writing you deleted stops being sent to a language
+model as context for what you write next. And **the row is not taken out of
+the database when you confirm**: it is marked deleted and kept out of every
+read path, which is what keeps the record of model calls made against it
+from pointing at nothing, and it is cleared when you delete your account.
+Nothing in the app will show that page to you again, no support path will
+bring it back, and it is left out of an export — so take a copy first if you
+might want it.
+
 ## Deleting your account
 
 **Settings → Delete account.** You retype your email address and the
@@ -297,9 +337,19 @@ what happens to a Creek Vault.
 
 ## Getting a copy of your writing
 
-There is no export button yet. It is being built, and until it exists a
-copy is produced by hand: ask at the contact address above and one will be
-sent to you.
+**Settings → Export my data.** The app asks the server for your archive and
+saves it to your device: everything in a JSON file that can be read back
+in, and your journal alone as Markdown, oldest first, for reading. Entries
+you deleted are in neither.
+
+The archive is decrypted on the way out, so what lands on your device is a
+plaintext copy of your journal — keep it where you would keep a paper one.
+Three kinds of thing are deliberately left out, and the file itself lists
+them with the reason for each: credentials, the records the system kept
+about your use of the app, and content that was never yours to take.
+[Your data](../your-data.md) walks through all three. That an export
+happened is noted — your account id and how many records went, and not a
+line of what they said.
 
 Because deletion is immediate and total, **take a copy before you delete**.
 Nothing here can undo it afterwards.
