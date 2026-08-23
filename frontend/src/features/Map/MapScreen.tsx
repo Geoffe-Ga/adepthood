@@ -876,12 +876,63 @@ const StageDetailModal = ({
   </Modal>
 );
 
-const MapLoading = (): React.JSX.Element => (
-  <View style={styles.centered} testID="map-loading">
-    <ActivityIndicator size="large" color={styles.loadingText.color} />
-    <Text style={styles.loadingText}>Loading stages...</Text>
+/**
+ * How long the cold-start spinner may hold the whole screen before it offers a
+ * way out. ``loading`` only flips back when the request settles, so a dropped
+ * connection, a backgrounded app or a proxy holding the socket open leaves it
+ * true for good — long enough that a slow-but-alive network still lands first,
+ * short enough that nobody is asked to trust an indefinite spinner.
+ */
+export const MAP_LOADING_TIMEOUT_MS = 12_000;
+
+// The cold start's last dead end: a spinner with no timeout and nothing to
+// press. After a bounded wait it says so plainly and offers the same explicit
+// "Try again" the error and empty states use; retrying re-arms the wait, so a
+// second slow attempt gets the spinner rather than a stale message.
+const MapLoadingTimedOut = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View
+    style={styles.centered}
+    testID="map-loading-timeout"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
+    <Text style={styles.emptyText}>Your map is taking longer than it should.</Text>
+    <Text style={styles.errorHint}>
+      It may still be on its way. Check your connection and try again.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.errorRetry}
+      testID="map-loading-retry"
+    >
+      <Text style={styles.errorRetryText}>Try again</Text>
+    </TouchableOpacity>
   </View>
 );
+
+const MapLoading = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => {
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (timedOut) return undefined;
+    const timer = setTimeout(() => setTimedOut(true), MAP_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [timedOut]);
+
+  const handleRetry = useCallback(() => {
+    setTimedOut(false);
+    onRetry();
+  }, [onRetry]);
+
+  if (timedOut) return <MapLoadingTimedOut onRetry={handleRetry} />;
+  return (
+    <View style={styles.centered} testID="map-loading">
+      <ActivityIndicator size="large" color={styles.loadingText.color} />
+      <Text style={styles.loadingText}>Loading stages...</Text>
+    </View>
+  );
+};
 
 // Cold-start failure: announce it, say what to do, and offer the same explicit
 // retry the refresh banner and history error use — never a silent auto-retry.
@@ -1384,7 +1435,7 @@ const MapScreen = (): React.JSX.Element => {
   const lens = useLensFocus(currentStage, lookup, setActiveStage);
   const { drawer, onDrawerSelectStage } = useMapDrawer(lens);
 
-  if (loading && stages.length === 0) return <MapLoading />;
+  if (loading && stages.length === 0) return <MapLoading onRetry={handleRefresh} />;
   if (error && stages.length === 0) return <MapError message={error} onRetry={handleRefresh} />;
   if (hasAttempted && stages.length === 0) return <MapEmpty onRetry={handleRefresh} />;
 
