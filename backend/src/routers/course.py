@@ -24,6 +24,7 @@ from domain.course import (
     unlocked_chapter_count,
 )
 from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
+from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
@@ -90,6 +91,12 @@ async def _day_in_stage_for_user(
     via :func:`ensure_user_progress`, so the clock has a real anchor even
     for users who never explicitly advanced a stage.
 
+    Opening the reading is also how someone shows up inside the program, so
+    entry into whatever window the calendar has opened is recorded here
+    (:func:`domain.stage_authority.record_stage_entry`) before the drip is
+    measured. It only ever moves the record forward to the calendar, so the
+    ``max`` below still decides the day and no chapter closes because of it.
+
     Advancement is honored so time can only widen access, never revoke it:
 
     - a **past** stage returns its full duration → every chapter open;
@@ -101,7 +108,8 @@ async def _day_in_stage_for_user(
       by ``calendar_stage`` (ahead of ``current_stage``) used to read as
       "-1 days", locking every one of its chapters.
     """
-    progress = await ensure_user_progress(session, user_id)
+    provisioned = await ensure_user_progress(session, user_id)
+    progress = await record_stage_entry(session, provisioned, tz=tz)
     duration = _stage_duration_days(stage_number)
     if progress.current_stage > stage_number:
         return duration
