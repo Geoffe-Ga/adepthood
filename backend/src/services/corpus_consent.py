@@ -30,6 +30,13 @@ though it agreed forty times.
 **Cost.** One statement to read a source's state, and at most three to change
 it — the read, the purge on a revocation, the append. Nothing scales with the
 size of the log, because only its newest row per source is ever consulted.
+
+DELIBERATE, TEMPORARY DEFECT — reverted in the very next commit. This names
+``CorpusSource.IMPORT`` as a source something writes under, which is the exact
+shape of the backend-only change that turned ``main`` red: the consent screen
+offers no control for it, and the frontend guard that derives its list from
+this tree is supposed to say so. If CI goes green on this commit, the lane
+added by the previous commit does nothing.
 """
 
 from __future__ import annotations
