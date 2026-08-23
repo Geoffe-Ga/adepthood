@@ -87,16 +87,23 @@ describe('stageService', () => {
     expect(state.error).toBeNull();
   });
 
-  it('loadStages sets currentStage to completed_count + 1 (backend-truth mirror)', async () => {
-    // BUG-FE-MAP-001: one completed (progress==1) stage → current is 2.
-    // Matches the backend's `next_stage_for` under the chain-validation
-    // invariant; no longer leaks the "highest unlocked" value when
-    // `is_unlocked` runs ahead of actual completion.
+  it('loadStages takes currentStage from the server program calendar', async () => {
+    // The calendar has opened stage 4 while only stage 1 is complete. Counting
+    // completions answers 2; the server answers 4, and the server is the only
+    // one that knows what the record has entered.
     mockList.mockResolvedValueOnce([
-      makeApiStage(1, { is_unlocked: true, progress: 1 }), // completed
-      makeApiStage(2, { is_unlocked: true, progress: 0.3 }), // in progress
-      makeApiStage(3, { is_unlocked: false, progress: 0 }),
+      makeApiStage(1, { is_unlocked: true, progress: 1 }),
+      makeApiStage(2, { is_unlocked: true, progress: 0.3 }),
+      makeApiStage(3, { is_unlocked: true, progress: 0 }),
+      makeApiStage(4, { is_unlocked: true, progress: 0 }),
     ]);
+    mockProgramCalendar.mockResolvedValueOnce({
+      program_started_at: '2026-01-01T00:00:00Z',
+      calendar_stage: 4,
+      calendar_week: 10,
+      current_stage: 4,
+      cycle_number: 1,
+    });
 
     const { stageService } = require('../stageService');
     const { useStageStore } = require('../../../../store/useStageStore');
@@ -105,19 +112,20 @@ describe('stageService', () => {
       await stageService.loadStages();
     });
 
-    expect(useStageStore.getState().currentStage).toBe(2);
+    expect(useStageStore.getState().currentStage).toBe(4);
   });
 
-  it('loadStages ignores is_unlocked drift and derives from completion count', async () => {
-    // BUG-FE-MAP-001 regression: if the backend ever returned `is_unlocked`
-    // for stages beyond the user's completion (e.g. from cached data or a
-    // partially-applied migration) the old heuristic would jump currentStage
-    // to the highest unlocked row.  Now it stays at completed_count + 1.
-    mockList.mockResolvedValueOnce([
-      makeApiStage(1, { is_unlocked: true, progress: 0.4 }),
-      makeApiStage(2, { is_unlocked: true, progress: 0 }),
-      makeApiStage(3, { is_unlocked: true, progress: 0 }),
-    ]);
+  it('loadStages honours a record that runs ahead of the completion count', async () => {
+    // Nothing is complete, so a completion count answers 1; the server's
+    // record says the person has entered stage 3 and that stands.
+    mockList.mockResolvedValueOnce([makeApiStage(1), makeApiStage(2), makeApiStage(3)]);
+    mockProgramCalendar.mockResolvedValueOnce({
+      program_started_at: '2026-01-01T00:00:00Z',
+      calendar_stage: 2,
+      calendar_week: 5,
+      current_stage: 3,
+      cycle_number: 1,
+    });
 
     const { stageService } = require('../stageService');
     const { useStageStore } = require('../../../../store/useStageStore');
@@ -126,7 +134,7 @@ describe('stageService', () => {
       await stageService.loadStages();
     });
 
-    expect(useStageStore.getState().currentStage).toBe(1);
+    expect(useStageStore.getState().currentStage).toBe(3);
   });
 
   it('loadStages records an error message on API failure', async () => {
@@ -253,13 +261,14 @@ describe('stageService', () => {
       expect(useStageStore.getState().cycleNumber).toBe(1);
     });
 
-    it('leaves stages and cycleNumber intact when the program-calendar fetch rejects', async () => {
+    it('leaves stages, cycleNumber and currentStage intact when the calendar fetch rejects', async () => {
       mockList.mockResolvedValueOnce([makeApiStage(1)]);
       mockProgramCalendar.mockRejectedValueOnce(new Error('calendar down'));
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
       act(() => {
         useStageStore.getState().setCycleNumber(3);
+        useStageStore.getState().setCurrentStage(5);
       });
 
       await act(async () => {
@@ -271,6 +280,7 @@ describe('stageService', () => {
       expect(state.stages).toHaveLength(1);
       expect(state.error).toBeNull();
       expect(state.cycleNumber).toBe(3);
+      expect(state.currentStage).toBe(5);
     });
   });
 
