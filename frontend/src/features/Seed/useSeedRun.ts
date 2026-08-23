@@ -13,6 +13,7 @@
  */
 import { useCallback, useMemo, useReducer, useRef, useState, type Dispatch } from 'react';
 
+import { importSeedDocument } from './importSeedDocument';
 import { pickSeedDocuments, type PickedDocument } from './pickSeedDocuments';
 import { SEED_CANCELLED_NOTICE, SEED_FAILED_PICK_NOTICE } from './seedCopy';
 import {
@@ -26,7 +27,6 @@ import {
   type SeedRunState,
   type SeedRunTally,
 } from './seedRun';
-import { uploadSeedDocument } from './uploadSeedDocument';
 
 import type { JournalClassification } from '@/api';
 
@@ -55,6 +55,15 @@ export interface SeedRunController {
   notice: string | null;
   /** Whether documents are still going over. */
   isSending: boolean;
+  /**
+   * Whether anything in this run was held back for want of the upload consent.
+   *
+   * Read off the outcomes the server actually returned rather than checked
+   * ahead of time: the consent gate lives in one place, and a client that
+   * pre-flighted it would be a second reading of the same permission, free to
+   * disagree with the one that decides.
+   */
+  needsConsent: boolean;
 }
 
 /** Pair each picked document with a run entry, already settled if unreadable. */
@@ -100,7 +109,7 @@ async function sendSequentially(
     dispatch({ type: 'start', id: next.id });
     batch = seedRunReducer(batch, { type: 'start', id: next.id });
     // Awaited inside the loop deliberately: this is the one-at-a-time guarantee.
-    const status = await uploadSeedDocument(document, tier);
+    const status = await importSeedDocument(document, tier);
     dispatch({ type: 'settle', id: next.id, status });
     batch = seedRunReducer(batch, { type: 'settle', id: next.id, status });
   }
@@ -156,5 +165,6 @@ export function useSeedRun(): SeedRunController {
     choose,
     notice,
     isSending,
+    needsConsent: items.some((item) => item.status === 'consent_required'),
   };
 }

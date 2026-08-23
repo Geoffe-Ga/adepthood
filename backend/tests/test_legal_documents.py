@@ -6,7 +6,7 @@ overstated one is a false promise made to every person who writes something
 private here. So the guarantees the policy makes are pinned from the code side,
 the way ``test_account_deletion_policy`` pins ``docs/your-data.md``.
 
-Four failure modes are guarded.
+Five failure modes are guarded.
 
 *A promise the code stops keeping.* The policy says production refuses to boot
 without a journal-encryption key, that no journal body reaches the error
@@ -35,6 +35,16 @@ follows costs one provider call per entry. Both sentences are pinned to the
 constants that make them true, so widening either is a rewrite of the document
 before it is a change to the code.
 
+*A promise that stopped covering what the app does.* The document is only
+worth its banner while it is at least as wide as the code. Two claims narrowed
+under it on one day: a person gained a Delete on a single page while the policy
+still described account erasure as the only remedy, and ``POST /corpus/import``
+gave the ``upload`` consent a writer while the corpus section still said the
+only kind of material was writing composed here. Both are pinned from the code
+side -- the delete by running it, the second kind of material by reading the
+writers' own source constants -- so the policy narrows into a red build rather
+than into a reader's wrong belief.
+
 *A link that rots.* The in-app rows point at the documents by repository path.
 A rename that leaves the rows behind gives a store reviewer, and a user, a 404
 where a privacy policy should be.
@@ -47,19 +57,32 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType, SimpleNamespace
+from typing import Final
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
+from domain.frequencies import Frequency
 from main import validate_journal_encryption_config
+from models.corpus_fragment import CorpusSource
+from models.journal_entry import JournalClassification, JournalEntry
+from routers.journal import delete_journal_entry
 from sentry import scrub_event
-from services import journal_encryption
-from services.corpus_consent import CONSENT_GRANTED_BY_DEFAULT
-from services.corpus_ingest import CLASSIFICATION_CALLS_PER_INGEST
+from services import frequency_classification, journal_encryption
+from services.corpus_consent import CONSENT_GRANTED_BY_DEFAULT, set_consent
+from services.corpus_import import IMPORT_SOURCE, reaches_a_vault
+from services.corpus_ingest import (
+    CLASSIFICATION_CALLS_PER_INGEST,
+    INGEST_SOURCE,
+    ingest_journal_entry,
+)
+from services.corpus_store import retrieve_fragments
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
@@ -463,3 +486,186 @@ def test_the_terms_do_not_promise_a_service_level() -> None:
     assert '"as is"' in text
     assert "service level agreement" not in text
     assert "99." not in text
+
+
+# Every consent source something in this backend actually writes a fragment
+# under, read off the writers' own constants rather than off the enum. A member
+# nothing collects under is a name, not a kind of material somebody is being
+# asked about -- and the policy owes a reader a description of each kind that
+# can hold their writing, not of each token the schema can store.
+_SOURCES_WITH_A_WRITER: Final[frozenset[CorpusSource]] = frozenset({INGEST_SOURCE, IMPORT_SOURCE})
+
+# What the policy must call each of those kinds, in the words the consent
+# screen offers the switch under. Keyed by the enum member, so a writer that
+# moves to a source nobody has written down (``POST /corpus/import`` deciding
+# to collect under ``import`` rather than ``upload``, say) leaves a switch the
+# policy does not explain and fails here.
+_CORPUS_SOURCE_DISCLOSURES: Final[Mapping[CorpusSource, str]] = MappingProxyType(
+    {
+        CorpusSource.JOURNAL: "what you write in adepthood itself",
+        CorpusSource.UPLOAD: "documents you bring in",
+    }
+)
+
+# Stands in for a source with no disclosure written for it. A control character
+# cannot occur in the prose, so an undisclosed source is reported by name
+# instead of raising a ``KeyError`` from inside a comprehension.
+_NO_DISCLOSURE_WRITTEN: Final[str] = "\x00"
+
+# The claim the corpus section shipped with, true while ``journal`` was the
+# only source with a writer and false the moment a second one landed.
+_SINGLE_SOURCE_CLAIM: Final[str] = "the only kind"
+
+
+def test_the_policy_names_every_kind_of_material_the_corpus_can_hold() -> None:
+    """Each source something writes fragments under is described, by name.
+
+    The consent switch is per source, so a source with a writer is a permission
+    a reader can be asked for -- and one the policy has to have explained
+    before they are. ``POST /corpus/import`` collects under the ``upload``
+    source rather than adding one of its own, which is precisely the change a
+    phrase match on the corpus section would not have seen: no wording went
+    stale, the meaning of an existing switch widened.
+
+    Both halves are derived. The population is the writers' constants, so a
+    third writer fails here until somebody writes down what it collects, and
+    the count is what retires the "only kind" sentence rather than a reviewer
+    remembering it exists.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    undisclosed = sorted(
+        source.value
+        for source in _SOURCES_WITH_A_WRITER
+        if _CORPUS_SOURCE_DISCLOSURES.get(source, _NO_DISCLOSURE_WRITTEN) not in policy
+    )
+
+    assert not undisclosed, (
+        f"something writes corpus fragments under {undisclosed}, and the policy "
+        f"describes no such kind of material"
+    )
+    assert len(_SOURCES_WITH_A_WRITER) == 1 or _SINGLE_SOURCE_CLAIM not in policy, (
+        f"{len(_SOURCES_WITH_A_WRITER)} sources have writers; the policy still "
+        f"tells a reader there is only one kind of material"
+    )
+
+
+def test_an_imported_document_reaches_the_corpus_only_without_a_vault() -> None:
+    """The routing rule the policy states is the resolver's own answer.
+
+    The policy tells a reader that a document they bring in goes to their vault
+    if they have connected one and is sorted into their own corpus only if they
+    have not. That sentence is a promise about where their writing ends up, so
+    it is re-derived from :func:`services.corpus_import.reaches_a_vault` -- the
+    predicate the import path actually branches on -- rather than paraphrased
+    from the module that documents it.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    assert reaches_a_vault(LocalFallbackCreekVaultClient()) is False, (
+        "an account with no vault no longer takes the local-corpus branch; "
+        "the policy describes the routing rule and must be rewritten with it"
+    )
+    assert _CORPUS_SOURCE_DISCLOSURES.get(IMPORT_SOURCE, _NO_DISCLOSURE_WRITTEN) in policy, (
+        f"an imported document is now collected under {IMPORT_SOURCE.value!r}, which the "
+        f"policy does not describe as a kind of material"
+    )
+
+
+# The policy section describing the deletion of a single entry, addressed by
+# its heading. Scoped rather than matched across the whole document, because
+# account deletion is immediate and irreversible and the words for that are
+# exactly the ones this section may not borrow.
+_SINGLE_PAGE_HEADING: Final[str] = "## deleting one page"
+
+# Promises stronger than the schema keeps. The row is stamped, not removed, so
+# any of these in that section would tell a reader their page is gone from the
+# database when it is gone from the app.
+_OVERSTATED_ERASURE: Final[tuple[str, ...]] = (
+    "permanently",
+    "shredded",
+    "wiped",
+    "expunged",
+    "beyond recovery",
+)
+
+# A reply the classifier's parser accepts, naming one position on the ontology.
+_CLASSIFIED_REPLY: Final[str] = json.dumps(
+    {"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9}
+)
+
+# The account the deletion guard runs as. Any id; the promise is about
+# behaviour, not about whose row it is.
+_DELETING_ACCOUNT: Final[int] = 1
+
+
+def _section(document: Path, heading: str) -> str:
+    """Return one ``##`` section of a document, as collapsed prose."""
+    text = _read(document)
+    start = text.index(heading)
+    following = text.find("\n## ", start + len(heading))
+    return " ".join(text[start : len(text) if following == -1 else following].split())
+
+
+def test_the_policy_describes_deleting_one_page_without_overstating_it() -> None:
+    """The single-page section exists and promises only what the row does.
+
+    A soft delete described as an erasure is the failure mode this section is
+    most exposed to: the honest sentence and the reassuring one differ by a
+    word, and the reassuring one is wrong. The in-app confirmation is already
+    careful -- "there is no way back to it from inside the app" -- and a
+    published policy may not be looser than the dialog it follows.
+    """
+    assert _SINGLE_PAGE_HEADING in _read(_PRIVACY_POLICY), (
+        "the policy describes no single-page deletion; the journal shelf ships one"
+    )
+    section = _section(_PRIVACY_POLICY, _SINGLE_PAGE_HEADING)
+
+    overstated = sorted(claim for claim in _OVERSTATED_ERASURE if claim in section)
+    assert not overstated, f"the single-page section promises {overstated}: {section!r}"
+    assert "corpus" in section, "the section does not say the corpus copy goes with the page"
+
+
+@pytest.mark.asyncio
+async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both halves of that section, re-derived by running the delete.
+
+    The policy makes two claims about one action, and they pull in opposite
+    directions: the row survives, and the copy of it the reflections read does
+    not. Reading either off a docstring would leave the document describing an
+    intention. So an entry is written, ontologized, and then deleted through
+    the endpoint the shelf's Delete calls.
+    """
+
+    async def classified(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(frequency_classification, "generate_response", classified)
+    await set_consent(db_session, user_id=_DELETING_ACCOUNT, source=INGEST_SOURCE, granted=True)
+    entry = JournalEntry(
+        user_id=_DELETING_ACCOUNT,
+        sender="user",
+        message=_SENTINEL_BODY,
+        classification=JournalClassification.PERSONAL.value,
+        timestamp=datetime.now(UTC),
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    await db_session.refresh(entry)
+    await ingest_journal_entry(db_session, entry)
+    await db_session.commit()
+    assert await retrieve_fragments(db_session, user_id=_DELETING_ACCOUNT), (
+        "the entry never reached the corpus, so the withdrawal below proves nothing"
+    )
+
+    await delete_journal_entry(current_user=_DELETING_ACCOUNT, session=db_session, entry=entry)
+
+    assert entry.deleted_at is not None, "the delete did not mark the row"
+    assert await db_session.get(JournalEntry, entry.id) is not None, (
+        "the row was removed; the policy says it is kept until the account goes"
+    )
+    assert await retrieve_fragments(db_session, user_id=_DELETING_ACCOUNT) == [], (
+        "the corpus copy outlived the delete and can still be read back as context"
+    )

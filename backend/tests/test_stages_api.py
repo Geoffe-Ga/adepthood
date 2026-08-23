@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
 from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from curriculum import CANONICAL_PHASE_ORDER, CurriculumDataError, stage_curriculum
@@ -124,12 +123,6 @@ async def test_list_stages_requires_auth(async_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_get_stage_progress_requires_auth(async_client: AsyncClient) -> None:
     resp = await async_client.get("/stages/1/progress")
-    assert resp.status_code == HTTPStatus.UNAUTHORIZED
-
-
-@pytest.mark.asyncio
-async def test_update_progress_requires_auth(async_client: AsyncClient) -> None:
-    resp = await async_client.put("/stages/progress", json={"current_stage": 2})
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
@@ -397,305 +390,6 @@ async def test_get_stage_progress_not_found(
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-# ── PUT /stages/progress ────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_update_progress_creates_new_at_stage_one(
-    async_client: AsyncClient,
-) -> None:
-    """First progress record must start at stage 1 (BUG-STAGE-001)."""
-    headers, user_id = await _signup(async_client)
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 1},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    data = resp.json()
-    assert data["current_stage"] == 1
-    assert data["user_id"] == user_id
-    assert data["completed_stages"] == []
-
-
-@pytest.mark.asyncio
-async def test_update_progress_rejects_create_at_nonzero_stage(
-    async_client: AsyncClient,
-) -> None:
-    """BUG-STAGE-001: Cannot create progress at a stage other than 1."""
-    headers, _user_id = await _signup(async_client)
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 5},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-
-
-@pytest.mark.asyncio
-async def test_update_progress_advances_one_step(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """BUG-STAGE-001: Must advance exactly one stage at a time."""
-    headers, user_id = await _signup(async_client)
-    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
-    db_session.add(progress)
-    await db_session.commit()
-
-    expected_stage = 2
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": expected_stage},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    data = resp.json()
-    assert data["current_stage"] == expected_stage
-    assert 1 in data["completed_stages"]
-
-
-@pytest.mark.asyncio
-async def test_update_progress_rejects_skip(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """BUG-STAGE-001: Skipping from stage 1 to 3 is rejected."""
-    headers, user_id = await _signup(async_client)
-    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 3},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-
-
-@pytest.mark.asyncio
-async def test_update_progress_cannot_go_backwards(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    headers, user_id = await _signup(async_client)
-    progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 3, 4])
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 2},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-
-
-@pytest.mark.asyncio
-async def test_update_progress_cannot_stay_same(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """Submitting the current stage again is rejected."""
-    headers, user_id = await _signup(async_client)
-    progress = StageProgress(user_id=user_id, current_stage=3, completed_stages=[1, 2])
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 3},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-
-
-@pytest.mark.asyncio
-async def test_advance_persists_highest_stage_reached(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """Advancing to a new stage bumps the persisted lifetime high-water mark."""
-    headers, user_id = await _signup(async_client, "highwater_advance")
-    progress = StageProgress(user_id=user_id, current_stage=4, completed_stages=[1, 2, 3])
-    db_session.add(progress)
-    await db_session.commit()
-
-    expected_stage = 5
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": expected_stage},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-
-    db_session.expire_all()
-    row_result = await db_session.execute(
-        select(StageProgress).where(col(StageProgress.user_id) == user_id)
-    )
-    row = row_result.scalar_one()
-    assert row.highest_stage_reached == expected_stage
-
-
-# ── BUG-SCHEMA-006: server derives stage, rejects client-supplied shortcuts ──
-
-
-@pytest.mark.asyncio
-async def test_update_progress_rejects_out_of_range_low(async_client: AsyncClient) -> None:
-    """BUG-SCHEMA-006: ``current_stage`` below 1 fails Pydantic validation (422)."""
-    headers, _ = await _signup(async_client, "schemalow")
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 0},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-
-
-@pytest.mark.asyncio
-async def test_update_progress_rejects_out_of_range_high(async_client: AsyncClient) -> None:
-    """BUG-SCHEMA-006: ``current_stage`` above the curriculum length fails at 422."""
-    headers, _ = await _signup(async_client, "schemahigh")
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 37},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-
-
-@pytest.mark.asyncio
-async def test_update_progress_rejects_completed_stages_injection(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """BUG-SCHEMA-006: payload may not smuggle ``completed_stages``.
-
-    Without ``extra='forbid'`` a client could PUT ``{"current_stage": 2,
-    "completed_stages": [1,2,3,4,5]}`` and silently pre-credit themselves.
-    The schema now rejects any unknown field at 422 before the handler runs.
-    """
-    headers, user_id = await _signup(async_client, "inject")
-    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 2, "completed_stages": [1, 2, 3, 4, 5]},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-
-
-@pytest.mark.asyncio
-async def test_update_progress_advances_from_current_stage_only(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """Advance derives from ``current_stage`` alone; drift in ``completed_stages`` is ignored."""
-    headers, user_id = await _signup(async_client, "dirty")
-    progress = StageProgress(user_id=user_id, current_stage=5, completed_stages=[1, 2, 4])
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 6},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["current_stage"] == 6
-
-
-@pytest.mark.asyncio
-async def test_advance_returns_409_when_all_stages_completed(
-    async_client: AsyncClient, db_session: AsyncSession
-) -> None:
-    """Advancing past the final stage must 409 instead of re-issuing it.
-
-    When the user already has ``completed_stages`` covering the full
-    curriculum, ``next_stage_for`` has no hole to fill and
-    ``raise conflict('all_stages_completed')`` stops the request before it
-    writes nonsense state.  (Issue #386 corrected ``TOTAL_STAGES`` from 36
-    — a week/stage conflation — to the seeded curriculum's 10; this test
-    now exercises the true boundary.)
-    """
-    headers, user_id = await _signup(async_client, "finished")
-    # Canonical "current_stage == N implies completed_stages == {1..N-1}" shape.
-    # The router simulates marking the final stage complete on a candidate,
-    # so candidate_completed covers the whole curriculum; next_stage_for has
-    # no hole and 409s.
-    progress = StageProgress(
-        user_id=user_id,
-        current_stage=TOTAL_STAGES,
-        completed_stages=list(range(1, TOTAL_STAGES)),
-    )
-    db_session.add(progress)
-    await db_session.commit()
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": TOTAL_STAGES},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.CONFLICT
-    assert resp.json()["detail"] == "all_stages_completed"
-
-
-# ── BUG-STAGE-005: TOCTOU race on PUT /stages/progress ─────────────────
-
-
-_EXPECTED_STAGE_AFTER_ADVANCE = 2
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("disable_rate_limit")
-async def test_concurrent_advance_produces_consistent_state(
-    concurrent_async_client: AsyncClient,
-) -> None:
-    """BUG-STAGE-005: Two concurrent advances must produce a consistent final state.
-
-    With PostgreSQL's ``FOR UPDATE`` lock, exactly one request wins and
-    the other is rejected.  SQLite serialises at the database level so
-    both may succeed, but the final state must still be
-    ``current_stage=2, completed_stages=[1]``.
-    """
-    headers, _user_id = await _signup(concurrent_async_client, "raceuser")
-    # Create initial progress at stage 1
-    resp = await concurrent_async_client.put(
-        "/stages/progress",
-        json={"current_stage": 1},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-
-    # Both try to advance to stage 2 concurrently
-    results = await asyncio.gather(
-        concurrent_async_client.put(
-            "/stages/progress",
-            json={"current_stage": _EXPECTED_STAGE_AFTER_ADVANCE},
-            headers=headers,
-        ),
-        concurrent_async_client.put(
-            "/stages/progress",
-            json={"current_stage": _EXPECTED_STAGE_AFTER_ADVANCE},
-            headers=headers,
-        ),
-    )
-
-    # At least one must succeed
-    assert any(r.status_code == HTTPStatus.OK for r in results)
-
-    # Verify the final state is consistent
-    successful = [r for r in results if r.status_code == HTTPStatus.OK]
-    for r in successful:
-        data = r.json()
-        assert data["current_stage"] == _EXPECTED_STAGE_AFTER_ADVANCE
-        assert data["completed_stages"] == [1]
-
-
 # ── BUG-STAGE-003: history requires stage to be unlocked ────────────────
 
 
@@ -820,124 +514,29 @@ async def test_stages_progress_isolated_per_user(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    alice_headers, _alice_id = await _signup(async_client, "alice")
+    _alice_headers, alice_id = await _signup(async_client, "alice")
     bob_headers, _bob_id = await _signup(async_client, "bob")
     await _seed_stages(db_session, count=3)
 
-    # Alice starts at stage 1
-    await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 1},
-        headers=alice_headers,
+    # Alice is genuinely ahead: a persisted record that has entered stage 3.
+    # Seeding her at stage 1 would have made this test pass whether or not
+    # progress leaked, because stage 1 is also where Bob starts.
+    db_session.add(
+        StageProgress(
+            user_id=alice_id,
+            current_stage=3,
+            completed_stages=[1, 2],
+            cycle_number=1,
+            highest_stage_reached=3,
+        ),
     )
-
-    # Bob's stages should not show Alice's progress
-    resp = await async_client.get("/stages", headers=bob_headers)
-    data = resp.json()
-    # Stage 2 should be locked for Bob (no progress record)
-    assert data[1]["is_unlocked"] is False
-
-
-# ── BUG-STAGE-003: first-advance create-path TOCTOU ────────────────────
-
-
-_CONCURRENT_FIRST_ADVANCE_FANOUT = 5
-
-
-@pytest.mark.asyncio
-async def test_update_progress_response_includes_cycle_number(
-    async_client: AsyncClient,
-) -> None:
-    """PUT /stages/progress response JSON must include cycle_number == 1."""
-    headers, _user_id = await _signup(async_client, "cycleboot")
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 1},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
-    data = resp.json()
-    assert "cycle_number" in data
-    assert data["cycle_number"] == 1
-
-
-@pytest.mark.asyncio
-async def test_advancing_stage_does_not_change_cycle_number(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """Advancing from stage 1 to 2 leaves cycle_number unchanged at 1."""
-    headers, user_id = await _signup(async_client, "cycleadvance")
-    progress = StageProgress(user_id=user_id, current_stage=1, completed_stages=[])
-    db_session.add(progress)
     await db_session.commit()
 
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": 2},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.OK
+    # Bob has no record of his own, so nothing past stage one is open to him.
+    resp = await async_client.get("/stages", headers=bob_headers)
     data = resp.json()
-    assert data["cycle_number"] == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("disable_rate_limit")
-async def test_concurrent_first_advance_yields_one_progress_row(
-    concurrent_async_client: AsyncClient,
-    concurrent_session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Five simultaneous first-advances for a fresh user persist one progress row.
-
-    Closes BUG-STAGE-003: the create path used to ``SELECT … FROM
-    stageprogress`` and INSERT without locking, so two concurrent
-    requests could both see ``progress is None`` and both attempt the
-    insert.  ``UniqueConstraint(user_id)`` rejects the second insert;
-    the new ``IntegrityError`` handler rolls back, re-fetches the
-    winner under ``FOR UPDATE``, and returns the same shape so the
-    loser observes a consistent final state instead of a 500.
-    """
-    signup_resp = await concurrent_async_client.post(
-        "/auth/signup",
-        json={
-            "email": "racestage@example.com",
-            "password": "securepassword123",  # pragma: allowlist secret
-        },
-    )
-    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
-    user_id = signup_resp.json()["user_id"]
-
-    async with concurrent_session_factory() as session:
-        for stage_number in (1, 2):
-            session.add(CourseStage(**_stage_data(stage_number=stage_number)))
-        await session.commit()
-
-    results = await asyncio.gather(
-        *[
-            concurrent_async_client.put(
-                "/stages/progress",
-                json={"current_stage": 1},
-                headers=headers,
-            )
-            for _ in range(_CONCURRENT_FIRST_ADVANCE_FANOUT)
-        ]
-    )
-
-    # Every concurrent first-advance must terminate as a 2xx (the
-    # winner inserts; losers re-fetch and return).  The unique
-    # constraint guarantees exactly one row for ``user_id`` no matter
-    # how many tasks ran in parallel.
-    for r in results:
-        assert r.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}, r.json()
-    async with concurrent_session_factory() as session:
-        result = await session.execute(
-            select(StageProgress).where(StageProgress.user_id == user_id)
-        )
-        rows = list(result.scalars().all())
-    assert len(rows) == 1
-    assert rows[0].current_stage == 1
-    assert rows[0].completed_stages == []
+    assert data[1]["is_unlocked"] is False
+    assert data[2]["is_unlocked"] is False
 
 
 # ── POST /stages/begin-again ─────────────────────────────────────────────
@@ -1161,21 +760,3 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
     assert data["cycle_number"] == 3
     assert data["current_stage"] == 1
     assert data["completed_stages"] == []
-
-
-@pytest.mark.asyncio
-async def test_advance_at_stage_10_still_returns_409_all_stages_completed(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """PUT /stages/progress at stage 10 still 409s — begin-again does NOT replace it."""
-    headers, user_id = await _signup(async_client, "beginagain_regression")
-    await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
-
-    resp = await async_client.put(
-        "/stages/progress",
-        json={"current_stage": TOTAL_STAGES},
-        headers=headers,
-    )
-    assert resp.status_code == HTTPStatus.CONFLICT
-    assert resp.json()["detail"] == "all_stages_completed"

@@ -226,8 +226,8 @@ export const habitSchema = z.object({
   name: z.string(),
   icon: z.string(),
   start_date: isoDate,
-  energy_cost: z.number(),
-  energy_return: z.number(),
+  energy_cost: z.number().int(),
+  energy_return: z.number().int(),
   notification_times: z.array(z.string()).nullish(),
   notification_frequency: notificationFrequencySchema.nullish(),
   notification_days: z.array(z.string()).nullish(),
@@ -256,6 +256,12 @@ export const promptDetailSchema = z.object({
   has_responded: z.boolean(),
   response: z.string().nullable(),
   timestamp: z.string().nullable(),
+  // The prompt's own title and its position in the week's sequence. Both are
+  // ``str | None`` / ``int | None`` on the wire; without them declared here Zod
+  // deleted them from every validated prompt response, so nothing downstream
+  // could tell that the server had been sending them at all.
+  default_title: z.string().nullish(),
+  prompt_ordinal: z.number().int().nullish(),
 });
 
 /**
@@ -279,6 +285,10 @@ export const journalTagSchema = z.enum([
   // includes that row, so the enum must accept it — otherwise the whole page
   // fails Zod validation and the user sees "Load failed".
   'weekly_prompt',
+  // A hierarchical reflection (week/stage/component/tier/program) is a journal
+  // row like any other and appears in the same shelf list, so the enum must
+  // accept it for the same reason it accepts ``weekly_prompt``.
+  'hierarchical_reflection',
 ]);
 
 /** Lowest Aspect tag (stage 1); the curriculum's first stage. */
@@ -367,18 +377,54 @@ export const vaultUploadStatusSchema = z.enum([
 export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
 
 /**
- * One document's upload outcome. ``vault_ref`` is the vault's fragment handle,
- * present only when the document was accepted; ``tags`` are what the vault's
- * ingest pipeline assigned (empty is the expected answer today, not a failure);
+ * Where an imported document actually went — the backend's
+ * ``ImportDestination``. Resolved per account by the server: an account that
+ * has connected a vault reaches it, an account that has not reaches its own
+ * ontologized corpus. The client never computes this; it reads it.
+ */
+export const importDestinationSchema = z.enum(['vault', 'corpus']);
+export type ImportDestinationT = z.infer<typeof importDestinationSchema>;
+
+/**
+ * What the local corpus did with one imported document — the wire strings of
+ * the backend's ``CorpusImportStatus``. Eight outcomes, one of which stores
+ * anything, each with a different next step for the person holding the
+ * document. Pinned rather than left as a bare string for the same reason
+ * {@link vaultUploadStatusSchema} is: a ninth value this release has no honest
+ * sentence for must surface as ``ApiValidationError`` rather than render blank.
+ */
+export const corpusImportStatusSchema = z.enum([
+  'stored',
+  'consent_required',
+  'tier_refused',
+  'format_unreadable',
+  'not_text',
+  'empty_document',
+  'document_too_long',
+  'unclassified',
+]);
+export type CorpusImportStatusT = z.infer<typeof corpusImportStatusSchema>;
+
+/**
+ * One document's import outcome, in whichever destination's vocabulary applies.
+ *
+ * ``destination`` is the discriminator, and exactly one side of the answer is
+ * populated: a ``vault`` answer carries ``vault_status`` (and possibly
+ * ``vault_ref`` and ``tags``), a ``corpus`` answer carries ``corpus_status``
+ * (and possibly ``fragment_id``). ``stored`` is the one boolean both share, and
  * ``message`` is the backend's own self-serve sentence.
  */
-export const uploadDocumentSchema = z.object({
-  status: vaultUploadStatusSchema,
+export const documentImportSchema = z.object({
+  destination: importDestinationSchema,
+  stored: z.boolean(),
+  vault_status: vaultUploadStatusSchema.nullable().optional(),
   vault_ref: z.string().nullable().optional(),
   tags: z.array(z.string()),
+  corpus_status: corpusImportStatusSchema.nullable().optional(),
+  fragment_id: z.number().int().nullable().optional(),
   message: z.string(),
 });
-export type UploadDocumentT = z.infer<typeof uploadDocumentSchema>;
+export type DocumentImportT = z.infer<typeof documentImportSchema>;
 
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
@@ -428,11 +474,11 @@ export const stageSchema = z.object({
 
 /** A user's stage-progress record (mirrors the backend ``StageProgressRecord``). */
 export const stageProgressRecordSchema = z.object({
-  id: z.number(),
-  user_id: z.number(),
-  current_stage: z.number(),
-  completed_stages: z.array(z.number()),
-  cycle_number: z.number(),
+  id: z.number().int(),
+  user_id: z.number().int(),
+  current_stage: z.number().int(),
+  completed_stages: z.array(z.number().int()),
+  cycle_number: z.number().int(),
 });
 
 export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
@@ -440,10 +486,10 @@ export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
 /** The server's date-derived program calendar (mirrors ``ProgramCalendarResponse``). */
 export const programCalendarSchema = z.object({
   program_started_at: z.string().nullable(),
-  calendar_stage: z.number(),
-  calendar_week: z.number(),
-  current_stage: z.number(),
-  cycle_number: z.number(),
+  calendar_stage: z.number().int(),
+  calendar_week: z.number().int(),
+  current_stage: z.number().int(),
+  cycle_number: z.number().int(),
 });
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;
@@ -470,7 +516,7 @@ export const practiceRecipeStepSchema = z.object({
   tag_slug: z.string(),
   tag_label: z.string(),
   prompt_label: z.string(),
-  target_count: z.number(),
+  target_count: z.number().int(),
 });
 
 /** A practice recipe (mirrors ``PracticeRecipe``). */
@@ -481,7 +527,7 @@ export const practiceRecipeSchema = z.object({
   description: z.string(),
   owner_user_id: z.number().int().nullable(),
   mode: z.enum(['sense_grounding', 'tallied_grounding']),
-  rounds: z.number(),
+  rounds: z.number().int(),
   created_at: z.string(),
   steps: z.array(practiceRecipeStepSchema),
 });
@@ -529,7 +575,7 @@ export const apiGoalGroupSchema = z.object({
   name: z.string(),
   icon: z.string().nullish(),
   description: z.string().nullish(),
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: ``GoalGroupResponse`` omits it (OwnedResourcePublic / BUG-T7).
   shared_template: z.boolean(),
   source: z.string().nullish(),
   goals: z.array(goalSchema),
@@ -565,12 +611,12 @@ export const stageIntroSchema = z.object({
  * the previous hand-rolled ``typeof`` check that threw a context-free error.
  */
 export const frequencyResponseSchema = z.object({
-  stage_number: z.number(),
+  stage_number: z.number().int(),
   color: z.string(),
   aspect: z.string(),
   practice_name: z.string(),
-  practice_id: z.number(),
-  user_practice_id: z.number().nullable(),
+  practice_id: z.number().int(),
+  user_practice_id: z.number().int().nullable(),
   banner_text: z.string(),
 });
 
@@ -636,9 +682,9 @@ export const invitationKindSchema = z.enum(['readiness', 'consistency', 'mastery
 
 /** One declinable invitation (mirrors the backend ``InvitationResponse``). */
 export const invitationSchema = z.object({
-  id: z.number(),
+  id: z.number().int(),
   target_type: invitationTargetTypeSchema,
-  target_id: z.number().nullable(),
+  target_id: z.number().int().nullable(),
   kind: invitationKindSchema,
   created_at: z.string(),
 });
@@ -693,7 +739,7 @@ export const returnArcSchema = z.object({
 
 /** A habit set to rest during a Return arc, with whether it has been taken up again. */
 export const releasedHabitSchema = z.object({
-  habit_id: z.number(),
+  habit_id: z.number().int(),
   name: z.string(),
   icon: z.string(),
   recommitted: z.boolean(),
@@ -754,14 +800,23 @@ export const promotedQuoteSchema = z.object({
   anchor_end: z.number().int(),
   anchor_text: z.string(),
   pending: z.boolean(),
+  // Whether the anchor no longer lines up with the entry's current text. The
+  // server has always sent it; Zod dropped it on the floor, so the owner view
+  // had no way to know a quote had come adrift from what it quotes.
+  stale: z.boolean(),
 });
 
 /**
  * A promoted quote as it appears in the cross-entry sources feed (mirrors the
  * backend ``PromotedQuoteSummary``): the same shape minus ``source_entry_id``,
- * which the feed groups by rather than repeating on every row.
+ * which the feed groups by rather than repeating on every row, and minus
+ * ``stale``, which the feed does not compute for quotes drawn from other
+ * entries.
  */
-export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({ source_entry_id: true });
+export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
+  source_entry_id: true,
+  stale: true,
+});
 
 export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
 export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;

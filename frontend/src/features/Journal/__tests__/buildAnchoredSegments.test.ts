@@ -34,6 +34,7 @@ function quote(overrides: Partial<PromotedQuote>): PromotedQuote {
     anchor_end: 1,
     anchor_text: 'x',
     pending: true,
+    stale: false,
     ...overrides,
   };
 }

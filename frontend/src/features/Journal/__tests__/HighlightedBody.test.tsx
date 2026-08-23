@@ -38,6 +38,7 @@ function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
     anchor_end: start + 'the willow'.length,
     anchor_text: 'the willow',
     pending: true,
+    stale: false,
     ...overrides,
   };
 }

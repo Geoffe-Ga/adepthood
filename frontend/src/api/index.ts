@@ -41,7 +41,7 @@ import {
   timezoneReadSchema,
   transcribePageSchema,
   uiFlagsSchema,
-  uploadDocumentSchema,
+  documentImportSchema,
   wheelBalanceSchema,
   type AccountDeletionReceiptT,
   type DataExportArchiveT,
@@ -76,7 +76,7 @@ import {
   type Tier,
   type TimezoneReadT,
   type TranscribePageT,
-  type UploadDocumentT,
+  type DocumentImportT,
   type WheelBalanceT,
 } from './schemas';
 
@@ -150,8 +150,13 @@ export class ApiTimeoutError extends Error {
 /** Transcribed-text result envelope, re-exported for callers of `journal.transcribePage`. */
 export type { TranscribePageT } from './schemas';
 
-/** Vault upload outcome, re-exported for callers of `journal.uploadDocument`. */
-export type { UploadDocumentT, VaultUploadStatusT } from './schemas';
+/** Document-import outcome, re-exported for callers of `corpus.importDocument`. */
+export type {
+  CorpusImportStatusT,
+  DocumentImportT,
+  ImportDestinationT,
+  VaultUploadStatusT,
+} from './schemas';
 
 /** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
@@ -200,10 +205,11 @@ export class TranscriptionError extends Error {
 }
 
 /**
- * The stable, UI-facing failure taxonomy for a document upload. A vault that is
- * missing, out of date, or degraded is NOT in here: those are 202 outcomes the
- * caller renders from {@link UploadDocumentT.status}. Only a request that never
- * produced an outcome lands here.
+ * The stable, UI-facing failure taxonomy for handing over a document. A vault
+ * that is missing, out of date or degraded is NOT in here, and neither is a
+ * corpus that declined the document: those are 202 outcomes the caller renders
+ * from {@link DocumentImportT}. Only a request that never produced an outcome
+ * lands here.
  */
 export type DocumentUploadErrorKind =
   'too_large' | 'invalid_document' | 'rate_limited' | 'network' | 'timeout' | 'unknown';
@@ -216,7 +222,7 @@ export type DocumentUploadErrorKind =
 export const UPLOAD_DOCUMENT_TIMEOUT_MS = 120_000;
 
 /**
- * Typed failure for {@link journal.uploadDocument}. PRIVACY: the message is a
+ * Typed failure for {@link corpus.importDocument}. PRIVACY: the message is a
  * static per-`kind` string and never interpolates the base64 document or the
  * filename, so it is safe to log or surface. The originating error is preserved
  * on `cause` for diagnostics.
@@ -971,10 +977,12 @@ export interface ApiGoal {
 
 export interface ApiGoalGroup {
   id: number;
+  // ``user_id`` is intentionally absent — ``GoalGroupResponse`` omits it for
+  // the same reason ``ApiHabit`` does, and declaring it here typed a field the
+  // wire has never sent.
   name: string;
   icon?: string | null;
   description?: string | null;
-  user_id?: number | null;
   shared_template: boolean;
   source?: string | null;
   goals: ApiGoal[];
@@ -1546,15 +1554,58 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
   return new DocumentUploadError('unknown', status, err);
 }
 
-/** One document handed to the vault: its own name, its bytes, and its tier. */
-export interface UploadDocumentInput {
-  /** The document's own name; its extension selects the vault's ingestor. */
+/** One document handed over: its own name, its bytes, and its tier. */
+export interface ImportDocumentInput {
+  /** The document's own name; its extension selects how it is read. */
   filename: string;
   /** The document's bytes, base64-encoded — never logged, never persisted. */
   contentBase64: string;
   /** The privacy tier the uploader chose, honored end to end. */
   classification: JournalClassification;
 }
+
+/**
+ * The corpus client: what an account has agreed may be sorted, and the one way
+ * a document gets into whichever corpus that account actually has.
+ *
+ * ``importDocument`` is deliberately the *only* document surface this client
+ * offers. ``POST /corpus/import`` resolves the destination per account — the
+ * vault for somebody who has connected one, their own ontologized corpus for
+ * somebody who has not — so a second wrapper aimed at the vault route would be
+ * the app computing a second answer to a question the server has already
+ * answered, and answering it differently the day the two disagree.
+ */
+export const corpus = {
+  /**
+   * Hand one document to this account's corpus and report where it landed.
+   *
+   * The transport is base64-in-JSON, deliberately never multipart — the backend
+   * carries no form-file surface and a privacy test fails the build on one.
+   *
+   * Every outcome arrives as a 202 whose ``destination`` and status the caller
+   * renders, including the ones that stored nothing: a vault that cannot take
+   * files, an account that has not agreed to ontologize uploads, a tier that
+   * never reaches a language model. A thrown {@link DocumentUploadError} means
+   * the request produced no outcome at all. PRIVACY: the bytes never enter an
+   * error message or a log line.
+   */
+  async importDocument(
+    { filename, contentBase64, classification }: ImportDocumentInput,
+    token?: string,
+  ): Promise<DocumentImportT> {
+    try {
+      return await request<DocumentImportT>('/corpus/import', {
+        method: 'POST',
+        body: { filename, content_base64: contentBase64, classification },
+        token,
+        timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
+        schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
+      });
+    } catch (err: unknown) {
+      throw toDocumentUploadError(err);
+    }
+  },
+};
 
 export const journal = {
   list(params: JournalListParams = {}, token?: string): Promise<JournalListResponse> {
@@ -1624,33 +1675,6 @@ export const journal = {
       });
     } catch (err: unknown) {
       throw toTranscriptionError(err);
-    }
-  },
-  /**
-   * Hand one document to the Creek Vault for its own ingestors to parse. The
-   * transport is base64-in-JSON, deliberately never multipart — the backend
-   * carries no form-file surface and a privacy test fails the build on one.
-   *
-   * Stateless: nothing is persisted on this side, and every vault outcome
-   * (including "your vault cannot take files yet") arrives as a 202 whose
-   * ``status`` the caller renders. A thrown {@link DocumentUploadError} means
-   * the request produced no outcome at all. PRIVACY: the bytes never enter an
-   * error message or a log line.
-   */
-  async uploadDocument(
-    { filename, contentBase64, classification }: UploadDocumentInput,
-    token?: string,
-  ): Promise<UploadDocumentT> {
-    try {
-      return await request<UploadDocumentT>('/journal/upload', {
-        method: 'POST',
-        body: { filename, content_base64: contentBase64, classification },
-        token,
-        timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
-        schema: uploadDocumentSchema as unknown as z.ZodType<UploadDocumentT>,
-      });
-    } catch (err: unknown) {
-      throw toDocumentUploadError(err);
     }
   },
 };
@@ -1933,6 +1957,10 @@ export interface PromptDetail {
   has_responded: boolean;
   response: string | null;
   timestamp: string | null;
+  /** The prompt's own title, when the week's content supplies one. */
+  default_title?: string | null;
+  /** Its position within the week's prompt sequence, when the week has several. */
+  prompt_ordinal?: number | null;
 }
 
 export interface PromptListResponse {

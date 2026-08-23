@@ -1,8 +1,10 @@
 """Seed script for the default :class:`Practice` catalog rows.
 
-Mirrors :mod:`seed_stages` — defines the preset list, validates each
-``mode_config`` payload at import time so a typo crashes the seeder (not
-the runtime), and inserts only what is missing on a per-call basis.
+Defines the preset list, validates each ``mode_config`` payload at import
+time so a typo crashes the seeder (not the runtime), and inserts only what
+is missing on a per-call basis. The import-time validation is this
+module's own: :mod:`seed_stages` has none, delegating Stage uniqueness to
+the vendored curriculum loader instead.
 
 Each :class:`~models.course_stage.CourseStage` has exactly one *canonical*
 preset (see :data:`CANONICAL_PRESET_PRACTICES`). A stage may additionally
@@ -34,7 +36,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.practice import Practice
 from schemas.practice_mode_config import ModeConfigAdapter
-from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
+from seed_helpers import (
+    commit_or_yield_to_race_winner,
+    existing_system_keys,
+    reject_duplicate_keys,
+)
 from seed_practice_copy import PRESET_COPY
 
 #: Nominal ``default_duration_minutes`` for the Dog Walkin' Shamanism
@@ -435,23 +441,21 @@ _PRESET_PRACTICES: list[dict[str, Any]] = [*_CANONICAL_PRESETS, *_ALTERNATIVE_PR
 for _preset in _PRESET_PRACTICES:
     ModeConfigAdapter.validate_python(_preset["mode_config"])
 
-# Reject duplicate canonical stage_numbers at import time, mirroring
-# seed_stages.py. Alternatives intentionally share a stage with their
-# canonical sibling, so the check is scoped to the canonical list.
-_stage_numbers = [p["stage_number"] for p in _CANONICAL_PRESETS]
-if len(set(_stage_numbers)) != len(_stage_numbers):
-    _dupes = sorted(n for n in _stage_numbers if _stage_numbers.count(n) > 1)
-    msg = f"Duplicate stage_number among canonical presets: {_dupes}"
-    raise ValueError(msg)
+# Reject duplicate canonical stage_numbers at import time. Alternatives
+# intentionally share a stage with their canonical sibling, so the check is
+# scoped to the canonical list.
+reject_duplicate_keys(
+    [p["stage_number"] for p in _CANONICAL_PRESETS],
+    label="stage_number among canonical presets",
+)
 
 # Reject duplicate preset names at import time. ``name`` is the PRESET_COPY
 # lookup key, so a collision would silently shadow one preset's copy; it
 # also defeats the partial unique index for two presets sharing a stage.
-_preset_names = [p["name"] for p in _PRESET_PRACTICES]
-if len(set(_preset_names)) != len(_preset_names):
-    _name_dupes = sorted(n for n in _preset_names if _preset_names.count(n) > 1)
-    msg = f"Duplicate preset name in PRESET_PRACTICES: {_name_dupes}"
-    raise ValueError(msg)
+reject_duplicate_keys(
+    [p["name"] for p in _PRESET_PRACTICES],
+    label="preset name in PRESET_PRACTICES",
+)
 
 #: Immutable view of every preset definition (canonical + alternatives).
 #: Tuple (not list) so callers can't accidentally ``.append()`` or

@@ -109,14 +109,14 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved. Still uncovered, and not for want of a spec: the routes live on the server, but no frontend code calls them. The API client exports no wrapper for PUT /stages/progress or GET /stages/{stage_number}/progress, and the optimistic advance machinery MapScreen would have used was deleted rather than wired up. A spec would have to hand-roll the request, which registers as coverage of a screen-to-client seam that does not exist.",
+    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. Still uncovered because no spec does that yet.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
       "routes": [
         "GET /stages",
+        "GET /stages/program-calendar",
         "GET /stages/wheel",
-        "PUT /stages/progress",
         "GET /stages/{stage_number}/progress"
       ],
       "tables": ["stageprogress", "coursestage"]
@@ -138,15 +138,27 @@
   },
   {
     "id": "seed.upload-document",
-    "description": "A person chooses a document from their device and seeds it into the Higher Self corpus; the upload forwards to the vault rather than persisting locally, so authentication is the only table it crosses. Still uncovered after the upload transport shipped: the lane's server reads CREEK_VAULT_OWNER_USER_ID from an environment fixed before any account exists, so no account a spec can create is ever the vault's owner and every e2e upload takes the local-fallback path. A spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. Per-user vault configuration (#2233) removes the environment half of that obstacle -- a spec can now connect a vault for the account it just created -- but not the other half: the lane still has no vault to connect to, so covering this needs a stand-in vault the lane can point an account at.",
+    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, now for one reason rather than two: per-user vault configuration (#2233) lets a spec connect a vault for the account it just created, but the lane has no vault to connect to, so every e2e import takes the local-fallback path. A spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. Covering this needs a stand-in vault the lane can point an account at. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
-      "client": ["journal"],
-      "routes": ["POST /journal/upload"],
+      "client": ["corpus"],
+      "routes": ["POST /corpus/import"],
       "tables": ["user"]
     },
     "status": "uncovered",
     "issue": 2317
+  },
+  {
+    "id": "corpus.import-without-a-vault",
+    "description": "Someone who has connected no vault brings in a document they wrote elsewhere: they pick it, choose its tier, and it is routed to their own ontologized corpus rather than answered in the vocabulary of a vault they do not have. The first answer is the consent question, because the corpus is off until they turn it on; the screen offers the way to that switch instead of failing silently. A format nothing can read is refused before consent is even consulted, and an Intimate document is declined outright -- placing writing among the frequencies means reading it with a language model, and that tier never goes to one. The stored outcome itself needs a classification call, which the lane has no provider for, so a consented import settles there as unclassified.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus", "corpusConsent"],
+      "routes": ["POST /corpus/import", "PUT /corpus/consent/{source}"],
+      "tables": ["user", "corpusconsentevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-import.e2e.test.ts"
   },
   {
     "id": "account.export-my-data",

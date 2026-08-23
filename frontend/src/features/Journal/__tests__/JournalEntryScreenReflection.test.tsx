@@ -349,6 +349,7 @@ describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => 
       anchor_end: mockStubPromoteSpan.anchor_end,
       anchor_text: 'went for a daily walk',
       pending: true,
+      stale: false,
     });
     const { findByTestId } = renderScreen(REFLECTION_PARAMS);
     await act(async () => {
@@ -400,6 +401,7 @@ describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => 
       anchor_end: mockStubPromoteSpan.anchor_end,
       anchor_text: 'went for a daily walk',
       pending: true,
+      stale: false,
     });
     await act(async () => {
       await Promise.resolve();
