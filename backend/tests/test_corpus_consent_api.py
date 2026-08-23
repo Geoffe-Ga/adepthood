@@ -208,6 +208,31 @@ async def test_a_classifier_outage_does_not_cost_anybody_their_writing(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_classifier")
+async def test_saying_yes_grounds_you_in_what_you_had_already_written(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The population the corpus was built for: an account with a history.
+
+    Every other test here consents first and writes afterwards, which is the
+    one case a write-time gate already handled. This is the case it did not:
+    the writing exists, the permission arrives later, and the grounding has to
+    be the corpus over that writing rather than a recency window over it.
+    """
+    headers, user_id = await _signup(async_client, "already-writing")
+    await _write(async_client, headers, _FIRST_BODY)
+    await _write(async_client, headers, _SECOND_BODY)
+    before = await gather_grounding(db_session, user_id=user_id, exclude_entry_id=_NO_SUCH_ENTRY)
+
+    await _grant(async_client, headers)
+    after = await gather_grounding(db_session, user_id=user_id, exclude_entry_id=_NO_SUCH_ENTRY)
+
+    assert before.source is GroundingSource.RECENT_ENTRIES
+    assert after.source is GroundingSource.CORPUS
+    assert sorted(after.bodies) == sorted([_FIRST_BODY, _SECOND_BODY])
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_classifier")
 async def test_editing_an_entry_changes_what_the_corpus_says(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

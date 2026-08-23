@@ -18,10 +18,12 @@ that word actually means here — sending the same decision twice leaves one
 decision on the record, not two. The audit log holds decisions, not requests;
 :func:`services.corpus_consent.set_consent` is where that is enforced.
 
-A revocation is not only a change of state: it deletes the fragments that
-source put in the corpus. That happens inside the service, in the same
-transaction as the event that records it, so a purge and its receipt land
-together or neither does.
+Neither decision is only a change of state, and they reach the corpus in
+opposite directions. A revocation deletes the fragments that source put there.
+A grant ontologizes the writing the account already had, so that saying yes
+after weeks of journalling is not an agreement about the future only. Both
+happen in the same transaction as the event that records them, so a sweep and
+its receipt land together or neither does.
 
 ``POST /import`` is the third verb and the reason the other two now have
 something to gate. It takes one document a person chose -- exported journal
@@ -51,6 +53,7 @@ from routers.auth import get_current_user
 from schemas.corpus import CorpusConsentListResponse, CorpusConsentResponse, CorpusConsentUpdate
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
+from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
 from services.corpus_import import (
     CorpusImportResult,
@@ -96,13 +99,20 @@ async def put_corpus_consent(
     """Record this account's decision about one source and report the result.
 
     Committed here rather than left to a caller: this is the whole transaction,
-    and on a revocation it is the purge as well as the event. Leaving either
-    uncommitted would be a permission withdrawn on screen and not in the
+    and a decision is never only the event. On a revocation it is the purge; on
+    a grant it is the sweep back over the writing the account already had,
+    bounded and reported by :mod:`services.corpus_backfill`. Leaving any of it
+    uncommitted would be a permission changed on screen and not in the
     database.
+
+    The response is still the *state*. What the decision reached is a fact
+    about the event, and it goes where events are kept -- the audit row and the
+    log -- rather than onto a shape that also answers ``GET``.
     """
-    state = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+    change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+    await backfill_after_consent(session, user_id=user_id, change=change)
     await session.commit()
-    return _to_response(state)
+    return _to_response(change.state)
 
 
 def _vault_response(result: VaultImportResult) -> DocumentImportResponse:

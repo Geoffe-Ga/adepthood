@@ -75,6 +75,7 @@ from models.journal_entry import JournalClassification, JournalEntry
 from routers.journal import delete_journal_entry
 from sentry import scrub_event
 from services import frequency_classification, journal_encryption
+from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import CONSENT_GRANTED_BY_DEFAULT, set_consent
 from services.corpus_import import IMPORT_SOURCE, reaches_a_vault
 from services.corpus_ingest import (
@@ -668,4 +669,71 @@ async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
     )
     assert await retrieve_fragments(db_session, user_id=_DELETING_ACCOUNT) == [], (
         "the corpus copy outlived the delete and can still be read back as context"
+    )
+
+
+# The sentence disclosing that a grant is retrospective. Named rather than
+# inlined, because the behaviour below is what makes it true and a reader
+# should find both in one place.
+_BACKWARD_REACH = "it reaches back over what you have already written"
+
+# The account whose history a grant sweeps. Any id; the promise is about
+# behaviour, not about whose row it is.
+_CONSENTING_ACCOUNT: Final[int] = 2
+
+
+def test_the_policy_says_turning_the_corpus_on_reaches_what_is_already_there() -> None:
+    """A grant sends writing the reader had already saved, and the page says so.
+
+    Left unsaid, this is the least expected thing the switch does: every other
+    sentence about the corpus describes what happens to an entry *as it is
+    saved*, which invites reading the switch as forward-only. Somebody with a
+    year of journal deciding whether to turn it on is deciding about that year.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    assert _BACKWARD_REACH in policy, (
+        "the policy describes the corpus switch as forward-only; granting "
+        "consent sorts the entries that were already there"
+    )
+
+
+@pytest.mark.asyncio
+async def test_granting_consent_sorts_the_writing_that_was_already_there(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sentence above, re-derived by granting rather than read off a doc.
+
+    The entry is written *before* the decision, which is the whole difference:
+    a write-time gate leaves it out of the corpus forever, and the policy's
+    claim about a year of journal would be false for every account that had
+    one.
+    """
+
+    async def classified(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(frequency_classification, "generate_response", classified)
+    entry = JournalEntry(
+        user_id=_CONSENTING_ACCOUNT,
+        sender="user",
+        message=_SENTINEL_BODY,
+        classification=JournalClassification.PERSONAL.value,
+        timestamp=datetime.now(UTC),
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    assert await retrieve_fragments(db_session, user_id=_CONSENTING_ACCOUNT) == [], (
+        "the entry was ontologized before consent existed; the grant below proves nothing"
+    )
+
+    change = await set_consent(
+        db_session, user_id=_CONSENTING_ACCOUNT, source=INGEST_SOURCE, granted=True
+    )
+    await backfill_after_consent(db_session, user_id=_CONSENTING_ACCOUNT, change=change)
+    await db_session.commit()
+
+    stored = await retrieve_fragments(db_session, user_id=_CONSENTING_ACCOUNT)
+    assert [fragment.content for fragment in stored] == [_SENTINEL_BODY], (
+        "the grant left the account's existing writing out of its own corpus"
     )
