@@ -69,7 +69,7 @@ import {
   isEndOfCycle,
   highestCompletedStage,
 } from './services/stageService';
-import { type StageData } from './stageData';
+import { STAGE_COUNT, type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
 import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
@@ -1247,6 +1247,19 @@ interface CompletionCelebration {
  * that just unlocked. The first render seeds the baseline (no celebration on
  * mount); thereafter a rise in the highest-completed stage fires once.
  */
+/**
+ * What the banner says for a completion that has just landed.
+ *
+ * The terminal stage has no successor, so naming one is a false claim made at
+ * the very moment the Begin Again block appears beside it saying the arc is
+ * whole. It reads as the end of the arc instead, in that block's own words.
+ */
+const completionMessage = (completed: number, lookup: StageLookup): string => {
+  if (completed >= STAGE_COUNT) return BEGIN_AGAIN_COPY.celebration;
+  const next = lookup[completed + 1];
+  return `${next ? next.title : 'The next stage'} unlocked`;
+};
+
 const useStageCompletionCelebration = (
   stages: readonly StageData[],
   lookup: StageLookup,
@@ -1260,9 +1273,7 @@ const useStageCompletionCelebration = (
     const prev = prevCompletedRef.current;
     prevCompletedRef.current = completed;
     if (prev === null || completed <= prev) return;
-    const next = lookup[completed + 1];
-    const nextName = next ? next.title : 'The next stage';
-    setMessage(`${nextName} unlocked`);
+    setMessage(completionMessage(completed, lookup));
     setActive(true);
   }, [completed, lookup]);
 
