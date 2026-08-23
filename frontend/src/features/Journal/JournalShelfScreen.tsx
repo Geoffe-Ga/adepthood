@@ -10,7 +10,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -105,15 +105,31 @@ function isSearchable(next: string): boolean {
   );
 }
 
-/** Loads the shelf with offset paging + debounced search (via SearchBar). */
+/** Loads the shelf with offset paging + debounced search (via SearchBar).
+ *
+ * The first page is read on every focus, not just on mount: the shelf stays
+ * mounted while the user pushes to the entry screen, so a page written there
+ * would never reach a list that loaded once — the same reason the weekly prompt
+ * card re-fetches, applied to the list it sits above. The read is skipped while
+ * a confirmed delete is still in flight, where the local list is deliberately
+ * ahead of the server and a landing page would resurrect the removed row.
+ */
 function useShelf(): ShelfState {
   const { items, setItems, total, adjustTotal, hasMore, loading, error, load } = usePagedJournal();
   const [query, setQuery] = useState('');
   const deletion = useEntryDeletion({ items, setItems, adjustTotal });
+  const { isRemoving } = deletion;
+  // Read inside the focus effect so the live query survives a return to the
+  // shelf without making the effect fire on every keystroke.
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
-  useEffect(() => {
-    void load(undefined, 0);
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      if (isRemoving()) return;
+      void load(searchParam(queryRef.current), 0);
+    }, [load, isRemoving]),
+  );
 
   const onSearch = useCallback(
     (next: string) => {
