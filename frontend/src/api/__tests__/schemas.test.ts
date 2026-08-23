@@ -236,6 +236,28 @@ describe('promptListResponseSchema total nullability', () => {
   it('rejects an envelope missing has_more', () => {
     expect(() => promptListResponseSchema.parse({ items: [], total: null })).toThrow();
   });
+
+  // Regression: the server has been sending both fields, and the item schema
+  // declared neither — so Zod deleted them from every validated prompt
+  // response and no caller could tell the data had arrived at all.
+  it('carries default_title and prompt_ordinal through instead of stripping them', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [{ ...item, default_title: 'On steadiness', prompt_ordinal: 2 }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBe('On steadiness');
+    expect(parsed.items[0]?.prompt_ordinal).toBe(2);
+  });
+
+  it('still accepts an item that omits both, and keeps them absent', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [item],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBeUndefined();
+  });
 });
 
 describe('journalListResponseSchema validation', () => {
@@ -282,6 +304,19 @@ describe('journalListResponseSchema validation', () => {
       has_more: false,
     });
     expect(parsed.items[0]?.tag).toBe('weekly_prompt');
+  });
+
+  it('accepts a hierarchical_reflection-tagged entry', () => {
+    // Regression: a hierarchical reflection (week/stage/component/tier/program)
+    // is stored as a journal row tagged ``hierarchical_reflection`` and appears
+    // in the same shelf list. The tag enum omitted it, so one such entry failed
+    // the whole page — the same defect the weekly_prompt case above records.
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, tag: 'hierarchical_reflection' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.tag).toBe('hierarchical_reflection');
   });
 
   it('accepts an unknown sender rather than failing the whole list', () => {
@@ -484,7 +519,6 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     name: 'Morning',
     icon: null,
     description: null,
-    user_id: null,
     shared_template: true,
     source: null,
     goals: [],
@@ -503,6 +537,13 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     expect(apiGoalGroupSchema.parse(group).shared_template).toBe(true);
     expect(() => apiGoalGroupSchema.parse({ ...group, shared_template: undefined })).toThrow();
     expect(() => apiGoalGroupSchema.parse({ ...group, name: 123 })).toThrow();
+  });
+
+  // No user_id: GoalGroupResponse omits it (OwnedResourcePublic / BUG-T7), so a
+  // server that sent one anyway must not reach callers as a typed field.
+  it('apiGoalGroupSchema does not carry user_id through', () => {
+    const parsed = apiGoalGroupSchema.parse({ ...group, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
   });
 
   it('apiGoalGroupSchema validates nested goals via goalSchema', () => {
