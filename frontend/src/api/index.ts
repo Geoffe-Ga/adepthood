@@ -977,10 +977,12 @@ export interface ApiGoal {
 
 export interface ApiGoalGroup {
   id: number;
+  // ``user_id`` is intentionally absent — ``GoalGroupResponse`` omits it for
+  // the same reason ``ApiHabit`` does, and declaring it here typed a field the
+  // wire has never sent.
   name: string;
   icon?: string | null;
   description?: string | null;
-  user_id?: number | null;
   shared_template: boolean;
   source?: string | null;
   goals: ApiGoal[];
@@ -1955,6 +1957,10 @@ export interface PromptDetail {
   has_responded: boolean;
   response: string | null;
   timestamp: string | null;
+  /** The prompt's own title, when the week's content supplies one. */
+  default_title?: string | null;
+  /** Its position within the week's prompt sequence, when the week has several. */
+  prompt_ordinal?: number | null;
 }
 
 export interface PromptListResponse {
