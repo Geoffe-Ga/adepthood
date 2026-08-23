@@ -22,6 +22,19 @@
        backwards, and it would stand down exactly when it is most needed.
 
   Run it by hand until then.
+
+  A MECHANICAL PRE-PASS now exists: `.github/workflows/issue-evidence.yml` runs
+  `scripts/ralph/issue-evidence.sh` weekly, which re-runs the `grep` invocations,
+  `path:line` citations and quoted code lines in every open `agent-ready` body and
+  comments on the ones that no longer reproduce. It implements exactly two rows of
+  the finding table below — "stale file/symbol/line references" and
+  "counts/baselines wrong" — and deliberately implements no others: whether a
+  premise is still *possible* under a ratified contract, and whether an epic is
+  substantially shipped, are judgements, not greps.
+
+  Run it first when starting this audit. Its `expired` list is where to begin, and
+  its `unverifiable` list is not a pass — it is the set of claims that still need
+  a human, which is this document's whole remit.
 -->
 
 # Backlog contract-drift audit
