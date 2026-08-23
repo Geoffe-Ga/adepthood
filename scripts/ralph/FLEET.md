@@ -135,12 +135,20 @@ building it: `fleet.sh adopt <issue> <PR>` puts the worktree on Dependabot's own
 head branch, so fixes push there and a second PR is never opened.
 
 **The picker needs no `RALPH_EXCLUDE_LABELS` override.** A bridged issue is
-already never picked: `pick-next.sh` scans open PR bodies for
-`(closes|fixes|resolves) #N`, and the bridge put `Closes #<issue>` there, so the
-issue already reads as in-flight. Setting the override is a hazard in its own
-right — it **replaces** the default exclusion list rather than adding to it, so
-it silently re-admits `epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the
-rest.
+never picked, on either of two routes. `pick-next.sh` scans open PR bodies for
+`(closes|fixes|resolves) #N`, which the bridge put there — and, because
+Dependabot regenerates its PR body from its own template on every rebase and
+group recomputation and *erases* that line, it also reads the durable
+`<!-- dependabot-pr:N -->` marker out of the **issue** body and holds the issue
+whenever that marker names an **open** PR. The marker route is what makes the
+first sentence true rather than merely usually true; the body-link route stays
+as it was. A marker naming a merged or closed PR holds nothing, so a stale
+marker cannot wedge the picker.
+
+If you ever do need to exclude one more label, use **`RALPH_EXTRA_EXCLUDE_LABELS`**,
+which appends. `RALPH_EXCLUDE_LABELS` **replaces** the default exclusion list
+rather than adding to it, so setting it to a single label silently re-admits
+`epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the rest.
 
 ### `pr-ready.sh` tokens
 
