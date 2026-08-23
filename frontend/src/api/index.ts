@@ -977,10 +977,12 @@ export interface ApiGoal {
 
 export interface ApiGoalGroup {
   id: number;
+  // ``user_id`` is intentionally absent — ``GoalGroupResponse`` omits it for
+  // the same reason ``ApiHabit`` does, and declaring it here typed a field the
+  // wire has never sent.
   name: string;
   icon?: string | null;
   description?: string | null;
-  user_id?: number | null;
   shared_template: boolean;
   source?: string | null;
   goals: ApiGoal[];

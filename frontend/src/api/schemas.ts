@@ -565,7 +565,7 @@ export const apiGoalGroupSchema = z.object({
   name: z.string(),
   icon: z.string().nullish(),
   description: z.string().nullish(),
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: ``GoalGroupResponse`` omits it (OwnedResourcePublic / BUG-T7).
   shared_template: z.boolean(),
   source: z.string().nullish(),
   goals: z.array(goalSchema),

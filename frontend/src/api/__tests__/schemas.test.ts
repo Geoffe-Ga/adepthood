@@ -484,7 +484,6 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     name: 'Morning',
     icon: null,
     description: null,
-    user_id: null,
     shared_template: true,
     source: null,
     goals: [],
@@ -503,6 +502,13 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     expect(apiGoalGroupSchema.parse(group).shared_template).toBe(true);
     expect(() => apiGoalGroupSchema.parse({ ...group, shared_template: undefined })).toThrow();
     expect(() => apiGoalGroupSchema.parse({ ...group, name: 123 })).toThrow();
+  });
+
+  // No user_id: GoalGroupResponse omits it (OwnedResourcePublic / BUG-T7), so a
+  // server that sent one anyway must not reach callers as a typed field.
+  it('apiGoalGroupSchema does not carry user_id through', () => {
+    const parsed = apiGoalGroupSchema.parse({ ...group, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
   });
 
   it('apiGoalGroupSchema validates nested goals via goalSchema', () => {
