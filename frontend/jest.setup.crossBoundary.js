@@ -56,6 +56,10 @@ if (fs[INSTRUMENTED] !== true) {
   fs[READS] = new Set();
   // `node:fs` and `fs` are the same module instance, so instrumenting once
   // covers both spellings.
+  // Sync API only, deliberately: every cross-boundary guard reads its mirror
+  // synchronously at module scope, and a promise-based read would need an await
+  // the extractor could not follow anyway. A future guard using `fs/promises`
+  // would bypass this instrumentation -- widen the list here if one appears.
   for (const name of ['readFileSync', 'readdirSync', 'existsSync', 'statSync']) {
     instrument(name);
   }

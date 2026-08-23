@@ -257,6 +257,31 @@ class TestDiscovery:
         assert result.returncode != 0, "discovering nothing passed as if it were clean"
         assert _MARKER in result.stderr
 
+    def test_an_e2e_spec_carrying_the_marker_is_not_swept_in(self, tmp_path: Path) -> None:
+        """``frontend/e2e`` is excluded structurally, not just by nobody trying yet.
+
+        An e2e spec matches ``*.test.ts`` like any other, so before
+        ``--exclude-dir=e2e`` the claim that the lane skips them held only because
+        no e2e spec happened to import the marker. One that did would be handed to
+        ``--runTestsByPath`` under the default Jest config, in a job with no live
+        backend, rather than under ``jest.e2e.config.js``.
+
+        Args:
+            tmp_path: Pytest-provided scratch directory.
+        """
+        checkout = _fake_checkout(tmp_path, marked=True)
+        spec = checkout / "frontend" / "e2e" / "invented.e2e.test.ts"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(f"import {{ backendPath }} from '{_MARKER}';\n", encoding="utf-8")
+
+        listed = _listed(_run("--list", checkout=checkout))
+
+        assert not any("e2e/" in path for path in listed), (
+            "an e2e spec importing the marker was swept into the cross-boundary lane; "
+            f"it would run under the wrong Jest config. Listed: {listed}"
+        )
+        assert listed, "the marked non-e2e guard should still be discovered"
+
     def test_rejects_an_unknown_flag_rather_than_running_something_else(self) -> None:
         """Argv typos must fail loudly rather than degrade into a default run."""
         result = _run("--everything")

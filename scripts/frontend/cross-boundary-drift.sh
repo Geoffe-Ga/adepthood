@@ -71,7 +71,7 @@ while IFS= read -r file; do
 done < <(
     grep -rl --fixed-strings "$MARKER" "$FRONTEND_DIR" \
         --include='*.test.ts' --include='*.test.tsx' \
-        --exclude-dir=node_modules |
+        --exclude-dir=node_modules --exclude-dir=e2e |
         LC_ALL=C sort
 )
 

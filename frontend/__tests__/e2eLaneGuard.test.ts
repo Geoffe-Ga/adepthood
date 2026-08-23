@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from '@jest/globals';
 
-import { backendPath } from '@/testing/backendSource';
+import { REPO_ROOT, backendPath } from '@/testing/backendSource';
 
 /**
  * Tripwires for the real-wire e2e lane, modelled on the backend's
@@ -22,7 +22,6 @@ import { backendPath } from '@/testing/backendSource';
  */
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(FRONTEND_ROOT, '..');
 
 const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
