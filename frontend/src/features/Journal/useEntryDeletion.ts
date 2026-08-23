@@ -33,6 +33,17 @@ export interface EntryDeletion {
   pending: JournalMessage | null;
   /** A refused delete, said in the shelf's own voice; null while all is well. */
   error: string | null;
+  /**
+   * Whether a confirmed delete is still waiting on the server. Read at the
+   * moment a caller is about to replace the list wholesale: while this is true
+   * the local list is deliberately ahead of the server, so a landing page would
+   * put the removed row back — or undo a revert that had just restored it.
+   *
+   * A callback rather than a rendered flag so its identity is stable: the shelf
+   * reads it from inside a focus effect that must fire once per focus, not once
+   * per render.
+   */
+  isRemoving: () => boolean;
   request: (_entry: JournalMessage) => void;
   cancel: () => void;
   confirm: () => void;
@@ -69,6 +80,7 @@ export function useEntryDeletion({
 
   const request = useCallback((target: JournalMessage) => setPending(target), []);
   const cancel = useCallback(() => setPending(null), []);
+  const isRemoving = useCallback(() => inFlightRef.current.size > 0, []);
 
   const confirm = useCallback(() => {
     const target = pending;
@@ -91,5 +103,5 @@ export function useEntryDeletion({
     });
   }, [pending, setItems, adjustTotal]);
 
-  return { pending, error, request, cancel, confirm };
+  return { pending, error, isRemoving, request, cancel, confirm };
 }
