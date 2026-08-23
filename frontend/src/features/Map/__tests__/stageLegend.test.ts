@@ -4,6 +4,7 @@ import { STAGE_DISPLAY } from '../mapLayout';
 import {
   balanceLabelSuffix,
   drawerStageLabel,
+  stageCenterCellLabel,
   stageNodeLabel,
   THIN_FULLNESS,
 } from '../stageLegend';
@@ -33,18 +34,59 @@ describe('balanceLabelSuffix', () => {
   });
 });
 
+const OPEN = { locked: false, current: false };
+
 describe('stageNodeLabel', () => {
   it('joins persona, descriptor, and a reads-full suffix at the threshold', () => {
     const display = requireDisplay(3);
-    expect(stageNodeLabel(display, FULLNESS_ALIVE_THRESHOLD)).toBe(
+    expect(stageNodeLabel(display, FULLNESS_ALIVE_THRESHOLD, OPEN)).toBe(
       `${display.persona} - ${display.descriptor} - reads full`,
     );
   });
 
   it('joins persona, descriptor, and a reads-thin suffix below the threshold', () => {
     const display = requireDisplay(1);
-    expect(stageNodeLabel(display, 0)).toBe(
+    expect(stageNodeLabel(display, 0, OPEN)).toBe(
       `${display.persona} - ${display.descriptor} - reads thin`,
+    );
+  });
+
+  it('appends a locked marker so the padlock is not sight-only', () => {
+    const display = requireDisplay(7);
+    expect(stageNodeLabel(display, 0, { locked: true, current: false })).toBe(
+      `${display.persona} - ${display.descriptor} - reads thin, locked`,
+    );
+  });
+
+  it('appends a current marker for the stage the person is in', () => {
+    const display = requireDisplay(2);
+    expect(stageNodeLabel(display, 0, { locked: false, current: true })).toBe(
+      `${display.persona} - ${display.descriptor} - reads thin, current`,
+    );
+  });
+
+  it('appends both markers, current before locked, matching the drawer row', () => {
+    const display = requireDisplay(4);
+    expect(stageNodeLabel(display, 0, { locked: true, current: true })).toBe(
+      `${display.persona} - ${display.descriptor} - reads thin, current, locked`,
+    );
+  });
+});
+
+describe('stageCenterCellLabel', () => {
+  it('joins the title and subtitle when the stage is open and not current', () => {
+    expect(stageCenterCellLabel('Beige', 'Survival', OPEN)).toBe('Beige - Survival');
+  });
+
+  it('appends a locked marker so the centre padlock is not sight-only', () => {
+    expect(stageCenterCellLabel('Turquoise', 'Holism', { locked: true, current: false })).toBe(
+      'Turquoise - Holism, locked',
+    );
+  });
+
+  it('appends a current marker for the stage the person is in', () => {
+    expect(stageCenterCellLabel('Purple', 'Kinship', { locked: false, current: true })).toBe(
+      'Purple - Kinship, current',
     );
   });
 });

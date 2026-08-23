@@ -29,6 +29,15 @@ export interface StageStoreState {
   error: string | null;
   /** Whether a stage load has been started at least once since the last reset. */
   hasAttempted: boolean;
+  /**
+   * Which load the store is currently listening to.
+   *
+   * Strictly increasing, and bumped by `reset()` as well as by `beginLoad()`,
+   * so a request in flight when the user signs out can never match again --
+   * were it merely returned to its initial value, the next session's first
+   * load would reuse a number an abandoned request is still holding.
+   */
+  loadGeneration: number;
 
   setStages: (_stages: StageData[]) => void;
   setCurrentStage: (_stageNumber: number) => void;
@@ -36,6 +45,8 @@ export interface StageStoreState {
   setLoading: (_loading: boolean) => void;
   setError: (_error: string | null) => void;
   markAttempted: () => void;
+  /** Claim the store for a new request, returning the generation it must quote to write. */
+  beginLoad: () => number;
   updateStageProgress: (_stageNumber: number, _progress: number) => void;
   /** BUG-FE-STATE-001: wipe every field back to its initial value on logout. */
   reset: () => void;
@@ -50,6 +61,7 @@ const INITIAL_STATE = {
   loading: false,
   error: null as string | null,
   hasAttempted: false,
+  loadGeneration: 0,
 };
 
 const stageCollection = createNormalizedById<StageData>((stage) => stage.stageNumber);
@@ -61,7 +73,7 @@ const normalizeStages = (
   return { stagesByNumber: byId, stageOrder: order, stages: list };
 };
 
-export const useStageStore = create<StageStoreState>((set) => ({
+export const useStageStore = create<StageStoreState>((set, get) => ({
   ...INITIAL_STATE,
 
   setStages: (stages) => set(normalizeStages(stages)),
@@ -70,6 +82,11 @@ export const useStageStore = create<StageStoreState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   markAttempted: () => set({ hasAttempted: true }),
+  beginLoad: () => {
+    const loadGeneration = get().loadGeneration + 1;
+    set({ loadGeneration });
+    return loadGeneration;
+  },
   updateStageProgress: (stageNumber, progress) =>
     set((state) => {
       const existing = state.stagesByNumber[stageNumber];
@@ -92,7 +109,7 @@ export const useStageStore = create<StageStoreState>((set) => ({
       };
       return { stagesByNumber, stages: stageCollection.rebuild(stagesByNumber, state.stageOrder) };
     }),
-  reset: () => set({ ...INITIAL_STATE }),
+  reset: () => set((state) => ({ ...INITIAL_STATE, loadGeneration: state.loadGeneration + 1 })),
 }));
 
 // BUG-FE-STATE-001

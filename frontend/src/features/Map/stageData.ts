@@ -1,17 +1,14 @@
-// frontend/features/Map/stageData.ts
-
 /**
  * Type definitions and shared geometry helpers for the Map screen.
  *
  * The Map is laid out by a single responsive row grid (see ``MapGrid`` in
- * ``MapScreen``); there is no longer any absolute-percentage coordinate system
- * here. Stage *content* is fetched from the backend API.
+ * ``MapScreen``), so nothing here carries coordinates. Stage *content* is
+ * fetched from the backend API.
  */
 
 import type { StageManifestation } from '../../api';
 
 export { STAGE_COUNT } from '../../domain/stageProgression';
-export type { StageExpression, StageManifestation } from '../../api';
 
 export interface StageData {
   id: number;
