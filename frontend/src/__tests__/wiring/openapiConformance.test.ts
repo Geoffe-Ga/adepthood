@@ -30,15 +30,13 @@
  *   are checked by that object's own entry below, since every item schema on
  *   the wire is itself an exported schema.
  */
-import * as fs from 'fs';
-import * as path from 'path';
-
 import { describe, expect, it } from '@jest/globals';
 import { z } from 'zod';
 
 import * as apiSchemas from '../../api/schemas';
 
-const OPENAPI_PATH = path.resolve(__dirname, '..', '..', '..', '..', 'backend', 'openapi.json');
+import { readBackendSource } from '@/testing/backendSource';
+
 const MIN_JUSTIFICATION_LENGTH = 40;
 const MAX_REF_DEPTH = 8;
 
@@ -199,7 +197,7 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
 // Document + Zod plumbing
 // ---------------------------------------------------------------------------
 
-const document = JSON.parse(fs.readFileSync(OPENAPI_PATH, 'utf-8')) as OpenApiDocument;
+const document = JSON.parse(readBackendSource('openapi.json')) as OpenApiDocument;
 const components = document.components.schemas;
 
 /** Every exported ``*Schema`` value that is an actual Zod schema. */
