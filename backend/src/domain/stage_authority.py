@@ -166,6 +166,12 @@ async def record_stage_entry(
     When a write is due the row is re-read under ``FOR UPDATE`` and the standing
     recomputed against the locked copy, so a concurrent begin-again cannot have
     its reset overwritten from this caller's stale anchor.
+
+    That commit is the whole session's, not this row's, so callers must not hold
+    uncommitted writes across this call -- the same contract
+    :func:`domain.stage_progress.ensure_user_progress` states, and for the same
+    reason: the locked re-read has to see committed state. Every call site today
+    is the first statement of its endpoint, which is what keeps that free.
     """
     if not stage_standing(progress, now, tz=tz).is_lagging:
         return progress

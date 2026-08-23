@@ -131,6 +131,31 @@ async def test_listing_the_stages_records_entry_too(
 
 
 @pytest.mark.asyncio
+async def test_opening_the_reading_records_entry_as_well(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The third door into the program is the Course tab, and it counts too.
+
+    Asserted on the row rather than on the listing because the listing would
+    be unchanged either way: the drip day is derived from the record, so a
+    course read that stopped recording entry would go on rendering plausible
+    chapters at a pace that silently disagrees with the calendar every other
+    surface reads.
+    """
+    headers, user_id = await _signup(async_client, "reader")
+    await _seed_stages(db_session)
+    progress = await _anchored_progress(db_session, user_id, days_ago=_SIXTY_DAYS)
+
+    resp = await async_client.get("/course/stages/1/content", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    await db_session.refresh(progress)
+    assert progress.current_stage == _THIRD_STAGE
+    assert progress.completed_stages == [1, 2]
+    assert progress.highest_stage_reached == _THIRD_STAGE
+
+
+@pytest.mark.asyncio
 async def test_entry_stops_at_the_calendar_and_never_runs_past_it(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
