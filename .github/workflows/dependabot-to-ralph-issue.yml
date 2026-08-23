@@ -287,7 +287,19 @@ jobs:
               echo "PR #$num already links an issue — skipping."
               continue
             fi
-            bridge_pr "$num" "$ttl"
+            # Guarded on purpose. bridge_pr returns non-zero when a PR's dedup
+            # lookup is UNKNOWN, and an unguarded call under `set -e` would end
+            # the whole run there -- silently skipping every later PR on the
+            # first transport blip, which is the failure this reconciler exists
+            # to survive. Same treatment as the label-verify path above: record
+            # it, keep going, fail once at the end.
+            bridge_ec=0
+            bridge_pr "$num" "$ttl" || bridge_ec=$?
+            if [ "$bridge_ec" -ne 0 ]; then
+              reconcile_failures+=("bridge_pr exited $bridge_ec for PR #$num; its dedup lookup could not be resolved, so no issue was filed -- re-run the reconciler once the API is healthy.")
+              echo "Bridging PR #$num failed ($bridge_ec) -- recorded; continuing the batch." >&2
+              continue
+            fi
           done
 
           # Close orphaned bridge issues. A Dependabot PR that is superseded by a

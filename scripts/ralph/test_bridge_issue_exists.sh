@@ -165,5 +165,25 @@ else
   ok "case 9: the bridge no longer pipes gh into an early-exiting reader"
 fi
 
+# --- case 10: one PR's bridge failure must not abort the whole batch -------
+# bridge_pr returns non-zero when a dedup lookup is UNKNOWN -- the outcome this
+# script's three-way exit code exists to express. The reconciler loop runs under
+# `set -euo pipefail`, so calling it bare means the first transport blip ends the
+# run and every later Dependabot PR is silently skipped. That is strictly worse
+# than the SIGPIPE bug it replaced: that one mis-answered one PR, this one drops
+# the rest of the batch. The event-driven single-PR path is deliberately NOT
+# guarded -- failing loud and immediate is correct when there is only one PR.
+if grep -qE '^[[:space:]]*bridge_pr "\$num" "\$ttl"[[:space:]]*$' "$BRIDGE"; then
+  bad "case 10: the reconciler calls bridge_pr unguarded -- set -e ends the batch on one PR's transport failure"
+else
+  ok "case 10: the reconciler guards bridge_pr so one PR's failure does not skip the rest"
+fi
+if grep -qE 'bridge_pr "\$num" "\$ttl" \|\| bridge_ec=' "$BRIDGE" \
+   && grep -qF 'reconcile_failures+=("bridge_pr exited' "$BRIDGE"; then
+  ok "case 10: the failure is recorded into reconcile_failures, so the run still fails at the end"
+else
+  bad "case 10: a guarded bridge_pr that records nothing would swallow the failure instead"
+fi
+
 echo "bridge-issue-exists tests: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
