@@ -76,6 +76,11 @@ const NARROWING = new Set(['only']);
  * follows it. The declaration of `request` itself matches too, and is dropped
  * downstream by the same rule that drops any dynamically built path -- its first
  * argument is a parameter name, not a literal.
+ *
+ * Assumes every call site writes the generic explicitly. A bare `request(...)`
+ * would be invisible here, and the route it reaches would read as uncalled --
+ * so a journey declaring that route would fail for a reason that is not true.
+ * No such call site exists today; widen this if one appears.
  */
 const REQUEST_CALL = /request<[^(]*?>\(/g;
 

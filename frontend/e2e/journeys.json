@@ -119,7 +119,7 @@
       "tables": ["stageprogress", "coursestage"]
     },
     "status": "uncovered",
-    "issue": 2323
+    "issue": 2299
   },
   {
     "id": "depth.choose-rings",
