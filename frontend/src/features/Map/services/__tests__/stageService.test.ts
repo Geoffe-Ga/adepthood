@@ -284,6 +284,161 @@ describe('stageService', () => {
     });
   });
 
+  describe('stale responses', () => {
+    /** A promise plus the resolve/reject handles, so a test drives when it settles. */
+    function deferred<T>(): {
+      promise: Promise<T>;
+      resolve: (_value: T) => void;
+      reject: (_error: Error) => void;
+    } {
+      let resolve: (_value: T) => void = () => undefined;
+      let reject: (_error: Error) => void = () => undefined;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('drops a stage list that resolves after the store was reset', async () => {
+      // Sign-out mid-flight: the previous account's stages must not repopulate
+      // the freshly-emptied store when the slow request finally lands.
+      const listCall = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(listCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      act(() => {
+        load = stageService.loadStages();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        listCall.resolve([makeApiStage(1), makeApiStage(2)]);
+        await load;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.stages).toHaveLength(0);
+      expect(state.hasAttempted).toBe(false);
+      // A dropped response asks the server nothing further.
+      expect(mockProgramCalendar).not.toHaveBeenCalled();
+    });
+
+    it('drops a failure that rejects after the store was reset', async () => {
+      const listCall = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(listCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      act(() => {
+        load = stageService.loadStages();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        listCall.reject(new Error('Network error'));
+        await load;
+      });
+
+      expect(useStageStore.getState().error).toBeNull();
+    });
+
+    it('drops a calendar response that resolves after the store was reset', async () => {
+      const calendarCall = deferred<ProgramCalendarPayload>();
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockReturnValueOnce(calendarCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      await act(async () => {
+        load = stageService.loadStages();
+        await Promise.resolve();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        calendarCall.resolve({
+          program_started_at: null,
+          calendar_stage: 7,
+          calendar_week: 1,
+          current_stage: 7,
+          cycle_number: 4,
+        });
+        await load;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.currentStage).toBe(1);
+      expect(state.cycleNumber).toBe(1);
+    });
+
+    it('settles on the newer load when an overtaken one resolves last', async () => {
+      const first = deferred<Stage[]>();
+      const second = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let older: Promise<void> = Promise.resolve();
+      let newer: Promise<void> = Promise.resolve();
+      act(() => {
+        older = stageService.loadStages();
+        newer = stageService.loadStages();
+      });
+
+      await act(async () => {
+        second.resolve([makeApiStage(3, { progress: 0.75 })]);
+        await newer;
+      });
+      await act(async () => {
+        first.resolve([makeApiStage(1), makeApiStage(2)]);
+        await older;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.stages).toHaveLength(1);
+      expect(state.stages[0]!.stageNumber).toBe(3);
+      expect(state.loading).toBe(false);
+      // Only the winning load went on to ask for the calendar.
+      expect(mockProgramCalendar).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops a begin-again response that resolves after the store was reset', async () => {
+      const record = deferred<StageProgressRecord>();
+      mockBeginAgainClient.mockReturnValueOnce(record.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let again: Promise<void> = Promise.resolve();
+      act(() => {
+        again = stageService.beginAgain();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        record.resolve({
+          id: 1,
+          user_id: 42,
+          current_stage: 1,
+          completed_stages: [],
+          cycle_number: 9,
+        });
+        await again;
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(1);
+      expect(mockList).not.toHaveBeenCalled();
+    });
+  });
+
   describe('clampProgress (BUG-FE-MAP-003)', () => {
     it('returns valid progress in [0, 1] unchanged', () => {
       expect(clampProgress(0)).toBe(0);
