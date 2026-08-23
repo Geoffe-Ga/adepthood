@@ -282,9 +282,9 @@ _BASELINE_LOG_RECORD_KEYS = (
     frozenset(logging.makeLogRecord({}).__dict__) | _STANDARD_LATE_LOG_RECORD_KEYS
 )
 _ALLOWED_ACCESS_LOG_EXTRA_KEYS = frozenset(
-    # ``trace_id`` is not a caller-supplied ``extra=`` key: the framework-wide
-    # filter from ``observability.install_trace_id_logging`` stamps it on every
-    # record by design (see ``middleware/logging.py`` -- the access line is
+    # ``trace_id`` is not a caller-supplied ``extra=`` key: the app log
+    # handler's filter, installed by ``observability.configure_logging``,
+    # stamps it on every record by design (see ``middleware/logging.py`` -- the access line is
     # documented as always carrying it). Whether it is present here depends on
     # whether some earlier test in the same process already booted the app and
     # installed that filter, so leaving it out made this assertion depend on

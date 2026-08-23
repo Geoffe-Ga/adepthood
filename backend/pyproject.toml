@@ -142,8 +142,12 @@ omit = [
 ]
 
 [tool.radon]
-cc_min = "A"
-mi_min = "A"
+# Ambient defaults for a bare `radon` run. No threshold lives here on
+# purpose: the enforced floors are xenon A/A/A and radon MI rank B or
+# better, declared once in scripts/backend/complexity.sh, which passes them
+# on the argv where they override anything written here. A `cc_min` or
+# `mi_min` key would be read by radon, ignored by every gate, and believed
+# by the next person to open this file.
 exclude = "migrations,alembic,.venv,venv,tests"
 show_complexity = true
 average = true
