@@ -13,9 +13,10 @@ refusing to absorb a vocabulary the ontology does not contain.
 
 from __future__ import annotations
 
-import inspect
+import asyncio
 import json
 import pathlib
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,25 @@ _EXPECTED_FREQUENCY_COUNT = 10
 # A syntactically-valid but entirely synthetic BYOK key. Named once so the
 # allowlist pragma lives in one place rather than on every line that mentions it.
 _FAKE_BYOK_KEY = "sk-ant-fake"  # pragma: allowlist secret
+
+# A reply the parser accepts, naming one position on the ontology.
+_WELL_FORMED_REPLY = '{"weights": {"F1": 0.7}, "overall_confidence": 0.8}'
+
+# The tier that does reach a provider, so a test about the call itself does not
+# also have to be about the INTIMATE refusal.
+_ORDINARY_TIER = JournalClassification.PERSONAL
+
+# A provider that answers only after longer than anybody waits, standing in for
+# ``services.botmason``'s full retry ladder -- a per-attempt timeout of 30s,
+# tried three times, with 1s and 2s of backoff between -- shortened only so a
+# failing run reports in seconds instead of minutes.
+_A_HANG_NOBODY_WAITS_OUT = 6.0
+
+# The bound such a caller sets, and what the call may then actually take.
+# Generous against the ~0s it should cost, so a loaded machine cannot fail it,
+# and far below the hang, so waiting the provider out cannot pass it.
+_A_MOMENT = 0.05
+_PATIENCE = 3.0
 
 
 def _patch_provider(monkeypatch: pytest.MonkeyPatch, text: str) -> list[dict[str, object]]:
@@ -317,14 +337,101 @@ async def test_no_key_falls_back_to_the_server_key(monkeypatch: pytest.MonkeyPat
     assert calls[0]["api_key"] is None
 
 
-def test_classification_is_stateless() -> None:
+@pytest.mark.asyncio
+async def test_classification_is_stateless(monkeypatch: pytest.MonkeyPatch) -> None:
     """No prior turns leak between fragments.
 
     A shared history would silently make one person's fragment part of
     another's prompt, which is a privacy failure rather than a quality one.
+
+    Asserted on what each call actually carried rather than on the shape of the
+    source: history could leak in from a default argument, a module-level list
+    or a helper, none of which a grep for one spelling would notice.
     """
-    source = inspect.getsource(fc.classify_frequencies)
-    assert "conversation_history=[]" in source
+    calls = _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
+
+    await fc.classify_frequencies("the first fragment", classification=_ORDINARY_TIER)
+    await fc.classify_frequencies("the second fragment", classification=_ORDINARY_TIER)
+
+    assert [call["conversation_history"] for call in calls] == [[], []]
+
+
+# --- a caller with a deadline can impose one ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_call_gives_up_rather_than_outlasting_its_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``timeout_seconds`` bounds the provider interaction, retries included.
+
+    ``services.botmason`` retries a transient failure twice with backoff on top
+    of a per-attempt timeout of 30s, so a caller who has promised somebody an
+    answer within a fixed number of seconds cannot obtain one by asking the
+    provider layer politely -- the bound has to cancel whatever that layer is
+    in the middle of. The fake stands in for that whole ladder, and the
+    assertion is on the clock rather than on the return value, because a
+    correct answer arriving a minute and a half late is the failure.
+    """
+
+    async def never_answers(**_kwargs: object) -> SimpleNamespace:
+        await asyncio.sleep(_A_HANG_NOBODY_WAITS_OUT)
+        return SimpleNamespace(text=_WELL_FORMED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", never_answers)
+
+    started = time.monotonic()
+    result = await fc.classify_frequencies(
+        "a fragment nobody will get an answer about",
+        classification=_ORDINARY_TIER,
+        timeout_seconds=_A_MOMENT,
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < _PATIENCE
+    assert not result.is_classified()
+
+
+@pytest.mark.asyncio
+async def test_running_out_of_time_degrades_like_every_other_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bound that raised would make classification a reason a write fails.
+
+    Which is the one thing this module promises it will never be. Timing out is
+    one more way to recognise nothing in a fragment, so it answers
+    ``UNCLASSIFIED`` exactly as an outage and a malformed reply do.
+    """
+
+    async def never_answers(**_kwargs: object) -> SimpleNamespace:
+        await asyncio.sleep(_A_HANG_NOBODY_WAITS_OUT)
+        return SimpleNamespace(text=_WELL_FORMED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", never_answers)
+
+    result = await fc.classify_frequencies(
+        "a fragment nobody will get an answer about",
+        classification=_ORDINARY_TIER,
+        timeout_seconds=_A_MOMENT,
+    )
+
+    assert result == fc.UNCLASSIFIED
+
+
+@pytest.mark.asyncio
+async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interactive write has only the client's own clock and wants no other.
+
+    Imposing a short ceiling by default would silently cut short the retry
+    budget every chat-path classification depends on.
+    """
+    _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
+
+    result = await fc.classify_frequencies("a fragment", classification=_ORDINARY_TIER)
+
+    assert result.is_classified()
 
 
 # --- the vocabulary is one thing, not three ----------------------------------

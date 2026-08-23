@@ -480,9 +480,13 @@ split is deliberate:
   a handshake. No intimate journal *entry* is transmitted to any vault
   today, in any form.
 - **Document uploads — skip-only too, since 2026-08-21.** An `intimate`
-  document sent to `POST /journal/upload` is withheld before the vault
+  document sent to `POST /corpus/import` is withheld before the vault
   is probed, because `/v1`'s tier vocabulary has no `intimate` member
-  and adepthood's one door onto it refuses rather than narrowing. The
+  and adepthood's one door onto it refuses rather than narrowing. That
+  door was `POST /journal/upload` when this was written; the route has
+  since been retired and the import route reaches the same
+  `services.creek_vault_upload.store_upload`, so the rule is unchanged
+  and only its address is. The
   2026-08-08 amendment to Decision 6 ruled that this surface could
   forward such a document; contracts 0.7.0 and 0.8.0 removed the premise
   that made it possible, and ADR 0004's 2026-08-21 note records the

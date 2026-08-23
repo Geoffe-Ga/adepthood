@@ -87,16 +87,23 @@ describe('stageService', () => {
     expect(state.error).toBeNull();
   });
 
-  it('loadStages sets currentStage to completed_count + 1 (backend-truth mirror)', async () => {
-    // BUG-FE-MAP-001: one completed (progress==1) stage → current is 2.
-    // Matches the backend's `next_stage_for` under the chain-validation
-    // invariant; no longer leaks the "highest unlocked" value when
-    // `is_unlocked` runs ahead of actual completion.
+  it('loadStages takes currentStage from the server program calendar', async () => {
+    // The calendar has opened stage 4 while only stage 1 is complete. Counting
+    // completions answers 2; the server answers 4, and the server is the only
+    // one that knows what the record has entered.
     mockList.mockResolvedValueOnce([
-      makeApiStage(1, { is_unlocked: true, progress: 1 }), // completed
-      makeApiStage(2, { is_unlocked: true, progress: 0.3 }), // in progress
-      makeApiStage(3, { is_unlocked: false, progress: 0 }),
+      makeApiStage(1, { is_unlocked: true, progress: 1 }),
+      makeApiStage(2, { is_unlocked: true, progress: 0.3 }),
+      makeApiStage(3, { is_unlocked: true, progress: 0 }),
+      makeApiStage(4, { is_unlocked: true, progress: 0 }),
     ]);
+    mockProgramCalendar.mockResolvedValueOnce({
+      program_started_at: '2026-01-01T00:00:00Z',
+      calendar_stage: 4,
+      calendar_week: 10,
+      current_stage: 4,
+      cycle_number: 1,
+    });
 
     const { stageService } = require('../stageService');
     const { useStageStore } = require('../../../../store/useStageStore');
@@ -105,19 +112,20 @@ describe('stageService', () => {
       await stageService.loadStages();
     });
 
-    expect(useStageStore.getState().currentStage).toBe(2);
+    expect(useStageStore.getState().currentStage).toBe(4);
   });
 
-  it('loadStages ignores is_unlocked drift and derives from completion count', async () => {
-    // BUG-FE-MAP-001 regression: if the backend ever returned `is_unlocked`
-    // for stages beyond the user's completion (e.g. from cached data or a
-    // partially-applied migration) the old heuristic would jump currentStage
-    // to the highest unlocked row.  Now it stays at completed_count + 1.
-    mockList.mockResolvedValueOnce([
-      makeApiStage(1, { is_unlocked: true, progress: 0.4 }),
-      makeApiStage(2, { is_unlocked: true, progress: 0 }),
-      makeApiStage(3, { is_unlocked: true, progress: 0 }),
-    ]);
+  it('loadStages honours a record that runs ahead of the completion count', async () => {
+    // Nothing is complete, so a completion count answers 1; the server's
+    // record says the person has entered stage 3 and that stands.
+    mockList.mockResolvedValueOnce([makeApiStage(1), makeApiStage(2), makeApiStage(3)]);
+    mockProgramCalendar.mockResolvedValueOnce({
+      program_started_at: '2026-01-01T00:00:00Z',
+      calendar_stage: 2,
+      calendar_week: 5,
+      current_stage: 3,
+      cycle_number: 1,
+    });
 
     const { stageService } = require('../stageService');
     const { useStageStore } = require('../../../../store/useStageStore');
@@ -126,7 +134,7 @@ describe('stageService', () => {
       await stageService.loadStages();
     });
 
-    expect(useStageStore.getState().currentStage).toBe(1);
+    expect(useStageStore.getState().currentStage).toBe(3);
   });
 
   it('loadStages records an error message on API failure', async () => {
@@ -253,13 +261,14 @@ describe('stageService', () => {
       expect(useStageStore.getState().cycleNumber).toBe(1);
     });
 
-    it('leaves stages and cycleNumber intact when the program-calendar fetch rejects', async () => {
+    it('leaves stages, cycleNumber and currentStage intact when the calendar fetch rejects', async () => {
       mockList.mockResolvedValueOnce([makeApiStage(1)]);
       mockProgramCalendar.mockRejectedValueOnce(new Error('calendar down'));
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
       act(() => {
         useStageStore.getState().setCycleNumber(3);
+        useStageStore.getState().setCurrentStage(5);
       });
 
       await act(async () => {
@@ -271,6 +280,162 @@ describe('stageService', () => {
       expect(state.stages).toHaveLength(1);
       expect(state.error).toBeNull();
       expect(state.cycleNumber).toBe(3);
+      expect(state.currentStage).toBe(5);
+    });
+  });
+
+  describe('stale responses', () => {
+    /** A promise plus the resolve/reject handles, so a test drives when it settles. */
+    function deferred<T>(): {
+      promise: Promise<T>;
+      resolve: (_value: T) => void;
+      reject: (_error: Error) => void;
+    } {
+      let resolve: (_value: T) => void = () => undefined;
+      let reject: (_error: Error) => void = () => undefined;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('drops a stage list that resolves after the store was reset', async () => {
+      // Sign-out mid-flight: the previous account's stages must not repopulate
+      // the freshly-emptied store when the slow request finally lands.
+      const listCall = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(listCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      act(() => {
+        load = stageService.loadStages();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        listCall.resolve([makeApiStage(1), makeApiStage(2)]);
+        await load;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.stages).toHaveLength(0);
+      expect(state.hasAttempted).toBe(false);
+      // A dropped response asks the server nothing further.
+      expect(mockProgramCalendar).not.toHaveBeenCalled();
+    });
+
+    it('drops a failure that rejects after the store was reset', async () => {
+      const listCall = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(listCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      act(() => {
+        load = stageService.loadStages();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        listCall.reject(new Error('Network error'));
+        await load;
+      });
+
+      expect(useStageStore.getState().error).toBeNull();
+    });
+
+    it('drops a calendar response that resolves after the store was reset', async () => {
+      const calendarCall = deferred<ProgramCalendarPayload>();
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockReturnValueOnce(calendarCall.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let load: Promise<void> = Promise.resolve();
+      await act(async () => {
+        load = stageService.loadStages();
+        await Promise.resolve();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        calendarCall.resolve({
+          program_started_at: null,
+          calendar_stage: 7,
+          calendar_week: 1,
+          current_stage: 7,
+          cycle_number: 4,
+        });
+        await load;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.currentStage).toBe(1);
+      expect(state.cycleNumber).toBe(1);
+    });
+
+    it('settles on the newer load when an overtaken one resolves last', async () => {
+      const first = deferred<Stage[]>();
+      const second = deferred<Stage[]>();
+      mockList.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let older: Promise<void> = Promise.resolve();
+      let newer: Promise<void> = Promise.resolve();
+      act(() => {
+        older = stageService.loadStages();
+        newer = stageService.loadStages();
+      });
+
+      await act(async () => {
+        second.resolve([makeApiStage(3, { progress: 0.75 })]);
+        await newer;
+      });
+      await act(async () => {
+        first.resolve([makeApiStage(1), makeApiStage(2)]);
+        await older;
+      });
+
+      const state = useStageStore.getState();
+      expect(state.stages).toHaveLength(1);
+      expect(state.stages[0]!.stageNumber).toBe(3);
+      expect(state.loading).toBe(false);
+      // Only the winning load went on to ask for the calendar.
+      expect(mockProgramCalendar).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops a begin-again response that resolves after the store was reset', async () => {
+      const record = deferred<StageProgressRecord>();
+      mockBeginAgainClient.mockReturnValueOnce(record.promise);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      let again: Promise<void> = Promise.resolve();
+      act(() => {
+        again = stageService.beginAgain();
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        record.resolve({
+          id: 1,
+          user_id: 42,
+          current_stage: 1,
+          completed_stages: [],
+          cycle_number: 9,
+        });
+        await again;
+      });
+
+      expect(useStageStore.getState().cycleNumber).toBe(1);
+      expect(mockList).not.toHaveBeenCalled();
     });
   });
 

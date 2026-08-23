@@ -50,8 +50,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'baseline',
   },
+  // The reading face, not the heading face: on a shelf of the writer's own
+  // pages the words should be the loudest thing, so the card carries exactly
+  // one full-ink line and separates from the excerpt by colour, not weight.
   cardTitle: {
-    ...editorialType.heading,
+    ...editorialType.body,
     color: ink.primary,
     flexShrink: 1,
   },
@@ -82,6 +85,13 @@ const styles = StyleSheet.create({
     ...editorialType.action,
     color: colors.danger,
     fontWeight: '400',
+  },
+  // Where the ScreenHeader's action slot used to sit: the same vertical rhythm,
+  // now carrying "New entry" alone, with no display-scale title above it.
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingVertical: rhythm.heroPaddingV,
   },
   searchRow: {
     marginBottom: SPACING.sm,
@@ -126,7 +136,6 @@ const styles = StyleSheet.create({
   promptLabel: {
     ...editorialType.caption,
     color: ink.muted,
-    textTransform: 'uppercase',
   },
   promptQuestion: {
     ...editorialType.heading,

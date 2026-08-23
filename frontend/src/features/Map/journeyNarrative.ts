@@ -1,5 +1,3 @@
-// frontend/features/Map/journeyNarrative.ts
-
 /**
  * Narrative helpers for the Map's journey read + stage-detail modal.
  *

@@ -41,7 +41,11 @@ from schemas.practice_recipe import (
     PracticeRecipeStepOut,
     materialise_mode_config,
 )
-from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
+from seed_helpers import (
+    commit_or_yield_to_race_winner,
+    existing_system_keys,
+    reject_duplicate_keys,
+)
 
 # Default repeat counts for rounds-by-categories recipes.  Three is the
 # defacto "enough to settle, not so many you check out" round count the
@@ -311,16 +315,8 @@ for _definition in SYSTEM_RECIPES:
 
 # Reject duplicate slugs in the seed plan -- a collision would block
 # every later seeder run on the partial-unique index.
-_recipe_slugs = [r["slug"] for r in SYSTEM_RECIPES]
-if len(set(_recipe_slugs)) != len(_recipe_slugs):
-    _dupes = sorted(s for s in _recipe_slugs if _recipe_slugs.count(s) > 1)
-    msg = f"Duplicate system recipe slug: {_dupes}"
-    raise ValueError(msg)
-_tag_slugs = [t["slug"] for t in SYSTEM_TAGS]
-if len(set(_tag_slugs)) != len(_tag_slugs):
-    _tag_dupes = sorted(s for s in _tag_slugs if _tag_slugs.count(s) > 1)
-    msg = f"Duplicate system tag slug: {_tag_dupes}"
-    raise ValueError(msg)
+reject_duplicate_keys([r["slug"] for r in SYSTEM_RECIPES], label="system recipe slug")
+reject_duplicate_keys([t["slug"] for t in SYSTEM_TAGS], label="system tag slug")
 
 
 async def _seed_system_tags(session: AsyncSession) -> int:

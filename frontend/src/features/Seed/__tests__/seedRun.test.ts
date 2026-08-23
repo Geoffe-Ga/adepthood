@@ -106,13 +106,13 @@ describe('one failure never abandons the rest', () => {
 
 describe('what the run reports', () => {
   test('has nothing to say about an empty run', () => {
-    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual({ total: 0, ingested: 0, waiting: 0, refused: 0 });
+    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual({ total: 0, landed: 0, waiting: 0, refused: 0 });
   });
 
   test('counts every unsent document as still waiting', () => {
     expect(seedRunTally(withThreeQueued())).toEqual({
       total: 3,
-      ingested: 0,
+      landed: 0,
       waiting: 3,
       refused: 0,
     });
@@ -123,7 +123,20 @@ describe('what the run reports', () => {
     state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'vault_unavailable' });
 
-    expect(seedRunTally(state)).toEqual({ total: 3, ingested: 1, waiting: 1, refused: 1 });
+    expect(seedRunTally(state)).toEqual({ total: 3, landed: 1, waiting: 1, refused: 1 });
+  });
+
+  test('counts a document kept by the corpus as landed, exactly as a vault one', () => {
+    // Two destinations, one question: how much of what I chose is in. An
+    // account with no vault reaches `in_corpus` and never `ingested`, so a
+    // tally that only counted the vault's word would report zero for every
+    // document such an account ever imported.
+    let state = withThreeQueued();
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'in_corpus' });
+    state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'in_corpus' });
+    state = seedRunReducer(state, { type: 'settle', id: 'c', status: 'consent_required' });
+
+    expect(seedRunTally(state)).toEqual({ total: 3, landed: 2, waiting: 0, refused: 1 });
   });
 
   test('clears back to an empty run', () => {

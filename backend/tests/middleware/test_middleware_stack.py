@@ -1,4 +1,4 @@
-"""Middleware-stack ordering and trace-id-at-import regression tests.
+"""Middleware-stack ordering regression tests.
 
 Closes:
 
@@ -7,9 +7,6 @@ Closes:
 - BUG-APP-002 — preflight bypassed security headers when CORS sat
   outside SecurityHeaders; CORS short-circuited with a 200 before the
   headers were applied.
-- BUG-APP-007 — :func:`install_trace_id_logging` ran in the lifespan
-  startup hook, after router-registration log records had already been
-  emitted without a trace-id field.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ from middleware import (
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
-from observability import TRACE_ID_HEADER, TraceIdLogFilter
+from observability import TRACE_ID_HEADER
 
 client = TestClient(app)
 
@@ -170,19 +167,6 @@ def test_cors_exposes_x_request_id_header() -> None:
     )
     exposed = response.headers.get("access-control-expose-headers", "")
     assert TRACE_ID_HEADER.lower() in exposed.lower()
-
-
-def test_install_trace_id_logging_runs_at_import() -> None:
-    """BUG-APP-007: importing ``main`` must already have installed the filter.
-
-    A lifespan-only install left router-mount log records without a
-    ``trace_id`` attribute and crashed any formatter that referenced
-    ``%(trace_id)s``.  The check below asserts the filter is present on
-    the root logger after merely importing ``main`` (which the test
-    module already did).
-    """
-    root = logging.getLogger()
-    assert any(isinstance(f, TraceIdLogFilter) for f in root.filters)
 
 
 def test_request_logging_middleware_emits_one_record_per_request(

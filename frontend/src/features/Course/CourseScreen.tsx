@@ -26,7 +26,6 @@ import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
 import { resolveStageColor } from '../../design/tokens';
-import { deriveCurrentStage } from '../../domain/stageProgression';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
@@ -67,13 +66,14 @@ function useStagesLoader() {
       const stagesList = await stagesApi.listAll();
       setAllStages(stagesList);
       if (routeStageNumber === null) {
-        // Master date wins when the user has picked an anchor; otherwise
-        // fall back to the server-owned, count-based progression
-        // (``completed_count + 1``) — "max unlocked" would visually
-        // reward skip-ahead attempts whenever ``is_unlocked`` ran
-        // ahead of completion.
+        // Master date wins when the user has picked an anchor; otherwise ask
+        // the server, which holds the one answer — the union of the stage its
+        // calendar has opened and the stage its record says was entered. The
+        // client counts nothing: someone back after two months away has
+        // several stages open and nothing newly complete, and a completion
+        // count would drop them into the stage they last finished.
         const dateDerived = programStage(programAnchor);
-        setSelectedStage(dateDerived ?? deriveCurrentStage(stagesList));
+        setSelectedStage(dateDerived ?? (await stagesApi.programCalendar()).current_stage);
       }
     } catch (err) {
       // Track failure explicitly so the screen can show error+retry instead of

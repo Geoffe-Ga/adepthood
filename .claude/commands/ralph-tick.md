@@ -377,13 +377,20 @@ the slot refills on the next wake; a `pr_opened` worker leaves its worktree in
 Gate 3/4.
 
 **Do not set `RALPH_EXCLUDE_LABELS`** — in particular, do not add `dependencies`
-to it. A bridged `dependencies` issue is already never picked here: `pick-next.sh`
-scans open PR bodies for `(closes|fixes|resolves) #N`, and the bridge appends
-`Closes #<issue>` to the Dependabot PR, so the issue reads as in-flight and the
-picker skips it. Those issues are adopted in Step 2, not assigned in Step 4.
-The override is also a hazard in its own right: it **replaces** the default
-exclusion list rather than adding to it, so setting it silently re-admits
-`epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the rest.
+to it. A bridged `dependencies` issue is never picked here, on either of two
+routes: `pick-next.sh` scans open PR bodies for `(closes|fixes|resolves) #N`,
+which the bridge appends to the Dependabot PR, **and** it reads the durable
+`<!-- dependabot-pr:N -->` marker out of the issue body and holds the issue
+whenever that marker names an open PR. The second route exists because Dependabot
+regenerates its PR body on every rebase and group recomputation, erasing the
+`Closes` line — without it the picker would offer the bridge issue as *build*
+work and a lane would open a second PR for a bump that already has one. Those
+issues are adopted in Step 2, not assigned in Step 4.
+
+If you genuinely need to exclude one more label, use `RALPH_EXTRA_EXCLUDE_LABELS`,
+which appends. `RALPH_EXCLUDE_LABELS` **replaces** the default exclusion list
+rather than adding to it, so setting it silently re-admits `epic`, `blocked`,
+`wontfix`, `do-not-auto-merge`, and the rest.
 
 ### Step 5 — Arm per-lane wakes (platform-aware), then end the turn
 

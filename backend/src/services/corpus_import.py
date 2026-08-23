@@ -8,9 +8,9 @@ only what they had typed into this app.
 
 **Nothing here is a second upload path, and nothing here is a second ingest.**
 The vault branch is :func:`services.creek_vault_upload.store_upload`, called
-with the same :class:`~services.creek_vault_upload.UploadedDocument` the
-shipped endpoint builds and answered in the same
-:class:`~domain.creek_vault.VaultUploadStatus` vocabulary. The corpus branch is
+with an :class:`~services.creek_vault_upload.UploadedDocument` and answered in
+the :class:`~domain.creek_vault.VaultUploadStatus` vocabulary the vault write
+path has always used. The corpus branch is
 :func:`services.corpus_ingest.ingest_content`, the same spine a journal entry
 goes through -- the same consent gate, the same single classification call, the
 same tier refusal, the same store. What this module adds is the *routing rule*
@@ -94,9 +94,9 @@ _INGEST_STATUS: Final[Mapping[IngestOutcome, CorpusImportStatus]] = MappingProxy
 class VaultImportResult:
     """One document's fate at the vault destination, in the vault's own words.
 
-    :class:`~domain.creek_vault.VaultUploadStatus` unwrapped and unrenamed: this
-    is the shipped upload path's answer, and a caller reading it is reading what
-    ``POST /journal/upload`` would have told them about the same document.
+    :class:`~domain.creek_vault.VaultUploadStatus` unwrapped and unrenamed: the
+    vault's own vocabulary reaches the caller as the vault said it, because a
+    second set of words for one outcome is a second thing to keep true.
     """
 
     status: VaultUploadStatus

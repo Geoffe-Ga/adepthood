@@ -1,9 +1,9 @@
 """Tests for the shared idempotent-seed helpers.
 
 Pins the contract two seeders (seed_practices, seed_practice_recipes) both
-need: a natural-key existence lookup and a commit-or-yield-to-race-winner
-guard, so future seeders can share one implementation instead of
-duplicating both patterns.
+need: a natural-key existence lookup, a commit-or-yield-to-race-winner
+guard, and an import-time duplicate-key rejection, so future seeders can
+share one implementation instead of duplicating all three patterns.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from sqlmodel import select
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.practice_tag import PracticeTag
-from seed_helpers import commit_or_yield_to_race_winner, existing_system_keys
+from seed_helpers import (
+    commit_or_yield_to_race_winner,
+    existing_system_keys,
+    reject_duplicate_keys,
+)
 
 #: Arbitrary owner id for a user-owned row planted to prove the owner filter
 #: excludes it from the "system" result set.
@@ -166,3 +170,34 @@ async def test_commit_or_yield_to_race_winner_race_loser_returns_zero(
     # The session must still be usable after the rollback.
     stages = (await db_session.execute(select(CourseStage))).scalars().all()
     assert stages == []
+
+
+def test_reject_duplicate_keys_accepts_a_unique_sequence() -> None:
+    """A collision-free key list passes silently.
+
+    There is nothing to assert on: the helper returns ``None`` and the whole
+    contract is that it does not raise, so a regression that rejected a
+    unique list would surface here as the propagating ``ValueError``.
+    """
+    reject_duplicate_keys(["alpha", "beta", "gamma"], label="system tag slug")
+
+
+def test_reject_duplicate_keys_raises_naming_every_repeated_key() -> None:
+    """The error must name the offenders, sorted, not merely report a collision.
+
+    The seeders call this at import time so a bad definition crashes the
+    process rather than poisoning the database on first startup. That crash
+    is only actionable if it says *which* keys collided — the caller is
+    staring at a literal list of dozens of definitions.
+    """
+    with pytest.raises(ValueError, match=r"Duplicate system tag slug: \['breath', 'stillness'\]"):
+        reject_duplicate_keys(
+            ["breath", "stillness", "breath", "walking", "stillness"],
+            label="system tag slug",
+        )
+
+
+def test_reject_duplicate_keys_handles_non_string_keys() -> None:
+    """Keys are natural keys, not always slugs: canonical presets collide on ints."""
+    with pytest.raises(ValueError, match=r"Duplicate stage_number: \[3\]"):
+        reject_duplicate_keys([1, 2, 3, 3], label="stage_number")

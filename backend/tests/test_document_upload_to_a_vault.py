@@ -1,17 +1,25 @@
-"""Integration tests for ``POST /journal/upload``, the document upload endpoint.
+"""The vault half of ``POST /corpus/import``, driven against a scripted vault.
 
 These drive the real endpoint against a scripted vault client to pin what the
-router owes the person uploading a file. An upload has no local system of
-record -- unlike a journal entry, which is already in Postgres before the vault
-is ever asked -- so every one of these outcomes is the *whole* answer the user
-gets, and each has to be honest and actionable on its own.
+router owes a person with a vault who hands over a file. A document sent to a
+vault has no local system of record -- unlike a journal entry, which is already
+in Postgres before the vault is ever asked -- so every one of these outcomes is
+the *whole* answer the user gets, and each has to be honest and actionable on
+its own.
+
+Written against ``POST /journal/upload`` and re-pointed when that route was
+retired for having no caller. Nothing under test moved: the import route
+resolves the account's client, finds a vault, and calls the same
+:func:`services.creek_vault_upload.store_upload` through the same request
+schema and the same size guard. What it adds is a destination for the account
+that has no vault, which ``tests/test_corpus_import.py`` is about.
 
 Four properties are pinned here that no lower layer can guarantee alone:
 
 - Every vault condition answers 202 with a distinguishable status, never a 500.
 - An oversized document is refused by size *before* its bytes are decoded.
-- An intimate document is forwarded at its own tier, and is not rerouted
-  anywhere when the vault is unreachable.
+- An intimate document reaches no vault, and is not rerouted anywhere when the
+  vault is unreachable.
 - A rejection never echoes the document back through the error envelope.
 """
 
@@ -27,6 +35,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 
 from dependencies.creek_vault import get_creek_vault_client
+from domain.corpus_import import ImportDestination
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -56,7 +65,7 @@ from schemas.journal_upload import (
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
-_UPLOAD_PATH = "/journal/upload"
+_IMPORT_PATH = "/corpus/import"
 
 _FILENAME = "field-notes.pdf"
 
@@ -195,11 +204,18 @@ class TestUploadAcceptance:
     async def test_accepted_upload_answers_202(
         self, async_client: AsyncClient, vault: ScriptedUploadClient
     ) -> None:
-        """202: the vault has it, and nothing further is pending on this request."""
+        """202: the vault has it, and nothing further is pending on this request.
+
+        The destination is asserted here and only here, because it is what makes
+        every other test in this module about a vault: an account resolved onto
+        the local fallback would answer in the corpus vocabulary instead, and a
+        suite that never checked would go on pinning the wrong branch.
+        """
         headers = await _signup(async_client, "uploader-accept")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.status_code == HTTPStatus.ACCEPTED
-        assert response.json()["status"] == VaultUploadStatus.ACCEPTED.value
+        assert response.json()["destination"] == ImportDestination.VAULT.value
+        assert response.json()["vault_status"] == VaultUploadStatus.ACCEPTED.value
         assert len(vault.upload_calls) == 1
 
     @pytest.mark.asyncio
@@ -208,7 +224,7 @@ class TestUploadAcceptance:
     ) -> None:
         """The fragment handle is how a client can later refer to what it sent."""
         headers = await _signup(async_client, "uploader-ref")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.json()["vault_ref"] == _FRAGMENT_ID
         assert vault.upload_calls[0].external_id
 
@@ -218,7 +234,7 @@ class TestUploadAcceptance:
     ) -> None:
         """Empty is the correct answer today, not a failure -- pinned so it stays honest."""
         headers = await _signup(async_client, "uploader-tags-empty")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.json()["tags"] == []
         assert len(vault.upload_calls) == 1
 
@@ -229,7 +245,7 @@ class TestUploadAcceptance:
     ) -> None:
         """The vault classifies in-pipeline; adepthood never builds a second classifier."""
         headers = await _signup(async_client, "uploader-tags")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.json()["tags"] == ["courage", "threshold"]
         assert len(vault.upload_calls) == 1
 
@@ -239,7 +255,7 @@ class TestUploadAcceptance:
     ) -> None:
         """Adepthood hands over bytes and a name; it never parses the file itself."""
         headers = await _signup(async_client, "uploader-forward")
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert vault.upload_calls[0].filename == _FILENAME
         assert vault.upload_calls[0].content_base64 == _CONTENT_B64
 
@@ -249,8 +265,8 @@ class TestUploadAcceptance:
     ) -> None:
         """Idempotence: a re-send edits the fragment in place instead of duplicating it."""
         headers = await _signup(async_client, "uploader-idempotent")
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert vault.upload_calls[0].external_id == vault.upload_calls[1].external_id
 
     @pytest.mark.asyncio
@@ -260,8 +276,8 @@ class TestUploadAcceptance:
         """One user's ``notes.pdf`` must never overwrite another's."""
         first = await _signup(async_client, "uploader-tenant-a")
         second = await _signup(async_client, "uploader-tenant-b")
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=first)
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=second)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=first)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=second)
         assert vault.upload_calls[0].external_id != vault.upload_calls[1].external_id
 
 
@@ -277,9 +293,9 @@ class TestUploadDegradation:
     ) -> None:
         """A journal-only vault must degrade without the document reaching the wire."""
         headers = await _signup(async_client, "uploader-nocap")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.status_code == HTTPStatus.ACCEPTED
-        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert response.json()["vault_status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert vault.upload_calls == []
 
     @pytest.mark.parametrize("vault", [{"available": False}], indirect=True)
@@ -289,8 +305,8 @@ class TestUploadDegradation:
     ) -> None:
         """Unreachable and cannot-take-files are different problems with different fixes."""
         headers = await _signup(async_client, "uploader-down")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
-        assert response.json()["status"] == VaultUploadStatus.VAULT_UNAVAILABLE.value
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+        assert response.json()["vault_status"] == VaultUploadStatus.VAULT_UNAVAILABLE.value
         assert vault.upload_calls == []
 
     @pytest.mark.parametrize(
@@ -302,9 +318,9 @@ class TestUploadDegradation:
     ) -> None:
         """A vault error must never surface as an unhandled server fault."""
         headers = await _signup(async_client, "uploader-degrade")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.status_code == HTTPStatus.ACCEPTED
-        assert response.json()["status"] == VaultUploadStatus.DEGRADED.value
+        assert response.json()["vault_status"] == VaultUploadStatus.DEGRADED.value
         # A failed upload is dropped, not queued: one attempt, never a retry.
         assert len(vault.upload_calls) == 1
 
@@ -315,8 +331,8 @@ class TestUploadDegradation:
     ) -> None:
         """A vault that answered without storing must not look like a success."""
         headers = await _signup(async_client, "uploader-notstored")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
-        assert response.json()["status"] == VaultUploadStatus.DEGRADED.value
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+        assert response.json()["vault_status"] == VaultUploadStatus.DEGRADED.value
         assert response.json()["vault_ref"] is None
         assert len(vault.upload_calls) == 1
 
@@ -338,9 +354,9 @@ class TestUploadDegradation:
         message included, rather than the status alone.
         """
         headers = await _signup(async_client, "uploader-refused")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.status_code == HTTPStatus.ACCEPTED
-        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert response.json()["vault_status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert (
             response.json()["message"] == UPLOAD_MESSAGES[VaultUploadStatus.CAPABILITY_UNSUPPORTED]
         )
@@ -361,7 +377,7 @@ class TestUploadDegradation:
     ) -> None:
         """A status the user cannot act on is a status that sends them to support."""
         headers = await _signup(async_client, "uploader-message")
-        response = await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.json()["message"].strip()
         # However it degraded, it was attempted at most once -- never retried.
         assert len(vault.upload_calls) <= 1
@@ -386,10 +402,10 @@ class TestUploadIntimateTier:
         """A 202 with a status the person can act on, and no document on any wire."""
         headers = await _signup(async_client, "uploader-intimate")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
+            _IMPORT_PATH, json=_payload(classification="intimate"), headers=headers
         )
         assert response.status_code == HTTPStatus.ACCEPTED
-        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert response.json()["vault_status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert response.json()["vault_ref"] is None
         assert vault.upload_calls == []
 
@@ -406,7 +422,7 @@ class TestUploadIntimateTier:
         """
         headers = await _signup(async_client, "uploader-intimate-copy")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
+            _IMPORT_PATH, json=_payload(classification="intimate"), headers=headers
         )
         message = response.json()["message"].lower()
         assert "try again" not in message
@@ -426,9 +442,9 @@ class TestUploadIntimateTier:
         """
         headers = await _signup(async_client, "uploader-intimate-down")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(classification="intimate"), headers=headers
+            _IMPORT_PATH, json=_payload(classification="intimate"), headers=headers
         )
-        assert response.json()["status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
+        assert response.json()["vault_status"] == VaultUploadStatus.CAPABILITY_UNSUPPORTED.value
         assert vault.upload_calls == []
 
 
@@ -443,7 +459,7 @@ class TestUploadGuards:
         headers = await _signup(async_client, "uploader-huge")
         oversized = "A" * (MAX_UPLOAD_BASE64_CHARS + 1)
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(content_base64=oversized), headers=headers
+            _IMPORT_PATH, json=_payload(content_base64=oversized), headers=headers
         )
         assert response.status_code == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
         assert vault.upload_calls == []
@@ -455,7 +471,7 @@ class TestUploadGuards:
         """Forwarding bytes we could not decode would hand the vault a broken file."""
         headers = await _signup(async_client, "uploader-badb64")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(content_base64="not!valid!base64!"), headers=headers
+            _IMPORT_PATH, json=_payload(content_base64="not!valid!base64!"), headers=headers
         )
         assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
         assert vault.upload_calls == []
@@ -483,7 +499,7 @@ class TestUploadGuards:
         """The name steers the vault's ingestor choice, so an ambiguous one is refused."""
         headers = await _signup(async_client, "uploader-badname")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(filename=filename), headers=headers
+            _IMPORT_PATH, json=_payload(filename=filename), headers=headers
         )
         assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
         assert vault.upload_calls == []
@@ -509,7 +525,7 @@ class TestUploadGuards:
         """
         headers = await _signup(async_client, "uploader-intl")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(filename=filename), headers=headers
+            _IMPORT_PATH, json=_payload(filename=filename), headers=headers
         )
         assert response.status_code == HTTPStatus.ACCEPTED
         assert vault.upload_calls[0].filename == filename
@@ -517,7 +533,7 @@ class TestUploadGuards:
     @pytest.mark.asyncio
     async def test_upload_requires_authentication(self, async_client: AsyncClient) -> None:
         """A document belongs to whoever uploaded it, so there is no anonymous path."""
-        response = await async_client.post(_UPLOAD_PATH, json=_payload())
+        response = await async_client.post(_IMPORT_PATH, json=_payload())
         assert response.status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}
 
     @pytest.mark.asyncio
@@ -527,7 +543,7 @@ class TestUploadGuards:
         """A rejection must not echo the document back through the error envelope."""
         headers = await _signup(async_client, "uploader-echo")
         response = await async_client.post(
-            _UPLOAD_PATH, json=_payload(filename="../escape.pdf"), headers=headers
+            _IMPORT_PATH, json=_payload(filename="../escape.pdf"), headers=headers
         )
         assert _CONTENT_B64 not in response.text
         assert vault.upload_calls == []
@@ -551,7 +567,7 @@ class TestUploadTiering:
         """Stored at exactly the tier chosen -- never widened so a call can succeed."""
         headers = await _signup(async_client, f"uploader-tier-{classification}")
         await async_client.post(
-            _UPLOAD_PATH, json=_payload(classification=classification), headers=headers
+            _IMPORT_PATH, json=_payload(classification=classification), headers=headers
         )
         assert vault.upload_calls[0].tier is expected
         assert vault.upload_calls[0].tier_ceiling is expected
@@ -563,7 +579,7 @@ class TestUploadTiering:
         """A naive timestamp would be read in the vault's local time, not the user's."""
         headers = await _signup(async_client, "uploader-tz")
         before = datetime.now(UTC)
-        await async_client.post(_UPLOAD_PATH, json=_payload(), headers=headers)
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         stamped = vault.upload_calls[0].created_at
         assert stamped.tzinfo is not None
         assert stamped >= before

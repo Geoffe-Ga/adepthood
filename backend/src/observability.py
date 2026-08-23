@@ -102,10 +102,14 @@ def _normalise_trace_id(raw: str | None) -> str:
 class TraceIdLogFilter(logging.Filter):
     """Inject the current request's trace ID into every log record.
 
-    Adding the filter at the root logger means every handler picks up the
-    ``trace_id`` attribute without having to be reconfigured individually.
-    Use ``%(trace_id)s`` in the formatter to emit the value, or read it
-    directly from a structured-log handler.
+    Attach it to a *handler* — never to a logger. A logger-level filter
+    runs only for records emitted directly on that logger, so one sitting
+    on the root logger would stamp nothing at all: application code logs
+    through ``logging.getLogger(__name__)`` and those records merely
+    propagate upward. :func:`configure_logging` makes the one attachment
+    that works, on the app stream handler. Use ``%(trace_id)s`` in the
+    formatter to emit the value, or read it directly from a
+    structured-log handler.
 
     A record carrying :data:`SUPPRESS_TRACE_CORRELATION` is stamped
     :data:`NO_TRACE` instead — the one honoured exception, for events whose
@@ -147,19 +151,6 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             trace_id_var.reset(token)
         response.headers[TRACE_ID_HEADER] = trace_id
         return response
-
-
-def install_trace_id_logging() -> None:
-    """Attach :class:`TraceIdLogFilter` to the root logger (idempotent).
-
-    Safe to call from app startup and from tests; calling it more than
-    once is a no-op because we check for an existing instance before
-    appending.  This means importing :mod:`main` repeatedly during a test
-    run doesn't accumulate filters.
-    """
-    root = logging.getLogger()
-    if not any(isinstance(f, TraceIdLogFilter) for f in root.filters):
-        root.addFilter(TraceIdLogFilter())
 
 
 # Marker attribute stamped on the handler ``configure_logging`` installs, so

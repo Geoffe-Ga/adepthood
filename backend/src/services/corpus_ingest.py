@@ -177,7 +177,11 @@ _JOURNAL_LOG_OUTCOMES: Final[Mapping[IngestOutcome, str]] = MappingProxyType(
 
 
 async def _classify_and_record(
-    session: AsyncSession, *, user_id: int, request: IngestRequest
+    session: AsyncSession,
+    *,
+    user_id: int,
+    request: IngestRequest,
+    timeout_seconds: float | None,
 ) -> IngestResult:
     """Classify this writing and store it, or report that it recognised nothing.
 
@@ -185,7 +189,9 @@ async def _classify_and_record(
     made here and nowhere else, which is what makes that constant assertable
     rather than aspirational.
     """
-    classification = await classify_frequencies(request.content, classification=request.tier)
+    classification = await classify_frequencies(
+        request.content, classification=request.tier, timeout_seconds=timeout_seconds
+    )
     if not classification.is_classified():
         return _UNCLASSIFIED_RESULT
     fragment = await record_fragment(
@@ -203,7 +209,11 @@ async def _classify_and_record(
 
 
 async def ingest_content(
-    session: AsyncSession, *, user_id: int, request: IngestRequest
+    session: AsyncSession,
+    *,
+    user_id: int,
+    request: IngestRequest,
+    timeout_seconds: float | None = None,
 ) -> IngestResult:
     """Put one piece of writing into ``user_id``'s corpus, or say why not.
 
@@ -220,17 +230,29 @@ async def ingest_content(
     an ordinary answer to give a person rather than a fault to propagate at
     them -- and catching *both* is what keeps this module from stating a tier
     rule of its own.
+
+    ``timeout_seconds`` is passed straight to the classifier and bounds only
+    the provider call. It is stated at the call rather than carried on
+    :class:`IngestRequest` because it is a fact about *this caller's patience*,
+    not about the writing: one payload offered by a request somebody is waiting
+    on and by a sweep with a deadline is the same payload with two different
+    budgets. ``None`` -- the default -- leaves the provider layer's own timeout
+    and retry budget in charge, which is what every interactive write wants.
     """
     consent = await load_consent(session, user_id=user_id, source=request.source)
     if not consent.granted:
         return _NO_CONSENT_RESULT
     try:
-        return await _classify_and_record(session, user_id=user_id, request=request)
+        return await _classify_and_record(
+            session, user_id=user_id, request=request, timeout_seconds=timeout_seconds
+        )
     except IntimateContentRefusedError:
         return _TIER_REFUSED_RESULT
 
 
-async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> CorpusFragment | None:
+async def ingest_journal_entry(
+    session: AsyncSession, entry: JournalEntry, *, timeout_seconds: float | None = None
+) -> CorpusFragment | None:
     """Write ``entry`` into its account's corpus, replacing what it had there.
 
     Returns the fragment, or ``None`` when the entry did not become one — no
@@ -250,6 +272,9 @@ async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> Co
 
     Nothing is committed. The caller owns the transaction, so the withdrawal of
     the previous fragment and the arrival of its replacement land together.
+
+    ``timeout_seconds`` bounds the provider call and nothing else; see
+    :func:`ingest_content`.
     """
     entry_id = entry.id
     if entry_id is None:
@@ -273,6 +298,7 @@ async def ingest_journal_entry(session: AsyncSession, entry: JournalEntry) -> Co
             source=INGEST_SOURCE,
             source_entry_id=entry_id,
         ),
+        timeout_seconds=timeout_seconds,
     )
     if result.outcome is not IngestOutcome.STORED:
         _log_outcome(entry.user_id, entry_id, _JOURNAL_LOG_OUTCOMES[result.outcome], removed)

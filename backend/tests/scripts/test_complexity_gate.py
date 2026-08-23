@@ -52,6 +52,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -153,6 +154,28 @@ def add(left: int, right: int) -> int:
 _RADON_CONFIG_HEADER = "[tool.radon]"
 _TOML_SECTION_SEPARATOR = "\n["
 
+# Threshold keys radon accepts from its ambient config. None may appear in
+# the repository's own block: the gate passes its floors on the argv, so a
+# key here is a second, silently unenforced declaration of a threshold --
+# and pyproject.toml is the first place anyone looks for one.
+_AMBIENT_THRESHOLD_KEYS = ("cc_min", "cc_max", "mi_min", "mi_max")
+
+# A [tool.radon] block hostile to the gate: ``mi_min = "A"`` tells radon to
+# list every module ranked A or worse, i.e. all of them, so a gate that let
+# ambient configuration choose its floor would reject provably clean code.
+_HOSTILE_RADON_CONFIG = """[tool.radon]
+cc_min = "A"
+mi_min = "A"
+"""
+
+# The opposite ambient setting, used to prove a staged block is read at all:
+# ``mi_min = "C"`` suppresses every module ranked better than C, and radon
+# with no ``-n`` of its own otherwise prints all of them. An empty report is
+# therefore only explicable by radon having loaded this file.
+_SUPPRESSING_RADON_CONFIG = """[tool.radon]
+mi_min = "C"
+"""
+
 # Wiring the consolidation must produce, and the wiring it must remove.
 _COMPLEXITY_SCRIPT_REFERENCE = "scripts/backend/complexity.sh"
 _NON_GATING_MI_HOOK_ENTRY = "radon mi src/ -n B"
@@ -208,13 +231,22 @@ class _StagedCheckout:
     source_dir: Path
 
 
-def _stage_checkout(tmp_path: Path, module_name: str, source: str) -> _StagedCheckout:
+def _stage_checkout(
+    tmp_path: Path,
+    module_name: str,
+    source: str,
+    *,
+    radon_config: str | None = None,
+) -> _StagedCheckout:
     """Build the tree layout the script derives its target directory from.
 
     Args:
         tmp_path: Per-test directory that becomes the fake repository root.
         module_name: Filename of the fixture module placed in ``backend/src``.
         source: Python source written into that module.
+        radon_config: Ambient ``[tool.radon]`` block for the staged
+            ``pyproject.toml``; defaults to the repository's own, read
+            verbatim so the fixture cannot drift from it.
 
     Returns:
         The relocated script and the source directory it will analyse.
@@ -227,7 +259,8 @@ def _stage_checkout(tmp_path: Path, module_name: str, source: str) -> _StagedChe
     script = scripts_dir / _COMPLEXITY_SCRIPT.name
     # copy, not copyfile: the executable bit has to survive.
     shutil.copy(_COMPLEXITY_SCRIPT, script)
-    (tmp_path / "backend" / "pyproject.toml").write_text(_radon_config_section())
+    ambient = _radon_config_section() if radon_config is None else radon_config
+    (tmp_path / "backend" / "pyproject.toml").write_text(ambient)
     (source_dir / module_name).write_text(source)
 
     return _StagedCheckout(script=script, source_dir=source_dir)
@@ -470,6 +503,81 @@ def test_unknown_option_is_an_analysis_error() -> None:
     )
     assert _UNKNOWN_FLAG in result.stderr, (
         f"stderr must name the rejected flag; got: {result.stderr!r}"
+    )
+
+
+def test_the_ambient_radon_config_declares_no_thresholds() -> None:
+    """``[tool.radon]`` must not restate a floor the gate does not read.
+
+    The gate passes ``-n`` on the argv every time, so a threshold key here
+    changes nothing and is never contradicted by a failing build -- it just
+    sits in the file everyone treats as the project's configuration,
+    answering the question "what is the complexity floor?" wrongly and
+    forever. Silence is the only honest value.
+    """
+    declared = tomllib.loads(_BACKEND_PYPROJECT.read_text()).get("tool", {}).get("radon", {})
+
+    for key in _AMBIENT_THRESHOLD_KEYS:
+        assert key not in declared, (
+            f"{key} in {_RADON_CONFIG_HEADER} is a second, unenforced declaration "
+            f"of a threshold; the one that gates lives in {_COMPLEXITY_SCRIPT_REFERENCE}"
+        )
+    assert _COMPLEXITY_SCRIPT_REFERENCE in _radon_config_section(), (
+        f"{_RADON_CONFIG_HEADER} must point at {_COMPLEXITY_SCRIPT_REFERENCE} so the "
+        "next reader is sent to the file that really sets the floor"
+    )
+
+
+def test_ambient_radon_thresholds_cannot_move_the_gate(tmp_path: Path) -> None:
+    """Clean code passes even under a ``[tool.radon]`` block that would fail it.
+
+    This is the assertion that keeps the deleted keys from coming back with
+    teeth. ``mi_min = "A"`` makes radon list every module it analyses, so if
+    the gate ever stopped passing its own ``-n`` and inherited the ambient
+    floor instead, this fixture -- a two-line addition function -- would be
+    reported as a maintainability violation.
+    """
+    checkout = _stage_checkout(
+        tmp_path, _CLEAN_MODULE, _CLEAN_SOURCE, radon_config=_HOSTILE_RADON_CONFIG
+    )
+
+    result = _run_script(checkout.script)
+
+    assert result.returncode == _ACCEPTABLE_EXIT_CODE, (
+        "the gate's own thresholds must win over the ambient [tool.radon] block; "
+        f"got exit {result.returncode} with stdout: {result.stdout!r} "
+        f"stderr: {result.stderr!r}"
+    )
+
+
+def test_a_staged_ambient_config_really_reaches_radon(tmp_path: Path) -> None:
+    """The previous test is only meaningful if radon reads the staged block.
+
+    radon 6 loads ``[tool.radon]`` from the directory it runs in, which is
+    the whole premise: a threshold written there is ambient, not
+    inert-by-parse. Proving that needs the *suppressing* direction —
+    ``mi_min = "C"`` hides everything ranked better than C, while radon
+    given no ``-n`` prints every module it analyses. So an empty report on
+    a rank-A module is not something a default run can produce, and the
+    gate passing under the hostile block above is its explicit argv winning
+    rather than a config file nobody ever loaded.
+    """
+    checkout = _stage_checkout(
+        tmp_path, _CLEAN_MODULE, _CLEAN_SOURCE, radon_config=_SUPPRESSING_RADON_CONFIG
+    )
+
+    report = subprocess.run(
+        [sys.executable, "-m", "radon", "mi", "-s", str(checkout.source_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=checkout.source_dir.parent,
+        timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+    )
+
+    assert report.stdout.strip() == "", (
+        "radon ignored the staged mi_min, so the ambient-config test above "
+        f"proves nothing about which floor wins; radon said: {report.stdout!r}"
     )
 
 

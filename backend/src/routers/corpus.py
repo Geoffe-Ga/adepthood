@@ -18,10 +18,12 @@ that word actually means here — sending the same decision twice leaves one
 decision on the record, not two. The audit log holds decisions, not requests;
 :func:`services.corpus_consent.set_consent` is where that is enforced.
 
-A revocation is not only a change of state: it deletes the fragments that
-source put in the corpus. That happens inside the service, in the same
-transaction as the event that records it, so a purge and its receipt land
-together or neither does.
+Neither decision is only a change of state, and they reach the corpus in
+opposite directions. A revocation deletes the fragments that source put there.
+A grant ontologizes the writing the account already had, so that saying yes
+after weeks of journalling is not an agreement about the future only. Both
+happen in the same transaction as the event that records them, so a sweep and
+its receipt land together or neither does.
 
 ``POST /import`` is the third verb and the reason the other two now have
 something to gate. It takes one document a person chose -- exported journal
@@ -48,9 +50,15 @@ from domain.creek_vault import CreekVaultClient
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
 from routers.auth import get_current_user
-from schemas.corpus import CorpusConsentListResponse, CorpusConsentResponse, CorpusConsentUpdate
+from schemas.corpus import (
+    CONSENT_RATE_LIMIT,
+    CorpusConsentListResponse,
+    CorpusConsentResponse,
+    CorpusConsentUpdate,
+)
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
+from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
 from services.corpus_import import (
     CorpusImportResult,
@@ -87,7 +95,9 @@ async def list_corpus_consent(
 
 
 @router.put("/consent/{source}", response_model=CorpusConsentResponse)
+@limiter.limit(CONSENT_RATE_LIMIT)
 async def put_corpus_consent(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     source: CorpusSource,
     payload: CorpusConsentUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
@@ -96,22 +106,33 @@ async def put_corpus_consent(
     """Record this account's decision about one source and report the result.
 
     Committed here rather than left to a caller: this is the whole transaction,
-    and on a revocation it is the purge as well as the event. Leaving either
-    uncommitted would be a permission withdrawn on screen and not in the
+    and a decision is never only the event. On a revocation it is the purge; on
+    a grant it is the sweep back over the writing the account already had,
+    bounded and reported by :mod:`services.corpus_backfill`. Leaving any of it
+    uncommitted would be a permission changed on screen and not in the
     database.
+
+    Rate-limited more tightly than ``POST /import`` despite carrying the
+    smallest body in the API: a grant is the most expensive request here, since
+    the sweep it authorises costs a provider call per entry it reaches, where
+    an import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.
+
+    The response is still the *state*. What the decision reached is a fact
+    about the event, and it goes where events are kept -- the audit row and the
+    log -- rather than onto a shape that also answers ``GET``.
     """
-    state = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+    change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+    await backfill_after_consent(session, user_id=user_id, change=change)
     await session.commit()
-    return _to_response(state)
+    return _to_response(change.state)
 
 
 def _vault_response(result: VaultImportResult) -> DocumentImportResponse:
     """Render a vault answer, in the vault path's own shipped copy.
 
-    The sentence is not rewritten for this surface. The person is in exactly
-    the situation ``POST /journal/upload`` would have put them in, and telling
-    them two different things about one outcome would be worse than telling
-    them nothing.
+    The sentence is not rewritten for this surface: it is the vault's own
+    account of what it did, and telling somebody two different things about one
+    outcome would be worse than telling them nothing.
     """
     return DocumentImportResponse(
         destination=ImportDestination.VAULT,
@@ -166,11 +187,10 @@ async def import_corpus_document(
 ) -> DocumentImportResponse:
     """Import one document into whichever corpus this account has.
 
-    202 for every outcome, including the ones that stored nothing, for the
-    reason ``POST /journal/upload`` answers 202: adepthood accepted the request
-    and acted on it, and what became of the document is in the body where a
-    client can render a specific sentence rather than infer one from a status
-    code. A vault that is missing, unreachable or unable to take files is a
+    202 for every outcome, including the ones that stored nothing: adepthood
+    accepted the request and acted on it, and what became of the document is in
+    the body where a client can render a specific sentence rather than infer one
+    from a status code. A vault that is missing, unreachable or unable to take files is a
     normal condition of an optional integration, and so is an account that has
     not yet agreed to ontologize uploads.
 

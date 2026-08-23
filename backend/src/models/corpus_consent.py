@@ -16,11 +16,19 @@ would want the earlier answer. ``accountdeletionaudit`` keeps its receipt for
 the same reason: evidence that a decision happened outlives the state the
 decision produced.
 
-**The row is content-free.** Account, source, decision, instant, and — for a
-revocation — how many fragments the purge removed. Nothing from any fragment,
-and nothing that would let a reader reconstruct one. The count is the same kind
-of evidence ``AccountDeletionAudit.row_counts`` is: it proves the sweep reached
-the corpus and says nothing about what it swept.
+**The row is content-free.** Account, source, decision, instant, and how many
+fragments the decision reached — removed by a revocation, added by a grant.
+Nothing from any fragment, and nothing that would let a reader reconstruct one.
+The counts are the same kind of evidence ``AccountDeletionAudit.row_counts``
+is: they prove the sweep reached the corpus and say nothing about what it
+swept.
+
+**Two counts rather than one signed one.** A decision reaches the corpus in one
+direction only, and the two directions are different events with different
+consequences, so each has its own column and neither has to be read as the
+other. Widening ``fragments_removed`` to carry an added count would make the
+one number an operator most needs to trust — how much writing a withdrawal
+actually deleted — depend on knowing which decision the row records.
 
 **Consent is per source, and the source vocabulary is
 :class:`models.corpus_fragment.CorpusSource`.** One blanket agreement at signup
@@ -57,9 +65,9 @@ class ConsentDecision(enum.StrEnum):
 _SOURCE_WIDTH = 20
 _DECISION_WIDTH = 20
 
-# A purge removes rows or it removes none; it cannot remove a negative number
-# of them, and a negative count would read as a sentinel nobody defined.
-_MIN_FRAGMENTS_REMOVED = 0
+# A sweep reaches rows or it reaches none; it cannot reach a negative number of
+# them, and a negative count would read as a sentinel nobody defined.
+_MIN_FRAGMENTS_REACHED = 0
 
 
 def _quoted(values: tuple[str, ...]) -> str:
@@ -91,8 +99,16 @@ def _decision_check() -> CheckConstraint:
 def _fragments_removed_check() -> CheckConstraint:
     """CHECK that a purge count is a count."""
     return CheckConstraint(
-        f"fragments_removed >= {_MIN_FRAGMENTS_REMOVED}",
+        f"fragments_removed >= {_MIN_FRAGMENTS_REACHED}",
         name="ck_corpusconsentevent_fragments_removed_range",
+    )
+
+
+def _fragments_added_check() -> CheckConstraint:
+    """CHECK that a backfill count is a count."""
+    return CheckConstraint(
+        f"fragments_added >= {_MIN_FRAGMENTS_REACHED}",
+        name="ck_corpusconsentevent_fragments_added_range",
     )
 
 
@@ -104,7 +120,11 @@ class CorpusConsentEvent(SQLModel, table=True):
     for.
 
     ``fragments_removed`` is zero for a grant, and for a revocation is how many
-    fragments that revocation deleted.
+    fragments that revocation deleted. ``fragments_added`` is its mirror: zero
+    for a revocation, and for a grant how many fragments the backfill that
+    grant authorised actually wrote. A grant that reached nothing records zero
+    and is not the same claim as a grant that was never asked to reach — the
+    decision's own log line carries what it did not reach.
     """
 
     __tablename__ = "corpusconsentevent"
@@ -118,6 +138,7 @@ class CorpusConsentEvent(SQLModel, table=True):
         _source_check(),
         _decision_check(),
         _fragments_removed_check(),
+        _fragments_added_check(),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -125,6 +146,7 @@ class CorpusConsentEvent(SQLModel, table=True):
     source: str = Field(max_length=_SOURCE_WIDTH)
     decision: str = Field(max_length=_DECISION_WIDTH)
     fragments_removed: int = Field(default=0, nullable=False)
+    fragments_added: int = Field(default=0, nullable=False)
     recorded_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

@@ -5,11 +5,18 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   auditJourneyLedger,
+  clientRoutesFromSource,
   readLedger,
   realLedgerEnvironment,
   summariseAudit,
 } from './journeyLedger';
 import type { LedgerEnvironment } from './journeyLedger';
+
+// The audit below reads backend/openapi.json and every model module, so this
+// is a cross-boundary guard: a route or table added in a backend-only commit
+// is exactly what it exists to catch. Taking the repository root from the
+// helper is what makes backend CI run it on such a commit.
+import { REPO_ROOT } from '@/testing/backendSource';
 
 /**
  * The journey coverage ledger and its gate.
@@ -35,7 +42,6 @@ import type { LedgerEnvironment } from './journeyLedger';
  */
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
-const REPO_ROOT = resolve(FRONTEND_ROOT, '..');
 
 const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
@@ -100,6 +106,7 @@ function baseEnvironment(overrides: Partial<LedgerEnvironment> = {}): LedgerEnvi
     readFile: (path) => files.get(path) ?? '',
     clientSymbols: new Set(['habits']),
     routes: new Set(['POST /habits/']),
+    clientRoutes: new Set(['POST /habits/']),
     tables: new Set(['habit']),
     ...overrides,
   };
@@ -334,6 +341,142 @@ describe('the ledger gate fails when a crossed surface was renamed away', () => 
   });
 });
 
+/**
+ * The hole the schema check cannot see: a route the server genuinely serves and
+ * the client cannot reach.
+ *
+ * Checking a declared route against `backend/openapi.json` asks whether the
+ * server would answer it. It never asks whether anything in the app would call
+ * it, so a journey could name a live route no screen can produce a request for
+ * and stay green -- and a spec written to that entry would have to hand-roll the
+ * call itself, proving the server works while the seam it claims to protect does
+ * not exist. That is what `map.advance-stage` did with
+ * `GET /stages/{stage_number}/progress`.
+ */
+describe('the ledger gate fails on a route the production client cannot issue', () => {
+  it('fails when a served route has no call site in the API module', () => {
+    const environment = baseEnvironment({
+      routes: new Set(['POST /habits/']),
+      clientRoutes: new Set(['GET /habits/']),
+    });
+
+    expect(onlyProblem([coveredEntry()], environment)).toContain('POST /habits/');
+  });
+
+  it('names the API module in the problem, so the fix is not guessed at', () => {
+    const environment = baseEnvironment({ clientRoutes: new Set<string>() });
+
+    expect(onlyProblem([coveredEntry()], environment)).toContain('frontend/src/api/index.ts');
+  });
+
+  it('accepts a route whose call site fills in a path parameter', () => {
+    const entry = coveredEntry({
+      crosses: {
+        screen: SCREEN,
+        client: ['habits'],
+        routes: ['DELETE /habits/{habit_id}'],
+        tables: ['habit'],
+      },
+    });
+    const environment = baseEnvironment({
+      routes: new Set(['DELETE /habits/{habit_id}']),
+      clientRoutes: new Set(['DELETE /habits/*']),
+    });
+
+    expect(problems([entry], environment)).toEqual([]);
+  });
+
+  it('accepts a collection route whose call site appends an optional query', () => {
+    const entry = coveredEntry({
+      crosses: { screen: SCREEN, client: ['habits'], routes: ['GET /habits/'], tables: ['habit'] },
+    });
+    const environment = baseEnvironment({
+      routes: new Set(['GET /habits/']),
+      clientRoutes: new Set(['GET /habits/*']),
+    });
+
+    expect(problems([entry], environment)).toEqual([]);
+  });
+
+  it('does not let a call site on a sibling path stand in for the declared one', () => {
+    const entry = coveredEntry({
+      crosses: {
+        screen: SCREEN,
+        client: ['habits'],
+        routes: ['GET /habits/{habit_id}/stats'],
+        tables: ['habit'],
+      },
+    });
+    const environment = baseEnvironment({
+      routes: new Set(['GET /habits/{habit_id}/stats']),
+      clientRoutes: new Set(['GET /habits/*/completions']),
+    });
+
+    expect(onlyProblem([entry], environment)).toContain('GET /habits/{habit_id}/stats');
+  });
+});
+
+/**
+ * Reading the client's own call sites.
+ *
+ * Exercised on source text rather than only through the real module, because a
+ * reader that quietly matched nothing would make every route unreachable and a
+ * reader that quietly matched everything would make every route reachable --
+ * and the second failure is invisible from the committed ledger, which passes
+ * either way.
+ */
+describe('the client route reader sees what the API module can actually call', () => {
+  it('reads the method and path off a plain call', () => {
+    const source = "return request<Habit>('/habits/', { method: 'POST', body: payload, token });";
+
+    expect([...clientRoutesFromSource(source)]).toEqual(['POST /habits/']);
+  });
+
+  it('reads an interpolated path segment as a parameter', () => {
+    const source = "return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });";
+
+    expect([...clientRoutesFromSource(source)]).toEqual(['DELETE /habits/*']);
+  });
+
+  it('defaults an unstated method to GET, as the client itself does', () => {
+    const source = 'return request<Entry>(`/journal/${entryId}`, { token });';
+
+    expect([...clientRoutesFromSource(source)]).toEqual(['GET /journal/*']);
+  });
+
+  it('drops a query string, which is not part of the route', () => {
+    const source = 'return request<Page<Stage>>(`/stages?${pageQuery({}, params)}`, { token });';
+
+    expect([...clientRoutesFromSource(source)]).toEqual(['GET /stages']);
+  });
+
+  it('reads a path whose interpolation holds a nested template literal', () => {
+    // `journal.list` is spelled this way, and a reader that stopped at the
+    // inner backtick would report the whole journal collection unreachable.
+    const source = "request<List>(`/journal/${qs ? `?${qs}` : ''}`, { token });";
+
+    expect([...clientRoutesFromSource(source)]).toEqual(['GET /journal/*']);
+  });
+
+  it('takes the method from the call it belongs to, not the next one', () => {
+    const source = [
+      'get(id) { return request<Entry>(`/journal/${id}`, { token }); },',
+      "create(entry) { return request<Entry>('/journal/', { method: 'POST', body: entry }); },",
+    ].join('\n');
+
+    expect([...clientRoutesFromSource(source)].sort()).toEqual([
+      'GET /journal/*',
+      'POST /journal/',
+    ]);
+  });
+
+  it('ignores the declaration of request itself, which issues nothing', () => {
+    const source = "async function request<T>(path: string, { method = 'GET' }): Promise<T> {}";
+
+    expect([...clientRoutesFromSource(source)]).toEqual([]);
+  });
+});
+
 describe('the ledger gate rejects a malformed ledger', () => {
   it('fails when the ledger is not an array', () => {
     expect(problems({ journeys: [] })).toHaveLength(1);
@@ -428,6 +571,26 @@ describe('the committed ledger is true of this repository', () => {
     expect(environment.clientSymbols.size).toBeGreaterThan(0);
     expect(environment.routes.size).toBeGreaterThan(0);
     expect(environment.tables.size).toBeGreaterThan(0);
+  });
+
+  it('reads the calls the production client makes, spot-checked against known ones', () => {
+    const { clientRoutes } = realLedgerEnvironment(REPO_ROOT);
+
+    expect(clientRoutes.has('GET /stages/program-calendar')).toBe(true);
+    expect(clientRoutes.has('GET /stages/wheel')).toBe(true);
+    expect(clientRoutes.has('POST /journal/')).toBe(true);
+  });
+
+  it('reaches no stage-progress route, which is why the Map journey stopped naming one', () => {
+    // The finding this check was built for, asserted rather than assumed: the
+    // stages router serves `GET /{stage_number}/progress` and nothing in the app
+    // calls it. The near-miss is `course.stageProgress`, which addresses the
+    // course router's own route -- so match on the whole path, not the suffix.
+    const { clientRoutes, routes } = realLedgerEnvironment(REPO_ROOT);
+
+    expect(routes.has('GET /stages/{stage_number}/progress')).toBe(true);
+    expect(clientRoutes.has('GET /stages/*/progress')).toBe(false);
+    expect(clientRoutes.has('GET /course/stages/*/progress')).toBe(true);
   });
 });
 

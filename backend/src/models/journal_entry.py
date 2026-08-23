@@ -234,6 +234,22 @@ class JournalEntry(SQLModel, table=True):
     # both nullable so the write path is purely additive over existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # When the consent backfill last *offered* this entry to the corpus writer,
+    # whatever came of it. NULL means never offered. Not a record of success --
+    # the fragment's own existence is that -- but of attention, and the sweep
+    # orders on it: never-offered first, least-recently-offered next. Without
+    # it, writing the classifier can place nowhere stays pending forever at the
+    # head of a newest-first queue and every later grant re-selects the same
+    # stuck rows, so an account whose recent entries are short or ambiguous
+    # never has its older history reached at all. Ordering rather than
+    # excluding, so a provider outage that touched everything is not a
+    # permanent hole. See :mod:`services.corpus_backfill`; written by a
+    # statement that restamps ``updated_at`` with its own value, because being
+    # swept is not being edited.
+    corpus_attempted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
     deleted_at: datetime | None = Field(
         default=None,
