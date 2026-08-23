@@ -1957,6 +1957,10 @@ export interface PromptDetail {
   has_responded: boolean;
   response: string | null;
   timestamp: string | null;
+  /** The prompt's own title, when the week's content supplies one. */
+  default_title?: string | null;
+  /** Its position within the week's prompt sequence, when the week has several. */
+  prompt_ordinal?: number | null;
 }
 
 export interface PromptListResponse {

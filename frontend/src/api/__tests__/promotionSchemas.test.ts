@@ -25,6 +25,7 @@ const FULL_QUOTE = {
   anchor_end: 19,
   anchor_text: 'went for a run to',
   pending: true,
+  stale: false,
 };
 
 const SUMMARY_QUOTE = {
@@ -48,6 +49,11 @@ describe('promotedQuoteSchema', () => {
     expect(parsed.anchor_end).toBe(19);
     expect(parsed.anchor_text).toBe('went for a run to');
     expect(parsed.pending).toBe(true);
+    expect(parsed.stale).toBe(false);
+  });
+
+  it('rejects a missing stale flag', () => {
+    expect(() => promotedQuoteSchema.parse(omitKey(FULL_QUOTE, 'stale'))).toThrow();
   });
 
   it('rejects a missing source_entry_id', () => {
@@ -87,5 +93,12 @@ describe('promotedQuoteSummarySchema', () => {
 
   it('rejects a missing pending flag', () => {
     expect(() => promotedQuoteSummarySchema.parse(omitKey(SUMMARY_QUOTE, 'pending'))).toThrow();
+  });
+
+  // The summary component has no ``stale``: the cross-entry feed does not
+  // compute anchor drift, so the field must not reach callers of this shape.
+  it('does not carry stale through', () => {
+    const parsed = promotedQuoteSummarySchema.parse({ ...SUMMARY_QUOTE, stale: true });
+    expect('stale' in parsed).toBe(false);
   });
 });

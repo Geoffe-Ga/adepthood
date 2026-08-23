@@ -118,6 +118,7 @@ function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
     anchor_end: 19,
     anchor_text: 'went for a daily',
     pending: true,
+    stale: false,
     ...overrides,
   };
 }

@@ -236,6 +236,28 @@ describe('promptListResponseSchema total nullability', () => {
   it('rejects an envelope missing has_more', () => {
     expect(() => promptListResponseSchema.parse({ items: [], total: null })).toThrow();
   });
+
+  // Regression: the server has been sending both fields, and the item schema
+  // declared neither — so Zod deleted them from every validated prompt
+  // response and no caller could tell the data had arrived at all.
+  it('carries default_title and prompt_ordinal through instead of stripping them', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [{ ...item, default_title: 'On steadiness', prompt_ordinal: 2 }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBe('On steadiness');
+    expect(parsed.items[0]?.prompt_ordinal).toBe(2);
+  });
+
+  it('still accepts an item that omits both, and keeps them absent', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [item],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBeUndefined();
+  });
 });
 
 describe('journalListResponseSchema validation', () => {
@@ -282,6 +304,19 @@ describe('journalListResponseSchema validation', () => {
       has_more: false,
     });
     expect(parsed.items[0]?.tag).toBe('weekly_prompt');
+  });
+
+  it('accepts a hierarchical_reflection-tagged entry', () => {
+    // Regression: a hierarchical reflection (week/stage/component/tier/program)
+    // is stored as a journal row tagged ``hierarchical_reflection`` and appears
+    // in the same shelf list. The tag enum omitted it, so one such entry failed
+    // the whole page — the same defect the weekly_prompt case above records.
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, tag: 'hierarchical_reflection' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.tag).toBe('hierarchical_reflection');
   });
 
   it('accepts an unknown sender rather than failing the whole list', () => {
