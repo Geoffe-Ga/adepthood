@@ -77,7 +77,7 @@ pre-commit run <hook-id> --all-files  # Run a specific hook
 # Backend
 cd backend && pytest                # Run tests
 cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90
-cd backend && python -m uvicorn src.main:app --reload
+cd backend && PYTHONPATH=src python -m uvicorn main:app --reload
 
 # Frontend
 cd frontend && npm ci               # Install from lockfile (deterministic)

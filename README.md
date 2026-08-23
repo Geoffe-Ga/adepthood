@@ -62,11 +62,22 @@ npm install
 npx expo start
 ```
 
+To run the web build, pass a port the backend's CORS allowlist accepts:
+
+```bash
+npx expo start --web --port 8080
+```
+
+`DEV_ORIGINS` in `backend/src/main.py` allows `localhost:3000` and
+`localhost:8080` only. Expo's own default is 8081, so a bare `--web` is
+CORS-blocked on every request and the app reports itself offline rather than
+naming the real cause.
+
 ### Backend
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn src.main:app --reload
+PYTHONPATH=src uvicorn main:app --reload
 ```
 
 #### A local account
