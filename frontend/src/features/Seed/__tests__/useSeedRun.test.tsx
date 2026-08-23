@@ -19,11 +19,41 @@ function asset(name: string) {
   return { name, uri: `file:///cache/${name}`, size: 512, lastModified: 0 };
 }
 
+/** What `POST /corpus/import` answers an account that has a vault. */
 function vaultReply(status: string) {
   return Promise.resolve({
     ok: true,
     status: 202,
-    json: () => Promise.resolve({ status, vault_ref: null, tags: [], message: 'ok' }),
+    json: () =>
+      Promise.resolve({
+        destination: 'vault',
+        stored: status === 'accepted',
+        vault_status: status,
+        vault_ref: null,
+        tags: [],
+        corpus_status: null,
+        fragment_id: null,
+        message: 'ok',
+      }),
+  });
+}
+
+/** What it answers an account that has connected none. */
+function corpusReply(status: string) {
+  return Promise.resolve({
+    ok: true,
+    status: 202,
+    json: () =>
+      Promise.resolve({
+        destination: 'corpus',
+        stored: status === 'stored',
+        vault_status: null,
+        vault_ref: null,
+        tags: [],
+        corpus_status: status,
+        fragment_id: status === 'stored' ? 1 : null,
+        message: 'ok',
+      }),
   });
 }
 
@@ -171,7 +201,39 @@ describe('a multi-document run', () => {
     });
 
     expect(result.current.items.map((item) => item.name)).toEqual(['one.md', 'two.md']);
-    expect(result.current.tally).toEqual({ total: 2, ingested: 2, waiting: 0, refused: 0 });
+    expect(result.current.tally).toEqual({ total: 2, landed: 2, waiting: 0, refused: 0 });
+  });
+
+  test('lands a document in the corpus for an account that has no vault', async () => {
+    // The whole point of the import route: one request, and the server decides
+    // where it goes. This account never had a vault, so nothing here waits on
+    // one and the document is theirs to find in reflections.
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
+    mockFetch.mockReturnValue(corpusReply('stored'));
+    const { result } = renderHook(() => useSeedRun());
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(statuses(result.current.items)).toEqual(['in_corpus']);
+    expect(result.current.tally).toEqual({ total: 1, landed: 1, waiting: 0, refused: 0 });
+    expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');
+    expect(result.current.needsConsent).toBe(false);
+  });
+
+  test('raises the consent question only once the server has asked it', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
+    mockFetch.mockReturnValue(corpusReply('consent_required'));
+    const { result } = renderHook(() => useSeedRun());
+
+    expect(result.current.needsConsent).toBe(false);
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(statuses(result.current.items)).toEqual(['consent_required']);
+    expect(result.current.needsConsent).toBe(true);
   });
 
   test('reports itself idle once every document has settled', async () => {

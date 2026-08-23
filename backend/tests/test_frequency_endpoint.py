@@ -16,7 +16,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -30,6 +30,10 @@ from models.user_practice import UserPractice
 from schemas.frequency import BANNER_TEMPLATE, render_banner_text
 from seed_practices import STAGE_TO_PRESET_NAME, seed_practices
 from seed_stages import STAGE_DEFINITIONS, seed_stages
+
+# Two 21-day stages have closed by day 42, so day 50 sits inside stage 3.
+_DAYS_INTO_THE_THIRD_STAGE = 50
+_THIRD_STAGE = 3
 
 
 async def _signup(client: AsyncClient, username: str = "freq-user") -> tuple[dict[str, str], int]:
@@ -115,6 +119,39 @@ async def test_frequency_stage_1_no_selection_falls_back_to_preset(
         aspect="Agency",
         practice_name=STAGE_TO_PRESET_NAME[1],
     )
+
+
+@pytest.mark.asyncio
+async def test_frequency_follows_the_calendar_when_the_record_lags_behind_it(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The practice ramp is paced by the schedule, not by the stored number.
+
+    This user's record still says stage 1 because they have been away, but
+    the calendar opened stage 3 weeks ago. Resolving the banner off
+    ``current_stage`` would hold a returning user at a step-up the program
+    has already moved past.
+    """
+    await _seed_catalog(db_session)
+    headers, user_id = await _signup(async_client, "returner")
+    anchor = datetime.now(UTC) - timedelta(days=_DAYS_INTO_THE_THIRD_STAGE)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            stage_started_at=anchor,
+            program_started_at=anchor,
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get("/user-practices/current/frequency", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["stage_number"] == _THIRD_STAGE
+    assert body["practice_name"] == STAGE_TO_PRESET_NAME[_THIRD_STAGE]
 
 
 # -- Selected UserPractice ---------------------------------------------------

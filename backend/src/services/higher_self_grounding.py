@@ -66,6 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.frequencies import Frequency
+from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
 from models.journal_entry import JournalClassification, JournalEntry
 from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
@@ -113,6 +114,12 @@ class Grounding:
 async def _current_frequency(session: AsyncSession, user_id: int) -> Frequency | None:
     """The position on the ontology the reader currently stands at, if any.
 
+    Resolved through :func:`domain.stage_authority.open_through` rather than
+    off ``current_stage``: what the reflection speaks in is part of what the
+    program *offers*, which ``NORTH-STAR.md`` line 34 paces by the calendar, so
+    a reader whose record lags is still met at the position the schedule has
+    carried them to.
+
     ``None`` for an account with no progress row and for a stage whose colour
     names no frequency. Both are ordinary states rather than failures, and the
     store reads an absent bias as a retrieval that ranks on meaning and recency
@@ -121,7 +128,7 @@ async def _current_frequency(session: AsyncSession, user_id: int) -> Frequency |
     progress = await get_user_progress(session, user_id)
     if progress is None:
         return None
-    return await resolve_stage_frequency(session, progress.current_stage)
+    return await resolve_stage_frequency(session, open_through(progress))
 
 
 async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
