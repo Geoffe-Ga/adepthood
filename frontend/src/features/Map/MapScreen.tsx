@@ -1,5 +1,3 @@
-// frontend/features/Map/MapScreen.tsx
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -97,8 +95,8 @@ const FULL_PROGRESS = 1;
 //
 // One responsive row grid is the single source of vertical truth. Each stage is
 // a flex row [LeftCell | CenterCell | RightCell]; the three columns are siblings
-// in the same row, so they cannot drift the way the old content-driven flex
-// table + absolute-percentage center overlay did. The Map reads with no PNG.
+// in the same row, so a stage's text, glyph and label always share its baseline
+// however the copy wraps. The Map reads with no PNG.
 
 const LockGlyph = (): React.JSX.Element => (
   <View style={styles.lockRow}>
@@ -411,7 +409,7 @@ const StageCenterCell = ({
         <Text style={styles.completedBadgeText}>✓</Text>
       </View>
     ) : null}
-    {/* Connector to the stage below (replaces the old %-positioned line). */}
+    {/* Connector down to the stage below; stage 1 is the foot of the spiral. */}
     {display.stageNumber > 1 ? (
       <View style={styles.connector} testID={`stage-connection-${stage.stageNumber}`} />
     ) : null}
@@ -1422,7 +1420,7 @@ const useMapStageStore = () => ({
 const MapScreen = (): React.JSX.Element => {
   const { stages, loading, error, hasAttempted, storeCurrentStage, cycleNumber } =
     useMapStageStore();
-  // Prefer the date-driven stage; the server's count-based one is the fallback.
+  // Prefer the locally anchored calendar; the server's stage stands when there is no anchor.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();

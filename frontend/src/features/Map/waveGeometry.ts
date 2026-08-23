@@ -1,5 +1,3 @@
-// frontend/features/Map/waveGeometry.ts
-
 /**
  * Pure geometry for the Map center column's continuous sine-wave (a
  * struck-tuning-fork rising upward). Every helper works in unit space [0,1] or

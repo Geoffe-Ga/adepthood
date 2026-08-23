@@ -129,4 +129,3 @@ export const selectCycleNumber = (state: StageStoreState): number => state.cycle
 export const selectStagesLoading = (state: StageStoreState): boolean => state.loading;
 export const selectStagesError = (state: StageStoreState): string | null => state.error;
 export const selectStagesAttempted = (state: StageStoreState): boolean => state.hasAttempted;
-export const selectLoadGeneration = (state: StageStoreState): number => state.loadGeneration;

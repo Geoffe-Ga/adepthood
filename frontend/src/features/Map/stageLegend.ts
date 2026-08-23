@@ -1,5 +1,3 @@
-// frontend/features/Map/stageLegend.ts
-
 /**
  * Accessibility-label helpers for the Map surfaces. A grid node reads as its
  * persona, descriptor, and a wheel-of-wholeness balance suffix; a header-drawer

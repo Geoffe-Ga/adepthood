@@ -1,5 +1,3 @@
-// frontend/features/Map/WaveOverlay.tsx
-
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Path, Polygon } from 'react-native-svg';

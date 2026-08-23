@@ -71,8 +71,14 @@ describe('MapScreen — cold start and metadata edge cases', () => {
   it('shows the full-screen loader when no stages are cached yet', () => {
     mockMapState.loading = true;
     mockMapState.stages = [];
-    const tree = create(<MapScreen />);
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<MapScreen />);
+    });
     expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
+    // The loading state arms a real timer; leaving the tree mounted holds the
+    // Jest worker open long after the assertion is done.
+    act(() => tree.unmount());
   });
 
   it('holds the bare spinner for as long as the bounded wait runs', () => {
@@ -91,6 +97,7 @@ describe('MapScreen — cold start and metadata edge cases', () => {
 
     expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
     expect(tree.root.findAllByProps({ testID: 'map-loading-retry' })).toHaveLength(0);
+    act(() => tree.unmount());
     jest.useRealTimers();
   });
 
@@ -124,6 +131,7 @@ describe('MapScreen — cold start and metadata edge cases', () => {
     // Retrying puts the spinner back rather than leaving the dead end on screen.
     expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
     expect(tree.root.findAllByProps({ testID: 'map-loading-timeout' })).toHaveLength(0);
+    act(() => tree.unmount());
     jest.useRealTimers();
   });
 
