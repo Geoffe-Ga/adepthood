@@ -1,0 +1,92 @@
+name: Issue Evidence
+
+# Re-run the evidence open `agent-ready` issues cite, and comment on the ones
+# whose premise has expired.
+#
+# WHY THIS IS NOT A REGISTERED SCAN: `_claude-scan.yml` drives the
+# scan-issue-writer skill, whose job is to *file* issues, and it stands down
+# above `BACKLOG_MAX`. This job's output is backlog *reduction*, so gating it on
+# backlog size would silence it exactly when it is most needed — the same
+# reasoning recorded in the header of `prompts/audits/contract-drift-audit.md`,
+# which this job is the mechanical pre-pass for. It also costs no model tokens:
+# the whole judgement is a deterministic Python module.
+#
+# ADVISORY ONLY. Nothing gates on this workflow and it is not a required check.
+# A false "expired" must never be able to block a merge, and a bot that
+# reorganises the backlog on a heuristic is worse than the decay it treats — so
+# the token here can add a comment and nothing else.
+
+on:
+  schedule:
+    # Mondays 09:15 UTC, ahead of the week's grooming rather than after it.
+    - cron: "15 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Issue label to check."
+        required: false
+        default: "agent-ready"
+      comment:
+        description: "Post comments (false = dry run, printed to the summary)."
+        required: false
+        type: boolean
+        default: true
+
+# `issues: write` is for `gh issue comment` alone. The script never calls
+# `issue edit`, `issue close`, or any label mutation, and its offline suite
+# asserts that against a recorded argv log.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-evidence
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: Re-run cited evidence
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Re-run cited evidence
+        id: evidence
+        run: |
+          set -uo pipefail
+          LABEL="${{ github.event.inputs.label || 'agent-ready' }}"
+          COMMENT_FLAG="--comment"
+          if [ "${{ github.event.inputs.comment }}" = "false" ]; then
+            COMMENT_FLAG=""
+          fi
+          # $? is inspected explicitly: exit 1 means "a premise expired", which
+          # is the report doing its job, while exit 2 is a transport failure and
+          # must fail the run. `set -e` would conflate the two.
+          PYTHON=python3 scripts/ralph/issue-evidence.sh \
+            --label "$LABEL" $COMMENT_FLAG | tee "$RUNNER_TEMP/report.txt"
+          status=${PIPESTATUS[0]}
+          {
+            echo "## Issue evidence"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ge 2 ]; then
+            echo "::error::issue-evidence could not complete — transport failure, no verdict reached."
+            exit 1
+          fi
+          if [ "$status" -eq 1 ]; then
+            echo "::warning::At least one issue's cited evidence no longer reproduces. See the run summary."
+          fi
+          exit 0
