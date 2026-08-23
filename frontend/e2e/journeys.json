@@ -111,20 +111,15 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. Still uncovered because no spec does that yet.",
+    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. The wrapper spelled like it, course.stageProgress, addresses the course router's own /course/stages/{n}/progress instead. Still uncovered because no spec moves the anchor and reads yet.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
-      "routes": [
-        "GET /stages",
-        "GET /stages/program-calendar",
-        "GET /stages/wheel",
-        "GET /stages/{stage_number}/progress"
-      ],
+      "routes": ["GET /stages", "GET /stages/program-calendar", "GET /stages/wheel"],
       "tables": ["stageprogress", "coursestage"]
     },
     "status": "uncovered",
-    "issue": 2323
+    "issue": 2299
   },
   {
     "id": "depth.choose-rings",
@@ -140,7 +135,7 @@
   },
   {
     "id": "seed.upload-document",
-    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, now for one reason rather than two: per-user vault configuration (#2233) lets a spec connect a vault for the account it just created, but the lane has no vault to connect to, so every e2e import takes the local-fallback path. A spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. Covering this needs a stand-in vault the lane can point an account at. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
+    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, and the count of reasons went from two to one and back to two. Per-user vault configuration (#2233) retired the environment binding, so a spec can now connect a vault for the account it just created; what stands is that the lane has no vault to connect to, and that the app has no way to connect one. PUT /vault/connection is served and no wrapper in src/api/index.ts and no screen addresses it, so nobody using the shipped app can reach the state this journey opens in, and a spec would have to hand-roll the connection over HTTP the product cannot make. Covering it therefore needs a stand-in vault the lane can point an account at AND a client half for the connecting, not lane infrastructure alone. Meanwhile every e2e import takes the local-fallback path, and a spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
       "client": ["corpus"],
