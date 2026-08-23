@@ -13,6 +13,13 @@ import { join } from 'node:path';
  * journey says it crosses — screen, client wrapper, route, table — must still
  * be there under that name.
  *
+ * A route clears two different checks, because they answer different questions.
+ * The exported schema says the server would answer it; the API module's own call
+ * sites say the app can ask. A route that passes the first and fails the second
+ * is served and unreachable, and a journey naming one describes a seam that does
+ * not exist — a spec written to it would have to hand-roll the request itself,
+ * and would prove only that the server works.
+ *
  * Honest gaps are first-class. A journey may declare `status: "uncovered"` with
  * a linked issue; the audit counts it and reports it, and does not fail on it.
  * A gate that goes red for accurate bookkeeping is a gate that gets deleted.
@@ -64,6 +71,25 @@ const DISABLING = new Set(['skip', 'todo']);
  */
 const NARROWING = new Set(['only']);
 
+/**
+ * Where the API module spells a call: `request<T>(` and the argument list that
+ * follows it. The declaration of `request` itself matches too, and is dropped
+ * downstream by the same rule that drops any dynamically built path -- its first
+ * argument is a parameter name, not a literal.
+ */
+const REQUEST_CALL = /request<[^(]*?>\(/g;
+
+/** A path segment filled in at call time, on either side of the comparison. */
+const PARAMETER = '*';
+
+/** `{entry_id}` and friends, as the OpenAPI document spells a path parameter. */
+const ROUTE_PARAMETER = /\{[^}]*\}/g;
+
+/** The method one call declares. Absent means GET, as `request` itself defaults. */
+const METHOD_OPTION = /method:\s*['"]([A-Z]+)['"]/;
+
+const DEFAULT_METHOD = 'GET';
+
 const EXPORTED_SYMBOL = /^export\s+(?:const|function|async function|class)\s+(\w+)/gm;
 const TABLE_CLASS = /^class\s+(\w+)\([^)]*table\s*=\s*True/gm;
 const EXPLICIT_TABLE_NAME = /^\s*__tablename__\s*=\s*"(\w+)"/gm;
@@ -94,6 +120,12 @@ export interface LedgerEnvironment {
   readonly clientSymbols: ReadonlySet<string>;
   /** `"POST /habits/"`-shaped keys drawn from the exported OpenAPI schema. */
   readonly routes: ReadonlySet<string>;
+  /**
+   * `"GET /habits/*"`-shaped keys drawn from the API module's own call sites:
+   * the requests the production client can actually issue, with each
+   * interpolated path segment written as `*`.
+   */
+  readonly clientRoutes: ReadonlySet<string>;
   readonly tables: ReadonlySet<string>;
 }
 
@@ -381,6 +413,149 @@ function coveringSpecProblem(entry: JourneyEntry, environment: LedgerEnvironment
   return `${entry.id} -> ${path} has no enabled test${because}.`;
 }
 
+/** Offset just past the `}` closing the `${` substitution opening at `brace`. */
+function substitutionEnd(text: string, brace: number): number {
+  let depth = 0;
+  for (let index = brace; index < text.length; index += 1) {
+    if (text[index] === '{') {
+      depth += 1;
+    } else if (text[index] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+  return text.length;
+}
+
+/** Offset of the `)` closing the argument list opening at `paren`. */
+function argumentListEnd(text: string, paren: number): number {
+  let depth = 0;
+  for (let index = paren; index < text.length; index += 1) {
+    if (text[index] === '(') {
+      depth += 1;
+    } else if (text[index] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return text.length;
+}
+
+/** One step through a path literal: the text it contributes, and where reading resumes. */
+interface PathStep {
+  readonly text: string;
+  readonly next: number;
+}
+
+/**
+ * Read one character of a path literal, or one whole `${...}` substitution.
+ *
+ * A substitution is a segment the caller fills in, so it contributes a
+ * parameter rather than its own source text, and reading resumes past the brace
+ * that closes it -- which is what carries the reader over a nested template.
+ */
+function pathStep(args: string, index: number, quote: string): PathStep {
+  const char = args[index];
+  if (char === '\\') {
+    return { text: args[index + 1] ?? '', next: index + 2 };
+  }
+  if (quote === '`' && char === '$' && args[index + 1] === '{') {
+    return { text: PARAMETER, next: substitutionEnd(args, index + 1) };
+  }
+  return { text: char ?? '', next: index + 1 };
+}
+
+/**
+ * The route a call's first argument addresses, or `null` when it is not written
+ * as a literal path.
+ *
+ * Read character by character rather than by regex because the paths are
+ * template literals whose substitutions nest -- `journal.list` interpolates a
+ * template inside its own -- and a pattern that stopped at the first inner
+ * backtick would report the whole journal collection unreachable. Everything
+ * from a literal `?` on is the query string, which is not part of the route the
+ * server matched on.
+ */
+function pathLiteral(argumentList: string): string | null {
+  const args = argumentList.trimStart();
+  const quote = args[0];
+  if (quote !== "'" && quote !== '`') {
+    return null;
+  }
+  let path = '';
+  let index = 1;
+  while (index < args.length) {
+    const char = args[index];
+    // The closing delimiter ends the literal, and a `?` ends the route: what
+    // follows it is the query string, which the server did not match on.
+    if (char === quote || char === '?') {
+      return path.startsWith('/') ? path : null;
+    }
+    const step = pathStep(args, index, quote);
+    path += step.text;
+    index = step.next;
+  }
+  return null;
+}
+
+/**
+ * Every request the API module can issue, as `"GET /habits/*"`-shaped keys.
+ *
+ * Exported so it can be read against source text directly. A reader that
+ * matched nothing and a reader that matched everything both leave the committed
+ * ledger green, and only a fixture can tell them apart.
+ */
+export function clientRoutesFromSource(source: string): ReadonlySet<string> {
+  const issued = new Set<string>();
+  for (const call of source.matchAll(REQUEST_CALL)) {
+    const paren = (call.index ?? 0) + call[0].length - 1;
+    const args = source.slice(paren + 1, argumentListEnd(source, paren));
+    const path = pathLiteral(args);
+    if (path !== null) {
+      issued.add(`${METHOD_OPTION.exec(args)?.[1] ?? DEFAULT_METHOD} ${path}`);
+    }
+  }
+  return issued;
+}
+
+/** Whether two paths of the same shape address each other, `*` matching any segment. */
+function addressesSamePath(declared: readonly string[], issued: readonly string[]): boolean {
+  return (
+    declared.length === issued.length &&
+    declared.every(
+      (segment, index) =>
+        segment === issued[index] || segment === PARAMETER || issued[index] === PARAMETER,
+    )
+  );
+}
+
+/** Split `"GET /habits/{habit_id}"` into its method and its `*`-normalized segments. */
+function methodAndSegments(route: string): [string, string[]] {
+  const space = route.indexOf(' ');
+  const path = route.slice(space + 1).replace(ROUTE_PARAMETER, PARAMETER);
+  return [route.slice(0, space), path.split('/')];
+}
+
+/**
+ * Whether some call site in the API module can produce this request.
+ *
+ * The question the schema check cannot ask. `backend/openapi.json` says what the
+ * server would answer; it says nothing about whether the app would ever call it,
+ * so a journey could name a live route no screen can reach and stay green while
+ * the seam it claims to protect does not exist.
+ */
+function clientCanIssue(route: string, environment: LedgerEnvironment): boolean {
+  const [method, declared] = methodAndSegments(route);
+  return [...environment.clientRoutes].some((issued) => {
+    const [issuedMethod, segments] = methodAndSegments(issued);
+    return issuedMethod === method && addressesSamePath(declared, segments);
+  });
+}
+
 function membershipProblems(
   values: readonly string[],
   known: ReadonlySet<string>,
@@ -406,6 +581,13 @@ function crossingSurfaceProblems(entry: JourneyEntry, environment: LedgerEnviron
       environment.routes,
       (route) => `${entry.id} names route "${route}", which the exported schema does not serve.`,
     ),
+    ...routes
+      .filter((route) => !clientCanIssue(route, environment))
+      .map(
+        (route) =>
+          `${entry.id} names route "${route}", which no call site in ${API_MODULE} can issue; ` +
+          `a journey crosses a route the app reaches, not one the server merely serves.`,
+      ),
     ...membershipProblems(
       tables,
       environment.tables,
@@ -498,6 +680,7 @@ export function realLedgerEnvironment(repoRoot: string): LedgerEnvironment {
     readFile: (path) => readFileSync(absolute(path), 'utf8'),
     clientSymbols: exportedSymbols(absolute(API_MODULE)),
     routes: openApiRoutes(absolute(OPENAPI_SCHEMA)),
+    clientRoutes: clientRoutesFromSource(readFileSync(absolute(API_MODULE), 'utf8')),
     tables: declaredTables(absolute(MODELS_DIR)),
   };
 }
