@@ -15,7 +15,6 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
-from dependencies.document_payload import guard_document_payload
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -73,12 +72,6 @@ from schemas.journal import (
     JournalMessageCreate,
     JournalMessageResponse,
 )
-from schemas.journal_upload import (
-    UPLOAD_MESSAGES,
-    UPLOAD_RATE_LIMIT,
-    UploadDocumentRequest,
-    UploadDocumentResponse,
-)
 from schemas.marginalia import (
     CareResourceResponse,
     CareResponse,
@@ -96,7 +89,6 @@ from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
 from services.creek_vault_reflect import select_reflection_llm
-from services.creek_vault_upload import UploadedDocument, store_upload
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -432,67 +424,6 @@ async def _encrypted_search_page(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in page],
         total=len(matched),
         has_more=page_has_more(filters.offset, filters.limit, len(matched)),
-    )
-
-
-@router.post(
-    "/upload",
-    response_model=UploadDocumentResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-@limiter.limit(UPLOAD_RATE_LIMIT)
-async def upload_document(
-    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    payload: UploadDocumentRequest,
-    current_user: Annotated[int, Depends(get_current_user)],
-    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
-) -> UploadDocumentResponse:
-    """Forward one user document to the Creek Vault for its own ingestors to parse.
-
-    202 rather than 201, and 202 for *every* vault outcome including the
-    degraded ones. The status code says adepthood accepted the request and acted
-    on it; what became of the document is in the body, where a client can render
-    a specific, actionable sentence instead of inferring one from an error code.
-    A vault that is missing, unreachable, or unable to take files is a normal
-    condition of an optional integration, not a server fault, so none of them is
-    a 5xx.
-
-    Deliberately stateless: no row is written, no upload table exists, and
-    adepthood keeps no copy of the document. The vault's stored fragment is the
-    only record, addressed by an id derived from the upload's identity so a
-    re-send edits it in place. That also means an upload has no local fallback --
-    if the vault will not take it, it went nowhere, and the response says so
-    plainly rather than implying a success.
-
-    The size guard runs before anything else touches the payload. A document is
-    forwarded at exactly the tier the uploader chose and never at a wider one --
-    which is why an ``intimate`` document is forwarded nowhere at all: Creek's
-    published upload request cannot express that tier, so there is no honest
-    request to send and :mod:`services.creek_vault_upload` withholds it before
-    the vault is contacted. The response says so plainly rather than reporting a
-    storage that did not happen.
-    """
-    # The decoded bytes are discarded: this path forwards the *encoded* document
-    # to the vault and parses nothing. The ceiling itself is stated once, in
-    # ``guard_document_payload``, which the corpus import surface also calls --
-    # an upload ceiling enforced in two places is one that can come to disagree
-    # with itself.
-    guard_document_payload(payload.content_base64)
-    outcome = await store_upload(
-        vault_client,
-        UploadedDocument(
-            owner_user_id=current_user,
-            filename=payload.filename,
-            content_base64=payload.content_base64,
-            classification=payload.classification,
-            created_at=datetime.now(UTC),
-        ),
-    )
-    return UploadDocumentResponse(
-        status=outcome.status,
-        vault_ref=outcome.vault_ref,
-        tags=list(outcome.tags),
-        message=UPLOAD_MESSAGES[outcome.status],
     )
 
 

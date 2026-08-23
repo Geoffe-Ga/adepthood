@@ -6248,46 +6248,6 @@
         "title": "UploadDocumentRequest",
         "type": "object"
       },
-      "UploadDocumentResponse": {
-        "description": "What became of one uploaded document, in the vault's own terms.\n\n``status`` is the whole answer: a client renders from it and never has to\ninfer an outcome from the presence or absence of another field.\n``vault_ref`` is the vault's handle on the stored fragment, present only when\nthe document was actually accepted. ``tags`` are the classification the\nvault's ingest pipeline assigned -- empty until the vault returns them, which\nis the expected answer today rather than a failure. ``message`` is the\nself-serve sentence shown to the person who uploaded it.",
-        "properties": {
-          "message": {
-            "description": "Self-serve explanation for the person who uploaded it.",
-            "title": "Message",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/VaultUploadStatus",
-            "description": "What the vault did with the document."
-          },
-          "tags": {
-            "description": "Tags the vault's ingest pipeline assigned.",
-            "items": {
-              "type": "string"
-            },
-            "title": "Tags",
-            "type": "array"
-          },
-          "vault_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The vault's fragment handle, present only when accepted.",
-            "title": "Vault Ref"
-          }
-        },
-        "required": [
-          "status",
-          "message"
-        ],
-        "title": "UploadDocumentResponse",
-        "type": "object"
-      },
       "UsageResponse": {
         "description": "Monthly BotMason usage snapshot for the authenticated user.\n\n``monthly_messages_remaining`` is derived from ``monthly_cap`` and\n``monthly_messages_used``; it is clamped at zero so the client never has\nto defend against negative values.",
         "properties": {
@@ -7907,7 +7867,7 @@
     },
     "/corpus/consent/{source}": {
       "put": {
-        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller: this is the whole transaction,\nand on a revocation it is the purge as well as the event. Leaving either\nuncommitted would be a permission withdrawn on screen and not in the\ndatabase.",
+        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller: this is the whole transaction,\nand a decision is never only the event. On a revocation it is the purge; on\na grant it is the sweep back over the writing the account already had,\nbounded and reported by :mod:`services.corpus_backfill`. Leaving any of it\nuncommitted would be a permission changed on screen and not in the\ndatabase.\n\nRate-limited more tightly than ``POST /import`` despite carrying the\nsmallest body in the API: a grant is the most expensive request here, since\nthe sweep it authorises costs a provider call per entry it reaches, where\nan import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.\n\nThe response is still the *state*. What the decision reached is a fact\nabout the event, and it goes where events are kept -- the audit row and the\nlog -- rather than onto a shape that also answers ``GET``.",
         "operationId": "put_corpus_consent_corpus_consent__source__put",
         "parameters": [
           {
@@ -7975,7 +7935,7 @@
     },
     "/corpus/import": {
       "post": {
-        "description": "Import one document into whichever corpus this account has.\n\n202 for every outcome, including the ones that stored nothing, for the\nreason ``POST /journal/upload`` answers 202: adepthood accepted the request\nand acted on it, and what became of the document is in the body where a\nclient can render a specific sentence rather than infer one from a status\ncode. A vault that is missing, unreachable or unable to take files is a\nnormal condition of an optional integration, and so is an account that has\nnot yet agreed to ontologize uploads.\n\nBounded and synchronous, and it stays that way honestly: one request is one\ndocument, one document is one fragment, and one fragment is one\nclassification call. Nothing here needs backgrounding because nothing here\nfans out -- an import that *did* fan out, over a whole-account archive,\nwould need a queue and observable progress, which is why\n:mod:`domain.document_text` refuses a document too long for one fragment\nrather than quietly splitting it into a job nobody can watch.\n\nThe commit is here rather than in the service because this is the whole\ntransaction: the fragment, and nothing else, land together or not at all.",
+        "description": "Import one document into whichever corpus this account has.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take files is a\nnormal condition of an optional integration, and so is an account that has\nnot yet agreed to ontologize uploads.\n\nBounded and synchronous, and it stays that way honestly: one request is one\ndocument, one document is one fragment, and one fragment is one\nclassification call. Nothing here needs backgrounding because nothing here\nfans out -- an import that *did* fan out, over a whole-account archive,\nwould need a queue and observable progress, which is why\n:mod:`domain.document_text` refuses a document too long for one fragment\nrather than quietly splitting it into a job nobody can watch.\n\nThe commit is here rather than in the service because this is the whole\ntransaction: the fragment, and nothing else, land together or not at all.",
         "operationId": "import_corpus_document_corpus_import_post",
         "parameters": [
           {
@@ -10274,66 +10234,6 @@
           }
         },
         "summary": "Transcribe Page",
-        "tags": [
-          "journal"
-        ]
-      }
-    },
-    "/journal/upload": {
-      "post": {
-        "description": "Forward one user document to the Creek Vault for its own ingestors to parse.\n\n202 rather than 201, and 202 for *every* vault outcome including the\ndegraded ones. The status code says adepthood accepted the request and acted\non it; what became of the document is in the body, where a client can render\na specific, actionable sentence instead of inferring one from an error code.\nA vault that is missing, unreachable, or unable to take files is a normal\ncondition of an optional integration, not a server fault, so none of them is\na 5xx.\n\nDeliberately stateless: no row is written, no upload table exists, and\nadepthood keeps no copy of the document. The vault's stored fragment is the\nonly record, addressed by an id derived from the upload's identity so a\nre-send edits it in place. That also means an upload has no local fallback --\nif the vault will not take it, it went nowhere, and the response says so\nplainly rather than implying a success.\n\nThe size guard runs before anything else touches the payload. A document is\nforwarded at exactly the tier the uploader chose and never at a wider one --\nwhich is why an ``intimate`` document is forwarded nowhere at all: Creek's\npublished upload request cannot express that tier, so there is no honest\nrequest to send and :mod:`services.creek_vault_upload` withholds it before\nthe vault is contacted. The response says so plainly rather than reporting a\nstorage that did not happen.",
-        "operationId": "upload_document_journal_upload_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UploadDocumentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UploadDocumentResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upload Document",
         "tags": [
           "journal"
         ]

@@ -181,7 +181,7 @@ stored the way an entry of yours would be — and only if the switch for
 documents is on. An Intimate document is refused by the corpus exactly as
 an Intimate entry is, and reaches no language model on the way.
 
-Turning it on has two consequences worth knowing before you do.
+Turning it on has three consequences worth knowing before you do.
 
 The first is that **each entry is sent once to the language-model provider
 to be sorted** — one call per entry you write, and one more if you go back
@@ -190,7 +190,16 @@ with which of the ten frequencies it speaks in; the answer, and your text,
 are then stored in the corpus. Nothing else in Adepthood does this, so with
 the switch off no entry of yours is ever sent anywhere at save time.
 
-The second is that **turning it back off deletes what it collected.** The
+The second is that **it reaches back over what you have already written.**
+The switch is permission for your journal, not only for the part of it you
+have not written yet, so entries that were already there are sorted on the
+same terms as a new one — one call each, and never an Intimate entry, and
+never an entry you have deleted. This happens while you wait, and it is
+bounded: a long journal is sorted as far as one request can reasonably go,
+and whatever is past that is simply left unsorted rather than sent
+somewhere later.
+
+The third is that **turning it back off deletes what it collected.** The
 corpus copies of your writing are removed, not merely hidden, and the
 entries themselves are untouched in your journal. Your decisions about this
 are kept as a dated record — which kind of material, what you decided, when
@@ -213,7 +222,9 @@ context — passages chosen out of the corpus of your own writing, or your
 recent entries while that corpus is empty — the photograph of a
 handwritten page when you ask for it to be transcribed, and, **only if you
 have turned the corpus on**, the body of each non-Intimate entry once as it
-is saved, so that it can be sorted into the ten frequencies — and the text
+is saved — and once for each non-Intimate entry that was already in your
+journal on the day you turned it on — so that it can be sorted into the ten
+frequencies, and the text
 of a document you bring in, once, on the same terms, when that document is
 going to your own corpus here rather than to a vault. It never receives an
 Intimate entry, and it is not sent an Intimate document that is being

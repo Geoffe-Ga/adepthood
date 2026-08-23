@@ -22,6 +22,16 @@ than ADR 0005's open question about retention, which asks how long a fragment
 kept under a *live* consent may live: that stays open, and nothing here
 answers it.
 
+**A grant reaches backwards too, and not from here.** Permission that only
+changes the future would leave somebody who has been journaling for weeks with
+a corpus of what they wrote after the switch and a recency window for
+everything before it. :mod:`services.corpus_backfill` is what closes that, and
+it lives outside this module because it goes through the ordinary corpus writer
+and the writer reads its consent from here — so the sweep cannot be invoked
+from inside the state it depends on. :func:`set_consent` therefore returns the
+event it appended as well as the state, and the caller that owns the
+transaction runs the sweep and records its count on that event.
+
 **A decision is recorded once.** A client that re-sends the answer it already
 gave has not made a decision, so no row is appended. The log holds decisions,
 not requests, and a retry storm must not be able to make an account look as
@@ -69,6 +79,22 @@ class ConsentState:
     source: CorpusSource
     granted: bool
     decided_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ConsentChange:
+    """What one call to :func:`set_consent` produced.
+
+    ``event`` is the row this call appended, and it is ``None`` when the client
+    re-sent an answer the account had already given — the log holds decisions,
+    not requests, so a repeat appends nothing to attach a count to. A caller
+    with work to attribute to *this* decision writes the count onto ``event``
+    before the commit; a caller looking at ``None`` is looking at a request
+    that decided nothing.
+    """
+
+    state: ConsentState
+    event: CorpusConsentEvent | None
 
 
 async def _newest_event(
@@ -124,18 +150,23 @@ async def load_every_consent(session: AsyncSession, *, user_id: int) -> list[Con
 
 async def set_consent(
     session: AsyncSession, *, user_id: int, source: CorpusSource, granted: bool
-) -> ConsentState:
-    """Record ``user_id``'s decision about ``source`` and return the new state.
+) -> ConsentChange:
+    """Record ``user_id``'s decision about ``source`` and return what it produced.
 
-    A decision that repeats the current state appends nothing and returns what
-    was already there. A revocation purges that source's fragments *before* the
-    event is appended, so the count the row carries is the count that actually
-    went; the caller owns the commit, so the purge and its receipt land
-    together or not at all.
+    A decision that repeats the current state appends nothing and reports the
+    state that was already there, with no event to attribute anything to. A
+    revocation purges that source's fragments *before* the event is appended,
+    so the count the row carries is the count that actually went; the caller
+    owns the commit, so the purge and its receipt land together or not at all.
+
+    A grant's own reach runs *after* this returns rather than inside it: the
+    sweep goes through the corpus writer, and the writer reads the consent this
+    function has just appended, so the event has to exist and be flushed before
+    the first fragment can be written. See :mod:`services.corpus_backfill`.
     """
     current = await load_consent(session, user_id=user_id, source=source)
     if current.granted == granted:
-        return current
+        return ConsentChange(state=current, event=None)
     removed = (
         _NOTHING_REMOVED
         if granted
@@ -149,4 +180,4 @@ async def set_consent(
     )
     session.add(event)
     await session.flush()
-    return _state_of(source, event)
+    return ConsentChange(state=_state_of(source, event), event=event)

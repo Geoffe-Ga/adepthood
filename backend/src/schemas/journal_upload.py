@@ -1,4 +1,11 @@
-"""Request/response DTOs for handing one user document to the Creek Vault.
+"""The request DTO for one user document, and what each outcome tells them.
+
+Named for the surface these shapes were written for, ``POST /journal/upload``,
+which has since been retired: ``POST /corpus/import`` reuses the request
+verbatim and routes it per account -- to the vault when the account has one, to
+its own ontologized corpus when it has not -- so the vault-only route it grew
+out of had nothing left that it alone could do. The vocabulary stayed because
+it is the vault's, not the route's.
 
 The transport is deliberately **base64-in-JSON**, exactly as the page-capture
 flow moves image bytes, and deliberately *not* the form-encoded file transport
@@ -8,10 +15,12 @@ carries no such surface anywhere, so an endpoint that reached for one would
 break a privacy guarantee the repository enforces by grep. Document bytes stay
 in request-scoped memory and never touch disk.
 
-Nothing on either DTO is persisted locally. The document travels through
-adepthood to the vault and adepthood keeps no copy: there is no upload table, no
-spool, and no row that outlives the request. What comes back is the vault's own
-outcome, which is the only record either side keeps.
+Nothing on this DTO is persisted locally when the document goes to a vault.
+It travels through adepthood and adepthood keeps no copy: there is no upload
+table, no spool, and no row that outlives the request. What comes back is the
+vault's own outcome, which is the only record either side keeps. An account
+with no vault is the other half of that decision and is
+:mod:`services.corpus_import`'s subject, not this module's.
 """
 
 from __future__ import annotations
@@ -57,8 +66,8 @@ def decode_document(content_base64: str) -> bytes:
     that slipped past the first by rounding still cannot exceed it.
 
     Lives here, beside the ceiling it enforces, and raises plain exceptions
-    rather than :class:`fastapi.HTTPException`: two surfaces accept a document
-    -- the vault upload and the corpus import -- and a ceiling enforced twice
+    rather than :class:`fastapi.HTTPException`, so the ceiling is stated once
+    however many surfaces come to accept a document -- a ceiling enforced twice
     is a ceiling that can come to disagree with itself.
     :func:`dependencies.document_payload.guard_document_payload` is the single
     place these become HTTP answers.
@@ -169,28 +178,6 @@ class UploadDocumentRequest(BaseModel):
             message = "filename must be a single plain name without path separators"
             raise ValueError(message)
         return value
-
-
-class UploadDocumentResponse(BaseModel):
-    """What became of one uploaded document, in the vault's own terms.
-
-    ``status`` is the whole answer: a client renders from it and never has to
-    infer an outcome from the presence or absence of another field.
-    ``vault_ref`` is the vault's handle on the stored fragment, present only when
-    the document was actually accepted. ``tags`` are the classification the
-    vault's ingest pipeline assigned -- empty until the vault returns them, which
-    is the expected answer today rather than a failure. ``message`` is the
-    self-serve sentence shown to the person who uploaded it.
-    """
-
-    status: VaultUploadStatus = Field(description="What the vault did with the document.")
-    vault_ref: str | None = Field(
-        default=None, description="The vault's fragment handle, present only when accepted."
-    )
-    tags: list[str] = Field(
-        default_factory=list, description="Tags the vault's ingest pipeline assigned."
-    )
-    message: str = Field(description="Self-serve explanation for the person who uploaded it.")
 
 
 # What each upload outcome tells the person who sent the document. Every line
