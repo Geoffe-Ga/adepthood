@@ -46,8 +46,22 @@ const mockStagesList = jest.fn<(...a: unknown[]) => Promise<Stage[]>>();
 const mockStageContent = jest.fn<(...a: unknown[]) => Promise<ContentItem[]>>();
 const mockStageProgress = jest.fn<(...a: unknown[]) => Promise<CourseProgress>>();
 
+// GET /stages/program-calendar — the server's one answer to which stage this
+// person is in; the screen reads it instead of counting completions.
+const mockProgramCalendar = jest.fn(() =>
+  Promise.resolve({
+    program_started_at: null as string | null,
+    calendar_stage: 1,
+    calendar_week: 1,
+    current_stage: 1,
+    cycle_number: 1,
+  }),
+);
 jest.mock('../../../api', () => ({
-  stages: { listAll: (...a: unknown[]) => mockStagesList(...a) },
+  stages: {
+    listAll: (...a: unknown[]) => mockStagesList(...a),
+    programCalendar: () => mockProgramCalendar(),
+  },
   course: {
     stageContentAll: (...a: unknown[]) => mockStageContent(...a),
     stageProgress: (...a: unknown[]) => mockStageProgress(...a),

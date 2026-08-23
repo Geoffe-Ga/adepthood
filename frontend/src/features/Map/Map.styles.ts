@@ -1,5 +1,3 @@
-// frontend/features/Map/Map.styles.ts
-
 import { StyleSheet } from 'react-native';
 
 import {
@@ -267,8 +265,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textAlign: CENTER,
   },
-  // Thin connector between a stage and the one below it (replaces the old
-  // percentage-positioned connection line).
+  // Thin connector between a stage and the one below it.
   connector: {
     width: 2,
     height: spacing(1),
@@ -472,7 +469,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // One-sentence progression read (replaces the disparate count list).
+  // One-sentence progression read.
   progressionSentence: {
     fontFamily: editorialType.serif,
     fontSize: 15,

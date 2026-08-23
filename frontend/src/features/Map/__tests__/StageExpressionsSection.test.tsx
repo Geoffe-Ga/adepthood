@@ -4,8 +4,8 @@
 import React from 'react';
 import { create } from 'react-test-renderer';
 
+import type { StageManifestation } from '../../../api';
 import { StageExpressionsSection } from '../StageExpressionsSection';
-import type { StageManifestation } from '../StageExpressionsSection';
 
 import { ranksOrShames } from './copyIntentRule';
 

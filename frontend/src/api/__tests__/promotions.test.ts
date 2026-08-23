@@ -32,6 +32,7 @@ function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
     anchor_end: 19,
     anchor_text: 'went for a run to',
     pending: true,
+    stale: false,
     ...overrides,
   };
 }

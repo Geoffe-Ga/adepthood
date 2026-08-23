@@ -9,13 +9,12 @@ import {
   labelCorner,
   MAP_ROWS,
   MAP_TITLE_LINES,
-  RIGHT_LABEL_GLYPH_EM_WIDTH,
+  MIXED_CASE_GLYPH_EM_WIDTH,
   RIGHT_LABEL_MAX_FONT_SIZE,
   RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
   STAGE_LINE_MAX_FONT_SIZE,
   STAGE_PERSONA_MAX_FONT_SIZE,
-  STAGE_TEXT_GLYPH_EM_WIDTH,
   STAGE_TEXT_MIN_FONT_SIZE,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
@@ -278,7 +277,7 @@ describe('fitRightLabel', () => {
   // Same conservative advance-width idiom fittedTitleFontSize's own tests use,
   // scoped to the right label's own glyph budget.
   const estimatedLineWidth = (line: string, fontSize: number): number =>
-    line.length * fontSize * RIGHT_LABEL_GLYPH_EM_WIDTH;
+    line.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH;
 
   it('renders the full label on one un-hyphenated line at the ceiling before layout reports a width', () => {
     const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, 0);
@@ -333,14 +332,14 @@ describe('fitStageText', () => {
   // Same conservative advance-width idiom the title / right-label fits use,
   // scoped to the left-column stage text and arrow label glyph budget.
   const estimatedWidth = (text: string, fontSize: number): number =>
-    text.length * fontSize * STAGE_TEXT_GLYPH_EM_WIDTH;
+    text.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH;
 
   it('pins the ceilings to the legacy fixed sizes and the shared floor / glyph budget', () => {
     expect(STAGE_PERSONA_MAX_FONT_SIZE).toBe(14);
     expect(STAGE_LINE_MAX_FONT_SIZE).toBe(12);
     expect(ARROW_LABEL_MAX_FONT_SIZE).toBe(12);
     expect(STAGE_TEXT_MIN_FONT_SIZE).toBe(9);
-    expect(STAGE_TEXT_GLYPH_EM_WIDTH).toBe(0.62);
+    expect(MIXED_CASE_GLYPH_EM_WIDTH).toBe(0.62);
   });
 
   it('renders at the given ceiling before layout reports a width', () => {
