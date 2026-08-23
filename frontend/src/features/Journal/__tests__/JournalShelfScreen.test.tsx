@@ -540,10 +540,12 @@ describe('JournalShelfScreen', () => {
     expect(await findByTestId('bottom-fade')).toBeTruthy();
   });
 
-  it('shows "Journal" as the header title and drops "Your shelf"', async () => {
-    const { findByTestId, getByText, queryByText } = render(<JournalShelfScreen />);
+  it('names the screen once — in the tab bar and the hero, not a third time in a display title', async () => {
+    const { findByTestId, queryByText } = render(<JournalShelfScreen />);
     await findByTestId('journal-hero');
-    expect(getByText('Journal')).toBeTruthy();
+    // "New entry" keeps its place; the display-scale title above it is gone.
+    expect(await findByTestId('journal-new-entry')).toBeTruthy();
+    expect(queryByText('Journal')).toBeNull();
     expect(queryByText('Your shelf')).toBeNull();
   });
 
@@ -559,20 +561,20 @@ describe('JournalShelfScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('Map');
   });
 
-  it('stacks Return above invitations, after the stat tiles and before the header', async () => {
+  it('stacks Return above invitations, after the stat tiles and before the action row', async () => {
     const { findByTestId, toJSON } = render(<JournalShelfScreen />);
     await findByTestId('stat-tile-row-stub');
     const order = flattenOrder(toJSON());
     const statIndex = order.indexOf('#stat-tile-row-stub');
     const returnIndex = order.indexOf('#return-stack-stub');
     const invitationIndex = order.indexOf('#invitation-stack-stub');
-    const headerIndex = order.indexOf('Journal');
+    const headerIndex = order.indexOf('#journal-new-entry');
     const tipIndex = order.indexOf('#morning-pages-tip-stub');
     expect(statIndex).toBeGreaterThan(-1);
     expect(returnIndex).toBeGreaterThan(statIndex);
     expect(invitationIndex).toBeGreaterThan(returnIndex);
     expect(headerIndex).toBeGreaterThan(invitationIndex);
-    // The morning-pages tip sits in the shelf's top matter, below the header.
+    // The morning-pages tip sits in the shelf's top matter, below the action row.
     expect(tipIndex).toBeGreaterThan(headerIndex);
   });
 });

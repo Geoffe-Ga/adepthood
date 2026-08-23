@@ -12,8 +12,18 @@
 #                         them). Empty (default) = no required label; any open
 #                         issue is a candidate.
 #   RALPH_EXCLUDE_LABELS  Space-separated labels that DISQUALIFY an issue.
-#                         Default excludes housekeeping / deferred / in-flight
-#                         markers. Override to taste.
+#                         REPLACES the default list below — it does not add to
+#                         it. Setting it to one label silently re-admits `epic`,
+#                         `blocked`, `wontfix` and the rest, which is a trap; to
+#                         ADD a label, use RALPH_EXTRA_EXCLUDE_LABELS instead.
+#   RALPH_EXTRA_EXCLUDE_LABELS
+#                         Space-separated labels APPENDED to whatever
+#                         RALPH_EXCLUDE_LABELS resolves to. This is the safe way
+#                         to exclude one more thing, and exists so nobody has to
+#                         restate nine defaults to add a tenth.
+#   RALPH_BRIDGE_LABEL    Label marking a Dependabot bridge issue, whose durable
+#                         `<!-- dependabot-pr:N -->` marker the in-flight scan
+#                         honors. Default: "dependencies".
 #   RALPH_SOLO_LABEL      Label marking an issue that must run ALONE (never in
 #                         parallel with any other worker). Default: "solo".
 #   RALPH_PARALLEL_LABEL  Label that overrides the same-epic guard so two issues
@@ -32,8 +42,9 @@
 # priority-low (see the tiering block below — both label vocabularies are honored).
 #
 # Parallel awareness (see scripts/ralph/FLEET.md):
-#   Issues already being worked — either an open PR (`Closes|Fixes|Resolves #N`)
-#   or a live worktree under .ralph/worktrees/issue-<N> — are excluded. Among
+#   Issues already being worked — an open PR (`Closes|Fixes|Resolves #N`), a
+#   bridge marker naming an open PR, or a live worktree under
+#   .ralph/worktrees/issue-<N> — are excluded. Among
 #   what remains, the FIRST worker (empty active set) gets the lowest eligible
 #   issue as before. Additional workers only get an issue that is *independent*
 #   of every active issue: not `solo`, and (unless `parallelizable`) not sharing
@@ -56,7 +67,13 @@ fi
 
 REQUIRE_LABELS="${RALPH_REQUIRE_LABELS:-}"
 EXCLUDE_LABELS="${RALPH_EXCLUDE_LABELS:-epic wontfix duplicate invalid question blocked needs-spec future-work do-not-auto-merge in-progress}"
+# Appended, never substituted. The override above replaces the whole default
+# list, so a caller who set it to add `dependencies` silently re-admitted every
+# default — a trap the docs used to warn about rather than remove. Adding here
+# cannot spring it.
+EXCLUDE_LABELS="$EXCLUDE_LABELS ${RALPH_EXTRA_EXCLUDE_LABELS:-}"
 SOLO_LABEL="${RALPH_SOLO_LABEL:-solo}"
+BRIDGE_LABEL="${RALPH_BRIDGE_LABEL:-dependencies}"
 PARALLEL_LABEL="${RALPH_PARALLEL_LABEL:-parallelizable}"
 RESPECT_EPICS="${RALPH_RESPECT_EPICS:-1}"
 
@@ -93,14 +110,19 @@ fi
 require_json=$(printf '%s\n' $REQUIRE_LABELS | jq -R . | jq -s .)
 exclude_json=$(printf '%s\n' $EXCLUDE_LABELS | jq -R . | jq -s .)
 
-# All open issues as "<number>\t<comma-separated-labels>", filtered by
+# All open issues as "<number>\t<labels-csv>\t<bridge-pr>", filtered by
 # require/exclude labels and ordered by [priority-tier, number ascending].
 # Fetched once; reused for candidates and for looking up active issues' labels.
+#
+# The third column is the PR number in this issue's `<!-- dependabot-pr:N -->`
+# marker, empty when it carries none. It rides along on the SAME call — adding
+# `body` to the existing --json costs no extra request, and the marker is
+# extracted server-side by jq so no issue body ever reaches the shell.
 open_tsv=$(
   gh issue list \
     --state open \
     --limit 300 \
-    --json number,labels \
+    --json number,labels,body \
     --jq "
       ( $require_json | map(select(length>0)) ) as \$req
       | ( $exclude_json | map(select(length>0)) ) as \$exc
@@ -110,6 +132,9 @@ open_tsv=$(
               and ( \$exc | any(. as \$x | \$names | index(\$x)) | not )
             )
           | { number: \$i.number, names: \$names,
+              bridge: ( ((\$i.body // \"\")
+                         | capture(\"<!-- dependabot-pr:(?<n>[0-9]+) -->\")?
+                         | .n) // \"\" ),
               rank: ( if   ((\$names | index(\"P0\")) or (\$names | index(\"priority-critical\"))) then 0
                       elif ((\$names | index(\"P1\")) or (\$names | index(\"priority-high\")))     then 1
                       elif ((\$names | index(\"P2\")) or (\$names | index(\"priority-medium\")))   then 2
@@ -117,7 +142,7 @@ open_tsv=$(
                       else $DEFAULT_RANK end ) })
       | sort_by([.rank, .number])
       | .[]
-      | \"\(.number)\t\(.names | join(\",\"))\"
+      | \"\(.number)\t\(.names | join(\",\"))\t\(.bridge)\"
     "
 )
 
@@ -132,17 +157,53 @@ if [[ -z "$open_tsv" ]]; then
   exit 0
 fi
 
-# Issue numbers already in flight via an open PR (case-insensitive markers).
-inflight=$(
+# Every open PR as "<number>\t<body, newlines flattened>", fetched in ONE call
+# and split locally into the two things the in-flight scan needs. Flattening the
+# body keeps one PR to one line so `cut` can separate the columns.
+open_prs_tsv=$(
   gh pr list \
     --state open \
     --limit 300 \
-    --json body \
-    --jq '.[].body' \
+    --json number,body \
+    --jq '.[] | "\(.number)\t\((.body // "") | gsub("[\n\r]"; " "))"' \
+  || true
+)
+
+# Route 1 — the body link. Issue numbers a PR body claims (case-insensitive).
+inflight=$(
+  printf '%s\n' "$open_prs_tsv" \
+  | cut -f2- \
   | grep -oiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+' \
   | grep -oE '[0-9]+' \
   | sort -u || true
 )
+
+# The numbers of the PRs that are open right now — route 2's whole input.
+open_pr_numbers=$(
+  printf '%s\n' "$open_prs_tsv" | cut -f1 | grep -E '^[0-9]+$' | sort -u || true
+)
+
+# Route 2 — the bridge marker. Dependabot regenerates its PR body from its own
+# template on every rebase and group recomputation, erasing the `Closes #<issue>`
+# line the bridge appended — after which route 1 no longer sees the bridge issue
+# as in flight and the picker offers it as BUILD work. That is worse than a
+# wasted tick: a `dependencies` issue must only ever be ADOPTED (drive the
+# existing Dependabot branch), so a build lane on one opens a SECOND PR for a
+# bump that already has one.
+#
+# The durable link is `<!-- dependabot-pr:N -->`, which the bridge writes into
+# the ISSUE body and no PR-body rewrite can touch. Note the direction inverts
+# relative to pr-ready.sh's lookup: that goes PR -> bridge issue, this goes
+# bridge issue -> open PR. Matching only OPEN PRs is deliberate — the bridge
+# reconciler closes issues whose PR has merged, and a stale marker must not
+# wedge the picker on an issue nothing is working.
+bridged=""
+while IFS=$'\t' read -r _n _labels _bridge_pr; do
+  [[ -n "${_bridge_pr:-}" ]] || continue
+  printf '%s' "$_labels" | tr ',' '\n' | grep -qix "$BRIDGE_LABEL" || continue
+  grep -qx "$_bridge_pr" <<<"$open_pr_numbers" || continue
+  bridged+="$_n"$'\n'
+done <<<"$open_tsv"
 
 # Issue numbers with a live worktree (started, PR not yet opened).
 worktree_issues=""
@@ -156,8 +217,11 @@ if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   fi
 fi
 
-# The active set = in-flight PR issues ∪ worktree issues.
-active=$(printf '%s\n%s\n' "$inflight" "$worktree_issues" | grep -E '^[0-9]+$' | sort -u || true)
+# The active set = body-linked issues ∪ marker-linked issues ∪ worktree issues.
+active=$(
+  printf '%s\n%s\n%s\n' "$inflight" "$bridged" "$worktree_issues" \
+  | grep -E '^[0-9]+$' | sort -u || true
+)
 
 is_active() { [[ -n "$active" ]] && grep -qx "$1" <<<"$active"; }
 
@@ -235,7 +299,7 @@ conflicts_with_active() {
 
 # Walk candidates ascending; print the first that is neither active nor
 # conflicting with the active set.
-while IFS=$'\t' read -r n cand_labels; do
+while IFS=$'\t' read -r n cand_labels _bridge; do
   [[ -z "$n" ]] && continue
   is_active "$n" && continue
   if conflicts_with_active "$cand_labels"; then

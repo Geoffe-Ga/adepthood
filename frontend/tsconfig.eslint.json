@@ -15,6 +15,7 @@
     "eslint.config.cjs",
     "jest.config.js",
     "jest.e2e.config.js",
-    "jest.setup.js"
+    "jest.setup.js",
+    "jest.setup.crossBoundary.js"
   ]
 }
