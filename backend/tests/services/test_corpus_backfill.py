@@ -23,13 +23,23 @@ entry, because the sweep considers only entries that have none.
 
 *It is bounded, and honest about the bound.* Every entry costs one provider
 call on a request somebody is waiting on, so the sweep stops at a ceiling and
-at a deadline, reports what it did not reach, and resumes from there.
+at a deadline, reports what it did not reach, and resumes from there. The
+deadline is a bound rather than a note taken between entries: a classification
+that retries can outlast the whole sweep's budget on its own, so each entry is
+capped as well.
+
+*It cannot get stuck on its own head.* Writing the classifier places nowhere
+stays pending forever, so a queue that always offers the newest first would
+offer the same stuck entries to every future grant and never reach the older
+history the sweep exists for.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -91,7 +101,7 @@ async def _entry(
     body: str,
     tier: JournalClassification = JournalClassification.PERSONAL,
     sender: str = "user",
-    deleted: bool = False,
+    written_at: datetime | None = None,
 ) -> int:
     """Put one journal row in the owner's history and return its id."""
     entry = JournalEntry(
@@ -99,12 +109,22 @@ async def _entry(
         sender=sender,
         user_id=_OWNER,
         classification=tier.value,
-        deleted_at=datetime.now(UTC) if deleted else None,
+        timestamp=written_at if written_at is not None else datetime.now(UTC),
     )
     session.add(entry)
     await session.flush()
     assert entry.id is not None
     return entry.id
+
+
+async def _discarded_entry(session: AsyncSession, *, body: str) -> int:
+    """Put one soft-deleted row in the owner's history and return its id."""
+    entry_id = await _entry(session, body=body)
+    entry = await session.get(JournalEntry, entry_id)
+    assert entry is not None
+    entry.deleted_at = datetime.now(UTC)
+    await session.flush()
+    return entry_id
 
 
 async def _decide(
@@ -185,7 +205,7 @@ async def test_a_deleted_entry_is_not_resurrected_by_a_grant(
     """Soft-deleted rows are invisible everywhere else and stay invisible here."""
     _patch_provider(monkeypatch)
     await _entry(db_session, body=_FIRST)
-    await _entry(db_session, body=_DISCARDED, deleted=True)
+    await _discarded_entry(db_session, body=_DISCARDED)
 
     outcome = await _decide(db_session, granted=True)
 
@@ -337,3 +357,163 @@ async def test_writing_the_classifier_places_nowhere_stays_pending(
 
     assert (outcome.fragments_added, outcome.entries_remaining) == (0, 1)
     assert await _stored(db_session) == []
+
+
+# --- the bound is a bound, not a note taken between entries -------------------
+
+# Shrunk stand-ins for the two wall-clock bounds, so a test about a bound does
+# not have to wait one out.
+_A_MOMENT = 0.05
+_A_FEW_MOMENTS = 0.2
+
+# A provider that answers only after longer than anybody waits. It stands in
+# for ``services.botmason``'s own worst case -- a 30s per-attempt timeout,
+# retried twice with 1s and 2s of backoff -- shortened only so a failing run
+# reports in seconds rather than in minutes.
+_A_HANG_NOBODY_WAITS_OUT = 6.0
+
+# What the whole sweep may take with both bounds shrunk to a moment. Generous
+# against the ~0.2s it should cost, so a loaded machine cannot fail this, and
+# far below the hang, so a sweep that waited the provider out cannot pass it.
+_PATIENCE = 3.0
+
+
+def _patch_choosy_provider(monkeypatch: pytest.MonkeyPatch, *, places: set[str]) -> None:
+    """A classifier that can place ``places`` and recognises nothing else.
+
+    Not an outage: every call answers, and the answers the sweep cannot use are
+    well-formed replies naming no frequency -- which is the condition that
+    leaves an entry pending forever.
+    """
+
+    async def choosy(**kwargs: object) -> SimpleNamespace:
+        written = str(kwargs["user_message"])
+        return SimpleNamespace(text=_CLASSIFIED_REPLY if written in places else _UNCLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", choosy)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_never_answers_cannot_hold_the_grant_open(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One entry may not outlast the budget the whole sweep was given.
+
+    A classification is retried on transient provider failures, on top of a
+    per-attempt timeout longer than the sweep's entire deadline -- so a
+    deadline sampled only between entries bounds nothing at all during the one
+    condition it exists for. The caller abandons the request at its own
+    ``FETCH_TIMEOUT_MS`` and takes the uncommitted transaction with it, so the
+    work is paid for and thrown away.
+
+    An entry that runs out of time is an ordinary unclassified one: nothing is
+    stored, it stays pending, and the next grant offers it again.
+    """
+    monkeypatch.setattr(cb, "BACKFILL_ENTRY_SECONDS", _A_MOMENT)
+    monkeypatch.setattr(cb, "BACKFILL_DEADLINE_SECONDS", _A_FEW_MOMENTS)
+
+    async def never_answers(**_kwargs: object) -> SimpleNamespace:
+        await asyncio.sleep(_A_HANG_NOBODY_WAITS_OUT)
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", never_answers)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+
+    started = time.monotonic()
+    outcome = await _decide(db_session, granted=True)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < _PATIENCE
+    assert (outcome.fragments_added, outcome.entries_remaining) == (0, 2)
+    assert await _stored(db_session) == []
+
+
+def test_one_entry_may_never_spend_the_whole_sweeps_budget() -> None:
+    """The two bounds only compose while the per-entry one is the smaller.
+
+    At or above the sweep's own deadline, a single entry could consume it
+    entirely and the guarantee would be back where it started.
+    """
+    assert cb.BACKFILL_ENTRY_SECONDS < cb.BACKFILL_DEADLINE_SECONDS
+
+
+# --- the sweep cannot get stuck on its own head ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_writing_the_classifier_cannot_place_does_not_starve_what_is_older(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A head of unplaceable entries must not block the history behind it.
+
+    An entry the classifier recognises nothing in stays pending, deliberately.
+    Offer the pending set newest-first every time and that is a batch which
+    never changes: an account whose most recent entries are short or ambiguous
+    -- entirely ordinary journalling -- would have every later grant re-select
+    the same stuck rows, pay a provider call for each, and never reach the
+    older writing. That account is precisely the one the backfill exists for,
+    so a grant that reached nothing has to leave the queue somewhere new.
+    """
+    monkeypatch.setattr(cb, "BACKFILL_ENTRY_CEILING", 2)
+    _patch_choosy_provider(monkeypatch, places={_FIRST})
+    now = datetime.now(UTC)
+    await _entry(db_session, body=_FIRST, written_at=now - timedelta(days=14))
+    await _entry(db_session, body=_SECOND, written_at=now - timedelta(days=7))
+    await _entry(db_session, body=_THIRD, written_at=now)
+
+    stuck = await _decide(db_session, granted=True)
+    resumed = await _decide(db_session, granted=True)
+
+    assert (stuck.fragments_added, resumed.fragments_added) == (0, 1)
+    assert await _stored(db_session) == [_FIRST]
+
+
+@pytest.mark.asyncio
+async def test_an_outage_that_touched_everything_does_not_exclude_it_for_good(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Having been offered is not having been placed, and must not read as done.
+
+    Moving past an entry nothing could be made of is what keeps the sweep
+    advancing; dropping it from the candidates outright would turn one bad
+    afternoon at a provider into a permanent hole in somebody's corpus.
+    """
+    _patch_choosy_provider(monkeypatch, places=set())
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+
+    outage = await _decide(db_session, granted=True)
+    _patch_choosy_provider(monkeypatch, places={_FIRST, _SECOND})
+    recovered = await _decide(db_session, granted=True)
+
+    assert (outage.fragments_added, recovered.fragments_added) == (0, 2)
+    assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])
+
+
+async def _last_written_at(session: AsyncSession, entry_id: int) -> datetime:
+    """The entry's own ``updated_at``, read back from the row rather than cached."""
+    session.expire_all()
+    entry = await session.get(JournalEntry, entry_id)
+    assert entry is not None
+    return entry.updated_at
+
+
+@pytest.mark.asyncio
+async def test_being_swept_is_not_being_edited(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recording that the sweep reached an entry must not restamp the entry.
+
+    ``updated_at`` is on the journal's own response shape and means "when this
+    was last written to". A backfill is not somebody editing their journal, so
+    a sweep that bumped it would tell every account it had just rewritten its
+    entire history.
+    """
+    _patch_choosy_provider(monkeypatch, places=set())
+    entry_id = await _entry(db_session, body=_FIRST)
+    before = await _last_written_at(db_session, entry_id)
+
+    await _decide(db_session, granted=True)
+
+    assert await _last_written_at(db_session, entry_id) == before

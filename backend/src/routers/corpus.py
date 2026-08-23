@@ -50,7 +50,12 @@ from domain.creek_vault import CreekVaultClient
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
 from routers.auth import get_current_user
-from schemas.corpus import CorpusConsentListResponse, CorpusConsentResponse, CorpusConsentUpdate
+from schemas.corpus import (
+    CONSENT_RATE_LIMIT,
+    CorpusConsentListResponse,
+    CorpusConsentResponse,
+    CorpusConsentUpdate,
+)
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from services.corpus_backfill import backfill_after_consent
@@ -90,7 +95,9 @@ async def list_corpus_consent(
 
 
 @router.put("/consent/{source}", response_model=CorpusConsentResponse)
+@limiter.limit(CONSENT_RATE_LIMIT)
 async def put_corpus_consent(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     source: CorpusSource,
     payload: CorpusConsentUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
@@ -104,6 +111,11 @@ async def put_corpus_consent(
     bounded and reported by :mod:`services.corpus_backfill`. Leaving any of it
     uncommitted would be a permission changed on screen and not in the
     database.
+
+    Rate-limited more tightly than ``POST /import`` despite carrying the
+    smallest body in the API: a grant is the most expensive request here, since
+    the sweep it authorises costs a provider call per entry it reaches, where
+    an import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.
 
     The response is still the *state*. What the decision reached is a fact
     about the event, and it goes where events are kept -- the audit row and the

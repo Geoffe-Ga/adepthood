@@ -35,26 +35,54 @@ each about a row rather than about a policy:
   revoke and grant again writes one fragment per entry, because the second
   grant sees only what the purge left with none.
 
-**Inline, and bounded twice.** There is no scheduler in this deployment, so
-"later" is not a thing that can be promised -- a deferred pass would need a
+**Inline, and bounded three ways.** There is no scheduler in this deployment,
+so "later" is not a thing that can be promised -- a deferred pass would need a
 queue, a worker and a delivery guarantee, and an audit row written before the
 work ran would be a claim rather than evidence. So the sweep runs on the
 request that granted, which makes its cost the caller's latency, which is why
-it stops at both a count and a clock:
+it stops at a count and at two clocks:
 
 * :data:`BACKFILL_ENTRY_CEILING` bounds the provider bill one grant can run up.
-* :data:`BACKFILL_DEADLINE_SECONDS` bounds the wall time, because a single
-  classification may take as long as ``services.botmason``'s own timeout and a
-  count alone cannot promise anything about seconds.
+* :data:`BACKFILL_ENTRY_SECONDS` bounds what any *one* entry may cost in wall
+  time, and it is the bound that makes the next one true.
+* :data:`BACKFILL_DEADLINE_SECONDS` bounds the sweep's wall time, and it is a
+  bound rather than a note taken between entries: the loop stops as soon as
+  another entry could not finish inside it, so the provider time a grant can
+  spend never exceeds it. Without the per-entry cap it would bound nothing
+  during the one condition it exists for -- ``services.botmason`` retries a
+  transient failure twice, with backoff, on top of a per-attempt timeout
+  already longer than this whole budget, so a single degraded classification
+  could hold the request, and its uncommitted transaction, for several times
+  the deadline and well past the point the mobile client abandons it.
+
+**Retrying inside the sweep buys nothing.** Which is why the per-entry cap is
+allowed to cut a retry ladder short rather than waiting one out: an entry that
+fails is left pending and offered again by the next grant, so the resumability
+below is already the retry, and it is one that costs the caller nothing.
 
 **Past the bound nothing is silently dropped.** The sweep reports how many
-entries it did not reach, logs it, and picks up exactly there next time: a
+entries it did not reach, logs it, and picks up somewhere new next time: a
 repeated ``PUT`` of an answer the account has already given appends no second
 decision but does re-run the sweep, so the reach is resumable through the
 surface that already exists rather than through a route nothing calls. What no
 surface does yet is *tell* somebody a remainder is waiting; that is a client
 change, and until it lands the remainder is visible to an operator in the log
 line and in the audit row rather than to the person.
+
+**"Somewhere new" is the whole of it.** An entry the classifier places nowhere
+stays pending, deliberately, so the order the pending set is offered in is what
+decides whether the sweep can advance at all. Offer it newest-first every time
+and an account whose most recent entries are short or ambiguous -- ordinary
+journalling -- gets the same stuck batch selected by every future grant,
+re-billed every time, with the older, richer material behind it never reached:
+starvation of exactly the population this module was written for. So each row
+carries ``JournalEntry.corpus_attempted_at``, the sweep orders never-offered
+first and least-recently-offered next, and the head of the queue therefore
+moves whether or not anything came of it. Ordering rather than excluding, so
+one bad afternoon at a provider is not a permanent hole. Reversing the order
+instead -- oldest first -- would not have fixed this: it relocates the stuck
+head to the other end of the history and starves the recent writing in its
+place.
 
 **Only the journal source has a history to sweep.** Uploads and imports are not
 kept: ``POST /journal/upload`` forwards a document and stores no row, and
@@ -64,12 +92,14 @@ sitting anywhere for a later grant to find, so a grant for those sources
 correctly reaches nothing rather than pretending to.
 
 **Cost.** One indexed count to see whether there is anything to do, a second
-read for the batch when there is, then per candidate what one ordinary journal
-ingest costs -- a consent read, a no-op withdrawal of the fragment it does not
-have, and the single provider call
+read for the batch when there is, then per candidate one small UPDATE marking
+it offered plus what one ordinary journal ingest costs -- a consent read, a
+no-op withdrawal of the fragment it does not have, and the single provider call
 ``services.corpus_ingest.CLASSIFICATION_CALLS_PER_INGEST`` names -- up to the
 ceiling. An account with nothing pending pays the one count and stops, which is
-what every grant after a completed sweep costs.
+what every grant after a completed sweep costs. The provider call is the whole
+bill in practice; the marking UPDATE is local and is what buys the sweep the
+ability to finish at all.
 """
 
 from __future__ import annotations
@@ -77,9 +107,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import ColumnElement, func
+from sqlalchemy import ColumnElement, func, nulls_first, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -99,10 +130,33 @@ BACKFILL_ENTRY_CEILING: Final[int] = 40
 #: How long one grant may spend sweeping, in seconds. Comfortably inside the
 #: 30s the mobile client gives a request (``FETCH_TIMEOUT_MS``), because a
 #: sweep the caller abandons is a transaction that never commits -- the work
-#: would be paid for and thrown away. Checked after each entry rather than
-#: before, so a grant always ontologizes at least one thing: a permission whose
-#: reach can be zero is not reaching.
+#: would be paid for and thrown away. The loop stops once another entry could
+#: not finish inside it, rather than once it has already been exceeded, which
+#: is what makes this a bound on the sweep instead of a reading taken after the
+#: damage. The first entry is attempted regardless, bounded by
+#: :data:`BACKFILL_ENTRY_SECONDS` alone: a permission whose reach can be zero
+#: is not reaching.
 BACKFILL_DEADLINE_SECONDS: Final[float] = 20.0
+
+#: How long one entry's classification may take before the sweep gives up on
+#: it, in seconds. A hard ceiling passed down to
+#: :func:`services.frequency_classification.classify_frequencies`, which
+#: cancels the provider call outright -- retries and backoff sleeps included,
+#: since that ladder is where the time actually goes. Generous against a
+#: classification's real cost (a small JSON reply to a fragment capped at
+#: ``MAX_FRAGMENT_CHARS``) and strictly smaller than the sweep's own deadline,
+#: which is what lets the two bounds compose; a test pins that inequality,
+#: because at or above it a single entry could consume the whole budget and the
+#: guarantee would be back where it started. An entry that runs out of time is
+#: an ordinary unclassified one: nothing stored, still pending, offered again.
+#:
+#: The sweep declines to *start* an entry it cannot afford, so a grant may stop
+#: short of :data:`BACKFILL_ENTRY_CEILING` with time still on the clock. That
+#: is the trade the bound costs, and it is the right way round: beginning a
+#: classification the deadline will cut off means paying a provider for an
+#: answer nobody reads, and the entry is left pending for the next grant either
+#: way.
+BACKFILL_ENTRY_SECONDS: Final[float] = 8.0
 
 #: The ``sender`` value marking a row somebody wrote themselves, as the column
 #: stores it. ``'bot'`` marks a resonance reply, which is this app's writing
@@ -122,7 +176,10 @@ class BackfillOutcome:
     the sweep stopped -- those past a bound, and those the classifier
     recognised nothing in. Both are genuinely still pending: an unclassified
     entry has no position on the ontology, so it is not corpus material yet and
-    the next sweep will offer it again.
+    a later sweep will offer it again. *Later* rather than *next*: an entry
+    already offered goes to the back of the queue behind everything no sweep
+    has reached for yet, which is what keeps a batch that produced nothing from
+    being the batch every future grant gets.
     """
 
     fragments_added: int
@@ -169,20 +226,57 @@ async def _count_pending(session: AsyncSession, user_id: int) -> int:
 
 
 async def _pending_batch(session: AsyncSession, user_id: int) -> list[JournalEntry]:
-    """The entries this grant will offer the writer, newest first.
+    """The entries this grant will offer the writer: unoffered first, newest first.
 
-    Newest first because that is the writing the recency fallback was already
-    serving: an account whose sweep is bounded gets a corpus that is at least
-    as good as the window it replaces, from the first grant rather than the
-    last.
+    Two keys, and the order between them is the whole point. ``NULLS FIRST`` on
+    ``corpus_attempted_at`` puts the writing no sweep has reached for yet ahead
+    of the writing a previous sweep already tried, so a batch that produced
+    nothing is not the batch the next grant gets. Without that, an entry the
+    classifier places nowhere -- which stays pending on purpose -- would sit at
+    the head of a newest-first queue permanently and no later grant could ever
+    advance past it.
+
+    Newest first *within* that, because recency is the writing the fallback was
+    already serving: an account whose sweep is bounded gets a corpus at least as
+    good as the window it replaces, from the first grant rather than the last.
+    An entry offered before and still pending comes back round once the
+    never-offered ones are exhausted, oldest attempt first, which is what keeps
+    a provider outage from excluding anything for good.
     """
     result = await session.execute(
         select(JournalEntry)
         .where(*_pending_conditions(user_id))
-        .order_by(col(JournalEntry.timestamp).desc(), col(JournalEntry.id).desc())
+        .order_by(
+            nulls_first(col(JournalEntry.corpus_attempted_at).asc()),
+            col(JournalEntry.timestamp).desc(),
+            col(JournalEntry.id).desc(),
+        )
         .limit(BACKFILL_ENTRY_CEILING)
     )
     return list(result.scalars().all())
+
+
+async def _mark_attempted(session: AsyncSession, entry: JournalEntry) -> None:
+    """Record that the sweep reached this entry, without restamping it.
+
+    ``updated_at`` carries its own ``onupdate``, and it is on the journal's
+    response shape meaning "when this was last written to". A sweep is not
+    somebody editing their journal, so it is set here to the value it already
+    holds: naming the column in the statement is what suppresses the automatic
+    bump, and the alternative would tell every account it had just rewritten
+    its entire history.
+
+    A statement rather than an attribute assignment for the same reason -- the
+    ORM flush would carry the ``onupdate`` with it.
+    """
+    await session.execute(
+        update(JournalEntry)
+        .where(col(JournalEntry.id) == entry.id)
+        .values(
+            corpus_attempted_at=datetime.now(UTC),
+            updated_at=col(JournalEntry.updated_at),
+        )
+    )
 
 
 def _log_sweep(user_id: int, considered: int, outcome: BackfillOutcome) -> None:
@@ -206,11 +300,18 @@ def _log_sweep(user_id: int, considered: int, outcome: BackfillOutcome) -> None:
 async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutcome:
     """Offer this account's un-ontologized writing to the ordinary corpus writer.
 
-    The deadline is tested *after* each entry so the first one is always
-    attempted, and the count that comes back is what the writer actually
-    stored: an entry the classifier recognised nothing in stays pending, which
-    is true rather than convenient, since a fragment with no position on the
-    ontology is not corpus material.
+    Each entry is offered under :data:`BACKFILL_ENTRY_SECONDS` and the loop
+    stops as soon as another one could not finish inside
+    :data:`BACKFILL_DEADLINE_SECONDS`, so the provider time a grant spends is
+    bounded by the deadline rather than merely measured against it. Testing
+    after the entry rather than before is what keeps the first one always
+    attempted -- it is bounded by the per-entry cap alone, which is smaller.
+
+    Every entry offered is marked as offered, whatever came of it, because that
+    mark is the sweep's place in the queue. The count that comes back is still
+    what the writer actually stored: an entry the classifier recognised nothing
+    in stays pending, which is true rather than convenient, since a fragment
+    with no position on the ontology is not corpus material.
     """
     pending = await _count_pending(session, user_id)
     if pending == 0:
@@ -219,9 +320,13 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
     deadline = time.monotonic() + BACKFILL_DEADLINE_SECONDS
     added = 0
     for entry in candidates:
-        if await ingest_journal_entry(session, entry) is not None:
+        await _mark_attempted(session, entry)
+        fragment = await ingest_journal_entry(
+            session, entry, timeout_seconds=BACKFILL_ENTRY_SECONDS
+        )
+        if fragment is not None:
             added += 1
-        if time.monotonic() >= deadline:
+        if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
             break
     outcome = BackfillOutcome(fragments_added=added, entries_remaining=pending - added)
     _log_sweep(user_id, len(candidates), outcome)

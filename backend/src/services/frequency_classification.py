@@ -16,6 +16,16 @@ enriches a corpus; it must never be why someone's journal entry fails to save.
 The only exception raised from here is :class:`IntimateContentRefusedError`, which
 is a defect at the call site rather than a runtime condition.
 
+**A caller with a deadline can impose one.** ``timeout_seconds`` bounds the
+whole provider interaction rather than one attempt of it: ``services.botmason``
+retries a transient failure twice, with backoff, on top of a per-attempt
+timeout of its own, so a caller who has promised somebody an answer inside a
+fixed number of seconds cannot get one by asking the provider layer nicely --
+the bound has to cancel whatever that layer is in the middle of. Running out of
+time is one more way to recognise nothing, so it degrades like the rest. The
+default is no bound at all, which is what an interactive write wants: there,
+the only clock that matters is the client's own.
+
 **This is the floor, not the authority.** A user running their own Creek Vault
 has it classify their corpus, and its answer wins; ``services.frequency_source``
 is where that precedence rule lives and it is the only module that knows about
@@ -35,6 +45,7 @@ them into a distribution, since normalising would destroy exactly the signal
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
@@ -44,7 +55,7 @@ from types import MappingProxyType
 
 from domain.frequencies import Frequency, frequency_table
 from models.journal_entry import JournalClassification
-from services.botmason import LLMProviderError, generate_response
+from services.botmason import LLMProviderError, LLMResponse, generate_response
 
 logger = logging.getLogger(__name__)
 
@@ -226,11 +237,46 @@ def _parse_reply(text: str) -> FrequencyClassification | None:
     )
 
 
+def _degraded(reason: str) -> FrequencyClassification:
+    """Record why nothing was recognised and return the empty classification.
+
+    One place, so a new way of failing cannot arrive with a different shape of
+    log line and become invisible to whoever is reading them.
+    """
+    logger.info("frequency_classification_degraded", extra={"reason": reason})
+    return UNCLASSIFIED
+
+
+async def _reply_within(
+    content: str, *, api_key: str | None, timeout_seconds: float | None
+) -> LLMResponse:
+    """Ask the provider for a classification, abandoning it at the bound.
+
+    ``asyncio.wait_for`` cancels the *whole* call, so a caller's bound covers
+    the retries and the backoff sleeps inside it as well as the attempt in
+    flight -- which is the only placement that bounds anything, since the
+    retry ladder is where the time actually goes. Nothing but an outbound HTTP
+    request is cancelled here: the sweep's database work stays outside, because
+    a cancellation mid-statement would take the caller's open transaction with
+    it and lose the fragments already written.
+    """
+    call = generate_response(
+        user_message=content[:MAX_FRAGMENT_CHARS],
+        conversation_history=[],
+        system_prompt=SYSTEM_PROMPT,
+        api_key=api_key,
+    )
+    if timeout_seconds is None:
+        return await call
+    return await asyncio.wait_for(call, timeout_seconds)
+
+
 async def classify_frequencies(
     content: str,
     *,
     classification: JournalClassification,
     api_key: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> FrequencyClassification:
     """Classify ``content`` into the frequency ontology.
 
@@ -242,21 +288,22 @@ async def classify_frequencies(
     ``api_key`` is the caller's own key (BYOK), threaded to
     :func:`services.botmason.generate_response` exactly as the chat path does;
     ``None`` falls back to the server-side key.
+
+    ``timeout_seconds`` is a hard ceiling on the provider interaction as a
+    whole, for a caller that has a wall-clock promise to keep;
+    :mod:`services.corpus_backfill` is the one that does. ``None`` -- the
+    default, and what every interactive write passes -- leaves the provider
+    layer's own timeout and retry budget in charge.
     """
     if classification is JournalClassification.INTIMATE:
         raise IntimateContentRefusedError
     try:
-        response = await generate_response(
-            user_message=content[:MAX_FRAGMENT_CHARS],
-            conversation_history=[],
-            system_prompt=SYSTEM_PROMPT,
-            api_key=api_key,
-        )
+        response = await _reply_within(content, api_key=api_key, timeout_seconds=timeout_seconds)
     except LLMProviderError:
-        logger.info("frequency_classification_degraded", extra={"reason": "provider_error"})
-        return UNCLASSIFIED
+        return _degraded("provider_error")
+    except TimeoutError:
+        return _degraded("timed_out")
     parsed = _parse_reply(response.text)
     if parsed is None:
-        logger.info("frequency_classification_degraded", extra={"reason": "unparsable_reply"})
-        return UNCLASSIFIED
+        return _degraded("unparsable_reply")
     return parsed

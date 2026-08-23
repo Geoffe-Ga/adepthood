@@ -35,8 +35,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.frequencies import Frequency
 from models.corpus_fragment import CorpusSource
+from schemas.corpus import CONSENT_RATE_LIMIT
+from schemas.journal_upload import UPLOAD_RATE_LIMIT
 from services import frequency_classification as fc
 from services.botmason import LLMProviderError
+from services.corpus_backfill import BACKFILL_ENTRY_CEILING
+from services.corpus_ingest import CLASSIFICATION_CALLS_PER_INGEST
 from services.higher_self_grounding import GroundingSource, gather_grounding
 
 _CONSENT_PATH = "/corpus/consent"
@@ -55,6 +59,13 @@ _CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_c
 # An entry id no account in these tests owns, used where the grounding call
 # needs an exclusion that excludes nothing.
 _NO_SUCH_ENTRY = 9_999
+
+
+def _per_minute(limit: str) -> int:
+    """The request count out of a slowapi ``"<count>/<window>"`` limit string."""
+    count, _, window = limit.partition("/")
+    assert window == "minute"
+    return int(count)
 
 
 @pytest.fixture
@@ -352,3 +363,26 @@ async def test_a_source_outside_the_vocabulary_is_refused(
     )
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+class TestTheDecisionIsRateLimitedForWhatItCosts:
+    """The cheapest body in the API is attached to its most expensive request.
+
+    A grant runs the backfill sweep, so one of these can cost up to
+    ``BACKFILL_ENTRY_CEILING`` provider calls where an import costs
+    ``CLASSIFICATION_CALLS_PER_INGEST``. Left on the app-wide default this
+    endpoint would have been the loosest limit over the largest cost, which is
+    the wrong way round.
+    """
+
+    def test_the_endpoint_declares_a_rate_limit_of_its_own(self) -> None:
+        """The app-wide default is sized for reads, not for a fan-out."""
+        assert CONSENT_RATE_LIMIT
+
+    def test_it_is_tighter_than_the_route_that_costs_one_call(self) -> None:
+        """Relative order, not absolute numbers: the dearer request is the scarcer one."""
+        assert _per_minute(CONSENT_RATE_LIMIT) < _per_minute(UPLOAD_RATE_LIMIT)
+
+    def test_the_cost_that_justifies_it_is_still_the_larger_one(self) -> None:
+        """The premise is asserted, so a smaller ceiling would surface here first."""
+        assert BACKFILL_ENTRY_CEILING > CLASSIFICATION_CALLS_PER_INGEST
