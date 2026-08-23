@@ -6,11 +6,12 @@
  * rather than incidental: {@link selectNextQueued} offers nothing while a
  * document is in flight, so a forty-file seed can never open forty requests.
  *
- * Every terminal state is its own status, including the three the vault can
- * answer with. A vault that cannot take files yet is not a failure and does not
- * share a status with one; a document past the size cap never reaches the
- * network at all. Nothing collapses into a generic "error", because each of
- * these sends the person somewhere different.
+ * Every terminal state is its own status, including each one the two
+ * destinations can answer with. A vault that cannot take files yet is not a
+ * failure and does not share a status with one; a corpus waiting on a consent
+ * nobody has given is not a failure either; a document past the size cap never
+ * reaches the network at all. Nothing collapses into a generic "error", because
+ * each of these sends the person somewhere different.
  *
  * PRIVACY: an item carries an id, a name, and a status — never the document's
  * bytes. The bytes live in the driver's local scope for exactly as long as
@@ -21,11 +22,39 @@
 export type VaultSeedStatus =
   'ingested' | 'vault_unavailable' | 'capability_unsupported' | 'degraded';
 
+/**
+ * The eight outcomes an account's own ontologized corpus answers with.
+ *
+ * A separate vocabulary from the vault's rather than a translation into it,
+ * because these are things a vault never says: the corpus gates on the consent
+ * that account gave, it reads the document itself rather than handing it to an
+ * ingestor, and it shows the writing to a language model to place it among the
+ * frequencies — which is why the intimate tier is refused here and forwarded
+ * nowhere.
+ */
+export type CorpusSeedStatus =
+  | 'in_corpus'
+  | 'consent_required'
+  | 'tier_refused'
+  | 'format_unreadable'
+  | 'not_text'
+  | 'empty_document'
+  | 'document_too_long'
+  | 'unclassified';
+
 /** The outcomes decided on device, before or instead of a request. */
 export type LocalSeedStatus = 'unsupported_format' | 'too_large' | 'unreadable' | 'failed';
 
-/** A settled document's outcome: what the vault said, or what the device found. */
-export type SettledSeedStatus = VaultSeedStatus | LocalSeedStatus;
+/**
+ * A settled document's outcome: what its destination said, or what the device
+ * found before there was a request to make.
+ *
+ * Two server vocabularies rather than one, because a document reaches exactly
+ * one of two destinations and the server says which. Collapsing them would
+ * require this app to decide what a corpus answer "means in vault terms",
+ * which is a second answer to a question already answered.
+ */
+export type SettledSeedStatus = VaultSeedStatus | CorpusSeedStatus | LocalSeedStatus;
 
 /** One document's lifecycle within a run. */
 export type SeedItemStatus = 'queued' | 'uploading' | SettledSeedStatus;
@@ -53,10 +82,19 @@ export interface SeedEntry {
 /** How many of each kind of outcome a run currently holds. */
 export interface SeedRunTally {
   total: number;
-  ingested: number;
+  /** Durably kept, wherever this account's writing lives. */
+  landed: number;
   waiting: number;
   refused: number;
 }
+
+/**
+ * The two ways a document is durably kept: the vault's `accepted`, and the
+ * corpus's `stored`. Counted together because the tally answers "how much of
+ * what I chose is in", which is one question whichever destination answered
+ * it — the per-document line is where the destination is named.
+ */
+const LANDED_STATUSES: readonly SeedItemStatus[] = ['ingested', 'in_corpus'];
 
 /** A run with nothing in it — the state before the first pick. */
 export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
@@ -147,11 +185,11 @@ export function selectNextQueued(state: SeedRunState): SeedItem | null {
 
 /** What the run currently holds: how much landed, waits, or did not land. */
 export function seedRunTally(state: SeedRunState): SeedRunTally {
-  const tally: SeedRunTally = { total: state.order.length, ingested: 0, waiting: 0, refused: 0 };
+  const tally: SeedRunTally = { total: state.order.length, landed: 0, waiting: 0, refused: 0 };
   for (const id of state.order) {
     const status = state.items[id]?.status;
     if (status === undefined) continue;
-    if (status === 'ingested') tally.ingested += 1;
+    if (LANDED_STATUSES.includes(status)) tally.landed += 1;
     else if (isSettled(status)) tally.refused += 1;
     else tally.waiting += 1;
   }

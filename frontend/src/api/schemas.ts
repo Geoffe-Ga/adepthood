@@ -367,18 +367,54 @@ export const vaultUploadStatusSchema = z.enum([
 export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
 
 /**
- * One document's upload outcome. ``vault_ref`` is the vault's fragment handle,
- * present only when the document was accepted; ``tags`` are what the vault's
- * ingest pipeline assigned (empty is the expected answer today, not a failure);
+ * Where an imported document actually went — the backend's
+ * ``ImportDestination``. Resolved per account by the server: an account that
+ * has connected a vault reaches it, an account that has not reaches its own
+ * ontologized corpus. The client never computes this; it reads it.
+ */
+export const importDestinationSchema = z.enum(['vault', 'corpus']);
+export type ImportDestinationT = z.infer<typeof importDestinationSchema>;
+
+/**
+ * What the local corpus did with one imported document — the wire strings of
+ * the backend's ``CorpusImportStatus``. Eight outcomes, one of which stores
+ * anything, each with a different next step for the person holding the
+ * document. Pinned rather than left as a bare string for the same reason
+ * {@link vaultUploadStatusSchema} is: a ninth value this release has no honest
+ * sentence for must surface as ``ApiValidationError`` rather than render blank.
+ */
+export const corpusImportStatusSchema = z.enum([
+  'stored',
+  'consent_required',
+  'tier_refused',
+  'format_unreadable',
+  'not_text',
+  'empty_document',
+  'document_too_long',
+  'unclassified',
+]);
+export type CorpusImportStatusT = z.infer<typeof corpusImportStatusSchema>;
+
+/**
+ * One document's import outcome, in whichever destination's vocabulary applies.
+ *
+ * ``destination`` is the discriminator, and exactly one side of the answer is
+ * populated: a ``vault`` answer carries ``vault_status`` (and possibly
+ * ``vault_ref`` and ``tags``), a ``corpus`` answer carries ``corpus_status``
+ * (and possibly ``fragment_id``). ``stored`` is the one boolean both share, and
  * ``message`` is the backend's own self-serve sentence.
  */
-export const uploadDocumentSchema = z.object({
-  status: vaultUploadStatusSchema,
+export const documentImportSchema = z.object({
+  destination: importDestinationSchema,
+  stored: z.boolean(),
+  vault_status: vaultUploadStatusSchema.nullable().optional(),
   vault_ref: z.string().nullable().optional(),
   tags: z.array(z.string()),
+  corpus_status: corpusImportStatusSchema.nullable().optional(),
+  fragment_id: z.number().int().nullable().optional(),
   message: z.string(),
 });
-export type UploadDocumentT = z.infer<typeof uploadDocumentSchema>;
+export type DocumentImportT = z.infer<typeof documentImportSchema>;
 
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
