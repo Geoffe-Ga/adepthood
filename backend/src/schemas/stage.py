@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
+from pydantic import BaseModel, Field
 
 
 class StageExpression(BaseModel):
@@ -45,15 +43,17 @@ class StageResponse(BaseModel):
 
 
 class ProgramCalendarResponse(BaseModel):
-    """The server's date-derived program calendar (issue #386).
+    """The server's date-derived program calendar.
 
-    Exposes the anchor and both gating views so the frontend can drop its
+    Exposes the anchor and both answers so the frontend can drop its
     client-only fallback if desired: ``calendar_stage``/``calendar_week``
     are derived from ``program_started_at`` against the shared
-    ``STAGE_DURATIONS_DAYS`` schedule; ``current_stage`` is the
-    advancement-chain value.  Effective unlock is the max of the two —
-    the same reconciliation the gating endpoints apply.  ``cycle_number``
-    is exposed so the frontend can seed its "Cycle N" indicator on cold start.
+    ``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;
+    ``current_stage`` is the record of what the user has *entered*, which
+    the endpoint brings up to the calendar before answering. Effective
+    unlock is ``domain.stage_authority.open_through`` — the union of the
+    two, never the record alone. ``cycle_number`` is exposed so the
+    frontend can seed its "Cycle N" indicator on cold start.
     """
 
     program_started_at: datetime | None
@@ -70,21 +70,6 @@ class StageProgressResponse(BaseModel):
     practice_sessions_completed: int = 0
     course_items_completed: int = 0
     overall_progress: float = 0.0
-
-
-class StageProgressUpdate(BaseModel):
-    """Payload asserting the client's expected ``current_stage`` after advance.
-
-    The router ignores this value as a write; it is only used as a
-    server-vs-client sanity assertion.  ``extra='forbid'`` blocks the
-    adjacent injection vector where a client attempts to set
-    ``completed_stages`` directly in the same PUT body, which the server
-    derives from its own state.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    current_stage: int = Field(ge=1, le=MAX_STAGE_NUMBER)
 
 
 class StageProgressRecord(BaseModel):

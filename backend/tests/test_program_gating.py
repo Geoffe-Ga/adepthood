@@ -138,6 +138,13 @@ def test_missing_progress_still_locks_everything_past_stage_one() -> None:
 async def test_program_calendar_endpoint_exposes_anchor_and_derivations(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """Both answers are exposed, and the read is itself a visit.
+
+    ``current_stage`` comes back at 2 rather than the planted 1: asking
+    where the calendar has got to means the user is present, so entry into
+    the window the calendar opened on day 21 is recorded before the answer
+    is built.
+    """
     headers = await _signup(async_client, "calendarreader")
     await _plant_progress(db_session, days_into_program=22, current_stage=1)
 
@@ -148,7 +155,7 @@ async def test_program_calendar_endpoint_exposes_anchor_and_derivations(
     assert body["program_started_at"] is not None
     assert body["calendar_stage"] == 2
     assert body["calendar_week"] == 4
-    assert body["current_stage"] == 1
+    assert body["current_stage"] == 2
     assert body["cycle_number"] == 1
 
 

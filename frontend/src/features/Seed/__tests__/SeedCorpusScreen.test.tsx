@@ -6,10 +6,16 @@ import * as FileSystem from 'expo-file-system';
 import React from 'react';
 
 import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
-import { SEED_CHOOSE_LABEL, SEED_STATUS_LINES } from '../seedCopy';
+import { SEED_CHOOSE_LABEL, SEED_CONSENT_LINK_LABEL, SEED_STATUS_LINES } from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
+
+const mockNavigate = jest.fn();
+
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch as unknown as typeof fetch;
@@ -23,15 +29,46 @@ function asset(name: string, size = 512) {
   return { name, uri: `file:///cache/${name}`, size, lastModified: 0 };
 }
 
+/** What `POST /corpus/import` answers an account that has a vault. */
 function vaultReply(status: string) {
   return Promise.resolve({
     ok: true,
     status: 202,
-    json: () => Promise.resolve({ status, vault_ref: null, tags: [], message: 'ok' }),
+    json: () =>
+      Promise.resolve({
+        destination: 'vault',
+        stored: status === 'accepted',
+        vault_status: status,
+        vault_ref: null,
+        tags: [],
+        corpus_status: null,
+        fragment_id: null,
+        message: 'ok',
+      }),
+  });
+}
+
+/** What it answers an account that has connected none. */
+function corpusReply(status: string) {
+  return Promise.resolve({
+    ok: true,
+    status: 202,
+    json: () =>
+      Promise.resolve({
+        destination: 'corpus',
+        stored: status === 'stored',
+        vault_status: null,
+        vault_ref: null,
+        tags: [],
+        corpus_status: status,
+        fragment_id: status === 'stored' ? 4 : null,
+        message: 'ok',
+      }),
   });
 }
 
 beforeEach(() => {
+  mockNavigate.mockReset();
   mockFetch.mockReset();
   getDocumentAsync.mockReset();
   getDocumentAsync.mockResolvedValue({ canceled: true, assets: null });
@@ -155,6 +192,69 @@ describe('per-document status', () => {
     await waitFor(() => {
       expect(getByTestId('seed-summary')).toHaveTextContent(/1/);
     });
+  });
+});
+
+describe('a person who has no vault', () => {
+  test('imports a document into their own corpus and is told so', async () => {
+    // The journey the import route exists for. This account has connected no
+    // vault; before the route, this screen told them their vault had not
+    // answered and their corpus stayed empty.
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('stored'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(SEED_STATUS_LINES.in_corpus)).toBeTruthy();
+    });
+    expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).filename).toBe('notes.md');
+  });
+
+  test('is offered the consent screen when the corpus is still switched off', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('consent_required'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(SEED_STATUS_LINES.consent_required)).toBeTruthy();
+    });
+    fireEvent.press(getByTestId('seed-consent-link'));
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent');
+    expect(getByText(SEED_CONSENT_LINK_LABEL)).toBeTruthy();
+  });
+
+  test('offers nothing about consent when nothing was held back for it', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('stored'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByTestId('seed-summary')).toBeTruthy();
+    });
+    expect(queryByTestId('seed-consent-invitation')).toBeNull();
+  });
+
+  test('says an Intimate document stayed on the device, and why', async () => {
+    // A guarantee rather than an error: placing writing among the frequencies
+    // means showing it to a language model, and this tier never goes to one.
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('diary.md')] });
+    mockFetch.mockReturnValue(corpusReply('tier_refused'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    fireEvent.press(getByTestId('privacy-tier-intimate'));
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(SEED_STATUS_LINES.tier_refused)).toBeTruthy();
+    });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).classification).toBe('intimate');
   });
 });
 

@@ -1,19 +1,31 @@
 /**
  * "Bring in what you've written" — the screen where a person hands documents
- * they already have to their vault, so reflections read from their whole corpus
- * rather than only what they have typed here.
+ * they already have to their corpus, so reflections read from everything they
+ * have written rather than only what they have typed here.
+ *
+ * **Where a document lands is the server's answer, not this screen's.** One
+ * request goes to `POST /corpus/import`, which routes per account: the vault
+ * for somebody who has connected one, their own ontologized corpus for somebody
+ * who has not. That is why an account with no vault can seed at all, and why
+ * this screen asks no question about vaults — it reports the destination it was
+ * told.
  *
  * The invitation is declinable and unhurried: no counter to fill, no streak, no
- * praise for uploading more. The tier chooser sits above the picker so the
+ * praise for bringing in more. The tier chooser sits above the picker so the
  * choice is made *before* anything is sent, and every document that comes back
  * says plainly where it got to — including the vault that cannot take files
- * yet, which is a state of the world rather than a failure of theirs.
+ * yet and the corpus that is waiting on a permission, neither of which is a
+ * failure of theirs.
  */
-import React from 'react';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import React, { useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 
 import {
   SEED_CHOOSE_LABEL,
+  SEED_CONSENT_LINK_LABEL,
+  SEED_CONSENT_PROMPT,
   SEED_EMPTY_INVITATION,
   SEED_STATUS_LINES,
   seedSummaryLine,
@@ -26,6 +38,7 @@ import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent, BORDER_RADIUS, ink, rhythm, SPACING, surface, touchTarget } from '@/design/tokens';
 import PrivacyTierControl from '@/features/Journal/PrivacyTierControl';
+import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Sits above the tier control, so the choice reads as a choice. */
 const TIER_PROMPT = 'Everything in this batch is stored at the tier you pick here.';
@@ -66,6 +79,29 @@ const ChooseButton = ({
   </TouchableOpacity>
 );
 
+/**
+ * The way to the permission a held-back document is waiting on.
+ *
+ * Shown only once the server has actually answered `consent_required`, so it is
+ * a response to something that happened rather than a pre-flight check this
+ * screen invented. It leads to the consent screen and asks for nothing here:
+ * agreeing to have documents sorted is a decision made where its consequences
+ * are spelled out, not a switch smuggled onto an import surface.
+ */
+const ConsentInvitation = ({ onPress }: { onPress: () => void }): React.JSX.Element => (
+  <View style={styles.consent} testID="seed-consent-invitation">
+    <Text style={styles.consentPrompt}>{SEED_CONSENT_PROMPT}</Text>
+    <TouchableOpacity
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={SEED_CONSENT_LINK_LABEL}
+      testID="seed-consent-link"
+    >
+      <Text style={styles.consentLink}>{SEED_CONSENT_LINK_LABEL}</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 /** The chosen documents and how far each one got. */
 const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Element | null => {
   if (items.length === 0) {
@@ -80,8 +116,13 @@ const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Eleme
   );
 };
 
+interface SeedCorpusBodyProps {
+  run: SeedRunController;
+  onOpenConsent: () => void;
+}
+
 /** The screen body, given a run to read and drive. */
-const SeedCorpusBody = ({ run }: { run: SeedRunController }): React.JSX.Element => {
+const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.Element => {
   const summary = seedSummaryLine(run.tally);
   return (
     <>
@@ -105,6 +146,7 @@ const SeedCorpusBody = ({ run }: { run: SeedRunController }): React.JSX.Element 
           {summary}
         </Text>
       ) : null}
+      {run.needsConsent ? <ConsentInvitation onPress={onOpenConsent} /> : null}
       <SeedRunList items={run.items} />
     </>
   );
@@ -113,9 +155,11 @@ const SeedCorpusBody = ({ run }: { run: SeedRunController }): React.JSX.Element 
 /** The corpus-seeding screen. */
 function SeedCorpusScreen(): React.JSX.Element {
   const run = useSeedRun();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const openConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   return (
     <ScreenScaffold scroll testID="seed-corpus-screen">
-      <SeedCorpusBody run={run} />
+      <SeedCorpusBody run={run} onOpenConsent={openConsent} />
     </ScreenScaffold>
   );
 }
@@ -148,6 +192,23 @@ const styles = StyleSheet.create({
   summary: {
     color: ink.primary,
     marginTop: SPACING.md,
+  },
+  consent: {
+    backgroundColor: surface.sunken,
+    borderRadius: BORDER_RADIUS.md,
+    marginTop: rhythm.blockGap,
+    padding: SPACING.md,
+  },
+  consentPrompt: {
+    color: ink.primary,
+    lineHeight: 20,
+  },
+  consentLink: {
+    color: accent.primary,
+    fontWeight: '600',
+    marginTop: SPACING.sm,
+    minHeight: touchTarget.minimum,
+    paddingTop: SPACING.md,
   },
   row: {
     backgroundColor: surface.raised,
