@@ -29,8 +29,9 @@ You get two files.
   and the ontologized corpus — your own sentences, classified into the ten
   frequencies.
 - **`adepthood-journal-<date>.md`** — the journal alone, as Markdown, oldest
-  first. This is the one to open if you want to *read* it. Entries you deleted
-  are not in it.
+  first. This is the one to open if you want to *read* it.
+
+Entries you deleted are in neither file.
 
 Your entries are stored encrypted, and the export decrypts them. What you get
 is what you wrote, not what the database holds. Anyone who gets hold of the
@@ -73,10 +74,11 @@ moment, so that writing stops being retrieved as context for anything you write
 afterwards.
 
 There is no restore inside the app. The row is not shredded the instant you
-confirm — it is marked deleted and swept later, which is how the usage audit
-trail stays intact — but nothing in the app exposes it and no support path will
-bring it back, so treat a deleted page as gone from Adepthood. If you might
-want it later, [take a copy](#taking-a-copy-of-your-writing) first.
+confirm — it is marked deleted and kept out of every read path, which is how
+the usage audit trail stays intact, and it is cleared when you delete your
+account — but nothing in the app exposes it and no support path will bring it
+back, so treat a deleted page as gone from Adepthood. If you might want it
+later, [take a copy](#taking-a-copy-of-your-writing) first.
 
 Deleting a page does not touch anything else about your account.
 

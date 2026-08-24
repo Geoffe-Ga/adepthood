@@ -114,12 +114,31 @@ jobs:
           # True if an open `dependencies` issue already carries this PR's
           # marker. Idempotency keystone: a second run finds the marker and
           # files nothing.
+          #
+          # Delegated to a script for two reasons. It used to pipe `gh` into
+          # `grep -qF`, and `grep -q` exits at the first match — so once the open
+          # bodies outgrew the 64 KiB pipe buffer, `gh` died of SIGPIPE and this
+          # `run:` block's `pipefail` reported 141 EVEN THOUGH GREP MATCHED,
+          # which reads as "no issue exists" and files a duplicate. It also
+          # carried `2>/dev/null`, so an auth or API failure was indistinguishable
+          # from "no match" — the same swallow that made the missing-label bug
+          # take four failed runs to diagnose. The script does the whole match
+          # inside gh's own `--jq` (no second process to close the pipe early),
+          # lets gh's stderr through, and exits 2 when the lookup FAILED, which
+          # is neither answer. A workflow `run:` block has no test seam; the
+          # script has one, at scripts/ralph/test_bridge_issue_exists.sh.
+          #
+          # Exit codes are inspected explicitly: 0 = exists, 1 = does not,
+          # anything else = unknown. Never fold "unknown" into "does not".
           issue_exists_for_pr() {
-            local pr="$1" marker
-            marker="$(marker_for "$pr")"
-            gh issue list --repo "$REPO" --label dependencies --state open \
-              --limit 200 --json number,body \
-              --jq '.[].body' 2>/dev/null | grep -qF "$marker"
+            local pr="$1" out ec=0
+            out="$(scripts/ralph/bridge-issue-exists.sh "$pr" --repo "$REPO")" || ec=$?
+            case "$ec" in
+              0) echo "Marker for PR #$pr found on issue(s): $out" ;;
+              1) return 1 ;;
+              *) echo "::error::Dedup lookup for PR #$pr failed (exit $ec) — refusing to file, because filing on an unknown answer is how a duplicate is minted."
+                 return "$ec" ;;
+            esac
           }
 
           # The working contract, stated verbatim, with a `{PR}` placeholder.
@@ -143,10 +162,17 @@ jobs:
             fi
 
             # Dedup against an existing open issue carrying this PR's marker.
-            if issue_exists_for_pr "$pr"; then
-              echo "Issue already exists for PR #$pr (marker present) — skipping."
-              return 0
-            fi
+            # Three outcomes, not two: an UNKNOWN answer aborts this PR rather
+            # than falling through to the filing path, because "we could not
+            # tell" and "there is none" have opposite correct actions.
+            local dedup_ec=0
+            issue_exists_for_pr "$pr" || dedup_ec=$?
+            case "$dedup_ec" in
+              0) echo "Issue already exists for PR #$pr (marker present) — skipping."
+                 return 0 ;;
+              1) ;;
+              *) return 1 ;;
+            esac
 
             # Build the Ralph-ready issue body: hidden marker, the verbatim
             # contract (with {PR} substituted), and a link to the Dependabot PR.
@@ -261,7 +287,19 @@ jobs:
               echo "PR #$num already links an issue — skipping."
               continue
             fi
-            bridge_pr "$num" "$ttl"
+            # Guarded on purpose. bridge_pr returns non-zero when a PR's dedup
+            # lookup is UNKNOWN, and an unguarded call under `set -e` would end
+            # the whole run there -- silently skipping every later PR on the
+            # first transport blip, which is the failure this reconciler exists
+            # to survive. Same treatment as the label-verify path above: record
+            # it, keep going, fail once at the end.
+            bridge_ec=0
+            bridge_pr "$num" "$ttl" || bridge_ec=$?
+            if [ "$bridge_ec" -ne 0 ]; then
+              reconcile_failures+=("bridge_pr exited $bridge_ec for PR #$num; its dedup lookup could not be resolved, so no issue was filed -- re-run the reconciler once the API is healthy.")
+              echo "Bridging PR #$num failed ($bridge_ec) -- recorded; continuing the batch." >&2
+              continue
+            fi
           done
 
           # Close orphaned bridge issues. A Dependabot PR that is superseded by a

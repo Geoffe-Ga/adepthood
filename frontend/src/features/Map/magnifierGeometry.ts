@@ -1,5 +1,3 @@
-// frontend/features/Map/magnifierGeometry.ts
-
 /**
  * Pure geometry + presentation resolution for the Map's glass magnifier — the
  * draggable "you are here" lens that floats over the center column, magnifies

@@ -19,6 +19,25 @@ from pydantic import BaseModel
 
 from models.corpus_fragment import CorpusSource
 
+#: How often one caller may record a decision about a source.
+#:
+#: Deliberately tighter than the import route's, and for the opposite reason to
+#: the usual one: this endpoint carries the smallest body in the API and is by
+#: far the most expensive request in it. A grant runs
+#: :mod:`services.corpus_backfill`, so a single "yes" can cost up to
+#: ``BACKFILL_ENTRY_CEILING`` provider calls, where an import costs one -- and
+#: a repeated "yes" is not a no-op, because resuming an unfinished sweep is
+#: what a repeat is *for*. Relying on the app-wide default would have permitted
+#: sixty of those a minute.
+#:
+#: Five rather than one because resumption goes through this door: a person
+#: decides this a handful of times in their life, but an account with a
+#: backlog reaches the rest of it by asking again. The sustained cost is
+#: bounded by their own journal either way -- once the backlog is swept, a
+#: repeat costs one indexed count and stops -- so what this bounds is the
+#: burst.
+CONSENT_RATE_LIMIT = "5/minute"
+
 
 class CorpusConsentUpdate(BaseModel):
     """The decision an account is making about one source.

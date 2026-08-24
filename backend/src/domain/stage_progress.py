@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
-from domain.program_calendar import calendar_stage, resolve_program_anchor
+from domain.stage_authority import open_through
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -24,12 +24,11 @@ from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 from schemas.stage import HabitHistoryItem, PracticeHistoryItem
 
-# Stage 1 is always unlocked regardless of progress state.
+# The stage every user starts at, and the only stage a row is ever created at.
 _STAGE_1 = 1
 
 __all__ = [
     "TOTAL_STAGES",
-    "AllStagesCompletedError",
     "compute_stage_progress",
     "compute_stage_progress_batch",
     "ensure_user_progress",
@@ -38,19 +37,8 @@ __all__ = [
     "get_user_progress",
     "get_user_progress_for_update",
     "is_stage_unlocked",
-    "next_stage_for",
     "stage_exists",
 ]
-
-
-class AllStagesCompletedError(Exception):
-    """Raised by :func:`next_stage_for` when every stage is already completed.
-
-    Keeping this as a plain domain exception — not ``HTTPException`` — lets
-    non-HTTP callers (admin tooling, async tasks, tests) use the helper
-    without pulling in FastAPI's transport layer.  Router code is responsible
-    for catching this and mapping it to the appropriate HTTP response.
-    """
 
 
 async def get_user_progress(session: AsyncSession, user_id: int) -> StageProgress | None:
@@ -126,36 +114,18 @@ def is_stage_unlocked(
     *,
     tz: str | None = None,
 ) -> bool:
-    """Return True iff the stage is open by advancement OR by the calendar.
+    """Return True iff the stage is open by the calendar OR by the record.
 
-    Advancement: ``N <= current_stage``, which only moves via the
-    validated router path (advance must equal ``current + 1``).
-    Calendar: ``N <= calendar_stage(anchor)``, the same date-derived
-    schedule the frontend renders, evaluated in the caller's timezone
-    (``tz``; UTC when None) so the server counts the same calendar days
-    the client does and never 403s a stage the user can see is open.
-    ``max`` of the two means time can OPEN stages but never revoke
-    advancement-granted access — and the calendar itself is
-    server-computed, so a client cannot skip ahead of the schedule.
+    The gate is :func:`domain.stage_authority.open_through` and nothing else:
+    the union of what the calendar has opened and what the record has entered,
+    evaluated in the caller's timezone (``tz``; UTC when None) so the server
+    counts the same local midnights the client does and never 403s a stage the
+    user can see is open. Reading the record alone here is what would turn a
+    lagging ``current_stage`` into a gate, which ``NORTH-STAR.md`` forbids; the
+    calendar is server-computed, so the union cannot let a client skip ahead
+    either. Stage 1 is open to everyone, including a user with no row yet.
     """
-    if stage_number == _STAGE_1:
-        return True
-    if progress is None:
-        return False
-    unlocked_through = max(
-        progress.current_stage,
-        calendar_stage(resolve_program_anchor(progress), now, tz=tz),
-    )
-    return stage_number <= unlocked_through
-
-
-def next_stage_for(progress: StageProgress | None) -> int:
-    """Return ``current_stage + 1`` (or 1 for fresh users); raises at the curriculum end."""
-    if progress is None:
-        return _STAGE_1
-    if progress.current_stage >= TOTAL_STAGES:
-        raise AllStagesCompletedError
-    return progress.current_stage + 1
+    return stage_number <= open_through(progress, now, tz=tz)
 
 
 async def _compute_habits_progress(

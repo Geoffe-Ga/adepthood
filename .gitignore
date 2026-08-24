@@ -141,6 +141,14 @@ frontend/local-assets/
 # git-workflow skill per-PR commit message templates — rot after merge.
 plans/github-issues/COMMIT_*.md
 
+# Per-session backlog-grooming notes. These accumulate fast — 63 of them were
+# untracked in one checkout — and an untracked pile that large is a live hazard:
+# a single `git add -A` sweeps the lot into an unrelated commit, which is exactly
+# how one 13-file change became a 77-file one. Ignoring them keeps the working
+# tree honest about what is actually pending. `plan/2026-05-13_BACKLOG_GROOMING.md`
+# was committed before this rule and stays tracked; gitignore does not untrack.
+plan/*_BACKLOG_GROOMING*.md
+
 # ======================================
 # Keep these tracked
 # ======================================

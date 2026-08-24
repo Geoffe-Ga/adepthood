@@ -1,18 +1,23 @@
 """Shared building blocks for the idempotent startup seeders.
 
-Two patterns recur across the ``seed_*`` modules that populate system
+Three patterns recur across the ``seed_*`` modules that populate system
 (owner-less) rows on FastAPI startup:
 
-* a natural-key existence lookup, used to skip rows already present, and
+* a natural-key existence lookup, used to skip rows already present,
 * a race-safe commit that treats a concurrent peer's winning insert as a
-  no-op.
+  no-op, and
+* an import-time duplicate-key rejection, so a collision in a literal
+  seed plan crashes the process instead of reaching the database.
 
-Collapsing both into one home keeps the individual seeders declarative
-and stops the two idioms from drifting apart as new seeders are added.
+Collapsing all three into one home keeps the individual seeders
+declarative and stops the idioms from drifting apart as new seeders are
+added.
 """
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +27,40 @@ from sqlmodel import col, select
 #: Column count that selects a two-part composite natural key. One column
 #: yields a set of scalars; this many yields a set of ``(a, b)`` tuples.
 _COMPOSITE_KEY_WIDTH = 2
+
+#: A key appearing more times than this in a seed plan is a collision.
+_UNIQUE_OCCURRENCE_COUNT = 1
+
+
+def reject_duplicate_keys(values: Iterable[Any], *, label: str) -> None:
+    """Raise ``ValueError`` if ``values`` repeats any natural key.
+
+    Seeders call this at import time on their literal definition lists, so
+    a duplicated slug, name, or stage number crashes the process at the
+    point the mistake was made rather than surfacing later as a partial
+    seed or an integrity error against the arbitrating unique index.
+
+    ``label`` names the key in the message — for example ``"system tag
+    slug"`` yields ``Duplicate system tag slug: ['breath']`` — and the
+    duplicates are listed, sorted, because the caller is looking at a
+    literal list of dozens of definitions and needs to be told which ones.
+
+    Keys must be hashable and mutually comparable; in practice they are the
+    ``str`` slugs and names and the ``int`` stage numbers the seed plans
+    are keyed by. The element type stays ``Any`` rather than a constrained
+    ``TypeVar`` because every call site reads its values out of a
+    ``dict[str, Any]`` seed literal — the type variable would solve to
+    ``Any`` at all of them, buying no checking in exchange for generic
+    syntax the 3.11 cross-version job cannot parse.
+    """
+    repeated = sorted(
+        value
+        for value, occurrences in Counter(values).items()
+        if occurrences > _UNIQUE_OCCURRENCE_COUNT
+    )
+    if repeated:
+        msg = f"Duplicate {label}: {repeated}"
+        raise ValueError(msg)
 
 
 async def existing_system_keys(

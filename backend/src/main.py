@@ -34,7 +34,7 @@ from middleware import (
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
-from observability import configure_logging, install_trace_id_logging
+from observability import configure_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -479,15 +479,6 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
         content={"detail": "rate_limit_exceeded"},
         headers={"Retry-After": str(retry_after)},
     )
-
-
-# BUG-APP-007: install the trace-id log filter at *import* time, not in the
-# lifespan startup hook.  Module imports (router registration, seed data
-# loading) run before lifespan fires, and a missing filter at that point
-# would leave their log records without a ``trace_id`` field — breaking
-# the formatter and causing a flood of ``KeyError`` messages on the very
-# first request a worker process serves.  The function is idempotent.
-install_trace_id_logging()
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:

@@ -45,6 +45,10 @@ const REVOKED: CorpusConsent = {
   decided_at: '2026-08-19T09:00:00Z',
 };
 const UPLOAD_UNDECIDED: CorpusConsent = { source: 'upload', granted: false, decided_at: null };
+// `import` is the example of a source the server names and nothing here writes for.
+// `upload` held that role until POST /corpus/import gave it a writer, at which point it
+// earned a switch — so the case still needs a source that genuinely has none.
+const IMPORT_UNDECIDED: CorpusConsent = { source: 'import', granted: false, decided_at: null };
 
 function listReturns(...sources: CorpusConsent[]): void {
   mockList.mockResolvedValue(sources);
@@ -84,10 +88,16 @@ describe('CorpusConsentScreen — the offer', () => {
   });
 
   test('offers no switch for a source nothing sorts yet, and says why', async () => {
-    const { queryByTestId, getByTestId } = await renderLoaded(UNDECIDED, UPLOAD_UNDECIDED);
+    const { queryByTestId, getByTestId } = await renderLoaded(UNDECIDED, IMPORT_UNDECIDED);
 
-    expect(queryByTestId('corpus-consent-switch-upload')).toBeNull();
-    expect(getByTestId('corpus-consent-note-upload')).toBeTruthy();
+    expect(queryByTestId('corpus-consent-switch-import')).toBeNull();
+    expect(getByTestId('corpus-consent-note-import')).toBeTruthy();
+  });
+
+  test('offers a switch for uploads, which something now writes for', async () => {
+    const { getByTestId } = await renderLoaded(UNDECIDED, UPLOAD_UNDECIDED);
+
+    expect(getByTestId('corpus-consent-switch-upload').props.value).toBe(false);
   });
 });
 

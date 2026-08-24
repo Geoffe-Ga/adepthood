@@ -19,7 +19,11 @@ import logging
 
 import pytest
 
-from observability import configure_logging, remove_app_log_handlers_for_tests
+from observability import (
+    configure_logging,
+    remove_app_log_handlers_for_tests,
+    trace_id_var,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +59,31 @@ def test_info_records_are_emitted_with_trace_id_placeholder() -> None:
     output = stream.getvalue()
     assert "seed_complete seeder=stages inserted=10" in output
     assert "[-]" in output, "records outside a request must carry the no-trace sentinel"
+
+
+def test_child_logger_record_carries_the_active_trace_id() -> None:
+    """A record emitted on a child logger is stamped with the live trace ID.
+
+    This is the property the whole correlation feature rests on, and the
+    only one worth asserting: application code never logs on the root
+    logger, so a mechanism that works only for direct root emits would
+    leave every real record unstamped and KeyError the ``%(trace_id)s``
+    format. Emitting on a child logger with nothing but
+    :func:`configure_logging` installed proves the handler filter — not a
+    logger-level one — is doing the work.
+    """
+    stream = io.StringIO()
+    configure_logging(stream=stream)
+    token = trace_id_var.set("REALTRACE")
+    try:
+        logging.getLogger("routers.auth").info("login_attempted")
+    finally:
+        trace_id_var.reset(token)
+    output = stream.getvalue()
+    assert "login_attempted" in output, f"the record must reach the stream; got: {output!r}"
+    assert "[REALTRACE]" in output, (
+        f"the child-logger record must carry the active trace ID; got: {output!r}"
+    )
 
 
 def test_log_level_env_is_honoured(monkeypatch: pytest.MonkeyPatch) -> None:

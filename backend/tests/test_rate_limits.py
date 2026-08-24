@@ -153,6 +153,11 @@ async def test_add_balance_rate_limit_pinned_at_5_per_minute(
     await _assert_limit_pinned(send, _LIMIT_5)
 
 
+async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> Response:
+    """Re-send one consent decision, the request that authorises a backfill sweep."""
+    return await client.put("/corpus/consent/journal", json={"granted": True}, headers=headers)
+
+
 # ── Per-endpoint limits pinned exactly ───────────────────────────────────
 
 
@@ -164,12 +169,14 @@ async def test_add_balance_rate_limit_pinned_at_5_per_minute(
         (_get_journal_list, _LIMIT_30),
         (_get_content_body, _LIMIT_30),
         (_get_site_resource_body, _LIMIT_30),
+        (_put_corpus_consent, _LIMIT_5),
     ],
     ids=[
         "post-practices-pinned-at-5-per-minute",
         "get-journal-list-pinned-at-30-per-minute",
         "get-content-body-pinned-at-30-per-minute",
         "get-site-resource-body-pinned-at-30-per-minute",
+        "put-corpus-consent-pinned-at-5-per-minute",
     ],
 )
 async def test_per_endpoint_rate_limit_pinned(

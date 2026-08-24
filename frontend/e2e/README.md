@@ -72,6 +72,14 @@ against the tree, and goes red when a covering spec is renamed, deleted or
 turned off, when a spec here is not declared, or when a crossed surface no
 longer exists under the name the ledger gives it.
 
+A declared route has to clear two checks, because "the server serves it" and
+"the app can ask for it" are different claims. The first reads
+`backend/openapi.json`; the second reads the call sites in `src/api/index.ts`,
+matching a declared `{param}` against an interpolated segment. A route that
+passes the first and fails the second is served and unreachable, and a journey
+naming one describes a seam with no client half — a spec written to it would
+have to hand-roll the request and would prove only that the server works.
+
 Honest gaps are the point. A journey may declare `status: "uncovered"` with a
 linked issue; the gate counts it and reports it and does not fail on it, because
 a gate that goes red for accurate bookkeeping is a gate that gets deleted.

@@ -2,15 +2,14 @@ import { StyleSheet } from 'react-native';
 
 import { SPACING, editorialType, onShowcase, touchTarget } from '@/design/tokens';
 
-const EYEBROW_TRACKING = 1;
-
 /** Token-only styles for the journal showcase hero. */
 export const journalHeroStyles = StyleSheet.create({
+  // Sentence case, untracked: the tracked small-caps eyebrow belongs to the
+  // shelf's recency spine alone, and repeating it here made the hero a header
+  // stacked on a header.
   eyebrow: {
     ...editorialType.caption,
     color: onShowcase.muted,
-    textTransform: 'uppercase',
-    letterSpacing: EYEBROW_TRACKING,
     marginBottom: SPACING.xs,
   },
   greeting: {

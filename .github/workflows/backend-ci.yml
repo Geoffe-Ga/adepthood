@@ -15,6 +15,12 @@ on:
       # scripts/backend/, so a change to render_spec or the --check exit logic
       # would have run neither openapi-drift nor the pytest job that covers it.
       - "scripts/backend/**"
+      # The frontend Jest guards that read backend source run from this
+      # workflow (see the cross-boundary-drift job). Their runner lives under
+      # scripts/frontend/, which neither this workflow's backend/** path nor
+      # frontend-ci.yml's frontend/** path covers, so without this line the
+      # gate itself could be edited -- or disarmed -- while nothing ran.
+      - "scripts/frontend/cross-boundary-drift.sh"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
   pull_request:
@@ -26,6 +32,12 @@ on:
       # scripts/backend/, so a change to render_spec or the --check exit logic
       # would have run neither openapi-drift nor the pytest job that covers it.
       - "scripts/backend/**"
+      # The frontend Jest guards that read backend source run from this
+      # workflow (see the cross-boundary-drift job). Their runner lives under
+      # scripts/frontend/, which neither this workflow's backend/** path nor
+      # frontend-ci.yml's frontend/** path covers, so without this line the
+      # gate itself could be edited -- or disarmed -- while nothing ran.
+      - "scripts/frontend/cross-boundary-drift.sh"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
 
@@ -51,7 +63,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           # Cache uv's download/build cache, keyed on the requirements files so
           # a dependency change busts it (audit-ci-05).
@@ -145,7 +157,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           # Cache uv's download/build cache, keyed on the requirements files so
           # a dependency change busts it (audit-ci-05).
@@ -185,7 +197,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: backend/requirements*.txt
@@ -231,7 +243,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           # Cache uv's download/build cache, keyed on the requirements files so
           # a dependency change busts it (audit-ci-05).
@@ -344,7 +356,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           # Cache uv's download/build cache, keyed on the requirements files so
           # a dependency change busts it (audit-ci-05).
@@ -368,6 +380,46 @@ jobs:
           # backend-quality job, which measures the whole suite.
           python -m pytest tests/integration -m integration -q --no-cov
 
+  cross-boundary-drift:
+    # A handful of frontend Jest tests exist only to read backend source and
+    # fail when the two stacks disagree: the ten APTITUDE colours and their
+    # schedule, the upload cap, which consent sources something actually
+    # writes, what the e2e launcher is allowed to stub.
+    #
+    # frontend-ci.yml is scoped to frontend/** on purpose -- ~450 Jest suites
+    # plus the audit gate do not belong in a one-line backend change -- and
+    # that had an unwritten consequence: a guard whose whole job is to watch
+    # backend source never ran on a backend-only PR. A backend change giving a
+    # consent source its first writer merged green and turned main red
+    # afterwards, on an unrelated frontend PR.
+    #
+    # So the guards run here, where the breaking change is. Only the guards:
+    # the runner discovers them by the marker each one carries, runs them by
+    # path, and does not touch coverage, the bundler, or the audit gate. The
+    # whole job is an npm ci and about a second of Jest. The narrowing over in
+    # frontend-ci.yml stays exactly as it was.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Discovery is at run time, by import of frontend/src/testing/
+      # backendSource.ts -- there is no path list here to go stale, and the
+      # runner exits non-zero rather than reporting a clean empty sweep if it
+      # ever finds nothing.
+      - name: Run the frontend guards that read backend source
+        run: ./scripts/frontend/cross-boundary-drift.sh
+
   content-drift:
     # Issue #397: the vendored backend/content/ must match its pinned
     # CONTENT_VERSION (no silent drift, no hand edits) and the manifest
@@ -383,7 +435,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           # Cache uv's download/build cache, keyed on the requirements files so
           # a dependency change busts it (audit-ci-05).

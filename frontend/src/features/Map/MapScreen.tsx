@@ -1,5 +1,3 @@
-// frontend/features/Map/MapScreen.tsx
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -69,9 +67,9 @@ import {
   isEndOfCycle,
   highestCompletedStage,
 } from './services/stageService';
-import { type StageData } from './stageData';
+import { STAGE_COUNT, type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
-import { stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
 import { WaveOverlay } from './WaveOverlay';
 
 import { Button } from '@/components/Button';
@@ -97,8 +95,8 @@ const FULL_PROGRESS = 1;
 //
 // One responsive row grid is the single source of vertical truth. Each stage is
 // a flex row [LeftCell | CenterCell | RightCell]; the three columns are siblings
-// in the same row, so they cannot drift the way the old content-driven flex
-// table + absolute-percentage center overlay did. The Map reads with no PNG.
+// in the same row, so a stage's text, glyph and label always share its baseline
+// however the copy wraps. The Map reads with no PNG.
 
 const LockGlyph = (): React.JSX.Element => (
   <View style={styles.lockRow}>
@@ -142,6 +140,8 @@ interface StageCellProps {
   stage: StageData;
   display: StageDisplay;
   locked: boolean;
+  /** The stage the person is standing in; both tap targets announce it. */
+  current: boolean;
   onPress: (_stage: StageData) => void;
 }
 
@@ -221,6 +221,7 @@ const StageTextBlock = ({
   stage,
   display,
   locked,
+  current,
   fullness,
   showTopDivider,
   onPress,
@@ -236,7 +237,7 @@ const StageTextBlock = ({
       ]}
       onPress={() => onPress(stage)}
       accessibilityRole="button"
-      accessibilityLabel={stageNodeLabel(display, fullness)}
+      accessibilityLabel={stageNodeLabel(display, fullness, { locked, current })}
     >
       {locked ? <Text style={styles.lockLeft}>🔒</Text> : null}
       <View
@@ -383,6 +384,7 @@ const StageCenterCell = ({
   stage,
   display,
   locked,
+  current,
   onPress,
   rowIndex,
   showTopDivider,
@@ -398,7 +400,7 @@ const StageCenterCell = ({
     onPress={() => onPress(stage)}
     onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
-    accessibilityLabel={`${stage.title} - ${stage.subtitle}`}
+    accessibilityLabel={stageCenterCellLabel(stage.title, stage.subtitle, { locked, current })}
   >
     <CenterContent display={display} locked={locked} />
     {locked ? <LockGlyph /> : null}
@@ -407,7 +409,7 @@ const StageCenterCell = ({
         <Text style={styles.completedBadgeText}>✓</Text>
       </View>
     ) : null}
-    {/* Connector to the stage below (replaces the old %-positioned line). */}
+    {/* Connector down to the stage below; stage 1 is the foot of the spiral. */}
     {display.stageNumber > 1 ? (
       <View style={styles.connector} testID={`stage-connection-${stage.stageNumber}`} />
     ) : null}
@@ -452,6 +454,7 @@ const RowLeftColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
+        current={stage.stageNumber === currentStage}
         fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
         // A row's top stage sits on the row boundary the group row already
         // rules; only the stacked stage(s) below it carry the within-row line.
@@ -483,6 +486,7 @@ const RowCenterColumn = ({
         stage={stage}
         display={display}
         locked={!isStageUnlocked(stage, currentStage)}
+        current={stage.stageNumber === currentStage}
         onPress={onPress}
         rowIndex={rowIndex}
         // Match the left column: only stages stacked below a row's top stage
@@ -876,12 +880,63 @@ const StageDetailModal = ({
   </Modal>
 );
 
-const MapLoading = (): React.JSX.Element => (
-  <View style={styles.centered} testID="map-loading">
-    <ActivityIndicator size="large" color={styles.loadingText.color} />
-    <Text style={styles.loadingText}>Loading stages...</Text>
+/**
+ * How long the cold-start spinner may hold the whole screen before it offers a
+ * way out. ``loading`` only flips back when the request settles, so a dropped
+ * connection, a backgrounded app or a proxy holding the socket open leaves it
+ * true for good — long enough that a slow-but-alive network still lands first,
+ * short enough that nobody is asked to trust an indefinite spinner.
+ */
+export const MAP_LOADING_TIMEOUT_MS = 12_000;
+
+// The cold start's last dead end: a spinner with no timeout and nothing to
+// press. After a bounded wait it says so plainly and offers the same explicit
+// "Try again" the error and empty states use; retrying re-arms the wait, so a
+// second slow attempt gets the spinner rather than a stale message.
+const MapLoadingTimedOut = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View
+    style={styles.centered}
+    testID="map-loading-timeout"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
+    <Text style={styles.emptyText}>Your map is taking longer than it should.</Text>
+    <Text style={styles.errorHint}>
+      It may still be on its way. Check your connection and try again.
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      style={styles.errorRetry}
+      testID="map-loading-retry"
+    >
+      <Text style={styles.errorRetryText}>Try again</Text>
+    </TouchableOpacity>
   </View>
 );
+
+const MapLoading = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => {
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (timedOut) return undefined;
+    const timer = setTimeout(() => setTimedOut(true), MAP_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [timedOut]);
+
+  const handleRetry = useCallback(() => {
+    setTimedOut(false);
+    onRetry();
+  }, [onRetry]);
+
+  if (timedOut) return <MapLoadingTimedOut onRetry={handleRetry} />;
+  return (
+    <View style={styles.centered} testID="map-loading">
+      <ActivityIndicator size="large" color={styles.loadingText.color} />
+      <Text style={styles.loadingText}>Loading stages...</Text>
+    </View>
+  );
+};
 
 // Cold-start failure: announce it, say what to do, and offer the same explicit
 // retry the refresh banner and history error use — never a silent auto-retry.
@@ -1190,6 +1245,19 @@ interface CompletionCelebration {
  * that just unlocked. The first render seeds the baseline (no celebration on
  * mount); thereafter a rise in the highest-completed stage fires once.
  */
+/**
+ * What the banner says for a completion that has just landed.
+ *
+ * The terminal stage has no successor, so naming one is a false claim made at
+ * the very moment the Begin Again block appears beside it saying the arc is
+ * whole. It reads as the end of the arc instead, in that block's own words.
+ */
+const completionMessage = (completed: number, lookup: StageLookup): string => {
+  if (completed >= STAGE_COUNT) return BEGIN_AGAIN_COPY.celebration;
+  const next = lookup[completed + 1];
+  return `${next ? next.title : 'The next stage'} unlocked`;
+};
+
 const useStageCompletionCelebration = (
   stages: readonly StageData[],
   lookup: StageLookup,
@@ -1203,9 +1271,7 @@ const useStageCompletionCelebration = (
     const prev = prevCompletedRef.current;
     prevCompletedRef.current = completed;
     if (prev === null || completed <= prev) return;
-    const next = lookup[completed + 1];
-    const nextName = next ? next.title : 'The next stage';
-    setMessage(`${nextName} unlocked`);
+    setMessage(completionMessage(completed, lookup));
     setActive(true);
   }, [completed, lookup]);
 
@@ -1354,7 +1420,7 @@ const useMapStageStore = () => ({
 const MapScreen = (): React.JSX.Element => {
   const { stages, loading, error, hasAttempted, storeCurrentStage, cycleNumber } =
     useMapStageStore();
-  // Prefer the date-driven stage; the server's count-based one is the fallback.
+  // Prefer the locally anchored calendar; the server's stage stands when there is no anchor.
   const currentStage = useDerivedCurrentStage(storeCurrentStage);
   // Additive overlay: a failed/loading read leaves the map empty so every Aspect reads thin.
   const { fullnessByStage } = useWheelBalance();
@@ -1384,7 +1450,7 @@ const MapScreen = (): React.JSX.Element => {
   const lens = useLensFocus(currentStage, lookup, setActiveStage);
   const { drawer, onDrawerSelectStage } = useMapDrawer(lens);
 
-  if (loading && stages.length === 0) return <MapLoading />;
+  if (loading && stages.length === 0) return <MapLoading onRetry={handleRefresh} />;
   if (error && stages.length === 0) return <MapError message={error} onRetry={handleRefresh} />;
   if (hasAttempted && stages.length === 0) return <MapEmpty onRetry={handleRefresh} />;
 

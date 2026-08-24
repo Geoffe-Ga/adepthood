@@ -92,11 +92,13 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
-      "client": ["course"],
+      "client": ["course", "stages"],
       "routes": [
+        "GET /stages",
+        "GET /stages/program-calendar",
         "GET /course/stages/{stage_number}/content",
         "GET /course/content/{content_id}/body",
         "POST /course/content/{content_id}/mark-read",
@@ -109,20 +111,15 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller reads the wheel and advances their stage, and the server agrees they moved. Still uncovered, and not for want of a spec: the routes live on the server, but no frontend code calls them. The API client exports no wrapper for PUT /stages/progress or GET /stages/{stage_number}/progress, and the optimistic advance machinery MapScreen would have used was deleted rather than wired up. A spec would have to hand-roll the request, which registers as coverage of a screen-to-client seam that does not exist.",
+    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. The wrapper spelled like it, course.stageProgress, addresses the course router's own /course/stages/{n}/progress instead. Still uncovered because no spec moves the anchor and reads yet.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
-      "routes": [
-        "GET /stages",
-        "GET /stages/wheel",
-        "PUT /stages/progress",
-        "GET /stages/{stage_number}/progress"
-      ],
+      "routes": ["GET /stages", "GET /stages/program-calendar", "GET /stages/wheel"],
       "tables": ["stageprogress", "coursestage"]
     },
     "status": "uncovered",
-    "issue": 2323
+    "issue": 2299
   },
   {
     "id": "depth.choose-rings",
@@ -138,15 +135,27 @@
   },
   {
     "id": "seed.upload-document",
-    "description": "A person chooses a document from their device and seeds it into the Higher Self corpus; the upload forwards to the vault rather than persisting locally, so authentication is the only table it crosses. Still uncovered after the upload transport shipped: the lane's server reads CREEK_VAULT_OWNER_USER_ID from an environment fixed before any account exists, so no account a spec can create is ever the vault's owner and every e2e upload takes the local-fallback path. A spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. Per-user vault configuration (#2233) removes the environment half of that obstacle -- a spec can now connect a vault for the account it just created -- but not the other half: the lane still has no vault to connect to, so covering this needs a stand-in vault the lane can point an account at.",
+    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, and the count of reasons went from two to one and back to two. Per-user vault configuration (#2233) retired the environment binding, so a spec can now connect a vault for the account it just created; what stands is that the lane has no vault to connect to, and that the app has no way to connect one. PUT /vault/connection is served and no wrapper in src/api/index.ts and no screen addresses it, so nobody using the shipped app can reach the state this journey opens in, and a spec would have to hand-roll the connection over HTTP the product cannot make. Covering it therefore needs a stand-in vault the lane can point an account at AND a client half for the connecting, not lane infrastructure alone. Meanwhile every e2e import takes the local-fallback path, and a spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
-      "client": ["journal"],
-      "routes": ["POST /journal/upload"],
+      "client": ["corpus"],
+      "routes": ["POST /corpus/import"],
       "tables": ["user"]
     },
     "status": "uncovered",
     "issue": 2317
+  },
+  {
+    "id": "corpus.import-without-a-vault",
+    "description": "Someone who has connected no vault brings in a document they wrote elsewhere: they pick it, choose its tier, and it is routed to their own ontologized corpus rather than answered in the vocabulary of a vault they do not have. The first answer is the consent question, because the corpus is off until they turn it on; the screen offers the way to that switch instead of failing silently. A format nothing can read is refused before consent is even consulted, and an Intimate document is declined outright -- placing writing among the frequencies means reading it with a language model, and that tier never goes to one. The stored outcome itself needs a classification call, which the lane has no provider for, so a consented import settles there as unclassified.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus", "corpusConsent"],
+      "routes": ["POST /corpus/import", "PUT /corpus/consent/{source}"],
+      "tables": ["user", "corpusconsentevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-import.e2e.test.ts"
   },
   {
     "id": "account.export-my-data",
@@ -162,7 +171,7 @@
   },
   {
     "id": "corpus.decide-what-may-be-sorted",
-    "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question.",
+    "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. The backend pins it at backend/tests/test_corpus_consent_api.py.",
     "crosses": {
       "screen": "frontend/src/features/Settings/CorpusConsentScreen.tsx",
       "client": ["auth", "setTokenGetter", "corpusConsent"],
