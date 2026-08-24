@@ -18,6 +18,18 @@ export const welcomeStyles = StyleSheet.create({
     flex: 1,
     backgroundColor: surface.canvas,
   },
+  /**
+   * The walkthrough's own column, centred inside the ground. Its width is set
+   * from ``useResponsive().contentWidth`` -- the same cap the rest of the app
+   * reads content at -- so a laptop browser gets symmetric margins instead of
+   * an edge-to-edge intro. Below the cap it equals the viewport, so a phone is
+   * unchanged. Every page-stride calculation measures this column, not the
+   * window, which is what keeps paging landing on panel boundaries.
+   */
+  column: {
+    flex: 1,
+    alignSelf: 'center',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
