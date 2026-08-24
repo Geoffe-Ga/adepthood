@@ -32,6 +32,7 @@ from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
     MarginaliaAnchored,
+    MarginaliaOutcome,
     ResonanceLLM,
     generate_essay,
     generate_marginalia,
@@ -695,9 +696,37 @@ async def _detect_and_persist_suggestions(
     return rows
 
 
+def _log_resonance_outcome(
+    outcome: MarginaliaOutcome, *, user_id: int, entry_id: int, count: int
+) -> None:
+    """Record what the pass produced and, when nothing survived, that it did not.
+
+    ``count=0`` alone states an outcome and never a cause: a model that returned
+    nothing, a completion that would not parse, and a model whose every quote was
+    paraphrased past the verbatim anchor all looked identical, and to the writer
+    all three look like a button that does nothing. The tally rides on the
+    existing record so the cause is in the same line as the outcome, and a
+    distinct WARNING fires for the one shape worth alerting on -- the model
+    proposed notes and the writer received none of them.
+
+    Counts and ids only. Never a quote, a note, or any part of the body: the same
+    reason the grounding path logs ids and counts, since journal text is
+    encrypted at rest.
+    """
+    extra: dict[str, object] = {
+        "user_id": user_id,
+        "entry_id": entry_id,
+        "count": count,
+        **outcome.as_log_extra(),
+    }
+    logger.info("journal_resonance_generated", extra=extra)
+    if outcome.produced_nothing_usable:
+        logger.warning("journal_resonance_all_drafts_discarded", extra=extra)
+
+
 async def _generate_marginalia_or_502(
     message: str, llm: ResonanceLLM, prior: list[str], session: AsyncSession
-) -> list[MarginaliaAnchored]:
+) -> MarginaliaOutcome:
     """Run the literary pass; a provider error rolls back the charge and 502s.
 
     This is the only charged LLM call — a failure here must un-deduct the wallet
@@ -856,7 +885,7 @@ async def _resonance_pass_or_care(
     prior: list[str],
     session: AsyncSession,
     care: CareResponse | None,
-) -> list[MarginaliaAnchored] | None:
+) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
     A flagged entry swallows the 502 (the charge was already rolled back) and
@@ -1057,7 +1086,7 @@ async def run_resonance(
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored)
+    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored.notes)
     spent_user = await require_user_fresh(session, current_user)
     await record_llm_usage(
         session,
@@ -1067,10 +1096,7 @@ async def run_resonance(
     )
     await session.commit()
     await _refresh_persisted(session, rows, suggestions)
-    logger.info(
-        "journal_resonance_generated",
-        extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
-    )
+    _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(care=care, contraction=contraction)
     return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)

@@ -9,8 +9,10 @@ anything that doesn't anchor cleanly.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
 from domain.care import MEDICATION_GUARDRAIL
@@ -68,6 +70,108 @@ class MarginaliaAnchored:
     note: str
 
 
+class DropReason(Enum):
+    """Why one model-proposed draft never reached the writer.
+
+    The set is closed and each member names a *different* fault, because the
+    remedy differs: ``UNANCHORABLE`` in bulk means the model is paraphrasing
+    its quotes (a prompt problem), ``KIND`` in bulk means it is inventing
+    categories (also a prompt problem), while ``OVERLAPPING`` in bulk means it
+    is crowding one passage (a fine outcome, and not a failure at all).
+    """
+
+    #: The JSON item was not an object carrying string kind/quote/note.
+    MALFORMED = "malformed"
+    #: The ``kind`` is not one of :data:`VALID_KINDS`.
+    KIND = "kind"
+    #: The quote was not present verbatim in the body, so it could not anchor.
+    UNANCHORABLE = "unanchorable"
+    #: The note was empty or too long once sanitized.
+    UNSANITISABLE = "unsanitisable"
+    #: The span intersected a note already kept; first anchor wins.
+    OVERLAPPING = "overlapping"
+
+
+@dataclass(frozen=True)
+class _ParsedCompletion:
+    """What the model's raw completion yielded before anchoring was attempted."""
+
+    #: The completion decoded to an object carrying a ``notes`` array.
+    usable: bool
+    #: How many entries that array held, well-shaped or not.
+    proposed: int
+    #: The well-shaped subset.
+    drafts: list[MarginaliaDraft]
+
+
+@dataclass(frozen=True)
+class MarginaliaOutcome:
+    """The notes a pass produced, plus an account of everything it discarded.
+
+    A resonance pass that returns nothing used to be indistinguishable from a
+    pass that was never going to: the caller saw an empty list and logged
+    ``count=0``, which states the outcome and never the cause. This type is the
+    cause. It carries counts only -- never a quote, a note, or any part of the
+    entry -- because journal bodies are encrypted at rest and the surrounding
+    code logs ids and counts for that reason.
+
+    The counts reconcile: ``kept + every dropped count + unexamined ==
+    proposed``. That is not decoration; it is what makes the record trustworthy,
+    since a draft that fell out through some path nobody counted would show up
+    as a gap in the arithmetic rather than as silence.
+    """
+
+    #: The anchored notes, in the order they were kept.
+    notes: list[MarginaliaAnchored]
+    #: False when the completion was not JSON carrying a ``notes`` array.
+    completion_parsed: bool
+    #: Entries in the model's ``notes`` array, well-shaped or not.
+    proposed: int
+    #: Well-shaped drafts actually put through anchoring (the rest hit the cap).
+    examined: int
+    #: How many drafts each fault discarded.
+    dropped: Mapping[DropReason, int]
+
+    @property
+    def kept(self) -> int:
+        """How many notes reached the writer."""
+        return len(self.notes)
+
+    @property
+    def unexamined(self) -> int:
+        """Well-shaped drafts never looked at because ``max_notes`` was reached."""
+        malformed = self.dropped.get(DropReason.MALFORMED, 0)
+        return self.proposed - malformed - self.examined
+
+    @property
+    def produced_nothing_usable(self) -> bool:
+        """True when the model said something and the writer received nothing.
+
+        Deliberately false for the one benign shape -- a parsed completion whose
+        ``notes`` array was empty -- because that is a model declining to
+        comment, not a pipeline silently eating its own output.
+        """
+        return self.kept == 0 and (self.proposed > 0 or not self.completion_parsed)
+
+    def as_log_extra(self) -> dict[str, int | bool]:
+        """Return the counts as structured log fields (no text, ever).
+
+        Keys are prefixed so they cannot collide with :class:`logging.LogRecord`
+        attributes, and every drop reason is emitted even at zero so a dashboard
+        can chart a reason that has stopped occurring.
+        """
+        extra: dict[str, int | bool] = {
+            "completion_parsed": self.completion_parsed,
+            "drafts_proposed": self.proposed,
+            "drafts_kept": self.kept,
+            "drafts_unexamined": self.unexamined,
+        }
+        extra.update(
+            {f"dropped_{reason.value}": self.dropped.get(reason, 0) for reason in DropReason}
+        )
+        return extra
+
+
 class ResonanceLLM(Protocol):
     """Minimal injected LLM seam: prompt in, raw completion text out."""
 
@@ -120,23 +224,37 @@ def _draft_from_item(item: object) -> MarginaliaDraft | None:
     return None
 
 
-def _load_json_list(raw: str, key: str) -> list[object]:
-    """Parse ``raw`` JSON and return its ``key`` list; [] on any malformed input."""
+def _optional_json_list(raw: str, key: str) -> list[object] | None:
+    """Parse ``raw`` JSON and return its ``key`` list, or None if there isn't one.
+
+    The ``None`` matters: "the model returned an empty ``notes`` array" and "the
+    completion was not usable JSON at all" are different events, and collapsing
+    them into an empty list is what made a zero-note pass undiagnosable.
+    """
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
-        return []
+        return None
     value = payload.get(key) if isinstance(payload, dict) else None
-    return value if isinstance(value, list) else []
+    return value if isinstance(value, list) else None
 
 
-def _parse_drafts(raw: str) -> list[MarginaliaDraft]:
-    """Defensively parse the model's JSON into drafts; never raise on bad input."""
-    return [
-        draft
-        for item in _load_json_list(raw, "notes")
-        if (draft := _draft_from_item(item)) is not None
-    ]
+def _load_json_list(raw: str, key: str) -> list[object]:
+    """Parse ``raw`` JSON and return its ``key`` list; [] on any malformed input."""
+    return _optional_json_list(raw, key) or []
+
+
+def _parse_completion(raw: str) -> _ParsedCompletion:
+    """Parse the model's JSON into drafts, keeping count of what it discarded.
+
+    Never raises on bad input. An item of the wrong shape is dropped exactly as
+    before, but is now counted rather than vanishing.
+    """
+    items = _optional_json_list(raw, "notes")
+    if items is None:
+        return _ParsedCompletion(usable=False, proposed=0, drafts=[])
+    drafts = [draft for item in items if (draft := _draft_from_item(item)) is not None]
+    return _ParsedCompletion(usable=True, proposed=len(items), drafts=drafts)
 
 
 def _sanitize_note(note: str) -> str | None:
@@ -156,14 +274,22 @@ def _quote_span(body: str, quote: str) -> tuple[int, int] | None:
     return None if start == -1 else (start, start + len(quote))
 
 
-def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | None:
-    """Resolve a draft to a span, or None if it can't anchor / validate."""
+def _anchor(body: str, draft: MarginaliaDraft) -> MarginaliaAnchored | DropReason:
+    """Resolve a draft to a span, or name the reason it could not be resolved.
+
+    Returning the reason rather than a bare ``None`` is the whole point: three
+    quite different faults used to leave through one exit, so a pass in which
+    the model paraphrased every quote looked exactly like a pass in which it
+    returned nothing.
+    """
     if draft.kind not in VALID_KINDS:
-        return None
+        return DropReason.KIND
     span = _quote_span(body, draft.quote)
+    if span is None:
+        return DropReason.UNANCHORABLE
     note = _sanitize_note(draft.note)
-    if span is None or note is None:
-        return None
+    if note is None:
+        return DropReason.UNSANITISABLE
     start, end = span
     return MarginaliaAnchored(
         kind=draft.kind,
@@ -184,30 +310,58 @@ def _overlaps_any(candidate: MarginaliaAnchored, kept: list[MarginaliaAnchored])
     return any(_overlaps(candidate, other) for other in kept)
 
 
+def _anchor_drafts(body: str, parsed: _ParsedCompletion, max_notes: int) -> MarginaliaOutcome:
+    """Anchor each draft against ``body``, tallying every one that is discarded.
+
+    Anchoring stays exactly as strict as it was -- ``_quote_span`` still matches
+    verbatim and model-supplied indices are still never trusted. The only change
+    is that a discard is now recorded instead of being silently skipped.
+    """
+    kept: list[MarginaliaAnchored] = []
+    dropped: Counter[DropReason] = Counter()
+    dropped[DropReason.MALFORMED] = parsed.proposed - len(parsed.drafts)
+    examined = 0
+    for draft in parsed.drafts:
+        if len(kept) >= max_notes:
+            break
+        examined += 1
+        candidate = _anchor(body, draft)
+        if isinstance(candidate, DropReason):
+            dropped[candidate] += 1
+        elif _overlaps_any(candidate, kept):
+            dropped[DropReason.OVERLAPPING] += 1
+        else:
+            kept.append(candidate)
+    return MarginaliaOutcome(
+        notes=kept,
+        completion_parsed=parsed.usable,
+        proposed=parsed.proposed,
+        examined=examined,
+        dropped=dict(dropped),
+    )
+
+
 async def generate_marginalia(
     body: str,
     *,
     llm: ResonanceLLM,
     prior_entries: Sequence[str] | None = None,
     max_notes: int = _DEFAULT_MAX_NOTES,
-) -> list[MarginaliaAnchored]:
-    """Ask ``llm`` to read ``body`` and return anchored, validated margin notes.
+) -> MarginaliaOutcome:
+    """Ask ``llm`` to read ``body`` and return anchored notes plus what was dropped.
 
     Quotes are located verbatim in ``body`` (model indices are never trusted);
     notes that don't anchor, have an unknown kind, or can't be sanitized are
     dropped. Overlapping spans are de-duplicated (first wins) and the result is
     capped at ``max_notes``.
+
+    Returns a :class:`MarginaliaOutcome` rather than a bare list so a caller can
+    tell an empty result apart from a pass that discarded everything it was
+    given. Callers are expected to log :meth:`MarginaliaOutcome.as_log_extra`;
+    dropping the outcome on the floor re-creates the silence this replaced.
     """
     raw = await llm.complete(build_prompt(body, prior_entries, max_notes))
-    anchored: list[MarginaliaAnchored] = []
-    for draft in _parse_drafts(raw):
-        candidate = _anchor(body, draft)
-        if candidate is None or _overlaps_any(candidate, anchored):
-            continue
-        anchored.append(candidate)
-        if len(anchored) >= max_notes:
-            break
-    return anchored
+    return _anchor_drafts(body, _parse_completion(raw), max_notes)
 
 
 def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> str:
