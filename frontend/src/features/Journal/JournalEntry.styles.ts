@@ -307,6 +307,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: SPACING.xs,
   },
+  /**
+   * A voice of the chord that has been chosen, folded onto one line: its label,
+   * the chosen chip, and the affordance that reopens the row. Folding is what
+   * keeps a named chord from holding nineteen chips open in the writing column.
+   */
+  aspectChordChosenRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
   /** A single Aspect chip; min dims hold the 44dp touch-target floor. */
   aspectChordChip: {
     minHeight: touchTarget.minimum,
@@ -317,24 +328,30 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
   },
+  /**
+   * The chosen chip. Its fill is this stage's own colour, applied at render from
+   * the shared palette, so only the ink border it gains lives here.
+   */
   aspectChordChipSelected: {
-    backgroundColor: colors.paper.anchorHighlight,
-    borderColor: colors.paper.inkSoft,
+    borderColor: colors.paper.ink,
   },
   aspectChordChipLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
   },
-  aspectChordChipLabelSelected: {
-    color: colors.paper.ink,
+  /** Row holding the chord-level affordances (Clear, Collapse) on one line. */
+  aspectChordActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
   },
-  /** The clear affordance that resets the chord to untagged. */
-  aspectChordClear: {
+  /** A chord affordance: Clear, Collapse, or a row's Change. 44dp touch floor. */
+  aspectChordAction: {
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
     paddingHorizontal: SPACING.sm,
   },
-  aspectChordClearLabel: {
+  aspectChordActionLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
   },

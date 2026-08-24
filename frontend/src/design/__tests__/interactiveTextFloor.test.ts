@@ -153,12 +153,12 @@ describe('interactive text floor', () => {
         journalEntryStyles.aspectChordTriggerLabel,
       );
       const aspectChordChipLabel = StyleSheet.flatten(journalEntryStyles.aspectChordChipLabel);
-      const aspectChordClearLabel = StyleSheet.flatten(journalEntryStyles.aspectChordClearLabel);
+      const aspectChordActionLabel = StyleSheet.flatten(journalEntryStyles.aspectChordActionLabel);
       expect(controlLink.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(privacyTierLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(aspectChordTriggerLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(aspectChordChipLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
-      expect(aspectChordClearLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
+      expect(aspectChordActionLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
     });
 
     it('sizes the StatTile cue to the floor', () => {
