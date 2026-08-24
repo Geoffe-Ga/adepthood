@@ -99,6 +99,20 @@ def service_unavailable(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
 
 
+def unhandled_exception_response(request: Request, exc: Exception) -> JSONResponse:
+    """Build the sanitised 500 for ``exc``, logging and Sentry-reporting it on the way.
+
+    The synchronous twin of :func:`_unhandled_exception_handler`, for callers
+    that are not Starlette exception handlers — specifically
+    :class:`middleware.unhandled_exception.UnhandledExceptionMiddleware`, which
+    exists so this envelope is produced *inside* the user middleware stack and
+    therefore travels back out through ``CORSMiddleware``.  Both entry points
+    build the identical body, header, log event, and Sentry report; they differ
+    only in where in the stack they run.
+    """
+    return _sanitized_500(request, exc, log_event="unhandled_exception", error_code=INTERNAL_ERROR)
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — log, report to Sentry, return a sanitised envelope.
 
@@ -125,8 +139,16 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     ``finally`` block by the time Starlette dispatches this handler —
     the contextvar is only a fallback for the bare-app test fixtures
     that do not install the middleware.
+
+    On the deployed app this is a *backstop*: ``UnhandledExceptionMiddleware``
+    sits below CORS and catches route- and rate-limit-layer exceptions first, so
+    only a panic in one of the outermost layers (forwarded-proto, access
+    logging, correlation id, security headers, CORS itself) still arrives here —
+    and such a response, being written above CORS, is the one case a browser
+    still cannot read.  Registering it remains strictly better than Starlette's
+    default traceback page.
     """
-    return _sanitized_500(request, exc, log_event="unhandled_exception", error_code=INTERNAL_ERROR)
+    return unhandled_exception_response(request, exc)
 
 
 def _sanitized_500(
