@@ -72,12 +72,16 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "gpt-4o-mini": _price("0.15", "0.60"),
     "gpt-4o": _price("2.50", "10.00"),
     "gpt-4-turbo": _price("10.00", "30.00"),
-    # Anthropic — https://www.anthropic.com/pricing
-    "claude-sonnet-4-20250514": _price("3.00", "15.00"),
+    # Anthropic — https://platform.claude.com/docs/en/about-claude/pricing
     "claude-haiku-4-5-20251001": _price("1.00", "5.00"),
-    # Floating aliases (track the latest minor) — priced at the family's current
-    # list price; the price follows the alias as Anthropic rolls it forward.
-    "claude-opus-4-7": _price("15.00", "75.00"),
+    # Floating aliases (track the latest release) — priced at the family's
+    # current list price; the price follows the alias as Anthropic rolls it
+    # forward.  Opus 4.7 is $5/$25, NOT the $15/$75 that this table carried:
+    # that is Opus 4.1's rate card, and quoting it here inflated every logged
+    # Opus cost threefold.
+    "claude-sonnet-5": _price("2.00", "10.00"),
+    "claude-opus-5": _price("5.00", "25.00"),
+    "claude-opus-4-7": _price("5.00", "25.00"),
     "claude-sonnet-4-6": _price("3.00", "15.00"),
 }
 

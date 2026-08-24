@@ -114,17 +114,25 @@ class ProviderSpec:
 
 # Anthropic model IDs intentionally mix two formats per Anthropic's naming:
 #
-#   * ``claude-{family}-{major}-{minor}`` (e.g. ``claude-opus-4-7``,
-#     ``claude-sonnet-4-6``) -- a *floating alias* that always points at
-#     the latest minor release in that family.  Choose this for chat /
-#     dev use where staying current matters more than reproducibility.
-#   * ``claude-{family}-{major}-{YYYYMMDD}`` (e.g.
-#     ``claude-sonnet-4-20250514``, ``claude-haiku-4-5-20251001``) --
-#     a *date-pinned* build.  Choose this for evaluations / experiments
-#     where the model behind the alias must not silently change.
+#   * ``claude-{family}-{major}`` / ``claude-{family}-{major}-{minor}``
+#     (e.g. ``claude-sonnet-5``, ``claude-opus-4-7``) -- a *floating
+#     alias* that always points at the latest release in that family.
+#     Choose this for chat / dev use where staying current matters more
+#     than reproducibility.
+#   * ``claude-{family}-{major}-{minor}-{YYYYMMDD}`` (e.g.
+#     ``claude-haiku-4-5-20251001``) -- a *date-pinned* build.  Choose
+#     this for evaluations / experiments where the model behind the
+#     alias must not silently change.
 #
 # Both forms are valid Anthropic endpoints; they are NOT duplicates --
 # an operator deliberately chooses pin-vs-alias by setting ``LLM_MODEL``.
+#
+# A date-pinned build is retired on a published schedule and then 404s,
+# which is invisible to a suite that mocks the provider: it took a user
+# pressing a button to discover that the old default had been retired
+# out from under it.  The live lane in ``backend/tests/live/`` now
+# reconciles every id below against Anthropic's own ``GET /v1/models``
+# catalogue on a schedule, so the next retirement files an issue instead.
 # Key-prefix note: Anthropic keys carry the more specific ``sk-ant-``
 # prefix, so OpenAI disallows it to prevent provider cross-wiring; keep
 # the frontend mirror (``frontend/.../byokProviders.ts``) in sync.
@@ -142,13 +150,30 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
     "anthropic": ProviderSpec(
         key_prefix="sk-ant-",
         disallowed_prefixes=(),
-        default_model="claude-sonnet-4-20250514",
+        default_model="claude-sonnet-5",
+        # Every entry is an audit decision, and each one earns its place:
+        #   * ``claude-sonnet-5`` -- the default.  Current balanced tier,
+        #     and at $2/$10 per Mtok it is both newer and cheaper than the
+        #     4-series Sonnet it supersedes.
+        #   * ``claude-opus-5`` -- most capable, for an operator who wants
+        #     depth on reflection/resonance and accepts $5/$25.
+        #   * ``claude-sonnet-4-6`` / ``claude-opus-4-7`` -- the previous
+        #     generation's aliases.  Retained (not "lagging") so an operator
+        #     already pinning one keeps a working config across this change.
+        #   * ``claude-haiku-4-5-20251001`` -- the cheap/fast tier, and the
+        #     one date-pinned id that keeps the pin-vs-alias note above
+        #     truthful with a real example.
+        # Deliberately absent: ``claude-fable-5`` resolves on the same key
+        # but is a creative-writing profile at $10/$50 with no audited role
+        # on this path, and the remaining 4-series point builds serve no
+        # need the five below do not.
         allowed_models=frozenset(
             {
-                # Date-pinned (reproducible) builds:
-                "claude-sonnet-4-20250514",
+                # Date-pinned (reproducible) build:
                 "claude-haiku-4-5-20251001",
-                # Floating aliases (track latest minor):
+                # Floating aliases (track latest release):
+                "claude-sonnet-5",
+                "claude-opus-5",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
             }
@@ -156,10 +181,13 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         call_name="_call_anthropic",
         # Explicit, independently-audited vision set (not aliased to
         # ``allowed_models``): each of these Anthropic models accepts images.
+        # Audited by posting a real image block to each id: all five return
+        # 200 rather than an ``invalid_request_error`` about image content.
         vision_models=frozenset(
             {
-                "claude-sonnet-4-20250514",
                 "claude-haiku-4-5-20251001",
+                "claude-sonnet-5",
+                "claude-opus-5",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
             }
