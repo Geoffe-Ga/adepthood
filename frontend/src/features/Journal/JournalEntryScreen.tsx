@@ -265,6 +265,13 @@ interface AutosaveApi {
    * the tier + chord controls stay inert until we know the entry's real values.
    */
   controlsLocked: boolean;
+  /**
+   * True once an existing entry's own text has been fetched and applied. Always
+   * false for a brand-new entry (there is nothing to fetch) and false while a
+   * load is in flight or has failed, so a consumer can tell "this page holds
+   * writing that already existed" from "this page is still blank".
+   */
+  loadedFromServer: boolean;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -995,6 +1002,7 @@ function useJournalAutosave(
     finish: finishNow,
     loadError: entry.loadError,
     controlsLocked: entryUnsettled,
+    loadedFromServer: routeEntryId != null && entry.loaded,
   };
 }
 
@@ -1556,6 +1564,31 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
   };
 }
 
+/**
+ * The screen's idle gate, with one addition: a page that opens onto writing
+ * that already exists counts as settled the moment its text arrives.
+ *
+ * ``isIdle`` models "the writer has paused *after writing*", which on a fresh
+ * page is exactly right. On an entry saved days ago there is no writing to
+ * pause after, so the pause never arrives and the reading is never offered —
+ * the writer sees a page with no affordance on it at all, which is what was
+ * reported. Nothing here loosens the pause for a page being composed: this
+ * fires once, only for an entry whose own text came back from the server with
+ * something in it, and any keystroke afterwards bumps the ordinary timer back
+ * into charge.
+ */
+function useResonanceIdle(autosave: AutosaveApi): { isIdle: boolean; bump: () => void } {
+  const { isIdle, bump, settle } = useIdle();
+  const settledRef = useRef(false);
+  const hasContent = autosave.body.trim().length > 0;
+  useEffect(() => {
+    if (settledRef.current || !autosave.loadedFromServer || !hasContent) return;
+    settledRef.current = true;
+    settle();
+  }, [autosave.loadedFromServer, hasContent, settle]);
+  return { isIdle, bump };
+}
+
 /** Wrap the autosave change handlers so each keystroke also bumps the idle timer. */
 function useBumpedHandlers(bump: () => void, autosave: AutosaveApi) {
   const { onChangeTitle, onChangeBody } = autosave;
@@ -1715,7 +1748,7 @@ function useJournalEntryController(
     handleSaved,
     onCreateConflict,
   );
-  const { isIdle, bump } = useIdle();
+  const { isIdle, bump } = useResonanceIdle(autosave);
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
