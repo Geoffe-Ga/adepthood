@@ -1943,6 +1943,63 @@ function ReturnToReadingLink({
   );
 }
 
+/** Screen-reader name for the exit that is offered no matter how they arrived. */
+const CLOSE_ENTRY_LABEL = 'Close — return to your journal';
+
+/**
+ * The always-available way out of the writing surface. ``ReturnToReadingLink``
+ * only appears for a writer who came from the course reader, which left everyone
+ * else with no exit the screen itself offered. This one is never gated: it flushes
+ * the pending draft on the same fired-not-awaited contract as the return link — so
+ * nothing typed is lost as the stack screen unmounts, and leaving never waits on a
+ * write — then lands the writer back on the Journal shelf.
+ */
+function CloseEntryLink({
+  navigation,
+  flush,
+}: {
+  navigation: ScreenNavigation;
+  flush: () => Promise<number | null>;
+}): React.JSX.Element {
+  const onPress = useCallback(() => {
+    void flush();
+    navigation.navigate('Tabs', { screen: 'Journal' });
+  }, [navigation, flush]);
+  return (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={CLOSE_ENTRY_LABEL}
+      testID="journal-close-entry"
+    >
+      <Text style={styles.controlLink}>Close</Text>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * The page's exit row: the course return when there is one, and the close always.
+ * They are separate affordances — the return carries the reader back to the exact
+ * passage they left, which the close cannot know about.
+ */
+function EntryExitControls({
+  returnTo,
+  navigation,
+  flush,
+}: {
+  returnTo: CourseReturnTo;
+  navigation: ScreenNavigation;
+  flush: () => Promise<number | null>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.entryExitRow}>
+      <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
+      <CloseEntryLink navigation={navigation} flush={flush} />
+    </View>
+  );
+}
+
 /**
  * Reflection compose surface: the rereadable sources panel plus a warm hint when
  * a folded quote could not be marked included. Renders nothing outside reflection
@@ -2112,7 +2169,7 @@ function JournalEntryScreen({
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
-      <ReturnToReadingLink
+      <EntryExitControls
         returnTo={route.params?.returnTo}
         navigation={navigation}
         flush={ctl.autosave.flush}
