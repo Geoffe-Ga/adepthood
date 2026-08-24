@@ -12,6 +12,18 @@
     "coveredBy": "frontend/e2e/auth.e2e.test.ts"
   },
   {
+    "id": "welcome.first-run-walkthrough-to-journal",
+    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "crosses": {
+      "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2399
+  },
+  {
     "id": "habits.create-check-in-streak",
     "description": "A user creates a habit, checks in against one of its goals, and sees the streak move.",
     "crosses": {
