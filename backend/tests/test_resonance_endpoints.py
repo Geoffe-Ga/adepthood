@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from domain.frequencies import Frequency
+from domain.resonance import DropReason
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia
@@ -479,3 +480,128 @@ async def test_the_grounding_is_recorded_by_id_and_never_by_content(
     assert fields["grounding_source"] == GroundingSource.CORPUS.value
     assert fields["fragment_ids"] == [fragment_id]
     assert _CORPUS_SENTINEL not in str(fields)
+
+
+_GENERATED = "journal_resonance_generated"
+_ALL_DISCARDED = "journal_resonance_all_drafts_discarded"
+
+
+def _records(caplog: pytest.LogCaptureFixture, message: str) -> list[logging.LogRecord]:
+    """Return the captured records carrying ``message``."""
+    return [record for record in caplog.records if record.message == message]
+
+
+async def _run_resonance_capturing_logs(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture, username: str
+) -> tuple[dict[str, str], int]:
+    """Sign up, write an entry, run one pass with logs captured; return headers + id."""
+    headers = await _signup(async_client, username)
+    entry_id = await _create_entry(async_client, headers)
+    with caplog.at_level(logging.INFO):
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    return headers, entry_id
+
+
+@pytest.mark.asyncio
+async def test_a_pass_that_discards_every_draft_says_so(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The silent-failure case: 200 OK, zero notes, and until now no stated cause.
+
+    The model answered with three well-formed notes whose quotes it paraphrased,
+    so none of them anchored. To the writer that is a button that does nothing;
+    to an operator ``count=0`` looked exactly like a model that returned nothing.
+    """
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "a phrase the entry never contains", "note": "n1"},
+        {"kind": "symbol", "quote": "another absent phrase", "note": "n2"},
+        {"kind": "theme", "quote": "paraphrased beyond recognition", "note": "n3"},
+    )
+
+    await _run_resonance_capturing_logs(async_client, caplog, "alldropped")
+
+    persisted = await db_session.execute(select(func.count()).select_from(Marginalia))
+    assert persisted.scalar_one() == 0
+    fields = _records(caplog, _GENERATED)[0].__dict__
+    assert fields["count"] == 0
+    assert fields["drafts_proposed"] == 3
+    assert fields["drafts_kept"] == 0
+    assert fields["dropped_unanchorable"] == 3
+    assert fields["completion_parsed"] is True
+    discarded = _records(caplog, _ALL_DISCARDED)
+    assert len(discarded) == 1
+    assert discarded[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_offered_nothing_is_not_reported_as_a_failure(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Zero notes proposed is a model declining to comment — distinct, and not a warning."""
+    _fake_llm(monkeypatch)
+
+    await _run_resonance_capturing_logs(async_client, caplog, "nodrafts")
+
+    fields = _records(caplog, _GENERATED)[0].__dict__
+    assert fields["count"] == 0
+    assert fields["drafts_proposed"] == 0
+    assert fields["completion_parsed"] is True
+    assert all(fields[f"dropped_{reason.value}"] == 0 for reason in DropReason)
+    assert _records(caplog, _ALL_DISCARDED) == []
+
+
+@pytest.mark.asyncio
+async def test_a_partly_discarded_pass_records_what_it_lost(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Notes did appear, so no warning — but the two that did not are still counted."""
+    _fake_llm(
+        monkeypatch,
+        {"kind": "theme", "quote": "the willow bent", "note": "kept"},
+        {"kind": "vibe", "quote": "the river", "note": "unknown kind"},
+        {"kind": "theme", "quote": "not in the entry at all", "note": "no anchor"},
+    )
+
+    await _run_resonance_capturing_logs(async_client, caplog, "partly")
+
+    fields = _records(caplog, _GENERATED)[0].__dict__
+    assert fields["count"] == 1
+    assert fields["drafts_proposed"] == 3
+    assert fields["drafts_kept"] == 1
+    assert fields["dropped_kind"] == 1
+    assert fields["dropped_unanchorable"] == 1
+    assert _records(caplog, _ALL_DISCARDED) == []
+
+
+@pytest.mark.asyncio
+async def test_the_drop_tally_never_carries_entry_text(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Journal bodies are encrypted at rest; this record must not undo that.
+
+    The failing quote is the single most tempting thing to log here — it is
+    exactly what an operator would want to see — and it is a verbatim slice of
+    the writer's entry, so it is the one thing that must never appear.
+    """
+    absent_quote = "a paraphrase the writer never wrote"
+    note_text = "This note never reaches anyone."
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": absent_quote, "note": note_text})
+
+    await _run_resonance_capturing_logs(async_client, caplog, "notext")
+
+    for message in (_GENERATED, _ALL_DISCARDED):
+        rendered = str(_records(caplog, message)[0].__dict__)
+        assert absent_quote not in rendered
+        assert note_text not in rendered
+        assert _BODY not in rendered
