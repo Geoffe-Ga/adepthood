@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -8,6 +8,7 @@ import { WELCOME_PANELS, type WelcomePanel } from './welcomeContent';
 
 import { CalloutBand } from '@/components/layout/CalloutBand';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
+import useResponsive from '@/design/useResponsive';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 interface PanelProps {
@@ -115,9 +116,17 @@ interface Pager {
   goNext: () => void;
 }
 
-/** Reduced-motion-safe horizontal paging state for the welcome panels. */
+/**
+ * Reduced-motion-safe horizontal paging state for the welcome panels.
+ *
+ * ``width`` here is the shared ``contentWidth`` cap, not the raw viewport: the
+ * walkthrough renders inside a column of that width, so it is also the width the
+ * pager scrolls. Panel size, offset -> page and the programmatic ``scrollTo``
+ * stride all read this one number, because a panel capped while paging still
+ * divided by the window would settle between panels on a wide screen.
+ */
 const useWelcomePager = (): Pager => {
-  const { width } = useWindowDimensions();
+  const { contentWidth: width } = useResponsive();
   const reduced = useReducedMotion();
   const scrollRef = useRef<ScrollView>(null);
   const [page, setPage] = useState(0);
@@ -162,25 +171,27 @@ export const WelcomeScreen = ({ onComplete }: WelcomeScreenProps): React.JSX.Ele
 
   return (
     <SafeAreaView style={s.ground} testID="welcome-screen">
-      <SkipButton onSkip={dismiss} />
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={onScroll}
-        testID="welcome-pager"
-      >
-        {WELCOME_PANELS.map((panel, index) => (
-          <WelcomePanelView key={panel.title} panel={panel} index={index} width={width} />
-        ))}
-      </ScrollView>
-      <WelcomeFooter
-        page={page}
-        isLast={page === WELCOME_PANELS.length - 1}
-        onNext={goNext}
-        onBegin={dismiss}
-      />
+      <View style={[s.column, { width }]} testID="welcome-column">
+        <SkipButton onSkip={dismiss} />
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={onScroll}
+          testID="welcome-pager"
+        >
+          {WELCOME_PANELS.map((panel, index) => (
+            <WelcomePanelView key={panel.title} panel={panel} index={index} width={width} />
+          ))}
+        </ScrollView>
+        <WelcomeFooter
+          page={page}
+          isLast={page === WELCOME_PANELS.length - 1}
+          onNext={goNext}
+          onBegin={dismiss}
+        />
+      </View>
     </SafeAreaView>
   );
 };
