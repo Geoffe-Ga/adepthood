@@ -1,0 +1,136 @@
+name: Live model check
+
+# Weekly reconciliation of the LLM model allowlist in
+# `backend/src/services/botmason.py` against the provider's own published
+# catalogue. Every other test in this repo mocks the provider, so the allowlist
+# is never compared with reality: a date-pinned Anthropic build was retired out
+# from under the default configuration and the first report of it was a user
+# pressing a button and getting `502 llm_provider_error`.
+#
+# Schedule and manual dispatch ONLY -- never on push or pull_request. The lane
+# needs a paid credential and touches the network, so it must not be triggerable
+# by ordinary code changes, and it must not make PR CI flaky.
+#
+# Three outcomes, deliberately distinguished, because a live check that cries
+# wolf on a network blip gets ignored and an ignored check is no check:
+#
+#   * A model on the allowlist is gone from the catalogue -> red job AND a
+#     filed issue. An issue is what actually gets seen and worked; a red
+#     scheduled run is not (a sibling LLM workflow in this repo failed six of
+#     six runs on a connection error with nobody noticing).
+#   * The provider was unreachable (429/5xx/transport) -> the lane skips, the
+#     job stays green, and a warning annotation plus a run-summary line records
+#     that no verdict was reached. No model claim is made on no evidence.
+#   * The credential is missing/expired, or the catalogue endpoint has moved
+#     -> red job AND a filed issue, because that is the state in which this
+#     check would otherwise skip forever while reporting success.
+
+on:
+  schedule:
+    # Mondays 06:40 UTC -- clear of graph-build's 04:40 and graph-semantic's 05:20.
+    - cron: "40 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-model-check
+  cancel-in-progress: false
+
+jobs:
+  anthropic-catalogue:
+    name: Reconcile the Anthropic allowlist against the live catalogue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Only the reporting steps need this; the check itself is read-only.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # No step git-pushes, so no write-scoped token belongs in .git/config.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+
+      - name: Reconcile allowlisted models against the live catalogue
+        id: reconcile
+        working-directory: backend
+        # ANTHROPIC_API_KEY is scoped to this step alone -- no other step, and
+        # certainly no issue-filing step holding a token, ever sees it.
+        env:
+          LIVE_MODEL_CHECK: "1"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          # pipefail above is load-bearing: without it `tee` would hand the step
+          # a zero exit code and a retired model would report as success.
+          # --no-cov: the repo-wide coverage gate belongs to backend-ci.
+          python -m pytest tests/live -m live -q --no-cov \
+            | tee "$RUNNER_TEMP/live-model-check.log"
+
+      - name: Record that the run reached a verdict
+        if: success()
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-model-check.log"
+          if grep -q 'skipped' "$log"; then
+            echo "::warning::No verdict this run -- the provider was unreachable, so no model was checked. Repeated weekly skips mean this check has gone blind."
+            echo 'Live model check: **no verdict** (provider unreachable).' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Live model check: every allowlisted model is still published.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: File an issue naming the cause
+        if: failure() && steps.reconcile.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-model-check.log"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # The sentinel is asserted by tests/live/test_anthropic_model_catalogue.py
+          # and separates "a model is gone" from "the lane cannot see at all".
+          # Only model ids and file paths are echoed; the log never carries the key.
+          if grep -q 'ALLOWLISTED_MODEL_RETIRED' "$log"; then
+            title='fix(backend): live model check found a retired Anthropic model'
+            detail="$(grep 'ALLOWLISTED_MODEL_RETIRED' "$log" | head -n 20)"
+            body="$(printf 'The weekly live model check found an id on the Anthropic allowlist that Anthropic no longer publishes. Any request selecting it returns HTTP 404, which surfaces to the user as `502 llm_provider_error` on every resonance pass, reflection, and journal transcription.\n\nRemove or replace it in `backend/src/services/botmason.py` (`allowed_models` **and** `vision_models`, plus `default_model` if it is the default), and update the matching row in `backend/src/services/llm_pricing.py` — a priced-but-unallowlisted model fails its own guard.\n\n```\n%s\n```\n\nRun: %s\n' "$detail" "$run_url")"
+          else
+            title='fix(ci): live model check cannot reach a verdict'
+            body="$(printf 'The weekly live model check failed for a reason other than a retired model — a missing or expired `ANTHROPIC_API_KEY` secret, or a moved catalogue endpoint. In this state the check cannot detect a retirement at all, which is why it fails loudly instead of skipping.\n\nA provider outage does NOT reach here: 429 and 5xx skip the lane and leave the job green.\n\nRun: %s\n' "$run_url")"
+          fi
+          # Dedup on exact open title so a weekly re-run never double-files.
+          # The search narrows by a punctuation-free phrase both titles share;
+          # jq then matches the title exactly, so the two causes never collapse
+          # into one another's issue.
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search 'in:title live model check' --json number,title \
+            | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "issue #$existing already open for this cause — not double-filing"
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "$title" \
+            --label bug \
+            --label backend \
+            --label P1 \
+            --label agent-ready \
+            --body "$body"

@@ -31,9 +31,9 @@ class TestEstimateCostUsd:
         assert cost == Decimal("0.750000")
 
     def test_known_anthropic_model(self) -> None:
-        # claude-sonnet-4-20250514: $3.00 / 1M input, $15.00 / 1M output
-        cost = estimate_cost_usd("claude-sonnet-4-20250514", 1_000_000, 1_000_000)
-        assert cost == Decimal("18.000000")
+        # claude-sonnet-5: $2.00 / 1M input, $10.00 / 1M output
+        cost = estimate_cost_usd("claude-sonnet-5", 1_000_000, 1_000_000)
+        assert cost == Decimal("12.000000")
 
     def test_partial_million_tokens_proportional(self) -> None:
         # 1,500 input tokens at $0.15/1M = $0.000225

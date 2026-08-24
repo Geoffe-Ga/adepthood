@@ -296,7 +296,7 @@ async def test_admin_endpoint_per_model_breakdown(
         journal_entry_id=journal_id,
         spec=_UsageLogSpec(
             provider="anthropic",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-5",
             prompt_tokens=200,
             completion_tokens=100,
             estimated_cost_usd=Decimal("2.00"),
@@ -309,7 +309,7 @@ async def test_admin_endpoint_per_model_breakdown(
     assert len(data["per_model"]) == 2
     # Ordered by descending cost: claude (2.00) before gpt-4o-mini (0.01).
     assert data["per_model"][0]["provider"] == "anthropic"
-    assert data["per_model"][0]["model"] == "claude-sonnet-4-20250514"
+    assert data["per_model"][0]["model"] == "claude-sonnet-5"
     assert data["per_model"][0]["total_tokens"] == 300
     assert data["per_model"][1]["provider"] == "openai"
     assert data["per_model"][1]["model"] == "gpt-4o-mini"
