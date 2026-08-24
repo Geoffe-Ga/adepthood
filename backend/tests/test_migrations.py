@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -112,6 +113,108 @@ def test_both_directions_exist(direction: str) -> None:
 
 def _migration_files() -> list[Path]:
     return sorted(p for p in MIGRATIONS_DIR.glob("*.py") if not p.name.startswith("_"))
+
+
+def _revision_script_files() -> list[Path]:
+    """Return every file Alembic will load as a revision script.
+
+    Deliberately wider than ``_migration_files``: Alembic reads *every* ``.py``
+    in the versions directory, leading underscore included, so a uniqueness
+    check that skipped those would leave a collision hiding in the one shape
+    the rest of this module ignores.
+    """
+    return sorted(MIGRATIONS_DIR.glob("*.py"))
+
+
+def _declared_revision_id(migration: Path) -> str | None:
+    """Return the ``revision`` identifier a script declares, or ``None``.
+
+    The ids are parsed out of the source with ``ast`` rather than imported.
+    Importing 80 migration modules to read one string each is slow, and a
+    migration module is not inert — importing it runs whatever its authors put
+    at module scope.
+    """
+    for node in ast.parse(migration.read_text()).body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "revision"
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                return node.value.value
+    return None
+
+
+def test_every_revision_script_declares_a_revision_id() -> None:
+    """Keeps the uniqueness check below from passing over nothing.
+
+    ``_declared_revision_id`` is a parser, and a parser that quietly stops
+    matching turns the collision test into a check on an empty collection —
+    green, and blind. Asserting that every script yields an id makes that
+    failure loud here instead of silent there.
+    """
+    scripts = _revision_script_files()
+
+    assert scripts, f"no revision scripts found under {MIGRATIONS_DIR}"
+
+    undeclared = [path.name for path in scripts if _declared_revision_id(path) is None]
+
+    assert undeclared == [], (
+        "these files under migrations/versions declare no ``revision`` id, so Alembic "
+        f"cannot load them as revision scripts: {undeclared}"
+    )
+
+
+def test_revision_ids_are_unique() -> None:
+    """A reused revision id must fail here, not months later on someone's fresh database.
+
+    Alembic only *warns* about this (``UserWarning: Revision <id> is present
+    more than once``) inside an otherwise-green run, so the collision that
+    prompted this test was caught by a human happening to read the warnings.
+    What it actually costs is a second head: ``alembic upgrade head`` then
+    refuses to run for whoever next builds a database from scratch, far from
+    the change that caused it.
+    """
+    by_id: dict[str, list[str]] = {}
+    for path in _revision_script_files():
+        revision_id = _declared_revision_id(path)
+        if revision_id is not None:
+            by_id.setdefault(revision_id, []).append(path.name)
+
+    collisions = {revision_id: files for revision_id, files in by_id.items() if len(files) > 1}
+    named = "; ".join(
+        f"{revision_id} -> {sorted(files)}" for revision_id, files in collisions.items()
+    )
+
+    assert collisions == {}, (
+        "duplicate Alembic revision ids (each id must name exactly one script; give the "
+        f"newer migration a fresh id and re-point anything chained to it): {named}"
+    )
+
+
+def test_the_script_directory_resolves_to_a_single_head() -> None:
+    """Two heads are what a duplicate id (or an unmerged branch) actually produces.
+
+    This asks Alembic itself rather than the file contents, so it also catches
+    the sibling causes an id check cannot see — two migrations chained off the
+    same parent, or a branch merged without a merge migration. It needs no
+    database: the head set is derived from the scripts on disk.
+    """
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+
+    assert len(heads) == 1, (
+        f"expected exactly one Alembic head, found {len(heads)}: {sorted(heads)} — "
+        "`alembic upgrade head` fails on a fresh database in this state; merge the "
+        "branches (`alembic merge`) or fix the duplicate revision id that split them"
+    )
 
 
 def _is_trivial_body(body: list[ast.stmt]) -> bool:
