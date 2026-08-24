@@ -113,6 +113,55 @@ async def test_malformed_json_returns_empty() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_is_parsed() -> None:
+    """A ```json-fenced payload is read, not discarded.
+
+    Providers routinely wrap structured output in a markdown fence even when
+    asked for bare JSON. Treating that as malformed silently discarded every
+    note the model produced, on every pass.
+    """
+    fenced = (
+        "```json\n"
+        + _notes_json(
+            {"kind": "theme", "quote": "the willow bending", "note": "The willow holds you."}
+        )
+        + "\n```"
+    )
+    out = await generate_marginalia(_BODY, llm=FakeLLM(fenced))
+    assert len(out) == 1
+    assert out[0].anchor_text == "the willow bending"
+
+
+@pytest.mark.asyncio
+async def test_bare_fenced_json_is_parsed() -> None:
+    """A fence with no language tag is read the same way."""
+    fenced = (
+        "```\n"
+        + _notes_json({"kind": "theme", "quote": "the willow bending", "note": "n"})
+        + "\n```"
+    )
+    assert len(await generate_marginalia(_BODY, llm=FakeLLM(fenced))) == 1
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_tolerates_surrounding_whitespace() -> None:
+    """Leading / trailing whitespace around the fence does not defeat parsing."""
+    fenced = (
+        "\n\n  ```json\n"
+        + _notes_json({"kind": "theme", "quote": "the willow bending", "note": "n"})
+        + "\n```  \n\n"
+    )
+    assert len(await generate_marginalia(_BODY, llm=FakeLLM(fenced))) == 1
+
+
+@pytest.mark.asyncio
+async def test_fenced_malformed_json_still_returns_empty() -> None:
+    """Stripping the fence must not smuggle malformed content past the guard."""
+    assert await generate_marginalia(_BODY, llm=FakeLLM("```json\nnot json\n```")) == []
+    assert await generate_marginalia(_BODY, llm=FakeLLM("```\n{}\n```")) == []
+
+
+@pytest.mark.asyncio
 async def test_overlapping_spans_are_deduped() -> None:
     """Two notes anchoring to overlapping spans keep only the first."""
     llm = FakeLLM(
