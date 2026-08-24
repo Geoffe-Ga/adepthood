@@ -154,6 +154,18 @@ const styles = StyleSheet.create({
     color: accent.primary,
     paddingTop: spacing(2),
   },
+  /**
+   * The page's exit row, above the sheet: the optional "Back to reading" return
+   * and the always-present close, clustered at the trailing edge so the writer
+   * finds one way out wherever they arrived from.
+   */
+  entryExitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: SPACING.md,
+    paddingHorizontal: journalSheet.deskPaddingH,
+  },
   /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
   quoteActionButton: {
     minHeight: touchTarget.minimum,
