@@ -96,6 +96,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalEntry.styles.ts::aspectChordSectionLabel',
   'features/Journal/JournalEntry.styles.ts::loadErrorText',
   'features/Journal/JournalEntry.styles.ts::marginError',
+  // Audited: the no-notes explanation is read, never tapped — the retry
+  // affordance is the "Get Resonance" button already on the page.
+  'features/Journal/JournalEntry.styles.ts::marginNotice',
   'features/Journal/JournalEntry.styles.ts::privacyResonanceReason',
   'features/Journal/JournalEntry.styles.ts::privacyTierExplainer',
   'features/Journal/JournalEntry.styles.ts::savedHint',

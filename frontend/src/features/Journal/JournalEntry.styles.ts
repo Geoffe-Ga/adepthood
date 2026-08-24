@@ -131,6 +131,18 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingTop: spacing(1),
   },
+  /**
+   * A pass that found nothing to say. Soft ink on paper, deliberately not the
+   * danger red of ``marginError`` beside it: the pass worked, and colouring a
+   * considered "nothing yet" as a fault would read as the page scolding the
+   * writer for what they wrote.
+   */
+  marginNotice: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+    paddingBottom: spacing(1),
+  },
   /** Warm paper-toned notice (not a red panic block) for a failed entry load. */
   loadErrorBanner: {
     marginHorizontal: journalSheet.deskPaddingH,

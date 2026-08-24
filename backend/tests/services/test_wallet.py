@@ -24,6 +24,7 @@ from models.wallet_audit import (
     REASON_ADMIN_GRANT,
     REASON_GUMROAD_PURCHASE,
     REASON_MONTHLY_RESET,
+    REASON_REFUND_NO_NOTES,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
     REASON_SPEND_OFFERING,
@@ -35,6 +36,7 @@ from services.wallet import (
     get_user_fresh,
     grant_purchase_credit,
     preflight_deduction,
+    refund_one_message,
     require_user_fresh,
     reset_monthly_usage_if_due,
     spend_one_message,
@@ -150,7 +152,7 @@ async def test_spend_one_message_drains_monthly_first(db_session: AsyncSession) 
     result = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
 
-    assert result == SpendResult(monthly_used=1, offering_balance=10)
+    assert result == SpendResult(monthly_used=1, offering_balance=10, bucket=BUCKET_MONTHLY)
 
 
 @pytest.mark.asyncio
@@ -162,7 +164,9 @@ async def test_spend_one_message_falls_through_to_offerings(db_session: AsyncSes
     result = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
 
-    assert result == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=2)
+    assert result == SpendResult(
+        monthly_used=_MONTHLY_CAP, offering_balance=2, bucket=BUCKET_OFFERING
+    )
 
 
 @pytest.mark.asyncio
@@ -189,12 +193,16 @@ async def test_monthly_bucket_cannot_be_overspent_at_cap(db_session: AsyncSessio
 
     first = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
-    assert first == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=1)
+    assert first == SpendResult(
+        monthly_used=_MONTHLY_CAP, offering_balance=1, bucket=BUCKET_MONTHLY
+    )
 
     second = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
     # The monthly bucket is full, so the second debit is served by offerings.
-    assert second == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=0)
+    assert second == SpendResult(
+        monthly_used=_MONTHLY_CAP, offering_balance=0, bucket=BUCKET_OFFERING
+    )
 
     refreshed = await get_user_fresh(db_session, user.id)
     assert refreshed is not None
@@ -219,7 +227,9 @@ async def test_offering_bucket_cannot_be_overspent_at_zero(db_session: AsyncSess
 
     first = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
-    assert first == SpendResult(monthly_used=_MONTHLY_CAP, offering_balance=0)
+    assert first == SpendResult(
+        monthly_used=_MONTHLY_CAP, offering_balance=0, bucket=BUCKET_OFFERING
+    )
 
     second = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
     await db_session.commit()
@@ -561,3 +571,127 @@ async def test_grant_purchase_credit_missing_user_returns_none_without_audit(
 
     assert result is None
     assert await _audit_rows(db_session, _MISSING_USER_ID) == []
+
+
+# ── Refunding a pass that produced nothing ────────────────────────────────
+
+
+class TestRefundOneMessage:
+    """A refund must reverse the bucket that was actually charged.
+
+    The spend drains monthly first and only then touches paid credits, so
+    "put one back wherever there is room" would quietly convert a paid credit
+    into a free monthly slot for anyone already at their cap. The refund
+    therefore follows the recorded bucket rather than re-deriving it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_monthly_spend_is_returned_to_the_monthly_counter(
+        self, db_session: AsyncSession
+    ) -> None:
+        """The common case: the free allocation is handed straight back."""
+        user = await _make_user(db_session, monthly_used=0, offering_balance=4)
+        assert user.id is not None
+        spent = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+        assert spent is not None
+
+        refunded = await refund_one_message(db_session, user.id, spent)
+        await db_session.commit()
+
+        assert refunded == SpendResult(monthly_used=0, offering_balance=4, bucket=BUCKET_MONTHLY)
+        fresh = await get_user_fresh(db_session, user.id)
+        assert fresh is not None
+        assert fresh.monthly_messages_used == 0
+        assert fresh.offering_balance == 4
+
+    @pytest.mark.asyncio
+    async def test_a_paid_spend_is_returned_as_a_paid_credit(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Someone at their monthly cap paid for the pass and must be paid back."""
+        user = await _make_user(db_session, monthly_used=_MONTHLY_CAP, offering_balance=3)
+        assert user.id is not None
+        spent = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+        assert spent is not None
+        assert spent.bucket == BUCKET_OFFERING
+
+        refunded = await refund_one_message(db_session, user.id, spent)
+        await db_session.commit()
+
+        assert refunded.offering_balance == 3
+        fresh = await get_user_fresh(db_session, user.id)
+        assert fresh is not None
+        # The monthly counter is untouched: a paid credit must never be
+        # silently downgraded into a free slot the writer had already used.
+        assert fresh.monthly_messages_used == _MONTHLY_CAP
+        assert fresh.offering_balance == 3
+
+    @pytest.mark.asyncio
+    async def test_the_refund_and_its_spend_net_to_zero_in_the_audit_log(
+        self, db_session: AsyncSession
+    ) -> None:
+        """``SUM(delta)`` is the reconciliation contract the audit table documents."""
+        user = await _make_user(db_session, monthly_used=_MONTHLY_CAP, offering_balance=2)
+        assert user.id is not None
+        spent = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+        assert spent is not None
+
+        await refund_one_message(db_session, user.id, spent)
+        await db_session.commit()
+
+        rows = await _audit_rows(db_session, user.id)
+        assert [row.reason for row in rows] == [REASON_SPEND_OFFERING, REASON_REFUND_NO_NOTES]
+        assert sum(row.delta for row in rows) == Decimal(0)
+        assert rows[1].bucket == BUCKET_OFFERING
+        assert rows[1].balance_before == Decimal(1)
+        assert rows[1].balance_after == Decimal(2)
+
+    @pytest.mark.asyncio
+    async def test_a_monthly_refund_records_its_own_reversing_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        """The monthly bucket counts up, so its reversal is a -1 delta."""
+        user = await _make_user(db_session, monthly_used=2, offering_balance=0)
+        assert user.id is not None
+        spent = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+        assert spent is not None
+
+        await refund_one_message(db_session, user.id, spent)
+        await db_session.commit()
+
+        rows = await _audit_rows(db_session, user.id)
+        assert [row.reason for row in rows] == [REASON_SPEND_MONTHLY, REASON_REFUND_NO_NOTES]
+        assert sum(row.delta for row in rows) == Decimal(0)
+        assert rows[1].delta == Decimal(-1)
+        assert rows[1].balance_after == Decimal(2)
+
+    @pytest.mark.asyncio
+    async def test_a_monthly_refund_at_zero_is_a_no_op_with_no_audit_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Never credit a slot nobody spent — the counter must not go negative."""
+        user = await _make_user(db_session, monthly_used=0, offering_balance=0)
+        assert user.id is not None
+        stale = SpendResult(monthly_used=0, offering_balance=0, bucket=BUCKET_MONTHLY)
+
+        refunded = await refund_one_message(db_session, user.id, stale)
+        await db_session.commit()
+
+        assert refunded == stale
+        fresh = await get_user_fresh(db_session, user.id)
+        assert fresh is not None
+        assert fresh.monthly_messages_used == 0
+        assert await _audit_rows(db_session, user.id) == []
+
+    @pytest.mark.asyncio
+    async def test_a_refund_for_a_vanished_user_stages_nothing(
+        self, db_session: AsyncSession
+    ) -> None:
+        """An account deleted mid-request must not leave an orphan audit row."""
+        stale = SpendResult(monthly_used=1, offering_balance=0, bucket=BUCKET_OFFERING)
+
+        refunded = await refund_one_message(db_session, _MISSING_USER_ID, stale)
+        await db_session.commit()
+
+        assert refunded == stale
+        assert await _audit_rows(db_session, _MISSING_USER_ID) == []

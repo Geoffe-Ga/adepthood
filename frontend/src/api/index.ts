@@ -1443,6 +1443,13 @@ export interface ResonanceResponse {
   private?: boolean;
   /** Reason copy shown when ``private`` is true; ``null`` when unset. */
   private_message?: string | null;
+  /**
+   * The server's explanation for a pass that produced no margin notes at all.
+   * Absent whenever notes were kept, and on the ``private`` path (which carries
+   * its own copy). Render it as written: a zero-note pass has several possible
+   * causes and only the server can tell them apart.
+   */
+  no_notes_message?: string | null;
 }
 
 export interface MarginaliaListResponse {

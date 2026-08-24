@@ -1187,6 +1187,28 @@ function ResonanceMargin({ error }: { error: string | null }) {
   ) : null;
 }
 
+/**
+ * The server's account of a pass that produced no margin notes.
+ *
+ * Warm paper tone rather than the error red beside it, because this is not a
+ * failure: the pass ran, the wallet was put back, and there was simply nothing
+ * to pin. Rendered above whatever the margin already holds so the writer sees
+ * it even when earlier notes are still on the page — pressing the button and
+ * getting no visible change is precisely the reported bug.
+ */
+function NoNotesNotice({ message }: { message: string | null }) {
+  return message == null ? null : (
+    <Text
+      style={styles.marginNotice}
+      accessibilityRole="text"
+      accessibilityLiveRegion="polite"
+      testID="journal-resonance-no-notes"
+    >
+      {message}
+    </Text>
+  );
+}
+
 type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
 
 /** The read-mode quote surface: the promoted-quote list plus its UI gestures. */
@@ -1862,6 +1884,7 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
             style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
             testID="journal-margin-column"
           >
+            <NoNotesNotice message={ctl.resonance.noNotesMessage} />
             {marginContent}
           </View>
         </View>

@@ -14,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from domain.frequencies import Frequency
-from domain.resonance import DropReason
+from domain.resonance import NO_NOTES_MESSAGES, DropReason, NoNotesReason
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
+from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
+from models.wallet_audit import REASON_REFUND_NO_NOTES, REASON_SPEND_MONTHLY, WalletAudit
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 from services.corpus_store import FragmentDraft, record_fragment
@@ -60,6 +62,30 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None:
             model=STUB_MODEL_NAME,
             prompt_tokens=0,
             completion_tokens=0,
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+
+
+def _billed_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None:
+    """Patch the LLM seam to answer as a real, metered provider.
+
+    :func:`_fake_llm` answers as the stub, and stub responses are deliberately
+    skipped by the usage log — so any assertion about metering made against it
+    would pass for the wrong reason.
+    """
+    payload = json.dumps({"notes": list(notes)})
+
+    async def _complete(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del prompt, history, system_prompt, api_key
+        return LLMResponse(
+            text=payload,
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+            prompt_tokens=120,
+            completion_tokens=40,
         )
 
     monkeypatch.setattr(marginalia_service, "generate_response", _complete)
@@ -605,3 +631,163 @@ async def test_the_drop_tally_never_carries_entry_text(
         assert absent_quote not in rendered
         assert note_text not in rendered
         assert _BODY not in rendered
+
+
+async def _user(db_session: AsyncSession, username: str) -> User:
+    """Read the signed-up test user's row fresh from the database."""
+    result = await db_session.execute(
+        select(User).where(col(User.email) == f"{username}@example.com")
+    )
+    return result.scalar_one()
+
+
+class TestZeroNotePassIsNeverSilent:
+    """A pass that persists nothing must say so, and must not bill for it.
+
+    A 200 carrying ``marginalia: []`` reads to the writer exactly like a dead
+    button, which is what was reported. The response now always carries either
+    notes or a sentence, and the wallet is put back either way.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_pass_that_anchors_nothing_returns_an_explanation(
+        self, async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported shape: 200 OK, zero notes, and now a sentence to read."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+        headers = await _signup(async_client, "silent")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.OK
+        body = resp.json()
+        assert body["marginalia"] == []
+        assert body["no_notes_message"] == NO_NOTES_MESSAGES[NoNotesReason.NOTHING_ANCHORED]
+
+    @pytest.mark.asyncio
+    async def test_a_declining_model_returns_its_own_explanation(
+        self, async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing to say yet gets the invitation, not the anchoring sentence."""
+        _fake_llm(monkeypatch)
+        headers = await _signup(async_client, "declined")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.json()["no_notes_message"] == NO_NOTES_MESSAGES[NoNotesReason.NOTHING_TO_ADD]
+
+    @pytest.mark.asyncio
+    async def test_a_zero_note_pass_refunds_the_message_it_charged(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Charging for silence is the one outcome with no defence."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+        headers = await _signup(async_client, "refunded")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.json()["remaining_messages"] == 50  # DEFAULT_MONTHLY_CAP, untouched
+        user = await _user(db_session, "refunded")
+        assert user.monthly_messages_used == 0
+
+    @pytest.mark.asyncio
+    async def test_the_refund_is_recorded_beside_the_spend_it_reverses(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A silent refund is still silence — an operator must be able to see it."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+        headers = await _signup(async_client, "audited")
+        entry_id = await _create_entry(async_client, headers)
+
+        await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        user = await _user(db_session, "audited")
+        rows = (
+            (
+                await db_session.execute(
+                    select(WalletAudit)
+                    .where(col(WalletAudit.user_id) == user.id)
+                    .order_by(col(WalletAudit.id))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [row.reason for row in rows] == [REASON_SPEND_MONTHLY, REASON_REFUND_NO_NOTES]
+
+    @pytest.mark.asyncio
+    async def test_the_provider_call_is_still_recorded_when_nothing_is_kept(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refund reverses the writer's charge, never our record of the real cost.
+
+        A blanket rollback would have been the easy refund and would have erased
+        this row too, hiding provider spend that genuinely happened. The fake
+        answers as a *billed* provider rather than the stub, because a stub
+        response is deliberately not metered and would make this vacuous.
+        """
+        _billed_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+        headers = await _signup(async_client, "metered")
+        entry_id = await _create_entry(async_client, headers)
+
+        await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        logged = await db_session.execute(select(func.count()).select_from(LLMUsageLog))
+        assert logged.scalar_one() > 0
+
+    @pytest.mark.asyncio
+    async def test_a_pass_that_kept_a_note_explains_nothing_and_charges(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The happy path must be untouched: notes, a charge, and no notice."""
+        _fake_llm(
+            monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "Water."}
+        )
+        headers = await _signup(async_client, "kept")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        body = resp.json()
+        assert len(body["marginalia"]) == 1
+        assert body["no_notes_message"] is None
+        assert body["remaining_messages"] == 49
+        user = await _user(db_session, "kept")
+        assert user.monthly_messages_used == 1
+
+    @pytest.mark.asyncio
+    async def test_an_intimate_entry_keeps_its_own_privacy_copy(
+        self, async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The privacy floor returns before any pass, so it owns its own message."""
+        _fake_llm(monkeypatch)
+        headers = await _signup(async_client, "intimate_notice")
+        resp = await async_client.post(
+            "/journal/", json={"message": _BODY, "classification": "intimate"}, headers=headers
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+        entry_id = int(resp.json()["id"])
+
+        body = (await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)).json()
+
+        assert body["private"] is True
+        assert body["private_message"]
+        # No second explanation stacked on top of the privacy one.
+        assert body["no_notes_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_retry_is_visible_in_the_pass_record(
+        self,
+        async_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Two provider calls is twice the bill, so it is charted, not hidden."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+
+        await _run_resonance_capturing_logs(async_client, caplog, "retried")
+
+        assert _records(caplog, _GENERATED)[0].__dict__["resonance_attempts"] == 2

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Protocol
 
@@ -131,6 +131,8 @@ class MarginaliaOutcome:
     examined: int
     #: How many drafts each fault discarded.
     dropped: Mapping[DropReason, int]
+    #: Provider calls the pass made, i.e. 2 once the corrective retry ran.
+    attempts: int = 1
 
     @property
     def kept(self) -> int:
@@ -165,6 +167,9 @@ class MarginaliaOutcome:
             "drafts_proposed": self.proposed,
             "drafts_kept": self.kept,
             "drafts_unexamined": self.unexamined,
+            # Two attempts costs twice the tokens, so the retry rate is a bill
+            # an operator must be able to chart, not a hidden doubling.
+            "resonance_attempts": self.attempts,
         }
         extra.update(
             {f"dropped_{reason.value}": self.dropped.get(reason, 0) for reason in DropReason}
@@ -341,6 +346,39 @@ def _anchor_drafts(body: str, parsed: _ParsedCompletion, max_notes: int) -> Marg
     )
 
 
+# Restated at the tail of the retry prompt (so the medication guardrail still
+# leads) when the first attempt reached the writer with nothing. It names the
+# one fault that actually causes this -- a paraphrased quote -- and closes the
+# obvious wrong exit: a model told "you produced nothing" will happily invent
+# something, and filler reflection on someone's journal is worse than silence.
+_RETRY_CORRECTION = (
+    'Your previous reply produced no usable notes. Every "quote" must be copied '
+    "character-for-character from the entry above: do not paraphrase it, do not "
+    "correct its spelling, do not add or remove punctuation, and do not join text "
+    "from two places. If you cannot reproduce a passage exactly, leave that note "
+    "out. Returning one exactly-quoted note beats five approximate ones, and an "
+    "empty list is better than inventing an observation the entry does not support."
+)
+
+
+def _retry_prompt(body: str, prior_entries: Sequence[str] | None, max_notes: int) -> str:
+    """Build the corrective second-attempt prompt: the same ask, plus the fix.
+
+    Deliberately the *same* question with a correction appended rather than a
+    different, easier one: the writer asked for a reading of this entry with
+    this grounding, and quietly narrowing the ask would answer a question they
+    did not put. The correction trails the entry so the medication guardrail
+    still leads the prompt.
+    """
+    return f"{build_prompt(body, prior_entries, max_notes)}\n\n{_RETRY_CORRECTION}"
+
+
+async def _one_pass(body: str, llm: ResonanceLLM, prompt: str, max_notes: int) -> MarginaliaOutcome:
+    """Run one provider call and anchor whatever it returned."""
+    raw = await llm.complete(prompt)
+    return _anchor_drafts(body, _parse_completion(raw), max_notes)
+
+
 async def generate_marginalia(
     body: str,
     *,
@@ -359,9 +397,92 @@ async def generate_marginalia(
     tell an empty result apart from a pass that discarded everything it was
     given. Callers are expected to log :meth:`MarginaliaOutcome.as_log_extra`;
     dropping the outcome on the floor re-creates the silence this replaced.
+
+    A pass that the model engaged with and that still reached the writer with
+    nothing (:attr:`MarginaliaOutcome.produced_nothing_usable`) is asked exactly
+    once more, with the verbatim-quote requirement restated. That is a re-ask,
+    not a rescue: anchoring stays as strict, model indices stay untrusted, and
+    the retry prompt says outright that an empty answer beats an invented one.
+    A model that returned a well-formed empty array is *not* retried -- it read
+    the page and declined, and a second call buys the same answer twice.
     """
-    raw = await llm.complete(build_prompt(body, prior_entries, max_notes))
-    return _anchor_drafts(body, _parse_completion(raw), max_notes)
+    first = await _one_pass(body, llm, build_prompt(body, prior_entries, max_notes), max_notes)
+    if not first.produced_nothing_usable:
+        return first
+    retry_prompt = _retry_prompt(body, prior_entries, max_notes)
+    second = await _one_pass(body, llm, retry_prompt, max_notes)
+    return replace(second, attempts=first.attempts + 1)
+
+
+class NoNotesReason(Enum):
+    """Why a completed pass reached the writer with no margin notes at all.
+
+    Distinct from :class:`DropReason`, which names why one *draft* was
+    discarded and is written for an operator. These name what the *writer*
+    should do next, and there are exactly three next moves: write more, ask
+    again, or wait a moment and ask again.
+    """
+
+    #: The model read the entry and had nothing to say yet.
+    NOTHING_TO_ADD = "nothing_to_add"
+    #: Notes were written but none quoted the entry closely enough to anchor.
+    NOTHING_ANCHORED = "nothing_anchored"
+    #: The completion never yielded a well-shaped note to anchor in the first place.
+    UNREADABLE = "unreadable"
+
+
+# The copy the writer actually reads when a pass yields nothing. It lives here,
+# beside the reason that selects it, so the client renders the backend's own
+# sentence instead of inventing a second explanation for a cause it cannot see.
+# Each follows what / why / next / escape, and none of them says or implies the
+# entry was inadequate: a journal is never wrong, and a tool that hints it might
+# be has failed at the only thing this one is for.
+NO_NOTES_MESSAGES: Mapping[NoNotesReason, str] = {
+    NoNotesReason.NOTHING_TO_ADD: (
+        "No margin notes came back this time. Your Higher Self read the page through "
+        "and didn't find a passage it could answer yet — most often that means the "
+        "thought is still arriving. Keep writing and ask again whenever you like; this "
+        "pass wasn't charged."
+    ),
+    NoNotesReason.NOTHING_ANCHORED: (
+        "No margin notes came back this time. Notes were written, but none of them "
+        "quoted the page closely enough to pin to it, and a note that can't point at "
+        "your own words isn't worth handing you. Asking again usually lands — the "
+        "reading comes out a little different each time — and this pass wasn't charged."
+    ),
+    NoNotesReason.UNREADABLE: (
+        "No margin notes came back this time. The reflection arrived in a shape this "
+        "page couldn't read, which has nothing to do with what you wrote. Give it a "
+        "moment and ask again; your entry is saved exactly as you left it, and this "
+        "pass wasn't charged."
+    ),
+}
+
+
+def _no_notes_reason(outcome: MarginaliaOutcome) -> NoNotesReason:
+    """Classify a zero-note outcome by what the writer should do about it."""
+    if not outcome.completion_parsed:
+        return NoNotesReason.UNREADABLE
+    if outcome.proposed == 0:
+        return NoNotesReason.NOTHING_TO_ADD
+    # Drafts existed but none was well-shaped enough to reach anchoring, so
+    # anchoring is not what failed and must not be what the writer is told.
+    if outcome.examined == 0:
+        return NoNotesReason.UNREADABLE
+    return NoNotesReason.NOTHING_ANCHORED
+
+
+def explain_no_notes(outcome: MarginaliaOutcome) -> str | None:
+    """Return the writer-facing sentence for a zero-note pass, else ``None``.
+
+    ``None`` for any pass that kept a note: the notes are the answer, and a
+    paragraph explaining them would be noise. Otherwise the writer always gets a
+    sentence, because the alternative -- a button that visibly does nothing --
+    is indistinguishable from a broken one, and is what was reported.
+    """
+    if outcome.kept > 0:
+        return None
+    return NO_NOTES_MESSAGES[_no_notes_reason(outcome)]
 
 
 def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> str:
