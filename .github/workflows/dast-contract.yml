@@ -1,0 +1,210 @@
+name: DAST Contract Fuzz
+
+# Boots an ephemeral instance against Postgres, reads the document that instance
+# publishes about itself, and answers one question of every operation in it: can
+# schema-aware but adversarial input make this endpoint break its own contract?
+#
+# The document is read from the running app, never from the checked-in export,
+# so the spec this gate judges against can never drift away from the code it is
+# judging.
+#
+# ``pull_request`` and never ``pull_request_target``: this job checks out and
+# runs the head of the branch under test, so it must not hold write-scoped
+# credentials.
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dast-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-fuzz:
+    runs-on: ubuntu-latest
+    # The fuzz step itself is budgeted to stay well inside five minutes (see the
+    # arithmetic on the run step); this ceiling covers install, migration and
+    # boot as well, and only exists to stop a wedged server running forever.
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+      BASE_URL: http://127.0.0.1:8000
+      UVICORN_LOG: /tmp/uvicorn.log
+      REPORT_DIR: /tmp/dast-contract-report
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+          # Schemathesis is pinned on its own; that file's header says why it is
+          # not in requirements-dev.txt.
+          uv pip install --system -r backend/requirements-dast.txt
+
+      - name: Migrate the throwaway database
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Start the target instance
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          # The Schemathesis CLI sends one fixed header set for a whole run, so
+          # it cannot vary X-Forwarded-For per request the way the authorization
+          # matrix does. Without a wider default the fuzzer would spend its
+          # budget collecting 429s -- a uniform denial none of the response
+          # checks below can tell apart from a healthy API. Read only by this
+          # job: no deployment sets this variable, and the shipped default
+          # (60/minute) is what every deployment gets.
+          DEFAULT_RATE_LIMIT: 6000/minute
+        run: |
+          # Started the way the Dockerfile does -- module ``main`` with
+          # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
+          # import layout production runs.
+          PYTHONPATH=src python -m uvicorn main:app \
+            --host 127.0.0.1 --port 8000 --log-level warning > "$UVICORN_LOG" 2>&1 &
+
+      - name: Wait for readiness
+        run: |
+          # The startup seeder runs deliberately: the fuzzer reaches catalog
+          # routes that answer differently once their rows exist.
+          for _ in $(seq 1 45); do
+            if curl -fsS "$BASE_URL/health/ready" > /dev/null; then
+              echo "instance is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the instance never became ready"
+          cat "$UVICORN_LOG"
+          exit 1
+
+      - name: Mint a bearer token and prove it works
+        working-directory: backend
+        run: |
+          # The helper exits non-zero unless the token it minted actually opens
+          # an authenticated route, which is the guard that stops this whole job
+          # from becoming a very expensive 401 test: a run holding a broken
+          # credential is denied uniformly and violates none of the checks below.
+          # It prints the bare token and nothing else, so this capture is safe.
+          TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
+            --base-url "$BASE_URL" \
+            --database-url "$DATABASE_URL")
+          echo "::add-mask::$TOKEN"
+          echo "DAST_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Contract fuzz
+        working-directory: backend
+        run: |
+          # Excluded by exact operation name, never by a blanket path filter, and
+          # every line carries the reason it cannot be fuzzed. A named exclusion
+          # has to be defended; a pattern quietly grows.
+          # backend/tests/scripts/dast/test_contract_workflow.py checks every
+          # name here against the operations the app actually publishes, so a
+          # renamed route turns red rather than leaving a dead line behind.
+          EXCLUDED=(
+            'DELETE /users/me'                    # deletes the fuzzing identity; every later request would be unauthenticated
+            'POST /auth/signup'                   # gated on a live Gumroad license verification
+            'POST /auth/oauth/google'             # verifies a token with Google
+            'POST /auth/oauth/apple'              # verifies a token with Apple
+            'POST /auth/password-reset/request'   # sends real mail, and is capped at 3/hour per route
+            'POST /journal/transcribe-page'       # external ASR provider (routers/transcription.py)
+            'GET /user/balance'                   # external Botmason credit API (routers/botmason.py)
+            'GET /user/usage'                     # external Botmason credit API (routers/botmason.py)
+            'POST /user/balance/add'              # external Botmason credit API (routers/botmason.py)
+            'POST /webhooks/gumroad/ping'         # HMAC-signed vendor webhook, not a client route (routers/gumroad.py)
+            'POST /corpus/import'                 # dials the external Creek vault
+            'GET /users/me/export'                # streams a non-JSON media type the document declares as JSON; TODO(#2424)
+            'GET /users/me/export/journal.md'     # streams Markdown the document declares as JSON; TODO(#2424)
+          )
+          exclusions=()
+          for name in "${EXCLUDED[@]}"; do
+            exclusions+=(--exclude-name "$name")
+          done
+
+          # Budget: the live document publishes 128 operations, 13 of which are
+          # excluded above, leaving 115. At --max-examples=10 that is at most
+          # 1,150 generated cases in the fuzzing phase plus the handful the
+          # examples phase replays -- roughly a minute of request time against a
+          # loopback instance, comfortably inside the five-minute criterion, with
+          # the job's timeout-minutes as the hard ceiling. Raise the example
+          # count once the measured wall clock of a real run is known.
+          #
+          # Phases: the coverage phase is off because the number of cases it
+          # derives from a schema is not something this comment could state a
+          # bound for, and an unstated budget is how a five-minute gate becomes a
+          # twenty-minute one. The stateful phase is off because a
+          # FastAPI-generated document declares no OpenAPI links, so it has no
+          # transitions to follow.
+          #
+          # status_code_conformance is deliberately absent from --checks: not one
+          # of the 128 operations declares a 401, 403, 404 or 429 response, so
+          # the check would fail on almost every route for a documentation gap
+          # rather than a fuzzing finding. Enabling it is issue #2425.
+          schemathesis run "$BASE_URL/openapi.json" \
+            --url "$BASE_URL" \
+            --checks not_a_server_error,content_type_conformance,response_schema_conformance \
+            --header "Authorization: Bearer $DAST_TOKEN" \
+            --max-examples 10 \
+            --seed 1337 \
+            --phases examples,fuzzing \
+            --max-failures 20 \
+            --report junit \
+            --report-dir "$REPORT_DIR" \
+            "${exclusions[@]}"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dast-contract-report
+          path: ${{ env.REPORT_DIR }}
+          if-no-files-found: warn
+
+      - name: Stop the instance
+        if: always()
+        run: pkill -f "uvicorn main:app" || echo "no instance left to stop"
+
+      - name: Server log
+        if: always()
+        run: cat "$UVICORN_LOG"

@@ -1,9 +1,10 @@
 """Shared rate limiter instances for the application."""
 
+import os
 import time
 from collections.abc import Callable
 
-from limits import RateLimitItemPerHour
+from limits import RateLimitItemPerHour, parse
 from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
 from slowapi import Limiter
@@ -13,7 +14,44 @@ from client_ip import client_throttle_key
 # Default rate limit applied to all endpoints that don't declare their own.
 # Auth endpoints override this with stricter per-route limits (3/min signup,
 # 5/min login). The global default protects against scraping and general abuse.
-DEFAULT_RATE_LIMIT = "60/minute"
+FALLBACK_RATE_LIMIT = "60/minute"
+
+# Set only by the DAST contract-fuzz job, which sends thousands of requests from
+# one loopback address and would otherwise spend its whole budget collecting
+# 429s -- a uniform denial the fuzzer's response checks cannot distinguish from
+# a healthy API. This is NOT a production default; no deployment sets it, and
+# ``FALLBACK_RATE_LIMIT`` above is what every deployment gets.
+DEFAULT_RATE_LIMIT_ENV_VAR = "DEFAULT_RATE_LIMIT"
+
+
+def resolve_default_rate_limit(raw: str | None) -> str:
+    """Decide the global default limit from an optionally-overridden environment.
+
+    Args:
+        raw: The override variable's value, or ``None`` when it is unset.
+
+    Returns:
+        The limit string to apply to every endpoint that declares no limit of
+        its own. A missing or blank value yields the production default.
+
+    Raises:
+        ValueError: When a value was supplied that ``limits`` cannot parse. Fail
+            closed: falling back on a typo would hand an unlimited default to a
+            deployment whose operator believed they had tightened one, and the
+            mistake would only be visible under the load it stopped shaping.
+    """
+    if raw is None or not raw.strip():
+        return FALLBACK_RATE_LIMIT
+    candidate = raw.strip()
+    try:
+        parse(candidate)
+    except ValueError as error:
+        message = f"{DEFAULT_RATE_LIMIT_ENV_VAR}={candidate!r} is not a rate limit: {error}"
+        raise ValueError(message) from error
+    return candidate
+
+
+DEFAULT_RATE_LIMIT = resolve_default_rate_limit(os.getenv(DEFAULT_RATE_LIMIT_ENV_VAR))
 
 # Rate limiter keyed by the trusted-proxy-resolved *throttle* key rather than a
 # forgeable header or a proxy every user shares: one customer, one budget. That

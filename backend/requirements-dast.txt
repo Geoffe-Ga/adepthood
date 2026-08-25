@@ -1,0 +1,20 @@
+# DAST-only tooling, installed by .github/workflows/dast-contract.yml and by
+# nothing else. Exact (==) pins, like every other requirements file here, so a
+# gate's verdict never depends on the day it ran.
+#
+# Deliberately NOT in requirements-dev.txt, for three reasons:
+#   1. `scripts/backend/deps.sh` compares requirements.txt + requirements-dev.txt
+#      against the *installed* environment on every local run of check-all.sh. A
+#      pin there is a pin every contributor must install to run lint, for a tool
+#      no local gate invokes.
+#   2. Schemathesis depends on PyYAML, which this repository deliberately keeps
+#      out of all three of the other requirements files -- see the docstring of
+#      backend/tests/test_integration_lane_guard.py, which parses a workflow as
+#      text precisely because `import yaml` would be a collection error.
+#   3. It also pulls hypothesis, jsonschema-rs, werkzeug, requests, rich and
+#      pyrate-limiter. That is a large transitive surface to add to every
+#      developer's environment for one CI job.
+#
+# Dependabot's pip ecosystem is configured for /backend and discovers the
+# requirements files in that directory, so upgrades here are still proposed.
+schemathesis==4.25.2
