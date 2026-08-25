@@ -12,6 +12,18 @@
     "coveredBy": "frontend/e2e/auth.e2e.test.ts"
   },
   {
+    "id": "welcome.first-run-walkthrough-to-journal",
+    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "crosses": {
+      "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2399
+  },
+  {
     "id": "habits.create-check-in-streak",
     "description": "A user creates a habit, checks in against one of its goals, and sees the streak move.",
     "crosses": {
@@ -56,6 +68,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
+  },
+  {
+    "id": "journal.ask-for-resonance",
+    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Uncovered because the pass calls a real language model and the lane has no provider to call: covering it needs a deterministic, configuration-selected provider the lane can point the server at, not a spec alone. The same constraint keeps seed.upload-document uncovered.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}/marginalia"],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2408
   },
   {
     "id": "practice.log-session",
@@ -204,5 +228,17 @@
     },
     "status": "uncovered",
     "issue": 2324
+  },
+  {
+    "id": "errors.server-fault-is-not-offline",
+    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 — every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2406
   }
 ]

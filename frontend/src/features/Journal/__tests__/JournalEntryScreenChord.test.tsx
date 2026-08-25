@@ -159,7 +159,9 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
       mockUpdate.mockClear();
       mockUpdate.mockRejectedValueOnce(new Error('network'));
 
-      // A tagged entry loads expanded on its chips, so no trigger tap is needed.
+      // A tagged entry loads expanded, folded onto its chosen chip, so re-tagging
+      // means reopening the row first.
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-change'));
       fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
 
       await act(async () => {
@@ -168,9 +170,10 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
 
       expect(getByTestId('journal-save-hint').props.children).toBe(ERROR_HINT);
       const after = within(getByTestId('journal-page'));
-      // Reverted to the persisted chord (primary 3), not the empty default.
+      // Reverted to the persisted chord (primary 3), not the empty default, and
+      // the row folded back onto it — so the rejected pick is gone entirely.
       expect(after.getByTestId('aspect-primary-3').props.accessibilityState.selected).toBe(true);
-      expect(after.getByTestId('aspect-primary-5').props.accessibilityState.selected).toBe(false);
+      expect(after.queryByTestId('aspect-primary-5')).toBeNull();
     } finally {
       jest.useRealTimers();
     }
@@ -221,6 +224,8 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
       const page = within(getByTestId('journal-page'));
       fireEvent.press(page.getByTestId('aspect-chord-trigger'));
       fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
+      // Picking folds the row onto the choice, so the second pick reopens it.
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-change'));
       fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-8'));
 
       await act(async () => {
@@ -229,7 +234,7 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
 
       const after = within(getByTestId('journal-page'));
       expect(after.getByTestId('aspect-primary-8').props.accessibilityState.selected).toBe(true);
-      expect(after.getByTestId('aspect-primary-5').props.accessibilityState.selected).toBe(false);
+      expect(after.queryByTestId('aspect-primary-5')).toBeNull();
     } finally {
       jest.useRealTimers();
     }

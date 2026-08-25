@@ -66,6 +66,14 @@ export interface UseResonanceResult {
    * copy when this is null.
    */
   privateMessage: string | null;
+  /**
+   * The server's sentence for a pass that produced no margin notes. ``null``
+   * until a generate pass returns one; a new pass clears any stale copy, and
+   * the load-on-open path never sets it (it runs no pass). Distinct from
+   * ``error``: this is a pass that *worked* and had nothing to hand back, which
+   * is not a failure and must not be dressed as one.
+   */
+  noNotesMessage: string | null;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -169,13 +177,14 @@ interface GeneratePassDeps {
   setCare: Dispatch<SetStateAction<CareResponse | null>>;
   setContraction: Dispatch<SetStateAction<ContractionReflection | null>>;
   setPrivateMessage: Dispatch<SetStateAction<string | null>>;
+  setNoNotesMessage: Dispatch<SetStateAction<string | null>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const { flush, setMarginalia, mergeFromGenerate, setCare, setContraction } = deps;
-  const { setPrivateMessage, setError } = deps;
+  const { setPrivateMessage, setNoNotesMessage, setError } = deps;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -193,6 +202,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     // Likewise clear any withheld-privacy copy up front so an errored or
     // non-withheld pass never leaves a stale privacy surface on the page.
     setPrivateMessage(null);
+    // Likewise clear any prior no-notes copy: a pass that is about to succeed
+    // must not run under last time's "nothing came back".
+    setNoNotesMessage(null);
     try {
       const entryId = await flush();
       if (entryId == null) {
@@ -210,6 +222,8 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       useContractionSignalStore.getState().observe(result.contraction ?? null);
       // ``private_message`` is present only when the pass was withheld.
       setPrivateMessage(result.private_message ?? null);
+      // Present only when the pass kept nothing — normalise absent to null.
+      setNoNotesMessage(result.no_notes_message ?? null);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -223,6 +237,7 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     setCare,
     setContraction,
     setPrivateMessage,
+    setNoNotesMessage,
     setError,
   ]);
 
@@ -239,6 +254,8 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
   const [contraction, setContraction] = useState<ContractionReflection | null>(null);
   // Reason copy from a withheld (intimate) pass; null until one returns it.
   const [privateMessage, setPrivateMessage] = useState<string | null>(null);
+  // The server's explanation for a zero-note pass; null until one returns it.
+  const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
@@ -250,6 +267,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     setCare,
     setContraction,
     setPrivateMessage,
+    setNoNotesMessage,
     setError,
   });
 
@@ -274,6 +292,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     care,
     contraction,
     privateMessage,
+    noNotesMessage,
     loading,
     error,
     requestResonance,

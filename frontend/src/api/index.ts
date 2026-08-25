@@ -110,12 +110,23 @@ const IDEMPOTENCY_HEADERS = new Set(['idempotency-key', 'x-idempotency-key']);
 export class ApiError extends Error {
   status: number;
   detail: string;
+  /**
+   * The server's correlation id for this failure, when it sent one.
+   *
+   * A sanitised 500 deliberately says nothing about what broke — the body is
+   * `{error, request_id}` and the traceback stays in the server log. The id is
+   * the only thing that links the two, so a user who reports "it broke" can be
+   * asked for a reference instead of a screenshot. `null` for a failure that
+   * carried no id, which includes every request that never reached the server.
+   */
+  requestId: string | null;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, requestId: string | null = null) {
     super(`Request failed with status ${status}: ${detail}`);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.requestId = requestId;
   }
 }
 
@@ -525,19 +536,82 @@ function detailFromArray(entries: readonly unknown[]): string {
   return messages.length > 0 ? messages.join(ERROR_DETAIL_SEPARATOR) : FALLBACK_ERROR_DETAIL;
 }
 
-async function extractErrorDetail(res: Response): Promise<string> {
-  try {
-    const errBody = await res.json();
-    if (errBody.detail && typeof errBody.detail === 'string') {
-      return errBody.detail;
-    }
-    if (Array.isArray(errBody.detail)) {
-      return detailFromArray(errBody.detail);
-    }
-  } catch {
-    // response body wasn't JSON — use default
+/**
+ * Header the backend echoes on every response, and the one entry in its CORS
+ * ``expose_headers`` — so a cross-origin browser client can read it even when
+ * the body is unreadable. Matches ``observability.TRACE_ID_HEADER``.
+ */
+const REQUEST_ID_HEADER = 'X-Request-ID';
+
+/** What a failed response tells us, after the single read of its body. */
+interface ErrorEnvelope {
+  detail: string;
+  requestId: string | null;
+}
+
+/**
+ * Read ``X-Request-ID`` off a response, tolerating a response object that has
+ * no headers at all.
+ *
+ * The DOM type says ``headers`` is always there, and on a real ``fetch`` it is.
+ * Test doubles across this suite hand `request` a bare ``{ok, status, json}``
+ * literal, though, so the guard is about runtime reality rather than the type.
+ */
+function requestIdHeader(res: Response): string | null {
+  const { headers } = res;
+  if (!headers) return null;
+  return headers.get(REQUEST_ID_HEADER);
+}
+
+/**
+ * Pull the detail string out of an error body, whatever shape it arrived in.
+ *
+ * Three shapes are in play. A per-route rejection sends ``{detail: "..."}``;
+ * a Pydantic rejection sends ``{detail: [...]}``; and the catch-all 500 sends
+ * the sanitised ``{error, request_id}`` envelope, which carries no ``detail``
+ * at all. Reading ``error`` as the detail is what stops a 500 from collapsing
+ * into the placeholder — the code names the failure (``internal_error`` vs
+ * ``decryption_failure``) where the placeholder named nothing.
+ *
+ * Note these codes are deliberately absent from ``USER_FACING_ERROR_MESSAGES``:
+ * a screen that phrased its own 500 copy should keep winning over a generic
+ * one, which is what the status-fallback ordering in ``formatApiError`` does.
+ */
+function detailFromBody(errBody: { detail?: unknown; error?: unknown }): string {
+  if (typeof errBody.detail === 'string' && errBody.detail.length > 0) {
+    return errBody.detail;
+  }
+  if (Array.isArray(errBody.detail)) {
+    return detailFromArray(errBody.detail);
+  }
+  if (typeof errBody.error === 'string' && errBody.error.length > 0) {
+    return errBody.error;
   }
   return FALLBACK_ERROR_DETAIL;
+}
+
+/**
+ * Consume a failed response's body once and report everything it told us.
+ *
+ * The body can only be read once, so the detail and the request id have to come
+ * out of the same read. The header is the fallback for the id precisely because
+ * it survives a body that is not JSON — a proxy's 502 page, a truncated
+ * response — which is when a correlation id is worth the most.
+ */
+async function readErrorEnvelope(res: Response): Promise<ErrorEnvelope> {
+  const headerId = requestIdHeader(res);
+  try {
+    const errBody = await res.json();
+    const bodyId = typeof errBody.request_id === 'string' ? errBody.request_id : null;
+    return { detail: detailFromBody(errBody), requestId: bodyId ?? headerId };
+  } catch {
+    // response body wasn't JSON — the header is all we have left
+    return { detail: FALLBACK_ERROR_DETAIL, requestId: headerId };
+  }
+}
+
+async function extractErrorDetail(res: Response): Promise<string> {
+  return (await readErrorEnvelope(res)).detail;
 }
 
 /**
@@ -579,9 +653,28 @@ export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedR
   }
 }
 
-async function handleErrorResponse(res: Response): Promise<never> {
-  const detail = await extractErrorDetail(res);
-  throw new ApiError(res.status, detail);
+/** Status at or above which the failure is the server's, not the caller's. */
+const SERVER_ERROR_STATUS = 500;
+
+/**
+ * Build the ``ApiError`` for a failed response, noting server-side faults.
+ *
+ * The console line is the client half of the correlation contract: the server
+ * logged a full traceback under this id and sent us nothing but the id, so
+ * writing it down here is what lets a support conversation ("it broke around
+ * 3pm") become a log query. Only 5xx is logged — a 404 or a 422 is answered by
+ * the UI, needs no cross-referencing, and would drown the signal.
+ */
+async function apiErrorFromResponse(res: Response, path: string): Promise<ApiError> {
+  const { detail, requestId } = await readErrorEnvelope(res);
+  if (res.status >= SERVER_ERROR_STATUS && requestId !== null) {
+    console.warn(`API ${res.status} on ${path} — server request id ${requestId}`);
+  }
+  return new ApiError(res.status, detail, requestId);
+}
+
+async function handleErrorResponse(res: Response, path: string): Promise<never> {
+  throw await apiErrorFromResponse(res, path);
 }
 
 /**
@@ -792,7 +885,7 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
       // generic "Request failed".
       throw new ApiError(retryRes.status, retryDetail);
     }
-    return handleErrorResponse(retryRes);
+    return handleErrorResponse(retryRes, ctx.path);
   }
   return parseResponse<T>(retryRes, ctx.path, ctx.schema, ctx.responseType);
 }
@@ -867,10 +960,9 @@ async function attemptRequest<T>(
     throw new ApiError(res.status, detail);
   }
   if (isTransientStatus(res.status) && ctx.canRetry) {
-    const detail = await extractErrorDetail(res);
-    return { kind: 'transient', error: new ApiError(res.status, detail) };
+    return { kind: 'transient', error: await apiErrorFromResponse(res, ctx.path) };
   }
-  return handleErrorResponse(res);
+  return handleErrorResponse(res, ctx.path);
 }
 
 function isRetryableException(err: unknown, canRetry: boolean): boolean {
@@ -1443,6 +1535,13 @@ export interface ResonanceResponse {
   private?: boolean;
   /** Reason copy shown when ``private`` is true; ``null`` when unset. */
   private_message?: string | null;
+  /**
+   * The server's explanation for a pass that produced no margin notes at all.
+   * Absent whenever notes were kept, and on the ``private`` path (which carries
+   * its own copy). Render it as written: a zero-note pass has several possible
+   * causes and only the server can tell them apart.
+   */
+  no_notes_message?: string | null;
 }
 
 export interface MarginaliaListResponse {

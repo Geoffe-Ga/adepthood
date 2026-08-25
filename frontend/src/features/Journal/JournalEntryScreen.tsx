@@ -265,6 +265,13 @@ interface AutosaveApi {
    * the tier + chord controls stay inert until we know the entry's real values.
    */
   controlsLocked: boolean;
+  /**
+   * True once an existing entry's own text has been fetched and applied. Always
+   * false for a brand-new entry (there is nothing to fetch) and false while a
+   * load is in flight or has failed, so a consumer can tell "this page holds
+   * writing that already existed" from "this page is still blank".
+   */
+  loadedFromServer: boolean;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -995,6 +1002,7 @@ function useJournalAutosave(
     finish: finishNow,
     loadError: entry.loadError,
     controlsLocked: entryUnsettled,
+    loadedFromServer: routeEntryId != null && entry.loaded,
   };
 }
 
@@ -1177,6 +1185,28 @@ function ResonanceMargin({ error }: { error: string | null }) {
       {error}
     </Text>
   ) : null;
+}
+
+/**
+ * The server's account of a pass that produced no margin notes.
+ *
+ * Warm paper tone rather than the error red beside it, because this is not a
+ * failure: the pass ran, the wallet was put back, and there was simply nothing
+ * to pin. Rendered above whatever the margin already holds so the writer sees
+ * it even when earlier notes are still on the page — pressing the button and
+ * getting no visible change is precisely the reported bug.
+ */
+function NoNotesNotice({ message }: { message: string | null }) {
+  return message == null ? null : (
+    <Text
+      style={styles.marginNotice}
+      accessibilityRole="text"
+      accessibilityLiveRegion="polite"
+      testID="journal-resonance-no-notes"
+    >
+      {message}
+    </Text>
+  );
 }
 
 type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
@@ -1556,6 +1586,31 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
   };
 }
 
+/**
+ * The screen's idle gate, with one addition: a page that opens onto writing
+ * that already exists counts as settled the moment its text arrives.
+ *
+ * ``isIdle`` models "the writer has paused *after writing*", which on a fresh
+ * page is exactly right. On an entry saved days ago there is no writing to
+ * pause after, so the pause never arrives and the reading is never offered —
+ * the writer sees a page with no affordance on it at all, which is what was
+ * reported. Nothing here loosens the pause for a page being composed: this
+ * fires once, only for an entry whose own text came back from the server with
+ * something in it, and any keystroke afterwards bumps the ordinary timer back
+ * into charge.
+ */
+function useResonanceIdle(autosave: AutosaveApi): { isIdle: boolean; bump: () => void } {
+  const { isIdle, bump, settle } = useIdle();
+  const settledRef = useRef(false);
+  const hasContent = autosave.body.trim().length > 0;
+  useEffect(() => {
+    if (settledRef.current || !autosave.loadedFromServer || !hasContent) return;
+    settledRef.current = true;
+    settle();
+  }, [autosave.loadedFromServer, hasContent, settle]);
+  return { isIdle, bump };
+}
+
 /** Wrap the autosave change handlers so each keystroke also bumps the idle timer. */
 function useBumpedHandlers(bump: () => void, autosave: AutosaveApi) {
   const { onChangeTitle, onChangeBody } = autosave;
@@ -1715,7 +1770,7 @@ function useJournalEntryController(
     handleSaved,
     onCreateConflict,
   );
-  const { isIdle, bump } = useIdle();
+  const { isIdle, bump } = useResonanceIdle(autosave);
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
@@ -1829,6 +1884,7 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
             style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
             testID="journal-margin-column"
           >
+            <NoNotesNotice message={ctl.resonance.noNotesMessage} />
             {marginContent}
           </View>
         </View>
@@ -1940,6 +1996,63 @@ function ReturnToReadingLink({
     >
       <Text style={styles.controlLink}>Back to reading</Text>
     </TouchableOpacity>
+  );
+}
+
+/** Screen-reader name for the exit that is offered no matter how they arrived. */
+const CLOSE_ENTRY_LABEL = 'Close — return to your journal';
+
+/**
+ * The always-available way out of the writing surface. ``ReturnToReadingLink``
+ * only appears for a writer who came from the course reader, which left everyone
+ * else with no exit the screen itself offered. This one is never gated: it flushes
+ * the pending draft on the same fired-not-awaited contract as the return link — so
+ * nothing typed is lost as the stack screen unmounts, and leaving never waits on a
+ * write — then lands the writer back on the Journal shelf.
+ */
+function CloseEntryLink({
+  navigation,
+  flush,
+}: {
+  navigation: ScreenNavigation;
+  flush: () => Promise<number | null>;
+}): React.JSX.Element {
+  const onPress = useCallback(() => {
+    void flush();
+    navigation.navigate('Tabs', { screen: 'Journal' });
+  }, [navigation, flush]);
+  return (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={CLOSE_ENTRY_LABEL}
+      testID="journal-close-entry"
+    >
+      <Text style={styles.controlLink}>Close</Text>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * The page's exit row: the course return when there is one, and the close always.
+ * They are separate affordances — the return carries the reader back to the exact
+ * passage they left, which the close cannot know about.
+ */
+function EntryExitControls({
+  returnTo,
+  navigation,
+  flush,
+}: {
+  returnTo: CourseReturnTo;
+  navigation: ScreenNavigation;
+  flush: () => Promise<number | null>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.entryExitRow}>
+      <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
+      <CloseEntryLink navigation={navigation} flush={flush} />
+    </View>
   );
 }
 
@@ -2112,7 +2225,7 @@ function JournalEntryScreen({
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
-      <ReturnToReadingLink
+      <EntryExitControls
         returnTo={route.params?.returnTo}
         navigation={navigation}
         flush={ctl.autosave.flush}

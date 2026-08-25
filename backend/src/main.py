@@ -33,6 +33,7 @@ from middleware import (
     ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
+    UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
 from rate_limit import limiter
@@ -676,12 +677,22 @@ install_exception_handlers(app)
 #      -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
 #         -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
 #            -> CORSMiddleware  (preflight handling + ACAO / ACAC)
-#               -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
-#                  -> route handler
+#               -> UnhandledExceptionMiddleware  (500 envelope, below CORS)
+#                  -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#                     -> route handler
 #
 # Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
 # rate-limited responses inherit the security-header set; putting trace-id
 # outside CORS means even preflight responses echo ``X-Request-ID``.
+#
+# UnhandledExceptionMiddleware has to be *below* CORS and nowhere else.  A
+# handler registered against the base ``Exception`` is served by Starlette's
+# ``ServerErrorMiddleware``, which sits above every layer here, so its 500
+# never passes back through CORS and a browser reads it as a network failure
+# rather than a server error -- the app then tells the user they are offline
+# while this process is up and answering.  Sitting above SlowAPI costs
+# nothing (slowapi answers its own 429s rather than raising) and covers a
+# panic in the limiter too.
 #
 # Forwarded-proto has to be outermost of all: Starlette's ``Router`` builds the
 # trailing-slash 307's ``Location`` from ``scope["scheme"]``, so the scheme has
@@ -692,6 +703,7 @@ origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(UnhandledExceptionMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

@@ -1,7 +1,7 @@
 # Dev/CI-only tooling. Exact (==) pins matching CI's resolved set so lint,
 # type, and quality gates run identically on every machine. Dependabot's pip
 # ecosystem entry proposes upgrades.
-uvicorn==0.52.3
+uvicorn==0.52.4
 bandit==1.9.4
 interrogate==1.7.0
 isort==8.0.1

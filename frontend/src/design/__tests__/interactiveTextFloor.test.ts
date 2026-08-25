@@ -96,6 +96,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalEntry.styles.ts::aspectChordSectionLabel',
   'features/Journal/JournalEntry.styles.ts::loadErrorText',
   'features/Journal/JournalEntry.styles.ts::marginError',
+  // Audited: the no-notes explanation is read, never tapped — the retry
+  // affordance is the "Get Resonance" button already on the page.
+  'features/Journal/JournalEntry.styles.ts::marginNotice',
   'features/Journal/JournalEntry.styles.ts::privacyResonanceReason',
   'features/Journal/JournalEntry.styles.ts::privacyTierExplainer',
   'features/Journal/JournalEntry.styles.ts::savedHint',
@@ -153,12 +156,12 @@ describe('interactive text floor', () => {
         journalEntryStyles.aspectChordTriggerLabel,
       );
       const aspectChordChipLabel = StyleSheet.flatten(journalEntryStyles.aspectChordChipLabel);
-      const aspectChordClearLabel = StyleSheet.flatten(journalEntryStyles.aspectChordClearLabel);
+      const aspectChordActionLabel = StyleSheet.flatten(journalEntryStyles.aspectChordActionLabel);
       expect(controlLink.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(privacyTierLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(aspectChordTriggerLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
       expect(aspectChordChipLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
-      expect(aspectChordClearLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
+      expect(aspectChordActionLabel.fontSize).toBe(INTERACTIVE_TEXT_MIN);
     });
 
     it('sizes the StatTile cue to the floor', () => {

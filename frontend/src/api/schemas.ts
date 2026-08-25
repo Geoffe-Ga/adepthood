@@ -883,6 +883,12 @@ export const resonanceResponseSchema = z.object({
   // responses (which omit both) still validate and behave as before.
   private: z.boolean().optional(),
   private_message: z.string().nullish(),
+  // The server's own sentence for a pass that produced no margin notes. It is
+  // prose rather than a code because only the server knows which of several
+  // routes to zero notes was taken; a client picking copy from a flag would be
+  // guessing at a cause it cannot see. Additive/nullish: a pass that kept notes
+  // omits it, and older responses still validate and behave as before.
+  no_notes_message: z.string().nullish(),
 });
 
 export type CareKindT = z.infer<typeof careKindSchema>;

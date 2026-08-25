@@ -687,7 +687,7 @@ journal_encryption_enabled=True
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS (e.g., `https://app.adepthood.com`) |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
-| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
+| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve). |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
 | `GOOGLE_OAUTH_CLIENT_IDS` | For Google sign-in | *(empty)* | Comma-separated Google OAuth client IDs the backend will accept ID tokens for (web + iOS + Android). Empty means every Google token is rejected, which is why the buttons appear to do nothing. |
@@ -912,6 +912,41 @@ Railway pings `GET /health` every 30 seconds. A healthy response:
 ```
 
 A 503 means the database is unreachable.
+
+### Verifying allowlisted models still resolve
+
+An LLM provider retires a date-pinned model on a published schedule, and after
+that date every request naming it comes back `404` — which the app surfaces as
+`502 llm_provider_error` on every resonance pass, reflection, and journal
+transcription. The test suite cannot see this coming: it mocks the provider, so
+the allowlist in `backend/src/services/botmason.py` is never compared with what
+the provider actually offers.
+
+The `live` lane closes that gap by reconciling the allowlist against the
+provider's own catalogue (`GET /v1/models`). It is opt-in, costs no tokens, and
+never runs in ordinary CI:
+
+```bash
+cd backend
+LIVE_MODEL_CHECK=1 ANTHROPIC_API_KEY=sk-ant-... \
+  python -m pytest tests/live -m live -q --no-cov
+```
+
+`.github/workflows/live-model-check.yml` runs it every Monday with the
+repository's `ANTHROPIC_API_KEY` secret, and **files an issue** when a model has
+been retired rather than leaving a red scheduled run for someone to notice.
+Three outcomes are kept distinct on purpose:
+
+| What happened | Job | Reported as |
+| --- | --- | --- |
+| An allowlisted id is gone from the catalogue | Red | Issue: *live model check found a retired Anthropic model* |
+| Provider unreachable (429/5xx/transport) | Green | `::warning::` + run-summary line — no verdict was reached, so none is claimed |
+| `ANTHROPIC_API_KEY` missing/expired, or the catalogue endpoint moved | Red | Issue: *live model check cannot reach a verdict* — the states in which this check would otherwise skip forever while reporting success |
+
+When an issue is filed, remove or replace the id in **both** `allowed_models`
+and `vision_models` (and `default_model` if it was the default), and update
+`backend/src/services/llm_pricing.py` — a priced-but-unallowlisted model fails
+its own guard.
 
 ### Error monitoring
 
