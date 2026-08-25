@@ -150,6 +150,11 @@ from services.creek_vault_telemetry import (
     record_vault_outcome,
 )
 from services.creek_vault_url import VaultUrlDefect, VaultUrlFinding, classify_vault_url
+from services.creek_vault_url_user import (
+    UserVaultUrlFinding,
+    classify_user_vault_url_host,
+    vault_url_host,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -422,6 +427,15 @@ _UNUSABLE_STORED_URL_EVENT = (
     "a connected creek vault URL is unusable; that user gets the local fallback -- "
     "they can reconnect their vault to fix it"
 )
+# The same degrade for a different reason: the URL is shaped fine and points
+# somewhere this server must not dial. A separate message because it is separate
+# news -- the first is a vault that cannot be described, this is one that can be
+# described and must not be reached, and only the second is ever the shape of an
+# attempt on the deployment's own network.
+_FORBIDDEN_STORED_DESTINATION_EVENT = (
+    "a connected creek vault URL names a destination this server must not dial; "
+    "that user gets the local fallback -- they can reconnect their vault to fix it"
+)
 
 # What the per-user degrade record says the configuration came from, in place of
 # the environment variable name its deployment-wide sibling carries. A field
@@ -544,6 +558,31 @@ def _stored_url_defect_fields(finding: VaultUrlFinding) -> Mapping[str, str]:
     the configured URL, which is the setting most likely to have a credential
     pasted into it, and here also the account, which is nobody an operator
     should be reading about in a warning stream for having a vault that moved.
+    """
+    return {
+        "config_source": _STORED_VAULT_SOURCE,
+        "url_defect": finding.defect.value,
+        "url_detail": finding.detail,
+    }
+
+
+def _stored_destination_fields(finding: UserVaultUrlFinding) -> Mapping[str, str]:
+    """Build the structured fields the per-user forbidden-destination degrade carries.
+
+    The same three keys :func:`_stored_url_defect_fields` uses, deliberately, so
+    one dashboard filter still counts "this user's vault could not be dialled"
+    across both reasons while ``url_defect`` keeps them separable. Only the
+    vocabulary behind ``url_defect`` differs, because the two questions have
+    different answers: :class:`~services.creek_vault_url.VaultUrlDefect` says
+    what is wrong with the URL's shape, and
+    :class:`~services.creek_vault_url_user.UserVaultUrlDefect` says what is wrong
+    with where it points.
+
+    Absent here is what is absent there and one thing more: not the URL, which is
+    the value most likely to have a credential in it; not the account, which is
+    nobody an operator should read about for having a vault that moved; and not
+    the host, which is the part of the URL this record would be most tempted to
+    quote and is exactly the part a stranger chose.
     """
     return {
         "config_source": _STORED_VAULT_SOURCE,
@@ -2258,7 +2297,18 @@ def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
     means a row got here some other way -- a restored backup, a rule tightened
     after the row was written. It is still checked, because the alternative is
     trusting a stored string to have been validated by a version of the code
-    that may not have existed when it was stored.
+    that may not have existed when it was stored. That is not hypothetical here:
+    the destination rules in :mod:`services.creek_vault_url_user` are newer than
+    some of the rows they now judge, and a stored ``https://10.0.0.7`` is exactly
+    the row this second check exists for.
+
+    Only the *pure* half of those rules runs here. This function is synchronous,
+    and a name lookup is not; the resolving half runs one layer up, in
+    :func:`dependencies.creek_vault.get_creek_vault_client`, which is already a
+    coroutine. Splitting it that way keeps this factory callable from anywhere
+    without dragging an event loop and a DNS round trip in behind it, and loses
+    nothing: an address literal is the case a stored row is most likely to hold,
+    and it is decided here for free.
 
     The degrade is counted under
     :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED` rather than under a
@@ -2272,5 +2322,11 @@ def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
     finding = classify_vault_url(url)
     if finding is not None:
         _LOGGER.warning(_UNUSABLE_STORED_URL_EVENT, extra=_stored_url_defect_fields(finding))
+        return LocalFallbackCreekVaultClient()
+    destination = classify_user_vault_url_host(vault_url_host(url))
+    if destination is not None:
+        _LOGGER.warning(
+            _FORBIDDEN_STORED_DESTINATION_EVENT, extra=_stored_destination_fields(destination)
+        )
         return LocalFallbackCreekVaultClient()
     return HttpCreekVaultClient(url, api_key)
