@@ -57,6 +57,31 @@ function corpusReply(status: string) {
   });
 }
 
+/** A reply the test holds open, so the run can be interfered with mid-flight. */
+function heldVaultReply(): { reply: Promise<unknown>; release: () => void } {
+  let release = (): void => undefined;
+  const reply = new Promise<unknown>((resolve) => {
+    release = (): void => {
+      resolve({
+        ok: true,
+        status: 202,
+        json: () =>
+          Promise.resolve({
+            destination: 'vault',
+            stored: true,
+            vault_status: 'accepted',
+            vault_ref: null,
+            tags: [],
+            corpus_status: null,
+            fragment_id: null,
+            message: 'ok',
+          }),
+      });
+    };
+  });
+  return { reply, release };
+}
+
 function serverError() {
   return Promise.resolve({
     ok: false,
@@ -247,5 +272,127 @@ describe('a multi-document run', () => {
     });
 
     expect(result.current.isSending).toBe(false);
+  });
+});
+
+describe('leaving a run part-way through', () => {
+  test('cancelling stops the loop rather than uploading the rest anyway', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md'), asset('three.md')],
+    });
+    const { result } = renderHook(() => useSeedRun());
+    mockFetch.mockImplementation(() => {
+      result.current.cancel();
+      return vaultReply('accepted');
+    });
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(statuses(result.current.items)).toEqual(['ingested', 'cancelled', 'cancelled']);
+  });
+
+  test('unmounting stops the loop, so the screen and the server agree', async () => {
+    // The defect this run exists to close: the loop is held by the callback's
+    // stack, not by React, so an unmount used to leave it uploading on in the
+    // background while the person saw an empty screen.
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md'), asset('three.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { result, unmount } = renderHook(() => useSeedRun());
+    let run: Promise<void> = Promise.resolve();
+    act(() => {
+      run = result.current.choose();
+    });
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    unmount();
+    await act(async () => {
+      held.release();
+      await run;
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('cancelling before anything was ever picked is a no-op', () => {
+    const { result } = renderHook(() => useSeedRun());
+
+    act(() => {
+      result.current.cancel();
+    });
+
+    expect(result.current.items).toEqual([]);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test('a run that was never cancelled still sends every document', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    mockFetch.mockReturnValue(vaultReply('accepted'));
+    const { result } = renderHook(() => useSeedRun());
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(statuses(result.current.items)).toEqual(['ingested', 'ingested']);
+  });
+
+  test('a picker dismissed after a cancelled run leaves the earlier outcomes alone', async () => {
+    getDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    getDocumentAsync.mockResolvedValueOnce({ canceled: true, assets: null });
+    const { result } = renderHook(() => useSeedRun());
+    mockFetch.mockImplementation(() => {
+      result.current.cancel();
+      return vaultReply('accepted');
+    });
+
+    await act(async () => {
+      await result.current.choose();
+    });
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(statuses(result.current.items)).toEqual(['ingested', 'cancelled']);
+    expect(result.current.notice).toBe(SEED_CANCELLED_NOTICE);
+  });
+});
+
+describe('the tier a cancelled run had already committed to', () => {
+  test('a tier changed mid-run never reaches a document the run already picked', async () => {
+    // The tier travels with the batch by value, so this holds by construction:
+    // the run cannot retroactively re-file writing at a tier nobody chose for it.
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    const { result } = renderHook(() => useSeedRun());
+    mockFetch.mockImplementation(() => {
+      result.current.chooseClassification('intimate');
+      return vaultReply('accepted');
+    });
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    const tiers = mockFetch.mock.calls.map((call) => JSON.parse(call[1].body).classification);
+    expect(tiers).toEqual(['personal', 'personal']);
   });
 });

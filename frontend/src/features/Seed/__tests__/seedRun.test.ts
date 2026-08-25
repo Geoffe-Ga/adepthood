@@ -143,3 +143,40 @@ describe('what the run reports', () => {
     expect(seedRunReducer(withThreeQueued(), { type: 'clear' })).toEqual(EMPTY_SEED_RUN);
   });
 });
+
+describe('cancelling a run that is still going', () => {
+  test('settles every document still waiting as one that never went', () => {
+    let state = withThreeQueued();
+    state = seedRunReducer(state, { type: 'start', id: 'a' });
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
+    state = seedRunReducer(state, { type: 'start', id: 'b' });
+
+    const cancelled = seedRunReducer(state, { type: 'cancel' });
+
+    expect(cancelled.items.a?.status).toBe('ingested');
+    expect(cancelled.items.c?.status).toBe('cancelled');
+  });
+
+  test('leaves the document already in flight alone, because it has gone', () => {
+    // The request is with the server. Calling it cancelled here would be the
+    // screen saying one thing while the corpus holds another.
+    let state = seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+    state = seedRunReducer(state, { type: 'cancel' });
+
+    expect(state.items.a?.status).toBe('uploading');
+  });
+
+  test('offers the loop nothing further to send', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
+    state = seedRunReducer(state, { type: 'cancel' });
+
+    expect(selectNextQueued(state)).toBeNull();
+  });
+
+  test('counts a cancelled document among what did not go over', () => {
+    const cancelled = seedRunReducer(withThreeQueued(), { type: 'cancel' });
+
+    expect(seedRunTally(cancelled)).toEqual({ total: 3, landed: 0, waiting: 0, refused: 3 });
+  });
+});

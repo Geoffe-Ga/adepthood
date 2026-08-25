@@ -72,6 +72,11 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,
   unreadable: "This file wouldn't open on this device.",
   failed: "This didn't get through, and nothing was stored. You can send it again.",
+  // Not a refusal by anything. The run was stopped while this one was still
+  // waiting its turn, so it was never sent and nothing anywhere changed.
+  cancelled:
+    'The run stopped while this one was still waiting, so it was never sent and nothing about ' +
+    'it changed. Choose it again whenever you like.',
 };
 
 /** The invitation on the empty screen, before anything has been chosen. */
@@ -119,3 +124,57 @@ export function seedSummaryLine(tally: SeedRunTally): string | null {
   }
   return `${tally.landed} of ${tally.total} landed. ${tally.refused} didn't go over.`;
 }
+
+/**
+ * How far along a run is while documents are still going over. Null once
+ * nothing is waiting, because a finished run has {@link seedSummaryLine} to
+ * say what became of it.
+ *
+ * The position counts the whole run rather than the latest pick: a second pick
+ * appends to the same list, and a number that restarted while the list did not
+ * would be a count of something nobody can see. Says "sending" and names no
+ * destination — which of the two answered is the server's word per request.
+ */
+export function seedProgressLine(tally: SeedRunTally): string | null {
+  if (tally.waiting === 0) {
+    return null;
+  }
+  const settled = tally.total - tally.waiting;
+  return `Sending ${settled + 1} of ${tally.total}…`;
+}
+
+/** What the question about leaving a run in flight is called. */
+export const SEED_LEAVE_TITLE = 'Documents are still going over';
+
+/**
+ * The whole of what leaving costs, said before it is paid.
+ *
+ * Names what is happening, why leaving matters, what becomes of each half of
+ * the run, and both ways out — because the one thing this screen must never do
+ * is let the person believe a run was abandoned while documents kept arriving
+ * in their corpus.
+ */
+export const SEED_LEAVE_WARNING =
+  'Documents from this batch are still going over. The one in flight has already left this ' +
+  'device and will finish wherever it lands; everything still waiting is never sent, and those ' +
+  'files stay on your device exactly as they are. Stay to let the rest go over, or leave and ' +
+  'choose them again another time.';
+
+/** The way out that stops the run. */
+export const SEED_LEAVE_CONFIRM_LABEL = 'Leave and stop sending';
+
+/** The way out that is no exit at all. */
+export const SEED_LEAVE_STAY_LABEL = 'Stay while the rest go over';
+
+/**
+ * The same warning in the one line a browser will take.
+ *
+ * A page reload never reaches the navigator, so on the web this is the only
+ * warning there is. Browsers have shown their own wording since 2016 and
+ * ignore this text; it is set because the API is what arms the prompt, and
+ * kept truthful because nothing is served by a string that lies where it does
+ * happen to show.
+ */
+export const SEED_LEAVE_BROWSER_WARNING =
+  'Documents are still going over. Leaving now stops the run, and everything still waiting is ' +
+  'never sent.';

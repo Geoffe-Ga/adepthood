@@ -6,15 +6,29 @@ import * as FileSystem from 'expo-file-system';
 import React from 'react';
 
 import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
-import { SEED_CHOOSE_LABEL, SEED_CONSENT_LINK_LABEL, SEED_STATUS_LINES } from '../seedCopy';
+import {
+  SEED_CHOOSE_LABEL,
+  SEED_CONSENT_LINK_LABEL,
+  SEED_LEAVE_WARNING,
+  SEED_STATUS_LINES,
+} from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 const mockNavigate = jest.fn();
+const mockDispatch = jest.fn();
+const mockListeners = new Map<string, (_event: unknown) => void>();
 
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+  useNavigation: () => ({
+    navigate: mockNavigate,
+    dispatch: mockDispatch,
+    addListener: (name: string, handler: (_event: unknown) => void) => {
+      mockListeners.set(name, handler);
+      return () => mockListeners.delete(name);
+    },
+  }),
 }));
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -69,6 +83,8 @@ function corpusReply(status: string) {
 
 beforeEach(() => {
   mockNavigate.mockReset();
+  mockDispatch.mockReset();
+  mockListeners.clear();
   mockFetch.mockReset();
   getDocumentAsync.mockReset();
   getDocumentAsync.mockResolvedValue({ canceled: true, assets: null });
@@ -77,6 +93,41 @@ beforeEach(() => {
   mocked.__fileBase64.mockResolvedValue('c2VlZA==');
   mocked.__fileSize.mockReturnValue(512);
 });
+
+/** A reply the test holds open, so the screen can be read mid-flight. */
+function heldVaultReply(): { reply: Promise<unknown>; release: () => void } {
+  let release = (): void => undefined;
+  const reply = new Promise<unknown>((resolve) => {
+    release = (): void => {
+      resolve({
+        ok: true,
+        status: 202,
+        json: () =>
+          Promise.resolve({
+            destination: 'vault',
+            stored: true,
+            vault_status: 'accepted',
+            vault_ref: null,
+            tags: [],
+            corpus_status: null,
+            fragment_id: null,
+            message: 'ok',
+          }),
+      });
+    };
+  });
+  return { reply, release };
+}
+
+const HELD_ACTION = { type: 'POP' };
+
+function fireBeforeRemove(): { preventDefault: jest.Mock } {
+  const event = { preventDefault: jest.fn(), data: { action: HELD_ACTION } };
+  act(() => {
+    mockListeners.get('beforeRemove')?.(event);
+  });
+  return event;
+}
 
 async function chooseFiles(getByTestId: (_id: string) => unknown) {
   await act(async () => {
@@ -269,5 +320,126 @@ describe('a pick that yields nothing', () => {
       expect(getByTestId('seed-notice')).toBeTruthy();
     });
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('while a run is going over', () => {
+  test('shows how far along the whole run is, not only a disabled button', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    fireEvent.press(getByTestId('seed-choose-button'));
+
+    await waitFor(() => {
+      expect(getByTestId('seed-progress')).toBeTruthy();
+    });
+    expect(getByTestId('seed-progress-line').props.children).toContain('1 of 2');
+
+    await act(async () => {
+      held.release();
+    });
+    await waitFor(() => {
+      expect(queryByTestId('seed-progress')).toBeNull();
+    });
+  });
+
+  test('says nothing about progress before anything has been picked', () => {
+    const { queryByTestId } = render(<SeedCorpusScreen />);
+
+    expect(queryByTestId('seed-progress')).toBeNull();
+  });
+});
+
+describe('leaving the screen', () => {
+  test('an idle screen holds nothing back', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
+    mockFetch.mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+    await chooseFiles(getByTestId);
+
+    expect(mockListeners.has('beforeRemove')).toBe(false);
+    expect(queryByTestId('seed-leave-prompt')).toBeNull();
+  });
+
+  test('a run still going over asks first, and says what becomes of each half', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+    fireEvent.press(getByTestId('seed-choose-button'));
+    await waitFor(() => {
+      expect(getByTestId('seed-progress')).toBeTruthy();
+    });
+
+    const event = fireBeforeRemove();
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(getByTestId('seed-leave-prompt')).toBeTruthy();
+    expect(getByText(SEED_LEAVE_WARNING)).toBeTruthy();
+    expect(mockDispatch).not.toHaveBeenCalled();
+
+    await act(async () => {
+      held.release();
+    });
+  });
+
+  test('leaving means the documents still waiting are never sent', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md'), asset('three.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId } = render(<SeedCorpusScreen />);
+    fireEvent.press(getByTestId('seed-choose-button'));
+    await waitFor(() => {
+      expect(getByTestId('seed-progress')).toBeTruthy();
+    });
+    fireBeforeRemove();
+
+    fireEvent.press(getByTestId('seed-leave-confirm'));
+    await act(async () => {
+      held.release();
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(HELD_ACTION);
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    expect(getByTestId('seed-item-status-seed-1').props.children).toBe(SEED_STATUS_LINES.cancelled);
+  });
+
+  test('staying lets the rest of the run finish', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+    fireEvent.press(getByTestId('seed-choose-button'));
+    await waitFor(() => {
+      expect(getByTestId('seed-progress')).toBeTruthy();
+    });
+    fireBeforeRemove();
+
+    fireEvent.press(getByTestId('seed-leave-stay'));
+    await act(async () => {
+      held.release();
+    });
+
+    expect(queryByTestId('seed-leave-prompt')).toBeNull();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
   });
 });
