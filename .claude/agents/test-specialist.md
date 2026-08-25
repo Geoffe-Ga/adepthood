@@ -89,3 +89,7 @@ implementation-specialist.
 
 **References**: [shared/adepthood-constraints.md](shared/adepthood-constraints.md),
 [taxonomy map](README.md)
+
+## Playbook (auto-curated)
+
+- **When** an assertion's outcome depends on wall-clock duration or on a filesystem snapshot of a directory the code under test does not own (e.g. `rglob` over a checkout containing `.git`), **do** make it load-independent before committing — calibrate against a control operation timed in the same run instead of a fixed millisecond delta, and scope the snapshot to the paths the code actually writes — because the pre-push gate runs the full suite on the same box as the parallel Ralph fleet. <!-- playbook added=2026-08-24 evidence=#2275,#2281 -->
