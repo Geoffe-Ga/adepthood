@@ -132,13 +132,19 @@ jobs:
       - name: Semantic extraction (claude backend)
         # ANTHROPIC_API_KEY is confined to this step; no GH_TOKEN here so the
         # third-party extractor never sees a write token. ANTHROPIC_MODEL /
-        # ANTHROPIC_BASE_URL are optional repo-var passthroughs (empty is fine).
+        # ANTHROPIC_BASE_URL are optional repo-var passthroughs, and an unset
+        # repo variable arrives here as the EMPTY STRING, not as absent. The
+        # Anthropic SDK only defaults its base URL when the variable is absent,
+        # so an empty one became the base URL and every chunk failed with
+        # `Connection error.` for over a month. run_with_optional_env.sh drops
+        # the empties before the SDK can read them.
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
         run: |
-          graphify extract . --backend claude --out . --token-budget 60000 --max-concurrency 2
+          bash scripts/graph/run_with_optional_env.sh ANTHROPIC_MODEL ANTHROPIC_BASE_URL -- \
+            graphify extract . --backend claude --out . --token-budget 60000 --max-concurrency 2
 
       - name: Write cost.json and job summary
         # extract records token usage in .graphify_analysis.json but does not
@@ -237,7 +243,8 @@ jobs:
       - name: Label communities (claude backend)
         # ANTHROPIC_API_KEY is confined to this step; no GH_TOKEN here so the
         # third-party labeller never sees a write token. ANTHROPIC_MODEL /
-        # ANTHROPIC_BASE_URL are optional repo-var passthroughs (empty is fine).
+        # ANTHROPIC_BASE_URL are optional repo-var passthroughs, dropped when
+        # empty for the reason documented on the extraction step above.
         # --missing-only names only the freshly-clustered communities that lack a
         # label, so stable names are never re-rolled.
         env:
@@ -245,7 +252,8 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
         run: |
-          graphify label . --missing-only --backend claude --batch-size 100
+          bash scripts/graph/run_with_optional_env.sh ANTHROPIC_MODEL ANTHROPIC_BASE_URL -- \
+            graphify label . --missing-only --backend claude --batch-size 100
 
       - name: Guard against placeholder community labels
         # Hard-fail rather than publishing placeholder labels as final. The
