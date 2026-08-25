@@ -17,4 +17,13 @@
 #
 # Dependabot's pip ecosystem is configured for /backend and discovers the
 # requirements files in that directory, so upgrades here are still proposed.
+#
+# It installs cleanly into the shared development virtualenv all the same --
+# `pip install -r backend/requirements-dast.txt` adds ten packages and changes
+# the version of nothing already pinned -- and you need it to run
+# backend/tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py, which
+# runs this exact pin against a deliberately broken application and requires it
+# to fail. Without the executable that suite skips, with a reason naming this
+# file; in the DAST workflow, which sets DAST_LANE_REQUIRE_SCHEMATHESIS, the
+# same absence is a red job instead.
 schemathesis==4.25.2

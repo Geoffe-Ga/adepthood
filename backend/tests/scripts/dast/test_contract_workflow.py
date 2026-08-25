@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.scripts.dast.test_contract_fuzz_catches_a_planted_bug import REQUIRE_ENV_VAR
+
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "dast-contract.yml"
 _REQUIREMENTS = _REPO_ROOT / "backend" / "requirements-dast.txt"
@@ -48,6 +50,12 @@ _DISARMING_FRAGMENTS = (
 
 _FUZZ_STEP = "Contract fuzz"
 _MINT_STEP = "Mint a bearer token and prove it works"
+_SELF_PROOF_STEP = "Prove the fuzzer catches a planted bug"
+
+# The suite that runs the pinned fuzzer against a deliberately broken app and
+# requires it to fail. Named here rather than restated as prose because a
+# renamed file must turn this red, not leave a step running nothing.
+_SELF_PROOF_SUITE = "tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py"
 
 # The fuzz step's whole command. Asserted by equality rather than by containment
 # so that nothing can be appended: a trailing command becomes the step's exit
@@ -91,7 +99,7 @@ def without_comment_lines(workflow_text: str) -> str:
     )
 
 
-def _step_body(workflow_text: str, step_name: str) -> list[str]:
+def step_body(workflow_text: str, step_name: str) -> list[str]:
     """Return the lines belonging to one named step.
 
     Args:
@@ -134,7 +142,7 @@ def step_run_command(workflow_text: str, step_name: str) -> str:
         The command the step runs, dedented, or the empty string when the step
         runs nothing at all.
     """
-    body = _step_body(workflow_text, step_name)
+    body = step_body(workflow_text, step_name)
     for index, line in enumerate(body):
         key = _RUN_KEY.match(line)
         if key is None:
@@ -220,6 +228,23 @@ def test_the_job_proves_its_credential_before_spending_it(workflow: str) -> None
     minting = step_run_command(workflow, _MINT_STEP)
     assert "scripts.dast.tokens" in minting, minting
     assert "DAST_TOKEN=" in minting, minting
+
+
+def test_the_job_proves_the_fuzzer_can_fail_before_trusting_it(workflow: str) -> None:
+    """A gate nobody has watched fail is not known to work.
+
+    Everything else here checks that the fuzz command is *built* correctly. This
+    step is the only thing that checks the fuzzer, once it really runs, fails on
+    a violation -- which is what separates a healthy gate from one that fuzzed
+    zero operations and exited 0.
+    """
+    command = step_run_command(workflow, _SELF_PROOF_STEP)
+    assert _SELF_PROOF_SUITE in command, command
+    assert "pytest" in command, command
+    # Without this the step would skip on a runner whose install silently did
+    # nothing, and skipping is the failure mode the whole job is about.
+    armed = f'{REQUIRE_ENV_VAR}: "1"'
+    assert armed in "\n".join(step_body(workflow, _SELF_PROOF_STEP)), armed
 
 
 def test_the_fuzz_step_runs_the_extracted_script_and_nothing_else(workflow: str) -> None:

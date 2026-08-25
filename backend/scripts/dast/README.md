@@ -225,6 +225,27 @@ argument would be a way to append a filter the exclusion cap cannot see), and
 `exec`s the fuzzer so that no trailing command can stand between a failing run
 and a failing job.
 
+Before the job trusts the fuzzer against the real application, it proves the
+fuzzer can fail. The `Prove the fuzzer catches a planted bug` step runs
+`backend/tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py`, which
+serves a deliberately broken `FastAPI` app over a real socket — one handler that
+raises (a 500) and one that returns `{"count": "not-a-number"}` against a
+published `{"count": integer}` — runs the real `contract_fuzz.sh` against it,
+and requires the run to fail naming both findings. It then serves the repaired
+twin and requires that run to pass *with every operation reached*, because
+"green" and "fuzzed nothing" are the two states this whole gate exists to tell
+apart. Argv assertions can only prove the command was built correctly; this is
+the only thing that proves the checks fire.
+
+That suite needs the `schemathesis` executable and deliberately does not use
+`pytest.importorskip`. Where the tool is absent it skips with a reason naming
+`requirements-dast.txt` and the `DAST_LANE_REQUIRE_SCHEMATHESIS` variable; the
+workflow sets that variable, so in the one environment that installs the tool a
+missing tool is a red job rather than a quiet pass. Nothing in Python imports
+`schemathesis` — the CLI is driven by subprocess, exactly as CI drives it — so
+`mypy --strict` never has to resolve a package that only one workflow installs,
+and no suppression is needed anywhere.
+
 **The job is not a pull-request gate yet.** It runs nightly and on
 `workflow_dispatch`. Its first honest run — with the token-revoking operation
 excluded, so the credential survives the whole run — is red: 19 operations

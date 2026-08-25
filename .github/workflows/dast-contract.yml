@@ -90,6 +90,22 @@ jobs:
           # not in requirements-dev.txt.
           uv pip install --system -r backend/requirements-dast.txt
 
+      # Prove the fuzzer catches a bug before trusting it to report on the real
+      # application. The pinned Schemathesis is run against a deliberately
+      # broken FastAPI app -- a handler that 500s and a handler that returns a
+      # body its own document forbids -- and must fail on both, then against the
+      # repaired twin, which must pass with every operation reached. A gate that
+      # has never been watched fail is not known to work.
+      #
+      # The flag turns a missing executable into a red job rather than a silent
+      # skip: this is the one environment that installs the tool, so absence
+      # here means the install step did nothing.
+      - name: Prove the fuzzer catches a planted bug
+        working-directory: backend
+        env:
+          DAST_LANE_REQUIRE_SCHEMATHESIS: "1"
+        run: python -m pytest tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py
+
       - name: Migrate the throwaway database
         working-directory: backend
         run: alembic upgrade head
