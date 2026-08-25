@@ -211,6 +211,31 @@ using Schemathesis. Reading the live `/openapi.json` rather than the checked-in
 export is the point: the spec the gate judges against cannot drift away from the
 code it is judging.
 
+The command itself is `backend/scripts/dast/contract_fuzz.sh`, not an inline
+`run:` block, and that is a testability decision. A YAML block can only be
+asserted about by grepping the file, and a substring search cannot tell a live
+invocation from a commented-out one — the first version of this job's guard
+passed with the whole fuzz command commented out and with the exclusion list
+wired to no argument at all. The script is executed instead, by
+`backend/tests/scripts/dast/test_contract_fuzz_script.py`, with a recording stub
+named `schemathesis` first on `PATH`; every assertion there is about the argv
+the script actually built. It reads `BASE_URL`, `DAST_TOKEN` and `REPORT_DIR`
+from the environment, refuses to run if any is missing, takes no arguments (an
+argument would be a way to append a filter the exclusion cap cannot see), and
+`exec`s the fuzzer so that no trailing command can stand between a failing run
+and a failing job.
+
+**The job is not a pull-request gate yet.** It runs nightly and on
+`workflow_dispatch`. Its first honest run — with the token-revoking operation
+excluded, so the credential survives the whole run — is red: 19 operations
+answer `500` to an out-of-`int32` path parameter, and the failure cap truncates
+before 41 of the selected operations have been looked at. Making that a required
+check would red every backend PR for bugs its author did not write, which is how
+a gate gets muted. The follow-up issue tracking those 500s also tracks promoting
+this job back to `pull_request`. Adding `continue-on-error` instead would be
+worse than not having the job: a permanently green report of a permanently red
+run.
+
 Three checks are enabled — `not_a_server_error`, `content_type_conformance` and
 `response_schema_conformance`. `status_code_conformance` is not, and the reason
 is a measured property of this API rather than a preference: not one of its 128
@@ -220,10 +245,23 @@ Issue #2425 tracks declaring those responses and turning the check on.
 
 Operations are excluded **by exact name, with a reason on the same line**, never
 by a path pattern — a named exclusion has to be defended and a pattern quietly
-grows. `backend/tests/scripts/dast/test_contract_workflow.py` checks every name
-in that list against the operations the application actually publishes, so a
-renamed route turns red instead of leaving a dead line in a YAML file, and it
-fails if the list ever excuses half the API.
+grows. `test_contract_fuzz_script.py` checks every name in that list against the
+operations the application actually publishes, so a renamed route turns red
+instead of leaving a dead line behind; proves each name reaches the fuzzer as an
+`--exclude-name` argument; fails if any other `--exclude-*`/`--include-*` filter
+appears, since a class filter is how the list stays small on paper while the run
+shrinks; and fails if the list ever excuses half the API.
+
+Two exclusions are load-bearing, and both destroy the credential the run depends
+on: `DELETE /users/me` deletes the fuzzing identity, and `POST /auth/refresh`
+revokes the presented token's `jti` before minting its replacement. Losing the
+credential mid-run is invisible — every later request answers `401`, which is
+not a 5xx and is undeclared on every operation, so all three enabled checks pass
+and the job reports success having reached no handler. Those two are the only
+operations reachable by the fuzzer that do this: a sweep of the auth and user
+routers found `_revoke_token_payload` called from `/auth/refresh` alone, and the
+only other credential-invalidating path (`password_changed_at`, advanced by
+`/auth/password-reset/confirm`) needs a reset token the fuzzer cannot mint.
 
 Schemathesis is pinned in `backend/requirements-dast.txt` rather than
 `requirements-dev.txt`; that file's header says why.

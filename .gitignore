@@ -112,6 +112,9 @@ dmypy.json
 .pyre/
 .pytype/
 .pytest_cache/
+# Schemathesis writes this beside the working directory it is run from; it is
+# regenerable cache, and a local contract-fuzz run should not dirty the tree.
+.schemathesis/
 
 # SQLAlchemy migrations (if auto-generated artifacts exist)
 migrations/versions/*.pyc
