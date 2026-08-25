@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import pytest
 
 from domain import resonance
-from domain.resonance import DropReason, MarginaliaOutcome, generate_marginalia
+from domain.resonance import (
+    NO_NOTES_MESSAGES,
+    DropReason,
+    MarginaliaOutcome,
+    NoNotesReason,
+    explain_no_notes,
+    generate_marginalia,
+)
 from models import marginalia
 from models.marginalia import MarginaliaKind
 
@@ -271,3 +279,182 @@ class TestDropTally:
         assert quote not in rendered
         assert note_text not in rendered
         assert _BODY not in rendered
+
+
+class SequencedLLM:
+    """Injected LLM stub returning a different completion per call.
+
+    The single-completion :class:`FakeLLM` cannot express "the first attempt
+    failed and the second succeeded", which is exactly the sequence the
+    zero-note retry exists to handle. Calls past the last completion repeat it.
+    """
+
+    def __init__(self, *completions: str) -> None:
+        """Store the completions this fake returns, in call order."""
+        self._completions = list(completions)
+        self.prompts: list[str] = []
+
+    async def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self._completions[min(len(self.prompts) - 1, len(self._completions) - 1)]
+
+
+class TestZeroNoteRetry:
+    """A pass that anchors nothing gets one corrective second attempt.
+
+    The writer spent a wallet unit and waited; handing them silence because the
+    model paraphrased its own quotes is the failure this retry addresses. The
+    retry re-asks rather than manufacturing a note, so anchoring stays exactly as
+    strict and nothing reaches the page that the writer did not write.
+    """
+
+    _ABSENT: ClassVar[dict[str, str]] = {
+        "kind": "theme",
+        "quote": "a phrase not in the entry",
+        "note": "n",
+    }
+    _PRESENT: ClassVar[dict[str, str]] = {
+        "kind": "theme",
+        "quote": "the willow bending",
+        "note": "kept on retry",
+    }
+
+    @pytest.mark.asyncio
+    async def test_unanchorable_first_attempt_is_retried_and_can_succeed(self) -> None:
+        """The salvageable case: attempt one paraphrased, attempt two quoted."""
+        llm = SequencedLLM(_notes_json(self._ABSENT), _notes_json(self._PRESENT))
+
+        out = await generate_marginalia(_BODY, llm=llm)
+
+        assert [note.note for note in out.notes] == ["kept on retry"]
+        assert out.attempts == 2
+        assert len(llm.prompts) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_retry_prompt_names_the_verbatim_requirement(self) -> None:
+        """A retry that re-asks identically would just fail identically."""
+        llm = SequencedLLM(_notes_json(self._ABSENT), _notes_json(self._PRESENT))
+
+        await generate_marginalia(_BODY, llm=llm, prior_entries=["An earlier page."])
+
+        first, second = llm.prompts
+        assert second != first
+        assert "character-for-character" in second
+        # The retry must still carry the entry and its grounding, or it asks a
+        # different (and worse) question than the one that just failed.
+        assert _BODY in second
+        assert "An earlier page." in second
+
+    @pytest.mark.asyncio
+    async def test_the_retry_forbids_inventing_a_note(self) -> None:
+        """Hollow reflection is worse than none, so the retry must say so."""
+        llm = SequencedLLM(_notes_json(self._ABSENT), _notes_json())
+
+        await generate_marginalia(_BODY, llm=llm)
+
+        assert "empty list is better than inventing" in llm.prompts[1]
+
+    @pytest.mark.asyncio
+    async def test_a_model_declining_to_comment_is_not_retried(self) -> None:
+        """A well-formed empty array is a considered decline, not a fault.
+
+        Re-asking spends a second provider call to be told the same thing, so
+        the decline is surfaced to the writer instead.
+        """
+        llm = SequencedLLM(_notes_json(), _notes_json(self._PRESENT))
+
+        out = await generate_marginalia(_BODY, llm=llm)
+
+        assert out.notes == []
+        assert out.attempts == 1
+        assert len(llm.prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_successful_first_attempt_is_never_retried(self) -> None:
+        """One kept note is a success; a second call would only cost money."""
+        llm = SequencedLLM(_notes_json(self._PRESENT))
+
+        out = await generate_marginalia(_BODY, llm=llm)
+
+        assert out.kept == 1
+        assert out.attempts == 1
+        assert len(llm.prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_retry_that_also_fails_stops_there(self) -> None:
+        """Exactly one retry — never a loop billing us for silence."""
+        llm = SequencedLLM(_notes_json(self._ABSENT))
+
+        out = await generate_marginalia(_BODY, llm=llm)
+
+        assert out.notes == []
+        assert out.attempts == 2
+        assert len(llm.prompts) == 2
+
+    @pytest.mark.asyncio
+    async def test_attempt_count_rides_the_log_record(self) -> None:
+        """An operator must be able to see the retry happened, and that it is billed."""
+        llm = SequencedLLM(_notes_json(self._ABSENT), _notes_json(self._PRESENT))
+
+        extra = (await generate_marginalia(_BODY, llm=llm)).as_log_extra()
+
+        assert extra["resonance_attempts"] == 2
+
+
+class TestNoNotesExplanation:
+    """Zero notes must always come with copy the writer can read.
+
+    Silence is indistinguishable from a dead button. Each shape gets its own
+    sentence because the writer's next move differs: more writing, another ask,
+    or simply waiting a moment.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_pass_that_kept_a_note_explains_nothing(self) -> None:
+        """The notes are the outcome; an explanation beside them would be noise."""
+        llm = FakeLLM(_notes_json({"kind": "theme", "quote": "the willow bending", "note": "k"}))
+
+        assert explain_no_notes(await generate_marginalia(_BODY, llm=llm)) is None
+
+    @pytest.mark.asyncio
+    async def test_a_declining_model_reads_as_an_invitation_to_write_more(self) -> None:
+        """Nothing to say yet is a legitimate answer, and must not read as a fault."""
+        out = await generate_marginalia(_BODY, llm=FakeLLM(_notes_json()))
+
+        assert explain_no_notes(out) == NO_NOTES_MESSAGES[NoNotesReason.NOTHING_TO_ADD]
+
+    @pytest.mark.asyncio
+    async def test_unanchorable_drafts_read_as_a_pass_worth_repeating(self) -> None:
+        """The reported bug's shape: the model spoke and nothing could be pinned."""
+        llm = SequencedLLM(_notes_json({"kind": "theme", "quote": "absent phrase", "note": "n"}))
+
+        out = await generate_marginalia(_BODY, llm=llm)
+
+        assert explain_no_notes(out) == NO_NOTES_MESSAGES[NoNotesReason.NOTHING_ANCHORED]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_completion_has_its_own_sentence(self) -> None:
+        """Came back in an unreadable shape is a different next step for the writer."""
+        out = await generate_marginalia(_BODY, llm=FakeLLM("not json at all"))
+
+        assert explain_no_notes(out) == NO_NOTES_MESSAGES[NoNotesReason.UNREADABLE]
+
+    @pytest.mark.asyncio
+    async def test_drafts_that_never_reached_anchoring_read_as_unreadable(self) -> None:
+        """Wrong-shape items never reached the anchor, so anchoring cannot be blamed."""
+        out = await generate_marginalia(_BODY, llm=FakeLLM(json.dumps({"notes": [7, "nope"]})))
+
+        assert explain_no_notes(out) == NO_NOTES_MESSAGES[NoNotesReason.UNREADABLE]
+
+    def test_every_reason_has_copy_that_neither_blames_nor_alarms(self) -> None:
+        """The copy is contract with the writer, so its tone is asserted, not assumed."""
+        blaming = ("you failed", "invalid", "error", "sorry", "unfortunately", "too short")
+        for reason in NoNotesReason:
+            message = NO_NOTES_MESSAGES[reason]
+            assert message
+            assert message == message.strip()
+            lowered = message.lower()
+            assert not any(word in lowered for word in blaming)
+            # Every message tells the writer the pass cost them nothing — the
+            # wallet is refunded, and a silent refund is still silence.
+            assert "wasn't charged" in lowered

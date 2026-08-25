@@ -34,6 +34,7 @@ from domain.resonance import (
     MarginaliaAnchored,
     MarginaliaOutcome,
     ResonanceLLM,
+    explain_no_notes,
     generate_essay,
     generate_marginalia,
 )
@@ -106,7 +107,12 @@ from services.marginalia import (
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
-from services.wallet import SpendResult, preflight_deduction, require_user_fresh
+from services.wallet import (
+    SpendResult,
+    preflight_deduction,
+    refund_one_message,
+    require_user_fresh,
+)
 
 
 def _sanitize_message(message: str) -> str:
@@ -954,10 +960,17 @@ class _ResonanceSurfaces:
     ``care`` is the acute-distress support surface; ``contraction`` is the warm,
     declinable naming of a thinned foundation. Both are ``None`` for an ordinary,
     healthy pass, and bundling them keeps the response builder's signature small.
+
+    ``no_notes_message`` is the sentence explaining a pass that produced no
+    margin notes; ``None`` whenever notes were kept. It rides here rather than
+    being re-derived in the builder because the same value decides whether the
+    charge is reversed, and those two must never disagree — a writer told the
+    pass was not charged while the charge stands is a worse bug than silence.
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
+    no_notes_message: str | None = None
 
 
 def _resonance_response(
@@ -979,7 +992,27 @@ def _resonance_response(
         monthly_reset_date=reset_date,
         care=surfaces.care,
         contraction=surfaces.contraction,
+        no_notes_message=surfaces.no_notes_message,
     )
+
+
+async def _settle_empty_pass(
+    session: AsyncSession, user_id: int, spent: SpendResult, outcome: MarginaliaOutcome
+) -> tuple[SpendResult, str | None]:
+    """Explain a pass that kept no notes, and hand its charge back.
+
+    The two halves are deliberately one call. A writer told "this pass wasn't
+    charged" while the charge stands is worse than the silence this replaced, so
+    the sentence and the reversal are decided from the same value rather than
+    from two independent reads of the outcome that could drift apart.
+
+    Returns the balances to report and the sentence to show, or the untouched
+    balances and ``None`` when the pass produced notes.
+    """
+    message = explain_no_notes(outcome)
+    if message is None:
+        return spent, None
+    return await refund_one_message(session, user_id, spent), message
 
 
 @dataclass(frozen=True)
@@ -1023,6 +1056,15 @@ async def run_resonance(
     Wallet pre-flight deducts one message (402 when out of capacity). The LLM
     pass + persistence + the charge commit atomically; any provider error rolls
     the deduction back so a failed pass never charges (502 ``llm_provider_error``).
+
+    A pass that *succeeds* and still persists no notes is neither an error nor a
+    non-event: it is a writer who waited and received nothing. Those get the
+    server's own explanation in ``no_notes_message`` — never an empty 200 the
+    client has to interpret — and the deduction is reversed in the bucket it
+    came from, so silence costs the writer nothing. The reversal is a crediting
+    entry rather than a rollback on purpose: the provider call really happened,
+    and rolling back would erase the usage record of what it cost us along with
+    any completion suggestions the same pass legitimately found.
 
     The entry is first screened for an acute-distress signal with a pure, local
     check; on an elevated signal the response carries a ``care`` surface (human +
@@ -1087,6 +1129,7 @@ async def run_resonance(
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
     rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored.notes)
+    spent, no_notes_message = await _settle_empty_pass(session, current_user, spent, anchored)
     spent_user = await require_user_fresh(session, current_user)
     await record_llm_usage(
         session,
@@ -1098,7 +1141,9 @@ async def run_resonance(
     await _refresh_persisted(session, rows, suggestions)
     _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
-    surfaces = _ResonanceSurfaces(care=care, contraction=contraction)
+    surfaces = _ResonanceSurfaces(
+        care=care, contraction=contraction, no_notes_message=no_notes_message
+    )
     return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
 
 

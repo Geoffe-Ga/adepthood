@@ -70,6 +70,18 @@
     "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
   },
   {
+    "id": "journal.ask-for-resonance",
+    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Uncovered because the pass calls a real language model and the lane has no provider to call: covering it needs a deterministic, configuration-selected provider the lane can point the server at, not a spec alone. The same constraint keeps seed.upload-document uncovered.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}/marginalia"],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2408
+  },
+  {
     "id": "practice.log-session",
     "description": "A practitioner logs a practice session and finds it in the week's record.",
     "crosses": {
