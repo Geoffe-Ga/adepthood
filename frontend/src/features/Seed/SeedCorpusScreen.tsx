@@ -20,23 +20,46 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   SEED_CHOOSE_LABEL,
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
   SEED_EMPTY_INVITATION,
+  SEED_LEAVE_CONFIRM_LABEL,
+  SEED_LEAVE_STAY_LABEL,
+  SEED_LEAVE_TITLE,
+  SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
+  seedProgressLine,
   seedSummaryLine,
 } from './seedCopy';
 import type { SeedItem } from './seedRun';
+import { useSeedLeaveGuard } from './useSeedLeaveGuard';
 import { useSeedRun, type SeedRunController } from './useSeedRun';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { accent, BORDER_RADIUS, ink, rhythm, SPACING, surface, touchTarget } from '@/design/tokens';
+import {
+  accent,
+  BORDER_RADIUS,
+  colors,
+  ink,
+  rhythm,
+  SPACING,
+  surface,
+  touchTarget,
+} from '@/design/tokens';
 import PrivacyTierControl from '@/features/Journal/PrivacyTierControl';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
@@ -77,6 +100,75 @@ const ChooseButton = ({
   >
     <Text style={styles.chooseButtonText}>{SEED_CHOOSE_LABEL}</Text>
   </TouchableOpacity>
+);
+
+/**
+ * How far along the run is, while it is going over.
+ *
+ * A moving indicator alongside the position, because the per-row text and a
+ * disabled button are both static: a run whose documents each take a round
+ * trip can sit for a long time looking hung. The position counts the whole
+ * run, which is exactly the list rendered below it.
+ */
+const SeedProgress = ({ line }: { line: string | null }): React.JSX.Element | null => {
+  if (line === null) {
+    return null;
+  }
+  return (
+    <View
+      style={styles.progress}
+      testID="seed-progress"
+      accessibilityRole="progressbar"
+      accessibilityLabel={line}
+      accessibilityLiveRegion="polite"
+    >
+      <ActivityIndicator color={accent.primary} />
+      <Text style={styles.progressText} testID="seed-progress-line">
+        {line}
+      </Text>
+    </View>
+  );
+};
+
+interface SeedLeavePromptProps {
+  onLeave: () => void;
+  onStay: () => void;
+}
+
+/**
+ * The question asked before an active run is left, with both answers spelled
+ * out. Staying is offered first: it is the one that changes nothing.
+ *
+ * A modal rather than a banner in the scroll, because the exit it is answering
+ * has already been held: somebody scrolled down a long run would otherwise
+ * find their tap on Back had simply done nothing, with the reason off screen.
+ * The hardware back gesture answers "stay" — the safe half of the choice.
+ */
+const SeedLeavePrompt = ({ onLeave, onStay }: SeedLeavePromptProps): React.JSX.Element => (
+  <Modal visible transparent animationType="fade" onRequestClose={onStay}>
+    <View style={styles.leaveScrim} accessibilityViewIsModal>
+      <View style={styles.leavePrompt} testID="seed-leave-prompt" accessibilityRole="alert">
+        <Text style={styles.leaveTitle}>{SEED_LEAVE_TITLE}</Text>
+        <Text style={styles.leaveWarning}>{SEED_LEAVE_WARNING}</Text>
+        <TouchableOpacity
+          onPress={onStay}
+          accessibilityRole="button"
+          accessibilityLabel={SEED_LEAVE_STAY_LABEL}
+          testID="seed-leave-stay"
+        >
+          <Text style={styles.leaveStay}>{SEED_LEAVE_STAY_LABEL}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onLeave}
+          accessibilityRole="button"
+          accessibilityLabel={SEED_LEAVE_CONFIRM_LABEL}
+          testID="seed-leave-confirm"
+        >
+          <Text style={styles.leaveConfirm}>{SEED_LEAVE_CONFIRM_LABEL}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </Modal>
 );
 
 /**
@@ -136,6 +228,7 @@ const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.
         <PrivacyTierControl value={run.classification} onChange={run.chooseClassification} />
       </EditorialSection>
       <ChooseButton onPress={run.choose} disabled={run.isSending} />
+      <SeedProgress line={seedProgressLine(run.tally)} />
       {run.notice ? (
         <Text style={styles.notice} testID="seed-notice">
           {run.notice}
@@ -157,8 +250,12 @@ function SeedCorpusScreen(): React.JSX.Element {
   const run = useSeedRun();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const openConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
+  const leaveGuard = useSeedLeaveGuard(run.isSending, run.cancel);
   return (
     <ScreenScaffold scroll testID="seed-corpus-screen">
+      {leaveGuard.isPrompting ? (
+        <SeedLeavePrompt onLeave={leaveGuard.confirmLeave} onStay={leaveGuard.stay} />
+      ) : null}
       <SeedCorpusBody run={run} onOpenConsent={openConsent} />
     </ScreenScaffold>
   );
@@ -184,6 +281,49 @@ const styles = StyleSheet.create({
   chooseButtonText: {
     color: accent.onPrimary,
     fontWeight: '600',
+  },
+  progress: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: SPACING.md,
+  },
+  progressText: {
+    color: ink.soft,
+  },
+  leaveScrim: {
+    backgroundColor: colors.mystical.overlay,
+    flex: 1,
+    justifyContent: 'center',
+    padding: SPACING.lg,
+  },
+  leavePrompt: {
+    backgroundColor: surface.raised,
+    borderColor: surface.hairline,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: SPACING.md,
+  },
+  leaveTitle: {
+    color: ink.primary,
+    fontWeight: '600',
+  },
+  leaveWarning: {
+    color: ink.soft,
+    lineHeight: 20,
+    marginTop: SPACING.sm,
+  },
+  leaveStay: {
+    color: accent.primary,
+    fontWeight: '600',
+    minHeight: touchTarget.minimum,
+    paddingTop: SPACING.md,
+  },
+  leaveConfirm: {
+    color: ink.soft,
+    fontWeight: '600',
+    minHeight: touchTarget.minimum,
+    paddingTop: SPACING.md,
   },
   notice: {
     color: ink.soft,
