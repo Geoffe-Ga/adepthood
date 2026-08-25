@@ -44,6 +44,7 @@ const EXPECTED_JOURNEYS = [
   'journal.e2e.test.ts',
   'practice-catalog.e2e.test.ts',
   'practice.e2e.test.ts',
+  'vault-connection.e2e.test.ts',
 ];
 const ONLY_MODULE_ALIAS = ['^@/(.*)$'];
 

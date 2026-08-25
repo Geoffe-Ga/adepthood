@@ -41,6 +41,7 @@ import {
   timezoneReadSchema,
   transcribePageSchema,
   uiFlagsSchema,
+  vaultConnectionResponseSchema,
   documentImportSchema,
   wheelBalanceSchema,
   type AccountDeletionReceiptT,
@@ -76,6 +77,7 @@ import {
   type Tier,
   type TimezoneReadT,
   type TranscribePageT,
+  type VaultConnectionT,
   type DocumentImportT,
   type WheelBalanceT,
 } from './schemas';
@@ -3328,5 +3330,75 @@ export const corpusConsent = {
       schema: corpusConsentResponseSchema,
       retry: false,
     });
+  },
+};
+
+// Private vault (an optional space of the user's own, holding a copy of entries)
+
+/** Whether an account has a vault attached, and where it points. */
+export type VaultConnection = VaultConnectionT;
+
+/**
+ * What connecting a vault takes: where it lives, and the key it issued.
+ *
+ * An interface rather than a Zod schema on purpose — the credential is sent and
+ * never read back, so there is nothing on the response side to validate, and a
+ * schema export naming the field would list it wherever schemas are enumerated.
+ */
+export interface VaultConnectionPayload {
+  vault_url: string;
+  api_key: string;
+}
+
+// Validated at the edge so a drifted ``connected`` raises ApiValidationError
+// rather than rendering as a connection state nobody is in. No trailing slash:
+// the router mounts ``/vault/connection`` directly, so one would cost a 307.
+const vaultConnectionSchema =
+  vaultConnectionResponseSchema as unknown as z.ZodType<VaultConnection>;
+
+/**
+ * The vault resource all three verbs address, named once instead of spelled
+ * three times.
+ *
+ * Composed at each call site rather than passed as a whole path, because the
+ * journey-ledger gate reads a route off the call itself and cannot follow an
+ * identifier standing in for one: ``/vault/${VAULT_RESOURCE}`` registers as
+ * ``/vault/*``, which is what it matches the three declared verbs against.
+ */
+const VAULT_RESOURCE = 'connection';
+
+export const vault = {
+  /**
+   * Whether this account has a vault attached, and its address if so.
+   *
+   * The route answers every account rather than 404ing an unconnected one, so
+   * the screen renders the offer straight from the reply instead of from an
+   * error it first has to recognise as "nothing here yet".
+   */
+  connection(token?: string): Promise<VaultConnection> {
+    return request<VaultConnection>(`/vault/${VAULT_RESOURCE}`, {
+      token,
+      schema: vaultConnectionSchema,
+    });
+  },
+  /**
+   * Attach a vault, replacing whatever was attached before.
+   *
+   * Deliberately not retried. The verb is idempotent, but the body carries a
+   * credential: a request whose response was lost is one the person should be
+   * told about rather than one the client quietly sends a second time.
+   */
+  connect(payload: VaultConnectionPayload, token?: string): Promise<VaultConnection> {
+    return request<VaultConnection>(`/vault/${VAULT_RESOURCE}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+      schema: vaultConnectionSchema,
+      retry: false,
+    });
+  },
+  /** Detach the vault. Idempotent, and a 204 whether one was attached or not. */
+  disconnect(token?: string): Promise<void> {
+    return request<void>(`/vault/${VAULT_RESOURCE}`, { method: 'DELETE', token });
   },
 };

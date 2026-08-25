@@ -4,17 +4,31 @@ import { describe, expect, it } from '@jest/globals';
 import * as vaultCopy from '../vaultCopy';
 
 /**
- * Copy guards for the private-vault Settings surface. The surface is purely
- * informational: it states one promise, says plainly that Adepthood is complete
- * without a vault, and never reaches for technical, pressuring, or durability
- * language. These tests pin the copy deck verbatim and fence off the vocabulary
- * the surface is not allowed to use.
+ * Copy guards for the private-vault Settings surface.
+ *
+ * The deck is now two decks with two different licences. The promise deck still
+ * describes a vault to somebody who may never want one, so it may name no host,
+ * transport, credential or routing concept at all. The form deck asks a person
+ * where their own space lives, and a field that cannot show the shape of an
+ * address is a field nobody can fill in — so it is swept by the same technical
+ * ban minus the transport alternative, and by nothing looser than that.
+ *
+ * Both decks are held to the pressure and durability bans without exception:
+ * neither may imply entries are at risk, that connecting is required, or that a
+ * vault promises anything the write path does not keep.
  */
 
-const { VAULT_FLOOR, VAULT_PROMISE, VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } = vaultCopy;
+const {
+  VAULT_ADDRESS_INSECURE,
+  VAULT_ADDRESS_PLACEHOLDER,
+  VAULT_FLOOR,
+  VAULT_PROMISE,
+  VAULT_ROW_DESCRIPTION,
+  VAULT_ROW_LABEL,
+} = vaultCopy;
 
-/** Every exported copy constant, so a new export cannot slip past the guards. */
-const COPY_KEYS = [
+/** The deck that describes a vault. Swept by the full technical ban. */
+const PROMISE_KEYS = [
   'VAULT_ROW_LABEL',
   'VAULT_ROW_DESCRIPTION',
   'VAULT_EYEBROW',
@@ -23,17 +37,60 @@ const COPY_KEYS = [
   'VAULT_WHAT_IT_IS',
   'VAULT_FLOOR',
   'VAULT_INTIMATE',
-  'VAULT_SETUP',
+  'VAULT_CONNECT_INTRO',
 ] as const;
 
-const ALL_COPY = Object.values(vaultCopy).join(' ');
+/** The deck that asks for a vault. Swept by the same ban minus the transport. */
+const FORM_KEYS = [
+  'VAULT_ADD_HEADING',
+  'VAULT_REPLACE_HEADING',
+  'VAULT_ADDRESS_LABEL',
+  'VAULT_ADDRESS_PLACEHOLDER',
+  'VAULT_KEY_LABEL',
+  'VAULT_KEY_PLACEHOLDER',
+  'VAULT_KEY_SHOW',
+  'VAULT_KEY_HIDE',
+  'VAULT_CONNECT_BUTTON',
+  'VAULT_CONNECTING_BUTTON',
+  'VAULT_DISCONNECT_BUTTON',
+  'VAULT_DISCONNECTING_BUTTON',
+  'VAULT_CONNECTED_LABEL',
+  'VAULT_NONE_CONNECTED',
+  'VAULT_STATUS_CONNECTED',
+  'VAULT_STATUS_DISCONNECTED',
+  'VAULT_DISCONNECT_CONFIRM_TITLE',
+  'VAULT_DISCONNECT_CONFIRM_BODY',
+  'VAULT_CANCEL',
+  'VAULT_ADDRESS_MISSING',
+  'VAULT_KEY_MISSING',
+  'VAULT_LOAD_FAILED',
+  'VAULT_CONNECT_FAILED',
+  'VAULT_DISCONNECT_FAILED',
+  'VAULT_ADDRESS_UNREADABLE',
+  'VAULT_ADDRESS_INCOMPLETE',
+  'VAULT_ADDRESS_EXTRA_PARTS',
+  'VAULT_ADDRESS_INSECURE',
+] as const;
 
-// Hosts, transports, credentials and routing: the technical vocabulary this
-// surface is forbidden to expose, since a vault is configured where it runs.
+const ALL_KEYS = [...PROMISE_KEYS, ...FORM_KEYS];
+
+const PROMISE_COPY = PROMISE_KEYS.map((key) => vaultCopy[key]).join(' ');
+const FORM_COPY = FORM_KEYS.map((key) => vaultCopy[key]).join(' ');
+const ALL_COPY = `${PROMISE_COPY} ${FORM_COPY}`;
+
+// Hosts, transports, credentials and routing: the vocabulary the promise deck
+// is forbidden to expose, because it is describing an idea rather than
+// collecting a value.
 const BANNED_TECHNICAL =
   /\b(host|hostname|url|uri|endpoint|api key|apikey|bearer|token|credential|mcp|https?|port|protocol|routing|route|server|sync|tenant|node|instance)\b/iu;
 
-// Loss and obligation framing: the copy must never imply entries are at risk
+// The same ban with the transport alternative removed, and only that one. The
+// form has to show somebody the shape of an address they are being asked to
+// paste; it still may not name a host, a credential or a routing concept.
+const FORM_BANNED_TECHNICAL =
+  /\b(host|hostname|url|uri|endpoint|api key|apikey|bearer|token|credential|mcp|port|protocol|routing|route|server|sync|tenant|node|instance)\b/iu;
+
+// Loss and obligation framing: neither deck may imply entries are at risk
 // without a vault, nor that connecting one is required of anybody.
 const BANNED_PRESSURE =
   /\b(backup|back up|safeguard|protect|secure your|lose|lost|losing|at risk|danger|failure|required|must|need to)\b/iu;
@@ -42,24 +99,41 @@ const BANNED_PRESSURE =
 const BANNED_DURABILITY =
   /\b(guarantee|guaranteed|never lose|always safe|permanent|permanently stored)\b/iu;
 
+/** The only two constants allowed to spell a transport. */
+const TRANSPORT_BEARERS = ['VAULT_ADDRESS_PLACEHOLDER', 'VAULT_ADDRESS_INSECURE'];
+
 // ---------------------------------------------------------------------------
 // Export surface
 // ---------------------------------------------------------------------------
 
 describe('vaultCopy — export surface', () => {
-  for (const key of COPY_KEYS) {
+  for (const key of ALL_KEYS) {
     it(`${key} is a non-empty string`, () => {
       expect(typeof vaultCopy[key]).toBe('string');
       expect(vaultCopy[key].length).toBeGreaterThan(0);
     });
   }
 
-  it('the swept blob carries every exported constant', () => {
-    // Anti-vacuity guard: the negative tests below only mean something if the
-    // swept blob really contains the whole deck.
-    for (const key of COPY_KEYS) {
-      expect(ALL_COPY).toContain(vaultCopy[key]);
+  it('sorts every export into exactly one of the two guarded decks', () => {
+    // Anti-vacuity: an export belonging to neither list is copy nothing below
+    // sweeps, and the old single-list guard could go stale without saying so.
+    expect([...ALL_KEYS].sort()).toEqual(Object.keys(vaultCopy).sort());
+  });
+
+  it('carries every promise constant into the blob the full ban sweeps', () => {
+    for (const key of PROMISE_KEYS) {
+      expect(PROMISE_COPY).toContain(vaultCopy[key]);
     }
+  });
+
+  it('carries every form constant into the blob the narrowed ban sweeps', () => {
+    for (const key of FORM_KEYS) {
+      expect(FORM_COPY).toContain(vaultCopy[key]);
+    }
+  });
+
+  it('retires VAULT_SETUP, whose claim the connect form made false', () => {
+    expect(Object.keys(vaultCopy)).not.toContain('VAULT_SETUP');
   });
 });
 
@@ -67,7 +141,7 @@ describe('vaultCopy — export surface', () => {
 // Verbatim copy deck — these strings are the contract
 // ---------------------------------------------------------------------------
 
-describe('vaultCopy — verbatim copy deck', () => {
+describe('vaultCopy — the promise deck, verbatim', () => {
   it('VAULT_ROW_LABEL reads "Private vault"', () => {
     expect(VAULT_ROW_LABEL).toBe('Private vault');
   });
@@ -112,9 +186,143 @@ describe('vaultCopy — verbatim copy deck', () => {
     expect(vaultCopy.VAULT_INTIMATE).toBe('Entries you mark Intimate are never sent to a vault.');
   });
 
-  it('VAULT_SETUP says there is nothing to fill in here', () => {
-    expect(vaultCopy.VAULT_SETUP).toBe(
-      'A vault is set up where it runs, not in the app — so there is nothing to fill in here.',
+  it('VAULT_CONNECT_INTRO offers the form and says leaving is free', () => {
+    expect(vaultCopy.VAULT_CONNECT_INTRO).toBe(
+      'If you keep a space of your own, you can connect it here and Adepthood will send a copy of each entry to it. You can disconnect whenever you like, and nothing you have written changes either way.',
+    );
+  });
+});
+
+describe('vaultCopy — the form deck, verbatim', () => {
+  it('VAULT_ADD_HEADING reads "Connect your vault"', () => {
+    expect(vaultCopy.VAULT_ADD_HEADING).toBe('Connect your vault');
+  });
+
+  it('VAULT_REPLACE_HEADING reads "Replace this vault"', () => {
+    expect(vaultCopy.VAULT_REPLACE_HEADING).toBe('Replace this vault');
+  });
+
+  it('VAULT_ADDRESS_LABEL reads "Your vault address"', () => {
+    expect(vaultCopy.VAULT_ADDRESS_LABEL).toBe('Your vault address');
+  });
+
+  it('VAULT_ADDRESS_PLACEHOLDER shows the shape of an address', () => {
+    expect(VAULT_ADDRESS_PLACEHOLDER).toBe('https://your-vault.example');
+  });
+
+  it('VAULT_KEY_LABEL reads "Your vault key"', () => {
+    expect(vaultCopy.VAULT_KEY_LABEL).toBe('Your vault key');
+  });
+
+  it('VAULT_KEY_PLACEHOLDER points at where the key came from', () => {
+    expect(vaultCopy.VAULT_KEY_PLACEHOLDER).toBe('Paste the key your vault gave you');
+  });
+
+  it('VAULT_KEY_SHOW reads "Show"', () => {
+    expect(vaultCopy.VAULT_KEY_SHOW).toBe('Show');
+  });
+
+  it('VAULT_KEY_HIDE reads "Hide"', () => {
+    expect(vaultCopy.VAULT_KEY_HIDE).toBe('Hide');
+  });
+
+  it('VAULT_CONNECT_BUTTON reads "Connect"', () => {
+    expect(vaultCopy.VAULT_CONNECT_BUTTON).toBe('Connect');
+  });
+
+  it('VAULT_CONNECTING_BUTTON reads "Connecting…"', () => {
+    expect(vaultCopy.VAULT_CONNECTING_BUTTON).toBe('Connecting…');
+  });
+
+  it('VAULT_DISCONNECT_BUTTON reads "Disconnect"', () => {
+    expect(vaultCopy.VAULT_DISCONNECT_BUTTON).toBe('Disconnect');
+  });
+
+  it('VAULT_DISCONNECTING_BUTTON reads "Disconnecting…"', () => {
+    expect(vaultCopy.VAULT_DISCONNECTING_BUTTON).toBe('Disconnecting…');
+  });
+
+  it('VAULT_CONNECTED_LABEL reads "Connected to"', () => {
+    expect(vaultCopy.VAULT_CONNECTED_LABEL).toBe('Connected to');
+  });
+
+  it('VAULT_NONE_CONNECTED states the empty case without regret', () => {
+    expect(vaultCopy.VAULT_NONE_CONNECTED).toBe('No vault connected yet.');
+  });
+
+  it('VAULT_STATUS_CONNECTED describes what connecting changed', () => {
+    expect(vaultCopy.VAULT_STATUS_CONNECTED).toBe(
+      'Connected. Adepthood will send a copy of each new entry to your vault.',
+    );
+  });
+
+  it('VAULT_STATUS_DISCONNECTED says the writing is still here', () => {
+    expect(vaultCopy.VAULT_STATUS_DISCONNECTED).toBe(
+      'Disconnected. Everything you have written is still here.',
+    );
+  });
+
+  it('VAULT_DISCONNECT_CONFIRM_TITLE asks before it acts', () => {
+    expect(vaultCopy.VAULT_DISCONNECT_CONFIRM_TITLE).toBe('Disconnect this vault?');
+  });
+
+  it('VAULT_DISCONNECT_CONFIRM_BODY bounds what disconnecting does', () => {
+    expect(vaultCopy.VAULT_DISCONNECT_CONFIRM_BODY).toBe(
+      'Adepthood will stop sending copies there. Every entry stays exactly where it is, and you can connect again whenever you like.',
+    );
+  });
+
+  it('VAULT_CANCEL reads "Cancel"', () => {
+    expect(vaultCopy.VAULT_CANCEL).toBe('Cancel');
+  });
+
+  it('VAULT_ADDRESS_MISSING asks for the address rather than scolding', () => {
+    expect(vaultCopy.VAULT_ADDRESS_MISSING).toBe('Add your vault address to connect.');
+  });
+
+  it('VAULT_KEY_MISSING asks for the key rather than scolding', () => {
+    expect(vaultCopy.VAULT_KEY_MISSING).toBe('Add your vault key to connect.');
+  });
+
+  it('VAULT_LOAD_FAILED blames the moment, not the person', () => {
+    expect(vaultCopy.VAULT_LOAD_FAILED).toBe(
+      'Adepthood could not check your vault connection just now.',
+    );
+  });
+
+  it('VAULT_CONNECT_FAILED invites a retry', () => {
+    expect(vaultCopy.VAULT_CONNECT_FAILED).toBe(
+      'Adepthood could not connect to that vault just now. Try again in a moment.',
+    );
+  });
+
+  it('VAULT_DISCONNECT_FAILED invites a retry', () => {
+    expect(vaultCopy.VAULT_DISCONNECT_FAILED).toBe(
+      'Adepthood could not disconnect just now. Try again in a moment.',
+    );
+  });
+
+  it('VAULT_ADDRESS_UNREADABLE covers an address nothing can parse', () => {
+    expect(vaultCopy.VAULT_ADDRESS_UNREADABLE).toBe(
+      'Adepthood cannot read that as an address. Copy it again from your vault.',
+    );
+  });
+
+  it('VAULT_ADDRESS_INCOMPLETE covers an address missing its name', () => {
+    expect(vaultCopy.VAULT_ADDRESS_INCOMPLETE).toBe(
+      'That address is missing the part that names your vault.',
+    );
+  });
+
+  it('VAULT_ADDRESS_EXTRA_PARTS covers an address carrying more than a vault', () => {
+    expect(vaultCopy.VAULT_ADDRESS_EXTRA_PARTS).toBe(
+      'Use the plain address of your vault, with no sign-in, no question mark, and nothing after a #.',
+    );
+  });
+
+  it('VAULT_ADDRESS_INSECURE names the one exception to https', () => {
+    expect(VAULT_ADDRESS_INSECURE).toBe(
+      'Adepthood reaches a vault over https:// unless it runs on this machine.',
     );
   });
 });
@@ -124,8 +332,25 @@ describe('vaultCopy — verbatim copy deck', () => {
 // ---------------------------------------------------------------------------
 
 describe('vaultCopy — banned technical vocabulary', () => {
-  it('names no host, transport, credential, or routing concept', () => {
-    expect(ALL_COPY).not.toMatch(BANNED_TECHNICAL);
+  it('the promise deck names no host, transport, credential, or routing concept', () => {
+    expect(PROMISE_COPY).not.toMatch(BANNED_TECHNICAL);
+  });
+
+  it('the form deck names no host, credential, or routing concept either', () => {
+    expect(FORM_COPY).not.toMatch(FORM_BANNED_TECHNICAL);
+  });
+});
+
+describe('vaultCopy — the transport is spelled twice and nowhere else', () => {
+  it('only the placeholder and the insecure-transport refusal say https', () => {
+    const bearers = ALL_KEYS.filter((key) => /https/iu.test(vaultCopy[key]));
+
+    expect([...bearers].sort()).toEqual([...TRANSPORT_BEARERS].sort());
+  });
+
+  it('the two that do say it are the ones the form cannot work without', () => {
+    expect(VAULT_ADDRESS_PLACEHOLDER).toMatch(/https/u);
+    expect(VAULT_ADDRESS_INSECURE).toMatch(/https/u);
   });
 });
 
@@ -138,6 +363,14 @@ describe('vaultCopy — no risk or obligation framing', () => {
 describe('vaultCopy — no durability claim', () => {
   it('makes no promise the write path cannot keep', () => {
     expect(ALL_COPY).not.toMatch(BANNED_DURABILITY);
+  });
+});
+
+describe('vaultCopy — straight apostrophes only', () => {
+  it('carries no curly quote anywhere in either deck', () => {
+    // Smart quotes break the TypeScript lexer when a specialist pastes them as
+    // delimiters, and they read as a different character to a copy diff.
+    expect(ALL_COPY).not.toMatch(/[‘’“”]/u);
   });
 });
 

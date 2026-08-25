@@ -240,5 +240,17 @@
     },
     "status": "uncovered",
     "issue": 2406
+  },
+  {
+    "id": "vault.connect-your-own",
+    "description": "Someone connects a private vault of their own from Settings: the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the path, the verbs, the refusal code and the write-only credential.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["GET /vault/connection", "PUT /vault/connection", "DELETE /vault/connection"],
+      "tables": ["user", "uservaultconfig"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-connection.e2e.test.ts"
   }
 ]
