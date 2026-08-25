@@ -24,6 +24,7 @@ from middleware import (
     ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
+    UnhandledExceptionMiddleware,
 )
 from observability import TRACE_ID_HEADER
 
@@ -40,6 +41,7 @@ _OUTER_TO_INNER = [
     CorrelationIdMiddleware.__name__,
     SecurityHeadersMiddleware.__name__,
     CORSMiddleware.__name__,
+    UnhandledExceptionMiddleware.__name__,
     SlowAPIMiddleware.__name__,
 ]
 

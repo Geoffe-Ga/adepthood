@@ -216,5 +216,17 @@
     },
     "status": "uncovered",
     "issue": 2324
+  },
+  {
+    "id": "errors.server-fault-is-not-offline",
+    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 — every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2406
   }
 ]
