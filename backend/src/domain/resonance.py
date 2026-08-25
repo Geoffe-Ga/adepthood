@@ -9,6 +9,7 @@ anything that doesn't anchor cleanly.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -229,6 +230,24 @@ def _draft_from_item(item: object) -> MarginaliaDraft | None:
     return None
 
 
+# A whole response wrapped in one markdown fence, with or without a language
+# tag. Anchored at both ends so a fence-like sequence *inside* the JSON cannot
+# truncate the body.
+_CODE_FENCE = re.compile(r"\A\s*```[^\n]*\n(?P<body>.*?)\n?```\s*\Z", re.DOTALL)
+
+
+def _strip_code_fence(raw: str) -> str:
+    """Return ``raw`` without an enclosing markdown code fence, if it has one.
+
+    Providers wrap structured output in a fence even when the prompt asks for
+    bare JSON, and no wording reliably suppresses it. The fence is the only
+    thing tolerated here: what it contains still has to parse as JSON, so a
+    fenced non-JSON body is refused exactly as an unfenced one is.
+    """
+    match = _CODE_FENCE.match(raw)
+    return match.group("body") if match else raw
+
+
 def _optional_json_list(raw: str, key: str) -> list[object] | None:
     """Parse ``raw`` JSON and return its ``key`` list, or None if there isn't one.
 
@@ -237,7 +256,7 @@ def _optional_json_list(raw: str, key: str) -> list[object] | None:
     them into an empty list is what made a zero-note pass undiagnosable.
     """
     try:
-        payload = json.loads(raw)
+        payload = json.loads(_strip_code_fence(raw))
     except (json.JSONDecodeError, TypeError):
         return None
     value = payload.get(key) if isinstance(payload, dict) else None
