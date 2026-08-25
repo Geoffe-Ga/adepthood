@@ -113,6 +113,48 @@ export const timezoneReadSchema = z.object({
 export type TimezoneReadT = z.infer<typeof timezoneReadSchema>;
 
 /**
+ * Response for ``DELETE /users/me``: the receipt the server issues once an
+ * account and its data are gone. ``erased`` / ``anonymised`` / ``retained``
+ * are table names from the server's own deletion policy, so the confirmation
+ * screen can report what actually happened rather than prose that drifts.
+ */
+export const accountDeletionReceiptSchema = z.object({
+  recoverable: z.boolean(),
+  rows_erased: z.number().int().nonnegative(),
+  erased: z.array(z.string()),
+  anonymised: z.array(z.string()),
+  retained: z.array(z.string()),
+  vault: z.object({
+    configured: z.boolean(),
+    purged: z.boolean(),
+    guidance: z.string(),
+  }),
+});
+
+export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchema>;
+
+/**
+ * Response for ``GET /users/me/export``: the whole archive.
+ *
+ * Validated at the envelope only. The collections underneath are the user's
+ * own rows across two dozen tables, and a schema that pinned their shapes
+ * would be a second copy of the backend's models that goes stale the first
+ * time a column is added — turning an ordinary migration into a client that
+ * refuses to hand somebody their journal back. What the client actually
+ * depends on is the envelope: that this is an Adepthood archive, of a version
+ * it understands, with named collections in it.
+ */
+export const dataExportArchiveSchema = z.object({
+  format: z.literal('adepthood-export'),
+  format_version: z.number().int().positive(),
+  exported_at: z.string().min(1),
+  records: z.record(z.string(), z.array(z.unknown())),
+  not_included: z.record(z.string(), z.string()),
+});
+
+export type DataExportArchiveT = z.infer<typeof dataExportArchiveSchema>;
+
+/**
  * Response for ``POST /auth/password-reset/request``.  Always 202 with
  * the same body shape regardless of whether the email is registered --
  * the message is the SPEC R4 anti-enumeration constant.
@@ -184,8 +226,8 @@ export const habitSchema = z.object({
   name: z.string(),
   icon: z.string(),
   start_date: isoDate,
-  energy_cost: z.number(),
-  energy_return: z.number(),
+  energy_cost: z.number().int(),
+  energy_return: z.number().int(),
   notification_times: z.array(z.string()).nullish(),
   notification_frequency: notificationFrequencySchema.nullish(),
   notification_days: z.array(z.string()).nullish(),
@@ -214,6 +256,12 @@ export const promptDetailSchema = z.object({
   has_responded: z.boolean(),
   response: z.string().nullable(),
   timestamp: z.string().nullable(),
+  // The prompt's own title and its position in the week's sequence. Both are
+  // ``str | None`` / ``int | None`` on the wire; without them declared here Zod
+  // deleted them from every validated prompt response, so nothing downstream
+  // could tell that the server had been sending them at all.
+  default_title: z.string().nullish(),
+  prompt_ordinal: z.number().int().nullish(),
 });
 
 /**
@@ -237,6 +285,10 @@ export const journalTagSchema = z.enum([
   // includes that row, so the enum must accept it — otherwise the whole page
   // fails Zod validation and the user sees "Load failed".
   'weekly_prompt',
+  // A hierarchical reflection (week/stage/component/tier/program) is a journal
+  // row like any other and appears in the same shelf list, so the enum must
+  // accept it for the same reason it accepts ``weekly_prompt``.
+  'hierarchical_reflection',
 ]);
 
 /** Lowest Aspect tag (stage 1); the curriculum's first stage. */
@@ -244,11 +296,34 @@ const MIN_ASPECT = 1;
 /** Highest Aspect tag (stage 10); the curriculum has ten stages. */
 const MAX_ASPECT = 10;
 
+/**
+ * The two senders the client renders differently. The backend types ``sender``
+ * as a bare ``str`` (``schemas/journal.py:128``), so a third value is one server
+ * change away -- and a ``z.enum`` at a *list* boundary fails the whole response
+ * over a single unrecognised row. Same reasoning as ``TIER_VALUES`` above:
+ * accept the string at the boundary, narrow at the point of use.
+ */
+export const SENDER_VALUES = ['user', 'bot'] as const;
+export type Sender = (typeof SENDER_VALUES)[number];
+
+/**
+ * Narrow a server-supplied sender, falling back to ``bot`` for anything else.
+ *
+ * ``bot`` rather than ``user`` on purpose: an unrecognised speaker is not the
+ * person who was writing, and rendering someone else's words as theirs is the
+ * worse of the two wrong answers.
+ */
+export function narrowSender(value: unknown): Sender {
+  return typeof value === 'string' && (SENDER_VALUES as readonly string[]).includes(value)
+    ? (value as Sender)
+    : 'bot';
+}
+
 /** One journal message (mirrors the backend ``JournalMessage`` response). */
 export const journalMessageSchema = z.object({
   id: z.number().int(),
   message: z.string(),
-  sender: z.enum(['user', 'bot']),
+  sender: z.string(),
   // Same ISO-8601 contract as every other timestamp column (goal completions
   // etc.) — bare z.string() would silently accept "not-a-date".
   timestamp: isoDateTime,
@@ -267,6 +342,12 @@ export const journalMessageSchema = z.object({
   // untagged / pre-column responses still validate.
   primary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
   secondary_aspect: z.number().int().min(MIN_ASPECT).max(MAX_ASPECT).nullable().optional(),
+  // Hierarchical-journaling fields (``schemas/journal.py:137-138``). Zod strips
+  // what it does not declare, so omitting these did not fail validation -- it
+  // silently deleted them from every validated list response. Optional *and*
+  // nullable to match the backend's ``str | None = None`` exactly.
+  reflection_level: z.string().nullable().optional(),
+  reflection_scope_key: z.string().nullable().optional(),
 });
 
 /** Journal list envelope: ``{ items, total, has_more }`` (bespoke, not ``Page``). */
@@ -279,6 +360,71 @@ export const journalListResponseSchema = z.object({
 /** Handwriting-transcription result: the OCR'd text of one journal page. */
 export const transcribePageSchema = z.object({ text: z.string() });
 export type TranscribePageT = z.infer<typeof transcribePageSchema>;
+
+/**
+ * What the vault did with one uploaded document — the wire strings of the
+ * backend's ``VaultUploadStatus``. All four are distinct outcomes with distinct
+ * remedies, so the enum is pinned rather than left as a bare string: a fifth
+ * value the client has no honest sentence for must surface as
+ * ``ApiValidationError`` rather than render as a blank row.
+ */
+export const vaultUploadStatusSchema = z.enum([
+  'accepted',
+  'vault_unavailable',
+  'capability_unsupported',
+  'degraded',
+]);
+export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
+
+/**
+ * Where an imported document actually went — the backend's
+ * ``ImportDestination``. Resolved per account by the server: an account that
+ * has connected a vault reaches it, an account that has not reaches its own
+ * ontologized corpus. The client never computes this; it reads it.
+ */
+export const importDestinationSchema = z.enum(['vault', 'corpus']);
+export type ImportDestinationT = z.infer<typeof importDestinationSchema>;
+
+/**
+ * What the local corpus did with one imported document — the wire strings of
+ * the backend's ``CorpusImportStatus``. Eight outcomes, one of which stores
+ * anything, each with a different next step for the person holding the
+ * document. Pinned rather than left as a bare string for the same reason
+ * {@link vaultUploadStatusSchema} is: a ninth value this release has no honest
+ * sentence for must surface as ``ApiValidationError`` rather than render blank.
+ */
+export const corpusImportStatusSchema = z.enum([
+  'stored',
+  'consent_required',
+  'tier_refused',
+  'format_unreadable',
+  'not_text',
+  'empty_document',
+  'document_too_long',
+  'unclassified',
+]);
+export type CorpusImportStatusT = z.infer<typeof corpusImportStatusSchema>;
+
+/**
+ * One document's import outcome, in whichever destination's vocabulary applies.
+ *
+ * ``destination`` is the discriminator, and exactly one side of the answer is
+ * populated: a ``vault`` answer carries ``vault_status`` (and possibly
+ * ``vault_ref`` and ``tags``), a ``corpus`` answer carries ``corpus_status``
+ * (and possibly ``fragment_id``). ``stored`` is the one boolean both share, and
+ * ``message`` is the backend's own self-serve sentence.
+ */
+export const documentImportSchema = z.object({
+  destination: importDestinationSchema,
+  stored: z.boolean(),
+  vault_status: vaultUploadStatusSchema.nullable().optional(),
+  vault_ref: z.string().nullable().optional(),
+  tags: z.array(z.string()),
+  corpus_status: corpusImportStatusSchema.nullable().optional(),
+  fragment_id: z.number().int().nullable().optional(),
+  message: z.string(),
+});
+export type DocumentImportT = z.infer<typeof documentImportSchema>;
 
 // ---------------------------------------------------------------------------
 // Per-item schemas for paginated endpoints (replacing loosePageSchema casts).
@@ -328,11 +474,11 @@ export const stageSchema = z.object({
 
 /** A user's stage-progress record (mirrors the backend ``StageProgressRecord``). */
 export const stageProgressRecordSchema = z.object({
-  id: z.number(),
-  user_id: z.number(),
-  current_stage: z.number(),
-  completed_stages: z.array(z.number()),
-  cycle_number: z.number(),
+  id: z.number().int(),
+  user_id: z.number().int(),
+  current_stage: z.number().int(),
+  completed_stages: z.array(z.number().int()),
+  cycle_number: z.number().int(),
 });
 
 export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
@@ -340,10 +486,10 @@ export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
 /** The server's date-derived program calendar (mirrors ``ProgramCalendarResponse``). */
 export const programCalendarSchema = z.object({
   program_started_at: z.string().nullable(),
-  calendar_stage: z.number(),
-  calendar_week: z.number(),
-  current_stage: z.number(),
-  cycle_number: z.number(),
+  calendar_stage: z.number().int(),
+  calendar_week: z.number().int(),
+  current_stage: z.number().int(),
+  cycle_number: z.number().int(),
 });
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;
@@ -356,16 +502,9 @@ export const practiceItemSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   default_duration_minutes: z.number(),
-  // The backend ``PracticeResponse`` intentionally OMITS this field
-  // (BUG-PRACTICE-001 / BUG-SCHEMA-010): echoing the submitter's user id on
-  // a catalog GET turns the endpoint into a user-id enumeration oracle. The
-  // field is therefore ABSENT on the wire, not ``null``. ``.nullish()``
-  // (``number | null | undefined``) tolerates the absence; a plain
-  // ``.nullable()`` rejected the missing key and failed every practice fetch
-  // with ``ApiValidationError`` — the "Something changed on the server"
-  // banner on the Practice and Catalog screens. Keep this absent-tolerant
-  // unless the backend re-introduces the field.
-  submitted_by_user_id: z.number().int().nullish(),
+  // No ``submitted_by_user_id``: ``PracticeResponse`` omits it so a catalog
+  // GET can't become a user-id enumeration oracle (BUG-PRACTICE-001 /
+  // BUG-SCHEMA-010).
   approved: z.boolean(),
   mode: z.string().optional(),
   mode_config: z.record(z.string(), z.unknown()).optional(),
@@ -377,7 +516,7 @@ export const practiceRecipeStepSchema = z.object({
   tag_slug: z.string(),
   tag_label: z.string(),
   prompt_label: z.string(),
-  target_count: z.number(),
+  target_count: z.number().int(),
 });
 
 /** A practice recipe (mirrors ``PracticeRecipe``). */
@@ -388,7 +527,7 @@ export const practiceRecipeSchema = z.object({
   description: z.string(),
   owner_user_id: z.number().int().nullable(),
   mode: z.enum(['sense_grounding', 'tallied_grounding']),
-  rounds: z.number(),
+  rounds: z.number().int(),
   created_at: z.string(),
   steps: z.array(practiceRecipeStepSchema),
 });
@@ -396,9 +535,7 @@ export const practiceRecipeSchema = z.object({
 /** A user's selected practice (mirrors ``UserPractice``). */
 export const userPracticeSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   practice_id: z.number().int(),
   stage_number: z.number().int(),
   start_date: isoDate,
@@ -412,9 +549,7 @@ export const userPracticeSchema = z.object({
 /** A logged practice session (mirrors ``PracticeSessionResponse``). */
 export const practiceSessionResponseSchema = z.object({
   id: z.number().int(),
-  // Backend omits user_id from user-scoped responses (OwnedResourcePublic /
-  // BUG-T7); nullish so a well-formed payload without it still validates.
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: user-scoped responses omit it (OwnedResourcePublic / BUG-T7).
   user_practice_id: z.number().int(),
   duration_minutes: z.number(),
   timestamp: isoDateTime,
@@ -440,7 +575,7 @@ export const apiGoalGroupSchema = z.object({
   name: z.string(),
   icon: z.string().nullish(),
   description: z.string().nullish(),
-  user_id: z.number().int().nullish(),
+  // No ``user_id``: ``GoalGroupResponse`` omits it (OwnedResourcePublic / BUG-T7).
   shared_template: z.boolean(),
   source: z.string().nullish(),
   goals: z.array(goalSchema),
@@ -476,12 +611,12 @@ export const stageIntroSchema = z.object({
  * the previous hand-rolled ``typeof`` check that threw a context-free error.
  */
 export const frequencyResponseSchema = z.object({
-  stage_number: z.number(),
+  stage_number: z.number().int(),
   color: z.string(),
   aspect: z.string(),
   practice_name: z.string(),
-  practice_id: z.number(),
-  user_practice_id: z.number().nullable(),
+  practice_id: z.number().int(),
+  user_practice_id: z.number().int().nullable(),
   banner_text: z.string(),
 });
 
@@ -547,9 +682,9 @@ export const invitationKindSchema = z.enum(['readiness', 'consistency', 'mastery
 
 /** One declinable invitation (mirrors the backend ``InvitationResponse``). */
 export const invitationSchema = z.object({
-  id: z.number(),
+  id: z.number().int(),
   target_type: invitationTargetTypeSchema,
-  target_id: z.number().nullable(),
+  target_id: z.number().int().nullable(),
   kind: invitationKindSchema,
   created_at: z.string(),
 });
@@ -604,7 +739,7 @@ export const returnArcSchema = z.object({
 
 /** A habit set to rest during a Return arc, with whether it has been taken up again. */
 export const releasedHabitSchema = z.object({
-  habit_id: z.number(),
+  habit_id: z.number().int(),
   name: z.string(),
   icon: z.string(),
   recommitted: z.boolean(),
@@ -665,14 +800,23 @@ export const promotedQuoteSchema = z.object({
   anchor_end: z.number().int(),
   anchor_text: z.string(),
   pending: z.boolean(),
+  // Whether the anchor no longer lines up with the entry's current text. The
+  // server has always sent it; Zod dropped it on the floor, so the owner view
+  // had no way to know a quote had come adrift from what it quotes.
+  stale: z.boolean(),
 });
 
 /**
  * A promoted quote as it appears in the cross-entry sources feed (mirrors the
  * backend ``PromotedQuoteSummary``): the same shape minus ``source_entry_id``,
- * which the feed groups by rather than repeating on every row.
+ * which the feed groups by rather than repeating on every row, and minus
+ * ``stale``, which the feed does not compute for quotes drawn from other
+ * entries.
  */
-export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({ source_entry_id: true });
+export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
+  source_entry_id: true,
+  stale: true,
+});
 
 export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
 export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
@@ -739,6 +883,12 @@ export const resonanceResponseSchema = z.object({
   // responses (which omit both) still validate and behave as before.
   private: z.boolean().optional(),
   private_message: z.string().nullish(),
+  // The server's own sentence for a pass that produced no margin notes. It is
+  // prose rather than a code because only the server knows which of several
+  // routes to zero notes was taken; a client picking copy from a flag would be
+  // guessing at a cause it cannot see. Additive/nullish: a pass that kept notes
+  // omits it, and older responses still validate and behave as before.
+  no_notes_message: z.string().nullish(),
 });
 
 export type CareKindT = z.infer<typeof careKindSchema>;
@@ -781,6 +931,38 @@ export const uiFlagsSchema = z.object({
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;
+
+// ---------------------------------------------------------------------------
+// Corpus consent (what an account has agreed to have sorted into its corpus)
+// ---------------------------------------------------------------------------
+
+/**
+ * One account's current decision about one source (mirrors the backend
+ * ``CorpusConsentResponse``).
+ *
+ * ``source`` is a plain string rather than an enum of the three the API serves
+ * today: the backend reports every source it knows, in its own order, so that a
+ * kind of material added later reaches the consent surface without a client
+ * release. A client that validated against a frozen list would reject the whole
+ * response the day that happened — turning an added row into a broken screen.
+ *
+ * ``decided_at`` is nullable because "never asked" is a state, not a missing
+ * field. Requiring a datetime here would make a brand-new account's honest
+ * answer look like a malformed response.
+ */
+export const corpusConsentSchema = z.object({
+  source: z.string().min(1),
+  granted: z.boolean(),
+  decided_at: isoDateTime.nullable(),
+});
+
+/** Every source, decided or not, in the order the backend declares them. */
+export const corpusConsentListSchema = z.object({
+  sources: z.array(corpusConsentSchema),
+});
+
+export type CorpusConsentT = z.infer<typeof corpusConsentSchema>;
+export type CorpusConsentListT = z.infer<typeof corpusConsentListSchema>;
 
 // ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)

@@ -94,6 +94,14 @@ class ResonanceResponse(BaseModel):
     of the habit foundation it carries a warm, declinable reflection. It is
     computed locally (no LLM) and has zero side effects on progression, and — like
     ``care`` / ``private`` — is defaulted so every existing response is unchanged.
+
+    ``no_notes_message`` is the sentence the writer reads when the pass produced
+    no margin notes at all — set whenever ``marginalia`` is empty on a pass that
+    actually ran, and ``None`` otherwise (including for the ``private`` path,
+    which carries its own copy). It is the server's own wording rather than a
+    flag the client interprets, because only the server knows *which* of the
+    several ways to arrive at zero notes actually happened, and a client
+    inventing a second explanation would be guessing at a cause it cannot see.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -105,6 +113,7 @@ class ResonanceResponse(BaseModel):
     private: bool = False
     private_message: str | None = None
     contraction: ContractionReflectionResponse | None = None
+    no_notes_message: str | None = None
 
 
 class MarginaliaListResponse(BaseModel):

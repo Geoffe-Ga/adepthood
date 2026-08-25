@@ -123,7 +123,11 @@ def test_unhandled_exception_log_carries_traceback(
 
 
 def test_unhandled_exception_calls_sentry_capture(app_with_failing_route: FastAPI) -> None:
-    """The handler forwards to ``sentry.capture_exception`` (today a stub)."""
+    """The handler forwards to ``sentry.capture_exception`` with allow-listed context.
+
+    What that call then does with the exception -- and what it refuses to send --
+    is covered end to end in ``test_error_monitoring.py``.
+    """
     captured: list[tuple[BaseException, dict[str, object]]] = []
 
     def fake_capture(exc: BaseException, **ctx: object) -> None:

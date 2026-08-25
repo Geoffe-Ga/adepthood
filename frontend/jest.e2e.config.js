@@ -29,6 +29,12 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  // SDK 57's babel-preset-expo rewrites `process.env` reads into an import of
+  // `expo/virtual/env`, which ships as ESM. Jest's default here skips all of
+  // node_modules, so that file would reach the runtime untransformed and throw
+  // on its `export`. Un-ignore expo's virtual modules and nothing else — the
+  // point of this lane is that the rest of node_modules stays real.
+  transformIgnorePatterns: ['node_modules/(?!expo/virtual/)'],
   globalSetup: '<rootDir>/e2e/globalSetup.ts',
   globalTeardown: '<rootDir>/e2e/globalTeardown.ts',
   setupFiles: ['<rootDir>/e2e/setupEnv.ts'],

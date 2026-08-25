@@ -36,6 +36,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelBalance,
 )
 from domain.resonance import ResonanceLLM, generate_marginalia
@@ -125,6 +127,10 @@ class RecordingVaultClient:
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Unused on the reflect path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
         raise NotImplementedError(request)
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
@@ -249,7 +255,7 @@ async def test_ok_reflection_reaches_marginalia_as_the_strict_json_contract() ->
 
     anchored = await generate_marginalia(_LOOP_BODY, llm=llm)
 
-    assert [(note.kind, note.anchor_text, note.note) for note in anchored] == [
+    assert [(note.kind, note.anchor_text, note.note) for note in anchored.notes] == [
         ("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE),
         ("theme", _LOOP_STALL_QUOTE, _STALL_NOTE),
     ]
@@ -475,8 +481,8 @@ async def test_essay_never_reaches_the_marginalia_contract(
     assert json.loads(completion) == {
         "notes": [{"kind": "connection", "quote": _LOOP_RIVER_QUOTE, "note": _RIVER_NOTE}]
     }
-    assert anchored != []
-    for note in anchored:
+    assert anchored.notes != []
+    for note in anchored.notes:
         assert _SENTINEL_ESSAY not in note.note
         assert _SENTINEL_ESSAY not in note.anchor_text
     assert _SENTINEL_ESSAY not in caplog.text

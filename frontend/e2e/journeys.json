@@ -1,0 +1,244 @@
+[
+  {
+    "id": "auth.signup-login-authenticated-read",
+    "description": "A user signs up, logs back in, and reads their own data with the session they were handed.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SignupScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "GET /journal/"],
+      "tables": ["user", "entitlement"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/auth.e2e.test.ts"
+  },
+  {
+    "id": "welcome.first-run-walkthrough-to-journal",
+    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "crosses": {
+      "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2399
+  },
+  {
+    "id": "habits.create-check-in-streak",
+    "description": "A user creates a habit, checks in against one of its goals, and sees the streak move.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": [
+        "POST /habits/",
+        "GET /habits/",
+        "POST /goal_completions/",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits.e2e.test.ts"
+  },
+  {
+    "id": "journal.write-list-read-back",
+    "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "GET /journal/", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal.e2e.test.ts"
+  },
+  {
+    "id": "journal.delete-entry",
+    "description": "A writer deletes one page from the shelf, the server stops serving it, and another account cannot delete it for them.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
+  },
+  {
+    "id": "journal.ask-for-resonance",
+    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Uncovered because the pass calls a real language model and the lane has no provider to call: covering it needs a deterministic, configuration-selected provider the lane can point the server at, not a spec alone. The same constraint keeps seed.upload-document uncovered.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}/marginalia"],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2408
+  },
+  {
+    "id": "practice.log-session",
+    "description": "A practitioner logs a practice session and finds it in the week's record.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": [
+        "POST /practice-sessions/",
+        "GET /practice-sessions/week-count",
+        "GET /practice-sessions/insights"
+      ],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice.e2e.test.ts"
+  },
+  {
+    "id": "practice.adopt-custom-practice",
+    "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
+      "client": ["practices", "userPractices"],
+      "routes": [
+        "POST /practices/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/"
+      ],
+      "tables": ["practice", "userpractice"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-catalog.e2e.test.ts"
+  },
+  {
+    "id": "course.read-and-mark-progress",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages"],
+      "routes": [
+        "GET /stages",
+        "GET /stages/program-calendar",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "GET /course/stages/{stage_number}/progress"
+      ],
+      "tables": ["stagecontent", "contentcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course.e2e.test.ts"
+  },
+  {
+    "id": "map.advance-stage",
+    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. The wrapper spelled like it, course.stageProgress, addresses the course router's own /course/stages/{n}/progress instead. Still uncovered because no spec moves the anchor and reads yet.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages", "wheel"],
+      "routes": ["GET /stages", "GET /stages/program-calendar", "GET /stages/wheel"],
+      "tables": ["stageprogress", "coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 2299
+  },
+  {
+    "id": "depth.choose-rings",
+    "description": "Someone turns a depth ring on and the app they come back to is the one they chose.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ChooseDepthsSection.tsx",
+      "client": ["depthPreferences"],
+      "routes": ["GET /depth-preferences", "PATCH /depth-preferences"],
+      "tables": ["userdepthpreferences"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/depth.e2e.test.ts"
+  },
+  {
+    "id": "seed.upload-document",
+    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, and the count of reasons went from two to one and back to two. Per-user vault configuration (#2233) retired the environment binding, so a spec can now connect a vault for the account it just created; what stands is that the lane has no vault to connect to, and that the app has no way to connect one. PUT /vault/connection is served and no wrapper in src/api/index.ts and no screen addresses it, so nobody using the shipped app can reach the state this journey opens in, and a spec would have to hand-roll the connection over HTTP the product cannot make. Covering it therefore needs a stand-in vault the lane can point an account at AND a client half for the connecting, not lane infrastructure alone. Meanwhile every e2e import takes the local-fallback path, and a spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["corpus"],
+      "routes": ["POST /corpus/import"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 2317
+  },
+  {
+    "id": "corpus.import-without-a-vault",
+    "description": "Someone who has connected no vault brings in a document they wrote elsewhere: they pick it, choose its tier, and it is routed to their own ontologized corpus rather than answered in the vocabulary of a vault they do not have. The first answer is the consent question, because the corpus is off until they turn it on; the screen offers the way to that switch instead of failing silently. A format nothing can read is refused before consent is even consulted, and an Intimate document is declined outright -- placing writing among the frequencies means reading it with a language model, and that tier never goes to one. The stored outcome itself needs a classification call, which the lane has no provider for, so a consented import settles there as unclassified.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus", "corpusConsent"],
+      "routes": ["POST /corpus/import", "PUT /corpus/consent/{source}"],
+      "tables": ["user", "corpusconsentevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-import.e2e.test.ts"
+  },
+  {
+    "id": "account.export-my-data",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
+      "client": ["users", "journal", "auth"],
+      "routes": ["POST /journal/", "GET /users/me/export", "GET /users/me/export/journal.md"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
+  },
+  {
+    "id": "corpus.decide-what-may-be-sorted",
+    "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. The backend pins it at backend/tests/test_corpus_consent_api.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/CorpusConsentScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpusConsent"],
+      "routes": ["GET /corpus/consent", "PUT /corpus/consent/{source}"],
+      "tables": ["corpusconsentevent", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-consent.e2e.test.ts"
+  },
+  {
+    "id": "account.delete",
+    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
+      "client": ["users"],
+      "routes": ["DELETE /users/me"],
+      "tables": ["user", "journalentry", "accountdeletionaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/account-deletion.e2e.test.ts"
+  },
+  {
+    "id": "errors.boundary-recovers-and-reports",
+    "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written. Still uncovered because the e2e lane cannot mount a screen at all: it runs on the node environment with node_modules untransformed, so importing the boundary dies on @react-navigation/native's ESM and react-native's Flow syntax, and the lane's own guard pins the moduleNameMapper to the @/ alias so the React Native preset cannot be added to a spec. Observing the outgoing crash envelope is banned in this lane by the same guard. Covering it needs a second, rendering lane, not another spec here.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2324
+  },
+  {
+    "id": "errors.server-fault-is-not-offline",
+    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 — every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2406
+  }
+]

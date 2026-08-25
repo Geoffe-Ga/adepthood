@@ -201,7 +201,12 @@ class JournalEntry(SQLModel, table=True):
     message: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     # Long-form page metadata: an optional title and a draft/finished lifecycle.
     # ``message`` remains the body. ``updated_at`` tracks the last edit.
-    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    # Encrypted at rest alongside the body: a title is the user's own words about
+    # the entry and is often the most disclosing line on the page, so leaving it
+    # in the clear beside the ciphertext would give a stolen dump an index of
+    # everything the body protects. Nothing filters or orders by it, so the cap
+    # (enforced by the request schemas + the sanitizer) is all the column needs.
+    title: str | None = Field(default=None, sa_column=Column(EncryptedString(), nullable=True))
     status: str = Field(default=EntryStatus.DRAFT, max_length=20)
     # Privacy tier; defaults to ``personal``. The DB CHECK in ``__table_args__``
     # pins the persisted value to the JournalClassification set.
@@ -229,6 +234,22 @@ class JournalEntry(SQLModel, table=True):
     # both nullable so the write path is purely additive over existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # When the consent backfill last *offered* this entry to the corpus writer,
+    # whatever came of it. NULL means never offered. Not a record of success --
+    # the fragment's own existence is that -- but of attention, and the sweep
+    # orders on it: never-offered first, least-recently-offered next. Without
+    # it, writing the classifier can place nowhere stays pending forever at the
+    # head of a newest-first queue and every later grant re-selects the same
+    # stuck rows, so an account whose recent entries are short or ambiguous
+    # never has its older history reached at all. Ordering rather than
+    # excluding, so a provider outage that touched everything is not a
+    # permanent hole. See :mod:`services.corpus_backfill`; written by a
+    # statement that restamps ``updated_at`` with its own value, because being
+    # swept is not being edited.
+    corpus_attempted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
     deleted_at: datetime | None = Field(
         default=None,

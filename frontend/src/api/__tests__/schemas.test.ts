@@ -236,6 +236,28 @@ describe('promptListResponseSchema total nullability', () => {
   it('rejects an envelope missing has_more', () => {
     expect(() => promptListResponseSchema.parse({ items: [], total: null })).toThrow();
   });
+
+  // Regression: the server has been sending both fields, and the item schema
+  // declared neither — so Zod deleted them from every validated prompt
+  // response and no caller could tell the data had arrived at all.
+  it('carries default_title and prompt_ordinal through instead of stripping them', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [{ ...item, default_title: 'On steadiness', prompt_ordinal: 2 }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBe('On steadiness');
+    expect(parsed.items[0]?.prompt_ordinal).toBe(2);
+  });
+
+  it('still accepts an item that omits both, and keeps them absent', () => {
+    const parsed = promptListResponseSchema.parse({
+      items: [item],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.default_title).toBeUndefined();
+  });
 });
 
 describe('journalListResponseSchema validation', () => {
@@ -284,14 +306,31 @@ describe('journalListResponseSchema validation', () => {
     expect(parsed.items[0]?.tag).toBe('weekly_prompt');
   });
 
-  it('rejects an unknown sender', () => {
-    expect(() =>
-      journalListResponseSchema.parse({
-        items: [{ ...message, sender: 'system' }],
-        total: 1,
-        has_more: false,
-      }),
-    ).toThrow();
+  it('accepts a hierarchical_reflection-tagged entry', () => {
+    // Regression: a hierarchical reflection (week/stage/component/tier/program)
+    // is stored as a journal row tagged ``hierarchical_reflection`` and appears
+    // in the same shelf list. The tag enum omitted it, so one such entry failed
+    // the whole page — the same defect the weekly_prompt case above records.
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, tag: 'hierarchical_reflection' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.tag).toBe('hierarchical_reflection');
+  });
+
+  it('accepts an unknown sender rather than failing the whole list', () => {
+    // This asserted the opposite until 2026-08-09. The backend types `sender`
+    // as a bare `str`, so a third value is one server change away -- and under
+    // the old `z.enum` a single unrecognised row took down every other entry in
+    // the response with it. Narrowing moved to the point of use (`narrowSender`),
+    // which is the same trade `narrowTier` already makes for `tier`.
+    const parsed = journalListResponseSchema.parse({
+      items: [{ ...message, sender: 'system' }],
+      total: 1,
+      has_more: false,
+    });
+    expect(parsed.items[0]?.sender).toBe('system');
   });
 
   it('rejects a non-ISO timestamp (same contract as other timestamp columns)', () => {
@@ -356,12 +395,11 @@ describe('per-item paginated schemas', () => {
     description: 'desc',
     instructions: 'inst',
     default_duration_minutes: 10,
-    submitted_by_user_id: null,
     approved: true,
   };
 
   it('practiceItemSchema accepts valid (mode_config optional) and rejects drift', () => {
-    expect(practiceItemSchema.parse(practiceItem).submitted_by_user_id).toBeNull();
+    expect(practiceItemSchema.parse(practiceItem).name).toBe('Breath');
     expect(() =>
       practiceItemSchema.parse({ ...practiceItem, mode: 'meditation_timer', mode_config: {} }),
     ).not.toThrow();
@@ -371,14 +409,9 @@ describe('per-item paginated schemas', () => {
     expect(() => practiceItemSchema.parse({ ...practiceItem, name: undefined })).toThrow();
   });
 
-  it('practiceItemSchema accepts the live backend shape that omits submitted_by_user_id', () => {
-    // PracticeResponse deliberately excludes ``submitted_by_user_id``
-    // (BUG-PRACTICE-001 / BUG-SCHEMA-010) to avoid leaking who proposed a
-    // draft. The field is therefore ABSENT on the wire, not null. A
-    // ``.nullable()`` (non-optional) schema rejected ``undefined`` and made
-    // every catalog/practice fetch fail validation -> the "Something changed
-    // on the server" banner. The mode + mode_config keys are always present
-    // on the real response.
+  it('practiceItemSchema accepts the live backend shape (PracticeResponse)', () => {
+    // PracticeResponse excludes submitted_by_user_id (BUG-PRACTICE-001 /
+    // BUG-SCHEMA-010); mode + mode_config are always present.
     const wire = {
       id: 7,
       stage_number: 2,
@@ -391,8 +424,12 @@ describe('per-item paginated schemas', () => {
       mode_config: { mode: 'meditation_timer', duration_minutes: 10 },
     };
     const parsed = practiceItemSchema.parse(wire);
-    expect(parsed.submitted_by_user_id).toBeUndefined();
     expect(parsed.name).toBe('Breath');
+  });
+
+  it('practiceItemSchema does not carry submitted_by_user_id through', () => {
+    const parsed = practiceItemSchema.parse({ ...practiceItem, submitted_by_user_id: 42 });
+    expect('submitted_by_user_id' in parsed).toBe(false);
   });
 
   // No user_id: the backend omits it from user-scoped responses (BUG-T7), so the
@@ -413,6 +450,11 @@ describe('per-item paginated schemas', () => {
     expect(() => userPracticeSchema.parse({ ...userPractice, start_date: undefined })).toThrow();
   });
 
+  it('userPracticeSchema does not carry user_id through', () => {
+    const parsed = userPracticeSchema.parse({ ...userPractice, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
+  });
+
   // No user_id — same OwnedResourcePublic (BUG-T7) contract as userPractice.
   const session = {
     id: 9,
@@ -428,6 +470,11 @@ describe('per-item paginated schemas', () => {
     expect(() =>
       practiceSessionResponseSchema.parse({ ...session, user_practice_id: undefined }),
     ).toThrow();
+  });
+
+  it('practiceSessionResponseSchema does not carry user_id through', () => {
+    const parsed = practiceSessionResponseSchema.parse({ ...session, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
   });
 });
 
@@ -472,7 +519,6 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     name: 'Morning',
     icon: null,
     description: null,
-    user_id: null,
     shared_template: true,
     source: null,
     goals: [],
@@ -491,6 +537,13 @@ describe('apiGoalGroupSchema + contentItemSchema (audit-contracts-08)', () => {
     expect(apiGoalGroupSchema.parse(group).shared_template).toBe(true);
     expect(() => apiGoalGroupSchema.parse({ ...group, shared_template: undefined })).toThrow();
     expect(() => apiGoalGroupSchema.parse({ ...group, name: 123 })).toThrow();
+  });
+
+  // No user_id: GoalGroupResponse omits it (OwnedResourcePublic / BUG-T7), so a
+  // server that sent one anyway must not reach callers as a typed field.
+  it('apiGoalGroupSchema does not carry user_id through', () => {
+    const parsed = apiGoalGroupSchema.parse({ ...group, user_id: 42 });
+    expect('user_id' in parsed).toBe(false);
   });
 
   it('apiGoalGroupSchema validates nested goals via goalSchema', () => {

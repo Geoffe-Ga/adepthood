@@ -6,8 +6,14 @@
  *
  * "You choose your depth": this is a warm, one-tap-declinable suggestion —
  * never a gate and never gamified. There is deliberately no streak, no count,
- * and no guilt copy. Either affordance retires the tip for good; beginning a
- * page simply also hands off to the shelf's new-entry flow.
+ * and no guilt copy.
+ *
+ * Only "Not now" retires the tip. Beginning a page hands off to the shelf's
+ * new-entry flow and leaves the tip exactly where it was: taking up an
+ * invitation is not declining it, and someone who writes a morning page today
+ * is the last person who should lose the reminder tomorrow. (The tip did once
+ * treat the CTA as a dismissal — that was the original spec, reversed
+ * deliberately.)
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -67,8 +73,6 @@ function useMorningPagesTip(onBegin: () => void) {
   }, []);
 
   const onBeginPress = useCallback(() => {
-    void saveMorningPagesTipDismissed(true);
-    setDismissed(true);
     onBegin();
   }, [onBegin]);
 
@@ -130,7 +134,6 @@ const styles = StyleSheet.create({
   label: {
     ...editorialType.caption,
     color: ink.muted,
-    textTransform: 'uppercase',
   },
   title: {
     ...editorialType.heading,

@@ -33,6 +33,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Annotated
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func
@@ -97,10 +98,21 @@ async def _read_ping_payload(request: Request) -> dict[str, str]:
     ``sale_id`` is the idempotency key — without it a ping cannot be stored
     or deduplicated, so the payload is rejected as malformed.
     """
-    form = await request.form()
+    # Parsed with the stdlib rather than Starlette's form reader on purpose.
+    # Gumroad pings are ``application/x-www-form-urlencoded``, which
+    # ``parse_qsl`` handles natively -- while Starlette's reader requires a
+    # third-party parser this app deliberately does not depend on, because that
+    # parser spools request bodies to disk and ``test_transcription_privacy``
+    # forbids the whole surface. Reaching for it here would have pulled a
+    # disk-spooling body parser back in to serve a payload that never needed one.
+    try:
+        raw = (await request.body()).decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("gumroad_webhook_rejected reason_code=malformed_payload")
+        raise bad_request("malformed_payload") from None
     # Last-value-wins for duplicated keys: Gumroad pings send each field once,
     # so collapsing to a plain str -> str dict is intentional, not lossy.
-    payload = {key: value for key, value in form.multi_items() if isinstance(value, str)}
+    payload = dict(parse_qsl(raw, keep_blank_values=True))
     if not payload.get("sale_id"):
         logger.warning("gumroad_webhook_rejected reason_code=malformed_payload")
         raise bad_request("malformed_payload")

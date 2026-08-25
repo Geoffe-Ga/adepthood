@@ -29,7 +29,8 @@ predict which files a change will touch before we make it. So the loop never
   commits behind `main` reports `CLEAN`. The `BEHIND` path below was designed but
   had never once fired here, so lanes were routinely merging out of date on a
   green that proved nothing about today's `main`. `CLEAN` is retained only as the
-  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`. If a sibling
+  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`, each of
+  which now prints its own token rather than collapsing into `behind`. If a sibling
   merged after this lane went green, the lane is behind; it **syncs the new
   `main` into its branch (by merge, not rebase — a plain push updates the PR
   and re-runs CI, never a force-push)** and merges on a later wake once green
@@ -134,12 +135,20 @@ building it: `fleet.sh adopt <issue> <PR>` puts the worktree on Dependabot's own
 head branch, so fixes push there and a second PR is never opened.
 
 **The picker needs no `RALPH_EXCLUDE_LABELS` override.** A bridged issue is
-already never picked: `pick-next.sh` scans open PR bodies for
-`(closes|fixes|resolves) #N`, and the bridge put `Closes #<issue>` there, so the
-issue already reads as in-flight. Setting the override is a hazard in its own
-right — it **replaces** the default exclusion list rather than adding to it, so
-it silently re-admits `epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the
-rest.
+never picked, on either of two routes. `pick-next.sh` scans open PR bodies for
+`(closes|fixes|resolves) #N`, which the bridge put there — and, because
+Dependabot regenerates its PR body from its own template on every rebase and
+group recomputation and *erases* that line, it also reads the durable
+`<!-- dependabot-pr:N -->` marker out of the **issue** body and holds the issue
+whenever that marker names an **open** PR. The marker route is what makes the
+first sentence true rather than merely usually true; the body-link route stays
+as it was. A marker naming a merged or closed PR holds nothing, so a stale
+marker cannot wedge the picker.
+
+If you ever do need to exclude one more label, use **`RALPH_EXTRA_EXCLUDE_LABELS`**,
+which appends. `RALPH_EXCLUDE_LABELS` **replaces** the default exclusion list
+rather than adding to it, so setting it to a single label silently re-admits
+`epic`, `blocked`, `wontfix`, `do-not-auto-merge`, and the rest.
 
 ### `pr-ready.sh` tokens
 
@@ -151,10 +160,16 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `ready` | fresh `LGTM` + CI green + `CLEAN` + `behind_by == 0`. | Merge now. |
 | `ready-unreviewed` | CI green *with at least one non-review check actually `SUCCESS`* + `CLEAN` + `behind_by == 0`, but this PR has no review gate: Dependabot both authored it and pushed its HEAD commit, and every `claude-review` entry reported `SKIPPED`. | Merge — on a `dependencies` lane only. On any other lane the review workflow is misconfigured: stop and investigate. |
 | `behind` | `LGTM` + green but not current with `main`. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
+| `unknown` | GitHub has not finished computing mergeability — routine for a few seconds after every push. | Wait for a later wake. A sync would merge nothing and push nothing, so the next wake would be identical. |
+| `draft` | the PR is a draft: a deliberate human hold. | Leave the lane alone, same standing as `optout`. The loop must not fight a human who parked a PR. |
+| `blocked` | a required check or review is missing. | A sync cannot supply it. Wait, or escalate if it stays blocked — do not dispatch a worker. |
+| `conflicted` | the branch conflicts with its base (`DIRTY`/`CONFLICTING`). Outranks `awaiting-review`: a conflicting PR has no merge ref, so GitHub runs no `pull_request`-event workflow, `claude-review` never appears, and no verdict can ever arrive. | Needs a real conflict resolution — drop to Gate 1. `fleet.sh sync` will exit 3 on the conflict rather than fix it. |
 | `pending` | CI still running. | Wait for a later wake. |
-| `ci-failed` | a check failed or errored. | Dispatch a `ci-debugging` worker into the lane. |
+| `ci-failed` | a check failed or errored, **and a second query corroborated it** by naming a check with a failing conclusion. | Dispatch a `ci-debugging` worker into the lane. |
+| `transport-error` | `gh` could not be asked, or answered non-zero with no failing check to corroborate it: no network, TLS failure, expired token, rate-limit block, a 5xx, or a PR reporting no checks at all. **Not a claim about CI** — it is "I could not tell". | Retry on a later wake. **Do not dispatch a `ci-debugging` worker**: that is the bug this token exists to stop, an agent reading logs for a failure that never happened on a PR that was about to go green. `watch-pr.sh` counts it as in-flight and keeps polling. |
 | `changes-requested` | a fresh verdict (posted after HEAD) that is not `LGTM` — `CHANGES_REQUESTED` or `COMMENTS`. Gate 4 failed. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
 | `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
+| `review-self-skipped` | this PR edits `.github/workflows/claude-code-review.yml`, so `claude-code-action` self-skipped as anti-tamper and no verdict will ever be posted. The check reports `SUCCESS`, not `SKIPPED`, so the reviewless path does not apply either. | **Terminal — hand it to a human.** Stop re-checking the lane; it is not waiting on anything. A human who reviews it and posts a fresh `LGTM` still lands it via `ready`. Common on Dependabot bumps of `anthropics/claude-code-action`. |
 | `optout` | `do-not-auto-merge` on the PR, on the issue its body closes, or — when a Dependabot PR's body links nothing — on the bridge issue carrying that PR's `<!-- dependabot-pr:<N> -->` marker. | Leave the lane entirely alone — no merge, no sync, no worker, and never `assign`/`adopt` a new one. A worktree it already holds **stays held** (`reconcile` releases only on `MERGED`/`CLOSED`): releasing it would discard work a human paused. Run `fleet.sh release <N>` by hand to take the slot back. |
 | *non-zero exit* | could not classify (API failure, expired token). | Leave the lane alone this wake; the next wake retries. |
 
@@ -272,12 +287,19 @@ Seven offline suites cover the fleet — six shell, one Python — all run in CI
   unreadable label answer or an unprovable hold fails closed (exit 2, not "no
   hold") — the freshness guard (`CLEAN` is not proof of
   being current) and its laziness (only a would-be-`ready` lane pays for the
-  compare probe), the `ready-unreviewed` path, and the `changes-requested`
-  split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting).
+  compare probe), the `ready-unreviewed` path, the `changes-requested`
+  split (a fresh non-LGTM verdict is actionable; missing/stale keeps waiting),
+  the `ci-failed`/`transport-error` split (a non-zero `gh` exit must be
+  corroborated by a check with a failing conclusion before it may route a lane
+  to ci-debugging — the transport cases are proved by stubbing `gh` to write a
+  connection error to stderr and exit 1, never by the happy path), and that a
+  conflicting PR reports `conflicted` rather than waiting forever on a verdict
+  GitHub can never produce for it.
 - `scripts/ralph/test_watch_pr.sh` covers `watch-pr.sh`, the per-lane hot
   watcher local sessions background: pidfile idempotence, the
   in-flight→terminal-token exit (including that `changes-requested` ends the
-  watch), API-error tolerance, the `gone` exit, and the timeout.
+  watch and that `transport-error` does *not*), API-error tolerance, the `gone`
+  exit, and the timeout.
 - `scripts/ralph/test_exec_bits.sh` asserts every `scripts/ralph/*.sh` is
   committed `100755` (`git ls-files -s`), so a directly-invoked script can
   never again ship exiting 126 — the mode CI's `bash <script>` launches mask.

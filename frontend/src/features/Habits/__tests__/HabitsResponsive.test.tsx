@@ -126,7 +126,27 @@ const assertTileLayout = (tile: any, height: number, expectedColumns: number): v
 };
 
 describe('HabitsScreen responsive layout', () => {
+  const mounted: any[] = [];
+
+  // Mount through here so every tree gets torn down. A HabitsScreen left mounted
+  // keeps re-rendering and keeps calling the mocked setOptions, so a later test's
+  // openHabitsDrawer() would press the header toggle belonging to an *earlier*
+  // test's tree -- opening a drawer nobody is asserting against.
+  const mountScreen = async (): Promise<any> => {
+    let tree: any;
+    await renderer.act(async () => {
+      tree = renderer.create(<HabitsScreen />);
+    });
+    mounted.push(tree);
+    return tree;
+  };
+
   afterEach(() => {
+    mounted.splice(0).forEach((tree) => {
+      renderer.act(() => {
+        tree.unmount();
+      });
+    });
     jest.clearAllMocks();
   });
 
@@ -137,10 +157,7 @@ describe('HabitsScreen responsive layout', () => {
         .spyOn(require('react-native'), 'useWindowDimensions')
         .mockReturnValue({ width: w, height, scale: 1, fontScale: 1 });
 
-      let testRenderer: any;
-      await renderer.act(async () => {
-        testRenderer = renderer.create(<HabitsScreen />);
-      });
+      const testRenderer = await mountScreen();
       const tree = testRenderer.root;
       const list = tree.findByProps({ testID: 'habits-list' });
       const expectedColumns = w > height ? 2 : 1;
@@ -166,10 +183,7 @@ describe('HabitsScreen responsive layout', () => {
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { FlatList } = require('react-native');
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
     const firstList = testRenderer.root.findByType(FlatList);
     expect(firstList.props.numColumns).toBe(2);
 
@@ -191,10 +205,7 @@ describe('HabitsScreen responsive layout', () => {
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { TouchableOpacity, Text } = require('react-native');
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
 
     openHabitsDrawer();
 
@@ -213,10 +224,7 @@ describe('HabitsScreen responsive layout', () => {
 
     const StatsModal = require('../components/StatsModal').default as jest.Mock;
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
     openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
@@ -244,10 +252,7 @@ describe('HabitsScreen responsive layout', () => {
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
     openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
@@ -278,10 +283,7 @@ describe('HabitsScreen responsive layout', () => {
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
     openHabitsDrawer();
 
     const { TouchableOpacity, Text } = require('react-native');
@@ -305,10 +307,7 @@ describe('HabitsScreen responsive layout', () => {
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
     const { Text } = require('react-native');
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
     const archive = testRenderer.root.findByProps({ testID: 'archive-energy-cta' });
 
     jest.useFakeTimers();
@@ -341,10 +340,7 @@ describe('HabitsScreen responsive layout', () => {
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
 
     const container = testRenderer.root.findByProps({ testID: 'content-container' });
     expect(container.findByProps({ testID: 'habits-list' })).toBeTruthy();
@@ -355,10 +351,7 @@ describe('HabitsScreen responsive layout', () => {
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    let testRenderer: any;
-    await renderer.act(async () => {
-      testRenderer = renderer.create(<HabitsScreen />);
-    });
+    const testRenderer = await mountScreen();
 
     const { StyleSheet } = require('react-native');
     const container = testRenderer.root.findByProps({ testID: 'content-container' });

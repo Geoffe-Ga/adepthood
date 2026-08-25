@@ -222,11 +222,22 @@ def test_no_multipart_upload_surface_in_source_tree() -> None:
 
 
 def test_no_python_multipart_dependency() -> None:
-    """``python-multipart`` is absent from both requirement files."""
+    """``python-multipart`` is absent from every requirement file, lock included.
+
+    The lock is the load-bearing one, and it is why this test now reads three
+    files instead of two. Until 2026-08-09 it checked only the two hand-written
+    manifests, and the package was installed the entire time anyway -- pulled in
+    transitively by ``mcp``, which the old lock recorded in as many words:
+    ``python-multipart==0.0.32  # via mcp``. So this guard reported "absent"
+    about a library that was present in every environment it was meant to keep
+    it out of, and ``routers/gumroad.py`` was quietly relying on it to read a
+    webhook body. Checking the manifests alone can only ever prove nobody asked
+    for it *directly*; the lock is what actually gets installed.
+    """
     backend_dir = _SRC_DIR.parent
-    for filename in ("requirements.txt", "requirements-dev.txt"):
+    for filename in ("requirements.txt", "requirements-dev.txt", "requirements-lock.txt"):
         text = (backend_dir / filename).read_text()
-        assert "python-multipart" not in text
+        assert "python-multipart" not in text, filename
 
 
 # ── D: request-log safety ──────────────────────────────────────────────────
@@ -271,9 +282,9 @@ _BASELINE_LOG_RECORD_KEYS = (
     frozenset(logging.makeLogRecord({}).__dict__) | _STANDARD_LATE_LOG_RECORD_KEYS
 )
 _ALLOWED_ACCESS_LOG_EXTRA_KEYS = frozenset(
-    # ``trace_id`` is not a caller-supplied ``extra=`` key: the framework-wide
-    # filter from ``observability.install_trace_id_logging`` stamps it on every
-    # record by design (see ``middleware/logging.py`` -- the access line is
+    # ``trace_id`` is not a caller-supplied ``extra=`` key: the app log
+    # handler's filter, installed by ``observability.configure_logging``,
+    # stamps it on every record by design (see ``middleware/logging.py`` -- the access line is
     # documented as always carrying it). Whether it is present here depends on
     # whether some earlier test in the same process already booted the app and
     # installed that filter, so leaving it out made this assertion depend on

@@ -28,11 +28,14 @@ from domain.creek_vault import (
 from models.journal_entry import JournalClassification
 from scripts.creek_contract_drift import BUNDLE_ROOT
 
-# Creek's error vocabulary, closed at contract 0.2 and published as an enum in
-# the vendored envelope schema. Read at runtime rather than restated, so a code
-# adepthood invents is caught against the bundle instead of against a copy.
+# Creek's error vocabulary, published as an enum in the vendored envelope
+# schema. Read at runtime rather than restated, so a code adepthood invents is
+# caught against the bundle instead of against a copy. The count is the
+# non-vacuity control on that read, not a claim that the vocabulary is closed:
+# it grew by one at contract 0.8.0, when the upload route brought
+# ``unsupported_source`` with it.
 _ERROR_ENVELOPE_SCHEMA = "schemas/ErrorEnvelope.schema.json"
-_PUBLISHED_ERROR_CODE_COUNT = 9
+_PUBLISHED_ERROR_CODE_COUNT = 10
 
 # Creek's reflection response, whose ``status`` enum publishes the two outcomes a
 # 200 may carry. An escalation is a different published document at the same
@@ -116,15 +119,19 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Six wire-name capability members."""
+    """Seven wire-name capability members."""
 
-    def test_has_six_members(self) -> None:
-        """Exactly six capabilities are defined."""
-        assert len(CreekCapability) == 6
+    def test_has_seven_members(self) -> None:
+        """Exactly seven capabilities are defined."""
+        assert len(CreekCapability) == 7
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
         assert CreekCapability.HANDSHAKE.value == "creek.handshake"
+
+    def test_upload_value_is_wire_name(self) -> None:
+        """UPLOAD's value is the creek.upload wire name."""
+        assert CreekCapability.UPLOAD.value == "creek.upload"
 
     def test_journal_value_is_wire_name(self) -> None:
         """JOURNAL's value is the creek.journal wire name."""
@@ -359,4 +366,4 @@ def test_contract_version_constant() -> None:
 
     It tracks Creek's published contract constant, and the docs restate it.
     """
-    assert CONTRACT_VERSION == "0.2.0"
+    assert CONTRACT_VERSION == "0.8.0"

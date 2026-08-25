@@ -136,8 +136,14 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
 
   // --- Streaming / rate limits / network -------------------------------
-  rate_limit_exceeded:
-    "You're sending messages faster than BotMason can keep up. Slow down to 10 messages per minute.",
+  // Deliberately surface-neutral and number-free. The backend emits this one
+  // code from a single app-wide handler (``main.py:424``), and the limiters
+  // behind it range from BotMason chat at 5/minute to auth routes at 1/minute
+  // and 10/hour -- so any wording that names a surface, or quotes a rate, is
+  // wrong everywhere else. The previous copy named BotMason *and* said
+  // "10 messages per minute", which was wrong even for BotMason. A surface that
+  // wants its own real limit can override this locally.
+  rate_limit_exceeded: "That's a lot of requests in a short time. Give it a moment and try again.",
   llm_provider_error: PROVIDER_TROUBLE,
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
@@ -204,7 +210,28 @@ type ErrorLike = {
   detail?: unknown;
   status?: unknown;
   message?: unknown;
+  requestId?: unknown;
 };
+
+/** Status at or above which the fault is ours to explain, and to correlate. */
+const SERVER_ERROR_STATUS = 500;
+
+/**
+ * The reference a user can quote back to us, when there is one.
+ *
+ * A sanitised 500 says nothing about what broke — that detail lives in the
+ * server log, keyed by this id and nothing else. Offering it turns "it keeps
+ * happening, let us know" from an invitation into something we can act on.
+ * Deliberately confined to 5xx: a 404 or a 422 is a conversation the UI already
+ * finishes, and a stray hex string in that copy is noise the user cannot use.
+ */
+function referenceSuffix(errish: ErrorLike): string {
+  const status = extractStatus(errish);
+  if (status === undefined || status < SERVER_ERROR_STATUS) return '';
+  const { requestId } = errish;
+  if (typeof requestId !== 'string' || requestId.length === 0) return '';
+  return ` (Reference: ${requestId})`;
+}
 
 function extractDetail(err: ErrorLike): string | undefined {
   return typeof err.detail === 'string' && err.detail.length > 0 ? err.detail : undefined;
@@ -297,6 +324,9 @@ function isFetchNetworkError(err: unknown): boolean {
  *   5. Generic status fallback  — per-HTTP-status default
  *   6. Raw ``.message``         — if it reads like human prose
  *   7. GENERIC_FALLBACK
+ *
+ * A 5xx that arrived with a server request id also gains a reference suffix
+ * (see {@link referenceSuffix}); nothing else does.
  */
 function classifyNetworkError(err: unknown): string | undefined {
   if (isTimeout(err)) return TIMEOUT_MESSAGE;
@@ -323,7 +353,7 @@ export function formatApiError(err: unknown, options: FormatErrorOptions = {}): 
     statusFallback(status) ??
     readableMessage(errish);
 
-  return resolved ?? GENERIC_FALLBACK;
+  return `${resolved ?? GENERIC_FALLBACK}${referenceSuffix(errish)}`;
 }
 
 // Re-export for use in contexts that can't import ``ApiError`` directly

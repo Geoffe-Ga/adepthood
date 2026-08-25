@@ -7,13 +7,57 @@ on:
     branches: [main]
     paths:
       - "frontend/**"
+      # Narrow on purpose, not an oversight. This workflow already documents a
+      # decision to shed trigger paths that pull the whole pipeline (audit gate
+      # and ~450 Jest suites) into PRs with no frontend change -- see the
+      # .pre-commit-config.yaml note below. So only the security-relevant script
+      # is listed, not all of scripts/frontend/: audit-gate.mjs is what reads
+      # .audit-allowlist.json and enforces the 2026-11-08 expiry on the two
+      # image-size advisories, and it was previously unguarded by any CI at all.
+      # A tweak to lint.sh or format.sh still triggers nothing, which is the
+      # existing tradeoff kept intact.
+      - "scripts/frontend/audit-gate.mjs"
       - ".github/workflows/frontend-ci.yml"
-      - ".pre-commit-config.yaml"
   pull_request:
     paths:
       - "frontend/**"
+      # Narrow on purpose, not an oversight. This workflow already documents a
+      # decision to shed trigger paths that pull the whole pipeline (audit gate
+      # and ~450 Jest suites) into PRs with no frontend change -- see the
+      # .pre-commit-config.yaml note below. So only the security-relevant script
+      # is listed, not all of scripts/frontend/: audit-gate.mjs is what reads
+      # .audit-allowlist.json and enforces the 2026-11-08 expiry on the two
+      # image-size advisories, and it was previously unguarded by any CI at all.
+      # A tweak to lint.sh or format.sh still triggers nothing, which is the
+      # existing tradeoff kept intact.
+      - "scripts/frontend/audit-gate.mjs"
       - ".github/workflows/frontend-ci.yml"
-      - ".pre-commit-config.yaml"
+
+# What the ``frontend/**`` narrowing gives up, written down. A handful of Jest
+# tests read backend source on purpose -- the APTITUDE colour table, the upload
+# cap, the consent copy, the e2e launcher's one permitted stub -- and a
+# backend-only change never triggers this workflow, so those guards were blind
+# to exactly the change they exist to catch. One such change merged green and
+# turned ``main`` red on the next frontend PR.
+#
+# The answer is NOT to widen these paths: backend-ci.yml now has a
+# ``cross-boundary-drift`` job that runs just those guards (a second of Jest,
+# no audit gate, no bundler), discovering them at run time by their import of
+# ``frontend/src/testing/backendSource.ts``. Nothing else about the narrowing
+# changes, and a new drift guard is covered the day it is written.
+
+# ``.pre-commit-config.yaml`` is deliberately NOT a trigger path. It used to be,
+# on the reasoning that the frontend eslint/prettier/jest hooks are defined
+# there -- but the cost outweighed it: a change to that one file pulled the
+# entire frontend pipeline, audit gate included, into PRs containing no frontend
+# code at all. #2156 was a backend tooling change blocked by two image-size
+# advisories in a transitive dev dependency.
+#
+# What is given up: a pre-commit config edit that breaks a frontend hook is no
+# longer caught by this workflow on the PR that makes it. It is still caught --
+# the hooks themselves run on every frontend-touching commit and push, and the
+# post-merge ``push`` run on main covers frontend changes -- just not on a
+# config-only PR. That is the trade #2156 records.
 
 # One in-flight run per PR; see backend-ci.yml for the rationale.
 concurrency:
@@ -67,6 +111,25 @@ jobs:
       - name: Format check
         working-directory: frontend
         run: npx prettier -c .
+
+      # The only step in this job that runs the bundler. Every other one reads a
+      # file in isolation -- eslint reads syntax, tsc reads types, prettier reads
+      # formatting, Jest reads modules behind its own moduleNameMapper -- and
+      # none of them resolves the real import graph or reads metro.config.js at
+      # all. Without this step a green run here certifies only that Jest ran.
+      #
+      # Demonstrated rather than asserted: disabling Metro's package-exports
+      # resolution leaves eslint, tsc, and the Habits suite green while the app
+      # cannot bundle. See scripts/frontend/bundle.sh, which this mirrors so
+      # that local Gate 2 predicts this job.
+      #
+      # Not a native build: there is no frontend/ios or frontend/android
+      # directory, so newArchEnabled has still never been compiled. And
+      # expo-doctor is deliberately not gated -- it fails on SDK-pinned version
+      # drift, which is Dependabot's cadence, not this job's question.
+      - name: Web bundle builds
+        working-directory: frontend
+        run: npx expo export --platform web
 
       - name: Tests (with coverage thresholds)
         working-directory: frontend

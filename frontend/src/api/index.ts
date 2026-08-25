@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import {
   apiGoalGroupSchema,
+  accountDeletionReceiptSchema,
+  dataExportArchiveSchema,
   authResponseSchema,
   contentItemSchema,
+  corpusConsentListSchema,
+  corpusConsentSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionSuggestionSchema,
@@ -37,7 +41,10 @@ import {
   timezoneReadSchema,
   transcribePageSchema,
   uiFlagsSchema,
+  documentImportSchema,
   wheelBalanceSchema,
+  type AccountDeletionReceiptT,
+  type DataExportArchiveT,
   type AcceptSuggestionResultT,
   type CareKindT,
   type CareResourceT,
@@ -45,6 +52,8 @@ import {
   type CompletionSuggestionT,
   type ContractionReflectionT,
   type ContractionVariantT,
+  type CorpusConsentListT,
+  type CorpusConsentT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type UiFlagsT,
@@ -67,6 +76,7 @@ import {
   type Tier,
   type TimezoneReadT,
   type TranscribePageT,
+  type DocumentImportT,
   type WheelBalanceT,
 } from './schemas';
 
@@ -100,12 +110,23 @@ const IDEMPOTENCY_HEADERS = new Set(['idempotency-key', 'x-idempotency-key']);
 export class ApiError extends Error {
   status: number;
   detail: string;
+  /**
+   * The server's correlation id for this failure, when it sent one.
+   *
+   * A sanitised 500 deliberately says nothing about what broke — the body is
+   * `{error, request_id}` and the traceback stays in the server log. The id is
+   * the only thing that links the two, so a user who reports "it broke" can be
+   * asked for a reference instead of a screenshot. `null` for a failure that
+   * carried no id, which includes every request that never reached the server.
+   */
+  requestId: string | null;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, requestId: string | null = null) {
     super(`Request failed with status ${status}: ${detail}`);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.requestId = requestId;
   }
 }
 
@@ -139,6 +160,14 @@ export class ApiTimeoutError extends Error {
 
 /** Transcribed-text result envelope, re-exported for callers of `journal.transcribePage`. */
 export type { TranscribePageT } from './schemas';
+
+/** Document-import outcome, re-exported for callers of `corpus.importDocument`. */
+export type {
+  CorpusImportStatusT,
+  DocumentImportT,
+  ImportDestinationT,
+  VaultUploadStatusT,
+} from './schemas';
 
 /** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
@@ -181,6 +210,41 @@ export class TranscriptionError extends Error {
     // stamp an explicit `undefined` cause instead of leaving it unset.
     super(`transcription failed: ${kind}`, cause === undefined ? undefined : { cause });
     this.name = 'TranscriptionError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+/**
+ * The stable, UI-facing failure taxonomy for handing over a document. A vault
+ * that is missing, out of date or degraded is NOT in here, and neither is a
+ * corpus that declined the document: those are 202 outcomes the caller renders
+ * from {@link DocumentImportT}. Only a request that never produced an outcome
+ * lands here.
+ */
+export type DocumentUploadErrorKind =
+  'too_large' | 'invalid_document' | 'rate_limited' | 'network' | 'timeout' | 'unknown';
+
+/**
+ * Upload timeout: 120s, four times {@link FETCH_TIMEOUT_MS}. A 10 MB document
+ * encodes to ~13 MB of JSON and is then forwarded to the vault, so the default
+ * 30s would abort uploads that are simply large rather than stuck.
+ */
+export const UPLOAD_DOCUMENT_TIMEOUT_MS = 120_000;
+
+/**
+ * Typed failure for {@link corpus.importDocument}. PRIVACY: the message is a
+ * static per-`kind` string and never interpolates the base64 document or the
+ * filename, so it is safe to log or surface. The originating error is preserved
+ * on `cause` for diagnostics.
+ */
+export class DocumentUploadError extends Error {
+  kind: DocumentUploadErrorKind;
+  status: number | null;
+
+  constructor(kind: DocumentUploadErrorKind, status: number | null, cause?: unknown) {
+    super(`document upload failed: ${kind}`, cause === undefined ? undefined : { cause });
+    this.name = 'DocumentUploadError';
     this.kind = kind;
     this.status = status;
   }
@@ -314,6 +378,9 @@ export function resetLlmApiKey(): void {
   llmApiKeyReset?.();
 }
 
+/** How a successful response body is read. */
+type ResponseType = 'json' | 'text';
+
 interface RequestOptions<TResponse = unknown> {
   method?: string;
   body?: unknown;
@@ -325,6 +392,21 @@ interface RequestOptions<TResponse = unknown> {
   timeoutMs?: number;
   /** External abort signal; respected alongside the timeout. */
   signal?: AbortSignal;
+  /**
+   * Opt out of the automatic retry, whatever the method would otherwise
+   * allow. ``DELETE`` counts as safe-to-retry because deleting a habit twice
+   * is deleting it once — but an operation that is not merely idempotent but
+   * *irreversible* (account deletion) must be attempted exactly once, so a
+   * lost response is reported rather than turned into a second attempt that
+   * lands on an account no longer there.
+   */
+  retry?: boolean;
+  /**
+   * How to read a successful body. Defaults to ``'json'``. ``'text'`` is for
+   * routes that do not serve JSON at all — the Markdown journal export — where
+   * ``res.json()`` would throw on a perfectly good response.
+   */
+  responseType?: ResponseType;
 }
 
 function resolveToken(token?: string): string | null {
@@ -454,19 +536,82 @@ function detailFromArray(entries: readonly unknown[]): string {
   return messages.length > 0 ? messages.join(ERROR_DETAIL_SEPARATOR) : FALLBACK_ERROR_DETAIL;
 }
 
-async function extractErrorDetail(res: Response): Promise<string> {
-  try {
-    const errBody = await res.json();
-    if (errBody.detail && typeof errBody.detail === 'string') {
-      return errBody.detail;
-    }
-    if (Array.isArray(errBody.detail)) {
-      return detailFromArray(errBody.detail);
-    }
-  } catch {
-    // response body wasn't JSON — use default
+/**
+ * Header the backend echoes on every response, and the one entry in its CORS
+ * ``expose_headers`` — so a cross-origin browser client can read it even when
+ * the body is unreadable. Matches ``observability.TRACE_ID_HEADER``.
+ */
+const REQUEST_ID_HEADER = 'X-Request-ID';
+
+/** What a failed response tells us, after the single read of its body. */
+interface ErrorEnvelope {
+  detail: string;
+  requestId: string | null;
+}
+
+/**
+ * Read ``X-Request-ID`` off a response, tolerating a response object that has
+ * no headers at all.
+ *
+ * The DOM type says ``headers`` is always there, and on a real ``fetch`` it is.
+ * Test doubles across this suite hand `request` a bare ``{ok, status, json}``
+ * literal, though, so the guard is about runtime reality rather than the type.
+ */
+function requestIdHeader(res: Response): string | null {
+  const { headers } = res;
+  if (!headers) return null;
+  return headers.get(REQUEST_ID_HEADER);
+}
+
+/**
+ * Pull the detail string out of an error body, whatever shape it arrived in.
+ *
+ * Three shapes are in play. A per-route rejection sends ``{detail: "..."}``;
+ * a Pydantic rejection sends ``{detail: [...]}``; and the catch-all 500 sends
+ * the sanitised ``{error, request_id}`` envelope, which carries no ``detail``
+ * at all. Reading ``error`` as the detail is what stops a 500 from collapsing
+ * into the placeholder — the code names the failure (``internal_error`` vs
+ * ``decryption_failure``) where the placeholder named nothing.
+ *
+ * Note these codes are deliberately absent from ``USER_FACING_ERROR_MESSAGES``:
+ * a screen that phrased its own 500 copy should keep winning over a generic
+ * one, which is what the status-fallback ordering in ``formatApiError`` does.
+ */
+function detailFromBody(errBody: { detail?: unknown; error?: unknown }): string {
+  if (typeof errBody.detail === 'string' && errBody.detail.length > 0) {
+    return errBody.detail;
+  }
+  if (Array.isArray(errBody.detail)) {
+    return detailFromArray(errBody.detail);
+  }
+  if (typeof errBody.error === 'string' && errBody.error.length > 0) {
+    return errBody.error;
   }
   return FALLBACK_ERROR_DETAIL;
+}
+
+/**
+ * Consume a failed response's body once and report everything it told us.
+ *
+ * The body can only be read once, so the detail and the request id have to come
+ * out of the same read. The header is the fallback for the id precisely because
+ * it survives a body that is not JSON — a proxy's 502 page, a truncated
+ * response — which is when a correlation id is worth the most.
+ */
+async function readErrorEnvelope(res: Response): Promise<ErrorEnvelope> {
+  const headerId = requestIdHeader(res);
+  try {
+    const errBody = await res.json();
+    const bodyId = typeof errBody.request_id === 'string' ? errBody.request_id : null;
+    return { detail: detailFromBody(errBody), requestId: bodyId ?? headerId };
+  } catch {
+    // response body wasn't JSON — the header is all we have left
+    return { detail: FALLBACK_ERROR_DETAIL, requestId: headerId };
+  }
+}
+
+async function extractErrorDetail(res: Response): Promise<string> {
+  return (await readErrorEnvelope(res)).detail;
 }
 
 /**
@@ -508,9 +653,28 @@ export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedR
   }
 }
 
-async function handleErrorResponse(res: Response): Promise<never> {
-  const detail = await extractErrorDetail(res);
-  throw new ApiError(res.status, detail);
+/** Status at or above which the failure is the server's, not the caller's. */
+const SERVER_ERROR_STATUS = 500;
+
+/**
+ * Build the ``ApiError`` for a failed response, noting server-side faults.
+ *
+ * The console line is the client half of the correlation contract: the server
+ * logged a full traceback under this id and sent us nothing but the id, so
+ * writing it down here is what lets a support conversation ("it broke around
+ * 3pm") become a log query. Only 5xx is logged — a 404 or a 422 is answered by
+ * the UI, needs no cross-referencing, and would drown the signal.
+ */
+async function apiErrorFromResponse(res: Response, path: string): Promise<ApiError> {
+  const { detail, requestId } = await readErrorEnvelope(res);
+  if (res.status >= SERVER_ERROR_STATUS && requestId !== null) {
+    console.warn(`API ${res.status} on ${path} — server request id ${requestId}`);
+  }
+  return new ApiError(res.status, detail, requestId);
+}
+
+async function handleErrorResponse(res: Response, path: string): Promise<never> {
+  throw await apiErrorFromResponse(res, path);
 }
 
 /**
@@ -539,8 +703,14 @@ function validateWithSchema<T>(
   throw new ApiValidationError(path, status, parsed.error.issues);
 }
 
-async function parseResponse<T>(res: Response, path = '', schema?: z.ZodType<T>): Promise<T> {
+async function parseResponse<T>(
+  res: Response,
+  path = '',
+  schema?: z.ZodType<T>,
+  responseType: ResponseType = 'json',
+): Promise<T> {
   if (res.status === 204) return undefined as T;
+  if (responseType === 'text') return (await res.text()) as T;
   const data: unknown = await res.json();
   if (schema) return validateWithSchema(path, res.status, schema, data);
   return data as T;
@@ -648,12 +818,20 @@ interface RefreshRetryContext<T> {
   timeoutMs: number | undefined;
   signal: AbortSignal | undefined;
   /**
+   * How to read a successful body, or ``undefined`` for the default.
+   * ``parseResponse`` owns that default so ``request`` stays one branch
+   * simpler; see {@link RequestOptions.responseType}.
+   */
+  responseType: ResponseType | undefined;
+  /**
    * Detail string of the original 401 response.  Threaded through so
    * the unauthorized callback fires with the correct
    * {@link UnauthorizedReason} (BUG-API-018) instead of a generic
    * "session expired".
    */
   initialDetail: string | null;
+  /** Whether this request may be attempted more than once (see RequestOptions.retry). */
+  canRetry: boolean;
 }
 
 /**
@@ -707,9 +885,9 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
       // generic "Request failed".
       throw new ApiError(retryRes.status, retryDetail);
     }
-    return handleErrorResponse(retryRes);
+    return handleErrorResponse(retryRes, ctx.path);
   }
-  return parseResponse<T>(retryRes, ctx.path, ctx.schema);
+  return parseResponse<T>(retryRes, ctx.path, ctx.schema, ctx.responseType);
 }
 
 async function handleUnauthorizedRetry<T>(
@@ -765,7 +943,7 @@ async function attemptRequest<T>(
   });
 
   if (res.ok) {
-    const value = await parseResponse<T>(res, ctx.path, ctx.schema);
+    const value = await parseResponse<T>(res, ctx.path, ctx.schema, ctx.responseType);
     return { kind: 'ok', value };
   }
   if (res.status === 401) {
@@ -781,11 +959,10 @@ async function attemptRequest<T>(
     if (retried !== null) return { kind: 'ok', value: retried };
     throw new ApiError(res.status, detail);
   }
-  if (isTransientStatus(res.status) && isRetryableMethod(ctx.method, ctx.extraHeaders)) {
-    const detail = await extractErrorDetail(res);
-    return { kind: 'transient', error: new ApiError(res.status, detail) };
+  if (isTransientStatus(res.status) && ctx.canRetry) {
+    return { kind: 'transient', error: await apiErrorFromResponse(res, ctx.path) };
   }
-  return handleErrorResponse(res);
+  return handleErrorResponse(res, ctx.path);
 }
 
 function isRetryableException(err: unknown, canRetry: boolean): boolean {
@@ -823,8 +1000,11 @@ async function request<T>(
     schema,
     timeoutMs,
     signal,
+    retry,
+    responseType,
   }: RequestOptions<T> = {},
 ): Promise<T> {
+  const canRetry = retry !== false && isRetryableMethod(method, extraHeaders);
   const ctx: RefreshRetryContext<T> = {
     path,
     url: `${API_BASE_URL}${path}`,
@@ -834,7 +1014,9 @@ async function request<T>(
     schema,
     timeoutMs,
     signal,
+    responseType,
     initialDetail: null,
+    canRetry,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying
@@ -844,7 +1026,6 @@ async function request<T>(
     throw new ApiError(0, 'network_error');
   }
 
-  const canRetry = isRetryableMethod(method, extraHeaders);
   const totalAttempts = canRetry ? MAX_RETRIES + 1 : 1;
   let lastError: Error = new ApiError(0, 'network_error');
   for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
@@ -888,10 +1069,12 @@ export interface ApiGoal {
 
 export interface ApiGoalGroup {
   id: number;
+  // ``user_id`` is intentionally absent — ``GoalGroupResponse`` omits it for
+  // the same reason ``ApiHabit`` does, and declaring it here typed a field the
+  // wire has never sent.
   name: string;
   icon?: string | null;
   description?: string | null;
-  user_id?: number | null;
   shared_template: boolean;
   source?: string | null;
   goals: ApiGoal[];
@@ -1237,7 +1420,12 @@ export type EntryStatus = 'draft' | 'finished';
 export interface JournalMessage {
   id: number;
   message: string;
-  sender: 'user' | 'bot';
+  /**
+   * Widened from ``'user' | 'bot'`` to match the backend, which types this as a
+   * bare ``str``. Narrow with ``narrowSender`` before branching on it, rather
+   * than assuming the union -- see the note on ``SENDER_VALUES`` in schemas.ts.
+   */
+  sender: string;
   timestamp: string;
   tag: JournalTag;
   practice_session_id: number | null;
@@ -1252,6 +1440,12 @@ export interface JournalMessage {
   primary_aspect?: number | null;
   /** Secondary chord Aspect (a stage 1..10); only meaningful with a primary. */
   secondary_aspect?: number | null;
+  /**
+   * Hierarchical-journaling scope (``schemas/journal.py:137-138``). Absent on
+   * responses predating the columns, null when the entry is not a reflection.
+   */
+  reflection_level?: string | null;
+  reflection_scope_key?: string | null;
 }
 
 /**
@@ -1341,6 +1535,13 @@ export interface ResonanceResponse {
   private?: boolean;
   /** Reason copy shown when ``private`` is true; ``null`` when unset. */
   private_message?: string | null;
+  /**
+   * The server's explanation for a pass that produced no margin notes at all.
+   * Absent whenever notes were kept, and on the ``private`` path (which carries
+   * its own copy). Render it as written: a zero-note pass has several possible
+   * causes and only the server can tell them apart.
+   */
+  no_notes_message?: string | null;
 }
 
 export interface MarginaliaListResponse {
@@ -1423,6 +1624,87 @@ function toTranscriptionError(err: unknown): TranscriptionError {
   const status = err instanceof ApiValidationError ? err.status : null;
   return new TranscriptionError('unknown', status, err);
 }
+
+/** HTTP statuses the upload endpoint answers with, mapped to a stable kind. */
+const UPLOAD_STATUS_KINDS: Record<number, DocumentUploadErrorKind> = {
+  413: 'too_large',
+  422: 'invalid_document',
+  429: 'rate_limited',
+  0: 'network',
+};
+
+/**
+ * Map any thrown error to a {@link DocumentUploadError} without ever touching the
+ * request body, so the document's bytes cannot leak into a message or a log.
+ */
+function toDocumentUploadError(err: unknown): DocumentUploadError {
+  if (err instanceof ApiTimeoutError) {
+    return new DocumentUploadError('timeout', null, err);
+  }
+  if (err instanceof ApiError) {
+    return new DocumentUploadError(UPLOAD_STATUS_KINDS[err.status] ?? 'unknown', err.status, err);
+  }
+  // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
+  // the core client does not retry) rather than the synthesized ApiError(0).
+  if (err instanceof TypeError && err.message.toLowerCase().includes('network')) {
+    return new DocumentUploadError('network', null, err);
+  }
+  const status = err instanceof ApiValidationError ? err.status : null;
+  return new DocumentUploadError('unknown', status, err);
+}
+
+/** One document handed over: its own name, its bytes, and its tier. */
+export interface ImportDocumentInput {
+  /** The document's own name; its extension selects how it is read. */
+  filename: string;
+  /** The document's bytes, base64-encoded — never logged, never persisted. */
+  contentBase64: string;
+  /** The privacy tier the uploader chose, honored end to end. */
+  classification: JournalClassification;
+}
+
+/**
+ * The corpus client: what an account has agreed may be sorted, and the one way
+ * a document gets into whichever corpus that account actually has.
+ *
+ * ``importDocument`` is deliberately the *only* document surface this client
+ * offers. ``POST /corpus/import`` resolves the destination per account — the
+ * vault for somebody who has connected one, their own ontologized corpus for
+ * somebody who has not — so a second wrapper aimed at the vault route would be
+ * the app computing a second answer to a question the server has already
+ * answered, and answering it differently the day the two disagree.
+ */
+export const corpus = {
+  /**
+   * Hand one document to this account's corpus and report where it landed.
+   *
+   * The transport is base64-in-JSON, deliberately never multipart — the backend
+   * carries no form-file surface and a privacy test fails the build on one.
+   *
+   * Every outcome arrives as a 202 whose ``destination`` and status the caller
+   * renders, including the ones that stored nothing: a vault that cannot take
+   * files, an account that has not agreed to ontologize uploads, a tier that
+   * never reaches a language model. A thrown {@link DocumentUploadError} means
+   * the request produced no outcome at all. PRIVACY: the bytes never enter an
+   * error message or a log line.
+   */
+  async importDocument(
+    { filename, contentBase64, classification }: ImportDocumentInput,
+    token?: string,
+  ): Promise<DocumentImportT> {
+    try {
+      return await request<DocumentImportT>('/corpus/import', {
+        method: 'POST',
+        body: { filename, content_base64: contentBase64, classification },
+        token,
+        timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
+        schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
+      });
+    } catch (err: unknown) {
+      throw toDocumentUploadError(err);
+    }
+  },
+};
 
 export const journal = {
   list(params: JournalListParams = {}, token?: string): Promise<JournalListResponse> {
@@ -1774,6 +2056,10 @@ export interface PromptDetail {
   has_responded: boolean;
   response: string | null;
   timestamp: string | null;
+  /** The prompt's own title, when the week's content supplies one. */
+  default_title?: string | null;
+  /** Its position within the week's prompt sequence, when the week has several. */
+  prompt_ordinal?: number | null;
 }
 
 export interface PromptListResponse {
@@ -1938,9 +2224,15 @@ export interface CourseProgress {
   next_unlock_day: number | null;
 }
 
+/**
+ * A read receipt for one chapter.
+ *
+ * No `user_id`: the server deliberately withholds it (the completion always
+ * belongs to the caller, and echoing the id aids enumeration), so declaring
+ * one here would type a field that never arrives.
+ */
 export interface ContentCompletion {
   id: number;
-  user_id: number;
   content_id: number;
   completed_at: string;
 }
@@ -2017,11 +2309,9 @@ export interface PracticeItem {
   description: string;
   instructions: string;
   default_duration_minutes: number;
-  // Absent on the wire — the backend ``PracticeResponse`` omits it to avoid
-  // leaking who proposed a draft (BUG-PRACTICE-001 / BUG-SCHEMA-010). Optional
-  // here so callers don't assume a value the server never sends; see
-  // ``practiceItemSchema`` in ``schemas.ts``.
-  submitted_by_user_id?: number | null;
+  // ``submitted_by_user_id`` is intentionally absent — the backend
+  // ``PracticeResponse`` omits it to avoid leaking who proposed a draft
+  // (BUG-PRACTICE-001 / BUG-SCHEMA-010).
   approved: boolean;
   /** ritual-01: discriminator for ``mode_config``. Older fixtures may omit. */
   mode?: string;
@@ -2031,8 +2321,8 @@ export interface PracticeItem {
 
 export interface UserPractice {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   practice_id: number;
   stage_number: number;
   start_date: string;
@@ -2177,8 +2467,8 @@ export interface PracticeSessionCreate {
 
 export interface PracticeSessionResponse {
   id: number;
-  /** Omitted by the backend's user-scoped responses (OwnedResourcePublic / BUG-T7). */
-  user_id?: number | null;
+  // ``user_id`` is intentionally absent — omitted by the backend's user-scoped
+  // responses (OwnedResourcePublic / BUG-T7).
   user_practice_id: number;
   duration_minutes: number;
   timestamp: string;
@@ -2299,9 +2589,7 @@ export const userPractices = {
    *
    * Passing ``mode_config_override: null`` resets to the catalog default;
    * passing ``undefined`` (or omitting the field) leaves the existing
-   * override untouched. The endpoint is documented in ritual-03; until
-   * that PR lands, this client method targets the agreed-upon route so
-   * the frontend can be cut over with no extra refactor.
+   * override untouched. The endpoint is documented in ritual-03.
    */
   customize(
     userPracticeId: number,
@@ -2822,6 +3110,31 @@ export interface TimezoneUpdatePayload {
   timezone: string;
 }
 
+/** The receipt ``DELETE /users/me`` returns once an account is gone. */
+export type AccountDeletionReceipt = AccountDeletionReceiptT;
+
+/** The whole archive ``GET /users/me/export`` streams back. */
+export type DataExportArchive = DataExportArchiveT;
+
+/**
+ * How long an export may take before the client gives up.
+ *
+ * Deliberately far above the default: the request is proportional to how much
+ * the person has written, and the account this feature exists for is the one
+ * with the most in it. A timeout tuned for a list endpoint would fail exactly
+ * the user the feature is for.
+ */
+const EXPORT_TIMEOUT_MS = 120_000;
+
+/**
+ * Confirmation body for ``DELETE /users/me``: the caller retypes their own
+ * address. A boolean the client could synthesise would make an accidental
+ * request indistinguishable from a deliberate one.
+ */
+export interface AccountDeletionPayload {
+  confirm_email: string;
+}
+
 // User profile client
 export const users = {
   /**
@@ -2839,6 +3152,59 @@ export const users = {
       body: payload,
       token,
       schema: timezoneReadSchema,
+    });
+  },
+  /**
+   * Erase the authenticated caller's account and personal data.
+   *
+   * Attempted exactly once. ``DELETE`` is normally in the retry set — deleting
+   * a habit twice is deleting it once — but this one is irreversible rather
+   * than merely idempotent, so ``retry: false`` keeps a lost response from
+   * becoming a second attempt that lands on an account that is no longer
+   * there and reports a 401 as if nothing had happened.
+   *
+   * The subject is resolved from the JWT alone, so this can only ever reach
+   * the caller's own account. On success the caller MUST clear the local
+   * session — the token it used is already dead server-side.
+   */
+  deleteMyAccount(
+    payload: AccountDeletionPayload,
+    token?: string,
+  ): Promise<AccountDeletionReceipt> {
+    return request<AccountDeletionReceipt>('/users/me', {
+      method: 'DELETE',
+      body: payload,
+      token,
+      schema: accountDeletionReceiptSchema,
+      retry: false,
+    });
+  },
+  /**
+   * Download everything the caller has written, as one JSON archive.
+   *
+   * The subject is resolved from the JWT alone, so this can only ever return
+   * the caller's own data. The server streams it; this client buffers what
+   * arrives, which is the trade a mobile client makes anyway in order to hand
+   * the result to the file system.
+   */
+  exportMyData(token?: string): Promise<DataExportArchive> {
+    return request<DataExportArchive>('/users/me/export', {
+      token,
+      schema: dataExportArchiveSchema,
+      timeoutMs: EXPORT_TIMEOUT_MS,
+    });
+  },
+  /**
+   * Download the caller's journal as Markdown -- the half a person can read.
+   *
+   * ``responseType: 'text'`` because the body is Markdown, not JSON: the
+   * default parse would throw on a completely healthy response.
+   */
+  exportMyJournalAsMarkdown(token?: string): Promise<string> {
+    return request<string>('/users/me/export/journal.md', {
+      token,
+      responseType: 'text',
+      timeoutMs: EXPORT_TIMEOUT_MS,
     });
   },
 };
@@ -2914,6 +3280,53 @@ export const uiFlags = {
       body: partial,
       token,
       schema: uiFlagsResponseSchema,
+    });
+  },
+};
+
+// Corpus consent (which kinds of material may be sorted into the corpus)
+
+/** What an account has currently decided about one source. */
+export type CorpusConsent = CorpusConsentT;
+
+// Validated at the edge so a decision that arrived as something other than a
+// boolean raises ApiValidationError rather than rendering as a switch position
+// nobody chose. Neither path has a trailing slash — the router mounts
+// ``/corpus/consent`` directly, so a slash would cost a 307 on every read.
+const corpusConsentListResponseSchema =
+  corpusConsentListSchema as unknown as z.ZodType<CorpusConsentListT>;
+const corpusConsentResponseSchema = corpusConsentSchema as unknown as z.ZodType<CorpusConsent>;
+
+export const corpusConsent = {
+  /**
+   * Every source and what the caller has decided about it, decided or not.
+   *
+   * The envelope is unwrapped here so callers hold the list the backend
+   * ordered; the order is the ontology's own, and re-sorting it client-side
+   * would put the surface's rows in an order nothing owns.
+   */
+  async list(token?: string): Promise<CorpusConsent[]> {
+    const response = await request<CorpusConsentListT>('/corpus/consent', {
+      token,
+      schema: corpusConsentListResponseSchema,
+    });
+    return response.sources;
+  },
+  /**
+   * Record one decision and return the state it produced.
+   *
+   * Deliberately not retried. The verb is idempotent — re-sending an answer
+   * already on the record appends nothing — but a withdrawal deletes that
+   * source's fragments, and a request whose response was lost is one a person
+   * should be told about rather than one the client silently sends again.
+   */
+  set(source: string, granted: boolean, token?: string): Promise<CorpusConsent> {
+    return request<CorpusConsent>(`/corpus/consent/${encodeURIComponent(source)}`, {
+      method: 'PUT',
+      body: { granted },
+      token,
+      schema: corpusConsentResponseSchema,
+      retry: false,
     });
   },
 };

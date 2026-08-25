@@ -76,3 +76,46 @@ describe('users API client', () => {
     ).rejects.toBeInstanceOf(ApiValidationError);
   });
 });
+
+const DELETION_RECEIPT = {
+  recoverable: false,
+  rows_erased: 12,
+  erased: ['habit', 'journalentry'],
+  anonymised: ['practice'],
+  retained: ['coursestage'],
+  vault: { configured: false, purged: false, guidance: 'No Creek Vault was connected.' },
+};
+
+describe('users.deleteMyAccount', () => {
+  test('sends DELETE /users/me with the typed confirmation in the body', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(DELETION_RECEIPT));
+
+    const result = await users.deleteMyAccount({ confirm_email: 'w@example.com' }, 'test-token');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/users/me');
+    expect(init.method).toBe('DELETE');
+    expect(JSON.parse(init.body)).toEqual({ confirm_email: 'w@example.com' });
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
+    expect(result).toEqual(DELETION_RECEIPT);
+  });
+
+  test('never retries — an irreversible erasure must be attempted exactly once', async () => {
+    // 503 is in the transient set the client retries for safe methods. If
+    // DELETE ever joined them, a network hiccup could fire a second erasure.
+    mockFetch.mockReturnValue(jsonResponse({ detail: 'service_unavailable' }, 503));
+
+    await expect(
+      users.deleteMyAccount({ confirm_email: 'w@example.com' }, 'test-token'),
+    ).rejects.toBeInstanceOf(ApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects a malformed receipt at the boundary', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ recoverable: false }));
+
+    await expect(
+      users.deleteMyAccount({ confirm_email: 'w@example.com' }, 'test-token'),
+    ).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});

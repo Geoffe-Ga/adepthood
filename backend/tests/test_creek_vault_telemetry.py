@@ -47,6 +47,7 @@ from domain.creek_vault import (
 from observability import NO_TRACE, SUPPRESS_TRACE_CORRELATION, TraceIdLogFilter, trace_id_var
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import (
+    _CONTRACT_MINOR_COMPONENTS,
     _HANDSHAKE_OUTCOME_BY_DEGRADE_REASON,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
@@ -96,10 +97,13 @@ _SENTINELS: tuple[str, ...] = (
 
 # The capabilities a healthy scripted vault advertises: every ratified surface,
 # so one handler serves the ingest, reflect, and wheel exchanges alike.
+# Creek's PUBLISHED wire names, not adepthood's ``creek.*`` telemetry keys. The
+# two vocabularies are translated at the client's parse boundary, so a fixture
+# advertising the internal names would be a document no vault can send.
 _RATIFIED_CAPABILITIES: tuple[str, ...] = (
-    CreekCapability.JOURNAL.value,
-    CreekCapability.REFLECT.value,
-    CreekCapability.WHEEL.value,
+    "journal-upsert",
+    "reflections",
+    "wheel",
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -193,9 +197,12 @@ class _ScriptedVault:
     def _capability_document(self) -> dict[str, object]:
         """Build the capability document this scripted vault advertises."""
         return {
-            "available": True,
+            # Creek nests availability under ``vault``; the client reads it there.
+            "vault": {"available": True},
             "capabilities": self._capabilities,
             "contract_version": self._contract_version,
+            "contract_minor": _minor_of(self._contract_version),
+            "supported_contract_minors": [_minor_of(self._contract_version)],
             "ontology_version": _ONTOLOGY_VERSION,
             "attestation": None,
         }
@@ -228,11 +235,23 @@ class _ScriptedHandshake:
 # A capability document from a vault that parses perfectly and reports itself out
 # of service -- not a failure to reach it, but an honest answer that it cannot
 # serve. It is the one degrade reason with no error behind it at all.
+def _minor_of(contract_version: str) -> str:
+    """Return the ``major.minor`` a server advertising ``contract_version`` serves.
+
+    The narrowest truthful claim for a given version, which keeps the skew cases
+    skewed: they advertise a version adepthood does not speak, and a wider
+    default would quietly make them compatible.
+    """
+    return ".".join(contract_version.split(".")[:_CONTRACT_MINOR_COMPONENTS])
+
+
 _VAULT_REPORTED_UNAVAILABLE_REPLY = _Reply(
     payload={
-        "available": False,
+        "vault": {"available": False},
         "capabilities": list(_RATIFIED_CAPABILITIES),
         "contract_version": CONTRACT_VERSION,
+        "contract_minor": _minor_of(CONTRACT_VERSION),
+        "supported_contract_minors": [_minor_of(CONTRACT_VERSION)],
         "ontology_version": _ONTOLOGY_VERSION,
         "attestation": None,
     }
@@ -861,6 +880,10 @@ _HANDSHAKE_DEGRADE_CASES: Mapping[
     HandshakeDegradeReason.INCOMPATIBLE_VERSION: (
         _ScriptedVault(contract_version=_SKEWED_CONTRACT_VERSION),
         VaultTelemetryOutcome.INCOMPATIBLE_VERSION,
+    ),
+    HandshakeDegradeReason.AUTH: (
+        _ScriptedHandshake(_UNAUTHORIZED_REPLY),
+        VaultTelemetryOutcome.AUTH_FAILED,
     ),
     HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE: (
         _ScriptedHandshake(_VAULT_REPORTED_UNAVAILABLE_REPLY),

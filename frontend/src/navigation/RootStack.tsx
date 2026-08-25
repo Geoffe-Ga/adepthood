@@ -8,7 +8,11 @@ import { CreatePracticeWizard } from '../features/Practice/screens/CreatePractic
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
 import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen';
+import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
+import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
+import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
+import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -33,8 +37,12 @@ export interface CreatePracticePrefill {
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<RootTabParamList>;
   Settings: undefined;
+  SeedCorpus: undefined;
+  CorpusConsent: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
+  DeleteAccount: undefined;
+  ExportData: undefined;
   SupportCare: undefined;
   VaultSettings: undefined;
   SharePreview: { token: string };
@@ -110,10 +118,21 @@ const JournalScreens = (): React.JSX.Element => (
   </>
 );
 
-const RootStack = (): React.JSX.Element => (
-  <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
-    <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+/** The Settings hub and everything reachable from it, grouped the way the
+ *  Journal routes are so ``RootStack`` stays readable as the hub grows. */
+const SettingsScreens = (): React.JSX.Element => (
+  <>
     <Stack.Screen name="Settings" component={SettingsHubScreen} options={{ title: 'Settings' }} />
+    <Stack.Screen
+      name="SeedCorpus"
+      component={SeedCorpusScreen}
+      options={{ title: 'Your corpus' }}
+    />
+    <Stack.Screen
+      name="CorpusConsent"
+      component={CorpusConsentScreen}
+      options={{ title: 'What reflections draw on' }}
+    />
     <Stack.Screen
       name="ApiKeySettings"
       component={ApiKeySettingsScreen}
@@ -125,10 +144,27 @@ const RootStack = (): React.JSX.Element => (
       options={{ title: 'Time zone' }}
     />
     <Stack.Screen
+      name="ExportData"
+      component={ExportDataScreen}
+      options={{ title: 'Export my data' }}
+    />
+    <Stack.Screen
+      name="DeleteAccount"
+      component={DeleteAccountScreen}
+      options={{ title: 'Delete account' }}
+    />
+    <Stack.Screen
       name="SupportCare"
       component={SupportCareScreen}
       options={{ title: 'Support & care' }}
     />
+  </>
+);
+
+const RootStack = (): React.JSX.Element => (
+  <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
+    <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+    {SettingsScreens()}
     <Stack.Screen
       name="VaultSettings"
       component={VaultSettingsScreen}

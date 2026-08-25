@@ -55,7 +55,10 @@ permissions:
 jobs:
   # Compute the window and count the failure signals BEFORE spending Claude
   # tokens. No signals in the window, or last week's playbook issue still
-  # open (un-drained) → stand down (mirrors the deslop/hopper gates).
+  # open (un-drained) → stand down (mirrors the deslop/hopper gates). A WIP
+  # state that could not be READ stands down as well, annotated so it is
+  # distinguishable from a week that genuinely had nothing to do:
+  # `scripts/ralph/playbook-wip-gate.sh` owns that distinction.
   window:
     name: Resolve window and count signals
     runs-on: ubuntu-latest
@@ -68,29 +71,73 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SINCE_OVERRIDE: ${{ github.event.inputs.since || '' }}
     steps:
+      - name: Check out the drain-gate script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job reads one script and calls `gh`; nothing here git-pushes,
+          # so no write-scoped token belongs in .git/config.
+          persist-credentials: false
+
       - name: Compute window start and signal counts
         id: compute
         run: |
           set -euo pipefail
 
-          # Drain gate: if a previous playbook issue is still open, Ralph has
-          # not implemented it yet — filing another would fork the playbook's
-          # state. Stand down and let the queue drain.
-          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-                   --label playbook --limit 5 --json number --jq 'length' \
-                 || echo 0)
-          if [ "$OPEN" -gt 0 ]; then
-            echo "::notice::A previous playbook issue is still open — standing down until Ralph drains it."
-            echo "Previous playbook issue still open — stood down." \
-              | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          # Record a stand-down and hand the downstream job its inputs.
+          stand_down() {
+            echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"
             {
+              echo "proceed=false"
               echo "since="
               echo "bug_count=0"
               echo "blocked_count=0"
             } >> "$GITHUB_OUTPUT"
             exit 0
+          }
+
+          # Drain gate: if a previous playbook issue is still open, Ralph has
+          # not implemented it yet — filing another would fork the playbook's
+          # state. Stand down and let the queue drain.
+          #
+          # FOUR outcomes, never folded together. This was `|| echo 0`, which
+          # read a `gh` failure as "no issues open" and filed a duplicate beside
+          # one that already existed — the exact condition the limit exists to
+          # prevent. "We could not tell" and "there are none" have opposite
+          # correct actions, so the gate reports them as different tokens and
+          # this step branches on all four.
+          gate_ec=0
+          WIP="$(scripts/ralph/playbook-wip-gate.sh --repo "$GITHUB_REPOSITORY")" || gate_ec=$?
+          if [ "$gate_ec" -ne 0 ]; then
+            echo "::error::playbook-wip-gate.sh exited $gate_ec — that is a usage or tooling fault, not a WIP verdict."
+            exit 1
           fi
+
+          case "$WIP" in
+            clear) ;;
+            wip-limit-hit)
+              echo "::notice::A previous playbook issue is still open — standing down until Ralph drains it."
+              stand_down "Previous playbook issue still open — stood down." ;;
+            transport-error)
+              # Green + annotated, like the live-model lane's unreachable
+              # provider: a blip says nothing, and a scheduled job that goes red
+              # on one is ignored. But a stand-down with no verdict must be
+              # distinguishable in the run list from one that hit the limit,
+              # because both otherwise render as a plain success.
+              echo "::warning::Could not read the open playbook-issue count — gh failed, so the WIP state is UNKNOWN. Standing down rather than assuming the limit is clear; repeated weeks here mean this workflow has gone blind."
+              stand_down "WIP state UNKNOWN (gh transport failure) — stood down without a verdict." ;;
+            auth-error)
+              # Loud, because this one does not heal by next Monday: left as a
+              # soft stand-down the workflow would skip forever while reporting
+              # success. Nothing is filed about it — filing needs the very `gh`
+              # credential that just failed.
+              echo "::error::gh rejected the credential (exit 4) — the playbook cannot read its own WIP state, and would otherwise skip every week while reporting success. Check the token's issues:read scope."
+              echo "gh authentication failed — the drain gate cannot run." \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1 ;;
+            *)
+              echo "::error::playbook-wip-gate.sh printed an unrecognised token: '$WIP'"
+              exit 1 ;;
+          esac
 
           if [ -n "$SINCE_OVERRIDE" ]; then
             SINCE="$SINCE_OVERRIDE"
@@ -189,7 +236,7 @@ jobs:
           fi
 
       - name: Curate playbook rules
-        uses: anthropics/claude-code-action@9db594c7a0e82298c121c18b7f08aa1579ce7341  # v1.0.185
+        uses: anthropics/claude-code-action@e2a4b761cd77a1138a5b41410eda9b28581f9bcd  # v1.0.196
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: true

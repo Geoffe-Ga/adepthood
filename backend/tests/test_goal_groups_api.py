@@ -7,8 +7,10 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, update
 
 from models.goal import Goal
+from models.user import User
 from routers.goal_groups import seed_goal_group_templates
 
 SEED_TEMPLATE_COUNT = 3
@@ -27,6 +29,19 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _promote(session: AsyncSession, username: str) -> None:
+    """Flip ``is_admin`` so the caller may publish a shared template.
+
+    Creating a shared template publishes content to every user, so it is an
+    operator act; see ``tests/test_goal_group_shared_template_authority.py``
+    for the rule and the ordinary-user refusal.
+    """
+    await session.execute(
+        update(User).where(col(User.email) == f"{username}@example.com").values(is_admin=True)
+    )
+    await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +142,14 @@ async def test_create_goal_group(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_shared_template(async_client: AsyncClient) -> None:
-    """Creating a shared template sets user_id to null."""
+async def test_create_shared_template(async_client: AsyncClient, db_session: AsyncSession) -> None:
+    """An operator creating a shared template gets an ownerless, world-readable row.
+
+    Publishing to every user is admin-gated; the ordinary-user refusal is pinned
+    in ``tests/test_goal_group_shared_template_authority.py``.
+    """
     headers = await _signup(async_client)
+    await _promote(db_session, "alice")
 
     resp = await async_client.post(
         "/goal-groups/",
@@ -207,13 +227,14 @@ async def test_get_other_users_group_returns_403(
 
 @pytest.mark.asyncio
 async def test_get_shared_template_accessible_by_any_user(
-    async_client: AsyncClient,
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Shared templates are accessible by any authenticated user."""
     alice_headers = await _signup(async_client, "alice")
     bob_headers = await _signup(async_client, "bob")
+    await _promote(db_session, "alice")
 
-    # Alice creates a shared template
+    # An operator publishes a shared template
     create_resp = await async_client.post(
         "/goal-groups/",
         json={"name": "Shared Yoga", "shared_template": True},

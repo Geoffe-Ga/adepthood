@@ -30,9 +30,9 @@ const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   ...overrides,
 });
 
-// Stage 1 is completed → backend-truth mirror derives currentStage = 2.
-// Keeping stage 2 unlocked+in-progress makes the "default selection" test
-// match what a user who just finished stage 1 would see.
+// Stage 1 is completed and the server reports stage 2 as this person's current
+// one (see the program-calendar mock below). Keeping stage 2 unlocked+in-progress
+// makes the "default selection" test match what such a user would see.
 const sampleStages: Stage[] = [
   makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 1 }),
   makeStage({
@@ -84,6 +84,16 @@ const sampleProgress: CourseProgress = {
 };
 
 const mockStagesList = (jest.fn() as any).mockResolvedValue(sampleStages);
+// GET /stages/program-calendar — the server's one answer to which stage this
+// person is in. Default matches ``sampleStages``: they have just finished stage 1.
+const defaultProgramCalendar = {
+  program_started_at: '2026-01-01T00:00:00Z',
+  calendar_stage: 2,
+  calendar_week: 4,
+  current_stage: 2,
+  cycle_number: 1,
+};
+const mockProgramCalendar = (jest.fn() as any).mockResolvedValue(defaultProgramCalendar);
 const mockStageContent = (jest.fn() as any).mockResolvedValue(sampleContent);
 const mockStageProgress = (jest.fn() as any).mockResolvedValue(sampleProgress);
 const mockMarkRead = (jest.fn() as any).mockResolvedValue({
@@ -128,6 +138,7 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
 jest.mock('../../../api', () => ({
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
+    programCalendar: (...args: unknown[]) => mockProgramCalendar(...args),
   },
   course: {
     stageContentAll: (...args: unknown[]) => mockStageContent(...args),
@@ -171,6 +182,8 @@ jest.mock('react-native-safe-area-context', () => {
 const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
+const { readToTheEnd } = require('./readerGeometry');
+
 // Drain the microtask queue across several ticks so a resolved fetch fully
 // propagates through the loading -> loaded state chain before we assert,
 // regardless of chain depth -- no wall-clock polling.
@@ -187,6 +200,7 @@ describe('CourseScreen', () => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
+    mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
     // Default: no intro for the stage — card hidden unless a test opts in.
@@ -242,12 +256,7 @@ describe('CourseScreen', () => {
     expect(flat.flex).toBe(1);
   });
 
-  it('selects completed_count + 1 as the default stage (backend-truth mirror)', async () => {
-    // BUG-FE-COURSE-001: stage 1 is complete, stage 2 is in progress →
-    // default selection is the first unfinished stage, not the highest
-    // unlocked one.  This mirrors backend `next_stage_for` so a client
-    // cannot skip ahead by exploiting drift between `is_unlocked` and
-    // `progress`.
+  it('defaults to the stage the server reports as current', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
@@ -255,6 +264,33 @@ describe('CourseScreen', () => {
       expect(mockStageProgress).toHaveBeenCalledWith(2);
       expect(getByTestId('stage-selector')).toBeTruthy();
     });
+  });
+
+  it('takes the server stage over the completion count when they disagree', async () => {
+    // Someone who put the app down for two months: the calendar has opened
+    // stage 4 and the server has recorded them entering it, while only stage 1
+    // is complete. Counting completions would answer 2 and drop them back into
+    // the stage they last finished.
+    mockStagesList.mockResolvedValue([
+      makeStage({ id: 1, stage_number: 1, is_unlocked: true, progress: 1 }),
+      makeStage({ id: 2, stage_number: 2, title: 'Stage 2', is_unlocked: true, progress: 0 }),
+      makeStage({ id: 3, stage_number: 3, title: 'Stage 3', is_unlocked: true, progress: 0 }),
+      makeStage({ id: 4, stage_number: 4, title: 'Stage 4', is_unlocked: true, progress: 0 }),
+    ]);
+    mockProgramCalendar.mockResolvedValue({
+      ...defaultProgramCalendar,
+      calendar_stage: 4,
+      calendar_week: 10,
+      current_stage: 4,
+    });
+
+    render(<CourseScreen />);
+
+    await waitFor(() => {
+      expect(mockStageContent).toHaveBeenCalledWith(4);
+      expect(mockStageProgress).toHaveBeenCalledWith(4);
+    });
+    expect(mockStageContent).not.toHaveBeenCalledWith(2);
   });
 
   it('displays stage metadata for selected stage', async () => {
@@ -351,7 +387,7 @@ describe('CourseScreen', () => {
 
   it('selects the stage from a NEW navigation to the already-mounted Course tab', async () => {
     // First mount carries no route param, so the screen derives the current
-    // stage (completed_count + 1 = 2) as the default selection.
+    // stage (the server's current stage, 2) as the default selection.
     const { getByTestId, rerender } = render(<CourseScreen />);
 
     await waitFor(() => {
@@ -411,6 +447,9 @@ describe('CourseScreen', () => {
       }),
     ];
     mockStagesList.mockResolvedValue(incompleteStages);
+    // Nothing is complete and the server puts this person on stage 1, so the
+    // stage-2 tap below is a genuine change of selection.
+    mockProgramCalendar.mockResolvedValue({ ...defaultProgramCalendar, current_stage: 1 });
 
     const stageOneContent: ContentItem[] = [
       {
@@ -582,7 +621,7 @@ describe('CourseScreen', () => {
     ];
     mockStageContent.mockResolvedValue(twoChapters);
 
-    const { getByText, getByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Chapter One')).toBeTruthy();
@@ -595,6 +634,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     await act(async () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
@@ -606,7 +647,7 @@ describe('CourseScreen', () => {
   });
 
   it('returns to the course list when Done is pressed on the last chapter', async () => {
-    const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, queryByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Welcome Essay')).toBeTruthy();
@@ -619,6 +660,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     await act(async () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
@@ -654,7 +697,7 @@ describe('CourseScreen', () => {
       },
     ]);
 
-    const { getByText, getByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Welcome Essay')).toBeTruthy();
@@ -668,6 +711,8 @@ describe('CourseScreen', () => {
     await waitFor(() => {
       expect(getByTestId('chapter-reader')).toBeTruthy();
     });
+    // The chapter controls are due only at the essay's end.
+    await readToTheEnd(findByTestId);
 
     // Press reflect button
     await act(async () => {
@@ -747,6 +792,7 @@ describe('single scroll surface', () => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
+    mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
     mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
@@ -823,6 +869,7 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
+    mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
     mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });

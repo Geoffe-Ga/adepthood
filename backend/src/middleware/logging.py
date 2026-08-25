@@ -46,8 +46,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     The line carries the request method, truncated path, response status,
     and elapsed milliseconds.  ``trace_id`` is injected automatically by
-    the log filter installed in :func:`observability.install_trace_id_logging`,
-    so every line is correlatable end-to-end without explicit threading.
+    the :class:`~observability.TraceIdLogFilter` that
+    :func:`observability.configure_logging` attaches to the app log
+    handler, so every line is correlatable end-to-end without explicit
+    threading.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -58,17 +60,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             elapsed_ms = (time.perf_counter() - start) * 1000
-            # Defensive catch.  Route-handler exceptions are caught by
-            # Starlette's ``ExceptionMiddleware`` (which sits *inside*
-            # this ``BaseHTTPMiddleware``) and converted to a 500 JSON
-            # envelope before they ever bubble out to ``call_next``.
-            # In that normal case we never hit this branch — the inner
-            # 500 response flows through the success path below and is
-            # logged at ERROR level by ``_level_for_status``.  This
-            # branch only fires if a *middleware layer below us* itself
-            # raises (e.g., SecurityHeadersMiddleware blowing up before
-            # ExceptionMiddleware can wrap it), which is a far rarer
-            # failure mode that still deserves a single access record.
+            # Defensive catch.  An ``HTTPException`` is converted by
+            # Starlette's ``ExceptionMiddleware`` and anything else by
+            # ``UnhandledExceptionMiddleware`` — both of which sit
+            # *inside* this layer — so in the normal case an error
+            # arrives here as a response and takes the success path
+            # below, logged at ERROR level by ``_level_for_status``.
+            # This branch only fires if a middleware layer between us
+            # and those two itself raises (e.g. SecurityHeaders or CORS
+            # blowing up), which is a far rarer failure mode that still
+            # deserves a single access record.
             logger.exception(
                 "request_failed",
                 extra={

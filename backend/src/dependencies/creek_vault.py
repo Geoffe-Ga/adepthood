@@ -1,38 +1,72 @@
-"""The gate that binds a configured Creek Vault to the one user it belongs to.
+"""Which Creek Vault, if any, this request's caller may reach.
 
-Adepthood reaches a vault with a single deployment-wide identity. There is no
-per-user credential to present and no tenant field anywhere in the ratified
-``/v1`` contract -- ingest and reflect both refuse unknown properties, and the
-wheel read is parameterless -- so everything adepthood replicates lands in one
-corpus, every reflection is grounded in that whole corpus, and the wheel is its
-whole-corpus aggregate. Per-user scoping therefore cannot be built from this
-side at all; it can only be *declined*, which is what this module does.
+Two questions look alike here and are not the same, and confusing them is what
+made this module's own docstring argue, at length, that the feature it now
+implements could not be built. They are worth separating before anything else:
 
-The binding is one environment variable naming one adepthood user
-(:data:`OWNER_ENV_VAR`). That user reaches the configured vault; every other
-user is served the local fallback, which is exactly the path a deployment with
-no vault has always run on -- their entries never enter the corpus, so no
-stranger's reflection can quote them, and nothing they are answered with is
-drawn from it. Nothing about their experience degrades beyond what an
-unconfigured deployment already offers: the local pipeline is the floor the
-whole seam is built on.
+* **Partitioning one shared vault by user.** Not buildable from this side, and
+  the reasoning is unchanged: there is no tenant field anywhere in the ratified
+  ``/v1`` contract -- ingest and reflect both refuse unknown properties, and the
+  wheel read is parameterless -- so adepthood has no way to label whose fragment
+  is whose inside one corpus, and Creek publishes no partitioning guarantee to
+  lean on instead (ADR 0004 Decision 7(a)). Nothing below attempts it.
+* **Per-user vault *instances*.** What this module does. Each user connects a
+  vault that is already theirs alone and supplies the credential that opens it,
+  so there is nothing to disambiguate: one vault, one owner, which is the
+  contract's own assumption. No tenant field is needed because no request ever
+  has to say which of several tenants is asking.
 
-Fail closed, and never raise. An unset or unreadable binding leaves the vault
-nobody's, since the alternative -- picking a user -- would pick the wrong one.
-And this runs as a per-request dependency, where a raise means the handler body
-never executes: a mis-typed variable would turn every journal save into a 500
-and cost the writer their entry. That is the loss the whole seam promises can
-never happen for a vault's sake, so this degrades for the same reason and in the
-same way :func:`~services.creek_vault_client.build_creek_vault_client` degrades
-for a stale protocol selector.
+An earlier version of this docstring stated the first and drew a conclusion
+about the second -- that per-user scoping "cannot be built from this side at
+all; it can only be *declined*". That was wrong, and it was the kind of wrong
+that propagates: it read as a settled finding, and the next reader had every
+reason to close the work rather than do it.
+
+So: resolution runs in two steps, most specific first.
+
+**The user's own connection.** A row in ``uservaultconfig`` naming a URL and
+holding an encrypted credential. If one exists, that is the vault this caller
+reaches, whatever the deployment's environment says -- a user who has connected
+their own vault must never be handed somebody else's corpus because an operator
+also set a deployment-wide default. The credential is decrypted on the way out
+of the column and handed straight to the adapter; it is not logged, not put in
+an exception, and not carried on any response body (see
+:mod:`schemas.vault_config`).
+
+**The deployment-wide default.** Unchanged, and kept for one release so an
+operator can migrate their users before the environment path is retired:
+:data:`OWNER_ENV_VAR` names the one adepthood user a configured
+``CREEK_VAULT_URL`` belongs to. That user reaches it; every other user who has
+connected nothing of their own gets the local fallback. This is the
+single-corpus binding ADR 0004 Decision 7(b) describes, and it is exactly as
+narrow as it always was -- one vault, one user -- which is precisely why the
+per-user path above exists.
+
+**The floor.** Everybody else gets :class:`LocalFallbackCreekVaultClient`, the
+same path a deployment with no vault has always run on. Their entries never
+enter anyone's corpus, no stranger's reflection can quote them, and nothing they
+are answered with is drawn from one. Nothing about their experience degrades
+beyond what an unconfigured deployment already offers: the local pipeline is the
+floor the whole seam is built on.
+
+Fail closed, and never raise. An unset or unreadable deployment binding leaves
+that vault nobody's, since the alternative -- picking a user -- would pick the
+wrong one. And this runs as a per-request dependency, where a raise means the
+handler body never executes: a mis-typed variable, or a stored URL that stopped
+being usable, would turn every journal save into a 500 and cost the writer their
+entry. That is the loss the whole seam promises can never happen for a vault's
+sake, so both degrade for the same reason and in the same way
+:func:`~services.creek_vault_client.build_creek_vault_client` degrades for a
+stale protocol selector.
 
 Kept apart from :mod:`dependencies.ownership` deliberately. That module audits
 denied cross-tenant *probes*: someone reached for a row that is not theirs and
 was refused with a 403 or an enumeration-safe 404. Nothing of the sort happens
-here. A non-owner asked for nothing they should not have, is refused nothing,
-and is answered in full -- what they lose is an optional capability they were
-never told about. Borrowing that vocabulary would file a routine capability
-degrade as an access-control incident and put a blameless user in an audit log.
+here. A user without a vault asked for nothing they should not have, is refused
+nothing, and is answered in full -- what they lack is an optional capability
+they were never told about. Borrowing that vocabulary would file a routine
+capability degrade as an access-control incident and put a blameless user in an
+audit log.
 """
 
 from __future__ import annotations
@@ -42,19 +76,30 @@ import os
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import get_session
 from domain.creek_vault import CreekVaultClient, resolve_vault_owner
 from routers.auth import get_current_user
-from services.creek_vault_client import LocalFallbackCreekVaultClient, build_creek_vault_client
+from services.creek_vault_client import (
+    LocalFallbackCreekVaultClient,
+    build_connected_vault_client,
+    build_creek_vault_client,
+)
 from services.creek_vault_telemetry import VaultTelemetryOutcome
+from services.user_vault_config import load_vault_config
 
 logger = logging.getLogger(__name__)
 
-# The variable naming the single adepthood user a configured vault belongs to,
-# and the one naming the vault itself. Read at request time rather than captured
-# at import, matching ``build_creek_vault_client``: a redeployed configuration
-# takes effect on the next request instead of the next restart, and a test can
-# set one without reloading a module.
+# The variable naming the single adepthood user the *deployment-wide* vault
+# belongs to, and the one naming that vault itself. Read at request time rather
+# than captured at import, matching ``build_creek_vault_client``: a redeployed
+# configuration takes effect on the next request instead of the next restart,
+# and a test can set one without reloading a module.
+#
+# Both are the pre-per-user path, kept for one release so an operator can move
+# their users onto their own connections before the binding is retired. A user
+# who has connected a vault of their own never reaches either of them.
 OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
 _VAULT_URL_ENV_VAR = "CREEK_VAULT_URL"
 
@@ -98,17 +143,21 @@ def _log_unowned_vault(raw_owner: str | None) -> None:
     logger.warning(event, extra={"env_var": OWNER_ENV_VAR, "binding": binding})
 
 
-def get_creek_vault_client(
-    current_user: Annotated[int, Depends(get_current_user)],
-) -> CreekVaultClient:
-    """Return the vault client this caller may hold: the real one only for its owner.
+def deployment_vault_client(current_user: int) -> CreekVaultClient:
+    """Return the deployment-wide vault, for a caller who connected none of their own.
 
-    The bound owner gets whatever
+    The pre-per-user path, unchanged in behaviour and kept for one release. The
+    bound owner gets whatever
     :func:`~services.creek_vault_client.build_creek_vault_client` makes of the
     deployment's configuration. Everyone else -- and everyone, when the binding
     is missing or unreadable -- gets :class:`LocalFallbackCreekVaultClient`, so
-    their writing never reaches the shared corpus and no answer of theirs is ever
-    drawn from it.
+    their writing never reaches that one shared corpus and no answer of theirs is
+    ever drawn from it.
+
+    Public rather than private because it is the whole of the environment path:
+    it can be exercised against an environment on its own, without a database
+    and without a request, which is how the binding's fail-closed rules are
+    pinned.
 
     The two silent paths are counted apart, by whether a vault exists at all. A
     deployment with none keeps counting
@@ -131,6 +180,28 @@ def get_creek_vault_client(
     if owner is None and vault_configured:
         _log_unowned_vault(raw_owner)
     return LocalFallbackCreekVaultClient(_degrade_outcome(vault_configured=vault_configured))
+
+
+async def get_creek_vault_client(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CreekVaultClient:
+    """Return the vault client this caller may hold: their own, or the deployment's, or none.
+
+    The caller's own connection is looked for first and wins outright. That
+    ordering is the security property, not a preference: an operator's
+    deployment-wide default and a user's own vault are two different corpora,
+    and resolving them the other way round would hand a user who deliberately
+    connected their own vault the shared one instead.
+
+    One lookup per request, on the session the handler is already using, so this
+    adds a single indexed read by ``user_id`` rather than a connection of its
+    own.
+    """
+    connection = await load_vault_config(session, current_user)
+    if connection is not None:
+        return build_connected_vault_client(connection.vault_url, connection.api_key)
+    return deployment_vault_client(current_user)
 
 
 def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:

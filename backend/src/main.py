@@ -33,13 +33,16 @@ from middleware import (
     ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
+    UnhandledExceptionMiddleware,
 )
-from observability import configure_logging, install_trace_id_logging
+from observability import configure_logging
 from rate_limit import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
+from routers.corpus import router as corpus_router
 from routers.course import router as course_router
+from routers.data_export import router as data_export_router
 from routers.depth_preferences import router as depth_preferences_router
 from routers.energy import router as energy_router
 from routers.goal_completions import router as goal_completion_router
@@ -64,10 +67,13 @@ from routers.transcription import router as transcription_router
 from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
+from routers.vault_config import router as vault_config_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
+from sentry import init_error_monitoring, shutdown_error_monitoring
+from services import journal_encryption
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -291,6 +297,56 @@ def validate_gumroad_config() -> None:
     raise RuntimeError(msg)
 
 
+# The one-liner an operator can paste to mint a key. A refusal that withholds
+# the remedy just moves the outage to whoever has to go read the source.
+JOURNAL_KEY_GENERATION_COMMAND = (
+    'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+)
+
+
+def validate_journal_encryption_config() -> None:
+    """Refuse a production boot that would store every journal in plaintext.
+
+    Journal encryption is switched on by key presence alone -- honest, and
+    exactly right on a laptop, where requiring a Fernet key to run the server or
+    the suite would be friction with no security benefit. On a server the same
+    default is the worst outcome this product has: entries save, the app looks
+    healthy, and the column an operator believed was encrypted is readable by
+    anyone who reaches the database. Nothing in the running system says so.
+
+    So production requires the key and non-production does not. The environment
+    gate is ``ENV``, the same explicit variable the rest of this module's
+    startup checks read, rather than anything inferred from an incidental
+    setting. Staging is deliberately left with development: it is a deploy for
+    material nobody has promised to protect, and taking one down over an unset
+    variable would only teach operators to set it to a throwaway key that then
+    rides to production.
+
+    The order of the two checks matters and is tested. ``is_enabled`` is
+    consulted first, so a configured-but-invalid key raises out of the
+    encryption service in every environment, exactly as it did before this
+    check existed. A typo in a key is not "encryption is off" and must never be
+    absorbed into an environment gate.
+
+    The failure names the variable and how to mint a value for it, and never
+    renders the configured value: this is the one variable in the deployment
+    whose contents decrypt every journal row in the database.
+    """
+    if journal_encryption.is_enabled():
+        return
+    if os.getenv("ENV", "development") != "production":
+        return
+    msg = (
+        f"{journal_encryption.KEYS_ENV_VAR} must be set in production. Without it "
+        "journal entries are written to the database as plaintext and this deploy "
+        "would silently store every user's writing in the clear. Generate a key "
+        f"with: {JOURNAL_KEY_GENERATION_COMMAND} -- the variable is plural because "
+        "keys are comma-separated for rotation (the first encrypts, every listed "
+        "key can still decrypt). backend/.env.example and DEPLOYMENT.md document it."
+    )
+    raise RuntimeError(msg)
+
+
 def validate_trusted_proxy_config() -> None:
     """Announce a production boot that trusts no reverse proxy.
 
@@ -426,15 +482,6 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
     )
 
 
-# BUG-APP-007: install the trace-id log filter at *import* time, not in the
-# lifespan startup hook.  Module imports (router registration, seed data
-# loading) run before lifespan fires, and a missing filter at that point
-# would leave their log records without a ``trace_id`` field — breaking
-# the formatter and causing a flood of ``KeyError`` messages on the very
-# first request a worker process serves.  The function is idempotent.
-install_trace_id_logging()
-
-
 async def _seed_startup_data(session: AsyncSession) -> None:
     """Run the idempotent seeders, with isolation and a stages prerequisite.
 
@@ -523,6 +570,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # dropped, and a production seeding failure looks identical to a
     # successful boot.
     configure_logging()
+    # Immediately after the logger, and before anything that can fail: an
+    # exception thrown by the rest of boot belongs in the operator inbox too.
+    # Returns False (having said so once) when no DSN is configured, which is a
+    # fully supported way to run -- the local logs below are unaffected either
+    # way, so degrading here loses the inbox, never the diagnosis.
+    init_error_monitoring()
     # Deliberate lazy imports: ``models`` registers every SQLModel table
     # with the metadata exactly once at startup (the unused name is the
     # point), and ``_get_secret_key`` would import-cycle at module load.
@@ -530,11 +583,15 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # (issue #272) instead of inline noqa comments.
     import models
     from routers.auth import _get_secret_key
-    from services import journal_encryption
 
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+
+    # ...and in production, refuse the boot outright: an unset key there is a
+    # deploy that stores every user's journal in plaintext, which the log line
+    # above states but nothing else in the running system ever would.
+    validate_journal_encryption_config()
 
     # BUG-AUTH-011: validate ``SECRET_KEY`` once at startup so a misconfigured
     # deployment fails the orchestrator's health probe immediately rather than
@@ -591,6 +648,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # vault was ever contacted, since the pool builds lazily.
     await close_creek_vault_http_pool()
 
+    # Switching off the SDK's default integrations also switched off its atexit
+    # flush, so the queue has to be drained here -- otherwise the report for the
+    # exception that prompted the restart is the one most likely to be dropped.
+    # Bounded wait: a slow vendor must not hold a rollover open.
+    shutdown_error_monitoring()
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -614,12 +677,22 @@ install_exception_handlers(app)
 #      -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
 #         -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
 #            -> CORSMiddleware  (preflight handling + ACAO / ACAC)
-#               -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
-#                  -> route handler
+#               -> UnhandledExceptionMiddleware  (500 envelope, below CORS)
+#                  -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#                     -> route handler
 #
 # Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
 # rate-limited responses inherit the security-header set; putting trace-id
 # outside CORS means even preflight responses echo ``X-Request-ID``.
+#
+# UnhandledExceptionMiddleware has to be *below* CORS and nowhere else.  A
+# handler registered against the base ``Exception`` is served by Starlette's
+# ``ServerErrorMiddleware``, which sits above every layer here, so its 500
+# never passes back through CORS and a browser reads it as a network failure
+# rather than a server error -- the app then tells the user they are offline
+# while this process is up and answering.  Sitting above SlowAPI costs
+# nothing (slowapi answers its own 429s rather than raising) and covers a
+# panic in the limiter too.
 #
 # Forwarded-proto has to be outermost of all: Starlette's ``Router`` builds the
 # trailing-slash 307's ``Location`` from ``scope["scheme"]``, so the scheme has
@@ -630,6 +703,7 @@ origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(UnhandledExceptionMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -670,10 +744,13 @@ app.include_router(goals_router)
 app.include_router(gumroad_router)
 app.include_router(stages_router)
 app.include_router(users_router)
+app.include_router(data_export_router)
 app.include_router(depth_preferences_router)
 app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
+app.include_router(vault_config_router)
+app.include_router(corpus_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can

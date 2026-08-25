@@ -13,8 +13,8 @@ Re-vendoring the bundle
    never a branch. A branch would let the "pinned" copy move underneath the
    checksums that are the only thing making it a pin.
 2. Verify every fetched file against Creek's own ``manifest.json``, which records
-   a sha256 for the 45 files it covers -- it covers neither itself nor the
-   hand-written ``README.md``.
+   a sha256 for every file it covers -- it covers neither itself nor the
+   hand-written ``README.md``, which is why the two counts here differ by two.
 3. Regenerate ``vendor.json`` with the drift script's ``snapshot`` subcommand and
    commit its output verbatim. ``tests/scripts/test_creek_contract_drift.py``
    asserts the committed sidecar is exactly what that command produces.
@@ -26,23 +26,18 @@ Re-vendoring the bundle
    ``CONTRACT_VERSION``, the pinned-version bullet in ADR 0004, and the contract
    document's version bullet together, in one reviewed change.
 
-The strict-xfail tripwire
--------------------------
+The capability list is no longer minor-independent
+--------------------------------------------------
 
-Two divergences separate today's client from Creek's ratified documents, and
-both live in the handshake. The client reads a top-level ``available`` where
-Creek nests ``vault.available``, and it maps advertised capability names through
-``CreekCapability``, whose ``creek.*`` values share no member with Creek's
-published names. Fixing either belongs to the client, not to this suite.
-
-Until they are fixed, the ratified outcome is asserted under
-``@pytest.mark.xfail(strict=True)``. Repo-wide ``xfail_strict`` means that
-assertion executes on every run and becomes a **hard failure the moment it starts
-passing** -- which is exactly when the client is fixed and the marker must be
-deleted. That is the intent: the tripwire reports the divergence closing in the
-same run that closes it. It is paired with plainly-asserted, today-green
-observations of what the client actually does, so the current behaviour is
-recorded rather than merely known.
+Through contract 0.7 every supported minor was answered the same four capability
+names, so "what a vault advertises" was a fact about the vault alone. Contract
+0.8.0 ends that: ``GET /v1/capabilities`` keys what it advertises on the
+caller's declared minor, ``upload`` is published only at or above ``0.8``, and
+``POST /v1/uploads`` refuses a caller below that threshold outright. The
+consequence for this suite is that ``examples/capabilities/success.json`` is the
+document a **0.8** caller receives, not a document every caller receives, and
+the counts below (five capabilities, thirty-five cells, four unreachable
+care-escalation sentinels) are the 0.8 shape rather than a permanent one.
 """
 
 from __future__ import annotations
@@ -64,20 +59,28 @@ from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
-    CreekVaultAuthError,
+    CreekCeilingUnrepresentableError,
     CreekVaultCareEscalationError,
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultUnavailableError,
+    VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
+    wire_ceiling_for,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
-from services.creek_vault_client import HandshakeDegradeReason, HttpCreekVaultClient
+from services.creek_vault_client import (
+    _CAPABILITY_BY_WIRE_NAME,
+    HandshakeDegradeReason,
+    HttpCreekVaultClient,
+)
 
 MANIFEST_NAME = "manifest.json"
 README_NAME = "README.md"
@@ -85,16 +88,16 @@ VENDOR_NAME = "vendor.json"
 RETRY_POLICY_NAME = "retry-policy.json"
 
 PINNED_REPO = "Geoffe-Ga/creek-vault"
-PINNED_COMMIT = "879d9611cb4c3b5599578f39772b906c8c170e02"  # pragma: allowlist secret
+PINNED_COMMIT = "349a56d6fd36ed18971c53f6d2c3d527b047074c"  # pragma: allowlist secret
 PINNED_PATH = "docs/contracts/adepthood-v1"
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
-CREEK_MANIFEST_ENTRIES = 45
-VENDORED_FILES = 47
-EXAMPLE_CELLS = 28
-CAPABILITY_COUNT = 4
+CREEK_MANIFEST_ENTRIES = 54
+VENDORED_FILES = 56
+EXAMPLE_CELLS = 35
+CAPABILITY_COUNT = 5
 STATE_COUNT = 7
-UNREACHABLE_CELLS = 3
+UNREACHABLE_CELLS = 4
 REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
 
 _VAULT_URL = "https://vault.example.test"
@@ -102,6 +105,7 @@ _API_KEY = "creek-vault-conformance-key"  # pragma: allowlist secret
 _CAPABILITIES_PATH = "/v1/capabilities"
 _WHEEL_PATH = "/v1/wheel"
 _REFLECTIONS_PATH = "/v1/reflections"
+_UPLOADS_PATH = "/v1/uploads"
 
 # The ceiling every reflections cell is driven at. Creek's own reflection
 # examples echo ``personal`` in both tier fields, so accepting less would reject
@@ -115,6 +119,14 @@ _PATTERN_MARGINALIA_KIND = "connection"
 
 _ENTRY_ID = 7
 _ENTRY_BODY = "a floor-level journal entry"
+
+# The one document every upload cell is driven with. The bytes are synthetic and
+# the id is adepthood's own generated shape rather than a filename, which is what
+# the seam actually sends: a filename is the user's words about their life and
+# does not belong in an id.
+_UPLOAD_EXTERNAL_ID = "adepthood-upload-conformance"
+_UPLOAD_FILENAME = "field-notes.pdf"
+_UPLOAD_CONTENT_B64 = "ZXhhbXBsZSBkb2N1bWVudCBieXRlcw=="
 _CREATED_AT = datetime(2026, 7, 31, 6, 12, tzinfo=UTC)
 
 # The vault-issued fragment id Creek's two ratified journal bodies answer with.
@@ -133,6 +145,21 @@ _CREDENTIAL_MARKERS = ('"api_key"', '"password"', '"token"', '"secret"', "Bearer
 # The tier that must never egress, and the three fields it could travel in.
 _FORBIDDEN_TIER = "intimate"
 _TIER_FIELDS = ("tier", "tier_ceiling", "routed_tier")
+
+# The two published request shapes that write into the vault, and the field both
+# must demand. Creek removed this field's ``open`` default from its write tools
+# at 0.7.0 -- a caller that omitted it had its content filed in the clear -- and
+# typed the upload's copy to the wire ceiling at 0.8.0, so omission is not
+# defaultable and ``intimate`` is not expressible. Adepthood satisfies both by
+# construction; the tests below pin that rather than rebuild it.
+_WRITE_REQUEST_SCHEMAS = (
+    "schemas/JournalUpsertRequest.schema.json",
+    "schemas/UploadRequest.schema.json",
+)
+_TIER_FIELD = "tier"
+_WIRE_TIER_CEILING_DEF = "WireTierCeiling"
+_WIRE_TIER_CEILING_REF = f"#/$defs/{_WIRE_TIER_CEILING_DEF}"
+_PUBLISHED_WIRE_CEILINGS = ("open", "personal")
 
 # The two keys a journal body would travel under if one had been published.
 _BODY_KEYS = ("content", "body")
@@ -159,20 +186,13 @@ _ERROR_STATES = frozenset(
     state for state, status in _STATUS_BY_STATE.items() if status != HTTPStatus.OK
 )
 
-# TRANSLATION THAT EXISTS ONLY BECAUSE OF TWO DIVERGENCES. Creek advertises its
-# capabilities by their published names; ``CreekCapability`` spells the same four
-# ideas as ``creek.*`` values, and the two sets share no member. This table, plus
-# the lifting of ``vault.available`` in :func:`_client_readable_capabilities`, is
-# the entire difference between Creek's ratified capability document and a
-# document today's client can complete a handshake against. Both must be deleted
-# the moment the client reads Creek's document natively: they are scaffolding
-# around a bug, not part of the contract.
-_CAPABILITY_BY_CREEK_NAME: Mapping[str, CreekCapability] = {
-    "capabilities": CreekCapability.HANDSHAKE,
-    "journal-upsert": CreekCapability.JOURNAL,
-    "reflections": CreekCapability.REFLECT,
-    "wheel": CreekCapability.WHEEL,
-}
+# The client's own wire-name translation, imported rather than restated. It used
+# to be duplicated here as scaffolding around two divergences -- the client read
+# a top-level ``available`` Creek does not publish, and mapped advertised names
+# through ``CreekCapability``, whose ``creek.*`` values share no member with
+# Creek's published names. Both are fixed, so the fixture is served verbatim and
+# this alias exists only so the guard below asserts against the SHIPPED table.
+_CAPABILITY_BY_CREEK_NAME = _CAPABILITY_BY_WIRE_NAME
 
 Handler = Callable[[httpx.Request], httpx.Response]
 ClientFactory = Callable[[Handler], HttpCreekVaultClient]
@@ -256,31 +276,6 @@ _CAPABILITY_ERROR_CELLS = tuple(
 )
 
 
-def _client_readable_capabilities() -> dict[str, object]:
-    """Derive a handshake document today's client can complete, from Creek's own.
-
-    Exactly two edits to ``examples/capabilities/success.json``, each undoing one
-    known divergence: ``vault.available`` is lifted to the top-level key the
-    client reads, and Creek's published capability names are translated through
-    :data:`_CAPABILITY_BY_CREEK_NAME`. Every other field is Creek's, unmodified.
-
-    This is scaffolding around a bug. When the client reads Creek's document
-    natively it must be deleted rather than generalised -- keeping it would let
-    the journal conformance cells go on passing against a document Creek does not
-    publish.
-    """
-    published = _read_json("examples/capabilities/success.json")
-    vault = published["vault"]
-    assert isinstance(vault, dict)
-    advertised = published["capabilities"]
-    assert isinstance(advertised, list)
-    return {
-        **published,
-        "available": vault["available"],
-        "capabilities": [_CAPABILITY_BY_CREEK_NAME[str(name)].value for name in advertised],
-    }
-
-
 @dataclass
 class _Recorder:
     """A route-aware ``MockTransport`` handler that records every request it sees.
@@ -297,17 +292,25 @@ class _Recorder:
     wheel_status: int = HTTPStatus.OK
     reflect_payload: object = None
     reflect_status: int = HTTPStatus.OK
+    upload_payload: object = None
+    upload_status: int = HTTPStatus.OK
     calls: list[str] = field(default_factory=list)
+    bodies: list[object] = field(default_factory=list)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Answer one request, recording the method and path it arrived on."""
         self.calls.append(f"{request.method} {request.url.path}")
         if request.url.path == _CAPABILITIES_PATH:
-            return httpx.Response(HTTPStatus.OK, json=_client_readable_capabilities())
+            return httpx.Response(
+                HTTPStatus.OK, json=_read_json("examples/capabilities/success.json")
+            )
         if request.url.path == _WHEEL_PATH:
             return httpx.Response(self.wheel_status, json=self.wheel_payload)
         if request.url.path == _REFLECTIONS_PATH:
             return httpx.Response(self.reflect_status, json=self.reflect_payload)
+        if request.url.path == _UPLOADS_PATH:
+            self.bodies.append(json.loads(request.content))
+            return httpx.Response(self.upload_status, json=self.upload_payload)
         return httpx.Response(self.journal_status, json=self.journal_payload)
 
 
@@ -330,6 +333,23 @@ def _ingest_request() -> VaultIngestRequest:
         tier_ceiling=VaultTierCeiling.PERSONAL,
         created_at=_CREATED_AT,
     )
+
+
+def _upload_request(tier: VaultTierCeiling = VaultTierCeiling.PERSONAL) -> VaultUploadRequest:
+    """Build the one upload request every document cell is driven with."""
+    return VaultUploadRequest(
+        external_id=_UPLOAD_EXTERNAL_ID,
+        filename=_UPLOAD_FILENAME,
+        content_base64=_UPLOAD_CONTENT_B64,
+        tier=tier,
+        tier_ceiling=tier,
+        created_at=_CREATED_AT,
+    )
+
+
+def _upload_example(state: str) -> dict[str, object]:
+    """Return one vendored upload example by its published state name."""
+    return _read_json(f"examples/upload/{state}.json")
 
 
 @pytest_asyncio.fixture
@@ -473,7 +493,7 @@ def test_the_two_manifests_agree_on_every_shared_digest() -> None:
 
 
 def test_the_two_manifests_jointly_cover_every_vendored_path_once() -> None:
-    """Creek's 45 plus the two files it cannot cover are exactly the 47 on disk."""
+    """Creek's entries plus the two files it cannot cover are exactly what is on disk."""
     creek = frozenset(_digests(MANIFEST_NAME))
     uncovered = frozenset({MANIFEST_NAME, README_NAME})
 
@@ -491,7 +511,7 @@ def test_contract_version_agrees_across_both_manifests_and_the_domain_pin() -> N
     """One version string in three places; any two of them disagreeing is the bug."""
     assert _read_json(VENDOR_NAME)["contract_version"] == CONTRACT_VERSION
     assert _read_json(MANIFEST_NAME)["contract_version"] == CONTRACT_VERSION
-    assert CONTRACT_VERSION == "0.2.0"
+    assert CONTRACT_VERSION == "0.8.0"
 
 
 def test_ontology_version_agrees_across_both_manifests() -> None:
@@ -505,7 +525,7 @@ def test_ontology_version_agrees_across_both_manifests() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
+def test_the_example_matrix_is_the_published_five_by_seven_grid() -> None:
     """Non-vacuity first: an emptied bundle fails here rather than passing silently."""
     assert len(_CELLS) == EXAMPLE_CELLS
     assert len(_CAPABILITIES) == CAPABILITY_COUNT
@@ -516,7 +536,7 @@ def test_the_example_matrix_is_the_published_four_by_seven_grid() -> None:
 
 
 def test_the_parametrised_case_list_covers_every_capability() -> None:
-    """The cases that drive the client must span all four capabilities, not one."""
+    """The cases that drive the client must span every published capability, not one."""
     assert _REACHABLE != ()
     assert frozenset(cell.capability for cell in _REACHABLE) == _CAPABILITIES
     assert frozenset(cell.state for cell in _REACHABLE) == _STATES
@@ -524,11 +544,12 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 
 def test_only_reflections_publishes_a_reachable_care_escalation() -> None:
-    """The care guard runs in one capability, so the other three cells are sentinels."""
+    """The care guard runs in one capability, so every other cell is a sentinel."""
     assert {cell.capability for cell in _UNREACHABLE} == {
         "capabilities",
         "journal-upsert",
         "wheel",
+        "upload",
     }
     assert {cell.state for cell in _UNREACHABLE} == {"care-escalation"}
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
@@ -540,7 +561,12 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The divergence-bridging table must name exactly Creek's four capabilities."""
+    """The client's wire-name table must name exactly Creek's published capabilities.
+
+    Not four of them, and not four plus whatever the client invented: the set is
+    read off the manifest, so a capability Creek publishes and the client cannot
+    name fails here rather than silently degrading every call that needs it.
+    """
     assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
     assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
 
@@ -564,14 +590,6 @@ def test_every_published_error_code_has_a_status_and_a_retry_disposition() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the client reads a top-level 'available' where Creek nests 'vault.available', "
-        "and maps advertised names through CreekCapability, whose creek.* values share "
-        "no member with Creek's published capabilities/journal-upsert/reflections/wheel"
-    ),
-)
 async def test_ratified_capability_documents_are_understood(
     vault_clients: ClientFactory,
 ) -> None:
@@ -600,30 +618,6 @@ async def test_ratified_capability_documents_are_understood(
 
     assert empty_result.available is False
     assert empty.last_degrade_reason == HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_observed_capability_success_degrades_to_vault_reported_unavailable(
-    vault_clients: ClientFactory,
-) -> None:
-    """The observed outcome is the divergence, not the contract.
-
-    Creek's ratified success document advertises an available vault and four
-    capabilities. Today's client reports the vault unavailable and supports
-    nothing, and the reason it records is the maximally misleading one: it never
-    reaches the capability list, because the top-level ``available`` key it looks
-    for is absent, so it concludes the vault reported itself unavailable.
-    """
-    client = vault_clients(
-        _static_handler(_read_json("examples/capabilities/success.json"), HTTPStatus.OK),
-    )
-
-    result = await client.handshake()
-
-    assert result.available is False
-    assert result.capabilities == frozenset()
-    assert client.last_degrade_reason == HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE
-    assert client.supports(CreekCapability.JOURNAL) is False
 
 
 @pytest.mark.asyncio
@@ -656,9 +650,18 @@ async def test_capability_error_states_degrade_as_unreachable(
 ) -> None:
     """Every non-200 capability document degrades the handshake rather than raising.
 
-    All four land on ``UNREACHABLE`` because the client raises for status before
-    reading the body, so Creek's typed error envelope is never consulted. That is
-    the observed behaviour; the envelope is what a fixed client would read.
+    All four still land on ``UNREACHABLE``, but no longer because the envelope
+    goes unread. The handshake now consults it, and asks it exactly one
+    question: is this a credential-rejected status carrying *no* code, and so a
+    key to rotate rather than a vault to go and look at? Every one of these four
+    fixtures carries a code -- the 403 refusal included -- so none of them is
+    that, and all four answer to the availability story.
+
+    What the envelope still does not do here is fan its codes out into the
+    reasons the handshake already has names for: ``unavailable`` into
+    ``VAULT_REPORTED_UNAVAILABLE``, ``incompatible_version`` into
+    ``INCOMPATIBLE_VERSION``. Both of those are reachable today only from a 200
+    body. That remaining collapse is what these cells record.
     """
     client = vault_clients(_static_handler(_read_json(cell.path), _STATUS_BY_STATE[cell.state]))
 
@@ -689,17 +692,20 @@ async def test_journal_upsert_empty_is_an_unchanged_write(vault_clients: ClientF
 
 
 @pytest.mark.asyncio
-async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
+async def test_journal_upsert_refusal_reports_a_refusal_not_a_rejected_credential(
     vault_clients: ClientFactory,
 ) -> None:
-    """Creek ratifies this cell as a privacy refusal; the write path reports a bad key.
+    """Creek ratifies this cell as a privacy refusal, and the write path now says so.
 
     ``examples/journal-upsert/refusal.json`` carries ``privacy_refused`` at 403.
-    The ingest path decides a credential-rejected status *before* it reads any
-    code, so the refusal is classified on status alone and surfaces as an auth
-    failure. An operator reading that would go and rotate a credential that was
-    never refused. The read path resolved this by consulting the code first; the
-    write path has not, and this cell records that it has not.
+    The ingest path used to decide a credential-rejected status *before* reading
+    any code, so the refusal was classified on status alone and surfaced as an
+    auth failure -- sending an operator to rotate a credential that was never
+    refused, while the actual remedy went unmentioned. This cell recorded that
+    misreport as known until the write path was aligned with the read paths,
+    which had consulted the code first all along.
+
+    Inverted rather than deleted so the reversal stays legible here.
     """
     recorder = _Recorder(
         journal_payload=_read_json("examples/journal-upsert/refusal.json"),
@@ -707,8 +713,10 @@ async def test_journal_upsert_refusal_is_misreported_as_a_rejected_credential(
     )
     client = await _handshaken(vault_clients, recorder)
 
-    with pytest.raises(CreekVaultAuthError):
+    with pytest.raises(CreekVaultContractError) as raised:
         await client.ingest(_ingest_request())
+
+    assert raised.value.code is VaultErrorCode.PRIVACY_REFUSED
 
 
 @pytest.mark.asyncio
@@ -739,6 +747,147 @@ async def test_journal_upsert_error_states_raise_their_classified_failure(
 
     with pytest.raises(expected):
         await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+async def test_upload_success_cell_is_a_created_write(vault_clients: ClientFactory) -> None:
+    """Creek's ratified upload body reads back as a durable, newly created fragment.
+
+    The fragment id is read out of the published example rather than restated, so
+    a fixture that moved underneath this suite fails here as well as at the
+    checksum.
+    """
+    published = _upload_example("success")
+    recorder = _Recorder(upload_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    result = await client.upload(_upload_request())
+
+    assert result == VaultUploadResult(
+        stored=True,
+        vault_ref=str(published["fragment_id"]),
+        action=VaultIngestAction.CREATED,
+        tags=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_upload_empty_cell_is_an_unchanged_resend(vault_clients: ClientFactory) -> None:
+    """Creek's empty state is a stored no-op re-send, which is what idempotence looks like.
+
+    Re-sending an unmodified document is the steady state of this path, not an
+    error and not a loss, and a client must be able to tell it apart from a write
+    without diffing the document itself.
+    """
+    published = _upload_example("empty")
+    recorder = _Recorder(upload_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    result = await client.upload(_upload_request())
+
+    assert result.stored is True
+    assert result.action is VaultIngestAction.UNCHANGED
+    assert result.vault_ref == str(published["fragment_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("refusal", CreekVaultContractError),
+        ("malformed-input", CreekVaultContractError),
+        ("incompatible-version", CreekVaultContractError),
+        ("unavailable-service", CreekVaultUnavailableError),
+    ],
+)
+async def test_upload_error_states_raise_their_classified_failure(
+    state: str,
+    expected: type[Exception],
+    vault_clients: ClientFactory,
+) -> None:
+    """Each ratified upload error is classified from the code Creek published on it.
+
+    The incompatible-version cell is the one 0.8.0 made routine rather than
+    theoretical: the capability list is keyed on the caller's declared minor, so a
+    vault can serve this route perfectly well and still refuse *this* caller. The
+    refusal cell is the other load-bearing one -- ``privacy_refused`` arrives at
+    403, and deciding on the status class first would report it as a rejected
+    credential and send an operator to rotate a key that was never refused.
+    """
+    recorder = _Recorder(
+        upload_payload=_upload_example(state), upload_status=_STATUS_BY_STATE[state]
+    )
+    client = await _handshaken(vault_clients, recorder)
+
+    with pytest.raises(expected):
+        await client.upload(_upload_request())
+
+
+@pytest.mark.asyncio
+async def test_upload_refuses_without_egress_when_unadvertised(
+    vault_clients: ClientFactory,
+) -> None:
+    """An upload the handshake never advertised is refused locally, whatever the wire says.
+
+    The permanent half of the refusal ``upload()`` used to answer with
+    unconditionally. Its shape is ratified now, but a vault that did not offer the
+    capability still gets no request -- and here that is a whole document rather
+    than one entry, with no local copy anywhere if it went astray.
+    """
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = vault_clients(recorder)
+
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.upload(_upload_request())
+
+    assert recorder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_upload_puts_the_published_request_on_the_wire(
+    vault_clients: ClientFactory,
+) -> None:
+    """The body adepthood sends is exactly the field set ``UploadRequest`` declares.
+
+    Read off the vendored schema rather than restated, and asserted as a whole
+    set: the shape forbids unknown properties, so an invented field is a refused
+    request, and a missing ``tier`` is a document filed at a depth nobody chose.
+    """
+    published = _read_json("schemas/UploadRequest.schema.json")["properties"]
+    assert isinstance(published, dict)
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = await _handshaken(vault_clients, recorder)
+
+    await client.upload(_upload_request())
+
+    assert recorder.calls[-1] == f"POST {_UPLOADS_PATH}"
+    sent = recorder.bodies[-1]
+    assert isinstance(sent, dict)
+    assert frozenset(sent) == frozenset(published)
+    assert sent[_TIER_FIELD] == VaultTierCeiling.PERSONAL.value
+    assert sent["external_id"] == _UPLOAD_EXTERNAL_ID
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_upload_is_refused_before_any_request_exists(
+    vault_clients: ClientFactory,
+) -> None:
+    """The tier with no wire spelling stops at adepthood's own door, carrying the document.
+
+    The published request types ``tier`` to the two ceilings a remote caller may
+    declare, and :func:`wire_ceiling_for` refuses rather than narrowing -- so the
+    document never becomes a request at all, and the no-egress assertion is what
+    proves it.
+    """
+    recorder = _Recorder(upload_payload=_upload_example("success"))
+    client = await _handshaken(vault_clients, recorder)
+    handshake_calls = list(recorder.calls)
+
+    with pytest.raises(CreekCeilingUnrepresentableError):
+        await client.upload(_upload_request(VaultTierCeiling.INTIMATE))
+
+    assert recorder.calls == handshake_calls
+    assert recorder.bodies == []
 
 
 @pytest.mark.asyncio
@@ -853,9 +1002,11 @@ async def test_reflections_error_states_raise_their_classified_failure(
 ) -> None:
     """Each ratified reflection error is classified from the code Creek published on it.
 
-    The refusal cell is the one that separates this path from the write path's:
-    ``privacy_refused`` arrives at 403, and reading the status first would report
-    it as a rejected credential.
+    The refusal cell is the load-bearing one: ``privacy_refused`` arrives at 403,
+    and reading the status first would report it as a rejected credential. It
+    used to be what separated this path from the write path's; the write path is
+    aligned on code-first now, so the cell no longer marks a divergence -- it
+    pins the rule both paths keep.
     """
     recorder = _Recorder(
         reflect_payload=_read_json(f"examples/reflections/{state}.json"),
@@ -1004,6 +1155,85 @@ def test_a_renamed_request_parameter_is_caught_by_the_checksum(tmp_path: Path) -
 def test_no_example_names_the_intimate_tier_in_any_tier_field(cell: _Cell) -> None:
     """Intimate content never egresses, so no published example may route at it."""
     assert _FORBIDDEN_TIER not in set(_tier_values(_read_json(cell.path)))
+
+
+@pytest.mark.parametrize("relative", _WRITE_REQUEST_SCHEMAS)
+def test_every_write_request_schema_demands_an_explicit_two_ceiling_tier(relative: str) -> None:
+    """Both published write shapes require ``tier`` and admit only the two wire ceilings.
+
+    Two properties, and the pairing is the point. *Required* means omission is
+    not defaultable, so a caller that says nothing about a document's depth is
+    refused rather than having it filed in the clear. *Two-member* means
+    ``intimate`` has no spelling at all, so the depth that must never egress
+    cannot be named even deliberately. Read off the bundle rather than restated,
+    because a schema that quietly regained a default would still satisfy a
+    hand-written copy of this rule.
+    """
+    schema = _read_json(relative)
+    required = schema["required"]
+    assert isinstance(required, list)
+    assert _TIER_FIELD in required
+
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties[_TIER_FIELD]["$ref"] == _WIRE_TIER_CEILING_REF
+
+    defs = schema["$defs"]
+    assert isinstance(defs, dict)
+    assert defs[_WIRE_TIER_CEILING_DEF]["enum"] == list(_PUBLISHED_WIRE_CEILINGS)
+
+
+def test_the_wire_ceiling_translation_admits_exactly_the_published_ceilings() -> None:
+    """Adepthood's one door onto the wire vocabulary matches the published enum.
+
+    The bundle says which ceilings a remote caller may name; this asserts the
+    translation agrees, and that the third ceiling raises instead of narrowing.
+    Narrowing would be the worst available outcome -- it would file content a
+    writer marked intimate under a depth they never chose, and every downstream
+    guard would see a well-formed request.
+    """
+    translated = {
+        wire_ceiling_for(ceiling).value
+        for ceiling in VaultTierCeiling
+        if ceiling.value in _PUBLISHED_WIRE_CEILINGS
+    }
+    assert translated == set(_PUBLISHED_WIRE_CEILINGS)
+
+    with pytest.raises(CreekCeilingUnrepresentableError):
+        wire_ceiling_for(VaultTierCeiling.INTIMATE)
+
+
+@pytest.mark.asyncio
+async def test_a_journal_upsert_puts_an_explicit_tier_on_the_wire(
+    vault_clients: ClientFactory,
+) -> None:
+    """The write the client actually sends carries the field the schema demands.
+
+    The schema test above proves the server refuses a tier-less write; this
+    proves adepthood never asks it to. Asserted on the body that left the
+    process, so a future refactor that reintroduced an omitted-means-open path
+    fails here rather than in Creek's logs.
+    """
+    sent: list[Mapping[str, object]] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        """Answer the ratified journal exchange, recording each non-handshake body."""
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(
+                HTTPStatus.OK, json=_read_json("examples/capabilities/success.json")
+            )
+        body = json.loads(request.content)
+        assert isinstance(body, dict)
+        sent.append(body)
+        return httpx.Response(
+            HTTPStatus.OK, json=_read_json("examples/journal-upsert/success.json")
+        )
+
+    client = vault_clients(_capture)
+    await client.handshake()
+    await client.ingest(_ingest_request())
+
+    assert [body[_TIER_FIELD] for body in sent] == [VaultTierCeiling.PERSONAL.value]
 
 
 def test_the_capability_document_publishes_the_two_ceiling_tier_model() -> None:

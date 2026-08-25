@@ -3,8 +3,10 @@ process.env.TZ = 'UTC';
 
 /** @type {import('jest').Config} */
 module.exports = {
-  // Use the react-native preset to avoid requiring Expo-specific tooling
-  preset: 'react-native',
+  // React Native >=0.85 removed the bundled 'react-native' preset; it now ships
+  // as its own package. Without this swap every suite fails to *start*, which
+  // reads as catastrophic breakage rather than a missing dependency.
+  preset: '@react-native/jest-preset',
   // BUG-FE-TEST-001: ``clearMocks: true`` zeroes mock call counts
   // between tests so a ``mockFetch.mockReturnValueOnce(...)`` queue from
   // one ``it()`` cannot leak into the next.  ``resetMocks: true`` is
@@ -21,7 +23,14 @@ module.exports = {
   // global.  Tracked for a follow-up that opts component test files
   // into ``@jest-environment jsdom`` per-file via the docblock pragma.
   testEnvironment: 'node',
-  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect', '<rootDir>/jest.setup.js'],
+  setupFilesAfterEnv: [
+    '@testing-library/jest-native/extend-expect',
+    '<rootDir>/jest.setup.js',
+    // Runs on every suite, not just the cross-boundary ones: its job is to
+    // catch a suite that reads backend source without the marker that makes it
+    // discoverable by scripts/frontend/cross-boundary-drift.sh.
+    '<rootDir>/jest.setup.crossBoundary.js',
+  ],
   roots: ['<rootDir>/src', '<rootDir>/__tests__'],
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {
@@ -31,9 +40,10 @@ module.exports = {
     '^expo-apple-authentication$': '<rootDir>/src/__mocks__/expo-apple-authentication.js',
     '^expo-auth-session/providers/google$': '<rootDir>/src/__mocks__/expo-auth-session-google.js',
     '^expo-web-browser$': '<rootDir>/src/__mocks__/expo-web-browser.js',
-    '^expo-av$': '<rootDir>/src/__mocks__/expo-av.js',
+    '^expo-document-picker$': '<rootDir>/src/__mocks__/expo-document-picker.js',
     '^expo-file-system$': '<rootDir>/src/__mocks__/expo-file-system.js',
     '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
+    '^expo-screen-orientation$': '<rootDir>/src/__mocks__/expo-screen-orientation.js',
     '^expo-image-manipulator$': '<rootDir>/src/__mocks__/expo-image-manipulator.js',
     '^expo-image-picker$': '<rootDir>/src/__mocks__/expo-image-picker.js',
     '^expo-keep-awake$': '<rootDir>/src/__mocks__/expo-keep-awake.js',
@@ -54,6 +64,10 @@ module.exports = {
       'sentry-expo|' +
       'native-base|' +
       'react-native-markdown-display|' +
+      // chart-kit 7 ships ESM where 6 shipped CJS, so the real module now needs
+      // transforming. Nothing caught this for a while because every StatsModal
+      // test mocked the library away; StatsModal.realCharts.test.tsx renders it.
+      'react-native-chart-kit|' +
       'uuid' +
       ')/)',
   ],

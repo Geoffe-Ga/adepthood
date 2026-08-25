@@ -11,12 +11,34 @@
 #                    authored it AND pushed its HEAD commit, and `claude-review`
 #                    reported SKIPPED → the orchestrator decides (see below)
 #   behind           LGTM (fresh) + CI green but the branch is not current → sync first
+#   unknown          GitHub has not finished computing mergeability (routine for a
+#                    few seconds after every push) → wait for a later wake; a sync
+#                    would merge nothing and push nothing
+#   draft            the PR is a draft: a deliberate human hold → the loop does not
+#                    act on it (same standing as `optout`)
+#   blocked          a required check or review is missing → a sync cannot supply
+#                    it; a human or the review gate must
+#   conflicted       the branch conflicts with its base → needs a real conflict
+#                    resolution (Gate 1), not a sync. OUTRANKS `awaiting-review`:
+#                    a conflicting PR has no merge ref, so no `pull_request`-event
+#                    run and no `claude-review` check ever exists, and the verdict
+#                    the lane would wait for can never arrive
 #   pending          CI still running → wait for a later wake
-#   ci-failed        CI has a failing/errored check → Step 2 (ci-debugging)
+#   ci-failed        CI has a failing/errored check, CORROBORATED by the rollup
+#                    naming it → Step 2 (ci-debugging)
+#   transport-error  `gh` could not be asked, or answered non-zero with no failing
+#                    check to corroborate it (no network, TLS, expired token,
+#                    rate limit, 5xx, a PR with no checks at all) → RETRY on a
+#                    later wake; do NOT dispatch a debugger. Distinct from
+#                    `unknown`, which is a real answer about mergeability
 #   changes-requested  a FRESH verdict (posted after the PR's HEAD commit) that
 #                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
 #                    (address-feedback): Gate 4 has spoken and wants changes
 #   awaiting-review  no verdict yet, or only a stale one (predates HEAD) → wait
+#   review-self-skipped  this PR edits the review workflow, so claude-code-action
+#                    self-skipped (anti-tamper) and no verdict will EVER arrive →
+#                    terminal: hand it to a human. The loop must stop re-checking
+#                    it; a fresh human-posted LGTM still reaches `ready`.
 #   optout           `do-not-auto-merge` on the PR, on the issue its body closes,
 #                    or on the bridge issue whose marker names this PR → the
 #                    loop does not act on this PR AT ALL (no merge, no sync, no
@@ -28,20 +50,31 @@
 # limit or an expired token silently defeat the one control a human retains over this
 # loop. So is an UNPROVABLE one on a bot PR about to be merged (see below).
 #
-# WHY THE MARKER FALLBACK EXISTS: the body-link route to the hold vanishes on exactly
+# WHY THE MARKER ROUTE EXISTS: the body-link route to the hold vanishes on exactly
 # the PRs the hold exists for. Dependabot regenerates its PR body from its own template
 # on every rebase and group recomputation, taking the bridge's appended `Closes #N` with
 # it — so `linked_issue` comes back empty and "no link" would be read as "no hold", a
 # fail-OPEN on the one PR class this loop merges with no review verdict. The bridge also
 # stamps `<!-- dependabot-pr:<N> -->` into the ISSUE body, which that rewrite cannot
-# reach because it lives on another object; that is the durable route. It is scanned only
-# on a Dependabot-authored PR whose body links nothing (human PRs routinely link nothing
-# and must classify normally, and an empty author reads as human), so in steady state the
-# extra `gh issue list` costs no lane anything. A scan that matches NOTHING is silence,
-# not proof: it is filtered by the `dependencies` label, which this repo has watched fail
-# to stick — hence `ensure-issue-label.sh`. Such a lane therefore classifies normally and
-# is refused only at the point of merge, so `behind` still prints `behind` (a sync is
-# always safe, and re-linking the body is often what makes the hold provable again).
+# reach because it lives on another object; that is the durable route.
+#
+# It is NOT a fallback: it runs on EVERY Dependabot-authored lane, whether or not the
+# body links something. It was a fallback until #2127, and that was the bug — a
+# regenerated body carrying an upstream changelog line (`Fixes #456`) still matches the
+# reference pattern, `linked_issue` takes the LAST match, and the hold lookup then
+# consulted an unrelated issue while the bridge went unread. A parked PR printed `ready`.
+# The two routes are independent answers to "is there a hold?" and either may be the one
+# that has it, so both are asked.
+#
+# The cost is one `gh issue list` per bot lane — paid on every bot lane now, not only
+# unlinked ones. Human lanes still pay nothing (they routinely link nothing and must
+# classify normally, and an empty author reads as human).
+#
+# A scan that matches NOTHING is silence, not proof: it is filtered by the `dependencies`
+# label, which this repo has watched fail to stick — hence `ensure-issue-label.sh`. A
+# lane where NEITHER route resolved anything therefore classifies normally and is refused
+# only at the point of merge, so `behind` still prints `behind` (a sync is always safe,
+# and re-linking the body is often what makes the hold provable again).
 #
 # An unresolvable hold on a bot PR that would otherwise merge is likewise one of those
 # exit-2 tooling errors: no token, and the next wake retries.
@@ -52,6 +85,23 @@
 # that could merge a PR with pending/failing checks. CI state here is keyed off
 # the `gh pr checks` EXIT CODE, which is authoritative: 0 = all passed, 8 = some
 # pending, anything else = failure. No text parsing of the checks table at all.
+#
+# WHY `transport-error` EXISTS: that exit code is authoritative ABOUT CHECKS, and
+# it was being read as authoritative about everything — including whether the call
+# reached GitHub at all. `gh` also exits non-zero with no network, a TLS failure,
+# an expired or rotated token, a secondary-rate-limit block, a 5xx, or a PR that
+# reports no checks whatsoever, and every one of those printed `ci-failed` — which
+# is not an idle label but a route to Step 2, so a dropped connection dispatched a
+# worker to debug a build that had never failed. Observed on a live lane:
+# `ci-failed` while the real state was nine SUCCESS and one IN_PROGRESS, and
+# earlier in the same session a bare x509 certificate error. So a non-zero exit is
+# now believed only when a second, independent query names a check that actually
+# reports a failing conclusion; everything else says "I could not tell", which is
+# a wait, not a debugging dispatch. The stderr `gh` wrote is kept and echoed
+# rather than discarded — it is the one thing that says WHICH failure happened,
+# and discarding it is why this went unnoticed. `unknown` was NOT reused: it means
+# "GitHub has not finished computing mergeability", a real answer about a
+# different question, and conflating the two would make both unreadable.
 #
 # WHY `ready-unreviewed` EXISTS: `claude-code-review.yml` cannot run while a PR
 # is untouched by anyone but Dependabot (GitHub withholds the OAuth secret from
@@ -112,8 +162,22 @@
 set -euo pipefail
 
 # `gh pr checks` exit code that means "checks still pending" (gh's documented
-# contract: 0 = pass, 8 = pending, other = failure).
+# contract: 0 = pass, 8 = pending, other = failure). "Failure" there covers the
+# command failing as well as a check failing, which is why the other end of that
+# mapping needs corroborating — see `failing_checks_confirmed`.
 readonly CHECKS_PENDING_EC=8
+
+# The rollup conclusions that constitute a genuinely red lane. FAILURE is the
+# common one; the rest are the terminal-but-not-passing states GitHub also
+# reports, and a lane sitting in any of them needs a debugger just as much.
+# NEUTRAL and SKIPPED are deliberately absent: neither is a failure.
+readonly FAILING_CONCLUSIONS_RE='FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE'
+
+# The `mergeStateStatus` values that mean the branch conflicts with its base.
+# Named once and consulted from both places that care, because the two used to
+# be spelled out separately and a drift between them is invisible.
+readonly CONFLICT_MERGE_STATE_DIRTY="DIRTY"
+readonly CONFLICT_MERGE_STATE_CONFLICTING="CONFLICTING"
 
 # The per-PR/per-issue human hold. `pick-next.sh` already excludes issues wearing
 # it from work entirely; this honours the same meaning on the PR side.
@@ -147,6 +211,9 @@ readonly DEPENDABOT_COMMIT_AUTHOR="dependabot[bot]"
 # that genuinely passed.
 readonly REVIEW_CHECK_NAME="claude-review"
 readonly SKIPPED_CONCLUSION="SKIPPED"
+# The one workflow whose own edits make it self-skip. Matched exactly, because
+# editing any *other* workflow does not suppress the review.
+readonly REVIEW_WORKFLOW_PATH=".github/workflows/claude-code-review.yml"
 readonly SUCCESS_CONCLUSION="SUCCESS"
 
 # How many non-review checks must have actually passed before "CI is green" may
@@ -275,16 +342,30 @@ hold_unproven=""
 issue_n="$(linked_issue "$pr_body")"
 if [[ -n "$issue_n" ]]; then
   exit_if_issue_holds "$issue_n" "linked by"
-elif [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
-  # Only Dependabot rewrites its own body, so only Dependabot can have lost the
-  # link. An empty author reads as human here, which is safe: the sole
-  # merge-without-review path re-verifies the author itself and fails closed on
-  # empty. A failed scan dies at once — unlike a matchless one, no later answer
-  # can arrive to settle it.
+fi
+
+# The marker route runs for EVERY bot lane, not only one whose body links
+# nothing. `linked_issue` takes the last reference match, so a regenerated body
+# carrying an upstream changelog line -- `Fixes #456` -- resolves an unrelated
+# issue in this repo. The hold lookup then consulted that issue, the bridge was
+# never reached, and a PR a human had parked printed `ready` and merged. Checking
+# the body link first and the marker as well costs one extra scan on bot lanes
+# and closes that: the two routes are independent answers to "is there a hold?",
+# and either may be the one that has it.
+#
+# Only Dependabot rewrites its own body, so only Dependabot can have lost the
+# link, and the scan stays off human lanes. An empty author reads as human here,
+# which is safe: the sole merge-without-review path re-verifies the author itself
+# and fails closed on empty. A failed scan dies at once -- unlike a matchless
+# one, no later answer can arrive to settle it.
+if [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
   bridge_issues="$(bridge_issues_for_pr)" ||
     die "could not scan for the bridge issue of PR #$pr; refusing to guess whether $OPTOUT_LABEL is set"
   if [[ -z "$bridge_issues" ]]; then
-    hold_unproven="yes"
+    # Unchanged from #2027, deliberately: unproven means NEITHER route resolved
+    # anything. A body that did resolve an issue is a resolution, so widening the
+    # scan must not start refusing lanes that classified fine before.
+    [[ -n "$issue_n" ]] || hold_unproven="yes"
   else
     while IFS= read -r bridge_n; do
       [[ -n "$bridge_n" ]] || continue
@@ -293,13 +374,51 @@ elif [[ "$pr_author" == "$DEPENDABOT_AUTHOR" ]]; then
   fi
 fi
 
+# True when a second, independent query names at least one check that actually
+# reports a failing conclusion. Returns non-zero when it cannot ask, when the
+# answer is malformed, and when nothing failed — so `ci-failed` is claimed only
+# on positive evidence and every other outcome falls through to
+# `transport-error`.
+#
+# Both shapes in the rollup are read: a CheckRun carries `conclusion`, a legacy
+# commit-status context carries `state` instead, and a filter reading only the
+# first would call a genuinely red PR a network blip. jq's `//` handles the
+# absent/null field for us. LAZY — only a lane whose `gh pr checks` already went
+# non-zero pays for it, so a green or pending lane costs exactly what it did.
+failing_checks_confirmed() {
+  local failures
+  failures="$(gh pr view "${gh_args[@]}" --json statusCheckRollup \
+    --jq "[.statusCheckRollup[]? | ((.conclusion // .state // \"\") | ascii_upcase)
+           | select(test(\"^($FAILING_CONCLUSIONS_RE)$\"))] | length" \
+    2>/dev/null)" || return 1
+  [[ "$failures" =~ ^[0-9]+$ ]] || return 1
+  [[ "$failures" -gt 0 ]]
+}
+
 # --- CI state from the exit code, not the text table -----------------------
+# Stderr is CAPTURED, not discarded. `gh` narrates a transport failure there and
+# says nothing when a check merely reports FAILURE, so throwing it away was what
+# made a dropped connection indistinguishable from a broken build — and the
+# message is the one thing that tells a human which happened.
 ci_ec=0
-gh pr checks "${gh_args[@]}" >/dev/null 2>&1 || ci_ec=$?
+ci_err="$(gh pr checks "${gh_args[@]}" 2>&1 >/dev/null)" || ci_ec=$?
 if [[ "$ci_ec" -eq "$CHECKS_PENDING_EC" ]]; then
   echo "pending"; exit 0
 elif [[ "$ci_ec" -ne 0 ]]; then
-  echo "ci-failed"; exit 0
+  # A non-zero that is not 8 means "something went wrong", which is NOT the same
+  # as "a check went red". `gh` also exits non-zero with no network, a TLS
+  # failure, an expired token, a secondary-rate-limit block, a 5xx, or a PR that
+  # reports no checks at all — and every one of those used to print `ci-failed`,
+  # dispatching a ci-debugging worker to read logs for a failure that never
+  # happened, on a PR that was often about to go green. So the verdict is only
+  # believed when a second query corroborates it by naming a failing check;
+  # otherwise the honest answer is "I could not tell", which is its own token.
+  if failing_checks_confirmed; then
+    echo "ci-failed"; exit 0
+  fi
+  [[ -z "$ci_err" ]] ||
+    printf 'pr-ready: gh pr checks exited %s: %s\n' "$ci_ec" "${ci_err%%$'\n'*}" >&2
+  echo "transport-error"; exit 0
 fi
 
 # --- CI is green: check mergeability + a FRESH LGTM verdict -----------------
@@ -326,8 +445,33 @@ verdict_line="$(gh pr view "${gh_args[@]}" \
 verdict_date="${verdict_line%%|*}"
 verdict_lgtm="${verdict_line#*|}"
 
+# True when the branch conflicts with its base. Read off the `mergeStateStatus`
+# already in hand, so it costs no extra round trip.
+is_conflicted() {
+  [[ "$merge_state" == "$CONFLICT_MERGE_STATE_DIRTY" ||
+     "$merge_state" == "$CONFLICT_MERGE_STATE_CONFLICTING" ]]
+}
+
+# A conflict makes the verdict UNREACHABLE, so it outranks every wait for one.
+# GitHub builds no merge ref for a conflicting PR, and `pull_request`-event
+# workflows run against that ref — so `claude-review` never appears in the rollup
+# at all (any green checks are `push`-event runs on the branch), and no amount of
+# re-kicking can produce a verdict. Waiting is therefore not merely slow, it can
+# never end. Emitting `conflicted` here instead sends the lane to the one action
+# that unblocks it. Observed on a live lane that reported `awaiting-review` while
+# the PR was in fact CONFLICTING; ralph-tick.md had to carry this as a manual
+# "check mergeStateStatus FIRST" instruction because the helper would not say it.
+#
+# Returns 0 when it does NOT fire, so a bare call is safe under `set -e` — a
+# function ending on a false test would abort the whole script instead.
+exit_if_conflicted() {
+  is_conflicted || return 0
+  echo "conflicted"; exit 0
+}
+
 # Without a HEAD commit time we cannot prove the verdict is fresh — fail closed.
 if [[ -z "$head_date" ]]; then
+  exit_if_conflicted
   echo "awaiting-review"; exit 0
 fi
 
@@ -376,6 +520,34 @@ review_gate_absent() {
   all_conclusions_skipped "$conclusions"
 }
 
+# True when this PR edits the review workflow itself, which is why no verdict
+# will ever arrive for it.
+#
+# claude-code-action self-skips as anti-tamper on any PR touching the workflow it
+# runs from, and the Post-review step handles that by warning and exiting 0. So
+# the `claude-review` check reports SUCCESS rather than SKIPPED: the
+# review-gate-absent path does not apply, no verdict comment exists, and the lane
+# printed `awaiting-review` forever while ralph-tick Step 1 sent it hunting a
+# merge conflict that was never there. Exiting 0 with a warning was right when a
+# human drove these PRs; it is wrong now that a loop reads the check as a gate.
+#
+# Detected here rather than by changing that workflow, deliberately: the
+# anti-tamper behaviour is worth keeping exactly as it is, the check must not go
+# red (that routes to ci-debugging, which cannot fix it either), and no verdict
+# may ever be fabricated. This only names the condition the orchestrator already
+# faced.
+#
+# Fails OPEN, unlike the freshness probe: an unreadable file list falls through
+# to the old `awaiting-review`. A false positive here parks a lane as needing a
+# human when nothing asked for that, which is worse than one more wait.
+review_edits_own_workflow() {
+  local files
+  files="$(gh pr view "${gh_args[@]}" --json files --jq '.files[].path' 2>/dev/null)" || return 1
+  [[ -n "$files" ]] || return 1
+  grep -Fxq "$REVIEW_WORKFLOW_PATH" <<<"$files"
+}
+
+
 # Fresh LGTM ⇔ latest verdict is LGTM AND its createdAt is strictly newer than
 # the HEAD commit. RFC3339 UTC timestamps are fixed-width, so a lexical string
 # compare is a correct chronological compare (portable — no date arithmetic).
@@ -393,6 +565,11 @@ if [[ "$verdict_lgtm" != "true" || -z "$verdict_date" ]] || ! [[ "$verdict_date"
   if [[ "$verdict_lgtm" == "false" && -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]]; then
     echo "changes-requested"; exit 0
   fi
+  # A verdict that already ARRIVED (above) still speaks; from here down every
+  # remaining branch is a wait for one that has not, and on a conflicting PR no
+  # such verdict can ever come.
+  exit_if_conflicted
+  review_edits_own_workflow && { echo "review-self-skipped"; exit 0; }
   review_gate_absent || { echo "awaiting-review"; exit 0; }
   ready_token="ready-unreviewed"
 fi
@@ -428,5 +605,28 @@ if [[ "$merge_state" == "CLEAN" ]] && branch_is_current; then
     die "PR #$pr is Dependabot's, its body links no issue, and no open $BRIDGE_ISSUE_LABEL issue carries $PR_MARKER, so $OPTOUT_LABEL can be neither found nor ruled out; re-run the Dependabot-to-Ralph bridge reconciler (gh workflow run dependabot-to-ralph-issue.yml) to re-link the PR body, then retry"
   echo "$ready_token"
 else
-  echo "behind"
+  # Not mergeable -- but `behind`'s remedy (fleet.sh sync) only helps one of the
+  # reasons why. These four each get their own token because a sync cannot
+  # supply a missing check, un-draft a PR a human parked, resolve a conflict, or
+  # hurry GitHub's mergeability computation. Collapsed together, every wake
+  # synced a no-op and dispatched a worker with nothing to do -- and against
+  # DRAFT the loop fought a human indefinitely.
+  # The conflict arm is `is_conflicted` rather than a second `DIRTY |
+  # CONFLICTING` pattern: the same two states are consulted before the
+  # awaiting-review wait as well, and two hand-maintained copies of that list is
+  # exactly the drift that would silently restore the wait-forever bug.
+  if is_conflicted; then
+    echo "conflicted"
+  else
+    case "$merge_state" in
+      UNKNOWN) echo "unknown" ;;
+      DRAFT) echo "draft" ;;
+      BLOCKED) echo "blocked" ;;
+      # CLEAN-but-stale, BEHIND, and anything not enumerated above. The fallback
+      # is deliberately `behind` rather than a new "unclassified" token: a sync is
+      # always safe, so an unrecognised state costs one wasted sync instead of
+      # wedging the lane on a token no caller knows how to route.
+      *) echo "behind" ;;
+    esac
+  fi
 fi

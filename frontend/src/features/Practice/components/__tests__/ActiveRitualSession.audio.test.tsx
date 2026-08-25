@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 import React from 'react';
 
 import type { UserPractice } from '@/api';
@@ -67,7 +67,7 @@ describe('ActiveRitualSession audio wiring', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(0);
-    (Audio.Sound.createAsync as jest.Mock).mockClear();
+    (createAudioPlayer as jest.Mock).mockClear();
   });
 
   afterEach(() => {
@@ -111,14 +111,14 @@ describe('ActiveRitualSession audio wiring', () => {
     ).toHaveLength(1);
   });
 
-  it('falls back to the expo-av-backed adapter when no audio prop is given', () => {
+  it('falls back to the expo-audio-backed adapter when no audio prop is given', () => {
     const { getByTestId } = renderSession();
 
     act(() => {
       fireEvent.press(getByTestId('ritual-start'));
     });
 
-    expect(Audio.Sound.createAsync).toHaveBeenCalled();
+    expect(createAudioPlayer).toHaveBeenCalled();
   });
 
   it('disposes the injected audio adapter exactly once on unmount', () => {

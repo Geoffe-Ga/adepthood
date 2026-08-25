@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Column, DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+from services.journal_encryption import EncryptedString
+
 if TYPE_CHECKING:
     from .user import User
 
@@ -14,6 +16,17 @@ class PromptResponse(SQLModel, table=True):
     The ``(user_id, week_number)`` unique constraint prevents duplicate
     responses at the database level, closing the TOCTOU race between the
     application-level SELECT and INSERT (BUG-JOURNAL-003).
+
+    ``response`` is encrypted at rest because it is not merely *like* journal
+    text — submitting a prompt response writes the identical sanitized string
+    into ``journalentry.message`` in the same transaction, so this row is a
+    byte-for-byte duplicate of a column that is ciphertext. Its plaintext cap is
+    ``schemas.prompt.PROMPT_RESPONSE_MAX_LENGTH``, applied by the router's
+    sanitizer — the column itself is ``Text``, because the ciphertext exceeds any
+    plaintext bound. ``question`` stays plaintext: it is the shared curriculum's
+    prompt, identical for every account and already committed to this repository,
+    so encrypting it would protect nothing while making the row harder to reason
+    about.
     """
 
     __table_args__ = (
@@ -22,8 +35,13 @@ class PromptResponse(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     week_number: int
+    # Which of the stage's prompts this row answers, 1-based. A stage carries
+    # three to five prompts, so the week alone no longer identifies one.
+    # ``None`` on rows written before prompts became individually addressable;
+    # those fall back to the prompt their week draws.
+    prompt_ordinal: int | None = Field(default=None)
     question: str = Field(max_length=1_000)
-    response: str = Field(max_length=10_000)
+    response: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

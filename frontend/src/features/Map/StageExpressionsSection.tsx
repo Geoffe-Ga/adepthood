@@ -4,8 +4,6 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { StageExpression, StageManifestation } from '../../api';
 import { editorialType, onShowcase, radius, showcase, spacing } from '../../design/tokens';
 
-export type { StageExpression, StageManifestation } from '../../api';
-
 // The two faces of a stage in each Wavelength phase read as facets of one wave,
 // never a ranking of the person: an integrated (medicinal) expression beside a
 // shadow (toxic) one. The headings are the only hand-authored copy; every name

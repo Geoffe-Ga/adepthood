@@ -45,6 +45,8 @@ from domain.creek_vault import (
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultTierCeiling,
+    VaultUploadRequest,
+    VaultUploadResult,
     VaultWheelAspect,
     VaultWheelBalance,
     resolve_vault_owner,
@@ -142,8 +144,16 @@ def configured_vault(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _client_for(user_id: int) -> CreekVaultClient:
-    """Resolve the vault client the request-time gate hands to ``user_id``."""
-    return vault_dependency.get_creek_vault_client(user_id)
+    """Resolve the deployment-wide vault client ``user_id`` is handed.
+
+    The environment half of the request-time gate, reached directly because that
+    is the whole of what this family is about: these tests are driven against a
+    bare environment with no database in sight, and the per-user half -- a
+    connection stored against an account, which outranks everything here -- has
+    its own suite in ``test_per_user_vault_config.py``. Every user in this module
+    has connected nothing, which is exactly the state that reaches this path.
+    """
+    return vault_dependency.deployment_vault_client(user_id)
 
 
 def _record_text(record: logging.LogRecord) -> str:
@@ -376,6 +386,10 @@ class _SharedCorpusVaultClient:
         """Add the body to the one shared corpus and answer with a stored ref."""
         self.ingested_bodies.append(request.body)
         return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingested_bodies)}")
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Unused on this path; raises if a test calls it by mistake."""
+        raise NotImplementedError(request)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: adepthood never calls classify, and a fake that answered would hide that."""

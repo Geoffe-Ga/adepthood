@@ -22,7 +22,7 @@ import re
 from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 from fastapi import HTTPException
@@ -248,7 +248,7 @@ class TestGetModelAllowlist:
 
     def test_default_anthropic_model_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("LLM_MODEL", raising=False)
-        assert _get_model("anthropic") == "claude-sonnet-4-20250514"
+        assert _get_model("anthropic") == "claude-sonnet-5"
 
     def test_env_override_to_allowed_model_is_accepted(
         self, monkeypatch: pytest.MonkeyPatch
@@ -499,7 +499,12 @@ class TestGenerateResponseExceptionContract:
     ) -> None:
         """A real SDK connection error still normalizes to LLMProviderError."""
         _configure_openai_env(monkeypatch)
-        request = httpx.Request("POST", "https://api.openai.com")
+        # ``httpx2`` -- not ``httpx`` -- on purpose: openai 3.x re-typed its
+        # client against httpx2 (a separate distribution, not an httpx upgrade),
+        # so ``APIConnectionError`` now declares ``request: httpx2.Request``.
+        # The two Request classes are unrelated, and the rest of this suite
+        # still speaks legacy httpx because Starlette and anthropic do.
+        request = httpx2.Request("POST", "https://api.openai.com")
         original = openai.APIConnectionError(request=request)
         broken_call = AsyncMock(side_effect=original)
         with (
@@ -811,7 +816,8 @@ class TestSupportsVision:
             ("openai", "gpt-4o-mini"),
             ("openai", "gpt-4o"),
             ("openai", "gpt-4-turbo"),
-            ("anthropic", "claude-sonnet-4-20250514"),
+            ("anthropic", "claude-sonnet-5"),
+            ("anthropic", "claude-opus-5"),
             ("anthropic", "claude-haiku-4-5-20251001"),
             ("anthropic", "claude-opus-4-7"),
             ("anthropic", "claude-sonnet-4-6"),
@@ -821,7 +827,7 @@ class TestSupportsVision:
         assert supports_vision(provider, model) is True
 
     def test_model_under_wrong_provider_returns_false(self) -> None:
-        assert supports_vision("openai", "claude-sonnet-4-20250514") is False
+        assert supports_vision("openai", "claude-sonnet-5") is False
         assert supports_vision("anthropic", "gpt-4o") is False
 
     def test_unknown_provider_returns_false(self) -> None:

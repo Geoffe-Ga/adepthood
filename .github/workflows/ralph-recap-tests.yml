@@ -45,3 +45,5 @@ jobs:
           bash scripts/ralph/test_watch_pr.sh
           bash scripts/ralph/test_exec_bits.sh
           bash scripts/ralph/test_ensure_issue_label.sh
+          bash scripts/ralph/test_issue_evidence.sh
+          bash scripts/ralph/test_bridge_issue_exists.sh

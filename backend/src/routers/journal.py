@@ -23,19 +23,30 @@ from dependencies.ownership import (
 from dependencies.timezone import current_user_timezone
 from domain.care import CarePayload, build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
-from domain.creek_vault import CreekVaultCareEscalationError, CreekVaultClient
+from domain.creek_vault import (
+    CreekVaultCareEscalationError,
+    CreekVaultClient,
+)
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
     MarginaliaAnchored,
+    MarginaliaOutcome,
     ResonanceLLM,
+    explain_no_notes,
     generate_essay,
     generate_marginalia,
 )
 from domain.safety import assess_distress
 from domain.stage_progress import get_user_progress, is_stage_unlocked
-from errors import bad_gateway, conflict, forbidden, not_found, unprocessable
+from errors import (
+    bad_gateway,
+    conflict,
+    forbidden,
+    not_found,
+    unprocessable,
+)
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -78,12 +89,14 @@ from services.botmason import LLMProviderError, resolve_chat_api_key
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
+from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
 from services.creek_vault_reflect import select_reflection_llm
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
     store_and_classify,
 )
+from services.higher_self_grounding import Grounding, gather_grounding
 from services.llm_usage import record_llm_usage
 from services.marginalia import (
     BotmasonResonanceLLM,
@@ -94,7 +107,12 @@ from services.marginalia import (
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
-from services.wallet import SpendResult, preflight_deduction, require_user_fresh
+from services.wallet import (
+    SpendResult,
+    preflight_deduction,
+    refund_one_message,
+    require_user_fresh,
+)
 
 
 def _sanitize_message(message: str) -> str:
@@ -190,10 +208,11 @@ def _resolve_backdated_timestamp(entry_date: date | None) -> datetime | None:
     )
 
 
-# PATCH fields whose change re-sends the entry to the Creek Vault. A body edit
-# ('message') or a privacy-tier change ('classification') alters what the vault
-# should hold; a title/status/chord-only PATCH must issue zero vault calls.
-_VAULT_REINGEST_FIELDS = frozenset({"message", "classification"})
+# PATCH fields whose change re-sends the entry to the Creek Vault and re-writes
+# its corpus fragment. A body edit ('message') or a privacy-tier change
+# ('classification') alters what both should hold; a title/status/chord-only
+# PATCH must issue zero vault calls and cost zero classifications.
+_REINGEST_FIELDS = frozenset({"message", "classification"})
 
 
 def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> bool:
@@ -236,9 +255,23 @@ async def _record_vault_outcome(
     send. Column reconciliation lives in :func:`_apply_vault_outcome`; only a
     real column change re-commits, so the common no-op paths stay free of a
     redundant write.
+
+    The commit below the id check is what keeps a pooled connection out of the
+    network round trip. Callers reach here having already committed the entry,
+    but each then calls ``session.refresh``, which opens a *fresh* transaction
+    -- and an open transaction is a checked-out connection. Left in place it
+    would be held for the whole vault request, so pool capacity would be
+    governed by the vault's latency rather than our own query time: the pool is
+    at SQLAlchemy's defaults (five plus ten overflow) and the vault's
+    whole-request deadline is thirty seconds, so fifteen concurrent writes
+    against a *slow* vault would starve every other database-backed endpoint. A
+    vault that is down is already safe; this is about one that answers slowly.
+    Ending the transaction here returns the connection immediately, and the
+    session transparently checks out a new one for the outcome write below.
     """
     if entry.id is None:
         return
+    await session.commit()
     outcome = await store_and_classify(
         vault_client,
         entry_id=entry.id,
@@ -251,6 +284,27 @@ async def _record_vault_outcome(
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
+
+
+async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
+    """Write the committed entry into its account's corpus, if it may be.
+
+    Best-effort and deliberately last. The entry is already committed by the
+    time this runs, so a classification that is slow, refused or unavailable
+    can cost latency but can never cost somebody their writing —
+    :func:`services.corpus_ingest.ingest_journal_entry` returns ``None`` for
+    every one of those outcomes rather than raising.
+
+    An account that has not consented never reaches a provider at all, which is
+    why the ordinary path here is one indexed read and no network call. The
+    commit is unconditional because that read opens a transaction either way,
+    and ending it here returns the pooled connection rather than holding it for
+    the remainder of the request.
+    """
+    if entry.id is None:
+        return
+    await ingest_journal_entry(session, entry)
+    await session.commit()
 
 
 async def _authorize_practice_links(
@@ -314,6 +368,7 @@ async def create_journal_entry(
         raise
     await session.refresh(entry)
     await _record_vault_outcome(session, entry, vault_client)
+    await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
 
@@ -536,14 +591,13 @@ async def update_journal_entry(
         raise
     await session.refresh(entry)
     # Re-ingest only when the body or privacy tier changed; a title/status/chord
-    # PATCH leaves the vault's copy untouched (and issues zero vault calls).
-    if payload.model_fields_set & _VAULT_REINGEST_FIELDS:
+    # PATCH leaves the vault's copy and the corpus fragment untouched (and
+    # issues zero vault calls and zero classifications).
+    if payload.model_fields_set & _REINGEST_FIELDS:
         await _record_vault_outcome(session, entry, vault_client)
+        await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
-
-
-_RESONANCE_PRIOR_LIMIT = 3
 
 
 async def _load_user_entry(
@@ -560,27 +614,26 @@ async def _load_user_entry(
     return result.scalars().first()
 
 
-async def _recent_prior_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
-    """The caller's most recent other entry bodies, for connection context.
+async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> Grounding:
+    """Gather the reflection's context and record which source answered.
 
-    Intimate entries (issue #895) are excluded: these bodies are embedded in the
-    resonance prompt and sent to the cloud LLM, so an intimate entry must never
-    reach the cloud even as *prior context* for a newer non-intimate entry's
-    pass. The classification is read off the persisted row (never client-supplied
-    at resonance time), mirroring the per-entry privacy floor in ``run_resonance``.
+    The record is ids and counts only. Naming the fragments is what makes a
+    given reflection attributable months later; printing their contents would
+    put the writing this whole path exists to protect into an operator's log
+    file, where none of the encryption or tier rules reach.
     """
-    result = await session.execute(
-        select(JournalEntry)
-        .where(
-            JournalEntry.user_id == user_id,
-            JournalEntry.id != exclude_id,
-            col(JournalEntry.deleted_at).is_(None),
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
-        )
-        .order_by(col(JournalEntry.id).desc())
-        .limit(_RESONANCE_PRIOR_LIMIT)
+    grounding = await gather_grounding(session, user_id=user_id, exclude_entry_id=entry_id)
+    logger.info(
+        "journal_resonance_grounded",
+        extra={
+            "user_id": user_id,
+            "entry_id": entry_id,
+            "grounding_source": grounding.source.value,
+            "grounding_count": len(grounding.bodies),
+            "fragment_ids": list(grounding.fragment_ids),
+        },
     )
-    return [row.message for row in result.scalars().all()]
+    return grounding
 
 
 def _persist_marginalia(
@@ -649,9 +702,37 @@ async def _detect_and_persist_suggestions(
     return rows
 
 
+def _log_resonance_outcome(
+    outcome: MarginaliaOutcome, *, user_id: int, entry_id: int, count: int
+) -> None:
+    """Record what the pass produced and, when nothing survived, that it did not.
+
+    ``count=0`` alone states an outcome and never a cause: a model that returned
+    nothing, a completion that would not parse, and a model whose every quote was
+    paraphrased past the verbatim anchor all looked identical, and to the writer
+    all three look like a button that does nothing. The tally rides on the
+    existing record so the cause is in the same line as the outcome, and a
+    distinct WARNING fires for the one shape worth alerting on -- the model
+    proposed notes and the writer received none of them.
+
+    Counts and ids only. Never a quote, a note, or any part of the body: the same
+    reason the grounding path logs ids and counts, since journal text is
+    encrypted at rest.
+    """
+    extra: dict[str, object] = {
+        "user_id": user_id,
+        "entry_id": entry_id,
+        "count": count,
+        **outcome.as_log_extra(),
+    }
+    logger.info("journal_resonance_generated", extra=extra)
+    if outcome.produced_nothing_usable:
+        logger.warning("journal_resonance_all_drafts_discarded", extra=extra)
+
+
 async def _generate_marginalia_or_502(
     message: str, llm: ResonanceLLM, prior: list[str], session: AsyncSession
-) -> list[MarginaliaAnchored]:
+) -> MarginaliaOutcome:
     """Run the literary pass; a provider error rolls back the charge and 502s.
 
     This is the only charged LLM call — a failure here must un-deduct the wallet
@@ -810,7 +891,7 @@ async def _resonance_pass_or_care(
     prior: list[str],
     session: AsyncSession,
     care: CareResponse | None,
-) -> list[MarginaliaAnchored] | None:
+) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
     A flagged entry swallows the 502 (the charge was already rolled back) and
@@ -879,10 +960,17 @@ class _ResonanceSurfaces:
     ``care`` is the acute-distress support surface; ``contraction`` is the warm,
     declinable naming of a thinned foundation. Both are ``None`` for an ordinary,
     healthy pass, and bundling them keeps the response builder's signature small.
+
+    ``no_notes_message`` is the sentence explaining a pass that produced no
+    margin notes; ``None`` whenever notes were kept. It rides here rather than
+    being re-derived in the builder because the same value decides whether the
+    charge is reversed, and those two must never disagree — a writer told the
+    pass was not charged while the charge stands is a worse bug than silence.
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
+    no_notes_message: str | None = None
 
 
 def _resonance_response(
@@ -904,7 +992,27 @@ def _resonance_response(
         monthly_reset_date=reset_date,
         care=surfaces.care,
         contraction=surfaces.contraction,
+        no_notes_message=surfaces.no_notes_message,
     )
+
+
+async def _settle_empty_pass(
+    session: AsyncSession, user_id: int, spent: SpendResult, outcome: MarginaliaOutcome
+) -> tuple[SpendResult, str | None]:
+    """Explain a pass that kept no notes, and hand its charge back.
+
+    The two halves are deliberately one call. A writer told "this pass wasn't
+    charged" while the charge stands is worse than the silence this replaced, so
+    the sentence and the reversal are decided from the same value rather than
+    from two independent reads of the outcome that could drift apart.
+
+    Returns the balances to report and the sentence to show, or the untouched
+    balances and ``None`` when the pass produced notes.
+    """
+    message = explain_no_notes(outcome)
+    if message is None:
+        return spent, None
+    return await refund_one_message(session, user_id, spent), message
 
 
 @dataclass(frozen=True)
@@ -949,6 +1057,15 @@ async def run_resonance(
     pass + persistence + the charge commit atomically; any provider error rolls
     the deduction back so a failed pass never charges (502 ``llm_provider_error``).
 
+    A pass that *succeeds* and still persists no notes is neither an error nor a
+    non-event: it is a writer who waited and received nothing. Those get the
+    server's own explanation in ``no_notes_message`` — never an empty 200 the
+    client has to interpret — and the deduction is reversed in the bucket it
+    came from, so silence costs the writer nothing. The reversal is a crediting
+    entry rather than a rollback on purpose: the provider call really happened,
+    and rolling back would erase the usage record of what it cost us along with
+    any completion suggestions the same pass legitimately found.
+
     The entry is first screened for an acute-distress signal with a pure, local
     check; on an elevated signal the response carries a ``care`` surface (human +
     professional support) that accompanies — never replaces — the reflection, and
@@ -963,6 +1080,12 @@ async def run_resonance(
     When a vault is connected and the entry is neither intimate nor
     distress-flagged, the reflection routes to that vault's own corpus; otherwise
     it is generated by the local cloud LLM exactly as before.
+
+    The context that accompanies the entry is chosen by
+    :func:`~services.higher_self_grounding.gather_grounding` — the account's own
+    ontologized corpus where it holds anything, the recency window where it does
+    not. It is gathered on every pass, vault or not: a vault that degrades hands
+    the prompt to the cloud fallback, which is the path this context is for.
 
     A vault may answer that request with its own care escalation, meaning its
     care guard read acute distress in writing adepthood's local screen did not
@@ -985,7 +1108,7 @@ async def run_resonance(
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
     spent = await preflight_deduction(session, current_user)
-    prior = await _recent_prior_bodies(session, current_user, entry_id)
+    grounding = await _grounding_for(session, current_user, entry_id)
     llm = BotmasonResonanceLLM(resolve_chat_api_key(clients.api_key))
     reflection_llm = await select_reflection_llm(
         clients.vault_client,
@@ -996,7 +1119,7 @@ async def run_resonance(
     )
     try:
         anchored = await _resonance_pass_or_care(
-            entry.message, reflection_llm, prior, session, care
+            entry.message, reflection_llm, list(grounding.bodies), session, care
         )
     except CreekVaultCareEscalationError:
         # The vault's care guard fired: answer with adepthood's own care surface
@@ -1005,7 +1128,8 @@ async def run_resonance(
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored)
+    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored.notes)
+    spent, no_notes_message = await _settle_empty_pass(session, current_user, spent, anchored)
     spent_user = await require_user_fresh(session, current_user)
     await record_llm_usage(
         session,
@@ -1015,12 +1139,11 @@ async def run_resonance(
     )
     await session.commit()
     await _refresh_persisted(session, rows, suggestions)
-    logger.info(
-        "journal_resonance_generated",
-        extra={"user_id": current_user, "entry_id": entry_id, "count": len(rows)},
-    )
+    _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
-    surfaces = _ResonanceSurfaces(care=care, contraction=contraction)
+    surfaces = _ResonanceSurfaces(
+        care=care, contraction=contraction, no_notes_message=no_notes_message
+    )
     return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
 
 
@@ -1364,6 +1487,12 @@ async def delete_journal_entry(
     entry_id = entry.id
     entry.deleted_at = datetime.now(UTC)
     session.add(entry)
+    if entry_id is not None:
+        # The corpus copy goes with the entry. A fragment that outlived a
+        # delete would keep the deleted writing in circulation as context for
+        # newer reflections -- soft-deletion hides an entry from every read
+        # path, and the corpus is a read path.
+        await withdraw_journal_entry(session, user_id=current_user, entry_id=entry_id)
     await session.commit()
     logger.info(
         "journal_entry_soft_deleted",

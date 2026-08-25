@@ -128,12 +128,15 @@ In the backend service's **Variables** tab, add:
 |----------|-------|-----------|
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
+| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
 | `PROD_DOMAIN` | `https://your-frontend-domain.com` | Yes |
 | `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2) |
 | `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break |
+| `GOOGLE_OAUTH_CLIENT_IDS` | *(comma-separated Google client IDs)* | Only for Google sign-in — unset means every Google token is rejected |
+| `APPLE_OAUTH_CLIENT_IDS` | *(the iOS bundle identifier)* | Only for Apple sign-in — unset means every Apple token is rejected |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -141,6 +144,14 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 Copy the output and paste it as the `SECRET_KEY` value. This is used to sign
 JWT tokens — keep it secret, keep it safe.
+
+**Generate a JOURNAL_ENCRYPTION_KEYS value:**
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+This encrypts journal entry text at rest. A production boot without it **fails**
+— see [Journal Encryption at Rest](#journal-encryption-at-rest) below for what
+that protects and how rotation works.
 
 **About PROD_DOMAIN:**
 This controls CORS (which origins can call your API). Set it to the URL where
@@ -220,11 +231,19 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_API_BASE_URL` | `https://your-backend.up.railway.app` | The backend service URL |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://adepthood.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
+| `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows no Sangha door |
 | `PORT` | `80` | nginx listens on 80 |
 
-> **Important:** `EXPO_PUBLIC_API_BASE_URL` is baked into the JavaScript
-> bundle at **build time** (not runtime). If you change the backend URL, you
-> must **redeploy** the frontend for it to take effect.
+> **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
+> bundle at **build time** (not runtime). If you change one, you must
+> **redeploy** the frontend for it to take effect.
+>
+> Each one must also be declared as an `ARG`/`ENV` pair in `frontend/Dockerfile`.
+> A Docker build sees none of Railway's service variables unless the Dockerfile
+> names them, so an undeclared variable produces a **green deploy with the
+> feature silently missing** and nothing in any log — the value simply never
+> reaches `expo export`.
 
 ### 4c. Deploy and verify
 
@@ -328,6 +347,246 @@ without generating its migration — CI will reject it.
 
 ---
 
+## Backups and Restore
+
+The database holds every user's journal. A journal-first product that loses a
+user's journal has destroyed the only thing it asked them to trust it with, so
+this section is written to be followed by someone who did not set the system up,
+on the worst day of the project.
+
+### Read this first: a backup without the keys is not a backup
+
+Journal text is stored as ciphertext (see
+[Journal Encryption at Rest](#journal-encryption-at-rest)). The keys that
+decrypt it are **not in the database and not in any database backup** — they
+live in the `JOURNAL_ENCRYPTION_KEYS` service variable, which is part of the
+Railway service configuration, not part of the Postgres volume.
+
+**A database backup restored without those keys is unrecoverable.** Not "hard to
+read", not "needs a specialist" — the ciphertext is the only copy of the user's
+writing and Fernet has no recovery path. A restore that reaches this state fails
+loudly rather than handing back garbage:
+
+```
+encrypted journal content found but JOURNAL_ENCRYPTION_KEYS is not configured
+```
+
+So key custody is part of backup custody, and it cuts both ways:
+
+- **Keys must survive whatever kills the database.** The Railway variable store
+  dies with the Railway account. There must be a second copy of every key ever
+  used — current *and* rotated-out — held somewhere the platform outage cannot
+  reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
+  establishing that escrow is not something a deploy can do for you, and it is
+  tracked in issue #2319 until it is.
+- **Keys must never be stored with the backup.** A dump and its keys in the same
+  bucket, archive, or download folder is one compromise away from being
+  plaintext, which defeats the encryption entirely. Different system, different
+  credentials.
+- **Keep retired keys.** Rows re-encrypt lazily, so a restored backup can carry
+  rows written under a key that production stopped using months ago. Discarding
+  a key discards every un-rewritten row that needed it.
+
+`SECRET_KEY` is in the same category, with a smaller blast radius: losing it
+invalidates every issued JWT (everyone is logged out) but destroys no data.
+
+### What is backed up, on what schedule, and where it lands
+
+Two independent legs, because each one fails in a way the other survives.
+
+| Leg | Mechanism | Schedule | Retention | Survives |
+| --- | --- | --- | --- | --- |
+| Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
+| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
+
+**Railway's own backups are not off-host in the sense that matters.** They are
+copy-on-write volume backups restorable only **into the same project and
+environment**, with no documented export path. That makes them excellent for the
+mistakes you make and useless for the platform going away — which is exactly why
+the second leg exists. Railway's own schedule choices are Daily (kept 6 days),
+Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
+
+`[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
+service → **Backups** → set schedule to Daily → confirm a backup appears within
+24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
+it until someone does.
+
+**Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
+in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
+from deciding to restore to the app serving reads again. Both are modest on
+purpose; a smaller RPO means continuous archiving (WAL shipping), which is not
+configured and should not be claimed.
+
+### Taking an off-host dump
+
+**Use the public connection string, not the injected one.** The `DATABASE_URL`
+Railway injects into the backend service points at `postgres.railway.internal`,
+which resolves only from inside the project's private network — a laptop cannot
+reach it, and neither can `railway run`. For an external dump, take
+`DATABASE_PUBLIC_URL` (the TCP-proxy address, `…proxy.rlwy.net:<port>`) from the
+Railway dashboard → PostgreSQL service → **Variables**. Paste it into the shell
+rather than committing it anywhere.
+
+`umask 077` first, so the dump is never world-readable — not even for the
+seconds before it is encrypted.
+
+```bash
+umask 077
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+
+# Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
+read -rs PGURL && export PGURL
+
+pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
+
+# Encrypt before it leaves the machine. Passphrase lives in the password
+# manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
+gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
+shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
+```
+
+Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
+custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
+and it lets you restore selectively.
+
+> This leg is **manual today**. It is written down honestly rather than
+> described as automated: a weekly calendar reminder is the current mechanism,
+> and automating it needs a credential store and a destination bucket that do
+> not yet exist.
+
+### Restoring, step by step
+
+The single most important rule: **restore into a fresh, empty database.** Never
+into one that already has tables. See the failure table below for what that
+costs.
+
+1. **Stop writes.** Take the backend service down from the Railway dashboard
+   (removing the active deployment is enough) before touching the data.
+   Restoring under live traffic produces a database that disagrees with itself.
+2. **Provision an empty target**, and name it once so every later step reaches
+   the same database. For a new Railway Postgres these come from its
+   `DATABASE_PUBLIC_URL`; locally they are your own cluster's.
+   ```bash
+   HOST=localhost; PORT=5432; USER="$(whoami)"; TARGET_DB=adepthood_restored
+
+   createdb -h "$HOST" -p "$PORT" -U "$USER" "$TARGET_DB"
+   ```
+3. **Decrypt the dump** (off-host leg only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
+4. **Restore.** `--exit-on-error` is not optional: without it `pg_restore`
+   reports success-ish while skipping objects it could not create.
+   ```bash
+   pg_restore -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
+     --no-owner --no-privileges --exit-on-error restore.dump
+   ```
+5. **Check the schema revision the dump carried.** The `alembic_version` table
+   travels inside the dump, so a restored database announces its own revision:
+   ```bash
+   psql -h "$HOST" -p "$PORT" -U "$USER" -d "$TARGET_DB" \
+     -c "SELECT version_num FROM alembic_version;"
+   ```
+   Compare it to the deployed code's head (`alembic heads` in `backend/`).
+6. **Reconcile the revision** — see "When the backup and the code disagree".
+7. **Supply the keys.** Set `JOURNAL_ENCRYPTION_KEYS` on the service that will
+   read this database, listing **every key that could have encrypted a row in
+   this dump**, newest first. The current production key alone is not enough if
+   the dump predates a rotation.
+8. **Verify before cutting over** (next section). A restore is not finished when
+   `pg_restore` exits; it is finished when a journal entry decrypts.
+9. **Point the app at it** and bring the backend service back up. Watch the boot
+   log for `journal_encryption_enabled=True` and `/health` for
+   `{"status": "healthy", "database": "connected"}`.
+
+### Verifying a restore
+
+Three questions SQL can answer, and a fourth it cannot. The fourth is the only
+one that actually proves the restore.
+
+```sql
+-- 1. Did the rows arrive?
+SELECT count(*) FROM "user";
+SELECT count(*) FROM journalentry;
+
+-- 2. Is the journal text still encrypted (not silently blanked or mangled)?
+--    Encrypted values carry the marker `enc::v1::`; anything else is a
+--    pre-encryption legacy row. Both the body and the title are encrypted, so
+--    check both — a restore can carry one and mangle the other.
+SELECT count(*) FILTER (WHERE message LIKE 'enc::v1::%') AS encrypted,
+       count(*) FILTER (WHERE message NOT LIKE 'enc::v1::%') AS plaintext,
+       count(*) FILTER (WHERE title LIKE 'enc::v1::%') AS encrypted_titles,
+       count(*) FILTER (WHERE title IS NOT NULL
+                          AND title NOT LIKE 'enc::v1::%') AS plaintext_titles
+FROM journalentry;
+
+-- 3. What revision does this database think it is at?
+SELECT version_num FROM alembic_version;
+```
+
+The fourth question — *did the writing survive?* — cannot be answered in SQL,
+because SQL only ever sees the ciphertext. **Read one entry back through the
+application with the keys configured**: the `EncryptedString` column type
+decrypts on read, so an entry
+that comes back as prose is proof that the dump, the restore, and the key list
+all agree. An entry that raises is proof they do not.
+
+### When the backup and the code disagree
+
+| Situation | What you see | What to do |
+| --- | --- | --- |
+| Backup **older** than the deployed code | `column "display_name" of relation "user" does not exist` (or any `UndefinedColumnError`) the moment the app writes | Run `alembic upgrade head` against the restored database *before* pointing the app at it. Forward migration of restored data is the supported path and was exercised in the drill below. |
+| Backup **newer** than the deployed code | `alembic_version` names a revision absent from `migrations/versions/` | Deploy the commit that contains that revision first. Do **not** `alembic downgrade` to make it fit — that discards columns, and the data in them. |
+| Restored into a **non-empty** database | `relation "…" already exists`, then `pg_restore: warning: errors ignored on restore: N`, exit code 1 | Do not try to salvage it. Drop the database, create an empty one, restore again. A partially-merged restore can look plausible and be wrong. |
+| Keys missing | `encrypted journal content found but JOURNAL_ENCRYPTION_KEYS is not configured` | Set the variable and restart. The data is fine; the reader is not. |
+| Keys wrong or incomplete | `journal ciphertext failed to decrypt (key rotated out?)` | A key that encrypted some rows is missing from the list. Add the retired key. There is no other fix. |
+
+### The proven restore (drill record)
+
+- **Date performed:** 2026-08-21
+- **Schema at drill time:** `c2d3e4f5a6b8`
+- **Performed against:** a scratch PostgreSQL 16.15 cluster on a developer
+  laptop — *not* production, and not Railway.
+
+What was run, and what was observed:
+
+1. `alembic upgrade head` against an empty Postgres 16 database — the whole
+   migration history applied cleanly, ending at `c2d3e4f5a6b8`.
+2. Seeded one user and one journal entry through the application's own models,
+   with `JOURNAL_ENCRYPTION_KEYS` set to a throwaway Fernet key. The entry
+   carried a tz-aware timestamp and a `vault_tags` JSON array containing
+   non-ASCII text (`✨ éñ`).
+3. Read the row with raw SQL, bypassing the ORM: `message` was
+   `enc::v1::gAAAAAB…` — genuinely ciphertext at rest, not a flag.
+4. `pg_dump -Fc` → a 143,900-byte custom-format dump.
+5. `createdb` + `pg_restore --no-owner --no-privileges --exit-on-error` into a
+   fresh database — **exit 0, no warnings**.
+6. In the restored database: the raw `message` ciphertext was **byte-identical**
+   to the source, `vault_tags` came back as a JSON array with its non-ASCII text
+   intact, the timestamp kept its UTC offset, and `alembic_version` read
+   `c2d3e4f5a6b8` — the revision travelled inside the dump.
+7. Read back through the ORM **with the key**: the plaintext matched the seeded
+   string exactly.
+8. Read back **with no key**: raised `encrypted journal content found but
+   JOURNAL_ENCRYPTION_KEYS is not configured`.
+9. Read back **with a different valid key**: raised `journal ciphertext failed
+   to decrypt (key rotated out?)`. Steps 8 and 9 are the empirical basis for the
+   warning at the top of this section.
+10. Older-backup drill: seeded a second database at revision `c7d8e9f0a1b3`,
+    dumped it, restored into a fresh database (exit 0), ran `alembic upgrade
+    head` (9 revisions applied), and confirmed the entry written under the old
+    schema still decrypted correctly at head.
+11. Non-empty-target drill: re-ran `pg_restore` into the already-restored
+    database. Exit 1, 249 errors ignored, 210 of them `already exists`. Row
+    counts happened to survive intact, which is precisely why this state is
+    dangerous — it looks fine and is not trustworthy.
+
+**What this drill did not prove.** It ran against a local cluster, so the
+Railway-side restore path (steps 1 and 2 of the procedure), the encrypted
+off-host copy, and the platform Backups tab are documented from Railway's
+reference and from the local drill's logic — not from a production rehearsal.
+The next drill should be run against a Railway staging database restored from a
+real platform backup, and this record updated with its date.
+
+---
+
 ## Wallet Audit Hardening (Post-Deploy)
 
 The `walletaudit` table is the forensic record for every wallet mutation
@@ -355,6 +614,67 @@ WHERE table_name = 'walletaudit' AND grantee = 'adepthood';
 Issue #272 tracks the decision to keep this as a deploy-time recipe rather
 than a migration.
 
+## Journal Encryption at Rest
+
+Journal text is encrypted in the database columns with Fernet keys read from
+`JOURNAL_ENCRYPTION_KEYS`. That is not the entry body alone: every column that
+holds a copy, a quote, or a paraphrase of an entry is encrypted with the same
+keys — the body and title on `journalentry`, the anchored passage on
+`promotedquote`, the passage plus the note and essay on `marginalia`, the
+passage plus its label on `completionsuggestion`, the weekly answer on
+`promptresponse` (mirrored into an entry byte-for-byte), and the ontologized
+copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
+the copy a stolen dump yields, so the set is pinned by a test rather than by this
+list. **Key presence is the switch**: with no key configured the columns are
+plaintext, which is the right default on a laptop and unacceptable on a server.
+So a boot with `ENV=production` and no key **fails**, naming the variable — the
+deploy never goes live rather than quietly storing every user's writing in the
+clear.
+
+Outside production an empty value is normal and silent: requiring a key to run a
+local server or the test suite would be friction with no security benefit.
+
+**Generate a key:**
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Paste the output as the value. Treat it exactly like `SECRET_KEY`: it is held
+only in the platform's variable store, never committed, never logged (the
+startup failure names the variable and never its contents), and never shared
+across environments — a staging key that reaches production means one leak
+compromises both.
+
+**Rotation.** The variable is plural because rotation is comma-separated:
+
+```
+JOURNAL_ENCRYPTION_KEYS=<new-key>,<previous-key>
+```
+
+The **first** key encrypts every new write; **every** listed key can decrypt. So
+a rotation is: generate a new key, prepend it, redeploy. The registry is cached
+per worker, so the change takes effect on restart — rotation is a deploy-time
+operation, not a runtime one.
+
+Rows re-encrypt lazily, on their next write. Nothing rewrites the corpus for
+you, so **keep the previous key listed** until you are willing to lose whatever
+has not been rewritten under the new one. Dropping a key that some row still
+needs does not degrade to plaintext and does not return the ciphertext as if it
+were the user's text — the read raises. There is no recovery from a discarded
+key: the ciphertext is the only copy.
+
+**A malformed key fails fast in every environment**, production or not. A typo
+is never re-read as "encryption is off".
+
+**Verify after deploy.** The boot log carries one line per worker:
+
+```
+journal_encryption_enabled=True
+```
+
+`False` in a production log means the deploy predates this check or `ENV` is not
+`production` — either way, journals are being written in the clear.
+
 ## Environment Variables Reference
 
 ### Backend
@@ -363,12 +683,15 @@ than a migration.
 |----------|----------|---------|-------------|
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS (e.g., `https://app.adepthood.com`) |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
-| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-4-20250514` (Anthropic) |
+| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve). |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
+| `GOOGLE_OAUTH_CLIENT_IDS` | For Google sign-in | *(empty)* | Comma-separated Google OAuth client IDs the backend will accept ID tokens for (web + iOS + Android). Empty means every Google token is rejected, which is why the buttons appear to do nothing. |
+| `APPLE_OAUTH_CLIENT_IDS` | For Apple sign-in | *(empty)* | Comma-separated audiences accepted on Apple identity tokens — for this app the iOS bundle identifier, since Apple sign-in is offered only on iOS. Empty means every Apple token is rejected. |
 | `IPV6_THROTTLE_PREFIX_LEN` | No | `64` | Bit length of the IPv6 prefix that throttle keys (the rate limiter and the invalid-license throttle) group on, so one subscriber's delegated address range can't mint one bucket per address. Audit rows always keep the full address regardless. Valid range `1`-`128`; anything else falls back to the default rather than being clamped. A smaller number covers a larger delegation: lower it to `56`/`48` if you see IPv6 abuse, raise it to `128` to restore per-address keying (which reopens the bypass). |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
@@ -378,6 +701,8 @@ than a migration.
 | `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
 | `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
 | `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
+| `SENTRY_DSN` | No (recommended in prod) | *(empty)* | Sentry DSN unhandled exceptions are reported to. Empty means no vendor: crashes are still caught, still answered with the sanitised 500 envelope, and still logged in full — only the operator inbox is lost. A value that will not parse degrades the same way with one boot warning; it never fails the deploy. See "Error monitoring" below for what a report does and does not contain. |
+| `SENTRY_RELEASE` | No | `RAILWAY_GIT_COMMIT_SHA`, else `unknown` | Version string every event is tagged with, so a regression can be pinned to a deploy. `ENV` is sent as the Sentry environment, which is what keeps a production alert distinguishable from a staging one. |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -395,6 +720,13 @@ than a migration.
 | `EXPO_PUBLIC_API_BASE_URL` | Yes | Full URL of the backend API (e.g., `https://api.adepthood.com`). Baked in at build time. |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | No | Gumroad product page opened by the Get Started CTA. Defaults to `https://adepthood.gumroad.com/l/aptitude`. |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | No | Gumroad help article linked from the signup form's "Where's my key?" link. Defaults to `https://help.gumroad.com/article/76-license-keys`. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
+| `EXPO_PUBLIC_SANGHA_INVITE_URL` | No | Permanent, never-expiring Discord invite for the Digital Sangha, opened from Settings in the platform browser. Must be `https`; anything else resolves to nothing. There is deliberately no default — unset means the app never mentions the Sangha, which is an absent invitation rather than a dead link inside a shipped binary. |
+| `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
+| `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |
 
 ---
 
@@ -581,6 +913,71 @@ Railway pings `GET /health` every 30 seconds. A healthy response:
 
 A 503 means the database is unreachable.
 
+### Verifying allowlisted models still resolve
+
+An LLM provider retires a date-pinned model on a published schedule, and after
+that date every request naming it comes back `404` — which the app surfaces as
+`502 llm_provider_error` on every resonance pass, reflection, and journal
+transcription. The test suite cannot see this coming: it mocks the provider, so
+the allowlist in `backend/src/services/botmason.py` is never compared with what
+the provider actually offers.
+
+The `live` lane closes that gap by reconciling the allowlist against the
+provider's own catalogue (`GET /v1/models`). It is opt-in, costs no tokens, and
+never runs in ordinary CI:
+
+```bash
+cd backend
+LIVE_MODEL_CHECK=1 ANTHROPIC_API_KEY=sk-ant-... \
+  python -m pytest tests/live -m live -q --no-cov
+```
+
+`.github/workflows/live-model-check.yml` runs it every Monday with the
+repository's `ANTHROPIC_API_KEY` secret, and **files an issue** when a model has
+been retired rather than leaving a red scheduled run for someone to notice.
+Three outcomes are kept distinct on purpose:
+
+| What happened | Job | Reported as |
+| --- | --- | --- |
+| An allowlisted id is gone from the catalogue | Red | Issue: *live model check found a retired Anthropic model* |
+| Provider unreachable (429/5xx/transport) | Green | `::warning::` + run-summary line — no verdict was reached, so none is claimed |
+| `ANTHROPIC_API_KEY` missing/expired, or the catalogue endpoint moved | Red | Issue: *live model check cannot reach a verdict* — the states in which this check would otherwise skip forever while reporting success |
+
+When an issue is filed, remove or replace the id in **both** `allowed_models`
+and `vision_models` (and `default_model` if it was the default), and update
+`backend/src/services/llm_pricing.py` — a priced-but-unallowlisted model fails
+its own guard.
+
+### Error monitoring
+
+Both sides report unhandled errors to **Sentry** when a DSN is configured
+(`SENTRY_DSN` on the backend, `EXPO_PUBLIC_SENTRY_DSN` on the frontend), and
+run normally with one startup line when it is not. Grep the boot log for
+`error_monitoring_enabled` / `error_monitoring_disabled` to see which state a
+deployment is in.
+
+Sentry is therefore a **third-party recipient of adepthood error reports**, and
+the privacy policy has to say so. What a report carries is deliberately narrow:
+
+- **Backend** — exception type, a credential-redacted and length-capped
+  message, the stack (file, function, line, source context), and the request
+  id / path / method. Every automatic capture channel is switched off:
+  no ASGI, logging, or HTTP instrumentation is installed at all, local
+  variables are not captured, request bodies are never captured, and the
+  breadcrumb buffer is sized to zero. A `before_send` scrubber then deletes
+  `request`, `extra`, `breadcrumbs` and frame `vars` wherever they appear.
+- **Frontend** — exception type, a credential-redacted and length-capped
+  message, the React component stack, and which error boundary caught it. The
+  payload is built field by field, so there is no channel for anything else;
+  there are no breadcrumbs anywhere in the design.
+- **Neither** — no journal, transcription or reflection content, no request
+  bodies, no credentials, and no user identity (not even an opaque id today).
+
+The one field neither side can close by configuration is an exception message,
+because it is authored at the throw site. Keep raised messages static and
+capability-named, the way `backend/src/dependencies/creek_vault.py` does; the
+length cap is a bound on that discipline slipping, not a substitute for it.
+
 ### Logs
 
 ```bash
@@ -633,6 +1030,7 @@ This runs:
 
 **Manual checklist:**
 - [ ] `SECRET_KEY` is a cryptographically random string (not `replace-me`)
+- [ ] `JOURNAL_ENCRYPTION_KEYS` holds a freshly generated Fernet key, unique to this environment
 - [ ] `ENV=production` on the backend
 - [ ] `PROD_DOMAIN` matches your frontend URL(s) exactly, with `https://`
 - [ ] `EXPO_PUBLIC_API_BASE_URL` on the frontend matches your backend URL

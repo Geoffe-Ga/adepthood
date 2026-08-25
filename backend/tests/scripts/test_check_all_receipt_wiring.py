@@ -49,6 +49,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.git_env import detached_git_env
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPTS_DIR = _REPO_ROOT / "scripts" / "backend"
 _CHECK_ALL_SCRIPT = _SCRIPTS_DIR / "check-all.sh"
@@ -282,7 +284,7 @@ def _git(root: Path, *args: str) -> None:
         root: Working directory for the command.
         *args: Arguments following ``git``.
     """
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}
+    env = detached_git_env(GIT_CONFIG_GLOBAL=os.devnull)
     result = subprocess.run(
         [_git_executable(), *_GIT_IDENTITY_ARGS, *args],
         cwd=root,
@@ -450,7 +452,7 @@ def _stage_gate(
     _git(root, "commit", "-q", "--no-verify", "-m", _INITIAL_COMMIT_MESSAGE)
 
     _install_tool_shims(parent / _SHIM_DIR_NAME)
-    env = dict(os.environ)
+    env = detached_git_env()
     env[_PATH_ENV] = f"{parent / _SHIM_DIR_NAME}{os.pathsep}{env[_PATH_ENV]}"
     env[_VIRTUALENV_ENV] = _BASELINE_VIRTUALENV
     env[_FAKE_PIP_FREEZE_ENV] = _BASELINE_PIP_FREEZE

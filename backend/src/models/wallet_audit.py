@@ -66,6 +66,17 @@ REASON_GUMROAD_PURCHASE = "gumroad_purchase"
 # The claw-back is deliberately unclamped, so this row can carry the balance
 # below zero — spending the credits first must not make the refund cheaper.
 REASON_GUMROAD_REFUND = "gumroad_refund"
+# ``refund_no_notes`` — the reversal of a resonance spend whose pass reached
+# the writer with no margin notes at all.  The pass ran and cost us provider
+# tokens, but the writer received nothing they could read, and charging a
+# person for silence is the least defensible outcome available; the reversal
+# is written into whichever bucket the spend took, so ``SUM(delta)`` over the
+# pair is zero and a paid credit is never quietly downgraded into a free
+# monthly slot.  System-initiated with ``actor_user_id == user_id``: nobody
+# granted anything, the pass simply did not deliver.  Distinct from
+# ``gumroad_refund`` so product-quality reversals can be counted apart from
+# payment ones — a rising count here is a reflection-quality signal.
+REASON_REFUND_NO_NOTES = "refund_no_notes"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

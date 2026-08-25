@@ -9,6 +9,15 @@ import pytest
 from httpx import AsyncClient
 
 from domain import weekly_prompts
+from domain.journal_prompt_parser import JournalPrompt
+
+# Beige is the floor of the curriculum with three prompts. Blue is a
+# four-prompt stage whose cadences are not all the same, which is what makes
+# it the stage worth asserting cadence against; it opens in week 10.
+_BEIGE_PROMPT_COUNT = 3
+_BLUE_PROMPT_COUNT = 4
+_BLUE_STAGE_NUMBER = 4
+_BLUE_FIRST_WEEK = 10
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -636,15 +645,15 @@ async def test_history_total_aware_has_more_false_at_boundary(
 
 
 @pytest.mark.asyncio
-async def test_history_question_uses_live_dict(
+async def test_history_question_uses_live_curriculum(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The persisted ``question`` snapshot is overridden by the live dict.
+    """The persisted ``question`` snapshot is overridden by the live content.
 
-    Submit a response, then patch ``WEEKLY_PROMPTS`` via ``monkeypatch.setitem``
-    -- the fixture restores the dict on test exit so the mutation cannot
-    leak into a parallel run.
+    Submit a response, then swap the parsed prompt list the week resolves
+    through -- history must re-read it rather than echo the snapshot it stored
+    at submit time, so a content sync reaches old rows too.
     """
     headers = await _signup(async_client)
     await async_client.post(
@@ -653,8 +662,258 @@ async def test_history_question_uses_live_dict(
         headers=headers,
     )
 
-    monkeypatch.setitem(weekly_prompts.WEEKLY_PROMPTS, 1, "REVISED prompt for week 1.")
+    revised = (JournalPrompt(ordinal=1, title="REVISED prompt for week 1.", body=""),)
+    monkeypatch.setattr(weekly_prompts, "prompts_for_color", lambda _colour: revised)
     resp = await async_client.get("/prompts/history", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert body["items"][0]["question"] == "REVISED prompt for week 1."
+
+
+# ── GET /prompts/stage/{stage_number} ───────────────────────────────────
+
+
+async def _advance_to_week(client: AsyncClient, headers: dict[str, str], week: int) -> None:
+    """Answer weeks 1..``week - 1`` so the user's current week becomes ``week``."""
+    for earlier in range(1, week):
+        resp = await client.post(
+            f"/prompts/{earlier}/respond",
+            json={"response": f"Week {earlier} reflection text."},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_stage_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/prompts/stage/1")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_stage_prompts_returns_every_prompt_beige_carries(
+    async_client: AsyncClient,
+) -> None:
+    """Beige ships three prompts, and all three are addressable from week 1."""
+    headers = await _signup(async_client, "stage_beige")
+    resp = await async_client.get("/prompts/stage/1", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["stage"] == 1
+    assert body["stage_name"] == "Beige"
+    assert [p["ordinal"] for p in body["prompts"]] == [1, 2, _BEIGE_PROMPT_COUNT]
+    assert all(p["title"].strip() for p in body["prompts"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_stage_prompts_returns_four_prompts_each_with_its_cadence(
+    async_client: AsyncClient,
+) -> None:
+    """Blue is a four-prompt stage, and its prompts do not share one rhythm.
+
+    A single question per week cannot say that Blue's fourth prompt is written
+    half as often as its first; four prompts each carrying their own cadence
+    can, which is the whole point of the stage-scoped read.
+    """
+    headers = await _signup(async_client, "stage_blue")
+    await _advance_to_week(async_client, headers, _BLUE_FIRST_WEEK)
+
+    resp = await async_client.get(f"/prompts/stage/{_BLUE_STAGE_NUMBER}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["stage_name"] == "Blue"
+    assert len(body["prompts"]) == _BLUE_PROMPT_COUNT
+    cadences = [p["cadence"] for p in body["prompts"]]
+    assert all(cadences)
+    assert len(set(cadences)) > 1
+
+
+@pytest.mark.asyncio
+async def test_stage_prompts_of_a_locked_stage_is_forbidden(async_client: AsyncClient) -> None:
+    """Exposing four prompts per stage must not leak the stages still locked."""
+    headers = await _signup(async_client, "stage_locked")
+    resp = await async_client.get("/prompts/stage/10", headers=headers)
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "week_locked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_number", [0, 11])
+async def test_stage_prompts_out_of_range_returns_404(
+    async_client: AsyncClient, stage_number: int
+) -> None:
+    """There are ten positions; an eleventh is an ontology change, not a lookup.
+
+    The detail is asserted, not just the status: an unrouted path 404s too, so
+    without it this would pass against an endpoint that does not exist.
+    """
+    headers = await _signup(async_client, f"stage_range_{stage_number}")
+    resp = await async_client.get(f"/prompts/stage/{stage_number}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "stage_not_found"
+
+
+# ── Addressing a specific prompt on POST ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_submit_with_prompt_ordinal_records_that_prompt(
+    async_client: AsyncClient,
+) -> None:
+    """A week's response identifies which of its stage's prompts it answers."""
+    headers = await _signup(async_client, "ordinal_pick")
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Answering the third one.", "prompt_ordinal": _BEIGE_PROMPT_COUNT},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.CREATED
+    body = resp.json()
+    assert body["prompt_ordinal"] == _BEIGE_PROMPT_COUNT
+    assert body["question"] == weekly_prompts.get_prompt_for_week(1, ordinal=_BEIGE_PROMPT_COUNT)
+
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    entry = journal_resp.json()["items"][0]
+    assert entry["title"] == f"Beige week 1 Prompt #{_BEIGE_PROMPT_COUNT}"
+
+
+@pytest.mark.asyncio
+async def test_submit_with_ordinal_beyond_the_stage_returns_404(
+    async_client: AsyncClient,
+) -> None:
+    """Beige carries three prompts, so its fourth is not a prompt that exists."""
+    headers = await _signup(async_client, "ordinal_over")
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "No such prompt here.", "prompt_ordinal": _BEIGE_PROMPT_COUNT + 1},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_submit_with_zero_ordinal_returns_422(async_client: AsyncClient) -> None:
+    """Ordinals are 1-based; zero is rejected at the schema layer."""
+    headers = await _signup(async_client, "ordinal_zero")
+    resp = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Ordinals start at one.", "prompt_ordinal": 0},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_reading_a_week_reflects_the_ordinal_that_was_answered(
+    async_client: AsyncClient,
+) -> None:
+    """The read path re-resolves the prompt the row answered, not the week's default."""
+    headers = await _signup(async_client, "ordinal_read")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Answering the second one.", "prompt_ordinal": 2},
+        headers=headers,
+    )
+
+    resp = await async_client.get("/prompts/1", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["prompt_ordinal"] == 2
+    assert body["question"] == weekly_prompts.get_prompt_for_week(1, ordinal=2)
+    assert body["default_title"] == "Beige week 1 Prompt #2"
+
+
+# ── Default journal title, served rather than mirrored client-side ──────
+
+
+@pytest.mark.asyncio
+async def test_current_prompt_carries_the_servers_default_title(
+    async_client: AsyncClient,
+) -> None:
+    """The compose default comes from the server so no client mirrors the band table."""
+    headers = await _signup(async_client, "default_title")
+    resp = await async_client.get("/prompts/current", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["default_title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_history_carries_the_default_title(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client, "history_title")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+
+    resp = await async_client.get("/prompts/history", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["items"][0]["default_title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_history_falls_back_to_the_weeks_prompt_when_the_stage_shrinks(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A content sync that drops prompts must not blank the entries that used them.
+
+    Answer Beige's third prompt, then swap the parsed list for a one-prompt
+    stage. The stored ordinal no longer resolves, so the row falls back to the
+    prompt its week draws rather than losing its question — while still
+    reporting the ordinal it was actually written against.
+    """
+    headers = await _signup(async_client, "stage_shrank")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Answering the third one.", "prompt_ordinal": _BEIGE_PROMPT_COUNT},
+        headers=headers,
+    )
+
+    shrunk = (JournalPrompt(ordinal=1, title="The only prompt left.", body=""),)
+    monkeypatch.setattr(weekly_prompts, "prompts_for_color", lambda _colour: shrunk)
+    resp = await async_client.get("/prompts/history", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    item = resp.json()["items"][0]
+    assert item["question"] == "The only prompt left."
+    assert item["prompt_ordinal"] == _BEIGE_PROMPT_COUNT
+    assert item["default_title"] == "Beige week 1 Prompt #1"
+
+
+@pytest.mark.asyncio
+async def test_history_falls_back_to_its_snapshot_for_a_retired_week(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A week the curriculum no longer has still reads back the question it stored.
+
+    Shortening the program is the one case where live content cannot answer at
+    all, and the stored snapshot is the only thing standing between an old
+    entry and an empty prompt.
+    """
+    headers = await _signup(async_client, "retired_week")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A meaningful first reflection."},
+        headers=headers,
+    )
+
+    monkeypatch.setattr(weekly_prompts, "TOTAL_WEEKS", 0)
+    resp = await async_client.get("/prompts/history", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    item = resp.json()["items"][0]
+    assert item["question"].startswith("List the systemic, social, and cultural influences")
+    assert item["default_title"] is None

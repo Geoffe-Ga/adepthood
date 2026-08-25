@@ -32,14 +32,16 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import col, select, update
 
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.journal_entry import JournalEntry
 from models.practice import Practice
+from models.practice_session import PracticeSession
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
+from models.user import User
 
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
@@ -85,6 +87,14 @@ async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], i
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
+async def _promote(session: AsyncSession, username: str) -> None:
+    """Flip ``is_admin`` so the caller may publish a shared template."""
+    await session.execute(
+        update(User).where(col(User.email) == f"{username}@example.com").values(is_admin=True)
+    )
+    await session.commit()
 
 
 def _goal_put_payload(goal: dict[str, object]) -> dict[str, object]:
@@ -175,6 +185,20 @@ def _journal_payload(**foreign_keys: int) -> dict[str, object]:
 def _denial_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     """Return the ``resource_access_denied`` audit records captured so far."""
     return [record for record in caplog.records if record.message == "resource_access_denied"]
+
+
+async def _sessions_where(
+    db_session: AsyncSession, condition: ColumnElement[bool]
+) -> list[PracticeSession]:
+    """Return every persisted practice session matching ``condition``.
+
+    Sibling of :func:`_entries_where`, and expires the shared session for the
+    same reason: the assertion has to read committed state, not the identity
+    map the request left behind.
+    """
+    db_session.expire_all()
+    result = await db_session.execute(select(PracticeSession).where(condition))
+    return list(result.scalars().all())
 
 
 async def _entries_where(
@@ -340,17 +364,20 @@ async def test_idor_goal_group_delete_returns_403(async_client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_idor_shared_template_mutation_returns_403(async_client: AsyncClient) -> None:
-    """BUG-GOAL-006: shared templates have no owner -- mutation always 403.
+async def test_idor_shared_template_mutation_returns_403(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """BUG-GOAL-006: an ordinary user cannot mutate a shared template.
 
-    Alice creates a shared template (``user_id IS NULL``).  Even the
-    creator cannot mutate it through the standard PUT/DELETE surface
-    because ``require_owned_goal_group`` checks ``group.user_id ==
-    current_user`` and ``None`` never equals an int.  An admin-only
-    moderation surface will land in a separate prompt; until then,
-    shared templates are read-only by design.
+    A template is ownerless (``user_id IS NULL``), so it can never match the
+    caller's id.  The admin moderation surface this docstring once anticipated
+    now exists -- ``require_manageable_goal_group`` routes templates to admin --
+    but a *non-admin* is still refused, which is what this pins.  Bob, an
+    ordinary user, is the one probing here.
     """
     alice_headers, _ = await _signup(async_client, "alice_shared")
+    await _promote(db_session, "alice_shared")
+    bob_headers, _ = await _signup(async_client, "bob_shared_probe")
 
     create = await async_client.post(
         "/goal-groups/",
@@ -363,19 +390,22 @@ async def test_idor_shared_template_mutation_returns_403(async_client: AsyncClie
     put = await async_client.put(
         f"/goal-groups/{group_id}",
         json={"name": "Hijacked"},
-        headers=alice_headers,
+        headers=bob_headers,
     )
     assert put.status_code == HTTPStatus.FORBIDDEN
 
-    delete = await async_client.delete(f"/goal-groups/{group_id}", headers=alice_headers)
+    delete = await async_client.delete(f"/goal-groups/{group_id}", headers=bob_headers)
     assert delete.status_code == HTTPStatus.FORBIDDEN
 
 
 @pytest.mark.asyncio
-async def test_idor_shared_template_get_is_visible(async_client: AsyncClient) -> None:
+async def test_idor_shared_template_get_is_visible(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
     """Shared templates are readable by every authenticated user."""
     alice_headers, _ = await _signup(async_client, "alice_shared_get")
     bob_headers, _ = await _signup(async_client, "bob_shared_get")
+    await _promote(db_session, "alice_shared_get")
 
     create = await async_client.post(
         "/goal-groups/",
@@ -478,22 +508,89 @@ async def test_idor_user_practice_get_returns_403(
 
 @pytest.mark.asyncio
 async def test_idor_practice_session_create_returns_403(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Cross-user POST /practice-sessions/ — body's user_practice_id is Alice's."""
-    alice_headers, alice_id = await _signup(async_client, "alice_ps_post")
-    bob_headers, _ = await _signup(async_client, "bob_ps_post")
+    """Bob cannot log a practice session against Alice's user-practice.
 
-    user_practice_id = await _create_user_practice(
-        async_client, db_session, alice_headers, alice_id
+    ``POST /practice-sessions/`` takes ``user_practice_id`` from the request
+    body, so the path-parameter ownership dependencies never see it.  An
+    unguarded write would graft sessions onto a victim's practice history --
+    rows that then surface in her session list and her analytics rollups.
+
+    Asserted three ways rather than on the status alone.  The 403 was already
+    correct before this test grew; what was missing is that a *denial nobody
+    records* is a cross-tenant probe nobody can see, and that a status code
+    says nothing about whether a row was written anyway.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_ps_post")
+    bob_headers, bob_id = await _signup(async_client, "bob_ps_post")
+
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id, practice_name="Alice PS Post"
+    )
+    bob_practice_id = await _create_user_practice(
+        async_client, db_session, bob_headers, bob_id, practice_name="Bob PS Post"
     )
 
-    resp = await async_client.post(
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(alice_practice_id),
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    # The identical payload against Bob's own practice is accepted, so the 403
+    # above can only be about ownership -- not a malformed body or a stage gate.
+    baseline = await async_client.post(
         "/practice-sessions/",
-        json=_session_window_payload(user_practice_id),
+        json=_session_window_payload(bob_practice_id),
         headers=bob_headers,
     )
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert baseline.status_code == HTTPStatus.CREATED
+    assert baseline.json()["user_practice_id"] == bob_practice_id
+
+    smuggled = await _sessions_where(
+        db_session, col(PracticeSession.user_practice_id) == alice_practice_id
+    )
+    assert smuggled == [], "cross-user practice session persisted against the victim's practice"
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "user_practice"
+    assert getattr(denials[0], "resource_id", None) == alice_practice_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_practice_session_create_missing_user_practice_is_404_and_unaudited(
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``user_practice_id`` that exists for nobody 404s, and audits nothing.
+
+    A missing row must never reach the ownership comparison -- inverting that
+    order makes the endpoint an existence oracle.  A denial record for a row
+    that never existed would likewise poison the audit signal that genuine
+    cross-tenant probes are meant to raise.  The sibling case is pinned for
+    ``POST /journal/`` but was unpinned for this endpoint.
+    """
+    headers, _ = await _signup(async_client, "ps_post_missing_up")
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(_DEFINITELY_MISSING_ID),
+            headers=headers,
+        )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "user_practice_not_found"
+    assert _denial_records(caplog) == []
 
 
 @pytest.mark.asyncio

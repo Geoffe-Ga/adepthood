@@ -1,5 +1,3 @@
-// frontend/features/Map/Map.styles.ts
-
 import { StyleSheet } from 'react-native';
 
 import {
@@ -194,13 +192,13 @@ const styles = StyleSheet.create({
   // Clipping bowl for the magnified artwork + frost wash; radius set inline to
   // match the pill so the magnified wave never bleeds past the glass edge.
   magnifierClip: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     overflow: 'hidden',
   },
   // Frost wash that rises while the lens is in motion (the "blur" read on
   // native; the web build adds a true backdrop blur on the pill itself).
   magnifierFrost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: colors.mystical.transparentLight,
   },
   magnifierCaption: {
@@ -267,8 +265,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textAlign: CENTER,
   },
-  // Thin connector between a stage and the one below it (replaces the old
-  // percentage-positioned connection line).
+  // Thin connector between a stage and the one below it.
   connector: {
     width: 2,
     height: spacing(1),
@@ -404,7 +401,7 @@ const styles = StyleSheet.create({
 
   // Optional decorative backdrop behind the grid (only when art is configured)
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.12,
   },
 
@@ -472,7 +469,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // One-sentence progression read (replaces the disparate count list).
+  // One-sentence progression read.
   progressionSentence: {
     fontFamily: editorialType.serif,
     fontSize: 15,

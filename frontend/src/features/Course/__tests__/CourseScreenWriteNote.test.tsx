@@ -88,9 +88,21 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
   body_markdown: '# Welcome to Beige\n\nintro\n',
 });
 
+// GET /stages/program-calendar — the server's one answer to which stage this
+// person is in; the screen reads it instead of counting completions.
+const mockProgramCalendar = jest.fn(() =>
+  Promise.resolve({
+    program_started_at: null as string | null,
+    calendar_stage: 1,
+    calendar_week: 1,
+    current_stage: 1,
+    cycle_number: 1,
+  }),
+);
 jest.mock('../../../api', () => ({
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
+    programCalendar: () => mockProgramCalendar(),
   },
   course: {
     stageContentAll: (...args: unknown[]) => mockStageContent(...args),
@@ -128,6 +140,8 @@ jest.mock('react-native-safe-area-context', () => {
 // eslint-disable-next-line import/order
 const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
+
+const { revealControls } = require('./readerGeometry');
 
 function selectRiff(getByTestId: any): void {
   const input = getByTestId('passage-select-input');
@@ -243,6 +257,8 @@ describe('CourseScreen -- write a note on a passage', () => {
     const restored = await findByTestId('reader-markdown');
     expect(restored.props.contentOffset).toEqual({ x: 0, y: 300 });
     expect(mockContentBody).toHaveBeenCalledTimes(1);
+    // The chapter controls are due only at the essay's end.
+    revealControls(restored);
 
     // Next swaps in chapter 7 via handleContentPress, which clears the restore
     // offset so the incoming chapter opens at the top instead of inheriting the

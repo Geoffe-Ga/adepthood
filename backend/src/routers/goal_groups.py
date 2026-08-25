@@ -10,10 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from database import get_session
-from dependencies.ownership import require_owned_goal_group, require_visible_goal_group
-from errors import not_found
+from dependencies.auth import get_current_user_model
+from dependencies.ownership import (
+    require_manageable_goal_group,
+    require_visible_goal_group,
+)
+from errors import forbidden, not_found
 from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
+from models.user import User
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.goal_group import GoalGroupCreate, GoalGroupResponse
@@ -116,17 +121,25 @@ async def get_goal_group(
 @router.post("/", response_model=GoalGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_goal_group(
     payload: GoalGroupCreate,
-    current_user: Annotated[int, Depends(get_current_user)],
+    caller: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
-    """Create a new goal group for the authenticated user.
+    """Create a goal group -- private for anyone, shared template for operators only.
 
-    Ownership is sourced from ``current_user`` (BUG-GOAL-005); the
-    payload schema does not expose a ``user_id`` field, so a forged
-    body cannot plant a row under another account.  ``shared_template``
-    flips the row to a public template (``user_id IS NULL``) per the
-    DB CHECK constraint.
+    Ownership is sourced from the caller (BUG-GOAL-005); the payload schema does
+    not expose a ``user_id`` field, so a forged body cannot plant a row under
+    another account.
+
+    ``shared_template`` is a different kind of act and carries a different gate.
+    A template is ownerless (``user_id IS NULL``, biconditional with the flag via
+    the DB CHECK constraint), world-readable, and carries its goals embedded --
+    so setting the flag *publishes content to every user of the deployment*.
+    That is an operator decision, not something an ordinary signup may do, and
+    it is refused here before any row is written.
     """
+    if payload.shared_template and not caller.is_admin:
+        raise forbidden("admin_required")
+    current_user = cast("int", caller.id)
     group = GoalGroup(
         user_id=current_user if not payload.shared_template else None,
         **payload.model_dump(),
@@ -163,22 +176,30 @@ async def update_goal_group(
     payload: GoalGroupCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    group: Annotated[GoalGroup, Depends(require_owned_goal_group)],
+    group: Annotated[GoalGroup, Depends(require_manageable_goal_group)],
 ) -> GoalGroup:
     """Update an existing goal group.
 
-    Mutation requires the strict owner-only check from
-    ``require_owned_goal_group``: shared templates have ``user_id IS NULL``
-    so they can never match ``current_user`` and always 403.  Closes
-    BUG-GOAL-006 (shared templates were editable by any user because the
-    prior ``group.user_id is not None and ...`` short-circuit treated
-    NULL ownership as caller-equivalent).
+    Authority is routed by kind in ``require_manageable_goal_group``: a private
+    group stays owner-only (an admin is deliberately not admitted to someone's
+    own space), while a shared template requires admin -- it is ownerless, so
+    the owner comparison could never match anybody and templates were previously
+    unmodifiable by everyone.  The owner-only rule for private groups still
+    closes BUG-GOAL-006.
     """
     # ``group.id`` is ``int | None`` on the SQLModel because of the
     # primary-key default, but the ownership dep only ever returns a
     # row freshly fetched from the DB, so the value is non-NULL here.
     group_id = cast("int", group.id)
-    for key, value in payload.model_dump().items():
+    # ``shared_template`` is deliberately not updatable here. It is not a field
+    # so much as a *kind*, and changing it either way is a different act than an
+    # edit: private -> template publishes the group (and its embedded goals) to
+    # every user, which belongs behind the creation gate; template -> private
+    # would strand an ownerless row against
+    # ``ck_goalgroup_shared_template_user_id``. Excluding it also means an
+    # ordinary edit body, which carries the field's ``False`` default, cannot
+    # silently demote a template and 500 on that constraint.
+    for key, value in payload.model_dump(exclude={"shared_template"}).items():
         setattr(group, key, value)
     session.add(group)
     await session.commit()
@@ -192,11 +213,12 @@ async def delete_goal_group(
     group_id: int,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    _owned: Annotated[GoalGroup, Depends(require_owned_goal_group)],
+    _owned: Annotated[GoalGroup, Depends(require_manageable_goal_group)],
 ) -> Response:
     """Delete a goal group. Unlinks goals but does not delete them.
 
-    Owner-only via ``require_owned_goal_group`` (BUG-GOAL-006).  We
+    Authority routed by kind via ``require_manageable_goal_group``: owner for a
+    private group, admin for a shared template (BUG-GOAL-006).  We
     re-fetch with eager-loaded goals (the shared helper) so the unlink step
     doesn't trigger a lazy load on an async session; the dep has already
     verified existence, so the helper's 404 guard is a no-op on the happy path.

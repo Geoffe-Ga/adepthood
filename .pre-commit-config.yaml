@@ -4,6 +4,17 @@
 # the digest drift in CI. Exempt the whole tree from every hook, like node_modules.
 exclude: ^backend/content/
 
+# Which git hooks a bare ``pre-commit install`` writes. Declared here rather than
+# left to the caller's flags because the omission was invisible and cost real
+# time: the three ``stages: [pre-push]`` hooks below -- the whole expensive local
+# gate -- had never fired on anybody's machine, because ``dev-setup.sh`` installed
+# only ``pre-commit`` and ``commit-msg`` and nothing supplied ``--hook-type
+# pre-push``. CI ran them regardless, so nothing shipped unverified, but four
+# documents described a push-time gate that did not exist, and every coverage or
+# complexity regression surfaced ~18 minutes into CI instead of ~5 minutes
+# locally. Naming the set here means a future install cannot silently drop one.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -28,6 +39,12 @@ repos:
           (?x)(
             ^frontend/package-lock\.json$
             |^backend/content/
+            # Generated from the app's own routes and schemas (~424KB for 96
+            # paths / 160 components) and held current by the openapi-drift CI
+            # job. Excluded rather than raising --maxkb, which would weaken the
+            # guard for every file; this hook exists to catch an accidental
+            # binary, and this is a deliberate, reviewed, gated artifact.
+            |^backend/openapi\.json$
           )
       - id: no-commit-to-branch
         args: ["--branch", "main"]
@@ -58,7 +75,7 @@ repos:
         files: ^backend/
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: ["types-jsonschema", "types-cachetools", "types-requests", "openai", "anthropic", "pydantic", "sqlmodel", "fastapi", "starlette", "pytest", "pytest-asyncio", "httpx", "aiosqlite", "PyJWT", "bcrypt", "cryptography", "slowapi", "limits", "alembic", "mcp==2.0.0", "httpx2==2.9.1"]
+        additional_dependencies: ["types-jsonschema==4.26.0.20260518", "types-cachetools==7.0.0.20260713", "types-requests==2.33.0.20260712", "openai==3.3.0", "anthropic==0.123.0", "pydantic==2.13.4", "sqlmodel==0.0.39", "fastapi==0.141.1", "starlette==1.6.0", "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1", "httpx2==2.12.0", "aiosqlite==0.22.1", "PyJWT==2.13.0", "bcrypt==5.0.0", "cryptography==50.0.0", "slowapi==0.1.10", "limits==5.8.0", "alembic==1.19.1", "uvicorn==0.52.4", "sentry-sdk==2.68.0"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
@@ -155,11 +172,19 @@ repos:
       - id: backend-tests-coverage
         name: backend tests (coverage required)
         language: system
-        # Bare ``--cov`` (not ``--cov=.``) so the measured set is the single
-        # declaration in [tool.coverage.run] source (= {src, scripts}), the
-        # same set backend-ci.yml's branch-coverage step asserts over.
-        # ``-n auto`` distributes the suite: 15m58s -> 4m07s on 4 cores (#2076).
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; cd backend && pytest -n auto --dist loadfile --cov --cov-report=term-missing --cov-fail-under=90'
+        # Routed through test.sh rather than calling pytest directly, because
+        # that script takes .gate-state/locks/backend-suite.lock first. A push
+        # firing while check-all.sh is mid-run otherwise gives two whole-suite
+        # runs sharing one coverage data file, one set of SQLite fixtures, and
+        # the cores ``-n auto`` sized for a single process -- and the damage is
+        # a wrong number rather than a crash, so nothing announces it.
+        #
+        # ``--all --coverage`` is the same run this line used to spell out:
+        # distributed (``-n "$PYTEST_WORKERS" --dist loadfile``), bare ``--cov``
+        # so the measured set stays the single [tool.coverage.run] declaration
+        # (= {src, scripts}) that backend-ci.yml's branch-coverage step asserts
+        # over, and ``--cov-fail-under=90``.
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/test.sh --all --coverage'
         pass_filenames: false
         files: ^backend/
         stages: [pre-push]

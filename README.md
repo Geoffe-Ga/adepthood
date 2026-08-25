@@ -62,12 +62,57 @@ npm install
 npx expo start
 ```
 
+To run the web build, pass a port the backend's CORS allowlist accepts:
+
+```bash
+npx expo start --web --port 8080
+```
+
+`DEV_ORIGINS` in `backend/src/main.py` allows `localhost:3000` and
+`localhost:8080` only. Expo's own default is 8081, so a bare `--web` is
+CORS-blocked on every request and the app reports itself offline rather than
+naming the real cause.
+
 ### Backend
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn src.main:app --reload
+PYTHONPATH=src uvicorn main:app --reload
 ```
+
+#### A local account
+
+Every account-creation path — password signup and both social sign-ins —
+requires a Gumroad-verified APTITUDE license, so a fresh local database has no
+way in. Seed one account instead:
+
+```bash
+cd backend
+PYTHONPATH=src python -m scripts.create_dev_account --email dev@example.com
+```
+
+It creates the user, comps it course access, and prints the generated password
+(pass `--password` to choose your own). Log in with those credentials and the
+journal is reachable.
+
+The address is folded and validated exactly as the login route folds and
+validates its payload — lower-cased, stripped, and parsed as an email — so what
+gets written is what a later login request will find. An address the API would
+reject is refused here rather than stored, because a row nobody can address is
+worse than no row: `dev@localhost.test` and other RFC 6761 reserved names read
+as local but are refused by the API, which is why the default is the
+documentation domain `example.com`.
+
+The command **refuses** unless the machine proves it is local, and every
+condition vetoes on its own: `ENV` must explicitly be `development`,
+`DATABASE_URL` must resolve to loopback (or be a SQLite file), no
+`GUMROAD_API_TOKEN` / `GUMROAD_WEBHOOK_SECRET` may be configured, and no
+platform-injected `RAILWAY_*` variable may be present. A refusal writes nothing
+and never opens a database connection. Nothing in the signup route changes —
+there is no runtime flag and nothing to leave switched on.
+
+The grant is recorded as a comp with no sale link, so a seeded account stays
+distinguishable from a real purchase forever after.
 
 To exercise the Gumroad integration (license verification and the sale
 webhook), set `GUMROAD_API_TOKEN`, `GUMROAD_WEBHOOK_SECRET`,

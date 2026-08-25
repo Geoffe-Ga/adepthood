@@ -4,10 +4,10 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.2.0 (tracks Creek's published
-  constant; see the 2026-07-31 note at the end of this document — the
-  `/v1` bundle creek-vault#1072 tracked has since shipped and is now
-  vendored, and it publishes this same 0.2.0)
+- **Pinned contract version:** 0.8.0 (tracks Creek's published
+  constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
+  of this document and moved to 0.8.0 with the 2026-08-19 note, which
+  records why that move became a prerequisite rather than housekeeping)
 
 ## Context
 
@@ -74,6 +74,10 @@ why this ADR treats "the version gate does nothing" as a defect worth
 fixing rather than a cosmetic detail.
 
 ## Decision 1 — HTTP/JSON `/v1` is the application boundary; MCP remains Creek's agent adapter
+
+> **AMENDED 2026-08-22:** shipped and closed out — the cutover is
+> complete, the `mcp` pin is gone, and MCP is agent-facing only. See
+> the note at the end of this document.
 
 Adepthood's backend is a deterministic consumer: it knows at build
 time that it needs exactly four operations — capability discovery,
@@ -197,6 +201,10 @@ matters most before 1.0.
 
 ## Decision 5 — Supersede the draft contract doc
 
+> **AMENDED 2026-08-22:** the path is still retained, on link
+> stability alone; the *title* is not. See the note at the end of this
+> document.
+
 Creek's published contract (its `contract.py` constants today; its
 ratified `/v1` document once creek-vault#1072 ships) becomes the
 single source of truth for wire shapes. `docs/creek-vault-mcp-contract.md`
@@ -234,13 +242,47 @@ authoritative source, one pointer, is the fix.
 
 ## Decision 6 — The intimate-transit rule is carried forward, and is entirely unshipped
 
+> **SUPERSEDED 2026-08-21 — see the note at the end of this ADR.** The
+> amendment below is kept verbatim as the record of what was ruled and
+> why. It no longer describes shipped behaviour: contract 0.7.0/0.8.0
+> made `intimate` unexpressible on the upload wire, so the upload path
+> withholds an intimate document exactly as the journal-entry path
+> does, and the "known asymmetry" recorded here is closed rather than
+> outstanding. Nothing about the *destination* reasoning was overturned
+> — the premise it rested on was removed upstream.
+>
+> **Amended 2026-08-08 (owner ruling, issue #1924 / PR #2149) — the
+> document-upload surface is vault-only, not skip-only.** Sub-decisions
+> (a)–(d) below are unchanged and still describe the *journal-entry*
+> write path. They do **not** govern `POST /journal/upload`, which
+> forwards an `intimate` document to the vault at the `INTIMATE` tier
+> ceiling, in plaintext, over the configured `CREEK_VAULT_URL`.
+>
+> The ruling rests on who the far end is. A Creek Vault is the user's
+> **own** corpus on operator-held infrastructure, not a third-party
+> service, so reaching it is not the cloud disclosure the privacy floor
+> was built to prevent. What that floor forbids — intimate content
+> reaching a cloud LLM — the upload path never does, because it calls no
+> LLM at all. This is a narrower claim than (a)'s ciphertext topology,
+> and it does not weaken (a): a deployment whose vault is *not*
+> operator-held is outside the assumption this amendment rests on, and
+> nothing here confers a confidential-compute guarantee.
+>
+> **Known asymmetry, deliberately left standing.** The journal-entry
+> write path still withholds intimate entries (skip-only, as below)
+> while the upload path forwards them. That is not an oversight and not
+> a contradiction to resolve silently: widening a shipped write path is
+> its own change, with its own tests and its own review, and it is
+> tracked in issue #2152. Until that lands, read (a)–(d) as governing
+> journal entries only.
+
 The four intimate-transit sub-decisions ratified via #927/#950 move
 into this ADR in condensed form. **Every one of them is entirely
 unshipped**; the owning issues are #958 (frontend vault key setup) and
 creek-vault#757 (Creek's confidential-compute epic). Today's shipped
-behavior remains ADR 0002 / #895's skip-only mode: an `intimate`
-classification short-circuits before any vault call at all, not even a
-handshake (`services/creek_vault_write.py:17-24`).
+behavior for journal entries remains ADR 0002 / #895's skip-only mode:
+an `intimate` classification short-circuits before any vault call at
+all, not even a handshake (`services/creek_vault_write.py:17-24`).
 
 - **(a) Transit topology — ciphertext only.** Intimate content may
   cross the seam through the operator's backend, but only as
@@ -389,9 +431,9 @@ rely on it.
 | `reflect` params `{consumer, body, tier_ceiling}` (`backend/src/services/creek_vault_client.py:277-279`) | `reflect(content, entry_ref, privacy_tier_ceiling)` (`creek-tools/creek_mcp/server.py:332-346`) | RESOLVED by the `/v1` cutover (#2047); the client this row describes is retired — archaeology only, per the 2026-08-07 note | adepthood #2047 |
 | `wheel` params `{"consumer": CONSUMER_ID}` (`creek_vault_client.py:426`) | `wheel(privacy_tier_ceiling)` only (`server.py:349-358`) | RESOLVED by the `/v1` cutover (#2047); `CONSUMER_ID` no longer exists in the codebase — archaeology only, per the 2026-08-07 note | adepthood #2047 |
 | `reflect` result read as scalar `payload.get("reflection")` (`creek_vault_client.py:406-407`) | `{status, tool, tier_ceiling, routed_tier, notes[{quote, kind, note}], essay_grounded, essay?}` (`creek-tools/creek_mcp/tools/reflect.py:479-490`) | PENDING creek-vault#1072 for the ratified `/v1` shape | adepthood #1936 |
-| `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity | adepthood #1937 |
+| `wheel` result validated as `WheelBalanceResponse{aspects:[{stage_number, aspect, fullness}]}` (`backend/src/schemas/wheel.py`) | `{status, tool, tier_ceiling, total_classified, unclassified, wheel:{F1..F10:{name, count, share}}}` (`creek-tools/creek_mcp/tools/wheel.py:95-110`) | PENDING creek-vault#1072 for the ratified `/v1` shape; the stage/aspect projection is Adepthood's to own — Creek must not invent our vocabulary, and the F1-F10-to-ten-stage numeric coincidence is NOT a semantic identity — **AMENDED 2026-08-21:** the first clause stands; the second is overturned, the mapping *is* an identity (see the note at the end of this ADR) | adepthood #1937 |
 | Major-only version gate, a no-op pre-1.0 (`_CONTRACT_MAJOR`, `creek_vault_client.py:79,242`) | `CONTRACT_VERSION = "0.2.0"` (`creek-tools/creek_mcp/contract.py:18`) | Exact-minor comparison per Decision 4; pin lives here, comparison code lands in #2045 | both repos |
-| Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning); interim single-tenant binding shipped per Decision 7 | `creek-vault` / adepthood #2134 |
+| Single deployment-wide bearer credential; no tenant field on any `/v1` request or response (`backend/src/dependencies/creek_vault.py`) | No tenancy or partitioning of any kind published in `/v1` — verified against every schema in `backend/tests/fixtures/creek_v1/schemas/` | PENDING a creek-side contract change (tenant field, or advertised per-consumer partitioning) for *partitioning one shared vault*, which remains unbuildable here. Per-user vault *instances* need no such change and shipped per the 2026-08-21 note; the interim single-tenant binding survives one release as a deployment-wide default | `creek-vault` / adepthood #2134, #2233 |
 
 ## Deprecation and change control
 
@@ -805,3 +847,423 @@ limitation, not a virtue — an operator watching only the fallback-rate
 counter cannot tell a misconfigured vault from an intentionally absent
 one today; the WARNING is what carries that distinction until a future
 issue gives the URL defect its own telemetry.
+
+## Note, 2026-08-09 — Decision 4 refines to membership in the server's supported set
+
+Decision 4 states the rule as "client and server must match on **exact
+`major.minor`**". That phrasing predates the `supported_contract_minors`
+field, and taken literally it compares adepthood's pin against the
+single version the server advertises *as its own*. That is strictly
+more brittle than the contract requires, and it had already begun to
+bite.
+
+`CapabilitiesResponse.schema.json` publishes three version fields, and
+adepthood read only the first: `contract_version` ("Full semantic
+contract version"), `contract_minor` ("The `major.minor` spoken
+here"), and `supported_contract_minors` ("Every contract minor this
+server still serves"). The third exists precisely so that a client can
+negotiate, and it is a `required` property — a server that omits it
+has published a malformed document.
+
+Upstream `creek-vault` moved to contract 0.3.0 on 2026-08-08 and
+deliberately *widened* rather than shifted its window. From upstream's
+own ADR: "`SUPPORTED_CONTRACT_MINORS` was widened to `("0.3", "0.2")`
+in the same change rather than shifted, so an existing client still
+sending `X-Creek-Contract-Version: 0.2` is served exactly as before."
+Against that server, adepthood read `contract_version` as `"0.3.0"`,
+found `0.3 != 0.2`, and degraded to the local fallback — **refusing a
+vault that was actively advertising that it would answer it**.
+
+**The refined rule: `client_minor ∈ server.supported_contract_minors`.**
+This is still exact-minor matching pre-1.0, and it still relaxes to a
+major match at 1.0 — the per-entry comparison is unchanged. What
+changes is *what* the pin is compared against: the set the server
+serves, not the one minor it happens to speak natively. The two worked
+examples in Decision 4 both still hold, because a server advertising
+`0.3.0` and serving only `0.3` publishes `["0.3"]`, which a `0.2.x`
+client is correctly not a member of.
+
+This is a refinement, not a widening of the kind Decision 4 forbids.
+The prohibition there is against relaxing *how* versions are compared —
+back toward major-only, or dropping the check. Nothing here does that:
+a server whose window has genuinely moved past adepthood's pin is
+still rejected, still as `INCOMPATIBLE_VERSION`, and an absent or
+wrong-typed `supported_contract_minors` degrades as a malformed
+payload rather than being silently trusted. Fail-closed in both
+directions.
+
+**Alongside it, the required request header, which was never sent.**
+Upstream's ratified ADR: "Every `/v1` **capability** endpoint requires
+an `X-Creek-Contract-Version: <major.minor>` request header; a missing
+or mismatched value is refused `409 incompatible_version` before any
+vault read. `GET /v1/capabilities` requires nothing on this axis,
+deliberately — the negotiation endpoint must never itself be able to
+fail to negotiate." Adepthood sent only `Authorization`, on every
+request, since the HTTP cutover shipped. A real Creek server would
+have accepted the handshake and then refused **every** journal upsert,
+reflection and wheel call — presenting as a configured, reachable,
+correctly-credentialed vault that accepts negotiation and then does no
+work.
+
+**Why no gate caught either.** The conformance suite validates payload
+*shapes* against the vendored bundle, and the bundle contains schemas
+and examples only: it says nothing about request headers, so no
+fixture could have caught a missing one. This is the same failure mode
+as the upload client retired in the 2026-08-07 note above — a fake
+answers any request it is given. The test added with this change
+therefore drives a fake that **refuses** capability requests lacking
+the header, which is the only shape of test that can hold the property.
+
+The `409 incompatible_version` a real server sends on the capability
+path is counted as `vault_incompatible_version`, not as a generic
+contract failure, which is what Decision 4's own "distinguishable
+signal" requirement asks for on this newer axis.
+
+**What is not claimed.** `CONTRACT_VERSION` stays pinned at `0.2.0`;
+0.2 remains served upstream, and moving the pin is separate work.
+The vendored bundle in `backend/tests/fixtures/creek_v1/` is still at
+upstream `879d961` (contract 0.2.0) while upstream `main` is at 0.3.0,
+so the scheduled `Creek contract drift` workflow is expected to go red
+on its next run — that is the gate working as designed, and
+re-vendoring is deliberately not bundled here.
+
+## Note, 2026-08-19 — the pin moves to 0.8.0, because the capability list stopped being minor-independent
+
+The 2026-08-09 note closed by saying `CONTRACT_VERSION` stays at
+`0.2.0` and that moving it was separate work. That was right at the
+time and is no longer: the pin has become a prerequisite rather than
+housekeeping, and this note records why, along with the re-vendoring
+that came with it.
+
+**What was true through contract 0.7.** Upstream widened
+`SUPPORTED_CONTRACT_MINORS` six times and never shifted it — the set
+is now `("0.8", "0.7", "0.6", "0.5", "0.4", "0.3", "0.2")` — and every
+one of those minors was answered the *same four* capability names.
+`GET /v1/capabilities` was a fact about the vault alone. So a 0.2 pin
+cost adepthood nothing it could observe: handshake, journal upsert,
+reflection and wheel were all still served, and the refined Decision 4
+rule accepted such a server correctly. This was a capability gap, not
+an outage, and nothing in production was broken by the pin alone.
+
+**What contract 0.8.0 changed.** creek-vault#1524 published `upload`
+as a fifth capability and `POST /v1/uploads` as its route, and — this
+is the load-bearing part — keyed both on the caller. What
+`GET /v1/capabilities` advertises now depends on the declared minor
+via `CAPABILITY_SINCE_MINOR`, and the route refuses a caller below the
+threshold with `incompatible_version`. Upstream's own `Capability`
+docstring, vendored with this change, says it outright: the list is
+"**no longer minor-independent**".
+
+The consequence for adepthood is concrete. A 0.2-pinned client is
+never *told* about `upload`, so no amount of client work could reach
+that route while the pin stood. Implementing the upload call therefore
+depends on this move; it is not parallel to it.
+
+**What moved, and what deliberately did not.** The vendored bundle in
+`backend/tests/fixtures/creek_v1/` is re-cut byte-for-byte from
+upstream `349a56d` (54 manifest entries, 56 vendored files) with
+`vendor.json` regenerated by the drift script's `snapshot` subcommand;
+`CONTRACT_VERSION`, this bullet, and the contract doc's version bullet
+move together as `test_contract_version_docs.py` requires; and the
+client's wire-name table now recognises `upload`, so a vault
+advertising it is believed. The upload *call* is not implemented here
+and still refuses — recognising a route and speaking it are separate
+changes, and a test pins the seam between them.
+
+**No wire shape adepthood already calls moved.** Across 0.2 → 0.8 the
+four capabilities in use changed in exactly one additive way:
+`JournalUpsertResponse` gained an optional `warnings` array at 0.5.0.
+The two purge counters added at 0.6.0 sit on a capability adepthood
+does not call. Everything else that re-hashed did so through
+docstrings inside the generated schemas.
+
+**Two privacy hardenings ride along and are asserted, not rebuilt.**
+0.7.0 removed the `open` default from the write tools' `tier`, so a
+caller that omits it is refused rather than having its content filed in
+the clear; 0.8.0 types `UploadRequest.tier` to the two-member wire
+ceiling, so `intimate` is not expressible and omission is not
+defaultable. Adepthood already satisfied both — it sends `tier`
+unconditionally, and `wire_ceiling_for` refuses an intimate ceiling
+rather than narrowing it. The conformance suite now pins both
+properties against the published schemas so a regression fails here
+rather than in Creek's logs.
+
+**Decision 4 is untouched.** Nothing here widens `_contract_minor_supported`
+or reintroduces a major-only comparison. The pin still names one minor,
+membership in the server's advertised set is still how compatibility is
+decided, and a server whose window moves past 0.8 will still be
+refused.
+
+## Note, 2026-08-21 — the upload call is implemented, and Decision 6's upload amendment is superseded by the wire
+
+The 2026-08-19 note closed by saying the upload *call* was not
+implemented and still refused, because recognising a route and speaking
+it are separate changes. This note records the second change, and one
+consequence of it that nobody chose and everybody has to live with.
+
+**The route.** `HttpCreekVaultClient.upload` now performs Creek's
+published exchange: a single `POST /v1/uploads` carrying
+`UploadRequest{filename, content_base64, external_id, timestamp, tier}`
+as JSON, with the document base64-encoded in the body. The shape is read
+off the vendored bundle at `backend/tests/fixtures/creek_v1/`, and the
+conformance suite drives every published example cell — success, empty,
+refusal, malformed-input, incompatible-version, unavailable-service —
+through the real adapter. There is no per-document URL: `external_id` is
+a field of the published request, so idempotence is keyed off the body
+the vault reads rather than off a path adepthood assembled. The invented
+`PUT /v1/uploads/{external_id}` that the long-standing refusal replaced
+is gone for good, and nothing on this path builds a path segment at all.
+
+**No MCP.** Decision 1 stands untouched. This is HTTP/JSON over `/v1`
+and nothing else; the retired MCP client is not resurrected, and
+`creek.upload`-the-MCP-tool remains Creek's adapter for agents.
+
+**Decision 6's 2026-08-08 upload amendment is superseded, and not on
+privacy grounds.** That owner ruling held that `POST /journal/upload`
+could forward an `intimate` document to the vault at the `INTIMATE`
+ceiling, because a Creek Vault is the user's own corpus on
+operator-held infrastructure rather than a third-party service. The
+reasoning about the *destination* is untouched and is not what changed.
+What changed is that upstream removed the premise from underneath it:
+contract 0.7.0 made `tier` required on the write shapes, and 0.8.0 typed
+`UploadRequest.tier` to the two-member `WireTierCeiling`. There is no
+way to say `intimate` on `/v1`, in either direction, and adepthood's own
+`wire_ceiling_for` refuses rather than narrowing — narrowing would file a
+document at a depth its owner never chose, which is the exact defect the
+wire vocabulary exists to prevent.
+
+So the amendment was already unreachable when it was written down; it
+survived only because `upload()` refused unconditionally and no request
+was ever built to test it against. Implementing the call is what made it
+visible. `services/creek_vault_upload.store_upload` now withholds an
+intimate document before the vault is probed at all, asking
+`wire_ceiling_for` the same question `services/creek_vault_write` asks
+before touching its client.
+
+**The known asymmetry is therefore closed rather than tracked.** Both
+write paths now withhold intimate material, for one reason, at one door.
+This is the *opposite* of the widening that issue was opened to
+consider, and it needs no privacy review to adopt: nothing that used to
+stay local now travels, and nothing that used to travel was ever
+actually able to.
+
+**What an uploader is told.** An intimate document answers
+`capability_unsupported` rather than `degraded`. Both are honest about
+the outcome; only one is honest about the remedy. `degraded` means "it
+broke, try again", and a retry re-runs an identical request against an
+identical contract — an instruction that cannot work. The
+`capability_unsupported` copy now names the tier first, because choosing
+a different one is the only remedy on this list that the person holding
+the document controls.
+
+**The degraded/unsupported split becomes meaningful for the first
+time.** While every upload refused before sending, every failure a real
+deployment reached was that refusal, so mapping it to `degraded` told
+users to retry something no retry could reach — which is why the 0.8.0
+re-vendoring changed it to `capability_unsupported`. Now that a document
+genuinely crosses the wire, the two halves are distinguishable again and
+both are live:
+
+- **Mishaps during a working upload keep `degraded`**, and the advice is
+  now true: a dropped connection, a 5xx, a rejected credential, a 2xx
+  body adepthood could not read, a vault that answered without storing.
+  Trying again is exactly right for all of them.
+- **Failures that say the route is closed to this caller answer
+  `capability_unsupported`**: a capability withdrawn between the
+  handshake and the call, and a vault refusing at the route with
+  `unsupported_capability` or `incompatible_version`. The second of
+  those is routine rather than theoretical from 0.8.0, because the
+  capability list is keyed on the caller's declared minor — a vault can
+  be reachable, serve the route to others, and still refuse this caller.
+- **`invalid_request` and `privacy_refused` stay on the degraded side**
+  deliberately. Both are defects in the request adepthood built or the
+  material it asked for, fixable on this side; neither says the route is
+  closed. Reading them as "no retry helps" would file adepthood's own
+  bug as a version gap.
+
+**Not covered end to end.** The `seed.upload-document` journey in
+`frontend/e2e/journeys.json` stays `uncovered`, and the reason is
+structural rather than an omission: the e2e lane's server process reads
+`CREEK_VAULT_OWNER_USER_ID` from its own environment at request time,
+and that environment is fixed before any account exists, so no account a
+spec can create is ever the vault's owner. Every e2e upload therefore
+takes the local-fallback path whatever else the lane does. A spec
+asserting only `vault_unavailable` would register as coverage while
+proving the journey's own outcome never happens, which is precisely the
+quiet coverage loss that ledger exists to prevent.
+
+## Note, 2026-08-21 — Decision 7 is lifted: vault configuration moves to the account
+
+Issue #2233. Decision 7 stands as written for what it decided, and is
+**amended, not retracted**: `CREEK_VAULT_OWNER_USER_ID` is no longer the
+only way a user can reach a vault, and (d)'s claim that lifting the
+binding "needs a change on Creek's side of the contract, not
+adepthood's" was true of one reading of the problem and false of the
+other. Both readings are worth separating here, because conflating them
+is what kept this open.
+
+**Partitioning one shared vault by user** — still not buildable from
+this side, exactly as 7(a) says. No tenant field is admitted by
+`ReflectionRequest` or `JournalUpsertRequest`, `/v1/wheel` is
+parameterless, and `CapabilitiesResponse` advertises no partitioning
+guarantee to verify at handshake. Nothing in this note assumes one.
+
+**Per-user vault *instances*** — buildable, and now built. Each account
+supplies the URL of a vault that is already theirs alone plus the
+credential that opens it. No tenant field is wanted, because there is
+nothing to disambiguate: one vault, one owner, which is the contract's
+own assumption throughout. That shape is also what ADR 0002 Decision 1
+and creek-vault ADR-0007 Decision 1 ratified in the first place — a
+persistent per-user VM with a durable, user-owned volume — so this is
+the architecture working as designed rather than a workaround for it.
+7(d)'s error was to answer the second question with the first
+question's evidence.
+
+**What shipped.** `uservaultconfig` holds one row per account: the URL,
+judged on write by `services.creek_vault_url.classify_vault_url` (the
+same four rules, in the same order, the deployment-wide path uses), and
+the credential, encrypted at rest through the same `EncryptedString`
+column type the journal body uses. There is no second key scheme and no
+second URL validator. The credential is write-only: no response schema
+in `schemas/vault_config.py` has a field to carry one, so it is absent
+from every body by construction rather than by omission.
+`dependencies.creek_vault.get_creek_vault_client` resolves the caller's
+own row first and the environment only after, because a user who
+connected their own vault must never be handed a shared corpus because
+an operator also set a default.
+
+**The environment path survives one release**, unchanged, as a
+deployment-wide default for accounts that have connected nothing:
+Decision 7(b) and 7(c) still describe it exactly. `CREEK_VAULT_OWNER_USER_ID`
+is retired only once operators have had a release to move their users
+across, which is why it is still read, still fails closed, and still
+warns when a configured vault is bound to nobody.
+
+**What is unchanged.** MCP stays Creek's agent surface and is not an
+application transport; the per-user path speaks HTTP `/v1` and nothing
+else, and carries no protocol selector at all, so there is no stored
+setting anywhere that could revive one. And the 2026-08-07 note's
+warning still holds with full force for any deployment that ran a
+shared vault with more than one active user: a corpus that is already
+mixed is not un-mixed by anything here. Per-user instances govern where
+new material goes; they do not reach into a vault that already holds
+several people's writing.
+
+**What is proven, and how.**
+`backend/tests/test_per_user_vault_config.py` reads the credential
+column with raw SQL and asserts the stored bytes carry the `enc::v1::`
+marker and not the key that was sent — an ORM round-trip would have
+passed against a plaintext column and proven nothing. It drives two
+accounts, two connected vaults and one app end to end with the
+transport faked *per URL*, so a resolution that handed one account the
+other's adapter shows up as a body in the wrong vault. It pins that a
+stored URL the classifier refuses degrades that account alone, to the
+local fallback, without raising on a journal save. And
+`backend/tests/test_legal_documents.py` now pins four encrypted columns
+rather than three, which is what forces `docs/legal/privacy-policy.md`
+to describe the credential before this could ship.
+
+**The divergence-table row is unchanged and still open.** No creek-side
+contract change was made or is implied by this note. What changed is
+that adepthood stopped needing one to give each user a vault.
+
+## Note, 2026-08-21 — the F1..F10-to-stage mapping is an identity, and the divergence table said the opposite
+
+**AMENDED 2026-08-21.** The divergence-table row for `wheel` closed with
+a clause that is wrong: that "the F1-F10-to-ten-stage numeric
+coincidence is NOT a semantic identity". The owner ratified the opposite
+on this date. The row is left as it was written, with a pointer to this
+note, because an ADR that edits away a ruling it once made stops being a
+record of what was decided.
+
+**What is overturned.** Only that clause. The rest of the row is
+untouched and still governs: the stage/aspect projection is Adepthood's
+to own, Creek must not invent our vocabulary on our behalf, and the row
+remains PENDING on creek-vault#1072 for the ratified `/v1` shape.
+Decision 1, Decision 6 and every other ruling in this document are
+unaffected — nothing here is about the transport or the tier ceiling.
+
+**What is ratified instead.** `F1..F10`, the APTITUDE Stages, the
+Adepthood Aspects of Wholeness and the Archetypal Wavelength Modes are
+**one set of ten developmental positions under several names**, not four
+vocabularies that happen to be the same size. `graph/ontology-spine.md`
+writes each row out — `Beige = Stage 1 = F1 = BEIGE = 01-beige =
+Survival` — and `NORTH-STAR.md` states the same shared ontology. F1 *is*
+stage 1.
+
+**Colour is the primary key, not the name.** This is the part worth
+carrying forward, because it is what makes the identity usable rather
+than merely true: the labelings agree on six of the ten positions and
+diverge on the middle four — creek's `Achievism` against the
+curriculum's `Intellectual Understanding / Achievist`, and likewise F6,
+F7, F8 — so a join on names mismatches exactly those four while looking
+correct. `domain.frequencies.frequency_for_color` is the single door,
+and `backend/tests/services/test_frequency_classification.py` asserts
+both the colour join and that specific divergence.
+
+**Owning the projection therefore means owning the rendering, not
+disputing the positions.** Adepthood decides which of the ten names a
+position is shown under and what a `WheelBalanceResponse` looks like on
+the wire it publishes; it does not get to treat Creek's tenth bucket as
+landing somewhere other than the tenth stage.
+
+**Why this is worth a note rather than a quiet edit.** The retracted
+reading has propagated twice already. A comment in
+`creek_vault_client.py` argued it — "different quantities over different
+material", their both having ten members dismissed as a mere accident of
+size — that comment was copied into `domain/frequencies.py`, and it was
+then cited in review as evidence that correct code was a latent bug. Commit `fa447e5d` corrected
+the code side. This document was the last and most authoritative place
+the wrong version survived, which made it the most likely to seed a
+third round. `backend/tests/test_ontology_record.py` now fails if a
+living document states the retracted claim, or if an ADR states it
+without naming the amendment that reversed it.
+
+## Note, 2026-08-22 — Decision 1 is complete; Decision 5's second reason is retired
+
+Two of this document's decisions have outlived the conditions their
+present tense describes. Neither is edited; both are read forward from
+here.
+
+**Decision 1 is done, not merely decided.** The HTTP/JSON `/v1`
+boundary is the only way this repository reaches a vault. Adepthood's
+own MCP client was deleted (the 2026-08-07 note above), and the `mcp`
+and `httpx2` pins that note left behind as acknowledged dead weight
+have since been dropped from `backend/requirements*.txt` by the
+follow-up it named. Nothing in the running system speaks MCP to Creek
+and nothing imports the package.
+
+The owner restated the boundary on 2026-08-18, and the restatement is
+the rule going forward rather than a summary of this decision:
+*"Creek-Vault retains MCP for any hermes or openclaw agents that want
+to interact with it, not for applications. MCP for application data
+transfer is a major code smell."* Creek's `creek-tools/creek_mcp/`
+server is untouched and stays the adapter for CrawDad, Claude Code,
+Hermes, and openclaw. What is settled is that adepthood is not one of
+its clients, in any tense, and no living document may describe it as
+one. `backend/tests/test_contract_version_docs.py` fails a document
+outside `docs/adr/` and `plan/` that presents MCP as the vault
+transport — the ratified records and the dated plan files are excluded
+because amending history is not the same as correcting it.
+
+**Decision 5 keeps the filename and loses the title.** Decision 5 gave
+two reasons for retaining `docs/creek-vault-mcp-contract.md`: link
+stability, and that "the shipped transport genuinely is still MCP
+until the HTTP cutover in Decision 1 lands". The 2026-08-07 note
+already recorded the second reason expiring. The first has grown
+rather than shrunk: the inbound references are now three `backend/src`
+module docstrings, `graph/ontology-spine.md`, the drift-guard test —
+and four citations in this document's own ratified text, which is
+append-only and therefore cannot be repointed. A rename would leave
+either dead links inside a decision record or a stub at the old path,
+which is one MCP-named file traded for two.
+
+So the path stays and the *title* goes: that document is now headed
+"Creek Vault contract pointer", and its Purpose section says in its
+own voice that the filename is a retained path and not a claim about a
+transport. Decision 5's "Rejected — deleting or renaming the file"
+paragraph stands as written; its reasoning is unchanged, and only its
+second premise — "nothing about the filename is wrong while MCP
+remains the shipped transport" — is superseded here. Nothing about the
+filename is *load-bearing*; that is a weaker claim, and it is the one
+that now holds.

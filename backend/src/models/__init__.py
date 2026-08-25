@@ -1,8 +1,11 @@
 """Database models package."""
 
+from .account_deletion_audit import AccountDeletionAudit
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
+from .corpus_consent import CorpusConsentEvent
+from .corpus_fragment import CorpusFragment
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
@@ -35,12 +38,16 @@ from .user import User
 from .user_depth_preferences import UserDepthPreferences
 from .user_practice import UserPractice
 from .user_ui_flags import UserUiFlags
+from .user_vault_config import UserVaultConfig
 from .wallet_audit import WalletAudit
 
 __all__ = [
+    "AccountDeletionAudit",
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",
+    "CorpusConsentEvent",
+    "CorpusFragment",
     "CourseStage",
     "EnergyPlan",
     "Entitlement",
@@ -74,5 +81,6 @@ __all__ = [
     "UserDepthPreferences",
     "UserPractice",
     "UserUiFlags",
+    "UserVaultConfig",
     "WalletAudit",
 ]

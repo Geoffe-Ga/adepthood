@@ -50,8 +50,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'baseline',
   },
+  // The reading face, not the heading face: on a shelf of the writer's own
+  // pages the words should be the loudest thing, so the card carries exactly
+  // one full-ink line and separates from the excerpt by colour, not weight.
   cardTitle: {
-    ...editorialType.heading,
+    ...editorialType.body,
     color: ink.primary,
     flexShrink: 1,
   },
@@ -70,8 +73,34 @@ const styles = StyleSheet.create({
     color: ink.muted,
     paddingTop: spacing(0.5),
   },
+  // Sits below the reading face, right-aligned, on the 44dp tap floor. The
+  // interactive `action` face rather than `caption`: it is meant to be pressed.
+  cardDeleteButton: {
+    minHeight: touchTarget.minimum,
+    alignSelf: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: SPACING.lg,
+  },
+  cardDeleteLabel: {
+    ...editorialType.action,
+    color: colors.danger,
+    fontWeight: '400',
+  },
+  // Where the ScreenHeader's action slot used to sit: the same vertical rhythm,
+  // now carrying "New entry" alone, with no display-scale title above it.
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingVertical: rhythm.heroPaddingV,
+  },
   searchRow: {
     marginBottom: SPACING.sm,
+  },
+  deleteError: {
+    ...editorialType.note,
+    color: colors.danger,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
   },
   emptyWrap: {
     flex: 1,
@@ -107,7 +136,6 @@ const styles = StyleSheet.create({
   promptLabel: {
     ...editorialType.caption,
     color: ink.muted,
-    textTransform: 'uppercase',
   },
   promptQuestion: {
     ...editorialType.heading,

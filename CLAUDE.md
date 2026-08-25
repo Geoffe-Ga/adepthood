@@ -77,7 +77,7 @@ pre-commit run <hook-id> --all-files  # Run a specific hook
 # Backend
 cd backend && pytest                # Run tests
 cd backend && pytest --cov=. --cov-report=term-missing --cov-fail-under=90
-cd backend && python -m uvicorn src.main:app --reload
+cd backend && PYTHONPATH=src python -m uvicorn main:app --reload
 
 # Frontend
 cd frontend && npm ci               # Install from lockfile (deterministic)
@@ -97,6 +97,10 @@ cd frontend && npx tsc --noEmit     # Type check
   `pre-commit run --all-files` sweep for a wide rename, a suspected
   cross-file type error, or a hook-config change — `git commit` already
   re-runs the hooks on your staged diff
+- Register a journey in `frontend/e2e/journeys.json` for any PR that adds or
+  changes a user-facing feature — `status: "covered"` naming the seam-crossing
+  spec, or `status: "uncovered"` with a linked issue. Declaring a gap is
+  expected; hiding one is not
 - Use conventional commit messages (enforced by commitlint)
 - Keep commits small and atomic — one logical change each
 - Respect existing patterns and conventions in the codebase
@@ -113,6 +117,11 @@ cd frontend && npx tsc --noEmit     # Type check
 - Leave TODOs for problems solvable now
 
 ### Quality Thresholds
+- **Journey coverage:** every critical user journey is declared in
+  `frontend/e2e/journeys.json` and either covered by a seam-crossing spec or
+  marked `uncovered` with an issue. Every other threshold here is a *volume*
+  metric: none of them can distinguish 90% coverage of a feature nobody can
+  reach from 90% coverage of a feature that works
 - **Test coverage:** 90% minimum line coverage (backend pytest-cov; frontend jest)
 - **Branch coverage:** 80% minimum (backend CI gate, target 90%)
 - **Docstring coverage:** 85% minimum (backend, interrogate)
@@ -132,9 +141,11 @@ once:
    backend; ~8s when it reuses a receipt for an unchanged tree).
 3. **Git hooks** (automatic): `git commit` runs the pre-commit-stage hooks on
    your staged files; `git push` runs the pre-push-stage hooks (full suite +
-   coverage + complexity) — but only where the `pre-push` hook type is
-   installed, which `scripts/dev-setup.sh` does not do today. CI runs that
-   stage regardless; a silent push is not a pass.
+   coverage + complexity), ~5 min. All three hook types are installed by a bare
+   `pre-commit install`, via `default_install_hook_types` in
+   `.pre-commit-config.yaml`. On a checkout set up before that landed, run
+   `pre-commit install` once to pick up the `pre-push` hook — `ls .git/hooks/`
+   should list `pre-push`. CI runs that stage regardless.
 4. **CI**: all of the above plus cross-version compat (3.11/3.12/3.13),
    docstring coverage, branch coverage, security audit.
 
@@ -215,3 +226,6 @@ hand freely — remove the marker to take a rule out of the playbook's
 jurisdiction.
 
 <!-- playbook rules are inserted below this line -->
+
+- **When** a FastAPI request body or query schema carries an id referencing an object other than the path's own resource (any `*_id` field), **do** authorize the caller's ownership of it unconditionally whenever it is non-null, using the `resolve_owned_*` helpers in `backend/src/dependencies/ownership.py` with their 404-missing / 403-not-owner convention and `log_ownership_denied`, and add a cross-tenant regression test in `backend/tests/security/test_idor.py` asserting both the rejection and that no row was persisted. <!-- playbook added=2026-08-10 evidence=#2064,#2065,#2121,#2122,#2123 -->
+- **When** adding or editing a command inside `scripts/**/*.sh` that a `check-all.sh` or pre-commit gate presents as enforcing, **do** run it once by hand to confirm it both executes and exits non-zero on a real violation, never wrap it in `|| true`, and add a meta-test under `backend/tests/scripts/` asserting the script fails on a deliberately violating fixture. <!-- playbook added=2026-08-10 evidence=#2024,#2055,#2015,#2006 -->

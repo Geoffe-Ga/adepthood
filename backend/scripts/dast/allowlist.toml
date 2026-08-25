@@ -13,6 +13,12 @@
 # row somebody owns, so a cross-user probe would be answered 200 by design.
 
 [[route]]
+method   = "PUT"
+path     = "/corpus/consent/{source}"
+category = "not_object_scoped"
+reason   = "source names a member of the CorpusSource enum, not a row; the decision is recorded against the caller"
+
+[[route]]
 method   = "GET"
 path     = "/course/site-resources/{slug}/body"
 category = "not_object_scoped"
@@ -41,6 +47,12 @@ method   = "GET"
 path     = "/course/stages/{stage_number}/progress"
 category = "not_object_scoped"
 reason   = "stage_number is a curriculum position; progress is read for the caller only"
+
+[[route]]
+method   = "GET"
+path     = "/prompts/stage/{stage_number}"
+category = "not_object_scoped"
+reason   = "stage_number is a curriculum position; the prompt set is the same for everyone"
 
 [[route]]
 method   = "GET"
@@ -136,6 +148,30 @@ reason   = "minting a link for a preset is explicitly permitted (submitted_by_us
 [[route]]
 method   = "POST"
 path     = "/admin/stage-progress/{user_id}/repair"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+# The entitlement overrides and the user summary act on *another* user by
+# design -- that is the whole point of an operator surface -- so ownership is
+# the wrong axis for them. The admin role is the control, and
+# tests/test_admin_entitlements.py exercises the anonymous and non-admin legs
+# on all three.
+
+[[route]]
+method   = "POST"
+path     = "/admin/users/{user_id}/entitlements"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "DELETE"
+path     = "/admin/users/{user_id}/entitlements/{entitlement_id}"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "GET"
+path     = "/admin/users/{user_id}/summary"
 category = "admin_only"
 reason   = "gated on the admin role rather than on ownership; both identities are denied"
 

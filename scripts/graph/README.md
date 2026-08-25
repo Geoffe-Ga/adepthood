@@ -51,6 +51,48 @@ The workflow **hard-fails** if the `ANTHROPIC_API_KEY` repo secret is
 missing — it refuses to publish a docs-blind graph mislabeled as
 `code+semantic`.
 
+### Preflight, and why the failures used to be undiagnosable
+
+Before the extraction, `scripts/graph/anthropic_preflight.sh` makes **one**
+minimal authenticated request (`GET /v1/models?limit=1` — cheap, and it buys
+no tokens) and prints the HTTP status.
+
+It exists because this workflow failed six weekly runs in a row with every
+one of its thirteen chunks reporting the same string, `Connection error.`,
+and nothing else. That string fits three faults equally well, and they have
+three different owners: a dead credential (the repo owner's — rotate the
+secret, never work around it), a runner that cannot egress, and a broken
+client inside `graphify` itself. Nothing in the extractor's output tells them
+apart, so a month of failures looked like one undiagnosable problem. The
+preflight separates them in about a second and encodes the answer in its exit
+code: `2` = credential rejected (401/403), `3` = unreachable (no HTTP
+response at all), `4` = the API answered and refused (rate limit, insufficient
+credit, outage), `0` = reachable and authenticated — which rules the first two
+out, so a chunk failure after a green preflight is the extractor's client.
+
+The key travels in a request header, never in the URL, and the script prints
+only the status; any key-shaped string in the third-party response body is
+redacted before it is echoed.
+
+**A note on inferring the credential's health from elsewhere:** `ralph-recap.yml`
+uses the same secret and its runs are green, which looks decisive and is not.
+The recap treats the key as *optional* and silently degrades to a heuristic
+headline on a dead key, so its green history is evidence about the credential
+in neither direction. `recap.py` now logs `headline: claude` or
+`headline: heuristic` with a reason for exactly this purpose.
+
+### When it fails, something says so
+
+`graph-semantic.yml`'s `report-failure` job runs on `failure()` and calls
+`scripts/graph/report_workflow_failure.sh`, which opens **or updates a single
+tracking issue** — matched by a `<!-- workflow-failure:<workflow> -->` marker
+in the issue body, so repeat failures become comments, never new issues. A bot
+that files weekly is noise, and noise is how the original six failures went
+unread for a month while `CLAUDE.md` was telling every agent to prefer the
+graph over grep sweeps. If the search for that issue cannot be completed, the
+script files **nothing** and exits non-zero: reading a failed lookup as "no
+tracking issue exists" is how one issue becomes one per run.
+
 **Cost**: the first run is the expensive one — it pays for the full corpus
 (the vendored course content alone is ~130k+ words), on the order of
 single-digit dollars. graphify's semantic cache is SHA256 content-keyed per
@@ -171,9 +213,22 @@ the trend ledger gets at most one record per UTC day.
 
 `scripts/graph/test_append_benchmark_trend.sh` and
 `scripts/graph/test_semantic_staleness.sh` are offline shell tests for the
-two scripts above, run by `.github/workflows/graph-tests.yml` on any change
-under `scripts/graph/**` (this tooling lives outside `backend/`, so the
-backend-scoped lint/coverage gates don't otherwise cover it).
+two scripts above. They are two of the suites `.github/workflows/graph-tests.yml`
+runs — this tooling lives outside `backend/`, so the backend-scoped
+lint/coverage gates don't otherwise cover it.
+
+The workflow does not name suites. It runs `bash scripts/graph/run_tests.sh`,
+which globs every `scripts/graph/test_*.sh`, so a new suite is gated the moment
+it lands. (Naming them is what drifted: the workflow once listed two of eight,
+leaving six invoked by nothing.) The runner invokes each through `bash` — their
+recorded git modes are mixed — and fails if a suite fails, or if the glob
+matches nothing at all.
+
+Its `paths:` filter covers more than `scripts/graph/**`, because several suites
+assert over files elsewhere: `prompts/scans/**` (the scan-prompt preambles),
+`.claude/**` (the graph skill, agent instructions, hooks, settings),
+`scripts/ralph/PROMPT.md` and `.github/workflows/weekly-playbook.yml`. Editing
+a file a suite reads must be able to fire the suite that reads it.
 
 The ledger also feeds the Discord Ralph recap's knowledge-graph line — see
 [`scripts/ralph/RECAP.md`](../ralph/RECAP.md).

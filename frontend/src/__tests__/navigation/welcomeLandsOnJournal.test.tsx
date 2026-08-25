@@ -205,7 +205,7 @@ import { useWelcomeStore } from '@/store/useWelcomeStore';
 // Resolve the tab navigator's first route (else the focused route); early-returns
 // keep the branch count under the complexity limit.
 function firstTabName(
-  navRef: React.RefObject<NavigationContainerRef<RootTabParamList>>,
+  navRef: React.RefObject<NavigationContainerRef<RootTabParamList> | null>,
 ): string | undefined {
   const container = navRef.current;
   if (!container) return undefined;
@@ -235,7 +235,7 @@ function mockAuthenticated(): void {
 }
 
 // Wrap RootNavigator in a REAL NavigationContainer + ref so getCurrentRoute() works.
-function renderWithNav(navRef: React.RefObject<NavigationContainerRef<RootTabParamList>>) {
+function renderWithNav(navRef: React.RefObject<NavigationContainerRef<RootTabParamList> | null>) {
   return render(
     <NavigationContainer theme={navThemeFor('light')} ref={navRef}>
       <RootNavigator />

@@ -19,8 +19,9 @@ from domain.program_calendar import calendar_week, resolve_program_anchor
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
     TOTAL_WEEKS,
-    get_prompt_for_week,
-    prompt_title_for_week,
+    WeekPrompt,
+    resolve_week_prompt,
+    stage_prompts,
 )
 from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH, JournalEntry, JournalTag
@@ -32,6 +33,8 @@ from schemas.prompt import (
     PromptDetail,
     PromptListResponse,
     PromptSubmit,
+    StagePromptDetail,
+    StagePromptsResponse,
 )
 from security import TextTooLongError, sanitize_user_text
 
@@ -87,6 +90,54 @@ async def _check_week_unlocked(
         raise forbidden("week_locked")
 
 
+async def _find_response(
+    session: AsyncSession, user_id: int, week_number: int
+) -> PromptResponse | None:
+    """The user's stored response for one week, if they have written one."""
+    result = await session.execute(
+        select(PromptResponse).where(
+            PromptResponse.user_id == user_id,
+            PromptResponse.week_number == week_number,
+        )
+    )
+    return result.scalars().first()
+
+
+def _unanswered_detail(resolved: WeekPrompt) -> PromptDetail:
+    """Serialize a week the user has not written to yet."""
+    return PromptDetail(
+        week_number=resolved.week_number,
+        question=resolved.question,
+        default_title=resolved.default_title,
+        prompt_ordinal=resolved.prompt.ordinal,
+        has_responded=False,
+    )
+
+
+def _answered_detail(pr: PromptResponse) -> PromptDetail:
+    """Serialize a stored response; live content wins, the snapshot is the fallback.
+
+    The row's ``prompt_ordinal`` picks which of its stage's prompts it
+    answered, so a stage with four addressable prompts reads back the one that
+    was written to rather than the one its week happens to draw. A legacy row
+    (``None``) falls back to the week's own prompt, and a row whose ordinal the
+    content no longer carries falls back the same way before finally falling
+    back to its own snapshot for a week the curriculum has retired.
+    """
+    resolved = resolve_week_prompt(pr.week_number, pr.prompt_ordinal) or resolve_week_prompt(
+        pr.week_number
+    )
+    return PromptDetail(
+        week_number=pr.week_number,
+        question=resolved.question if resolved else pr.question,
+        default_title=resolved.default_title if resolved else None,
+        prompt_ordinal=pr.prompt_ordinal,
+        has_responded=True,
+        response=pr.response,
+        timestamp=pr.timestamp,
+    )
+
+
 @router.get("/current", response_model=PromptDetail)
 async def get_current_prompt(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -95,26 +146,12 @@ async def get_current_prompt(
 ) -> PromptDetail:
     """Return the prompt for the user's current week in the program."""
     week = await _get_user_week(session, current_user, user_tz)
-    question = get_prompt_for_week(week)
-    if question is None:
+    resolved = resolve_week_prompt(week)
+    if resolved is None:
         raise not_found("prompt")
 
-    # Check if user already responded this week
-    result = await session.execute(
-        select(PromptResponse).where(
-            PromptResponse.user_id == current_user,
-            PromptResponse.week_number == week,
-        )
-    )
-    existing = result.scalars().first()
-
-    return PromptDetail(
-        week_number=week,
-        question=question,
-        has_responded=existing is not None,
-        response=existing.response if existing else None,
-        timestamp=existing.timestamp if existing else None,
-    )
+    existing = await _find_response(session, current_user, week)
+    return _answered_detail(existing) if existing else _unanswered_detail(resolved)
 
 
 @dataclass
@@ -124,17 +161,6 @@ class _HistoryFilters:
     limit: int = Query(default=50, ge=1, le=200)
     offset: int = Query(default=0, ge=0, le=TOTAL_WEEKS)
     include_total: bool = Query(default=True)
-
-
-def _history_detail(pr: PromptResponse) -> PromptDetail:
-    """Serialize a ``PromptResponse``; live dict wins, snapshot is the retired-week fallback."""
-    return PromptDetail(
-        week_number=pr.week_number,
-        question=get_prompt_for_week(pr.week_number) or pr.question,
-        has_responded=True,
-        response=pr.response,
-        timestamp=pr.timestamp,
-    )
 
 
 async def _maybe_total(
@@ -182,9 +208,49 @@ async def list_prompt_history(
         items = rows[: filters.limit]
         has_more = len(rows) > filters.limit
     return PromptListResponse(
-        items=[_history_detail(pr) for pr in items],
+        items=[_answered_detail(pr) for pr in items],
         total=total,
         has_more=has_more,
+    )
+
+
+@router.get("/stage/{stage_number}", response_model=StagePromptsResponse)
+async def get_stage_prompts(
+    stage_number: int,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> StagePromptsResponse:
+    """Every prompt of one stage, in curriculum order, each with its cadence.
+
+    Weeks and prompts are not 1:1 — a stage carries three to five prompts
+    across three or six weeks — so this is the read path the week-scoped
+    endpoints cannot express: the 25-curiosities list is a one-time build and
+    the Wavelength check-in is a daily, and one undifferentiated question per
+    week says neither.
+
+    Gated on the stage's *first* week through the same
+    :func:`_check_week_unlocked` the weekly endpoints use, so opening four
+    prompts at once cannot leak a stage the user has not reached.  404
+    precedes 403 so an unknown stage is never reported as merely locked.
+    """
+    stage = stage_prompts(stage_number)
+    if stage is None:
+        raise not_found("stage")
+    await _check_week_unlocked(session, current_user, stage.first_week, user_tz)
+
+    return StagePromptsResponse(
+        stage=stage.stage,
+        stage_name=stage.band,
+        prompts=[
+            StagePromptDetail(
+                ordinal=prompt.ordinal,
+                title=prompt.title,
+                body=prompt.body,
+                cadence=prompt.cadence,
+            )
+            for prompt in stage.prompts
+        ],
     )
 
 
@@ -202,36 +268,24 @@ async def get_prompt_by_week(
     lift every future question.  404 precedes 403 so unknown weeks
     (outside 1..``TOTAL_WEEKS``) don't get re-interpreted as "locked".
     """
-    question = get_prompt_for_week(week_number)
-    if question is None:
+    resolved = resolve_week_prompt(week_number)
+    if resolved is None:
         raise not_found("prompt")
     await _check_week_unlocked(session, current_user, week_number, user_tz)
 
-    result = await session.execute(
-        select(PromptResponse).where(
-            PromptResponse.user_id == current_user,
-            PromptResponse.week_number == week_number,
-        )
-    )
-    existing = result.scalars().first()
-
-    return PromptDetail(
-        week_number=week_number,
-        question=question,
-        has_responded=existing is not None,
-        response=existing.response if existing else None,
-        timestamp=existing.timestamp if existing else None,
-    )
+    existing = await _find_response(session, current_user, week_number)
+    return _answered_detail(existing) if existing else _unanswered_detail(resolved)
 
 
-def _resolve_entry_title(payload_title: str | None, week_number: int) -> str | None:
+def _resolve_entry_title(payload_title: str | None, resolved: WeekPrompt) -> str:
     """Resolve the journal title mirrored from a prompt submission.
 
     A non-blank user override is sanitized and used verbatim; a blank,
     whitespace-only, absent, or sanitized-to-empty override falls back to the
-    week's default band label (:func:`prompt_title_for_week`). ``week_number``
-    is already range-validated by the caller, so the fallback is non-``None``
-    for a real submission. An over-long title surfaces as a 422.
+    default title of the prompt actually answered
+    (:attr:`domain.weekly_prompts.WeekPrompt.default_title`), so a response to
+    a stage's third prompt is titled for that prompt rather than for the one
+    its week draws. An over-long title surfaces as a 422.
     """
     if payload_title and payload_title.strip():
         try:
@@ -240,7 +294,7 @@ def _resolve_entry_title(payload_title: str | None, week_number: int) -> str | N
             raise unprocessable("title_too_long") from exc
         if cleaned:
             return cleaned
-    return prompt_title_for_week(week_number)
+    return resolved.default_title
 
 
 @router.post(
@@ -270,9 +324,15 @@ async def submit_prompt_response(
     semantically one condition; the constraint is the only observer that
     sees both rows in a TOCTOU race anyway, so we let it own the
     decision and the response code stays uniform.
+
+    ``prompt_ordinal`` names which of the stage's prompts the response
+    answers; omitted, it is the prompt the week itself draws, so clients
+    written against the one-prompt-per-week contract are unaffected.  An
+    ordinal the stage does not carry is a 404 — the same shape an unknown week
+    already gets — rather than a silent wrap-around onto a different prompt.
     """
-    question = get_prompt_for_week(week_number)
-    if question is None:
+    resolved = resolve_week_prompt(week_number, payload.prompt_ordinal)
+    if resolved is None:
         raise not_found("prompt")
     await _check_week_unlocked(session, current_user, week_number, user_tz)
 
@@ -290,11 +350,16 @@ async def submit_prompt_response(
     except TextTooLongError as exc:
         raise unprocessable("response_too_long") from exc
 
-    entry_title = _resolve_entry_title(payload.title, week_number)
+    entry_title = _resolve_entry_title(payload.title, resolved)
 
+    # The *resolved* ordinal is stored, not the one the payload sent: a
+    # submission that named none still answered a specific prompt, and
+    # recording which makes the row self-describing instead of dependent on a
+    # rotation a later content sync could change.
     prompt_response = PromptResponse(
         week_number=week_number,
-        question=question,
+        prompt_ordinal=resolved.prompt.ordinal,
+        question=resolved.question,
         response=cleaned_response,
         user_id=current_user,
     )
@@ -322,13 +387,11 @@ async def submit_prompt_response(
 
     logger.info(
         "prompt_response_submitted",
-        extra={"user_id": current_user, "week_number": week_number},
+        extra={
+            "user_id": current_user,
+            "week_number": week_number,
+            "prompt_ordinal": prompt_response.prompt_ordinal,
+        },
     )
 
-    return PromptDetail(
-        week_number=prompt_response.week_number,
-        question=prompt_response.question,
-        has_responded=True,
-        response=prompt_response.response,
-        timestamp=prompt_response.timestamp,
-    )
+    return _answered_detail(prompt_response)

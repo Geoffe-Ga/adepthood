@@ -34,6 +34,7 @@ import { ReauthSheet } from './features/Auth/ReauthSheet';
 import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
 import SignupScreen from './features/Auth/SignupScreen';
 import { WelcomeScreen } from './features/Welcome/WelcomeScreen';
+import { useLockPortraitUp } from './hooks/useLockPortraitUp';
 import type { RootTabParamList } from './navigation/BottomTabs';
 import type { RootStackParamList } from './navigation/RootStack';
 import RootStack from './navigation/RootStack';
@@ -220,6 +221,10 @@ function ThemedStatusBar(): React.JSX.Element {
 }
 
 function AppShell(): React.JSX.Element {
+  // Here rather than in App, which returns early on CONFIG_ERROR — a hook above
+  // that branch would break the rules of hooks. The config-error screen is a
+  // dead end anyway, so it has nothing to rotate.
+  useLockPortraitUp();
   useHydrateProgramStore();
   const { mode } = useTheme();
   return (

@@ -8,12 +8,22 @@ cachetools==7.1.7
 # preserved by this pin, which is >= 4.0.
 jsonschema==4.26.0
 fastapi==0.141.1
-uvicorn==0.52.1
+uvicorn==0.52.4
 pydantic==2.13.4
 email-validator==2.3.0
-sqlalchemy==2.0.51
+# The ``asyncio`` extra, not bare sqlalchemy, because that is what this app
+# actually uses -- and it is the only way greenlet gets declared honestly.
+# SQLAlchemy's bare dependency on greenlet carries a platform marker listing
+# aarch64/ppc64le/x86_64/amd64/win32; macOS on Apple silicon reports ``arm64``,
+# which is in none of them, so a from-scratch install on the primary dev
+# platform silently omitted it and every async DB test died with "the greenlet
+# library is required". CI never saw it -- ubuntu-latest is x86_64. The extra
+# requires greenlet unconditionally, so the single source of truth stays
+# SQLAlchemy's own metadata rather than a version we would have to keep in step
+# by hand.
+sqlalchemy[asyncio]==2.0.52
 sqlmodel==0.0.39
-alembic==1.18.5
+alembic==1.19.1
 asyncpg==0.31.0
 aiosqlite==0.22.1
 bcrypt==5.0.0
@@ -28,15 +38,21 @@ tzdata==2026.3
 pytest==9.1.1
 pytest-asyncio==1.4.0
 httpx==0.28.1
-# MCP SDK powering the Creek Vault streamable-HTTP transport
-# (services/creek_vault_client.py); unconfigured deployments never open it.
-mcp==2.0.0
-# The HTTP library the MCP SDK speaks, distinct from the ``httpx`` the plain
-# HTTP vault client uses. Already a transitive mcp dependency; pinned here
-# because the vault client imports it directly to build the MCP transport's
-# timeout budget and to name its errors in the degrade set.
-httpx2==2.9.1
 # LLM provider SDKs for BotMason (issue #402) — the stub provider stays the
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
-openai==2.53.0
-anthropic==0.120.2
+#
+# openai 3.x moved its HTTP layer to httpx2, a separate distribution rather
+# than an httpx upgrade, so the lock carries both stacks: httpx for anthropic,
+# Starlette and the test suite, httpx2 (plus httpcore2 and truststore) for
+# openai alone. The two are unrelated at the type level — httpx2.Request is
+# not httpx.Request — which is why the mypy hook pins both. httpx2 also trusts
+# the OS certificate store rather than certifi.
+openai==3.3.0
+anthropic==0.123.0
+# Error monitoring. Wholly optional at runtime: with SENTRY_DSN unset the SDK
+# is never initialised and every capture is a no-op, so local dev and CI carry
+# the import cost and nothing else. Installed rather than vendored because the
+# envelope wire format is the vendor's to change, not ours -- a hand-rolled
+# client that silently stops being accepted would reproduce the invisibility
+# this dependency exists to remove.
+sentry-sdk==2.68.0

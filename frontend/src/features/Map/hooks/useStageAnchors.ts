@@ -1,5 +1,3 @@
-// frontend/features/Map/hooks/useStageAnchors.ts
-
 /**
  * Measure the real, content-driven vertical center of each stage cell so the
  * center-column wave threads through the true row/cell midpoints instead of ten

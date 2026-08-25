@@ -54,8 +54,22 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 
 # Arg-aware fake gh. Behaviour is driven by env vars the test sets per case:
-#   CHECKS_EC     — exit code `gh pr checks` should return (0 green / 8 pending / other failed)
+#   CHECKS_EC     — exit code `gh pr checks` should return (0 green / 8 pending /
+#                   other = "something went wrong", which is NOT the same as red)
+#   CHECKS_STDERR — what that call writes to stderr; real `gh` narrates a transport
+#                   failure there and stays silent on a merely-failing check
+#   CI_CONFIRM_JSON — raw `--json statusCheckRollup` payload for the confirmation
+#                   re-query on the non-zero path; the stub runs the REAL jq with
+#                   pr-ready.sh's own `--jq` against it. Defaults to an EMPTY
+#                   rollup, i.e. "nothing corroborates a failure"
+#   CI_CONFIRM_EC — exit code that same call returns (non-0 = it could not ask
+#                   either, so nothing was ever confirmed)
+#   CI_CONFIRM_SENTINEL — file the stub touches when the confirmation endpoint is
+#                   hit, so a test can prove that re-query stays off green lanes
 #   MERGE_STATE   — mergeStateStatus (CLEAN / BEHIND / ...)
+#   PR_FILES      — newline-separated paths the PR touches; drives the
+#                   review-self-skip detection
+#   PR_FILES_EC   — exit code for that lookup (non-zero ⇒ unreadable)
 #   HEAD_DATE     — RFC3339 committedDate of the PR HEAD commit
 #   HEAD_AUTHOR   — `authors[0].login` of that same HEAD commit, the third field of
 #                   the `--json mergeStateStatus,commits` answer; defaults to the
@@ -122,7 +136,11 @@ case "$args" in
     [[ -n "${COMPARE_SENTINEL:-}" ]] && : > "$COMPARE_SENTINEL"
     printf '%s\n' "${BEHIND_BY-0}"    # `-` not `:-` so an empty value stays empty
     exit "${COMPARE_EC:-0}" ;;
-  *"pr checks"*)            exit "${CHECKS_EC:-0}" ;;
+  *"pr checks"*)
+    # Real `gh` narrates a transport failure on stderr and says nothing at all
+    # when a check merely reports FAILURE, which is the whole signal here.
+    [[ -z "${CHECKS_STDERR:-}" ]] || printf '%s\n' "$CHECKS_STDERR" >&2
+    exit "${CHECKS_EC:-0}" ;;
   *"pr view"*"--json labels"*)
     printf '%s' "${PR_LABELS:-}" | tr ',' '\n'
     exit "${PR_LABELS_EC:-0}" ;;
@@ -151,6 +169,21 @@ case "$args" in
     printf '%s|%s\n' "${PR_AUTHOR:-}" "${PR_BODY:-}"
     exit "${PR_BODY_EC:-0}" ;;
   *"pr view"*"--json baseRefName"*) printf '%s|%s\n' "${BASE_REF:-main}" "${HEAD_OID:-c0ffee1}" ;;
+  *"pr view"*"--json statusCheckRollup"*)
+    [[ -n "${CI_CONFIRM_SENTINEL:-}" ]] && : > "$CI_CONFIRM_SENTINEL"
+    payload="${CI_CONFIRM_JSON:-}"
+    [[ -n "$payload" ]] || payload='{"statusCheckRollup":[]}'
+    expr="" prev=""
+    for a in "$@"; do [[ "$prev" == "--jq" ]] && expr="$a"; prev="$a"; done
+    # Real jq against a real rollup shape, so the production conclusion filter is
+    # exercised rather than simulated: a filter that missed FAILURE (or matched
+    # SUCCESS) would report the wrong token here instead of passing on a stub.
+    if [[ -n "$expr" ]]; then
+      printf '%s' "$payload" | jq -rc "$expr"
+    else
+      printf '%s\n' "$payload"
+    fi
+    exit "${CI_CONFIRM_EC:-0}" ;;
   *"pr view"*"--json author"*)
     [[ -n "${REVIEW_SENTINEL:-}" ]] && : > "$REVIEW_SENTINEL"
     if [[ -n "${ROLLUP_JSON:-}" ]]; then
@@ -162,6 +195,9 @@ case "$args" in
       printf '%s|%s|%s\n' "${PR_AUTHOR:-}" "${REVIEW_CONCLUSIONS:-}" "${NON_REVIEW_SUCCESSES-1}"
     fi
     exit "${REVIEW_EC:-0}" ;;
+  *"pr view"*"--json files"*)
+    printf '%s\n' "${PR_FILES:-}"
+    exit "${PR_FILES_EC:-0}" ;;
   *"--json mergeStateStatus"*)
     printf '%s|%s|%s\n' "${MERGE_STATE:-CLEAN}" "${HEAD_DATE:-}" "${HEAD_AUTHOR-dependabot[bot]}" ;;
   *"--json comments"*)
@@ -192,11 +228,80 @@ check "missing PR number exits 2" "2" "$rc"
 check "exit 8 → pending" "pending" \
   "$(CHECKS_EC=8 run 100)"
 
-# --- CI failure surfaced: non-0/non-8 exit → ci-failed ---------------------
-check "exit 1 → ci-failed" "ci-failed" \
-  "$(CHECKS_EC=1 run 100)"
-check "exit 2 → ci-failed" "ci-failed" \
-  "$(CHECKS_EC=2 run 100)"
+# --- CI failure vs. "I could not ask CI" -----------------------------------
+# `gh pr checks` exits non-zero for reasons that have nothing to do with a red
+# build: no network, TLS failure, an expired token, a secondary-rate-limit block,
+# a 5xx, or a PR carrying no checks at all. Every one of those used to print
+# `ci-failed`, which routes a lane into ci-debugging — an agent reading logs for
+# a failure that never happened, on a PR that may well be green. So a non-zero
+# exit is only believed once a second, independent query CORROBORATES it by
+# naming an actually-failing check.
+FAILED_ROLLUP='{"statusCheckRollup":[{"name":"backend-ci","conclusion":"FAILURE"}]}'
+GREEN_ROLLUP='{"statusCheckRollup":[{"name":"backend-ci","conclusion":"SUCCESS"}]}'
+CONNREFUSED='dial tcp 140.82.113.5:443: connect: connection refused'
+
+check "exit 1 corroborated by a FAILURE conclusion → ci-failed" "ci-failed" \
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" run 100)"
+check "exit 2 corroborated by a FAILURE conclusion → ci-failed" "ci-failed" \
+  "$(CHECKS_EC=2 CI_CONFIRM_JSON="$FAILED_ROLLUP" run 100)"
+
+# The bug, stated as a test: a dropped connection is not a failed build.
+check "exit 1 + a connection error on stderr → transport-error" "transport-error" \
+  "$(CHECKS_EC=1 CHECKS_STDERR="$CONNREFUSED" run 100)"
+check "exit 1 + a TLS failure on stderr → transport-error" "transport-error" \
+  "$(CHECKS_EC=1 CHECKS_STDERR='tls: failed to verify certificate: x509: certificate signed by unknown authority' \
+     run 100)"
+
+# The exact shape observed on PR #2218: gh reported non-zero while every check
+# that existed was SUCCESS or still running. Nothing failed; nothing may be said
+# to have failed.
+check "exit 1 while the rollup is all-green → transport-error" "transport-error" \
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON="$GREEN_ROLLUP" run 100)"
+
+# If the corroborating call cannot reach GitHub either, we know even less —
+# certainly not enough to dispatch a debugger.
+check "exit 1 + an unreachable confirmation query → transport-error" "transport-error" \
+  "$(CHECKS_EC=1 CI_CONFIRM_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" run 100)"
+
+# A malformed answer to the confirmation is not a confirmation.
+check "exit 1 + a malformed confirmation answer → transport-error" "transport-error" \
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON='{"statusCheckRollup":null}' run 100)"
+
+# Legacy commit-status contexts carry `state`, not `conclusion`; a filter reading
+# only `conclusion` would call a genuinely red PR a transport blip.
+check "a failing legacy status context still → ci-failed" "ci-failed" \
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON='{"statusCheckRollup":[{"context":"ci/legacy","state":"FAILURE"}]}' \
+     run 100)"
+
+# Non-FAILURE terminal conclusions are failures too — a timed-out or cancelled
+# check is a red lane, not a network blip.
+check "a TIMED_OUT conclusion still → ci-failed" "ci-failed" \
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON='{"statusCheckRollup":[{"name":"e2e","conclusion":"TIMED_OUT"}]}' \
+     run 100)"
+
+# The confirmation costs an API call, so it must stay off every lane that never
+# claimed a failure in the first place.
+S_CONFIRM_GREEN="$WORK/ci-confirm-green"
+check "a green lane classifies without the confirmation query" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
+     CI_CONFIRM_SENTINEL="$S_CONFIRM_GREEN" run 100)"
+probed "the confirmation query stays off a green lane" "no" "$S_CONFIRM_GREEN"
+
+S_CONFIRM_PENDING="$WORK/ci-confirm-pending"
+check "a pending lane classifies without the confirmation query" "pending" \
+  "$(CHECKS_EC=8 CI_CONFIRM_SENTINEL="$S_CONFIRM_PENDING" run 100)"
+probed "the confirmation query stays off a pending lane" "no" "$S_CONFIRM_PENDING"
+
+# The evidence must reach a human: the discarded stderr line is the whole reason
+# nobody could tell these two apart. It goes to stderr, never stdout — the
+# contract is exactly one token on stdout.
+transport_stderr="$(CHECKS_EC=1 CHECKS_STDERR="$CONNREFUSED" \
+  PATH="$BIN:$PATH" "$READY" 100 2>&1 >/dev/null)"
+if grep -qF "connection refused" <<<"$transport_stderr"; then
+  ok "the transport error's own message reaches stderr"
+else
+  bad "the transport error's own message reaches stderr (got '$transport_stderr')"
+fi
 
 # --- ready: green + CLEAN + fresh LGTM -------------------------------------
 check "green + CLEAN + fresh LGTM → ready" "ready" \
@@ -205,6 +310,107 @@ check "green + CLEAN + fresh LGTM → ready" "ready" \
 # --- behind: green + fresh LGTM but not up-to-date -------------------------
 check "green + BEHIND + fresh LGTM → behind" "behind" \
   "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+# --- a PR editing the review workflow is a terminal state, not a wait -------
+# claude-code-action self-skips (anti-tamper) on any PR that edits the workflow
+# it runs from, and the Post-review step exits 0 with a warning -- so the check
+# reports SUCCESS, no verdict is ever posted, and the lane sat at
+# `awaiting-review` forever while ralph-tick sent it hunting a merge conflict
+# that does not exist.
+REVIEW_WF=".github/workflows/claude-code-review.yml"
+
+check "green + edits the review workflow + no verdict → review-self-skipped" "review-self-skipped" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+check "a stale verdict on such a PR is still review-self-skipped" "review-self-skipped" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|true" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+# The escape hatch: a human who reviews it by hand and posts a fresh LGTM must
+# be able to land it. Detection must not outrank a real, fresh verdict.
+check "a FRESH human LGTM on such a PR still reaches ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
+     PR_FILES="$REVIEW_WF" BEHIND_BY=0 run 100)"
+
+# A fresh non-LGTM is the review speaking; it routes to address-feedback as ever.
+check "a FRESH non-LGTM on such a PR is still changes-requested" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false" \
+     PR_FILES="$REVIEW_WF" run 100)"
+
+# Touching a *different* workflow does not trip it -- only the review workflow
+# self-skips, so only it earns the token.
+check "editing an unrelated workflow still awaits review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES=".github/workflows/backend-ci.yml" run 100)"
+
+# Fails OPEN to the old behaviour: an unreadable file list must not invent a
+# terminal state and park a lane a human never asked to hold.
+check "an unreadable file list falls back to awaiting-review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="|false" \
+     PR_FILES="" PR_FILES_EC=1 run 100)"
+
+# --- non-actionable merge states get their own tokens ----------------------
+# All five used to print `behind`, whose remedy is `fleet.sh sync`. A sync
+# cannot supply a missing check, un-draft a PR a human parked, resolve a
+# conflict, or hurry GitHub's mergeability computation -- so each wake synced a
+# no-op and dispatched a worker with nothing to do.
+check "green + UNKNOWN → unknown (GitHub still computing)" "unknown" \
+  "$(CHECKS_EC=0 MERGE_STATE=UNKNOWN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + DRAFT → draft (a human parked it)" "draft" \
+  "$(CHECKS_EC=0 MERGE_STATE=DRAFT HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + BLOCKED → blocked (a required gate is missing)" "blocked" \
+  "$(CHECKS_EC=0 MERGE_STATE=BLOCKED HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + DIRTY → conflicted (needs a real merge, not a sync)" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+check "green + CONFLICTING → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=CONFLICTING HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+
+# --- a conflict OUTRANKS the wait for a verdict -----------------------------
+# GitHub builds no merge ref for a conflicting PR, so it creates no
+# `pull_request`-event runs — `claude-review` never appears and the verdict this
+# lane would be waiting for can NEVER arrive. The conflict check used to sit
+# after the verdict check, so such a PR printed `awaiting-review` and the
+# orchestrator waited on a review that was structurally impossible. Observed on a
+# live lane: reported `awaiting-review`, actually CONFLICTING.
+check "a conflicting PR with no verdict → conflicted, not awaiting-review" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=CONFLICTING HEAD_DATE=$H VERDICT="|false" run 100)"
+
+check "a conflicting PR with a DIRTY state and no verdict → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="|false" run 100)"
+
+check "a conflicting PR with a STALE verdict → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$STALE|true" run 100)"
+
+# The missing-HEAD fail-closed path is a wait for the same unreachable verdict.
+check "a conflicting PR with no readable HEAD date → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE="" VERDICT="|false" run 100)"
+
+# And it must not swallow the states that genuinely are waits: only a conflict
+# makes the verdict unreachable.
+check "a BLOCKED PR with no verdict still awaits review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=BLOCKED HEAD_DATE=$H VERDICT="|false" run 100)"
+
+check "an UNKNOWN-mergeability PR with no verdict still awaits review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=UNKNOWN HEAD_DATE=$H VERDICT="|false" run 100)"
+
+# A fresh non-LGTM is the review speaking and stays actionable in its own right;
+# a conflict does not erase a verdict that already arrived.
+check "a conflicting PR with a FRESH non-LGTM is still changes-requested" "changes-requested" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|false" run 100)"
+
+# CLEAN-but-stale is the one case `behind` still means, and it must survive.
+check "green + CLEAN + stale head → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=3 run 100)"
+
+# A state nobody has enumerated must not silently become `ready`; it falls back
+# to the safe, actionable token rather than to a merge.
+check "green + an unenumerated state → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=HAS_HOOKS HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
 
 # --- stale-verdict guard: an LGTM older than HEAD does NOT count ------------
 check "green + CLEAN + STALE LGTM → awaiting-review" "awaiting-review" \
@@ -409,7 +615,8 @@ probed "pending lane never probes freshness" "no" "$S_PENDING"
 
 S_FAILED="$WORK/compare-ci-failed"
 check "ci-failed stays ci-failed with a stale branch" "ci-failed" \
-  "$(CHECKS_EC=1 BEHIND_BY=17 COMPARE_SENTINEL="$S_FAILED" run 100)"
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" BEHIND_BY=17 \
+     COMPARE_SENTINEL="$S_FAILED" run 100)"
 probed "ci-failed lane never probes freshness" "no" "$S_FAILED"
 
 S_REVIEW="$WORK/compare-awaiting-review"
@@ -476,7 +683,12 @@ check "reviewless + 17 commits behind → behind, never ready-unreviewed" "behin
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=17 run 100)"
 
-check "reviewless + DIRTY → behind, never ready-unreviewed" "behind" \
+# Was `behind` until the non-actionable states were split out. The property this
+# case exists for is unchanged and is what the name states: a conflicting bot PR
+# must never reach `ready-unreviewed`. `conflicted` says that more precisely --
+# and unlike `behind` it does not send the orchestrator to a sync that cannot
+# resolve a conflict.
+check "reviewless + DIRTY → conflicted, never ready-unreviewed" "conflicted" \
   "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$NO_VERDICT" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
 
@@ -609,8 +821,8 @@ probed "pending lane never probes the review gate" "no" "$S_GATE_PENDING"
 
 S_GATE_FAILED="$WORK/gate-ci-failed"
 check "reviewless lane with red CI stays ci-failed" "ci-failed" \
-  "$(CHECKS_EC=1 PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" \
-     REVIEW_SENTINEL="$S_GATE_FAILED" run 100)"
+  "$(CHECKS_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" PR_AUTHOR="$DEPENDABOT" \
+     REVIEW_CONCLUSIONS="$SKIPPED" REVIEW_SENTINEL="$S_GATE_FAILED" run 100)"
 probed "ci-failed lane never probes the review gate" "no" "$S_GATE_FAILED"
 
 S_GATE_OPTOUT="$WORK/gate-optout"
@@ -722,7 +934,62 @@ check "a bot PR whose body still links an issue classifies from the link" "ready
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
      PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="dependencies" \
      ISSUE_LIST_SENTINEL="$S_ISSUE_LINKED" run 100)"
-probed "an intact body link never scans for a marker" "no" "$S_ISSUE_LINKED"
+# Was `"no"` until #2127. That pinned the narrower rule this issue replaces: the
+# marker scan ran ONLY when the body linked nothing, so a rewritten bot body
+# carrying an unrelated changelog `Fixes #456` resolved the wrong issue and the
+# bridge's hold was never consulted. A bot lane now checks both routes, so the
+# scan does run here. Kept rather than deleted -- it is still the pin that says
+# whether the scan happened, only its expected answer moved.
+probed "a bot lane checks the marker route as well as the body link" "yes" "$S_ISSUE_LINKED"
+
+# --- #2127: a changelog link in a rewritten bot body must not hide the bridge
+# `linked_issue` takes the LAST reference match, so an upstream changelog line
+# resolved to an unrelated issue in this repo, the hold lookup consulted *that*,
+# and the bridge marker was never reached. A parked PR would then merge.
+CHANGELOG_BODY="Bumps foo from 1 to 2.
+Release notes: Fixes #456
+<!-- dependabot-pr:100 -->"
+HELD_BRIDGE='[{"number":1982,"body":"<!-- dependabot-pr:100 -->"}]'
+
+# ISSUE_LABELS_FOR pins the hold to the BRIDGE issue only, so #456 -- the
+# changelog link -- reads unlabelled. Without it the fake answers every issue
+# identically and the case would pass even with the bug present.
+check "a bridge hold is honoured despite a changelog link in the body" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$CHANGELOG_BODY" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="do-not-auto-merge" ISSUE_LABELS_FOR=1982 run 100)"
+
+# The body-link route must keep working on its own -- this is #2027's case and
+# it must not regress while widening to check both.
+check "a hold reachable by the body link alone is still honoured" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LABELS="do-not-auto-merge" \
+     ISSUE_LABELS_FOR=1982 run 100)"
+
+# Named for what it actually verifies. `exit_if_issue_holds` exits on the FIRST
+# hold it finds, so with the body link held the marker route is never reached --
+# this pins that the body-link route still short-circuits cleanly when both are
+# present, not that both are consulted. The case where both genuinely run is the
+# changelog one above: the body link resolves an UNHELD issue, so evaluation
+# continues into the marker scan, which is where the hold actually is.
+check "a held body link short-circuits before the marker route" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="Closes #1982" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="do-not-auto-merge" ISSUE_LABELS_FOR=1982 run 100)"
+
+# Neither route holds: the lane merges as before. Widening must not invent holds.
+check "an unheld bot lane with a changelog link still reaches ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="$DEPENDABOT" PR_BODY="$CHANGELOG_BODY" ISSUE_LIST_JSON="$HELD_BRIDGE" \
+     ISSUE_LABELS="dependencies" run 100)"
+
+# Human lanes keep "last link wins" and pay for no extra scan.
+S_HUMAN_SCAN="$WORK/issue-list-human"
+check "a human PR with a changelog link is unaffected" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
+     PR_AUTHOR="someone" PR_BODY="$CHANGELOG_BODY" ISSUE_LABELS="enhancement" \
+     ISSUE_LIST_SENTINEL="$S_HUMAN_SCAN" run 100)"
+probed "a human lane never pays for the marker scan" "no" "$S_HUMAN_SCAN"
 
 # The knowing cost of checking the hold FIRST, pinned rather than hidden: an
 # unlinked bot lane pays for the scan even while CI is still running. That is the
@@ -737,8 +1004,8 @@ probed "an unlinked bot lane scans for a marker before CI settles" "yes" "$S_ISS
 # merge would strand it: `behind`'s remedy (a sync) is safe and, by re-linking the
 # body or re-labelling the issue, is often what makes the hold provable again.
 rc=0
-out="$(CHECKS_EC=1 PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" \
-   ISSUE_LIST_JSON='[]' run 100)" || rc=$?
+out="$(CHECKS_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" PR_AUTHOR="$DEPENDABOT" \
+   PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON='[]' run 100)" || rc=$?
 check "an unprovable hold still reports ci-failed" "ci-failed" "$out"
 check "an unprovable hold does not fail a red lane" "0" "$rc"
 

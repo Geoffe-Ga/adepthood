@@ -22,7 +22,6 @@ from observability import (
     TraceIdLogFilter,
     _normalise_trace_id,
     get_trace_id,
-    install_trace_id_logging,
     trace_id_var,
 )
 
@@ -101,13 +100,24 @@ def test_log_filter_stamps_the_trace_id_when_suppression_is_explicitly_off() -> 
     assert record.__dict__["trace_id"] == "trace-abc"
 
 
-def test_install_trace_id_logging_is_idempotent() -> None:
-    """Calling :func:`install_trace_id_logging` twice adds only one filter."""
-    install_trace_id_logging()
-    install_trace_id_logging()
+def test_the_trace_id_filter_is_never_attached_to_the_root_logger() -> None:
+    """The root *logger* is the one seam the filter must not occupy.
+
+    A filter on a logger runs only for records emitted directly on that
+    logger; records propagated up from a child logger bypass it entirely.
+    Since every application module logs through
+    ``logging.getLogger(__name__)``, a root-logger attachment stamps
+    nothing while reading like the mechanism that does — so its presence
+    is the defect, not the guarantee. The working seam is the handler
+    filter :func:`configure_logging` installs, asserted end-to-end in
+    ``tests/test_logging_config.py``.
+    """
     root = logging.getLogger()
-    trace_filters = [f for f in root.filters if isinstance(f, TraceIdLogFilter)]
-    assert len(trace_filters) == 1
+    attached = [f for f in root.filters if isinstance(f, TraceIdLogFilter)]
+    assert attached == [], (
+        "a TraceIdLogFilter on the root logger cannot stamp propagated "
+        f"child-logger records; found {attached!r}"
+    )
 
 
 def test_caller_provided_id_is_echoed() -> None:

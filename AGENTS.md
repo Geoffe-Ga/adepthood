@@ -97,7 +97,29 @@ Agents working on this project must abide by the following operating principles:
 
   - Never reference an action by tag alone (`@v4`, `@v1`) — tags can be force-pushed, enabling supply chain attacks.
 
-7. **Respect the Archetypal Wavelength**
+7. **Every User-Facing Feature Registers a Journey**
+
+  - Both suites are exhaustive on their own side of the wire and neither can
+    tell whether the wire is connected. Six shipped features turned out to be
+    reachable by nobody, and every one of them tested green the whole time.
+
+  - A PR that adds or changes a user-facing feature adds a journey to
+    `frontend/e2e/journeys.json` — either `status: "covered"`, naming the
+    seam-crossing spec that drives it, or `status: "uncovered"` with a linked
+    issue number.
+
+  - Declaring a gap is allowed and expected; hiding one is not. The gate
+    (`npm run check:journeys`, and the `journey-ledger` job in
+    `.github/workflows/e2e.yml`) reports the uncovered count and does not fail
+    on it. It *does* fail when a declared journey names a spec that was
+    renamed, deleted, or turned off, when a spec crosses the seam without being
+    declared, and when a screen, client wrapper, route, or table a journey
+    claims to cross no longer exists under that name.
+
+  - Do not quietly omit an uncovered journey to keep the gate green. A ledger
+    that claims more coverage than exists is worse than no ledger.
+
+8. **Respect the Archetypal Wavelength**
 
   - Restoration leads to Rising.
 

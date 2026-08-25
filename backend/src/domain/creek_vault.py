@@ -13,12 +13,18 @@ today depends on a vault being present. Every value type here is designed so a
 missing, unreachable, or capability-poor vault collapses to a well-defined
 "unavailable" state rather than an error the caller must special-case.
 
-Two invariants are load-bearing and deliberately encoded in the types:
+Three invariants are load-bearing and deliberately encoded in the types:
 
 * **Fail closed on tier.** :func:`tier_ceiling_for` raises rather than defaulting
   to :attr:`VaultTierCeiling.OPEN` for an unknown classification. Silently
   widening a tier would let sensitive content leave under a looser ceiling than
   the writer chose -- the opposite of "you choose your depth."
+* **Intimate is unspellable on the wire.** :class:`VaultTierCeiling` is
+  adepthood's vocabulary and carries ``INTIMATE``; :class:`WireTierCeiling` is
+  the narrower one Creek's ``/v1`` publishes and cannot name it at all. Every
+  request header is typed on the latter, and :func:`wire_ceiling_for` is the
+  only door between them -- so intimate content leaving under a ceiling nobody
+  can express is a type error rather than a review someone has to remember.
 * **Privacy over debuggability.** The error hierarchy exists so the service layer
   can normalize any transport failure to :class:`CreekVaultUnavailableError`
   *without* echoing the entry body or an API key into the message.
@@ -33,14 +39,14 @@ from __future__ import annotations
 import enum
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.2.0"
+CONTRACT_VERSION = "0.8.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -56,6 +62,7 @@ class CreekCapability(enum.StrEnum):
 
     HANDSHAKE = "creek.handshake"
     JOURNAL = "creek.journal"
+    UPLOAD = "creek.upload"
     SAVE = "creek.save"
     CLASSIFY = "creek.classify"
     REFLECT = "creek.reflect"
@@ -74,6 +81,28 @@ class VaultTierCeiling(enum.StrEnum):
     OPEN = "open"
     PERSONAL = "personal"
     INTIMATE = "intimate"
+
+
+class WireTierCeiling(enum.StrEnum):
+    """The subset of :class:`VaultTierCeiling` Creek's ``/v1`` wire can express.
+
+    Creek caps every *network* consumer below intimate -- the boundary is the
+    network, not the tier -- so the two members here are the only ceilings a
+    remote caller may declare, and its own wire enum has exactly these two. A
+    separate type rather than a comment saying so: adepthood's
+    :class:`VaultTierCeiling` carries an ``INTIMATE`` member that has no wire
+    spelling at all, and a type with no way to name it is the only guard that
+    cannot be forgotten. Everything that builds a request header is typed on
+    *this* enum, so putting an intimate ceiling on the wire is a type error
+    rather than a mistake caught at runtime -- and :func:`wire_ceiling_for` is
+    the one door between the two vocabularies.
+
+    Values are the wire strings Creek reads out of ``X-Creek-Tier-Ceiling``, so
+    they are contract and must not be reworded.
+    """
+
+    OPEN = "open"
+    PERSONAL = "personal"
 
 
 # Maps a journal classification *string* onto its tier ceiling. Keyed by the raw
@@ -253,6 +282,24 @@ class CreekVaultContractError(CreekVaultError):
         self.code = code
 
 
+class CreekCeilingUnrepresentableError(CreekVaultContractError):
+    """A call was about to declare a tier ceiling Creek's wire cannot express.
+
+    Raised by :func:`wire_ceiling_for` **before** anything is sent, so the
+    refusal is adepthood's own rather than one the vault has to make for it --
+    which is the whole point: the body of an intimate entry may not leave this
+    process to be refused elsewhere.
+
+    A :class:`CreekVaultContractError` because that is exactly what an operator
+    should read it as: a defect in the request adepthood was building, with a
+    remedy on adepthood's side. Its subtype is spelled out so the one refusal
+    that means "intimate nearly went on the wire" stays greppable apart from
+    every other contract fault. It inherits that type's degrade too, so a caller
+    that never expected it drops the replication and keeps the user's own save
+    intact rather than crashing their request.
+    """
+
+
 class CreekVaultPayloadError(CreekVaultError):
     """The vault answered, and its answer could not be read as the published shape.
 
@@ -324,6 +371,48 @@ class CreekCapabilityUnsupportedError(CreekVaultError):
     way the caller should fall back to its local pipeline for that one feature;
     degradation is per-capability, not all-or-nothing.
     """
+
+
+# The one translation from adepthood's tier vocabulary into the narrower one
+# Creek's wire speaks. Total over the two representable ceilings and *deliberately
+# partial* over the third: ``INTIMATE`` is absent rather than folded onto
+# ``PERSONAL``, because a mapping that quietly narrows an intimate ceiling would
+# make an intimate body sendable under a tier its writer never chose -- which is
+# the exact failure the wire vocabulary exists to prevent.
+_WIRE_CEILING_BY_TIER: Mapping[VaultTierCeiling, WireTierCeiling] = {
+    VaultTierCeiling.OPEN: WireTierCeiling.OPEN,
+    VaultTierCeiling.PERSONAL: WireTierCeiling.PERSONAL,
+}
+
+# What :func:`wire_ceiling_for` refuses with. Static, like every message in this
+# module: the refused ceiling is adepthood's own closed vocabulary rather than
+# user text, but there is exactly one value that can reach it, so naming it would
+# add nothing an operator does not already learn from the type.
+_UNREPRESENTABLE_CEILING_MESSAGE = "creek vault cannot express this tier ceiling on the wire"
+
+
+def wire_ceiling_for(ceiling: VaultTierCeiling) -> WireTierCeiling:
+    """Translate a tier ceiling into the one Creek's wire can carry, or refuse.
+
+    The single door between :class:`VaultTierCeiling` and
+    :class:`WireTierCeiling`, and the last of the guards keeping intimate
+    content off the network. The write path holds the first two -- it withholds
+    an intimate entry by its classification, then again by the tier that
+    classification resolves to -- and both run before any client is touched.
+    This one is different in kind rather than a third copy: it sits at the
+    moment a *request* is built, so it covers every capability, including the
+    ones the write path knows nothing about, and it is the only one that would
+    still catch a caller reaching the adapter directly.
+
+    Raises :class:`CreekCeilingUnrepresentableError` rather than narrowing to
+    :attr:`WireTierCeiling.PERSONAL`, for the reason
+    :func:`tier_ceiling_for` fails closed: a translation that widened or
+    narrowed on its own would move content across a boundary the writer chose.
+    """
+    try:
+        return _WIRE_CEILING_BY_TIER[ceiling]
+    except KeyError:
+        raise CreekCeilingUnrepresentableError(_UNREPRESENTABLE_CEILING_MESSAGE) from None
 
 
 @dataclass(frozen=True)
@@ -416,6 +505,83 @@ class VaultIngestResult:
     stored: bool
     vault_ref: str | None
     action: VaultIngestAction | None = None
+
+
+class VaultUploadStatus(enum.StrEnum):
+    """The terminal outcome of a :func:`store_upload` attempt.
+
+    Exactly one is always returned, and the three non-accepted values stay apart
+    because each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is
+    "connect or fix your vault", ``CAPABILITY_UNSUPPORTED`` is "uploads do not
+    work between these two versions yet", and ``DEGRADED`` is "it broke, try
+    again". Values are the wire strings the API answers with, so they are
+    contract and must not be reworded casually.
+
+    ``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is
+    behind. Either side can be: a vault too old to take files, or a vault
+    offering an upload route this client recognises but cannot yet speak. What
+    the user needs from the status is the same in both -- that no retry helps --
+    and splitting it would add a fourth wire value every consumer of this enum
+    would have to learn before it could render anything at all.
+    """
+
+    ACCEPTED = "accepted"
+    VAULT_UNAVAILABLE = "vault_unavailable"
+    CAPABILITY_UNSUPPORTED = "capability_unsupported"
+    DEGRADED = "degraded"
+
+
+@dataclass(frozen=True)
+class VaultUploadRequest:
+    """One user-supplied document handed to the vault for its own ingestors to parse.
+
+    The sibling of :class:`VaultIngestRequest` rather than a widening of it: a
+    journal entry is text adepthood already holds, while an upload is a *file*
+    -- bytes plus the filename the vault reads an extension off to choose an
+    ingestor. Adepthood never parses the document itself and never names a
+    source type; guessing one here would override a decision the vault is
+    better placed to make.
+
+    ``external_id`` is the stable identity the vault keys the stored fragment
+    off, so re-sending the same document edits that fragment in place instead of
+    accumulating duplicates -- the same idempotence a journal entry gets from its
+    entry id. ``tier`` and ``tier_ceiling`` are both the uploader's own tier, so
+    the vault stores at exactly the depth the user chose and refuses any
+    widening.
+
+    ``content_base64`` is excluded from ``repr()``: this dataclass is the one
+    object carrying a user's document through the seam, and a frozen dataclass's
+    generated ``repr`` is exactly what a logging call or a traceback would
+    otherwise render in full.
+    """
+
+    external_id: str
+    filename: str
+    content_base64: str = field(repr=False)
+    tier: VaultTierCeiling
+    tier_ceiling: VaultTierCeiling
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class VaultUploadResult:
+    """Outcome of an upload attempt, mirroring :class:`VaultIngestResult`.
+
+    ``stored`` is ``False`` (with ``vault_ref`` ``None``) whenever the document
+    was not durably written -- notably on the local-fallback path, where there
+    is no vault to hold it and Postgres remains the sole system of record.
+
+    ``tags`` are the per-fragment classification tags the vault assigns *in its
+    own ingest pipeline*. Adepthood reads them and never re-derives them: a
+    second local classifier would be a second opinion nobody asked for. A vault
+    that does not return them yields an empty tuple, which is the expected
+    answer today rather than a failure.
+    """
+
+    stored: bool
+    vault_ref: str | None
+    action: VaultIngestAction | None = None
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -543,6 +709,23 @@ class CreekVaultClient(Protocol):
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Hand a piece of writing to the vault for durable storage."""
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Hand one user-supplied document to the vault for its ingestors to parse.
+
+        Separate from :meth:`ingest` because the two carry different things and
+        are advertised separately: a vault may accept journal text without
+        accepting files, so a caller must gate on
+        :attr:`CreekCapability.UPLOAD` rather than assuming journal ingest
+        implies it.
+
+        Fails exactly as ingest does -- a refused request as
+        :class:`CreekVaultContractError`, a rejected credential as
+        :class:`CreekVaultAuthError`, an absent or unreadable vault as
+        :class:`CreekVaultUnavailableError`, and a capability the vault never
+        advertised as :class:`CreekCapabilityUnsupportedError` raised *before*
+        any document bytes reach the wire.
+        """
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Request Frequency/Wavelength-phase tags for ``body``."""

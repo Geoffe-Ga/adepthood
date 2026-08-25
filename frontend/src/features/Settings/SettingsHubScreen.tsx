@@ -1,26 +1,35 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  ChevronRight,
+  BookOpen,
+  Download,
+  FileText,
+  FolderUp,
   Globe,
   KeyRound,
   LifeBuoy,
   LogOut,
   ShieldCheck,
+  Trash2,
   Vault,
-  type LucideIcon,
 } from 'lucide-react-native';
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+
+import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
+import { LEGAL_DOCUMENTS } from './legalLinks';
+import { SettingsRow } from './shared/SettingsRow';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
-import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
+import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
+import SanghaSection from '@/features/Settings/SanghaSection';
 import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 /**
  * Warm Settings landing hub (#835). Groups the scattered settings entries —
@@ -30,7 +39,6 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  */
 
 const ICON_SIZE = 22;
-const CHEVRON_SIZE = 20;
 
 /** Entry-visibility promise: the three privacy tiers are the user's choice. */
 const PRIVACY_VISIBILITY_LINE =
@@ -39,45 +47,6 @@ const PRIVACY_VISIBILITY_LINE =
 const PRIVACY_INTIMATE_LINE = 'Entries you mark Intimate are never sent to any AI.';
 /** Full-sentence a11y label so screen-reader users hear both promises at once. */
 const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`;
-
-interface SettingsRowProps {
-  icon: LucideIcon;
-  label: string;
-  description: string;
-  onPress: () => void;
-  testID: string;
-  destructive?: boolean;
-}
-
-const SettingsRow = ({
-  icon: Icon,
-  label,
-  description,
-  onPress,
-  testID,
-  destructive = false,
-}: SettingsRowProps): React.JSX.Element => {
-  const { width } = useWindowDimensions();
-  const t = typeRamp(width);
-  const tint = destructive ? accent.strong : accent.primary;
-  return (
-    <TouchableOpacity
-      style={styles.row}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={description}
-      testID={testID}
-    >
-      <Icon color={tint} size={ICON_SIZE} />
-      <View style={styles.rowText}>
-        <Text style={[t.label, styles.rowLabel]}>{label}</Text>
-        <Text style={[t.caption, styles.rowDescription]}>{description}</Text>
-      </View>
-      {destructive ? null : <ChevronRight color={ink.muted} size={CHEVRON_SIZE} />}
-    </TouchableOpacity>
-  );
-};
 
 interface AccountSectionProps {
   onApiKey: () => void;
@@ -140,8 +109,70 @@ const PrivacySection = ({ onVault }: { onVault: () => void }): React.JSX.Element
   );
 };
 
-/** Session group: the destructive log-out action. */
-const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Element => (
+interface CorpusSectionProps {
+  onSeedCorpus: () => void;
+  onCorpusConsent: () => void;
+}
+
+/**
+ * Corpus group: the way in for writing that already exists elsewhere, and the
+ * decision about whether any of it is sorted for reflections to draw on.
+ * Phrased as an offer, not a task — the journal works fine on its own, and both
+ * rows only widen what reflections can reach for people who want that. The
+ * consent row is off until somebody turns it on, so it is a question rather
+ * than a setting to correct.
+ */
+const CorpusSection = ({
+  onSeedCorpus,
+  onCorpusConsent,
+}: CorpusSectionProps): React.JSX.Element => (
+  <EditorialSection title="Your corpus" testID="settings-group-corpus">
+    <SettingsRow
+      icon={FolderUp}
+      label="Bring in your writing"
+      description="Add notes, exports, and documents you have already written elsewhere."
+      onPress={onSeedCorpus}
+      testID="settings-row-seed-corpus"
+    />
+    <SettingsRow
+      icon={BookOpen}
+      label={CORPUS_CONSENT_ROW_LABEL}
+      description={CORPUS_CONSENT_ROW_DESCRIPTION}
+      onPress={onCorpusConsent}
+      testID="settings-row-corpus-consent"
+    />
+  </EditorialSection>
+);
+
+/**
+ * Your data group: the copy you can take away. It sits above Session on
+ * purpose -- deletion is down there, and the only honest order is "here is how
+ * to keep your writing" before "here is how to destroy it".
+ */
+const YourDataSection = ({ onExportData }: { onExportData: () => void }): React.JSX.Element => (
+  <EditorialSection title="Your data" testID="settings-group-your-data">
+    <SettingsRow
+      icon={Download}
+      label="Export my data"
+      description="Download everything you have written, as JSON and as a readable journal."
+      onPress={onExportData}
+      testID="settings-row-export-data"
+    />
+  </EditorialSection>
+);
+
+interface SessionSectionProps {
+  onLogout: () => void;
+  onDeleteAccount: () => void;
+}
+
+/**
+ * Session group: the destructive log-out action, and below it the permanent
+ * one. Account deletion lives here rather than behind a support email because
+ * App Store Guideline 5.1.1(v) requires the path to be inside the app — and
+ * because a journal you cannot leave is not one you fully own.
+ */
+const SessionSection = ({ onLogout, onDeleteAccount }: SessionSectionProps): React.JSX.Element => (
   <EditorialSection title="Session" testID="settings-group-session">
     <SettingsRow
       icon={LogOut}
@@ -151,6 +182,34 @@ const SessionSection = ({ onLogout }: { onLogout: () => void }): React.JSX.Eleme
       testID="settings-row-logout"
       destructive
     />
+    <SettingsRow
+      icon={Trash2}
+      label="Delete account"
+      description="Erase your account and everything in it. This cannot be undone."
+      onPress={onDeleteAccount}
+      testID="settings-row-delete-account"
+      destructive
+    />
+  </EditorialSection>
+);
+
+/**
+ * Legal group: the privacy policy and the terms, opened in the platform
+ * browser. They are read outside the app on purpose — they are hosted
+ * independently of this project's API, so they stay readable when it is not.
+ */
+const LegalSection = (): React.JSX.Element => (
+  <EditorialSection title="Legal" testID="settings-group-legal">
+    {LEGAL_DOCUMENTS.map((document) => (
+      <SettingsRow
+        key={document.id}
+        icon={FileText}
+        label={document.label}
+        description={document.description}
+        onPress={() => void openExternalUrl(document.url)}
+        testID={document.testID}
+      />
+    ))}
   </EditorialSection>
 );
 
@@ -175,6 +234,10 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
   const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
+  const openSeedCorpus = useCallback(() => navigation.navigate('SeedCorpus'), [navigation]);
+  const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
+  const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
+  const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -185,34 +248,19 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <CorpusSection onSeedCorpus={openSeedCorpus} onCorpusConsent={openCorpusConsent} />
       <PrivacySection onVault={openVault} />
       <ChooseDepthsSection />
-      <SessionSection onLogout={onLogout} />
+      <SanghaSection />
+      <YourDataSection onExportData={openExportData} />
+      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
+      <LegalSection />
     </ScreenScaffold>
   );
 };
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: touchTarget.minimum,
-    paddingVertical: rhythm.blockGap,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: surface.hairline,
-  },
-  rowText: {
-    flex: 1,
-    marginLeft: rhythm.blockGap,
-  },
-  rowLabel: {
-    color: ink.primary,
-  },
-  rowDescription: {
-    color: ink.soft,
-    marginTop: rhythm.blockGap / 3,
-  },
   privacyStatement: {
     flexDirection: 'row',
     alignItems: 'flex-start',

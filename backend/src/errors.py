@@ -68,6 +68,17 @@ def unprocessable(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=reason)
 
 
+def payload_too_large(reason: str) -> HTTPException:
+    """Return a 413 HTTPException for a request body past a declared ceiling.
+
+    Distinct from :func:`unprocessable` because size is the one rejection the
+    client can act on without changing anything else about the request: the
+    status alone tells them to send something smaller, and a proxy in front of
+    the app answers an oversized body with this same code.
+    """
+    return HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=reason)
+
+
 def bad_gateway(reason: str) -> HTTPException:
     """Return a 502 HTTPException for an upstream-dependency failure.
 
@@ -88,6 +99,20 @@ def service_unavailable(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
 
 
+def unhandled_exception_response(request: Request, exc: Exception) -> JSONResponse:
+    """Build the sanitised 500 for ``exc``, logging and Sentry-reporting it on the way.
+
+    The synchronous twin of :func:`_unhandled_exception_handler`, for callers
+    that are not Starlette exception handlers — specifically
+    :class:`middleware.unhandled_exception.UnhandledExceptionMiddleware`, which
+    exists so this envelope is produced *inside* the user middleware stack and
+    therefore travels back out through ``CORSMiddleware``.  Both entry points
+    build the identical body, header, log event, and Sentry report; they differ
+    only in where in the stack they run.
+    """
+    return _sanitized_500(request, exc, log_event="unhandled_exception", error_code=INTERNAL_ERROR)
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all handler — log, report to Sentry, return a sanitised envelope.
 
@@ -99,9 +124,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     traceback for support to look up by request ID.
 
     BUG-OBS-002: every entry is also forwarded to :func:`sentry.capture_exception`
-    so the operator inbox gets the same alert signal.  ``capture_exception``
-    is the no-op stub today; once the DSN lands the call site already
-    works without modification.
+    so the operator inbox gets the same alert signal.  That call ships the
+    exception and the allow-listed request metadata below -- never the request
+    body -- and is a no-op on a deployment with no DSN configured, which is a
+    supported way to run: the ERROR record above is emitted either way.
 
     The trace ID is echoed in the response header (in addition to the body)
     so clients that opaquely surface failure to a user can ask them to copy
@@ -113,8 +139,16 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     ``finally`` block by the time Starlette dispatches this handler —
     the contextvar is only a fallback for the bare-app test fixtures
     that do not install the middleware.
+
+    On the deployed app this is a *backstop*: ``UnhandledExceptionMiddleware``
+    sits below CORS and catches route- and rate-limit-layer exceptions first, so
+    only a panic in one of the outermost layers (forwarded-proto, access
+    logging, correlation id, security headers, CORS itself) still arrives here —
+    and such a response, being written above CORS, is the one case a browser
+    still cannot read.  Registering it remains strictly better than Starlette's
+    default traceback page.
     """
-    return _sanitized_500(request, exc, log_event="unhandled_exception", error_code=INTERNAL_ERROR)
+    return unhandled_exception_response(request, exc)
 
 
 def _sanitized_500(

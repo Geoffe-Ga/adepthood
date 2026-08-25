@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import ast
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+
+from services import journal_encryption
 
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations" / "versions"
 
@@ -108,6 +113,108 @@ def test_both_directions_exist(direction: str) -> None:
 
 def _migration_files() -> list[Path]:
     return sorted(p for p in MIGRATIONS_DIR.glob("*.py") if not p.name.startswith("_"))
+
+
+def _revision_script_files() -> list[Path]:
+    """Return every file Alembic will load as a revision script.
+
+    Deliberately wider than ``_migration_files``: Alembic reads *every* ``.py``
+    in the versions directory, leading underscore included, so a uniqueness
+    check that skipped those would leave a collision hiding in the one shape
+    the rest of this module ignores.
+    """
+    return sorted(MIGRATIONS_DIR.glob("*.py"))
+
+
+def _declared_revision_id(migration: Path) -> str | None:
+    """Return the ``revision`` identifier a script declares, or ``None``.
+
+    The ids are parsed out of the source with ``ast`` rather than imported.
+    Importing 80 migration modules to read one string each is slow, and a
+    migration module is not inert — importing it runs whatever its authors put
+    at module scope.
+    """
+    for node in ast.parse(migration.read_text()).body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "revision"
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                return node.value.value
+    return None
+
+
+def test_every_revision_script_declares_a_revision_id() -> None:
+    """Keeps the uniqueness check below from passing over nothing.
+
+    ``_declared_revision_id`` is a parser, and a parser that quietly stops
+    matching turns the collision test into a check on an empty collection —
+    green, and blind. Asserting that every script yields an id makes that
+    failure loud here instead of silent there.
+    """
+    scripts = _revision_script_files()
+
+    assert scripts, f"no revision scripts found under {MIGRATIONS_DIR}"
+
+    undeclared = [path.name for path in scripts if _declared_revision_id(path) is None]
+
+    assert undeclared == [], (
+        "these files under migrations/versions declare no ``revision`` id, so Alembic "
+        f"cannot load them as revision scripts: {undeclared}"
+    )
+
+
+def test_revision_ids_are_unique() -> None:
+    """A reused revision id must fail here, not months later on someone's fresh database.
+
+    Alembic only *warns* about this (``UserWarning: Revision <id> is present
+    more than once``) inside an otherwise-green run, so the collision that
+    prompted this test was caught by a human happening to read the warnings.
+    What it actually costs is a second head: ``alembic upgrade head`` then
+    refuses to run for whoever next builds a database from scratch, far from
+    the change that caused it.
+    """
+    by_id: dict[str, list[str]] = {}
+    for path in _revision_script_files():
+        revision_id = _declared_revision_id(path)
+        if revision_id is not None:
+            by_id.setdefault(revision_id, []).append(path.name)
+
+    collisions = {revision_id: files for revision_id, files in by_id.items() if len(files) > 1}
+    named = "; ".join(
+        f"{revision_id} -> {sorted(files)}" for revision_id, files in collisions.items()
+    )
+
+    assert collisions == {}, (
+        "duplicate Alembic revision ids (each id must name exactly one script; give the "
+        f"newer migration a fresh id and re-point anything chained to it): {named}"
+    )
+
+
+def test_the_script_directory_resolves_to_a_single_head() -> None:
+    """Two heads are what a duplicate id (or an unmerged branch) actually produces.
+
+    This asks Alembic itself rather than the file contents, so it also catches
+    the sibling causes an id check cannot see — two migrations chained off the
+    same parent, or a branch merged without a merge migration. It needs no
+    database: the head set is derived from the scripts on disk.
+    """
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+
+    assert len(heads) == 1, (
+        f"expected exactly one Alembic head, found {len(heads)}: {sorted(heads)} — "
+        "`alembic upgrade head` fails on a fresh database in this state; merge the "
+        "branches (`alembic merge`) or fix the duplicate revision id that split them"
+    )
 
 
 def _is_trivial_body(body: list[ast.stmt]) -> bool:
@@ -3325,3 +3432,465 @@ def test_cross_tenant_quarantine_migration_is_idempotent_on_sqlite(
     assert _quarantine_rows(db_url) == snapshot
     assert _goal_group_links(db_url) == _EXPECTED_GOAL_LINKS
     assert _journal_practice_links(db_url) == _EXPECTED_JOURNAL_LINKS
+
+
+# -- d4e5f6a7b8ca: encrypt every remaining journal-text column ---------------
+
+_JOURNAL_TEXT_BASE_REVISION = "c3d4e5f6a7b9"  # pragma: allowlist secret
+_JOURNAL_TEXT_REVISION = "d4e5f6a7b8ca"  # pragma: allowlist secret
+
+# The marker real ciphertext carries, spelled out so the round-trip pins the
+# on-disk format rather than trusting the helper that produced it.
+_CIPHERTEXT_MARKER = "enc::v1::"
+
+# The plaintext seeded before the upgrade, per ``table.column``. Every value is
+# recognisable prose, so a mangled downgrade cannot pass as a near-miss.
+_SEEDED_JOURNAL_TEXT: dict[str, str] = {
+    "journalentry.title": "What I could not say out loud",
+    "marginalia.anchor_text": "the willow bending without breaking",
+    "marginalia.note": "A recurring image of yielding strength.",
+    "marginalia.essay": "The willow is this entry's whole argument, in one plant.",
+    "completionsuggestion.label": "I walked the long way home",
+    "completionsuggestion.anchor_text": "I walked the long way home",
+    "promptresponse.response": "The week I stopped pretending it was fine.",
+}
+
+
+def _bootstrap_journal_text_tables(sync_url: str) -> None:
+    """Pre-create the four tables the encryption migration rewrites.
+
+    Each carries one row with plaintext in every target column, plus a second
+    row leaving the nullable columns NULL, so both branches of the transform are
+    observed. FKs are omitted deliberately: the migration touches only these
+    columns, and SQLite does not enforce them anyway.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " title VARCHAR(200)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE marginalia ("
+                " id INTEGER PRIMARY KEY,"
+                " journal_entry_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " kind VARCHAR(20) NOT NULL,"
+                " anchor_start INTEGER NOT NULL,"
+                " anchor_end INTEGER NOT NULL,"
+                " anchor_text VARCHAR(280) NOT NULL,"
+                " note VARCHAR(600) NOT NULL,"
+                " essay VARCHAR(10000)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE completionsuggestion ("
+                " id INTEGER PRIMARY KEY,"
+                " journal_entry_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " target_type VARCHAR(20) NOT NULL,"
+                " label VARCHAR(255) NOT NULL,"
+                " anchor_start INTEGER NOT NULL,"
+                " anchor_end INTEGER NOT NULL,"
+                " anchor_text VARCHAR(280) NOT NULL"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE promptresponse ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " week_number INTEGER NOT NULL,"
+                " question VARCHAR(1000) NOT NULL,"
+                " response VARCHAR(10000) NOT NULL"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message, title)"
+                " VALUES (1, 1, 'user', 'a page of thoughts', :title)"
+            ),
+            {"title": _SEEDED_JOURNAL_TEXT["journalentry.title"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO promptresponse (id, user_id, week_number, question, response)"
+                " VALUES (1, 1, 1, 'What is alive in you this week?', :response)"
+            ),
+            {"response": _SEEDED_JOURNAL_TEXT["promptresponse.response"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO journalentry (id, user_id, sender, message, title)"
+                " VALUES (2, 1, 'user', 'an untitled page', NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO marginalia"
+                " (id, journal_entry_id, user_id, kind, anchor_start, anchor_end,"
+                "  anchor_text, note, essay)"
+                " VALUES (1, 1, 1, 'symbol', 11, 45, :anchor, :note, :essay)"
+            ),
+            {
+                "anchor": _SEEDED_JOURNAL_TEXT["marginalia.anchor_text"],
+                "note": _SEEDED_JOURNAL_TEXT["marginalia.note"],
+                "essay": _SEEDED_JOURNAL_TEXT["marginalia.essay"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO marginalia"
+                " (id, journal_entry_id, user_id, kind, anchor_start, anchor_end,"
+                "  anchor_text, note, essay)"
+                " VALUES (2, 1, 1, 'theme', 0, 6, :anchor, :note, NULL)"
+            ),
+            {
+                "anchor": _SEEDED_JOURNAL_TEXT["marginalia.anchor_text"],
+                "note": _SEEDED_JOURNAL_TEXT["marginalia.note"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO completionsuggestion"
+                " (id, journal_entry_id, user_id, target_type, label,"
+                "  anchor_start, anchor_end, anchor_text)"
+                " VALUES (1, 1, 1, 'habit', :label, 0, 26, :anchor)"
+            ),
+            {
+                "label": _SEEDED_JOURNAL_TEXT["completionsuggestion.label"],
+                "anchor": _SEEDED_JOURNAL_TEXT["completionsuggestion.anchor_text"],
+            },
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_journal_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Config]:
+    """Stamped SQLite config just before ``d4e5f6a7b8ca``, with a real key set.
+
+    A key must be configured or the encrypt/decrypt helpers are passthroughs and
+    the round-trip would prove nothing. The registry is process-cached, so it is
+    reset on both sides of the test.
+    """
+    db_path = tmp_path / "journal_text_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+    _bootstrap_journal_text_tables(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    yield cfg
+    journal_encryption.reset_cache()
+
+
+def _stored_journal_text(db_url: str) -> dict[str, str]:
+    """Read every migrated column of the seeded rows with raw SQL, no ORM."""
+    engine = create_engine(_sync_url(db_url))
+    queries = {
+        "journalentry.title": "SELECT title FROM journalentry WHERE id = 1",
+        "marginalia.anchor_text": "SELECT anchor_text FROM marginalia WHERE id = 1",
+        "marginalia.note": "SELECT note FROM marginalia WHERE id = 1",
+        "marginalia.essay": "SELECT essay FROM marginalia WHERE id = 1",
+        "completionsuggestion.label": "SELECT label FROM completionsuggestion WHERE id = 1",
+        "completionsuggestion.anchor_text": (
+            "SELECT anchor_text FROM completionsuggestion WHERE id = 1"
+        ),
+        "promptresponse.response": "SELECT response FROM promptresponse WHERE id = 1",
+    }
+    try:
+        with engine.connect() as conn:
+            return {name: conn.execute(text(sql)).scalar_one() for name, sql in queries.items()}
+    finally:
+        engine.dispose()
+
+
+def _nullable_journal_text_nulls(db_url: str) -> list[Any]:
+    """The nullable migrated columns of the rows that left them NULL."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return [
+                conn.execute(text("SELECT title FROM journalentry WHERE id = 2")).scalar_one(),
+                conn.execute(text("SELECT essay FROM marginalia WHERE id = 2")).scalar_one(),
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_journal_text_encryption_migration_round_trips_on_real_rows(
+    alembic_sqlite_config_journal_text: Config,
+) -> None:
+    """Round-trip ``d4e5f6a7b8ca`` on seeded data, not on an empty table.
+
+    Phase 1: upgrade rewrites every seeded plaintext into marked ciphertext that
+    decrypts back to exactly what was written.
+    Phase 2: downgrade restores the plaintext verbatim -- the property that makes
+    the rollback survivable. A downgrade that left the ciphertext in place, or
+    truncated it into the restored ``String`` bound, fails here.
+    Phase 3: re-upgrade is idempotent and does not double-encrypt.
+    """
+    cfg = alembic_sqlite_config_journal_text
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade encrypts every seeded row in place.
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    encrypted = _stored_journal_text(db_url)
+    for name, plaintext in _SEEDED_JOURNAL_TEXT.items():
+        stored = encrypted[name]
+        assert stored.startswith(_CIPHERTEXT_MARKER), f"{name} was left in the clear"
+        assert plaintext not in stored, f"{name} still leaks its plaintext"
+        assert journal_encryption.decrypt(stored) == plaintext
+    assert _nullable_journal_text_nulls(db_url) == [None, None]
+
+    # Phase 2: downgrade returns the plaintext, not mangled ciphertext.
+    command.downgrade(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+    assert _nullable_journal_text_nulls(db_url) == [None, None]
+
+    # Phase 3: re-upgrade encrypts once more, decrypting to the same plaintext
+    # (a double-encrypted value would decrypt to a marked token, not prose).
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    re_encrypted = _stored_journal_text(db_url)
+    for name, plaintext in _SEEDED_JOURNAL_TEXT.items():
+        assert journal_encryption.decrypt(re_encrypted[name]) == plaintext
+
+
+def test_journal_text_encryption_migration_is_a_no_op_without_a_key(
+    alembic_sqlite_config_journal_text: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On an un-keyed environment the rows are untouched, not blanked or marked.
+
+    Key presence is the switch, so a laptop or a CI run with no key must come
+    through the migration with its text exactly as it was -- the property that
+    lets this migration ship ahead of the key.
+    """
+    cfg = alembic_sqlite_config_journal_text
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    monkeypatch.delenv(journal_encryption.KEYS_ENV_VAR, raising=False)
+    journal_encryption.reset_cache()
+
+    command.upgrade(cfg, _JOURNAL_TEXT_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+
+    command.downgrade(cfg, _JOURNAL_TEXT_BASE_REVISION)
+    assert _stored_journal_text(db_url) == _SEEDED_JOURNAL_TEXT
+
+
+# -- a6b7c8d9e0f2: encrypt the prose written in a practice session -----------
+
+_SESSION_PROSE_BASE_REVISION = "b5f1a2c3d4e6"  # pragma: allowlist secret
+_SESSION_PROSE_REVISION = "a6b7c8d9e0f2"  # pragma: allowlist secret
+
+# The plaintext seeded before the upgrade, per ``table.column``. Recognisable
+# prose, so a mangled downgrade cannot pass itself off as a near-miss, and long
+# enough that a ciphertext truncated back into the old ``VARCHAR`` bound would
+# come back short rather than come back wrong.
+_SEEDED_SESSION_PROSE: dict[str, str] = {
+    "practicesession.reflection": (
+        "Twenty minutes in, the grief I had been outrunning sat down beside me."
+    ),
+    "practicesession.insight": "It is not the silence I am afraid of, it is what it keeps saying.",
+}
+
+# Read back with raw SQL, never the ORM: an ``EncryptedString`` round-trip is
+# identical whether or not the bytes underneath were ever encrypted.
+_SESSION_PROSE_READS: dict[str, str] = {
+    "practicesession.reflection": "SELECT reflection FROM practicesession WHERE id = 1",
+    "practicesession.insight": "SELECT insight FROM practicesession WHERE id = 1",
+}
+
+
+def _bootstrap_practice_session_table(sync_url: str) -> None:
+    """Pre-create ``practicesession`` with the bounded columns the migration widens.
+
+    Two rows: one with prose in both columns, one logged without any, so both
+    branches of the transform are observed. FKs are omitted deliberately -- the
+    migration touches only these two columns, and SQLite does not enforce them.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE practicesession ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " user_practice_id INTEGER NOT NULL,"
+                " duration_minutes FLOAT NOT NULL,"
+                " timestamp DATETIME NOT NULL,"
+                " reflection VARCHAR(5000),"
+                " mode VARCHAR(32) NOT NULL,"
+                " completed BOOLEAN NOT NULL,"
+                " insight VARCHAR(2000)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes, timestamp,"
+                "  reflection, mode, completed, insight)"
+                " VALUES (1, 1, 1, 20.0, '2025-01-01 08:00:00',"
+                "  :reflection, 'meditation_timer', 1, :insight)"
+            ),
+            {
+                "reflection": _SEEDED_SESSION_PROSE["practicesession.reflection"],
+                "insight": _SEEDED_SESSION_PROSE["practicesession.insight"],
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO practicesession"
+                " (id, user_id, user_practice_id, duration_minutes, timestamp,"
+                "  reflection, mode, completed, insight)"
+                " VALUES (2, 1, 1, 20.0, '2025-01-02 08:00:00',"
+                "  NULL, 'meditation_timer', 1, NULL)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_session_prose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Config]:
+    """Stamped SQLite config just before ``a6b7c8d9e0f2``, with a real key set.
+
+    A key must be configured or the encrypt/decrypt helpers are passthroughs and
+    the round-trip would prove nothing. The registry is process-cached, so it is
+    reset on both sides of the test.
+    """
+    db_path = tmp_path / "session_prose_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+
+    _bootstrap_practice_session_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _SESSION_PROSE_BASE_REVISION)
+    yield cfg
+    journal_encryption.reset_cache()
+
+
+def _stored_session_prose(db_url: str) -> dict[str, str]:
+    """Read both migrated columns of the seeded row with raw SQL, no ORM."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return {
+                name: conn.execute(text(sql)).scalar_one()
+                for name, sql in _SESSION_PROSE_READS.items()
+            }
+    finally:
+        engine.dispose()
+
+
+def _session_prose_nulls(db_url: str) -> list[Any]:
+    """Both migrated columns of the session logged without anything written."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return [
+                conn.execute(
+                    text("SELECT reflection FROM practicesession WHERE id = 2")
+                ).scalar_one(),
+                conn.execute(text("SELECT insight FROM practicesession WHERE id = 2")).scalar_one(),
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_session_prose_encryption_migration_round_trips_on_real_rows(
+    alembic_sqlite_config_session_prose: Config,
+) -> None:
+    """Round-trip ``a6b7c8d9e0f2`` on a seeded row, not on an empty table.
+
+    Phase 1: upgrade rewrites the seeded plaintext into marked ciphertext that
+    decrypts back to exactly what was written.
+    Phase 2: downgrade restores the plaintext verbatim -- the property that makes
+    the rollback survivable. A downgrade that left the ciphertext sitting in a
+    plaintext column would be data loss dressed as a rollback, and fails here.
+    Phase 3: re-upgrade is idempotent and does not double-encrypt.
+    """
+    cfg = alembic_sqlite_config_session_prose
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade encrypts the seeded row in place.
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    encrypted = _stored_session_prose(db_url)
+    for name, plaintext in _SEEDED_SESSION_PROSE.items():
+        stored = encrypted[name]
+        assert stored.startswith(_CIPHERTEXT_MARKER), f"{name} was left in the clear"
+        assert plaintext not in stored, f"{name} still leaks its plaintext"
+        assert journal_encryption.decrypt(stored) == plaintext
+    assert _session_prose_nulls(db_url) == [None, None]
+
+    # Phase 2: downgrade returns the plaintext, not mangled ciphertext.
+    command.downgrade(cfg, _SESSION_PROSE_BASE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE
+    assert _session_prose_nulls(db_url) == [None, None]
+
+    # Phase 3: re-upgrade encrypts once more, decrypting to the same plaintext
+    # (a double-encrypted value would decrypt to a marked token, not prose).
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    re_encrypted = _stored_session_prose(db_url)
+    for name, plaintext in _SEEDED_SESSION_PROSE.items():
+        assert journal_encryption.decrypt(re_encrypted[name]) == plaintext
+
+
+def test_session_prose_encryption_migration_is_a_no_op_without_a_key(
+    alembic_sqlite_config_session_prose: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On an un-keyed environment the rows are untouched, not blanked or marked.
+
+    Key presence is the switch, so a laptop or a CI run with no key must come
+    through the migration with its text exactly as it was -- the property that
+    lets this migration ship ahead of the key.
+    """
+    cfg = alembic_sqlite_config_session_prose
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    monkeypatch.delenv(journal_encryption.KEYS_ENV_VAR, raising=False)
+    journal_encryption.reset_cache()
+
+    command.upgrade(cfg, _SESSION_PROSE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE
+
+    command.downgrade(cfg, _SESSION_PROSE_BASE_REVISION)
+    assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE

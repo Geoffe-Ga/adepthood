@@ -1,10 +1,10 @@
-# Creek Vault MCP contract (pointer + adepthood-owned projections)
+# Creek Vault contract pointer (and adepthood-owned projections)
 
 - **Status:** Superseded pointer doc. This file no longer restates
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.2.0
+- **Contract version:** 0.8.0
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
@@ -13,9 +13,18 @@
 
 ## Purpose
 
-This filename is retained deliberately for link stability — two backend
-source docstrings, `graph/ontology-spine.md`, and a drift-guard test
-reference it by path — even though its role has changed. It is no longer a draft contract
+**The filename says `mcp`; the transport does not.** MCP is not, and is
+not becoming, how adepthood reaches the vault — see the Status line
+above and the ADR it points at. The path is retained for link
+stability alone: three `backend/src` module docstrings,
+`graph/ontology-spine.md`, a drift-guard test that reads this file by
+path, and four citations inside ADR 0004's ratified text, which is
+amended by dated note rather than rewritten and so cannot be
+repointed. Renaming would trade one MCP-named path for a stub at the
+old path plus dead links inside the decision record; the title, which
+costs nothing to correct, was corrected instead (2026-08-22).
+
+This document's role has changed. It is no longer a draft contract
 awaiting cross-repo ratification. It is now a **pointer**: Creek
 Vault's own published contract is the single source of truth for
 every request/response shape, and this document holds only the pinned
@@ -63,9 +72,9 @@ ADR 0004's Context section documents in detail. Instead:
   note) — nothing in this repository calls Creek over MCP any more, and
   nothing about Creek's MCP surface changed to make that so. The bundle
   describes `/v1` only.
-- This document is titled "MCP contract" for the link-stability reasons
-  ADR 0004's Decision 5 gives, not because MCP is a live application
-  transport here — it is not, as of the note above. Every `creek.*`
+- This document's *path* still says `mcp`, for the link-stability
+  reasons the Purpose section gives; its title no longer does, and MCP
+  is not a live application transport here. Every `creek.*`
   capability name below (`CreekCapability` in `domain/creek_vault.py`)
   is adepthood's own vocabulary and telemetry key, chosen because it
   was minted that way originally; it is not a claim about how the call
@@ -93,6 +102,25 @@ tier:
 Adepthood's client owns this mapping and applies it before every call
 into the vault; it is not something Creek Vault is expected to infer.
 
+**How the ceiling reaches Creek over `/v1`.** Every request carries an
+`X-Creek-Tier-Ceiling` header, derived from the material that call
+touches — the entry's own tier for a write or a reflection, `personal`
+for the whole-corpus wheel read, `open` for the content-free capability
+handshake. It is not optional: Creek admits an absent header at `open`
+(`creek_mcp/httpapi/middleware/ceiling.py`) and an `open` ceiling cannot
+admit a `personal` write, so a client that omits it has every
+default-classification entry refused `403 privacy_refused` and reads a
+wheel computed over open-tier material alone. That was the state of this
+client until issue #2246.
+
+The header's vocabulary is **narrower than the table above**: Creek caps
+every network consumer below intimate, so its wire enum publishes only
+`open` and `personal` and `INTIMATE` has no spelling on `/v1` at all.
+Adepthood encodes that as a separate `WireTierCeiling` type, with
+`wire_ceiling_for` the one translation into it — it refuses rather than
+narrowing, so an intimate ceiling cannot reach a request header even by
+mistake.
+
 ## Wheel-of-Wholeness projection (adepthood-owned)
 
 Creek's `creek.wheel` computes and owns the Frequency-wheel counts and
@@ -101,36 +129,59 @@ shares — ten buckets, `F1` through `F10`
 Adepthood's `WheelBalanceResponse` (`backend/src/schemas/wheel.py`) is a
 *ten-stage aspect-fullness* projection, and the projection from one onto the
 other is Adepthood's to own — Creek must not invent our stage/aspect
-vocabulary on our behalf. The fact that both land on ten buckets is a
-numeric coincidence, **not a semantic identity**: `F1..F10` are
-Creek's frequency classification of corpus content, while adepthood's
-ten stages are `CourseStage` rows tied to the APTITUDE program.
+vocabulary on our behalf. That both land on ten buckets is **a semantic
+identity, not an accident of size**: `F1..F10`, the APTITUDE Stages, the
+Aspects of Wholeness and the Wavelength Modes are one set of ten
+developmental positions under several names, and the `CourseStage` rows
+are those same ten. Creek classifies corpus content into them; adepthood
+renders them as course stages. That is one ontology seen from two sides,
+not two ontologies of equal size.
+
+**Colour is the primary key, not the name.** The two labelings agree on
+six of the ten positions and diverge on the middle four, so a join on
+names mismatches exactly those four while looking correct.
+`domain.frequencies.frequency_for_color` is the single door, and
+`backend/tests/services/test_frequency_classification.py` asserts both
+the colour join and that divergence. Owning the projection therefore
+means owning the *rendering* — which of the ten names a position is
+shown under, and what `WheelBalanceResponse` looks like on the wire
+adepthood publishes — not disputing that the positions coincide.
 
 ### The request
 
 `/v1/wheel` is a bare `GET` with no query parameters and no body — the
 ratified surface publishes neither for this capability, and sending an
-undocumented one would be guessing at a contract
-(`_get_wheel`, `backend/src/services/creek_vault_client.py:1522-1541`).
-There is therefore no ceiling adepthood can *declare* on this call; the
-`personal` value in `_WHEEL_TIER_CEILING`
-(`creek_vault_client.py:230`) instead names the widest ceiling
-adepthood is willing to *accept* on the way back, and `_admissible_wheel`
-refuses a response that echoes anything wider
-(`creek_vault_client.py:1109-1122`). `personal` is the honest maximum
-here, on either reading: only aggregate per-Frequency counts and
-shares cross this seam — never fragment content — intimate content
-never reaches the vault from adepthood at all (see "Intimate-tier
-content: pointer only" below), and creek independently caps a network
-consumer below intimate regardless of what adepthood would ask for. The
-server instead applies its own published `open` default to what it
-*counts*, and `open` ranks unclassified content below `personal`: a
-not-yet-classified fragment is silently excluded from the count, so a
-young corpus — most of whose entries have no Frequency yet — reads back
-as an all-zero wheel even though it plainly isn't empty. That case, and
-how adepthood treats an all-zero answer as legitimate rather than a
-failure, is covered in "WHEEL over `/v1`" under "Per-capability
-fallback rules" below.
+undocumented one would be guessing at a contract (`_get_wheel`).
+
+The ceiling therefore travels in a **header**, not in the request shape:
+every `/v1` call declares `X-Creek-Tier-Ceiling`, and the wheel read
+declares `personal` from `_WHEEL_WIRE_CEILING`. That is what
+`_WHEEL_TIER_CEILING` has always named — the widest ceiling adepthood is
+willing to accept — and it is now also what adepthood *asks* Creek to
+count at. `_admissible_wheel` still refuses a response that echoes
+anything wider, so the declaration and the check agree rather than the
+check standing alone.
+
+Declaring it matters, because the alternative is not neutral. Absent the
+header Creek applies its published `open` default to what it *counts*,
+and `open` ranks unclassified content below `personal`: a not-yet-classified
+fragment is silently excluded, so a young corpus — most of whose entries
+have no Frequency yet — reads back as an all-zero wheel even though it
+plainly is not empty. Declaring `personal` is what stops that silent
+undercount. How adepthood treats a genuinely all-zero answer as
+legitimate rather than a failure is covered in "WHEEL over `/v1`" under
+"Per-capability fallback rules" below.
+
+`personal` is the honest maximum here, on either reading: only aggregate
+per-Frequency counts and shares cross this seam — never fragment content
+— no intimate *journal entry* reaches the vault from adepthood at all
+(see "Intimate-tier content: pointer only" below for the per-surface
+rule), and creek independently caps a network consumer below intimate
+regardless of what adepthood would ask for.
+
+Symbols above are named rather than cited by line number on purpose: the
+previous exact-range citations drifted the moment lines were inserted
+earlier in the file, which is a footgun this doc has already stepped on.
 
 ### The response projection
 
@@ -273,6 +324,78 @@ capability is still used for the others it supports:
   (ADR 0004's 2026-08-07 note) — Creek's own MCP server is untouched
   and remains what agents like CrawDad, Claude Code, and Hermes talk
   to, but nothing in this repository calls it any more.
+- **UPLOAD** — a *required* capability for the document-upload surface,
+  and gated entirely separately from JOURNAL: a vault that advertises
+  `creek.journal` has said nothing about whether it accepts files, so
+  the upload path checks `creek.upload` on its own
+  (`store_upload`, `backend/src/services/creek_vault_upload.py`) and an
+  unadvertised capability is refused locally with no request sent
+  (`_upload`, `backend/src/services/creek_vault_client.py`). Adepthood
+  `POST`s the document to the published `/v1/uploads` collection,
+  carrying `filename`, `content_base64`, `external_id`, `timestamp`, and
+  `tier` as JSON with the bytes base64-encoded — never a form-encoded
+  file part, which both sides ban outright. There is no per-document
+  URL: `external_id` is a field of the published request, so the vault
+  keys idempotence off the body it reads rather than off a path
+  adepthood assembled. Adepthood
+  **names no source or content type**: the vault reads the extension
+  off the filename and selects its own ingestor, so adepthood never
+  parses, sniffs, or classifies the document. `external_id` is a
+  deterministic digest of (owner user id, filename), which is what makes
+  a re-send idempotent — the vault edits the same fragment in place
+  rather than accumulating one per attempt — and it is a *digest*
+  specifically so a filename, which is the user's own words about their
+  life, never travels in a request line or an access log.
+
+  Tier semantics match JOURNAL: the document's tier and the declared
+  write ceiling are both the uploader's chosen tier, so the vault stores
+  at exactly that depth and refuses any widening.
+
+  Graceful degradation is finer-grained here than for JOURNAL, because
+  an upload has **no local system of record** — if the vault will not
+  take the document, it went nowhere, and the user has to be told which
+  problem they have. An unreachable vault reports `VAULT_UNAVAILABLE`,
+  and a call that failed mid-flight (or answered without durably
+  storing) reports `DEGRADED`. `CAPABILITY_UNSUPPORTED` covers every way
+  the route turns out to be closed to this caller: a vault that never
+  advertised it, a vault that withdrew it between the handshake and the
+  call, a vault refusing at the route with `unsupported_capability` or
+  `incompatible_version` — routine rather than theoretical from contract
+  0.8.0, which keys the advertised list on the caller's own declared
+  minor — and a document at the `intimate` tier, which the wire cannot
+  express at all. They are one status because they are one fact to the
+  person waiting: this document is not going over, and no retry of the
+  same request changes that. `DEGRADED` means the opposite, that another
+  attempt may well succeed. All are
+  answered as a `202` carrying the status and a self-serve message —
+  never a 5xx, since an optional integration being absent is not a
+  server fault. As with JOURNAL, **a failed upload is dropped, not
+  queued**: there is no spool, because durably holding user document
+  bytes outside the vault is a privacy decision nobody has made.
+
+  Per-fragment classification tags are read from the response when the
+  vault supplies them and are otherwise empty, which is the expected
+  answer today rather than a failure — adepthood deliberately builds no
+  second, local classifier.
+
+  **Intimate documents are withheld, exactly as intimate journal entries
+  are.** An `intimate` upload never reaches a vault: `store_upload` asks
+  `wire_ceiling_for` whether the tier has a wire spelling before it
+  probes anything, and `UploadRequest.tier` is typed to the two ceilings
+  a remote caller may declare, so the answer is no and the document
+  stops there. The 2026-08-08 amendment to ADR 0004's Decision 6 ruled
+  otherwise, on the reasoning that the vault is the user's own corpus
+  rather than a third-party service; that reasoning about the
+  destination was never overturned, but upstream removed the premise
+  underneath it at contracts 0.7.0 and 0.8.0. This section previously
+  said as much itself, and the ADR's 2026-08-21 note records the
+  supersession. The asymmetry with JOURNAL is closed rather than
+  outstanding: both write paths withhold, for one reason, at one door.
+
+  A vault's router still enforces the ceiling it *is* handed, so a vault
+  declining to store at the declared ceiling refuses the write and
+  adepthood degrades honestly rather than downgrading the tier to force
+  a success.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).
@@ -289,10 +412,12 @@ capability is still used for the others it supports:
   related-praxis or related-eddies fields — are ignored rather than
   erroring. Content already flagged by the care gate never calls the
   vault for a reflection at all, regardless of vault availability.
-- **REFLECT over `/v1`** — the ratified request carries no declarable
-  tier ceiling (`ReflectionRequest` is `additionalProperties: false`
-  and publishes none), so adepthood verifies the `tier_ceiling` and
-  `routed_tier` the vault echoes back instead of declaring one. A care
+- **REFLECT over `/v1`** — the ratified request *body* carries no tier
+  ceiling (`ReflectionRequest` is `additionalProperties: false` and
+  publishes none), so the entry's own ceiling is declared in the
+  `X-Creek-Tier-Ceiling` header instead, and adepthood still verifies
+  the `tier_ceiling` and `routed_tier` the vault echoes back: what was
+  asked for and what was applied are two separate claims. A care
   escalation is a **200, not an error**: it leaves the seam as
   `CreekVaultCareEscalationError` — deliberately outside the
   `CreekVaultError` hierarchy the read path degrades on — and the
@@ -322,16 +447,19 @@ capability is still used for the others it supports:
   (`_carries_signal`, `creek_vault_wheel.py:85-95`). Any of these causes
   `select_wheel_balance` to fall back to computing the balance locally
   (`creek_vault_wheel.py:170-183`).
-- **WHEEL over `/v1`** — the ratified HTTP surface publishes no way to
-  declare a tier ceiling at all (no field, no parameter), so the read
-  runs at the server's own `open` default rather than the `personal`
-  ceiling adepthood would ask for if it could. Adepthood verifies the
-  ceiling the vault echoes back instead, and refuses a payload claiming
-  a wider one. The
-  documented consequence of `open` therefore applies: a young or
-  wholly-unclassified corpus reads back as an all-zero wheel, which is
-  a valid answer rather than a failure, and falls back to the
-  locally-computed balance by the same `_carries_signal` rule above.
+- **WHEEL over `/v1`** — the ratified surface publishes no request field
+  and no query parameter for a ceiling, so the read declares `personal`
+  in the `X-Creek-Tier-Ceiling` header, and verifies the ceiling the
+  vault echoes back besides — refusing a payload claiming a wider one.
+  `personal` is the honest maximum: intimate content never reaches the
+  vault from adepthood, and Creek independently caps a network consumer
+  below intimate. It matters that it is declared rather than defaulted,
+  because Creek ranks unclassified fragments with `personal`, so a read
+  left at the server's `open` default counts only classified open-tier
+  material and reads back as an all-zero wheel on a young corpus. That
+  all-zero answer is still a valid one rather than a failure when the
+  corpus really is empty, and falls back to the locally-computed
+  balance by the same `_carries_signal` rule above.
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
   Adepthood does not call Creek's classify capability today; every
   Frequency/Wavelength tag in the app is produced locally.
@@ -341,12 +469,31 @@ capability is still used for the others it supports:
 The rule governing whether, and how, intimate content may ever cross
 the adepthood-to-vault seam is recorded in
 [ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
-Decision 6, not in this document. That rule is **entirely unshipped**.
-Today's actual behavior is the skip-only mode from
-[ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
-classification short-circuits before any vault call at all, not even a
-handshake. No intimate journal content is transmitted to any vault
-today, in any form.
+Decision 6, not in this document. **It differs by surface**, and the
+split is deliberate:
+
+- **Journal entries — skip-only, unchanged.** The ciphertext/attested
+  transit topology in Decision 6 (a)–(d) is **entirely unshipped**, so
+  today's behavior remains the skip-only mode from
+  [ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
+  classification short-circuits before any vault call at all, not even
+  a handshake. No intimate journal *entry* is transmitted to any vault
+  today, in any form.
+- **Document uploads — skip-only too, since 2026-08-21.** An `intimate`
+  document sent to `POST /corpus/import` is withheld before the vault
+  is probed, because `/v1`'s tier vocabulary has no `intimate` member
+  and adepthood's one door onto it refuses rather than narrowing. That
+  door was `POST /journal/upload` when this was written; the route has
+  since been retired and the import route reaches the same
+  `services.creek_vault_upload.store_upload`, so the rule is unchanged
+  and only its address is. The
+  2026-08-08 amendment to Decision 6 ruled that this surface could
+  forward such a document; contracts 0.7.0 and 0.8.0 removed the premise
+  that made it possible, and ADR 0004's 2026-08-21 note records the
+  supersession.
+
+There is no longer an asymmetry between the two surfaces: no intimate
+material of any kind is transmitted to any vault today, in any form.
 
 ## Vault tenancy: pointer only
 

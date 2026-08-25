@@ -131,6 +131,18 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingTop: spacing(1),
   },
+  /**
+   * A pass that found nothing to say. Soft ink on paper, deliberately not the
+   * danger red of ``marginError`` beside it: the pass worked, and colouring a
+   * considered "nothing yet" as a fault would read as the page scolding the
+   * writer for what they wrote.
+   */
+  marginNotice: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+    paddingBottom: spacing(1),
+  },
   /** Warm paper-toned notice (not a red panic block) for a failed entry load. */
   loadErrorBanner: {
     marginHorizontal: journalSheet.deskPaddingH,
@@ -153,6 +165,18 @@ const styles = StyleSheet.create({
     ...editorialType.action,
     color: accent.primary,
     paddingTop: spacing(2),
+  },
+  /**
+   * The page's exit row, above the sheet: the optional "Back to reading" return
+   * and the always-present close, clustered at the trailing edge so the writer
+   * finds one way out wherever they arrived from.
+   */
+  entryExitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: SPACING.md,
+    paddingHorizontal: journalSheet.deskPaddingH,
   },
   /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
   quoteActionButton: {
@@ -295,6 +319,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: SPACING.xs,
   },
+  /**
+   * A voice of the chord that has been chosen, folded onto one line: its label,
+   * the chosen chip, and the affordance that reopens the row. Folding is what
+   * keeps a named chord from holding nineteen chips open in the writing column.
+   */
+  aspectChordChosenRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
   /** A single Aspect chip; min dims hold the 44dp touch-target floor. */
   aspectChordChip: {
     minHeight: touchTarget.minimum,
@@ -305,24 +340,30 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
   },
+  /**
+   * The chosen chip. Its fill is this stage's own colour, applied at render from
+   * the shared palette, so only the ink border it gains lives here.
+   */
   aspectChordChipSelected: {
-    backgroundColor: colors.paper.anchorHighlight,
-    borderColor: colors.paper.inkSoft,
+    borderColor: colors.paper.ink,
   },
   aspectChordChipLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
   },
-  aspectChordChipLabelSelected: {
-    color: colors.paper.ink,
+  /** Row holding the chord-level affordances (Clear, Collapse) on one line. */
+  aspectChordActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
   },
-  /** The clear affordance that resets the chord to untagged. */
-  aspectChordClear: {
+  /** A chord affordance: Clear, Collapse, or a row's Change. 44dp touch floor. */
+  aspectChordAction: {
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
     paddingHorizontal: SPACING.sm,
   },
-  aspectChordClearLabel: {
+  aspectChordActionLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
   },
