@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import (
     require_owned_user_practice,
@@ -250,7 +251,7 @@ async def create_practice_recipe(
 
 @router.get("/{recipe_id}", response_model=PracticeRecipeOut)
 async def get_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeRecipeOut:
@@ -262,7 +263,7 @@ async def get_practice_recipe(
 
 @router.patch("/{recipe_id}", response_model=PracticeRecipeOut)
 async def update_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     payload: PracticeRecipeUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -318,7 +319,7 @@ async def update_practice_recipe(
 
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
@@ -340,7 +341,7 @@ async def delete_practice_recipe(
     response_model=UserPracticeDetail,
 )
 async def apply_recipe_to_user_practice(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],

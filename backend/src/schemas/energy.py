@@ -6,6 +6,8 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
+from bounds import RowIdField
+
 # Bounds matching ``schemas.habit.HabitCreate`` so the energy planner
 # accepts the same range the rest of the app already validates against
 # (BUG-SCHEMA-007).  ``id`` and ``name`` are user-controlled too —
@@ -18,7 +20,7 @@ MAX_HABITS_PER_PLAN = 100
 
 
 class Habit(BaseModel):
-    id: int = Field(gt=0)
+    id: RowIdField
     name: str = Field(min_length=1, max_length=HABIT_NAME_MAX_LENGTH)
     # energy_cost / energy_return are loaded server-side from the caller's own
     # Habit rows (BUG-PRACTICE-010); any client-sent values are ignored. They

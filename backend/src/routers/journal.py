@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.ownership import (
@@ -85,7 +86,11 @@ from schemas.marginalia import (
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
-from services.botmason import LLMProviderError, resolve_chat_api_key
+from services.botmason import (
+    LLM_API_KEY_MAX_LENGTH,
+    LLMProviderError,
+    resolve_chat_api_key,
+)
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
@@ -173,9 +178,9 @@ class _ListFilters:
         max_length=JOURNAL_SEARCH_MAX_LENGTH,
     )
     tag: JournalTag | None = None
-    practice_session_id: int | None = Query(default=None)
+    practice_session_id: int | None = Query(default=None, ge=MIN_ROW_ID, le=INT32_MAX)
     limit: int = Query(default=50, ge=1, le=200)
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET)
 
 
 # Noon is the midpoint of the UTC day, so a backdated entry stays on its intended
@@ -554,7 +559,7 @@ async def _apply_entry_update(
 
 @router.patch("/{entry_id}", response_model=JournalMessageResponse)
 async def update_journal_entry(
-    entry_id: int,
+    entry_id: RowIdPath,
     payload: JournalEntryUpdate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -1031,7 +1036,9 @@ class _ReflectionClients:
 
 def _reflection_clients(
     vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
-    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
 ) -> _ReflectionClients:
     """Bundle the BYOK key and the vault client for the resonance handler.
 
@@ -1046,7 +1053,7 @@ def _reflection_clients(
 @limiter.limit("10/minute")
 async def run_resonance(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    entry_id: int,
+    entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     clients: Annotated[_ReflectionClients, Depends(_reflection_clients)],
@@ -1149,7 +1156,7 @@ async def run_resonance(
 
 @router.get("/{entry_id}/marginalia", response_model=MarginaliaListResponse)
 async def list_marginalia(
-    entry_id: int,
+    entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MarginaliaListResponse:
@@ -1173,7 +1180,7 @@ async def list_marginalia(
 
 @router.get("/{entry_id}/suggestions", response_model=CompletionSuggestionListResponse)
 async def list_suggestions(
-    entry_id: int,
+    entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     suggestion_status: Annotated[
@@ -1340,7 +1347,7 @@ async def _already_accepted_response(
 
 @router.post("/suggestions/{suggestion_id}/accept", response_model=AcceptSuggestionResponse)
 async def accept_suggestion(
-    suggestion_id: int,
+    suggestion_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -1367,7 +1374,7 @@ async def accept_suggestion(
 
 @router.post("/suggestions/{suggestion_id}/dismiss", response_model=CompletionSuggestionResponse)
 async def dismiss_suggestion(
-    suggestion_id: int,
+    suggestion_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CompletionSuggestionResponse:
@@ -1408,10 +1415,12 @@ async def _load_user_marginalia(
 @limiter.limit("10/minute")
 async def expand_marginalia_essay(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    marginalia_id: int,
+    marginalia_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
 ) -> Marginalia:
     """Lazily generate (and cache) a longer essay expanding one margin note.
 

@@ -117,17 +117,24 @@ async def test_get_prompt_by_week(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_prompt_invalid_week_returns_404(async_client: AsyncClient) -> None:
+async def test_get_prompt_week_past_the_program_is_rejected(async_client: AsyncClient) -> None:
+    """A week the thirty-six-week program does not have never reaches a lookup.
+
+    ``week_number`` is bounded by the curriculum, so an out-of-range week is
+    refused while the path parameter is solved rather than answered 404 by a
+    query that had to run first.
+    """
     headers = await _signup(async_client)
     resp = await async_client.get("/prompts/99", headers=headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio
-async def test_get_prompt_week_zero_returns_404(async_client: AsyncClient) -> None:
+async def test_get_prompt_week_zero_is_rejected(async_client: AsyncClient) -> None:
+    """Weeks are numbered from one, so week zero is below the declared floor."""
     headers = await _signup(async_client)
     resp = await async_client.get("/prompts/0", headers=headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── POST /prompts/{week_number}/respond ─────────────────────────────────
@@ -175,14 +182,17 @@ async def test_submit_duplicate_response_returns_409(async_client: AsyncClient) 
 
 
 @pytest.mark.asyncio
-async def test_submit_response_invalid_week_returns_404(async_client: AsyncClient) -> None:
+async def test_submit_response_week_past_the_program_is_rejected(
+    async_client: AsyncClient,
+) -> None:
+    """Submitting against a week the program does not have is a bad request."""
     headers = await _signup(async_client)
     resp = await async_client.post(
         "/prompts/99/respond",
         json={"response": "a thoughtful response"},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 # ── BUG-PROMPT-001 / BUG-PROMPT-002: weekly unlock gate ─────────────────
@@ -743,19 +753,20 @@ async def test_stage_prompts_of_a_locked_stage_is_forbidden(async_client: AsyncC
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage_number", [0, 11])
-async def test_stage_prompts_out_of_range_returns_404(
+async def test_stage_prompts_out_of_range_is_rejected(
     async_client: AsyncClient, stage_number: int
 ) -> None:
     """There are ten positions; an eleventh is an ontology change, not a lookup.
 
-    The detail is asserted, not just the status: an unrouted path 404s too, so
-    without it this would pass against an endpoint that does not exist.
+    The rejection is located, not just counted: an unrouted path can answer
+    422 for a wholly unrelated reason, so pinning ``loc`` is what proves the
+    declared stage bound is what refused this.
     """
     headers = await _signup(async_client, f"stage_range_{stage_number}")
     resp = await async_client.get(f"/prompts/stage/{stage_number}", headers=headers)
 
-    assert resp.status_code == HTTPStatus.NOT_FOUND
-    assert resp.json()["detail"] == "stage_not_found"
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["path", "stage_number"]
 
 
 # ── Addressing a specific prompt on POST ────────────────────────────────
