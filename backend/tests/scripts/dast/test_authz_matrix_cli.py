@@ -23,6 +23,7 @@ from httpx import AsyncClient
 from scripts.dast import authz_matrix
 from scripts.dast.discovery import RouteSpec
 from scripts.dast.policy import DEFAULT_ALLOWLIST_PATH, AllowlistEntry, load_allowlist
+from scripts.dast.references import REFERENCE_REGISTRY, ReferenceProbe, ReferenceRegistry
 from scripts.dast.report import (
     EXIT_AUTHZ_FINDING,
     EXIT_CLEAN,
@@ -33,6 +34,7 @@ from scripts.dast.report import (
 from scripts.dast.runner import (
     DEFAULT_BUDGET_SECONDS,
     DEFAULT_MAX_ALLOWLIST_FRACTION,
+    DEFAULT_MIN_REFERENCES,
     DEFAULT_MIN_ROUTES,
     MatrixConfig,
 )
@@ -50,8 +52,19 @@ ALLOWLISTED_ROUTES = 4
 ELAPSED_SECONDS = 11.5
 
 CUSTOM_MIN_ROUTES = 33
+CUSTOM_MIN_REFERENCES = 9
 CUSTOM_BUDGET_SECONDS = 45.0
 CUSTOM_MAX_FRACTION = 0.25
+
+# A probe table that is recognisably not the shipped one. It is never issued --
+# the matrix is stubbed -- so it only has to be a distinct, well-formed entry.
+INJECTED_REFERENCE_REGISTRY: ReferenceRegistry = {
+    ("POST", "/widgets/"): ReferenceProbe(
+        method="POST",
+        path="/widgets/",
+        body={"label": "probe"},
+    ),
+}
 
 LEAKY_ROUTE = RouteSpec(
     method="GET",
@@ -118,10 +131,11 @@ def install_stub_matrix(
     return recorded
 
 
-def run_cli(*extra: str) -> int:
+def run_cli(*extra: str, overrides: authz_matrix.HarnessOverrides | None = None) -> int:
     """Invoke ``main`` with the two required arguments plus ``extra``."""
     return authz_matrix.main(
         ["--base-url", BASE_URL, "--database-url", DATABASE_URL, *extra],
+        overrides=overrides,
     )
 
 
@@ -194,26 +208,58 @@ def test_a_tripped_guard_exits_three(
     assert "HARNESS ERROR  require_seeded_resources: no objects were created" in captured.err
 
 
-def test_the_documented_defaults_reach_the_runner(
+def record_flagless_run(monkeypatch: pytest.MonkeyPatch) -> tuple[AsyncClient, MatrixConfig]:
+    """Drive the CLI with no optional flags and return what the runner received.
+
+    The scheduled job invokes the matrix exactly this way, so everything this
+    returns was decided by a default rather than by a command line.
+    """
+    recorded = install_stub_matrix(monkeypatch, build_report())
+    run_cli()
+    return recorded[0]
+
+
+def test_the_documented_default_thresholds_reach_the_runner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A threshold that stops being applied is how a gate loosens without a diff."""
-    recorded = install_stub_matrix(monkeypatch, build_report())
+    _, config = record_flagless_run(monkeypatch)
 
-    run_cli()
-
-    client, config = recorded[0]
-    assert str(client.base_url) == BASE_URL
     assert config.min_routes == DEFAULT_MIN_ROUTES
+    assert config.min_references == DEFAULT_MIN_REFERENCES
     assert config.budget_seconds == DEFAULT_BUDGET_SECONDS
     assert config.max_allowlist_fraction == DEFAULT_MAX_ALLOWLIST_FRACTION
+
+
+def test_a_flagless_run_carries_a_non_zero_reference_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheduled job passes no flags, so this default is the whole gate.
+
+    A floor of zero would let the reference dimension report green having probed
+    nothing at all, which is the vacuous pass the guard exists to forbid.
+    """
+    _, config = record_flagless_run(monkeypatch)
+
+    assert config.min_references > 0
+
+
+def test_the_default_target_and_data_reach_the_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The registries are data, and swapping one silently is the other way to loosen."""
+    client, config = record_flagless_run(monkeypatch)
+
+    assert str(client.base_url) == BASE_URL
     assert config.seed_registry is SEED_REGISTRY
+    assert config.reference_registry is REFERENCE_REGISTRY
     assert config.allowlist == load_allowlist(DEFAULT_ALLOWLIST_PATH)
 
 
 def test_the_default_thresholds_are_the_documented_numbers() -> None:
-    """These three numbers are the acceptance criteria, so they are pinned once."""
+    """These four numbers are the acceptance criteria, so they are pinned once."""
     assert DEFAULT_MIN_ROUTES == 20
+    assert DEFAULT_MIN_REFERENCES == 5
     assert DEFAULT_BUDGET_SECONDS == 120.0
     assert DEFAULT_MAX_ALLOWLIST_FRACTION == 0.5
 
@@ -227,6 +273,8 @@ def test_every_threshold_flag_overrides_its_default(
     run_cli(
         "--min-routes",
         str(CUSTOM_MIN_ROUTES),
+        "--min-references",
+        str(CUSTOM_MIN_REFERENCES),
         "--budget-seconds",
         str(CUSTOM_BUDGET_SECONDS),
         "--max-allowlist-fraction",
@@ -235,8 +283,35 @@ def test_every_threshold_flag_overrides_its_default(
 
     _, config = recorded[0]
     assert config.min_routes == CUSTOM_MIN_ROUTES
+    assert config.min_references == CUSTOM_MIN_REFERENCES
     assert config.budget_seconds == CUSTOM_BUDGET_SECONDS
     assert config.max_allowlist_fraction == CUSTOM_MAX_FRACTION
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        pytest.param(INJECTED_REFERENCE_REGISTRY, id="populated"),
+        pytest.param({}, id="empty"),
+    ],
+)
+def test_an_injected_reference_registry_replaces_the_shipped_one(
+    registry: ReferenceRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stub target carries its own ids, so the probe table has to be a seam.
+
+    The empty case is the one that matters: a stub with no references at all
+    must be able to say so, and a fallback that treats "empty" as "unset" would
+    quietly probe the production table against somebody else's application.
+    """
+    recorded = install_stub_matrix(monkeypatch, build_report())
+
+    run_cli(overrides=authz_matrix.HarnessOverrides(reference_registry=registry))
+
+    _, config = recorded[0]
+    assert config.reference_registry == registry
+    assert config.reference_registry is not REFERENCE_REGISTRY
 
 
 def test_an_explicit_allowlist_path_is_loaded_instead_of_the_shipped_one(
