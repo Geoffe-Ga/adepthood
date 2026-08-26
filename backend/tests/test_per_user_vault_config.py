@@ -50,9 +50,10 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
 )
-from models.user_vault_config import UserVaultConfig
+from models.user_vault_config import VAULT_URL_MAX_LENGTH, UserVaultConfig
+from schemas.vault_config import VAULT_API_KEY_MAX_LENGTH
 from services import creek_vault_client as vault_client_module
-from services import journal_encryption
+from services import creek_vault_url_resolution, journal_encryption
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
 
 # The marker real ciphertext carries. Imported as a literal rather than off the
@@ -71,6 +72,23 @@ _KEY_A = "alpha-credential-never-leaves-the-column"  # pragma: allowlist secret
 _KEY_B = "beta-credential-never-leaves-the-column"  # pragma: allowlist secret
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
+
+# A credential distinctive enough that finding it in a 422 body can only mean the
+# body repeated what was submitted. Every refusal test below is written against
+# it rather than against a plausible-looking key, because "the response does not
+# echo the secret" is only an assertion when the secret is unmistakable.
+_SENTINEL_KEY = "SENTINEL-CREDENTIAL-MUST-NOT-BE-ECHOED"  # pragma: allowlist secret
+
+# The refusal code a caller sees for a credential no ``Authorization`` header
+# could carry. A code rather than a validator's prose, because the prose that
+# used to carry this refusal arrived with the submitted value attached.
+_KEY_REFUSAL = "vault_key_unusable"
+
+# Two bodies past the schema's own ceilings, which is the one class of refusal
+# the router never sees: the request is rejected before any handler runs, so
+# whatever the framework puts in that body is what the client gets.
+_OVER_LONG_URL = f"https://{'a' * VAULT_URL_MAX_LENGTH}.example.test"
+_OVER_LONG_KEY = _SENTINEL_KEY * (1 + VAULT_API_KEY_MAX_LENGTH // len(_SENTINEL_KEY))
 
 _ALPHA_SENTINEL = "alpha-writing-belongs-only-to-alphas-vault"
 _BETA_SENTINEL = "beta-writing-belongs-only-to-betas-vault"
@@ -105,6 +123,41 @@ def _no_deployment_vault(monkeypatch: pytest.MonkeyPatch) -> None:
         "CREEK_VAULT_OWNER_USER_ID",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+# The address every stubbed lookup in this module answers with. Globally
+# routable on purpose: a user-supplied vault URL is judged by where it points,
+# and documentation ranges are not routable, so a stub answering with one would
+# have every connection in this file refused for the wrong reason.
+_PUBLIC_ADDRESS = "8.8.8.8"
+
+
+async def _resolves_publicly(_host: str) -> tuple[str, ...]:
+    """Answer any name with an ordinary public address."""
+    return (_PUBLIC_ADDRESS,)
+
+
+@pytest.fixture(autouse=True)
+def _resolvable_hosts(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Answer name lookups from the test rather than from whatever DNS is nearby.
+
+    A user-supplied vault URL is refused unless its host resolves somewhere
+    globally routable, and refused when it does not resolve at all -- fail
+    closed, because a name nobody can answer is a destination nobody has
+    checked. Every vault in this module lives under ``.example.test``, which is
+    reserved precisely so that it never resolves, so without this fixture the
+    whole file would be asserting the request-forgery guard instead of the
+    per-user feature it exists for.
+
+    The cache is cleared on both sides. Its entries outlive a test by a minute of
+    wall-clock time, which is longer than this suite takes, so a leaked answer is
+    a real ordering dependency rather than a theoretical one -- and it would
+    surface as a failure in whichever test happened to run next.
+    """
+    creek_vault_url_resolution.reset_resolution_cache()
+    monkeypatch.setattr(creek_vault_url_resolution, "_resolve", _resolves_publicly)
+    yield
+    creek_vault_url_resolution.reset_resolution_cache()
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
@@ -433,13 +486,20 @@ async def test_an_unusable_url_is_refused_on_write(
 
 
 @pytest.mark.parametrize(
-    "api_key",
-    ["", "   ", "key with a space", "key\nwith-a-newline", "key\twith-a-tab", "kéy"],
+    ("api_key", "reason"),
+    [
+        ("", "there is no credential at all"),
+        ("   ", "whitespace trims away to nothing"),
+        (f"{_SENTINEL_KEY} with a space", "a space cannot appear inside a bearer credential"),
+        (f"{_SENTINEL_KEY}\nwith-a-newline", "httpx refuses to build a header holding one"),
+        (f"{_SENTINEL_KEY}\twith-a-tab", "a tab is a control character in a field value"),
+        (f"{_SENTINEL_KEY}é", "a non-ASCII letter cannot be encoded into a field value"),
+    ],
 )
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_keyed")
 async def test_a_credential_that_could_not_survive_a_header_is_refused(
-    async_client: AsyncClient, api_key: str
+    async_client: AsyncClient, api_key: str, reason: str
 ) -> None:
     """The credential is destined for an ``Authorization`` header, so it must fit one.
 
@@ -447,6 +507,13 @@ async def test_a_credential_that_could_not_survive_a_header_is_refused(
     from it, and that refusal is not in any degrade set -- so a key accepted here
     would turn every one of that user's journal saves into a 500 rather than an
     optional capability quietly skipped.
+
+    What the refusal *says* is the second half, and it is a security property
+    rather than an ergonomic one. This is the one field on this request that is a
+    secret, and a rejection describing it by quoting it puts that secret into a
+    422 body, into whatever the client logs, and into whatever sits between them.
+    So the refusal is a code this endpoint owns, and the submitted value appears
+    nowhere in the response.
     """
     headers, _user_id = await _signup(async_client, "alpha")
 
@@ -454,7 +521,55 @@ async def test_a_credential_that_could_not_survive_a_header_is_refused(
         _CONNECTION_PATH, json={"vault_url": _VAULT_A_URL, "api_key": api_key}, headers=headers
     )
 
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, reason
+    assert resp.json()["detail"] == _KEY_REFUSAL
+    assert _SENTINEL_KEY not in resp.text
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        ({"vault_url": _OVER_LONG_URL, "api_key": _SENTINEL_KEY}, "the URL is past its ceiling"),
+        (
+            {"vault_url": _VAULT_A_URL, "api_key": _OVER_LONG_KEY},
+            "the credential is past its ceiling",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_a_schema_refusal_names_the_field_without_repeating_what_was_sent(
+    async_client: AsyncClient, body: dict[str, str], reason: str
+) -> None:
+    """A 422 raised before any handler runs still must not carry the request back.
+
+    This is the refusal no router-level check can reach. Both bodies are rejected
+    by the request schema itself, so nothing in this application's own code has
+    executed by the time the response is written -- which means the only place the
+    submitted credential can be stripped from it is a handler installed over the
+    framework's validation error, and this is the test that says so.
+
+    The shape is kept: still 422, still a list under ``detail``, still one entry
+    per problem naming its type, its location and a human-readable message. What
+    goes is ``input``, which is a verbatim copy of what the client sent, and
+    ``ctx``, which carries the validator's own state. A client debugging a
+    rejected request already has the body it sent; the server repeating it is
+    pure downside on a request whose whole purpose is to carry a secret.
+    """
+    headers, _user_id = await _signup(async_client, "alpha")
+
+    resp = await async_client.put(_CONNECTION_PATH, json=body, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, reason
+    assert _SENTINEL_KEY not in resp.text
+    detail = resp.json()["detail"]
+    assert isinstance(detail, list)
+    assert detail
+    for entry in detail:
+        assert set(entry) <= {"type", "loc", "msg"}, "a 422 entry carried more than it should"
+        assert entry["type"]
+        assert entry["loc"]
+        assert entry["msg"]
 
 
 @pytest.mark.asyncio
