@@ -774,3 +774,37 @@ describe('JournalEntryScreen writing-field focus', () => {
     expect(input.props.cursorColor).toBe(writingField.caret);
   });
 });
+/**
+ * The live word count under the writing column. It counts the body only — the
+ * prose the writer is producing — and stays silent on a blank page.
+ */
+describe('JournalEntryScreen word count', () => {
+  it('says nothing before a word is written', () => {
+    expect(renderScreen().getByTestId('journal-word-count').props.children).toBe('');
+  });
+
+  it('counts up live as the body is typed', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'I walked to the river');
+    expect(getByTestId('journal-word-count').props.children).toBe('5 words');
+  });
+
+  it('uses the singular for a one-word page', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'willow');
+    expect(getByTestId('journal-word-count').props.children).toBe('1 word');
+  });
+
+  it('counts the prose, not the punctuation between it', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'time—space  ***  \n  well-being');
+    expect(getByTestId('journal-word-count').props.children).toBe('3 words');
+  });
+
+  it('leaves the title out of the count', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-title-input'), 'A long title about rivers');
+    fireEvent.changeText(getByTestId('journal-body-input'), 'willow');
+    expect(getByTestId('journal-word-count').props.children).toBe('1 word');
+  });
+});

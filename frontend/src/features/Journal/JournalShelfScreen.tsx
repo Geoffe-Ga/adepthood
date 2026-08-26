@@ -29,6 +29,7 @@ import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
 import { usePagedJournal } from './usePagedJournal';
+import { countWords } from './wordCount';
 
 import { prompts } from '@/api';
 import type { JournalMessage, PromptDetail } from '@/api';
@@ -54,11 +55,16 @@ const FIRST_PROMPT = 'What brought you here?';
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
 
-/** Estimated reading time in whole minutes (≥1). */
+/**
+ * Estimated reading time in whole minutes (≥1).
+ *
+ * Shares ``countWords`` with the writing page's live counter so a page never
+ * reports a reading time computed from a different idea of what a word is —
+ * a whitespace split counted a row of asterisks and undercounted em-dashed
+ * prose.
+ */
 function readingMinutes(body: string): number {
-  const trimmed = body.trim();
-  const words = trimmed ? trimmed.split(/\s+/).length : 0;
-  return Math.max(1, Math.ceil(words / WORDS_PER_MINUTE));
+  return Math.max(1, Math.ceil(countWords(body) / WORDS_PER_MINUTE));
 }
 
 /** A relative "saved …" phrase, falling back to the absolute date when old. */

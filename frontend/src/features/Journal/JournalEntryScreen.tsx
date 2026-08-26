@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -41,6 +41,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
+import { countWords, wordCountLabel } from './wordCount';
 
 import { journal, prompts, reflections } from '@/api';
 import type {
@@ -1134,6 +1135,30 @@ function WritingFields({
   );
 }
 
+/**
+ * The line under the body: the save state on the left, the live word count on
+ * the right.
+ *
+ * The count follows the BODY only — the prose being produced, not the label on
+ * it — and is deliberately not a live region: announcing a new total on every
+ * keystroke would make the page unusable with a screen reader, and the count is
+ * reference, never a prompt. It stays silent at zero (see ``wordCountLabel``),
+ * so an untouched page still opens as a blank page rather than a scoreboard.
+ */
+function WritingFooter({ body, saveState }: { body: string; saveState: SaveState }) {
+  const words = useMemo(() => countWords(body), [body]);
+  return (
+    <View style={styles.writingFooter}>
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {savedHintLabel(saveState)}
+      </Text>
+      <Text style={styles.wordCount} testID="journal-word-count">
+        {wordCountLabel(words)}
+      </Text>
+    </View>
+  );
+}
+
 /** The scrollable writing column (title + growing body + save hint). */
 function WritingColumn({
   title,
@@ -1173,9 +1198,7 @@ function WritingColumn({
         onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
-      <Text style={styles.savedHint} testID="journal-save-hint">
-        {savedHintLabel(saveState)}
-      </Text>
+      <WritingFooter body={body} saveState={saveState} />
       {onFinish ? (
         <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
       ) : null}

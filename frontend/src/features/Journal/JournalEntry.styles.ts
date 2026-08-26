@@ -128,7 +128,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper.hairline,
     marginVertical: spacing(1),
   },
+  /** The line under the body: save state on the left, live word count on the right. */
+  writingFooter: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing(2),
+  },
   savedHint: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
+  },
+  /** Quieter than the save hint beside it: reference the writer glances at, never a target. */
+  wordCount: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
