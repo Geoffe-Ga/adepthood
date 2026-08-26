@@ -77,7 +77,14 @@ import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
-import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
+import {
+  selectCurrentStage,
+  selectStages,
+  selectStagesAttempted,
+  selectStagesError,
+  selectStagesLoading,
+  useStageStore,
+} from '@/store/useStageStore';
 
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
@@ -459,15 +466,24 @@ const EmptyStateView = ({ onBrowseCatalog }: EmptyStateViewProps): React.JSX.Ele
 function useResolvedStageNumber(): number {
   const route = useAppRoute<'Practice'>();
   const storeCurrentStage = useStageStore(selectCurrentStage);
-  const storeStages = useStageStore((s) => s.stages);
+  const storeStages = useStageStore(selectStages);
+  const loading = useStageStore(selectStagesLoading);
+  const error = useStageStore(selectStagesError);
+  const hasAttempted = useStageStore(selectStagesAttempted);
   // Master-date wiring: when the user has set a program start date, derive
   // the active stage from ``today - programStartDate`` so the screen tracks
   // real elapsed time rather than the server's count-based current stage.
   // Falls back to the store value when no anchor is set.
   const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
+  // One automatic attempt per session: a load that fails — or succeeds with an
+  // empty list — lands back on this guard's shape, so only the store's recorded
+  // attempt stops it re-firing. Every later attempt is user-initiated; the
+  // store's logout ``reset`` clears the flag and re-arms the cold start.
   useEffect(() => {
-    if (storeStages.length === 0) void stageService.loadStages();
-  }, [storeStages.length]);
+    if (storeStages.length === 0 && !loading && !error && !hasAttempted) {
+      void stageService.loadStages();
+    }
+  }, [storeStages.length, loading, error, hasAttempted]);
   return route.params?.stageNumber ?? derivedCurrentStage;
 }
 
