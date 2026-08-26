@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from bounds import CountField
 from schemas._base import OwnedResourcePublic
 from schemas.goal import GoalWithCompletions
 
@@ -67,7 +68,7 @@ class HabitCreate(BaseModel):
     notification_frequency: NOTIFICATION_FREQUENCY | None = None
     notification_days: list[str] | None = None
     milestone_notifications: bool = False
-    sort_order: int | None = None
+    sort_order: CountField | None = None
     stage: str = Field(default="", max_length=HABIT_STAGE_MAX_LENGTH)
     revealed: bool = False
     is_carryover: bool = False

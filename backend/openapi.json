@@ -1534,6 +1534,8 @@
             "type": "boolean"
           },
           "goal_id": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
             "title": "Goal Id",
             "type": "integer"
           }
@@ -1749,6 +1751,8 @@
           "goal_group_id": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -2015,7 +2019,8 @@
             "title": "Energy Return"
           },
           "id": {
-            "exclusiveMinimum": 0.0,
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
             "title": "Id",
             "type": "integer"
           },
@@ -2243,6 +2248,8 @@
           "sort_order": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -2803,6 +2810,8 @@
           "practice_session_id": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -2865,6 +2874,8 @@
           "user_practice_id": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -4178,6 +4189,8 @@
             "type": "string"
           },
           "user_practice_id": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
             "title": "User Practice Id",
             "type": "integer"
           }
@@ -4449,11 +4462,13 @@
         "description": "Payload for promoting a span of a source entry into a pending quote.\n\nOnly offsets are accepted; the server slices ``anchor_text`` from the\npersisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an\nempty or inverted span is rejected before it reaches the database.",
         "properties": {
           "anchor_end": {
+            "maximum": 10000.0,
             "minimum": 1.0,
             "title": "Anchor End",
             "type": "integer"
           },
           "anchor_start": {
+            "maximum": 10000.0,
             "minimum": 0.0,
             "title": "Anchor Start",
             "type": "integer"
@@ -4550,6 +4565,8 @@
           "included_in_entry_id": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -4674,6 +4691,7 @@
           "prompt_ordinal": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
                 "minimum": 1.0,
                 "type": "integer"
               },
@@ -4790,6 +4808,7 @@
           },
           "interval_seconds": {
             "items": {
+              "maximum": 86400.0,
               "minimum": 1.0,
               "type": "integer"
             },
@@ -4969,6 +4988,8 @@
         "properties": {
           "habit_ids": {
             "items": {
+              "maximum": 2147483647.0,
+              "minimum": 1.0,
               "type": "integer"
             },
             "maxItems": 50,
@@ -5023,6 +5044,7 @@
             "type": "string"
           },
           "target_reps": {
+            "maximum": 1000000.0,
             "minimum": 1.0,
             "title": "Target Reps",
             "type": "integer"
@@ -6370,6 +6392,8 @@
         "description": "Payload for selecting a practice for a stage.",
         "properties": {
           "practice_id": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
             "title": "Practice Id",
             "type": "integer"
           },
@@ -6998,6 +7022,8 @@
             "required": false,
             "schema": {
               "default": 30,
+              "maximum": 36500,
+              "minimum": 1,
               "title": "Older Than Days",
               "type": "integer"
             }
@@ -7070,6 +7096,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -7150,6 +7177,8 @@
             "name": "user_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Id",
               "type": "integer"
             }
@@ -7222,6 +7251,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -7294,6 +7324,8 @@
             "name": "user_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Id",
               "type": "integer"
             }
@@ -7363,6 +7395,8 @@
             "name": "user_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Id",
               "type": "integer"
             }
@@ -7372,6 +7406,8 @@
             "name": "entitlement_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entitlement Id",
               "type": "integer"
             }
@@ -7441,6 +7477,8 @@
             "name": "user_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Id",
               "type": "integer"
             }
@@ -8014,6 +8052,8 @@
             "name": "content_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Content Id",
               "type": "integer"
             }
@@ -8073,6 +8113,8 @@
             "name": "content_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Content Id",
               "type": "integer"
             }
@@ -8132,6 +8174,8 @@
             "name": "content_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Content Id",
               "type": "integer"
             }
@@ -8304,6 +8348,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -8326,6 +8372,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -8396,6 +8443,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -8455,6 +8504,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -8514,6 +8565,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -8694,6 +8747,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -8822,6 +8876,8 @@
             "name": "group_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Group Id",
               "type": "integer"
             }
@@ -8872,6 +8928,8 @@
             "name": "group_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Group Id",
               "type": "integer"
             }
@@ -8929,6 +8987,8 @@
             "name": "group_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Group Id",
               "type": "integer"
             }
@@ -9058,6 +9118,8 @@
             "name": "goal_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Goal Id",
               "type": "integer"
             }
@@ -9140,6 +9202,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -9268,6 +9331,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9318,6 +9383,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9375,6 +9442,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9444,6 +9513,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9496,6 +9567,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9569,6 +9642,8 @@
             "name": "habit_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Habit Id",
               "type": "integer"
             }
@@ -9751,6 +9826,8 @@
             "name": "invitation_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Invitation Id",
               "type": "integer"
             }
@@ -9846,6 +9923,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 2147483647,
+                  "minimum": 1,
                   "type": "integer"
                 },
                 {
@@ -9873,6 +9952,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -9991,6 +10071,8 @@
             "name": "marginalia_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Marginalia Id",
               "type": "integer"
             }
@@ -10002,6 +10084,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 256,
                   "type": "string"
                 },
                 {
@@ -10066,6 +10149,8 @@
             "name": "suggestion_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Suggestion Id",
               "type": "integer"
             }
@@ -10125,6 +10210,8 @@
             "name": "suggestion_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Suggestion Id",
               "type": "integer"
             }
@@ -10186,6 +10273,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 256,
                   "type": "string"
                 },
                 {
@@ -10260,6 +10348,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10310,6 +10400,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10367,6 +10459,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10436,6 +10530,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10495,6 +10591,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10564,6 +10662,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10627,6 +10727,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -10654,6 +10756,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 256,
                   "type": "string"
                 },
                 {
@@ -10702,6 +10805,8 @@
             "name": "entry_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
             }
@@ -11238,6 +11343,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -11366,6 +11472,8 @@
             "name": "recipe_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Recipe Id",
               "type": "integer"
             }
@@ -11416,6 +11524,8 @@
             "name": "recipe_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Recipe Id",
               "type": "integer"
             }
@@ -11473,6 +11583,8 @@
             "name": "recipe_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Recipe Id",
               "type": "integer"
             }
@@ -11542,6 +11654,8 @@
             "name": "recipe_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Recipe Id",
               "type": "integer"
             }
@@ -11551,6 +11665,8 @@
             "name": "user_practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Practice Id",
               "type": "integer"
             }
@@ -11573,6 +11689,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Sessions Offset",
               "type": "integer"
@@ -11625,7 +11742,7 @@
     },
     "/practice-sessions/": {
       "get": {
-        "description": "List sessions for a specific user-practice, newest first.\n\nCross-user calls used to return an empty list (the ``user_id`` filter\nsilently masked them); now ``require_owned_user_practice`` runs the\ncanonical 404→403 split before we hit the sessions table so the\nauth-failure path is uniform with every other owned-resource route.\n\nBUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when\n``?paginate=true`` is set; otherwise the legacy bare list is returned\nfor one release while the frontend migrates to the envelope.",
+        "description": "List sessions for a specific user-practice, newest first.\n\nCross-user calls used to return an empty list (the ``user_id`` filter\nsilently masked them); now ``require_owned_user_practice_from_query``\nruns the canonical 404→403 split before we hit the sessions table so the\nauth-failure path is uniform with every other owned-resource route.\n\nBUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when\n``?paginate=true`` is set; otherwise the legacy bare list is returned\nfor one release while the frontend migrates to the envelope.",
         "operationId": "list_sessions_practice_sessions__get",
         "parameters": [
           {
@@ -11646,6 +11763,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -11668,6 +11786,8 @@
             "name": "user_practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Practice Id",
               "type": "integer"
             }
@@ -11912,6 +12032,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -12040,6 +12161,8 @@
             "name": "tag_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Tag Id",
               "type": "integer"
             }
@@ -12090,6 +12213,8 @@
             "name": "tag_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Tag Id",
               "type": "integer"
             }
@@ -12147,6 +12272,8 @@
             "name": "tag_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Tag Id",
               "type": "integer"
             }
@@ -12216,6 +12343,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -12250,6 +12379,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -12378,6 +12508,8 @@
             "name": "share_link_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Share Link Id",
               "type": "integer"
             }
@@ -12548,6 +12680,8 @@
             "name": "practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Practice Id",
               "type": "integer"
             }
@@ -12607,6 +12741,8 @@
             "name": "practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Practice Id",
               "type": "integer"
             }
@@ -12676,6 +12812,8 @@
             "name": "practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Practice Id",
               "type": "integer"
             }
@@ -12753,6 +12891,8 @@
             "name": "promotion_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Promotion Id",
               "type": "integer"
             }
@@ -12803,6 +12943,8 @@
             "name": "promotion_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "Promotion Id",
               "type": "integer"
             }
@@ -13006,6 +13148,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -13065,6 +13209,8 @@
             "name": "week_number",
             "required": true,
             "schema": {
+              "maximum": 36,
+              "minimum": 1,
               "title": "Week Number",
               "type": "integer"
             }
@@ -13124,6 +13270,8 @@
             "name": "week_number",
             "required": true,
             "schema": {
+              "maximum": 36,
+              "minimum": 1,
               "title": "Week Number",
               "type": "integer"
             }
@@ -13323,6 +13471,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -13543,6 +13692,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -13602,6 +13753,8 @@
             "name": "stage_number",
             "required": true,
             "schema": {
+              "maximum": 10,
+              "minimum": 1,
               "title": "Stage Number",
               "type": "integer"
             }
@@ -13782,6 +13935,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -13980,6 +14134,8 @@
             "name": "user_practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Practice Id",
               "type": "integer"
             }
@@ -14002,6 +14158,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Sessions Offset",
               "type": "integer"
@@ -14062,6 +14219,8 @@
             "name": "user_practice_id",
             "required": true,
             "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
               "title": "User Practice Id",
               "type": "integer"
             }
@@ -14084,6 +14243,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 1000000,
               "minimum": 0,
               "title": "Sessions Offset",
               "type": "integer"

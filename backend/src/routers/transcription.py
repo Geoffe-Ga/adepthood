@@ -30,6 +30,7 @@ from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
+    LLM_API_KEY_MAX_LENGTH,
     ImagePayload,
     LLMProviderError,
     LLMResponse,
@@ -174,7 +175,9 @@ async def transcribe_page(
     payload: TranscribePageRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
 ) -> TranscribePageResponse:
     """Transcribe one photographed handwritten page, charging one message.
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
 from sentry import capture_exception
@@ -232,6 +233,43 @@ def _sanitized_validation_entry(entry: Mapping[str, object]) -> dict[str, object
     return {key: entry[key] for key in _VALIDATION_ENTRY_KEYS}
 
 
+def sanitized_validation_entries(
+    entries: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Rebuild every entry in ``entries`` with only the keys a client needs.
+
+    The plural form exists so a caller never has to reach for the per-entry
+    worker, and therefore never has to remember that mapping it is the whole
+    redaction.
+    """
+    return [_sanitized_validation_entry(entry) for entry in entries]
+
+
+def unprocessable_validation(exc: ValidationError) -> HTTPException:
+    """Return a 422 carrying ``exc``'s per-field errors with the input redacted.
+
+    The one legal way for a router to answer a :class:`ValidationError` it
+    caught itself.  Such an error never reaches the global handler -- that is
+    bound to ``RequestValidationError``, and an ``HTTPException`` a router
+    raises is not one -- so a router spelling the response out by hand reopens
+    exactly the disclosure the handler closes, one endpoint at a time.
+
+    Taking the exception rather than its entries is deliberate: it keeps
+    ``.errors()`` called in this module alone, which is what makes that
+    property checkable by reading one file instead of every router.
+
+    The structured entries are kept rather than collapsed into a single token
+    because clients map ``loc`` onto the form field that was rejected.  What
+    leaks is ``input``, not the structure -- and ``ctx``, which an
+    after-validator populates with the ``ValueError`` object itself, something
+    the response encoder cannot serialise at all.
+    """
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=jsonable_encoder(sanitized_validation_entries(exc.errors())),
+    )
+
+
 async def _validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Answer a schema rejection without handing the submitted material back.
 
@@ -264,7 +302,7 @@ async def _validation_error_handler(_request: Request, exc: Exception) -> JSONRe
     entries = exc.errors() if isinstance(exc, RequestValidationError) else ()
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content={_DETAIL_KEY: jsonable_encoder([_sanitized_validation_entry(e) for e in entries])},
+        content={_DETAIL_KEY: jsonable_encoder(sanitized_validation_entries(entries))},
     )
 
 
