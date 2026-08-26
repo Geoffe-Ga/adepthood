@@ -442,6 +442,15 @@ describe('MindfulAnchorView', () => {
       expect(flattened.maxHeight).toBe(SESSION_LIST_MAX_HEIGHT);
     });
 
+    it('keeps the option list scrollable when the player is nested in a scroller', () => {
+      const view = renderManyOptions();
+      const inner = view
+        .UNSAFE_getAllByType(ScrollView)
+        .find((scroll) => within(scroll).queryByTestId('mindful-anchor-options') !== null);
+      if (inner === undefined) throw new Error('option group is not inside a ScrollView');
+      expect(inner.props.nestedScrollEnabled).toBe(true);
+    });
+
     it('keeps the radiogroup and every option rendered and selectable', () => {
       const controls = fakeControls();
       const { getByTestId } = renderManyOptions(controls);
