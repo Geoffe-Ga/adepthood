@@ -22,7 +22,10 @@ backend sources enforces it rather than trusting the current arrangement.
 
 ``EMAIL_BACKEND=smtp`` with a missing ``SMTP_*`` variable is the other half of
 the same promise: the sender is built eagerly at boot, so the first user to
-request a reset is not the one who discovers the gap.
+request a reset is not the one who discovers the gap. A variable that is present
+but unusable -- a port that is not a number, or a number no socket can be opened
+on -- belongs to that same promise, and has to arrive as the same kind of
+sentence rather than as whatever the conversion happened to throw.
 """
 
 from __future__ import annotations
@@ -95,6 +98,13 @@ UNRECOGNIZED_BACKEND = "sendgrid"
 
 # Environments where logging the reset link is the point, not a leak.
 NON_PRODUCTION_ENVS = [None, "development", "staging"]
+
+# A relay port int() cannot read, and one it reads into a number nothing will
+# answer on. Both are configured relays that cannot deliver, so both have to
+# stop the deploy the way a missing variable does.
+UNPARSEABLE_PORT = "eighty"
+UNUSABLE_PORT = "70000"
+MALFORMED_PORTS = [UNPARSEABLE_PORT, UNUSABLE_PORT]
 
 # The variables an operator needs the template to name before they can act on
 # the refusal. The backend switch comes from the module so a rename cannot leave
@@ -256,6 +266,55 @@ def test_production_with_smtp_and_a_missing_relay_variable_refuses_to_boot(
 
     with pytest.raises(RuntimeError, match="SMTP_HOST"):
         validate_email_config()
+
+
+@pytest.mark.parametrize("port", MALFORMED_PORTS)
+def test_production_with_smtp_and_an_unusable_port_refuses_to_boot(
+    port: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relay that cannot be reached is not a configured relay, however it got that way.
+
+    A set variable reads as a satisfied requirement to everything that only
+    checks for presence, so an unreadable or unreachable port is the missing-var
+    outage with the evidence removed. Refusing it here keeps the promise the
+    eager build makes -- and keeps the refusal a sentence, rather than whatever
+    the conversion throws on its way out of a boot.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_SMTP)
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv(email.SMTP_PORT_ENV_VAR, port)
+
+    with pytest.raises(RuntimeError, match=email.SMTP_PORT_ENV_VAR) as excinfo:
+        validate_email_config()
+
+    assert port in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
+async def test_boot_refuses_under_a_production_configuration_with_an_unusable_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven through the real ``lifespan``: this is what the deploy actually sees.
+
+    Everything the startup check promises about a half-wired relay is only worth
+    the path it sits on, and the port is where that path currently ends in a
+    traceback with no variable in it. The Gumroad pair is left unset on purpose
+    -- that state only warns, so the refusal here can only have come from email.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_SMTP)
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv(email.SMTP_PORT_ENV_VAR, UNPARSEABLE_PORT)
+    monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
+    monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+
+    with pytest.raises(RuntimeError, match=email.SMTP_PORT_ENV_VAR):
+        async with _isolated_factory_patch(), lifespan(app):
+            pytest.fail("startup completed with a relay port nothing can connect to")
 
 
 def test_non_production_with_smtp_and_a_missing_relay_variable_still_boots(

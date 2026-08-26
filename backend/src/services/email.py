@@ -204,6 +204,61 @@ SMTP_RELAY_ENV_VARS = (
 )
 
 
+# The TCP port space, named because a bare 1 and 65535 in a comparison say
+# nothing about what they bound, and because the refusal below quotes the range
+# it enforces -- a range spelled twice is one that eventually disagrees with the
+# sentence reporting it. Public for the reason ``MIN_IPV6_THROTTLE_PREFIX_LEN``
+# is, with one difference worth stating: an unusable prefix length falls back to
+# a default, because a bucket of the wrong width still throttles. A relay has no
+# such default -- no port can be assumed to have something listening on it -- so
+# a value outside these bounds is refused rather than replaced.
+MIN_SMTP_PORT = 1
+MAX_SMTP_PORT = 65535
+
+
+def _parse_port(name: str, raw: str) -> int:
+    """Read ``raw`` as an integer or refuse in the register of the missing-var raise.
+
+    The bare ``int()`` this replaces failed just as hard and said only ``invalid
+    literal for int() with base 10``, which names neither the variable nor the
+    file it lives in. Since the relay is built at boot in production, that
+    traceback is the whole of what an operator gets from a deploy that stopped.
+    """
+    try:
+        return int(raw)
+    except ValueError as exc:
+        msg = (
+            f"{name}={raw!r} is not a number, so no relay port can be read from it and "
+            f"password recovery would fail on its first send. Set {name} to the TCP port "
+            f"the relay listens on, between {MIN_SMTP_PORT} and {MAX_SMTP_PORT}. "
+            "backend/.env.example and DEPLOYMENT.md document it."
+        )
+        raise RuntimeError(msg) from exc
+
+
+def _required_port(name: str) -> int:
+    """Return the relay port ``name`` configures, or refuse with a sentence.
+
+    Three ways to be wrong, one kind of answer. Unset falls to
+    :func:`_required_env` unchanged; unreadable and out-of-range are separated
+    because an operator who typed ``eighty`` and one who typed ``70000`` are
+    looking for different mistakes. The range check is what keeps a value that
+    parses cleanly from building a healthy-looking sender that only fails at
+    socket time, on the first user to ask for a reset -- which is the deferred
+    failure the boot-time build exists to eliminate.
+    """
+    port = _parse_port(name, _required_env(name))
+    if not (MIN_SMTP_PORT <= port <= MAX_SMTP_PORT):
+        msg = (
+            f"{name}={port} is outside the connectable port range {MIN_SMTP_PORT}-"
+            f"{MAX_SMTP_PORT}, so nothing can be dialled on it and password recovery "
+            f"would fail on its first send. Set {name} to the TCP port the relay "
+            "listens on. backend/.env.example and DEPLOYMENT.md document it."
+        )
+        raise RuntimeError(msg)
+    return port
+
+
 @dataclass(slots=True)
 class SmtpEmailSender:
     """Production adapter that speaks RFC 5321 to a configured relay.
@@ -238,11 +293,20 @@ class SmtpEmailSender:
         ``RuntimeError`` from :func:`_required_env` instead. The comprehension
         preserves the tuple's order, so the variable the refusal lists first is
         still the first to raise.
+
+        The port is the exception, and takes :func:`_required_port` after the
+        strings rather than inside the comprehension: it is the only value that
+        is not a string once validated, and reading it in both places would ask
+        the environment for it twice. Unset still raises from
+        :func:`_required_env`, so the missing-variable case is the same sentence
+        it always was.
         """
-        values = {name: _required_env(name) for name in SMTP_RELAY_ENV_VARS}
+        values = {
+            name: _required_env(name) for name in SMTP_RELAY_ENV_VARS if name != SMTP_PORT_ENV_VAR
+        }
         return cls(
             host=values[SMTP_HOST_ENV_VAR],
-            port=int(values[SMTP_PORT_ENV_VAR]),
+            port=_required_port(SMTP_PORT_ENV_VAR),
             username=values[SMTP_USERNAME_ENV_VAR],
             password=values[SMTP_CREDENTIAL_ENV_VAR],
             from_address=values[EMAIL_FROM_ENV_VAR],

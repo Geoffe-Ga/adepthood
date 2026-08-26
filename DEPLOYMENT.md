@@ -696,7 +696,7 @@ journal_encryption_enabled=True
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
 | `EMAIL_BACKEND` | Yes in prod | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). `ENV=production` refuses to boot on anything but `smtp`, because the console fallback writes every password-reset link to the application log while the endpoint still answers 202. |
 | `SMTP_HOST` | Yes in prod | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
-| `SMTP_PORT` | Yes in prod | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. |
+| `SMTP_PORT` | Yes in prod | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. A value that is not a number, or one outside 1-65535, is refused at startup rather than defaulted. |
 | `SMTP_USERNAME` | Yes in prod | — | SMTP relay username |
 | `SMTP_PASSWORD` | Yes in prod | — | SMTP relay password / API key |
 | `EMAIL_FROM` | Yes in prod | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
