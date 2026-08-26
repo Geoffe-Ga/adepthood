@@ -5,8 +5,9 @@ is documented below; the contract-fuzz job is documented at the end.
 
 ## Authorization matrix
 
-Asks one question of every route that names an object by id in its path: **can
-identity B reach identity A's object?**
+Asks one question of every route that names an object by id -- in its path, in
+its JSON request body, or in its query string: **can identity B reach identity
+A's object?**
 
 The in-process suite (`backend/tests/security/test_idor.py`) already pins the
 specific ownership rules. This harness is the one that exercises the whole stack
@@ -38,8 +39,12 @@ per-minute rate limit cannot turn the run into a page of uniform, meaningless
 denials; without that setting the header is ignored (correctly) and the run will
 fail on the throttling guard.
 
-Optional flags: `--allowlist PATH`, `--min-routes 20`, `--budget-seconds 120`,
-`--max-allowlist-fraction 0.5`.
+Optional flags: `--allowlist PATH`, `--min-routes 20`, `--min-references 5`,
+`--budget-seconds 120`, `--max-allowlist-fraction 0.5`.
+
+The CI job passes none of them, so the defaults are what actually gate: a
+dimension that quietly stopped probing anything fails the run rather than
+reporting clean over a surface it never touched.
 
 ## Exit codes
 
@@ -79,12 +84,135 @@ everybody equally, which reads exactly like a correctly guarded route. Running i
 last, on its own fresh object, is what keeps a destructive cross-user leak
 reportable instead of collapsing into a harness error.
 
+## How one reference is probed
+
+An id carried in a body or a query string cannot be graded on its status. `GET
+/journal/?practice_session_id=` applies its filter *after* scoping to the caller,
+so a foreign id there is answered `200` with an empty page -- a correct route
+that status-only grading would report as a leak. So each reference runs two
+cells, both sent by B, and what changes is whose object the id names:
+
+1. `CROSS_REFERENCE` — B's own request carrying **A's** id. A denial (403/404)
+   passes. A 2xx is judged on evidence: the foreign object in the response is the
+   leak; its absence proves nothing on its own and is `INCONCLUSIVE` unless the
+   control below has shown this request surfaces an id it *can* see.
+2. `REFERENCE_CONTROL` — the identical request with **B's own** id. It has to
+   both succeed and surface that id, or `require_reference_positive_controls`
+   fails the run: a route whose responses say nothing about which object was
+   reached makes every cross-user 2xx unfalsifiable.
+
+Any path ids the route interpolates are seeded as B, so the request gets past the
+path's own ownership check and actually reaches the body.
+
+Evidence lives in one of three places, declared per reference in
+`references.py`:
+
+- `ECHO` — the probe's own response repeats the id it was handed.
+- `LISTING` — the probe is a read, so its body is the evidence.
+- `READ_BACK` — the response says nothing, so the object is read back through a
+  declared follow-up `GET` issued as its owner. This is only as sharp as the read
+  surface it has: a follow-up that can do no better than confirm the object is
+  reachable by its owner fires on every cell, which leaves the cross cell graded
+  on its status.
+
+The `read_back_path` carries an obligation nothing can check for you: it **must
+name an owner-visible surface** — one that shows the object's owner every write
+made against that object, by anyone. A listing scoped to whoever *created* the
+row looks identical from the registry and is silently useless. The control reads
+back its own write on its own object and finds it every time, while the cross
+cell's write stays hidden from the owner it landed on, so the strategy
+manufactures the very absence it then grades as a pass. Where the application
+offers no owner-visible surface, reach for a witness over the route's own answer
+instead.
+
+If a cell's evidence cannot be read at all — a 2xx whose body is not JSON, a
+read-back the target refused or answered 5xx — the cell records that
+distinctly and grades `INCONCLUSIVE`. "Nobody could look" is not "the object was
+not reached": the paired control has its own healthy response, so folding the
+two together would let it license a pass over a request nobody ever examined.
+
+What counts as a hit in that evidence is a second, independent choice. The
+default is a scan for the injected id. A route that answers with no id anywhere
+— a check-in reports a streak, a fold reports whether the quote is still pending
+— instead declares an `EvidenceWitness`: a pointer into the evidence body and
+the condition that field meets only once the write has landed
+(`pending: false`, `streak >= 1`). A witness *replaces* the scan for the
+reference that declares it, because there is no id to find and a numeric field
+that happened to equal the id would be a leak reported against a route that did
+nothing.
+
+Two things keep a witness honest. The fast suite reads the app's own OpenAPI
+document and asserts every witness pointer still names a property of that
+route's success response, so a rename fails on the pull request that makes it.
+And if one ever slipped through, the witness would go quiet on the control as
+well as on the cross cell, and `require_reference_positive_controls` would fail
+the live run by name rather than let the reference slide back to status
+grading.
+
+Two guards bound the dimension from the outside, and both run against the
+document the *target* published rather than the one in this repository.
+`require_reference_allowlist_bounded` caps the share of discovered references an
+allow-list may excuse: the path ceiling cannot see a field-scoped entry, because
+such an entry excuses no route and so enters neither side of that fraction.
+`require_declared_references_classified` fails the run when a reference this
+registry declares was neither probed nor classified — the shape a stale
+deployment produces, where a route or a property has gone and the declaration
+quietly stops being counted instead of surfacing as uncovered.
+
+The coverage floor stays an absolute number rather than a fraction of what was
+discovered. A fraction computed from the target's own document shrinks with the
+document, so it goes quiet in exactly the case it is there to catch.
+
+## Adding a reference probe
+
+Add one entry to `REFERENCE_REGISTRY` in `references.py`, keyed by
+`(method, path)`:
+
+```python
+("POST", "/journal/"): ReferenceProbe(
+    method="POST",
+    path="/journal/",
+    body={"message": "probed by the authorization matrix"},
+    references=(
+        ObjectReference(
+            field="practice_session_id",
+            location=ReferenceLocation.BODY,
+            seed_key="practice_session_id",
+            evidence=EvidenceStrategy.ECHO,
+        ),
+    ),
+),
+```
+
+- `body` carries everything else the route requires. Without it the route answers
+  422 before it reads the reference at all — not a denial, just a probe that
+  proved nothing.
+- `seed_key` names a `SEED_REGISTRY` entry, and it is frequently *not* the
+  field's own name: `goal_group_id` names a goal group, whose spec is keyed
+  `group_id`.
+- `path_seeds` lists the path parameters the probe interpolates; they are seeded
+  as the caller.
+- A `LISTING` reference usually needs a seed spec that creates the row the filter
+  will match and hands back the *filtered* id — a control answering with an empty
+  page proves nothing, and the guard fails the run when it does.
+- A `READ_BACK` reference needs a `read_back_path` naming an **owner-visible**
+  surface, not a creator-scoped one. See the obligation above; getting this wrong
+  produces a probe that passes forever.
+- Whatever the strategy, the reference is only genuinely covered if the route's
+  answer would look *different* for a foreign reference it persisted than for a
+  reference it never accepted. A serializer that resolves the field through an
+  owner-scoped lookup renders both as `null`, and the cell then passes on an
+  absence the application produced. Declare a witness over a fact only the landed
+  write produces, and where neither is possible, say so in `allowlist.toml`
+  rather than declaring a probe that cannot fail.
+
 ## Adding a seed strategy
 
 Add one entry to `SEED_REGISTRY` in `seeds.py`, keyed by the **path-parameter
 name** (`entry_id`, not "journal"). Parameter names are globally consistent in
 this application, which is what lets a two-parameter route be filled by resolving
-each parameter independently.
+each parameter independently. A spec may also earn its keep by being named as the
+`seed_key` of a reference, in which case the key is whatever reads best.
 
 ```python
 "widget_id": SeedSpec(
@@ -125,57 +253,51 @@ Categories: `shared_catalog`, `not_object_scoped`, `admin_only`,
 `capability_token`, `no_seed_strategy`, `known_leak`. Only `known_leak` may carry
 `tracking_issue`, so nothing else can be made to look tracked.
 
+An optional `field = "practice_id"` narrows the entry to a single body property
+or query parameter of that route. It excuses that field alone: not the route's
+path ids, not its other references, and not a field the route has since stopped
+declaring.
+
 `backend/tests/scripts/dast/test_registry_covers_real_app.py` enforces all of
 this in the fast unit suite with no server: a new router with an id in its path
 fails that test until somebody decides whether it is seedable or excused.
 
 ## Scope
 
-Object references in the **path** only. Ids carried in query parameters or
-request bodies are not covered, so a green run must never be read as "no BOLA
-anywhere". The report prints that note on every run for the same reason.
+Object references named in the **path**, in a **JSON request body**, and in
+**query parameters**. An id that reaches the application any other way -- inside
+a nested body object, in a header, in a multipart form -- is outside the matrix,
+and the report prints that note on every run so a green is never read as "no BOLA
+anywhere".
 
-## Known coverage gap
+Four limits are worth naming rather than discovering later.
 
-The path-only scope above is structural, not an oversight in the registry.
-`RouteSpec` and `is_object_scoped` in `discovery.py` derive object-scoping
-purely from templated path-parameter names, so a body field is invisible to
-the matrix from the start. `replay_body()` in `seeds.py` then returns the
-configured `REPLAY_BODIES` entry verbatim -- only *create* payloads are run
-through `render_payload`, so a replay body is never rewritten to reference an
-id the harness seeded. Seeding itself always runs as the owner identity
-(every create in `runner.py` sends `session.owner.token`), so there is no
-object seeded as the intruder for a forged body to point at. And denial
-grading is global rather than per-route -- `_ACCEPTABLE_DENIALS` in
-`verdict.py` accepts both 403 and 404 for every route alike -- so no
-per-endpoint expectation exists to get wrong either.
+The body heuristic reads *top-level* properties of the JSON schema the operation
+declares, so an id nested one object deep is invisible to it.
 
-`PUT /goals/{goal_id}` shows the gap without any registry bug: it is
-registered, seeded, and probed like every other route, and its cross-user
-cell against `goal_id` in the path is a clean denial. The leak was in
-`goal_group_id`, a field of the replay *body*, which the matrix has no
-mechanism to vary per credential or point at a foreign object. Closing this
-class needs, at minimum: seeding at least one object as the intruder
-identity, templating replay bodies the way create payloads already are, a
-registry describing which body fields carry object references, a matching
-`Cell` variant, and new assertions in `test_registry_covers_real_app.py`.
+It also matches a **singular** `*_id`. A plural collection — `habit_ids` on
+`POST /metta-return/arc/release` — is a top-level property naming other users'
+objects and is **not probed**, because substituting into a list of ids is a
+different mechanism from substituting a single one. Those routes are authorized
+in the application today; the gap is in this harness, not in them.
 
-`POST /journal/` is a second, independent instance of the same class, found
-by hand rather than by the harness. It is even further outside the matrix's
-reach than `goals` was: its path is `/journal/`, with no id in it at all, so
-`is_object_scoped` in `discovery.py` never puts it in the object-scoped set
-to begin with, and `classify_routes` in `policy.py` leaves a route with no
-path parameters out of the count entirely rather than probing or excusing
-it -- there was no cross-user cell to run, clean or otherwise. The two
-foreign-object references, `user_practice_id` and `practice_session_id`,
-were both carried in the request body and are now checked in-app by
-`resolve_owned_user_practice` and `resolve_owned_practice_session` in
-`backend/src/dependencies/ownership.py`. Two instances of this class, found
-by hand in two different routes the matrix has run green on, is what makes
-the gap systemic rather than a one-off in `goals`: a clean matrix report is
-still not a claim that no other route has an unguarded body reference.
-Issue #2124 tracks closing the body-parameter gap described above; nothing
-in this change closes it.
+A `READ_BACK` reference is only as sharp as the read surface the application
+gives it: where none exists, a witness over the route's own answer is the sharper
+instrument, and where neither is available the cell falls back to being graded on
+its status.
+
+And a body- or query-carried id is covered only **where the response
+distinguishes a foreign reference from an absent one**. Grading a cross-user 2xx
+on the absence of the foreign id assumes the route renders a reference it
+persisted the same way whoever owns the object it names — an assumption the
+paired control cannot establish, because the control only ever shows the route
+surfacing an id the caller *owns*. A serializer that resolves the field through
+an owner-scoped lookup, or a read-back through a creator-scoped surface, renders
+a persisted foreign id exactly as it renders none, and the cell passes with the
+row on disk. Closing that needs a third probe establishing that the route
+surfaces a foreign reference when it has one. Until it lands, a green here means
+"no reference leak was observable in the answers these routes give" — not "no
+reference leak happened".
 
 ## Minting a token: `tokens.py`
 

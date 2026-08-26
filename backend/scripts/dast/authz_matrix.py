@@ -1,9 +1,17 @@
 """Run the authenticated BOLA/IDOR authorization matrix against a live instance.
 
 Two identities are created, and the check asks one question of every route that
-addresses an object by id in its path: can identity B reach identity A's object?
-A denial only counts once the same route has answered A herself, which is what
-keeps "everything was refused" from passing as "nothing was wrong".
+addresses an object by id: can identity B reach identity A's object? A denial
+only counts once the same route has answered A herself, which is what keeps
+"everything was refused" from passing as "nothing was wrong".
+
+The question is asked in two dimensions. Ids named in the *path* are graded on
+the status alone -- reaching the row at all is the leak. Ids carried in a
+request body or a query string are graded on evidence instead, because a
+correctly filtered listing answers a foreign id with an empty 200 rather than a
+denial; there, a 2xx counts as a leak only when the foreign object actually
+surfaced, and an ambiguous answer counts as a finding unless the paired control
+has shown the request surfaces an id it can see.
 
 Signup cannot be used to make those identities -- it is gated on a live license
 verification that cannot be satisfied across a socket -- so the two user rows are
@@ -15,7 +23,7 @@ Usage:
 
     python -m scripts.dast.authz_matrix --base-url URL --database-url URL
     python -m scripts.dast.authz_matrix --base-url URL --database-url URL \
-        --allowlist path/to/allowlist.toml --min-routes 20 \
+        --allowlist path/to/allowlist.toml --min-routes 20 --min-references 5 \
         --budget-seconds 120 --max-allowlist-fraction 0.5
 
 Run it from ``backend/`` with ``PYTHONPATH=src``, the way the other repository
@@ -48,6 +56,7 @@ from pathlib import Path
 from httpx import AsyncClient
 
 from scripts.dast.policy import DEFAULT_ALLOWLIST_PATH, load_allowlist
+from scripts.dast.references import REFERENCE_REGISTRY, ReferenceRegistry
 from scripts.dast.report import (
     EXIT_AUTHZ_FINDING,
     EXIT_CLEAN,
@@ -60,6 +69,7 @@ from scripts.dast.runner import (
     DEFAULT_AUTH_PROBE_PATH,
     DEFAULT_BUDGET_SECONDS,
     DEFAULT_MAX_ALLOWLIST_FRACTION,
+    DEFAULT_MIN_REFERENCES,
     DEFAULT_MIN_ROUTES,
     Bootstrap,
     Identity,
@@ -98,6 +108,8 @@ class HarnessOverrides:
             real login.
         seed_registry: Seed strategies for the target application.
         replay_bodies: Valid request bodies for the mutating replays.
+        reference_registry: Probes for the ids the target carries in bodies and
+            query strings.
         auth_probe_path: The route used to prove authentication works.
     """
 
@@ -107,6 +119,7 @@ class HarnessOverrides:
     # dataclass default; the factories hand back those same shared objects.
     seed_registry: Mapping[str, SeedSpec] = field(default_factory=lambda: SEED_REGISTRY)
     replay_bodies: ReplayBodies = field(default_factory=lambda: REPLAY_BODIES)
+    reference_registry: ReferenceRegistry = field(default_factory=lambda: REFERENCE_REGISTRY)
     auth_probe_path: str = DEFAULT_AUTH_PROBE_PATH
 
 
@@ -162,6 +175,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Fail unless at least this many routes were probed.",
     )
     parser.add_argument(
+        "--min-references",
+        type=int,
+        default=DEFAULT_MIN_REFERENCES,
+        help="Fail unless at least this many body/query references were probed.",
+    )
+    parser.add_argument(
         "--budget-seconds",
         type=float,
         default=DEFAULT_BUDGET_SECONDS,
@@ -181,9 +200,11 @@ def _build_config(args: argparse.Namespace, overrides: HarnessOverrides) -> Matr
     return MatrixConfig(
         seed_registry=overrides.seed_registry,
         replay_bodies=overrides.replay_bodies,
+        reference_registry=overrides.reference_registry,
         allowlist=load_allowlist(args.allowlist),
         auth_probe_path=overrides.auth_probe_path,
         min_routes=args.min_routes,
+        min_references=args.min_references,
         budget_seconds=args.budget_seconds,
         max_allowlist_fraction=args.max_allowlist_fraction,
     )

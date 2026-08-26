@@ -19,6 +19,42 @@ const SYNC_ERROR_TOAST_DURATION_MS = 6000;
 /** Toast icon for an offline check-in that was queued for later sync. */
 const OFFLINE_QUEUED_ICON = '\u{1F4F6}';
 
+/** Toast icon for a tap on a sample tile — an invitation, not a warning. */
+const DEMO_TILE_ICON = '\u{2728}';
+
+/**
+ * Any failed log on a demo-seed tile, offline or online. Those tiles' goal
+ * ids are fabricated on-device, so no retry, queued check-in, or habit
+ * refresh can ever make the POST land — only saying so is honest. The
+ * optimistic increment stays: the tile is explorable, and ``persistHabits``
+ * already keeps demo rows off disk.
+ */
+const showDemoSeedNotice = (showToast: ShowToast): void => {
+  showToast({
+    message:
+      "These are sample habits to explore — this one isn't saved to your account. Add your own to start tracking.",
+    icon: DEMO_TILE_ICON,
+    color: colors.secondary,
+    duration: SYNC_ERROR_TOAST_DURATION_MS,
+  });
+};
+
+/** Keep an offline tap by queueing it for the next replay. */
+const keepOfflineCheckIn = (ctx: LogUnitContext, goalId: number, showToast: ShowToast): void => {
+  void savePendingCheckIn({
+    goal_id: goalId,
+    did_complete: true,
+    timestamp: new Date().toISOString(),
+    completed_on: ctx.completedOn,
+  });
+  showToast({
+    message: "You're offline — check-in saved on this device. It will sync when you reconnect.",
+    icon: OFFLINE_QUEUED_ICON,
+    color: colors.secondary,
+    duration: SYNC_ERROR_TOAST_DURATION_MS,
+  });
+};
+
 /**
  * The server spoke (an HTTP status or a response that failed validation) —
  * the request is not retryable as-is, so the optimistic update must revert.
@@ -56,21 +92,17 @@ const handleLogUnitFailure = (
   showToast: ShowToast,
   tz: string,
 ): void => {
+  if (ctx.isDemoSeed === true) {
+    // Ahead of every other branch: a demo tile fails online too — its
+    // fabricated goal id draws a real ``goal_not_found``, which otherwise
+    // reads as the stale-id symptom and triggers a refresh that can only
+    // re-seed the same demo.
+    showDemoSeedNotice(showToast);
+    return;
+  }
   if (!isServerResponse(err) && ctx.currentGoal.id != null) {
-    // Offline: keep the optimistic state and queue the check-in for
-    // the next loadHabits replay instead of throwing the tap away.
-    void savePendingCheckIn({
-      goal_id: ctx.currentGoal.id,
-      did_complete: true,
-      timestamp: new Date().toISOString(),
-      completed_on: ctx.completedOn,
-    });
-    showToast({
-      message: "You're offline — check-in saved on this device. It will sync when you reconnect.",
-      icon: OFFLINE_QUEUED_ICON,
-      color: colors.secondary,
-      duration: SYNC_ERROR_TOAST_DURATION_MS,
-    });
+    // Offline: keep the optimistic state instead of throwing the tap away.
+    keepOfflineCheckIn(ctx, ctx.currentGoal.id, showToast);
     return;
   }
   habitManager.rollbackLogUnitContext(ctx);

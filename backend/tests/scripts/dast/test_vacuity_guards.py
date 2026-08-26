@@ -24,32 +24,51 @@ import pytest
 from httpx import AsyncClient
 
 from scripts.dast.discovery import RouteSpec
-from scripts.dast.policy import AllowlistEntry
+from scripts.dast.policy import AllowlistEntry, ReferenceTarget, classify_routes
+from scripts.dast.references import (
+    EvidenceStrategy,
+    ObjectReference,
+    ReferenceLocation,
+    ReferenceProbe,
+)
 from scripts.dast.report import EXIT_CLEAN, EXIT_HARNESS_ERROR
 from scripts.dast.runner import (
     DEFAULT_BUDGET_SECONDS,
     DEFAULT_MAX_ALLOWLIST_FRACTION,
+    DEFAULT_MIN_REFERENCES,
     DEFAULT_MIN_ROUTES,
     run_matrix,
 )
 from scripts.dast.verdict import (
     Cell,
     CellResult,
+    ReferenceCellResult,
     Verdict,
     require_allowlist_bounded,
     require_allowlist_is_live,
     require_auth_established,
+    require_declared_references_classified,
     require_minimum_coverage,
+    require_minimum_reference_coverage,
     require_no_throttling,
     require_positive_controls,
+    require_reference_allowlist_bounded,
+    require_reference_positive_controls,
     require_seeded_resources,
     require_within_budget,
 )
 from tests.scripts.dast.conftest import (
+    REFERENCE_GUARDED_NOTE_POST,
+    REFERENCE_LEAKY_ATTACHMENT_POST,
+    REFERENCE_LEAKY_FOLD_POST,
+    REFERENCE_LEAKY_NOTE_POST,
+    REFERENCE_STUB_REFERENCES,
     STUB_OBJECT_SCOPED_ROUTES,
+    STUB_REFERENCE_REGISTRY,
     StubDeployment,
     drive_main,
     make_stub_bootstrap,
+    reference_stub_config,
     stub_config,
 )
 
@@ -80,6 +99,31 @@ LIVE_ENTRY = AllowlistEntry(
     path="/widgets/{widget_id}",
     category="admin_only",
     reason="covered by the in-process suite instead",
+)
+
+# A route that publishes one id in its body, and two entries scoped to a single
+# field of it: one naming the field it still declares, one naming a property
+# that has since been renamed away.
+NOTE_ROUTE = RouteSpec(
+    method="POST",
+    path="/notes/",
+    params=(),
+    requires_auth=True,
+    body_id_refs=("gadget_id",),
+)
+LIVE_FIELD_ENTRY = AllowlistEntry(
+    method="POST",
+    path="/notes/",
+    category="shared_catalog",
+    reason="any authenticated user may attach a note to any approved gadget",
+    field="gadget_id",
+)
+RENAMED_FIELD_ENTRY = AllowlistEntry(
+    method="POST",
+    path="/notes/",
+    category="shared_catalog",
+    reason="the property this excused has since been renamed",
+    field="widget_id",
 )
 
 
@@ -243,6 +287,26 @@ def test_allowlist_liveness_is_silent_when_every_entry_matches_a_live_route() ->
     assert require_allowlist_is_live((LIVE_ENTRY,), (WIDGET_ROUTE,)) is None
 
 
+def test_allowlist_liveness_trips_on_an_entry_scoped_to_a_field_nobody_publishes() -> None:
+    """A field-scoped excuse outliving its field excuses nothing and says nothing.
+
+    The classifier already refuses to let such an entry excuse whatever
+    property replaced it, so without this guard the entry would simply stop
+    doing anything -- silently, and forever. Reporting it is what makes the
+    narrow excuse as reviewable as the broad one.
+    """
+    failure = require_allowlist_is_live((RENAMED_FIELD_ENTRY,), (NOTE_ROUTE,))
+
+    assert failure is not None
+    assert failure.guard == "require_allowlist_is_live"
+    assert "widget_id" in failure.detail
+
+
+def test_allowlist_liveness_is_silent_when_a_field_scoped_entry_names_a_live_field() -> None:
+    """A narrow excuse for a property the route still publishes is doing its job."""
+    assert require_allowlist_is_live((LIVE_FIELD_ENTRY,), (NOTE_ROUTE,)) is None
+
+
 def test_allowlist_bounded_trips_when_most_of_the_app_is_excused() -> None:
     """Excusing the majority of routes turns the gate into decoration."""
     failure = require_allowlist_bounded(
@@ -342,3 +406,374 @@ def test_a_run_that_probed_too_few_routes_fails_even_though_it_found_leaks(
     captured = capsys.readouterr()
     assert exit_code == EXIT_HARNESS_ERROR, f"stdout={captured.out!r} stderr={captured.err!r}"
     assert "HARNESS ERROR  require_minimum_coverage" in captured.err, captured.err
+
+
+# --- The two guards that keep the reference dimension from proving nothing ----
+#
+# The reference matrix can go vacuous in the same two ways the path matrix can,
+# plus one of its own. It can shrink until it probes almost nothing, and its
+# controls can "succeed" against a route that never echoes anything back -- at
+# which point the absence of a foreign id in a cross response means nothing at
+# all, and every ambiguous 2xx would be graded as if it did.
+
+PROBED_TOO_FEW_REFERENCES = 4
+REFERENCE_STUB_MIN_REFERENCES = 1
+
+JOURNAL_ROUTE = RouteSpec(
+    method="POST",
+    path="/journal/",
+    params=(),
+    requires_auth=True,
+    body_id_refs=("practice_session_id",),
+)
+
+JOURNAL_REFERENCE = ObjectReference(
+    field="practice_session_id",
+    location=ReferenceLocation.BODY,
+    seed_key="practice_session_id",
+    evidence=EvidenceStrategy.ECHO,
+)
+
+
+def reference_cell_result(
+    cell: Cell,
+    status: int,
+    *,
+    evidence: bool,
+    verdict: Verdict,
+) -> ReferenceCellResult:
+    """Build one graded reference cell for the guards that read a run's results."""
+    return ReferenceCellResult(
+        route=JOURNAL_ROUTE,
+        reference=JOURNAL_REFERENCE,
+        cell=cell,
+        resolved_path="/journal/",
+        object_id="31",
+        status=status,
+        object_was_reached=evidence,
+        verdict=verdict,
+    )
+
+
+def test_minimum_reference_coverage_trips_when_nothing_was_probed() -> None:
+    """Zero references probed is the garbled-document case, and it scores perfectly."""
+    failure = require_minimum_reference_coverage(0, minimum=DEFAULT_MIN_REFERENCES)
+
+    assert failure is not None
+    assert failure.guard == "require_minimum_reference_coverage"
+    assert "0" in failure.detail
+
+
+def test_minimum_reference_coverage_trips_one_short_of_the_floor() -> None:
+    """A dimension that quietly shrank by one route is still a dimension that shrank."""
+    failure = require_minimum_reference_coverage(
+        PROBED_TOO_FEW_REFERENCES,
+        minimum=DEFAULT_MIN_REFERENCES,
+    )
+
+    assert failure is not None
+    assert failure.guard == "require_minimum_reference_coverage"
+    assert str(PROBED_TOO_FEW_REFERENCES) in failure.detail
+    assert str(DEFAULT_MIN_REFERENCES) in failure.detail
+
+
+def test_minimum_reference_coverage_is_silent_at_exactly_the_floor() -> None:
+    """The floor is inclusive, matching the path dimension's."""
+    assert (
+        require_minimum_reference_coverage(
+            DEFAULT_MIN_REFERENCES,
+            minimum=DEFAULT_MIN_REFERENCES,
+        )
+        is None
+    )
+
+
+def test_the_reference_floor_is_five() -> None:
+    """The default is a number, not a mood; lowering it is a decision made here."""
+    assert DEFAULT_MIN_REFERENCES == 5
+
+
+def test_reference_positive_controls_trip_when_a_control_succeeded_without_evidence() -> None:
+    """The keystone of the whole dimension, asserted on its own.
+
+    A control that answers 2xx while surfacing nothing has demonstrated that
+    this route's responses say nothing about which object was reached. Every
+    cross-user 2xx on it is then unfalsifiable, so grading its silence as a pass
+    would be exactly the vacuous green this harness exists to forbid.
+    """
+    failure = require_reference_positive_controls(
+        (
+            reference_cell_result(
+                Cell.CROSS_REFERENCE,
+                HTTPStatus.OK,
+                evidence=False,
+                verdict=Verdict.INCONCLUSIVE,
+            ),
+            reference_cell_result(
+                Cell.REFERENCE_CONTROL,
+                HTTPStatus.CREATED,
+                evidence=False,
+                verdict=Verdict.INCONCLUSIVE,
+            ),
+        ),
+    )
+
+    assert failure is not None
+    assert failure.guard == "require_reference_positive_controls"
+    assert "/journal/" in failure.detail
+    assert "practice_session_id" in failure.detail
+
+
+def test_reference_positive_controls_trip_when_the_control_could_not_succeed() -> None:
+    """A control rejected outright denies everybody equally, which proves nothing either."""
+    failure = require_reference_positive_controls(
+        (
+            reference_cell_result(
+                Cell.REFERENCE_CONTROL,
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                evidence=False,
+                verdict=Verdict.INCONCLUSIVE,
+            ),
+        ),
+    )
+
+    assert failure is not None
+    assert failure.guard == "require_reference_positive_controls"
+
+
+def test_reference_positive_controls_are_silent_when_every_control_showed_its_own_id() -> None:
+    """A control that both succeeded and echoed its own id makes the cross cell readable."""
+    assert (
+        require_reference_positive_controls(
+            (
+                reference_cell_result(
+                    Cell.CROSS_REFERENCE,
+                    HTTPStatus.FORBIDDEN,
+                    evidence=False,
+                    verdict=Verdict.PASS,
+                ),
+                reference_cell_result(
+                    Cell.REFERENCE_CONTROL,
+                    HTTPStatus.CREATED,
+                    evidence=True,
+                    verdict=Verdict.PASS,
+                ),
+            ),
+        )
+        is None
+    )
+
+
+def test_the_reference_guard_ignores_cross_cells_with_no_evidence() -> None:
+    """Only controls are asked to prove the mechanism; a silent cross cell is the finding."""
+    assert (
+        require_reference_positive_controls(
+            (
+                reference_cell_result(
+                    Cell.CROSS_REFERENCE,
+                    HTTPStatus.OK,
+                    evidence=False,
+                    verdict=Verdict.INCONCLUSIVE,
+                ),
+            ),
+        )
+        is None
+    )
+
+
+def test_the_cli_never_reports_clean_against_a_server_that_401s_every_reference(
+    blind_deployment: StubDeployment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The false pass has to stay closed in the new dimension too.
+
+    The blind stub answers 401 to everything, so no reference is ever probed.
+    Asked for even one, the run must report a tripped reference guard rather
+    than a clean sweep of a dimension it never entered.
+    """
+    exit_code = drive_main(
+        blind_deployment,
+        min_routes=BLIND_STUB_MIN_ROUTES,
+        min_references=REFERENCE_STUB_MIN_REFERENCES,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == EXIT_HARNESS_ERROR, f"stdout={captured.out!r} stderr={captured.err!r}"
+    assert exit_code != EXIT_CLEAN
+    assert captured.out == "", f"a harness error must not report on stdout: {captured.out!r}"
+    assert "require_minimum_reference_coverage" in captured.err, captured.err
+
+
+# --- The reference dimension's own ceiling, and its own liveness check --------
+#
+# Both guards above measure the path dimension only. ``classify_routes`` counts
+# a field-scoped entry as excusing nothing, so a file that excused every body id
+# in the application would leave ``require_allowlist_bounded`` exactly where it
+# started: the reference dimension had a floor and no ceiling. And
+# ``classify_references`` walks the *discovered* fields, so a declared reference
+# whose route or property has vanished lands in no bucket at all and simply
+# stops being counted -- a matrix that shrinks down to its floor without one
+# line of output saying so.
+
+ALLOWLISTED_REFERENCE_MAJORITY = 3
+ALLOWLISTED_REFERENCE_MINORITY = 2
+DISCOVERED_REFERENCES = 4
+
+EXCUSED_STUB_REFERENCE_ROUTES = (
+    REFERENCE_LEAKY_NOTE_POST,
+    REFERENCE_GUARDED_NOTE_POST,
+    REFERENCE_LEAKY_ATTACHMENT_POST,
+    REFERENCE_LEAKY_FOLD_POST,
+)
+STUB_REFERENCES_LEFT_PROBED = REFERENCE_STUB_REFERENCES - len(EXCUSED_STUB_REFERENCE_ROUTES)
+VANISHED_REFERENCE_ROUTE = ("POST", "/vanished/")
+
+GADGET_REFERENCE = ObjectReference(
+    field="gadget_id",
+    location=ReferenceLocation.BODY,
+    seed_key="gadget_id",
+    evidence=EvidenceStrategy.ECHO,
+)
+NOTE_PROBE = ReferenceProbe(
+    method=NOTE_ROUTE.method,
+    path=NOTE_ROUTE.path,
+    body={},
+    references=(GADGET_REFERENCE,),
+)
+NOTE_TARGET = ReferenceTarget(route=NOTE_ROUTE, field="gadget_id", reference=GADGET_REFERENCE)
+
+
+def test_the_path_allowlist_ceiling_cannot_see_a_field_scoped_excuse() -> None:
+    """The gap the reference ceiling exists to close, asserted rather than assumed.
+
+    An entry scoped to one body property excuses no route, so it enters neither
+    side of the path guard's fraction. Without a ceiling of its own the
+    reference dimension could be excused entirely and every path count would
+    look untouched.
+    """
+    classification = classify_routes(
+        (NOTE_ROUTE,),
+        seed_registry={},
+        allowlist=(LIVE_FIELD_ENTRY,),
+    )
+
+    assert classification.allowlisted == ()
+
+
+def test_reference_allowlist_bounded_trips_when_most_body_ids_are_excused() -> None:
+    """Excusing the majority of the ids an application accepts is the same decoration."""
+    failure = require_reference_allowlist_bounded(
+        ALLOWLISTED_REFERENCE_MAJORITY,
+        DISCOVERED_REFERENCES,
+        max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
+    )
+
+    assert failure is not None
+    assert failure.guard == "require_reference_allowlist_bounded"
+    assert str(ALLOWLISTED_REFERENCE_MAJORITY) in failure.detail
+    assert str(DISCOVERED_REFERENCES) in failure.detail
+
+
+def test_reference_allowlist_bounded_is_silent_at_the_permitted_fraction() -> None:
+    """Half is the same documented ceiling the path dimension uses."""
+    assert (
+        require_reference_allowlist_bounded(
+            ALLOWLISTED_REFERENCE_MINORITY,
+            DISCOVERED_REFERENCES,
+            max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
+        )
+        is None
+    )
+
+
+def test_reference_allowlist_bounded_reports_rather_than_raises_on_an_empty_document() -> None:
+    """Zero excused out of zero discovered is a report, not a division by zero."""
+    assert (
+        require_reference_allowlist_bounded(0, 0, max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION)
+        is None
+    )
+
+
+def test_declared_references_classified_trips_when_a_declaration_vanished() -> None:
+    """A registry entry naming a route the document no longer has must be said out loud.
+
+    The classifier walks discovered fields, so the declaration falls out of
+    every bucket rather than into ``uncovered``. Silence here is how a matrix
+    shrinks to its floor with nobody noticing.
+    """
+    failure = require_declared_references_classified({VANISHED_REFERENCE_ROUTE: NOTE_PROBE}, ())
+
+    assert failure is not None
+    assert failure.guard == "require_declared_references_classified"
+    assert "/vanished/" in failure.detail
+    assert GADGET_REFERENCE.field in failure.detail
+
+
+def test_declared_references_classified_is_silent_when_every_declaration_landed() -> None:
+    """A declaration the classifier placed in any bucket is accounted for."""
+    assert (
+        require_declared_references_classified(
+            {(NOTE_ROUTE.method, NOTE_ROUTE.path): NOTE_PROBE},
+            (NOTE_TARGET,),
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_excuses_most_of_its_references_is_a_harness_error(
+    reference_deployment: StubDeployment,
+    reference_client: AsyncClient,
+) -> None:
+    """Four field-scoped excuses over six references must fail the run by name.
+
+    This is the wiring, not the arithmetic: the same four entries leave every
+    path count untouched, so before the reference ceiling the run reported a
+    clean sweep of the two references it had left.
+    """
+    report = await run_matrix(
+        reference_client,
+        bootstrap=make_stub_bootstrap(reference_deployment),
+        config=reference_stub_config(
+            min_references=REFERENCE_STUB_MIN_REFERENCES,
+            allowlist=tuple(
+                AllowlistEntry(
+                    method=method,
+                    path=path,
+                    category="shared_catalog",
+                    reason="any authenticated caller may name any approved gadget",
+                    field=GADGET_REFERENCE.field,
+                )
+                for method, path in EXCUSED_STUB_REFERENCE_ROUTES
+            ),
+        ),
+    )
+
+    tripped = [failure.guard for failure in report.guard_failures]
+    assert "require_reference_allowlist_bounded" in tripped, tripped
+    assert "require_allowlist_bounded" not in tripped, tripped
+    assert report.references_probed == STUB_REFERENCES_LEFT_PROBED
+    assert report.exit_code == EXIT_HARNESS_ERROR
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_declared_reference_is_no_longer_published_is_a_harness_error(
+    reference_deployment: StubDeployment,
+    reference_client: AsyncClient,
+) -> None:
+    """A declared probe for a route this instance does not publish fails the run.
+
+    Pointed at a stale deployment the registry silently loses references one at
+    a time, and the coverage floor only notices once enough of them are gone.
+    """
+    report = await run_matrix(
+        reference_client,
+        bootstrap=make_stub_bootstrap(reference_deployment),
+        config=reference_stub_config(
+            reference_registry={**STUB_REFERENCE_REGISTRY, VANISHED_REFERENCE_ROUTE: NOTE_PROBE},
+        ),
+    )
+
+    tripped = [failure.guard for failure in report.guard_failures]
+    assert "require_declared_references_classified" in tripped, tripped
+    assert report.exit_code == EXIT_HARNESS_ERROR

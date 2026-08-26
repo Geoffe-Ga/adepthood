@@ -30,10 +30,12 @@ name: Weekly Playbook Rules
 #   secret  CLAUDE_CODE_OAUTH_TOKEN  - same token the other Claude workflows use.
 
 on:
-  schedule:
-    # Mondays at 07:00 UTC — one hour before the De-Slop wave, so the week's
-    # failure corpus is complete and the playbook issue is filed first.
-    - cron: "0 7 * * 1"
+  # PAUSED 2026-08-26: automated issue inflow paused by owner request.
+  # Re-enable by uncommenting; workflow_dispatch still allows manual runs.
+  # schedule:
+  # # Mondays at 07:00 UTC — one hour before the De-Slop wave, so the week's
+  # # failure corpus is complete and the playbook issue is filed first.
+  # - cron: "0 7 * * 1"
   workflow_dispatch:
     inputs:
       since:

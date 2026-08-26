@@ -21,14 +21,21 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.dast.discovery import RouteSpec, discover_routes, is_object_scoped
+from scripts.dast.discovery import (
+    RouteSpec,
+    carries_reference,
+    discover_routes,
+    is_object_scoped,
+)
 from tests.scripts.dast.conftest import (
     LEAKY_WIDGET_DELETE,
     LEAKY_WIDGET_GET,
+    REFERENCE_LEAKY_NOTE_POST,
     SAFE_ITEM_GET,
     SAFE_PART_GET,
     SAFE_PART_POST,
     build_leaky_app,
+    build_reference_leaky_app,
 )
 
 AUTH_HEADER_PARAMETER: dict[str, object] = {
@@ -273,3 +280,251 @@ def test_discovery_reads_a_real_fastapi_generated_document() -> None:
     assert all(spec.requires_auth for spec in routes if is_object_scoped(spec))
     login = next(spec for spec in routes if spec.path == "/auth/login")
     assert login.requires_auth is False
+
+
+# --- Object references carried in a request body or a query parameter --------
+#
+# The path heuristic above sees only ``/goals/{goal_id}``. An id posted in a
+# body or hung off a query string addresses somebody's object just as directly,
+# so discovery reads those too -- as a separate dimension, leaving
+# ``is_object_scoped`` exactly as it was.
+
+GOAL_UPDATE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "goal_group_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "identity": {"type": "string"},
+        "idea": {"type": "string"},
+    },
+}
+
+JOURNAL_CREATE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "message": {"type": "string"},
+        "practice_session_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "user_practice_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    },
+}
+
+
+def query_parameter(name: str) -> dict[str, object]:
+    """Return an OpenAPI query-parameter object for ``name``."""
+    return {"name": name, "in": "query", "required": False, "schema": {"type": "integer"}}
+
+
+def json_request_body(schema_name: str) -> dict[str, object]:
+    """Return a ``requestBody`` whose JSON schema is a reference to ``schema_name``."""
+    return {
+        "required": True,
+        "content": {
+            "application/json": {"schema": {"$ref": f"#/components/schemas/{schema_name}"}},
+        },
+    }
+
+
+def document_with_schemas(
+    paths: dict[str, object],
+    schemas: dict[str, object],
+) -> dict[str, object]:
+    """Wrap ``paths`` and ``components.schemas`` in a minimal OpenAPI envelope."""
+    envelope = document(paths)
+    envelope["components"] = {"schemas": schemas}
+    return envelope
+
+
+def body_operation(schema_name: str, *params: str) -> dict[str, object]:
+    """Return an authenticated operation that posts ``schema_name`` as its body."""
+    operation = authenticated_operation(*params)
+    operation["requestBody"] = json_request_body(schema_name)
+    return operation
+
+
+def test_a_request_body_property_ending_in_id_is_discovered_as_a_body_reference() -> None:
+    """A ``$ref`` body has to be resolved against ``components.schemas`` to be read at all."""
+    routes = discover_routes(
+        document_with_schemas(
+            {"/goals/{goal_id}": {"put": body_operation("GoalUpdate", "goal_id")}},
+            {"GoalUpdate": GOAL_UPDATE_SCHEMA},
+        ),
+    )
+
+    assert routes[0].body_id_refs == ("goal_group_id",)
+    assert routes[0].query_id_refs == ()
+
+
+def test_body_properties_that_merely_contain_the_letters_are_not_references() -> None:
+    """``identity`` and ``idea`` are ordinary fields; the heuristic anchors on the suffix."""
+    routes = discover_routes(
+        document_with_schemas(
+            {"/goals/{goal_id}": {"put": body_operation("GoalUpdate", "goal_id")}},
+            {"GoalUpdate": GOAL_UPDATE_SCHEMA},
+        ),
+    )
+
+    assert "identity" not in routes[0].body_id_refs
+    assert "idea" not in routes[0].body_id_refs
+
+
+def test_several_body_references_are_captured_in_declaration_order() -> None:
+    """One operation may address two foreign objects, and each is probed separately."""
+    routes = discover_routes(
+        document_with_schemas(
+            {"/journal/": {"post": body_operation("JournalMessageCreate")}},
+            {"JournalMessageCreate": JOURNAL_CREATE_SCHEMA},
+        ),
+    )
+
+    assert routes[0].body_id_refs == ("practice_session_id", "user_practice_id")
+
+
+def test_a_query_parameter_ending_in_id_is_discovered_as_a_query_reference() -> None:
+    """A listing filtered by somebody else's id is an object reference in a query string."""
+    routes = discover_routes(
+        document(
+            {
+                "/practice-sessions/": {
+                    "get": {
+                        "parameters": [
+                            query_parameter("user_practice_id"),
+                            query_parameter("stage_number"),
+                            AUTH_HEADER_PARAMETER,
+                        ],
+                        "responses": {"200": {"description": "ok"}},
+                    },
+                },
+            },
+        ),
+    )
+
+    assert routes[0].query_id_refs == ("user_practice_id",)
+    assert routes[0].body_id_refs == ()
+
+
+def test_a_path_parameter_is_never_counted_as_a_query_reference() -> None:
+    """The two dimensions stay disjoint, so neither count can inflate the other."""
+    routes = discover_routes(
+        document({"/habits/{habit_id}": {"get": authenticated_operation("habit_id")}}),
+    )
+
+    assert routes[0].params == ("habit_id",)
+    assert routes[0].query_id_refs == ()
+    assert routes[0].body_id_refs == ()
+
+
+def test_a_request_body_whose_schema_cannot_be_resolved_yields_no_references() -> None:
+    """A dangling ``$ref`` must produce an empty answer, which a guard then catches.
+
+    Raising here would abort the whole run on one malformed document, and the
+    minimum-coverage guard can only report "nothing was discovered" if discovery
+    returns at all.
+    """
+    routes = discover_routes(
+        document_with_schemas(
+            {"/goals/{goal_id}": {"put": body_operation("MissingSchema", "goal_id")}},
+            {"GoalUpdate": GOAL_UPDATE_SCHEMA},
+        ),
+    )
+
+    assert routes[0].body_id_refs == ()
+
+
+def test_a_document_with_no_components_at_all_yields_no_body_references() -> None:
+    """The same non-answer when the whole ``components`` object is absent."""
+    routes = discover_routes(
+        document({"/goals/{goal_id}": {"put": body_operation("GoalUpdate", "goal_id")}}),
+    )
+
+    assert routes[0].body_id_refs == ()
+
+
+def test_a_request_body_that_is_not_json_yields_no_body_references() -> None:
+    """A form or binary upload declares no JSON properties to read."""
+    routes = discover_routes(
+        document(
+            {
+                "/uploads/": {
+                    "post": {
+                        "parameters": [AUTH_HEADER_PARAMETER],
+                        "requestBody": {"content": {"application/octet-stream": {}}},
+                        "responses": {"200": {"description": "ok"}},
+                    },
+                },
+            },
+        ),
+    )
+
+    assert routes[0].body_id_refs == ()
+
+
+def test_carries_reference_is_true_for_a_body_reference_and_false_without_one() -> None:
+    """The predicate the reference dimension is driven by, asserted both ways."""
+    with_body = RouteSpec(
+        method="POST",
+        path="/journal/",
+        params=(),
+        requires_auth=True,
+        body_id_refs=("practice_session_id",),
+    )
+    without = RouteSpec(method="POST", path="/journal/", params=(), requires_auth=True)
+
+    assert carries_reference(with_body) is True
+    assert carries_reference(without) is False
+
+
+def test_carries_reference_is_true_for_a_query_reference() -> None:
+    """A filtered listing is a reference even though it mutates nothing."""
+    spec = RouteSpec(
+        method="GET",
+        path="/journal/",
+        params=(),
+        requires_auth=True,
+        query_id_refs=("practice_session_id",),
+    )
+
+    assert carries_reference(spec) is True
+
+
+def test_the_path_dimension_is_unchanged_by_the_reference_dimension() -> None:
+    """``is_object_scoped`` still reads the path and nothing else.
+
+    A route carrying a body reference and no path id must stay out of the path
+    matrix entirely, or the two dimensions would double-count each other.
+    """
+    body_only = RouteSpec(
+        method="POST",
+        path="/journal/",
+        params=(),
+        requires_auth=True,
+        body_id_refs=("practice_session_id",),
+    )
+    path_only = RouteSpec(
+        method="GET",
+        path="/habits/{habit_id}",
+        params=("habit_id",),
+        requires_auth=True,
+    )
+
+    assert is_object_scoped(body_only) is False
+    assert carries_reference(body_only) is True
+    assert is_object_scoped(path_only) is True
+    assert carries_reference(path_only) is False
+
+
+def test_discovery_reads_body_references_out_of_a_real_fastapi_document() -> None:
+    """FastAPI spells a body schema as a ``$ref``, so the resolution runs for real here.
+
+    A hand-written document could not prove that: the whole reason the
+    ``components.schemas`` lookup exists is the shape the framework emits.
+    """
+    deployment = build_reference_leaky_app()
+
+    routes = discover_routes(deployment.app.openapi())
+    referencing = {
+        (spec.method, spec.path): spec.body_id_refs
+        for spec in routes
+        if carries_reference(spec) and spec.body_id_refs
+    }
+
+    assert referencing[REFERENCE_LEAKY_NOTE_POST] == ("gadget_id",)

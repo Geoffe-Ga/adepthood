@@ -1,10 +1,15 @@
 name: DAST Authorization Matrix
 
 # Starts an ephemeral instance and asks one question of every route that names
-# an object by id in its path: can identity B reach identity A's object? The
-# in-process suite already asserts specific ownership rules; this job is the one
-# that exercises the whole stack over a real socket, so a middleware or routing
-# change that bypasses those rules surfaces here.
+# an object by id -- in its path, in its JSON request body, or in its query
+# string: can identity B reach identity A's object? The in-process suite already
+# asserts specific ownership rules; this job is the one that exercises the whole
+# stack over a real socket, so a middleware or routing change that bypasses those
+# rules surfaces here.
+#
+# The command below passes no thresholds on purpose: the harness's own defaults
+# (--min-routes, --min-references) are what gate this job, so a dimension that
+# quietly stopped probing anything fails here rather than reporting clean.
 #
 # ``pull_request`` and never ``pull_request_target``: this job checks out and
 # runs the head of the branch under test, so it must not hold write-scoped
