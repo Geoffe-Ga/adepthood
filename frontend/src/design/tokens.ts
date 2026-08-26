@@ -5,7 +5,7 @@
  * should be imported from this module. Do not define design constants elsewhere.
  */
 
-import { Platform } from 'react-native';
+import { Platform, type TextStyle } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Colors
@@ -716,6 +716,41 @@ export const accent = {
   strong: '#8f4a28', // 6.1:1 — pressed / emphasis
   onPrimary: '#ffffff', // light foreground on the accent fill (white on terracotta ~5:1, AA)
 } as const;
+
+/**
+ * The writing surface's caret.
+ *
+ * A text field on the paper page has no border of its own, so the caret is the
+ * whole focus signal — see ``writingFieldFocus`` below, which removes the one
+ * the browser would otherwise draw. That makes findability the requirement: a
+ * one-pixel bar wants the emphasis accent's 6.1:1 rather than the 4.9:1 of
+ * ``accent.primary``, and the warm hue keeps it inside the Candle & Ink palette
+ * instead of the system blue it replaces.
+ */
+export const writingField = {
+  caret: accent.strong,
+} as const;
+
+/**
+ * Style fragment for every field a writer types prose into.
+ *
+ * Browsers frame the ``<input>``/``<textarea>`` react-native-web renders in
+ * their own focus ring — a blue box that reads as hard chrome bolted onto a
+ * sheet of paper. Dropping it hands the focus signal to the caret, which
+ * ``caretColor`` then makes unmissable wherever the writer clicks.
+ *
+ * ``outlineStyle`` and ``caretColor`` are react-native-web CSS passthroughs
+ * absent from RN's ``TextStyle`` (the same shape as ``MagnifierLens``'s
+ * ``backdropFilter``), so the fragment is typed through a narrowing cast and
+ * attached on web only — native draws no focus ring to remove and takes its
+ * caret from the ``selectionColor`` / ``cursorColor`` props instead.
+ *
+ * Resolved from ``Platform.OS`` at module load, like ``serifStack`` above.
+ */
+export const writingFieldFocus: TextStyle =
+  Platform.OS === 'web'
+    ? ({ outlineStyle: 'none', caretColor: writingField.caret } as unknown as TextStyle)
+    : {};
 
 /**
  * App-wide warm elevation — the generalisation of ``paperShadow`` beyond the

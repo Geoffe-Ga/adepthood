@@ -8,7 +8,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
-import { colors } from '@/design/tokens';
+import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -752,5 +752,25 @@ describe('JournalEntryScreen', () => {
         jest.useRealTimers();
       }
     });
+  });
+});
+
+/**
+ * The writing page carries no field borders, so the browser's own focus ring
+ * (a blue box on the paper sheet) is dropped and the accent caret takes over as
+ * the focus signal. ``writingFieldFocus`` is empty off web — Jest renders as
+ * ``ios`` — so it is pinned here by identity; its web contents are asserted in
+ * ``design/__tests__/writingFieldFocus.test.ts``.
+ */
+describe('JournalEntryScreen writing-field focus', () => {
+  it.each([
+    ['title', 'journal-title-input'],
+    ['body', 'journal-body-input'],
+  ])('gives the %s field no focus ring and an accent caret', (_field, testID) => {
+    const input = renderScreen().getByTestId(testID);
+    const style = Array.isArray(input.props.style) ? input.props.style : [input.props.style];
+    expect(style).toContain(writingFieldFocus);
+    expect(input.props.selectionColor).toBe(writingField.caret);
+    expect(input.props.cursorColor).toBe(writingField.caret);
   });
 });

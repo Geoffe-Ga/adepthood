@@ -20,7 +20,7 @@ import { TranscriptionError } from '@/api';
 import type { TranscriptionErrorKind } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
-import { accent } from '@/design/tokens';
+import { accent, writingField, writingFieldFocus } from '@/design/tokens';
 
 // --- Copy (warm, declinable — NORTH-STAR) ---------------------------------
 
@@ -105,9 +105,11 @@ function DoneBlock({
     <View style={styles.blockBody}>
       <TextInput
         testID={`photograph-block-${position}-input`}
-        style={styles.blockInput}
+        style={[styles.blockInput, writingFieldFocus]}
         value={block.text}
         onChangeText={(text) => onEdit(block.id, text)}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         multiline
         accessibilityLabel={BLOCK_INPUT_A11Y}
       />

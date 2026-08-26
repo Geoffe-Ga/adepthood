@@ -56,7 +56,7 @@ import type {
 } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
-import { colors } from '@/design/tokens';
+import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -1102,22 +1102,26 @@ function WritingFields({
   return (
     <>
       <TextInput
-        style={styles.titleInput}
+        style={[styles.titleInput, writingFieldFocus]}
         value={title}
         onChangeText={onChangeTitle}
         placeholder="Title"
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         accessibilityLabel="Entry title"
         testID="journal-title-input"
       />
       <View style={styles.hairline} />
       <TextInput
-        style={styles.bodyInput}
+        style={[styles.bodyInput, writingFieldFocus]}
         value={body}
         onChangeText={onChangeBody}
         onSelectionChange={onBodySelectionChange}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         multiline
         // The outer ScrollView owns scrolling so the field grows freely and long
         // entries stay reachable (iOS multiline TextInput won't scroll its own
