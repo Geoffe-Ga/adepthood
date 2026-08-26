@@ -111,7 +111,7 @@ const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => 
         {card.name}
       </Text>
       {card.symbolism !== null && card.symbolism.length > 0 && (
-        <ScrollView style={styles.symbolismScroll}>
+        <ScrollView style={styles.symbolismScroll} nestedScrollEnabled>
           <Text style={styles.cardSymbolism} testID="card-meditation-card-symbolism">
             {card.symbolism}
           </Text>
