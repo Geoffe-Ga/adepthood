@@ -140,6 +140,14 @@ const useLogUnitMutation = (
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
     onSuccess: (ctx) => {
+      if (ctx.isDemoSeed === true) {
+        // ``commitLogUnitContext`` short-circuits a demo tile to ``null``, which
+        // resolves — so this path, not ``rollback``, is where a sample tap lands.
+        // Without the notice here the tile would hand out a milestone
+        // celebration for a check-in that never left the device.
+        showDemoSeedNotice(showToast);
+        return;
+      }
       showToast(habitManager.buildLogUnitToast(ctx));
     },
   });

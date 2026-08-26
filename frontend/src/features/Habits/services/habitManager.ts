@@ -52,6 +52,13 @@ import {
 } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
+import {
+  isNotDemoSeed,
+  isServerBackedGoal,
+  isServerBackedHabit,
+  isServerIssuedId,
+} from './serverIds';
+
 export type ShowToast = (_config: ToastConfig) => void;
 
 // The offline/demo seed is shown only when the server is unreachable and no
@@ -65,13 +72,6 @@ const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   // The sole construction site for the demo tiles, so this mark keeps their placeholder dates out of the program anchor however they are seeded.
   isDemoSeed: true,
 }));
-
-/**
- * Demo tiles are in-memory placeholders: their ids and start dates are
- * fabricated, so they must never reach the cache on disk (where the next
- * launch would read them back as real data) nor the server.
- */
-const isNotDemoSeed = (habit: { isDemoSeed?: boolean }): boolean => habit.isDemoSeed !== true;
 
 /**
  * The single write path to the habit cache. It always writes, even when the
@@ -702,8 +702,9 @@ const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
  * rejection triggers one deterministic rollback to ``prev`` (mirrors
  * ``saveHabitOrder``), restoring both the store and the on-disk snapshot.
  *
- * Demo tiles flip in the store like any other row but are never PUT: their ids
- * are fabricated placeholders, so there is no server row for the write to land on.
+ * Demo tiles and pre-sync added habits flip in the store like any other row but
+ * are never PUT: their ids are fabricated on-device, so there is no server row
+ * for the write to land on.
  */
 const syncRevealState = (next: Habit[], failureMessage: string): void => {
   const prev = getHabits();
@@ -712,8 +713,7 @@ const syncRevealState = (next: Habit[], failureMessage: string): void => {
   void persistHabits(next);
   const updates: Array<Promise<unknown>> = [];
   for (const habit of next) {
-    if (habit.id == null) continue;
-    if (!isNotDemoSeed(habit)) continue;
+    if (!isServerBackedHabit(habit)) continue;
     // Only PUT rows whose unlock flag actually flipped, so a single unlock
     // does not rewrite every untouched row.
     if (habit.revealed === revealedBefore.get(habit.id)) continue;
@@ -905,14 +905,16 @@ export const habitManager = {
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
     const prev = getHabits();
+    const parent = prev.find((h) => h.id === habitId);
     const next = applyGoalUpdate(prev, habitId, updatedGoal);
     setHabits(next);
     void persistHabits(next);
-    // The optimistic write above + the local-only fallback for synthetic
-    // ids (no ``id`` from the server) keep the UI responsive. With a real
-    // id we POST to ``/goals/{id}`` and roll the store back if the wire
-    // rejects the change — same pattern as ``updateHabit``.
-    if (!updatedGoal.id) return;
+    // The optimistic write above keeps the UI responsive for every row. Only a
+    // goal the server actually issued an id for goes on the wire. A Goal carries
+    // no demo marker of its own, so ``isServerBackedGoal`` reads that half from
+    // the parent habit. With a real id we PUT ``/goals/{id}`` and roll the store
+    // back if the wire rejects the change — same pattern as ``updateHabit``.
+    if (!isServerBackedGoal(updatedGoal, parent)) return;
     const payload: GoalUpdatePayload = {
       title: updatedGoal.title,
       tier: updatedGoal.tier,
@@ -952,9 +954,15 @@ export const habitManager = {
     );
     setHabits(next);
     void persistHabits(next);
-    // Synthetic ids (pre-sync onboarding state) stay local-only — the
-    // same contract as ``updateGoal``.
-    if (!habit.goals.every((g) => g.id)) return;
+    // Both halves are load-bearing and neither implies the other. The habit
+    // check rejects demo tiles (positive but fabricated ids) and pre-sync added
+    // habits (negative ids). The per-goal check additionally rejects a
+    // server-backed habit whose tier goals have not been round-tripped yet: the
+    // endpoint rewrites every tier of the habit at once, so an un-issued goal id
+    // means the store's tiers are not the server's and the optimistic state we
+    // just wrote would not be what the batch produced.
+    if (!isServerBackedHabit(habit)) return;
+    if (!habit.goals.every((g) => isServerIssuedId(g.id))) return;
     const payload: GoalUnitsPayload = {
       target_unit: changes.target_unit ?? reference.target_unit,
       frequency: changes.frequency ?? reference.frequency,
@@ -979,7 +987,7 @@ export const habitManager = {
     // edit reschedules against fresh ``notificationIds`` instead of double-scheduling.
     if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
     else void persistHabits(next);
-    if (!updatedHabit.id) return;
+    if (!isServerBackedHabit(updatedHabit)) return;
     habitsApi
       .update(updatedHabit.id, toApiPayload(updatedHabit))
       .catch(
@@ -990,12 +998,22 @@ export const habitManager = {
       );
   },
 
+  /**
+   * Remove a habit everywhere it lives. The local removal, the on-disk write and
+   * the reminder cancellation always run — the user asked for the tile to go.
+   * Only the DELETE is conditional, and it is resolved from the row being
+   * removed rather than from the raw id: a demo tile's fabricated id collides
+   * with a real habit's, so an unguarded ``DELETE /habits/{id}`` would destroy
+   * the user's own row of that number.
+   */
   deleteHabit: (habitId: number): void => {
     const prev = getHabits();
+    const target = prev.find((h) => h.id === habitId);
     const next = prev.filter((h) => h.id !== habitId);
     setHabits(next);
     void persistHabits(next);
     void cancelForHabit(habitId);
+    if (!isServerBackedHabit(target)) return;
     habitsApi
       .delete(habitId)
       .catch(
@@ -1045,9 +1063,9 @@ export const habitManager = {
    * (and third…) failure each restored ``prev``, clobbering successful
    * sibling writes that were already in the store.
    *
-   * Demo tiles keep their positions and are stamped locally like any other row,
-   * but are never PUT: their ids are fabricated placeholders, so there is no
-   * server row for the write to land on.
+   * Demo tiles and pre-sync added habits keep their positions and are stamped
+   * locally like any other row, but are never PUT: their ids are fabricated
+   * on-device, so there is no server row for the write to land on.
    */
   saveHabitOrder: (ordered: Habit[]): void => {
     const prev = getHabits();
@@ -1056,8 +1074,7 @@ export const habitManager = {
     void persistHabits(stamped);
     const updates: Array<Promise<unknown>> = [];
     for (const habit of stamped) {
-      if (habit.id == null) continue;
-      if (!isNotDemoSeed(habit)) continue;
+      if (!isServerBackedHabit(habit)) continue;
       updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
     }
     if (updates.length === 0) return;
@@ -1132,12 +1149,19 @@ export const habitManager = {
   },
 
   /**
-   * Network step. POSTs the goal completion. Returns null when the
-   * habit has no current goal (rare; the store-side `prepareLogUnit`
-   * has already validated `updated` exists, but we still guard here so
-   * the API isn't hit with `goal_id: undefined`).
+   * Network step. POSTs the goal completion. Returns null when the tile is a
+   * demo placeholder, or when the habit has no current goal (rare; the
+   * store-side `prepareLogUnit` has already validated `updated` exists, but we
+   * still guard here so the API isn't hit with `goal_id: undefined`).
    */
   commitLogUnitContext: async (ctx: LogUnitContext): Promise<CheckInResult | null> => {
+    if (ctx.isDemoSeed === true) return null;
+    // Deliberately NOT ``isServerIssuedId``: a negative pre-sync goal id is
+    // still posted, because the 404 ``goal_not_found`` it draws is what triggers
+    // the stale-scaffold resync that swaps those ids for real ones. Suppressing
+    // it would turn a recoverable failure into a silent local-only success.
+    // ``backfillMissedDays`` does demand a positive id, because its failure path
+    // is a full rollback that would throw the user's backfill away.
     if (!ctx.currentGoal.id) return null;
     return goalCompletionsApi.create({
       goal_id: ctx.currentGoal.id,
@@ -1182,9 +1206,10 @@ export const habitManager = {
    * reload (which trusts the server as the source of truth). A single
    * ``Promise.all`` rejection rolls the store AND the on-disk snapshot back
    * to ``prev`` and alerts the user — the same deterministic single-rollback
-   * pattern as ``saveHabitOrder``. When the habit or its low goal has no
-   * server id we keep the optimistic update but skip the network call, so a
-   * pre-sync onboarding habit still shows the backfill locally.
+   * pattern as ``saveHabitOrder``. When the habit is a demo tile, or it or its
+   * low goal carries an id no server issued, we keep the optimistic update but
+   * skip the network call: a pre-sync habit still shows the backfill locally,
+   * and no fabricated id can trigger the rollback that would erase it.
    *
    * ``tz`` is the user's stored IANA zone forwarded by the hook; it falls
    * back to the last zone a ``loadHabits`` observed, then to the device zone.
@@ -1194,10 +1219,12 @@ export const habitManager = {
     const next = prev.map((h) => (h.id === habitId ? backfillHabit(h, days) : h));
     setHabits(next);
     void persistHabits(next);
-    const lowGoal = prev.find((h) => h.id === habitId)?.goals.find((g) => g.tier === 'low');
-    if (!lowGoal?.id) return;
+    const parent = prev.find((h) => h.id === habitId);
+    if (!isServerBackedHabit(parent)) return;
+    const lowGoalId = parent.goals.find((g) => g.tier === 'low')?.id;
+    if (!isServerIssuedId(lowGoalId)) return;
     const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
-    const updates = postBackfillCompletions(lowGoal.id, days, zone);
+    const updates = postBackfillCompletions(lowGoalId, days, zone);
     Promise.all(updates).catch(
       revertOnFailure(
         prev,
@@ -1234,7 +1261,10 @@ export const habitManager = {
     setHabits(next);
     void persistHabits(next);
     const updated = next.find((h) => h.id === habitId);
-    if (!updated?.id) return;
+    // Suppresses the PUT *and* the chained clear: a demo tile's fabricated id
+    // would point the irreversible clear-completions call at whichever real
+    // habit of the user's happens to carry that number.
+    if (!isServerBackedHabit(updated)) return;
     const updatedId = updated.id;
     habitsApi
       .update(updatedId, toApiPayload(updated))
@@ -1324,7 +1354,7 @@ export const habitManager = {
     const next = prev.map((h, i) => (i === index ? updated : h));
     setHabits(next);
     void persistHabits(next);
-    if (!updated.id) return;
+    if (!isServerBackedHabit(updated)) return;
     habitsApi
       .update(updated.id, toApiPayload(updated))
       .catch(

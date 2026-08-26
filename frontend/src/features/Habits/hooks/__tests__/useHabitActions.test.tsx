@@ -365,11 +365,8 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
   });
 
   it('never queues a demo-seed tile and never promises it will sync later', async () => {
-    // A demo tile's goal id is client-fabricated, so a queued check-in can never post.
+    // A demo tile's goal id is client-fabricated, so no POST leaves and nothing can be queued.
     useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
-    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
-      Promise.reject(new TypeError('fetch failed')),
-    );
     const { result, showToast } = renderActions();
 
     await act(async () => {
@@ -378,6 +375,7 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
       await Promise.resolve();
     });
 
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
     expect(savePendingCheckIn).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
@@ -390,13 +388,32 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
 
 describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
   it('explains the sample tile instead of blaming a sync problem', async () => {
-    // A demo tile is also seeded on a fresh account WITH a connection, so its
-    // fabricated goal id 404s for real. That looks exactly like the stale-id
-    // symptom, but no refresh can fix it — the refresh only re-seeds the demo.
+    // A demo tile is seeded on a fresh account WITH a connection too. Its
+    // fabricated goal id never reaches the wire, so nothing about the tap
+    // should read as a sync problem the user could act on.
     useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
-    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
-      Promise.reject(new MockApiError(404, 'goal_not_found')),
-    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.color).toBe(colors.secondary);
+    expect(toast.message).not.toMatch(/out of sync/i);
+    // Nothing is queued, and no futile refresh fires.
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).not.toHaveBeenCalled();
+    // The optimistic increment stays: the sample tile remains explorable.
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+  });
+
+  it('shows the sample-tile notice and never an unearned celebration', async () => {
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
     const { result, showToast } = renderActions();
 
     await act(async () => {
@@ -407,13 +424,33 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
 
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.message).toMatch(/sample habits/i);
+    expect(toast.message).not.toMatch(/Goal achieved/i);
+    expect(toast.message).not.toMatch(/sync when you reconnect/i);
     expect(toast.color).toBe(colors.secondary);
-    expect(toast.message).not.toMatch(/out of sync/i);
-    // Nothing is queued, and no futile refresh fires.
-    expect(savePendingCheckIn).not.toHaveBeenCalled();
-    expect(habitsApi.listAll).not.toHaveBeenCalled();
-    // The optimistic increment stays: the sample tile remains explorable.
-    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+  });
+
+  it('still POSTs once and celebrates for a server-backed tile beside the demo seed', async () => {
+    // Goal id 91 belongs only to the real row, so the assertion cannot pass by coincidence.
+    const real = makeHabit({ id: 42, name: 'Real' });
+    real.goals = real.goals.map((g, i) => ({ ...g, id: 91 + i }));
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true, id: 3 }), real] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(42, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+    expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+      expect.objectContaining({ goal_id: 91, did_complete: true }),
+    );
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).toMatchObject({
+      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+    });
   });
 });
 

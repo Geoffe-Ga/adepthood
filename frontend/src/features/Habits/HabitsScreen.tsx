@@ -38,6 +38,7 @@ import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 import { usePaginationBarVisibility } from './hooks/usePaginationBarVisibility';
+import { isServerBackedHabit } from './services/serverIds';
 
 import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
@@ -491,7 +492,13 @@ const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | 
 
   const fetchStats = useCallback(
     (h: Habit) => {
-      if (h.id == null) return;
+      if (!isServerBackedHabit(h)) {
+        // No server row answers to this id, so fall straight to the local
+        // generator. A bare return would leave the modal on its "Loading
+        // stats..." banner forever, since it reads in-flight as ``stats == null``.
+        setStats(generateStatsForHabit(h, userTimezone));
+        return;
+      }
       // ``userTimezone`` flows from the auth-context value populated by
       // /auth/login | signup | refresh -- closes BUG-FE-HABIT-002 / -207.
       // The API path is preferred (server already buckets in user TZ);

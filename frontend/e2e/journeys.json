@@ -54,12 +54,21 @@
   },
   {
     "id": "habits.demo-tile-stays-local",
-    "description": "With the habits fetch failing and no cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10. Revealing or reordering one is a local action: it flips and re-stamps in the store but sends nothing, so no PUT is issued against an id that corresponds to no row the caller owns, and no \"Couldn't sync\" alert appears for something the user did only to themselves. A mixed store still PUTs the one server-backed row. Uncovered because the real-wire lane cannot produce the state -- it needs the habits fetch to throw while the cache is empty, and the lane's premise is a backend it can reach, the same constraint already recorded on habits.offline-check-in-replay-drains and errors.server-fault-is-not-offline. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts.",
+    "description": "With the habits fetch failing and no cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, resetting the start date, editing a goal or its shared units, logging a unit, opening stats, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. A mixed store still performs each of those operations against the one genuinely server-backed row. Uncovered because the real-wire lane cannot produce the state -- it needs the habits fetch to throw while the cache is empty, and the lane's premise is a backend it can reach, the same constraint already recorded on habits.offline-check-in-replay-drains and errors.server-fault-is-not-offline. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts and src/features/Habits/services/__tests__/habitManager.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["habits"],
-      "routes": ["GET /habits/", "PUT /habits/{habit_id}"],
-      "tables": ["habit"]
+      "client": ["habits", "goals", "goalCompletions"],
+      "routes": [
+        "GET /habits/",
+        "PUT /habits/{habit_id}",
+        "DELETE /habits/{habit_id}",
+        "DELETE /habits/{habit_id}/completions",
+        "PUT /habits/{habit_id}/goals/units",
+        "PUT /goals/{goal_id}",
+        "POST /goal_completions/",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
     },
     "status": "uncovered",
     "issue": 2491
