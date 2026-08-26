@@ -27,7 +27,7 @@ import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
-  saveHabits as persistHabits,
+  saveHabits as saveHabitsToDisk,
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
   clearPendingCheckIns,
@@ -62,6 +62,21 @@ const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   // The sole construction site for the demo tiles, so this mark keeps their placeholder dates out of the program anchor however they are seeded.
   isDemoSeed: true,
 }));
+
+/**
+ * Demo tiles are in-memory placeholders: their ids and start dates are
+ * fabricated, so they must never reach the cache on disk (where the next
+ * launch would read them back as real data) nor the server.
+ */
+const isNotDemoSeed = (habit: { isDemoSeed?: boolean }): boolean => habit.isDemoSeed !== true;
+
+/**
+ * The single write path to the habit cache. It always writes, even when the
+ * filtered list is empty: an empty cache reads back as "no cache", which heals
+ * a cache poisoned before this guard existed on the user's first mutation.
+ */
+const persistHabits = (habits: Habit[]): Promise<void> =>
+  saveHabitsToDisk(habits.filter(isNotDemoSeed));
 
 const INSTRUCTIONAL_TOAST_DURATION_MS = 5000;
 
@@ -310,8 +325,7 @@ const earliestStartDate = (
   habits: ReadonlyArray<{ start_date: Date; isDemoSeed?: boolean }>,
 ): Date | null => {
   let earliest: number | null = null;
-  for (const habit of habits) {
-    if (habit.isDemoSeed === true) continue;
+  for (const habit of habits.filter(isNotDemoSeed)) {
     const time = new Date(habit.start_date).getTime();
     if (Number.isNaN(time)) continue;
     if (earliest === null || time < earliest) earliest = time;
@@ -792,15 +806,18 @@ const loadHabits = async (tz?: string): Promise<void> => {
     setLoading(false);
   }
   const result = await fetchFromApi(hasCachedData);
-  // Stuck-user recovery: cache has habits, server returned an empty list.
-  // Push the cache back, then re-fetch so the store gets the server's ids.
-  if (result.kind === 'ok' && result.count === 0 && hasCachedData) {
-    await recoverStuckHabits(cached!);
+  // Stuck-user recovery: cache has real habits, server returned an empty list.
+  // Push those back, then re-fetch so the store gets the server's ids. Demo
+  // tiles left in an older cache are skipped on both legs, so a cache holding
+  // nothing else means the user was never stuck.
+  const recoverable = (cached ?? []).filter(isNotDemoSeed);
+  if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
+    await recoverStuckHabits(recoverable);
     const refetch = await fetchFromApi(true);
     // #286: the recovery push seeded default goal targets — replay any
     // cached customizations onto the fresh server goals.
     if (refetch.kind === 'ok') {
-      await replayCachedGoalTargets(cached!, getHabits());
+      await replayCachedGoalTargets(recoverable, getHabits());
     }
   }
   setLoading(false);
