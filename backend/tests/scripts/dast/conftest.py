@@ -30,6 +30,12 @@ in-memory dict. Nothing here imports, touches, or weakens the real auth stack.
 Passwords are generated with ``secrets`` so there is no credential literal at
 all.
 
+One thing no stub can prove is that the identity bootstrap works against the
+*real* application, so :func:`serve_real_app` at the end of this module serves
+the production app in-process from a throwaway file-backed database. It is a
+plain context manager rather than a fixture because the CLIs it exists to drive
+own their own ``asyncio.run``.
+
 ``from __future__ import annotations`` is deliberately absent: the route
 handlers below depend on locally-defined dependency callables, and stringised
 annotations would leave FastAPI unable to resolve them from module globals.
@@ -37,9 +43,11 @@ annotations would leave FastAPI unable to resolve them from module globals.
 
 import asyncio
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http import HTTPStatus
+from pathlib import Path
 from typing import Annotated
 
 import pytest
@@ -47,7 +55,18 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI, Header, HTTPException
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
+from sqlmodel import SQLModel
 
+from conftest import _replace_array_columns
+from database import get_session
+from main import app as production_app
 from scripts.dast.authz_matrix import HarnessOverrides, main
 from scripts.dast.runner import Bootstrap, Identity, MatrixConfig
 from scripts.dast.seeds import SeedSpec
@@ -599,3 +618,75 @@ def drive_main(
         )
     finally:
         close_client(session_client)
+
+
+# --- The production application, served in-process from a throwaway database ---
+#
+# Every stub above proves the harness *grades* correctly. This last section is
+# for the one thing no stub can prove: that the token bootstrap works against
+# the real application. It is a synchronous context manager rather than a
+# ``pytest_asyncio`` fixture because the thing under test is a CLI entry point
+# that owns its own ``asyncio.run``; an async fixture would already hold the
+# only loop the process is allowed to have.
+
+
+REAL_APP_BASE_URL = "http://dast-contract-target"
+
+# A route that requires a token and touches the database, so a probe against it
+# proves both the credential and the session wiring.
+REAL_APP_PROBE_PATH = "/habits/"
+
+
+@dataclass(frozen=True)
+class RealAppTarget:
+    """The production application together with the database URL it is serving from."""
+
+    client: AsyncClient
+    database_url: str
+
+
+async def _create_schema(engine: AsyncEngine) -> None:
+    """Create every table the application declares on a fresh database."""
+    async with engine.begin() as connection:
+        await connection.run_sync(SQLModel.metadata.create_all)
+
+
+@contextmanager
+def serve_real_app(tmp_path: Path) -> Iterator[RealAppTarget]:
+    """Serve the real application from a throwaway file-backed SQLite database.
+
+    File-backed rather than in-memory because the identity bootstrap opens an
+    engine of its own against the URL it is handed, exactly as it does in
+    production; two engines onto ``:memory:`` would see two different databases
+    and the login would 401 for reasons unrelated to the code under test.
+
+    ``NullPool`` because the caller runs its own event loop: a pooled aiosqlite
+    connection opened while building the schema would be handed back out inside
+    a *different* loop once the CLI starts one, which is a hang rather than an
+    assertion failure.
+
+    Args:
+        tmp_path: A directory to put the throwaway database file in.
+
+    Yields:
+        A client wired straight into the application, plus that database's URL.
+    """
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'dast-contract.db'}"
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    _replace_array_columns()
+    asyncio.run(_create_schema(engine))
+
+    async def _per_request_session() -> AsyncIterator[AsyncSession]:
+        async with factory() as session:
+            yield session
+
+    production_app.dependency_overrides[get_session] = _per_request_session
+    client = AsyncClient(transport=ASGITransport(app=production_app), base_url=REAL_APP_BASE_URL)
+    try:
+        yield RealAppTarget(client=client, database_url=database_url)
+    finally:
+        close_client(client)
+        production_app.dependency_overrides.clear()
+        asyncio.run(engine.dispose())

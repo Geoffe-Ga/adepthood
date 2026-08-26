@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import secrets
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -47,12 +46,7 @@ from functools import partial
 from pathlib import Path
 
 from httpx import AsyncClient
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from models.user import User
-from routers.auth import _hash_password
 from scripts.dast.policy import DEFAULT_ALLOWLIST_PATH, load_allowlist
 from scripts.dast.report import (
     EXIT_AUTHZ_FINDING,
@@ -69,13 +63,12 @@ from scripts.dast.runner import (
     DEFAULT_MIN_ROUTES,
     Bootstrap,
     Identity,
-    LiveTargetError,
     MatrixConfig,
     ReplayBodies,
-    forwarded_for,
     run_matrix,
 )
 from scripts.dast.seeds import REPLAY_BODIES, SEED_REGISTRY, SeedSpec
+from scripts.dast.tokens import mint_identities
 
 # The exit codes are defined once, in the report module, and re-exported here
 # because this script is the only thing CI actually reads them from.
@@ -88,21 +81,11 @@ __all__ = [
     "main",
 ]
 
-# Generated per run rather than written down, so there is no credential literal
-# anywhere in the repository and no reusable account left behind.
-_PASSWORD_BYTES = 24
-_EMAIL_TOKEN_BYTES = 4
-# RFC 2606's documentation domain: the email validator rejects reserved TLDs
-# such as ``.invalid`` outright, which would 422 the login before it was tried.
-_EMAIL_DOMAIN = "example.com"
-_SEED_TIMEZONE = "UTC"
-
 _REQUEST_TIMEOUT_SECONDS = 30.0
-_LOGIN_PATH = "/auth/login"
 
-# What the report says instead of a DSN it could not even parse. Echoing the
-# string back verbatim would put whatever it does contain into the log.
-_UNPARSEABLE_DSN = "<unparseable database URL>"
+# The matrix always wants exactly two actors, and the report names them by these
+# labels, so the order they are minted in is contractual.
+_MATRIX_LABELS = ("A", "B")
 
 
 @dataclass(frozen=True)
@@ -127,102 +110,6 @@ class HarnessOverrides:
     auth_probe_path: str = DEFAULT_AUTH_PROBE_PATH
 
 
-@dataclass(frozen=True)
-class _Credentials:
-    """One throwaway identity, before it has a token."""
-
-    label: str
-    email: str
-    password: str
-
-
-def _new_credentials(label: str) -> _Credentials:
-    """Mint credentials for one throwaway identity."""
-    return _Credentials(
-        label=label,
-        email=f"dast-{label.lower()}-{secrets.token_hex(_EMAIL_TOKEN_BYTES)}@{_EMAIL_DOMAIN}",
-        password=secrets.token_urlsafe(_PASSWORD_BYTES),
-    )
-
-
-def _redacted(database_url: str) -> str:
-    """Render a database URL with its password removed, for a line of output.
-
-    A report is pasted into issues and CI logs, so the DSN has to be nameable
-    without the credential in it travelling along.
-    """
-    try:
-        return make_url(database_url).render_as_string(hide_password=True)
-    except ArgumentError:
-        return _UNPARSEABLE_DSN
-
-
-async def _commit_users(database_url: str, credentials: Sequence[_Credentials]) -> None:
-    """Open an engine of the harness's own, insert every identity's row, dispose of it."""
-    engine = create_async_engine(database_url)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    try:
-        async with factory() as session:
-            for item in credentials:
-                session.add(
-                    User(
-                        email=item.email,
-                        password_hash=await _hash_password(item.password),
-                        timezone=_SEED_TIMEZONE,
-                    ),
-                )
-            await session.commit()
-    finally:
-        await engine.dispose()
-
-
-async def _insert_users(database_url: str, credentials: Sequence[_Credentials]) -> None:
-    """Insert the identities' rows through the application's own ORM.
-
-    Args:
-        database_url: The async database URL the target instance is using.
-        credentials: The identities to create.
-
-    Raises:
-        LiveTargetError: When the database cannot be reached or will not accept
-            the rows. Left to propagate as-is it would exit the process on 1 --
-            the code that means "a foreign object was reached" -- so it is
-            re-raised as the type the runner reports as a harness error, naming
-            the DSN it could not use. The DSN is scrubbed out of the driver's own
-            message too, because several drivers echo it back.
-
-    Signup is gated on a live license verification with no local override, so a
-    row insert is the only way to make an identity from outside the process. The
-    password is hashed with the application's own hasher, which is what lets the
-    real login route accept it a moment later.
-    """
-    try:
-        await _commit_users(database_url, credentials)
-    except (SQLAlchemyError, OSError) as error:
-        redacted = _redacted(database_url)
-        detail = str(error).replace(database_url, redacted)
-        message = (
-            f"the identity database {redacted} could not be used to insert the identities: "
-            f"{type(error).__name__}: {detail}"
-        )
-        raise LiveTargetError(message) from error
-
-
-async def _login(client: AsyncClient, credentials: _Credentials) -> Identity:
-    """Mint one identity's token over the target's real login route."""
-    response = await client.post(
-        _LOGIN_PATH,
-        json={"email": credentials.email, "password": credentials.password},
-        headers={"X-Forwarded-For": forwarded_for()},
-    )
-    response.raise_for_status()
-    return Identity(
-        label=credentials.label,
-        email=credentials.email,
-        token=str(response.json()["token"]),
-    )
-
-
 async def _bootstrap_identities(
     client: AsyncClient,
     *,
@@ -237,13 +124,12 @@ async def _bootstrap_identities(
     Returns:
         The owner first, then the intruder.
     """
-    owner_credentials = _new_credentials("A")
-    intruder_credentials = _new_credentials("B")
-    await _insert_users(database_url, (owner_credentials, intruder_credentials))
-    return (
-        await _login(client, owner_credentials),
-        await _login(client, intruder_credentials),
+    owner, intruder = await mint_identities(
+        client,
+        database_url=database_url,
+        labels=_MATRIX_LABELS,
     )
+    return owner, intruder
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
