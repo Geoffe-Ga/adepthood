@@ -128,6 +128,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper.hairline,
     marginVertical: spacing(1),
   },
+  /** The line under the body: save state on the left, live word count on the right. */
+  writingFooter: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing(2),
+  },
+  /**
+   * The page's quiet caption face, shared by every footer line that reports
+   * state rather than offering an action: the save hint, the live word count
+   * beside it, and the quote-inclusion hint. They sit at one weight on purpose
+   * — the count is reference the writer glances at, not a target that should
+   * out-shout the save state.
+   */
   savedHint: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,

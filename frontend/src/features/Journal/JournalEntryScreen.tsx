@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -41,6 +41,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
+import { countWords, wordCountLabel } from './wordCount';
 
 import { journal, prompts, reflections } from '@/api';
 import type {
@@ -56,7 +57,7 @@ import type {
 } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
-import { colors } from '@/design/tokens';
+import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -1102,22 +1103,26 @@ function WritingFields({
   return (
     <>
       <TextInput
-        style={styles.titleInput}
+        style={[styles.titleInput, writingFieldFocus]}
         value={title}
         onChangeText={onChangeTitle}
         placeholder="Title"
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         accessibilityLabel="Entry title"
         testID="journal-title-input"
       />
       <View style={styles.hairline} />
       <TextInput
-        style={styles.bodyInput}
+        style={[styles.bodyInput, writingFieldFocus]}
         value={body}
         onChangeText={onChangeBody}
         onSelectionChange={onBodySelectionChange}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         multiline
         // The outer ScrollView owns scrolling so the field grows freely and long
         // entries stay reachable (iOS multiline TextInput won't scroll its own
@@ -1127,6 +1132,30 @@ function WritingFields({
         testID="journal-body-input"
       />
     </>
+  );
+}
+
+/**
+ * The line under the body: the save state on the left, the live word count on
+ * the right.
+ *
+ * The count follows the BODY only — the prose being produced, not the label on
+ * it — and is deliberately not a live region: announcing a new total on every
+ * keystroke would make the page unusable with a screen reader, and the count is
+ * reference, never a prompt. It stays silent at zero (see ``wordCountLabel``),
+ * so an untouched page still opens as a blank page rather than a scoreboard.
+ */
+function WritingFooter({ body, saveState }: { body: string; saveState: SaveState }) {
+  const words = useMemo(() => countWords(body), [body]);
+  return (
+    <View style={styles.writingFooter}>
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {savedHintLabel(saveState)}
+      </Text>
+      <Text style={styles.savedHint} testID="journal-word-count">
+        {wordCountLabel(words)}
+      </Text>
+    </View>
   );
 }
 
@@ -1169,9 +1198,7 @@ function WritingColumn({
         onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
-      <Text style={styles.savedHint} testID="journal-save-hint">
-        {savedHintLabel(saveState)}
-      </Text>
+      <WritingFooter body={body} saveState={saveState} />
       {onFinish ? (
         <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
       ) : null}

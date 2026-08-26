@@ -11,6 +11,8 @@ import {
   surface,
   touchTarget,
   uiType,
+  writingField,
+  writingFieldFocus,
 } from '@/design/tokens';
 
 const DEBOUNCE_DELAY_MS = 300;
@@ -64,13 +66,15 @@ const SearchTextInput = ({
     <TextInput
       testID="search-input"
       accessibilityLabel="Search journal"
-      style={[styles.searchTextInput, focused && styles.searchTextInputFocused]}
+      style={[styles.searchTextInput, writingFieldFocus, focused && styles.searchTextInputFocused]}
       value={text}
       onChangeText={onChangeText}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       placeholder="Search journal..."
       placeholderTextColor={ink.muted}
+      selectionColor={writingField.caret}
+      cursorColor={writingField.caret}
       autoFocus
     />
   );
