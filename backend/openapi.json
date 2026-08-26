@@ -14688,7 +14688,7 @@
         ]
       },
       "put": {
-        "description": "Set or replace this account's vault connection, refusing a URL it cannot use.\n\nThe URL is judged before anything is written, so a refused connection leaves\nno row behind and the account keeps whatever it had -- a half-applied\nreplacement would pair a new URL with an old credential and send one vault's\nsecret to another.\n\n``PUT`` rather than ``POST`` because the resource is singular and the\noperation is idempotent: an account has at most one vault, and sending the\nsame body twice leaves the same one connection.",
+        "description": "Set or replace this account's vault connection, refusing a URL it cannot use.\n\nThe URL is judged before anything is written, so a refused connection leaves\nno row behind and the account keeps whatever it had -- a half-applied\nreplacement would pair a new URL with an old credential and send one vault's\nsecret to another.\n\n``PUT`` rather than ``POST`` because the resource is singular and the\noperation is idempotent: an account has at most one vault, and sending the\nsame body twice leaves the same one connection.\n\nThe URL is checked before the credential, so a request carrying both a bad\ndestination and an unusable key is answered about the destination. That is\nthe order the two cost: a URL naming private space is an attempt on this\ndeployment's network, and a malformed key is a paste that went wrong.",
         "operationId": "put_vault_connection_vault_connection_put",
         "parameters": [
           {

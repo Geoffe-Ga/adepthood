@@ -12,12 +12,31 @@ is never carried on any response, which is a property of
 :mod:`schemas.vault_config` -- no response schema in that module has a field to
 put one in -- rather than of anything this module remembers to omit.
 
-The URL is judged by :func:`~services.creek_vault_url.classify_vault_url`,
-which is the same judgement :func:`~services.creek_vault_client.build_creek_vault_client`
-already applies to the deployment-wide variable. Reusing it is what makes the
-refusal here mean something: a second set of rules written for this endpoint
-could accept a URL the request path would then quietly degrade, and the user
-would have been told their vault was connected when it was not.
+The URL is judged twice, by two rule sets, and the second one exists because
+sharing the first was not safe on every axis.
+
+:func:`~services.creek_vault_url.classify_vault_url` runs first, and reusing it
+is what makes the refusal here mean something on the axis it covers: a URL this
+endpoint accepted under looser shape rules than the request path applies would
+leave a user told their vault was connected when it was not. That much of the
+reuse is sound and stays.
+
+What it cannot decide is *where the URL points*, and on that axis the shared
+judgement is not merely silent but actively wrong for this input. It exempts
+loopback, deliberately, because the value it was written for is the operator's
+deployment-wide ``CREEK_VAULT_URL`` -- set by whoever owns the machine, who can
+already reach every host it could name. The value here arrived in a request
+body from somebody who owns none of that, and the URL it names is dialled by
+this server on every journal save with a bearer credential attached. One
+caller's safe default is this caller's open door, so
+:mod:`services.creek_vault_url_user` and
+:mod:`services.creek_vault_url_resolution` run *on top*, for this value only.
+Narrowing the shared rules instead would break every operator's local vault.
+
+The credential is judged last and by this module rather than by the request
+schema, for a reason of the same kind: a schema refusal is a
+``RequestValidationError``, and those carry the rejected value back to the
+caller. See :func:`~schemas.vault_config.credential_is_usable`.
 """
 
 from __future__ import annotations
@@ -31,8 +50,14 @@ from database import get_session
 from errors import unprocessable
 from models.user_vault_config import UserVaultConfig
 from routers.auth import get_current_user
-from schemas.vault_config import VaultConnectionRequest, VaultConnectionResponse
+from schemas.vault_config import (
+    VaultConnectionRequest,
+    VaultConnectionResponse,
+    credential_is_usable,
+)
 from services.creek_vault_url import classify_vault_url
+from services.creek_vault_url_resolution import classify_resolved_user_vault_url
+from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
 from services.user_vault_config import clear_vault_config, load_vault_config, store_vault_config
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -44,6 +69,43 @@ router = APIRouter(prefix="/vault", tags=["vault"])
 # defects it is a component name, but for the fourth it quotes the scheme and
 # host, and a refusal body is a place a client may log.
 _URL_REFUSED_PREFIX = "vault_url_"
+
+# The refusal a caller sees for a credential no ``Authorization`` header could
+# carry. A code this endpoint owns rather than a validator's prose, because the
+# prose that used to carry this refusal arrived with the submitted value
+# attached -- and this is the one field on this request that is a secret.
+_KEY_REFUSED = "vault_key_unusable"
+
+
+async def _refuse_a_url_this_endpoint_must_not_store(url: str) -> None:
+    """Raise a 422 naming the first rule ``url`` fails, or return having found none.
+
+    The order is load-bearing rather than incidental. The shared classifier runs
+    first because it is the one that can find userinfo, and userinfo is itself a
+    credential: ``urlsplit`` puts it in the *scheme* slot when the ``//`` is
+    missing, so no finding may quote or even judge a host until the parse it came
+    from is known to hold no secret. A URL carrying userinfo in front of a
+    private address is two defects at once and must report the credential rather
+    than the destination.
+
+    Then the destination, cheapest question first: an address literal is decided
+    from the string and costs nothing, and only a name that survived that is
+    worth a lookup. The lookup is last because it is the only part that touches
+    the network.
+
+    The classifier's ``detail`` is deliberately not appended to any of these
+    codes. A refusal body is a place a client may log, and one of the shared
+    wordings quotes a scheme and a host.
+    """
+    shape = classify_vault_url(url)
+    if shape is not None:
+        raise unprocessable(f"{_URL_REFUSED_PREFIX}{shape.defect.value}")
+    host = vault_url_host(url)
+    destination = classify_user_vault_url_host(host)
+    if destination is None:
+        destination = await classify_resolved_user_vault_url(host)
+    if destination is not None:
+        raise unprocessable(f"{_URL_REFUSED_PREFIX}{destination.defect.value}")
 
 
 def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
@@ -90,10 +152,15 @@ async def put_vault_connection(
     ``PUT`` rather than ``POST`` because the resource is singular and the
     operation is idempotent: an account has at most one vault, and sending the
     same body twice leaves the same one connection.
+
+    The URL is checked before the credential, so a request carrying both a bad
+    destination and an unusable key is answered about the destination. That is
+    the order the two cost: a URL naming private space is an attempt on this
+    deployment's network, and a malformed key is a paste that went wrong.
     """
-    finding = classify_vault_url(payload.vault_url)
-    if finding is not None:
-        raise unprocessable(f"{_URL_REFUSED_PREFIX}{finding.defect.value}")
+    await _refuse_a_url_this_endpoint_must_not_store(payload.vault_url)
+    if not credential_is_usable(payload.api_key):
+        raise unprocessable(_KEY_REFUSED)
     config = await store_vault_config(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )

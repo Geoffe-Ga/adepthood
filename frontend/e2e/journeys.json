@@ -182,6 +182,18 @@
     "coveredBy": "frontend/e2e/corpus-import.e2e.test.ts"
   },
   {
+    "id": "corpus.leave-an-import-in-flight",
+    "description": "Someone brings in a batch and leaves the screen before it has all gone over. The screen asks first rather than silently discarding the run, and confirming genuinely stops it: the document already in flight finishes wherever it lands, and everything still queued is never sent. The point of the journey is the seam, not the prompt -- what has to be proved is that the account's corpus afterwards holds exactly the documents that had settled on screen, because the defect this closes was a run that kept uploading in the background while the person saw an empty screen. Covered at the hook and screen level by Jest (useSeedRun, useSeedLeaveGuard, SeedCorpusScreen), which can only assert that the client stopped calling the route; uncovered here because no spec yet reads the corpus back to confirm the server agrees.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus", "corpusConsent"],
+      "routes": ["POST /corpus/import", "PUT /corpus/consent/{source}"],
+      "tables": ["user", "corpusconsentevent"]
+    },
+    "status": "uncovered",
+    "issue": 2423
+  },
+  {
     "id": "account.export-my-data",
     "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
     "crosses": {
