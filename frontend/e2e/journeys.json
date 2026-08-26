@@ -41,6 +41,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.offline-check-in-replay-drains",
+    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Uncovered because the real-wire lane cannot put the device offline and then make the server permanently reject a queued entry -- the constraint already recorded on errors.server-fault-is-not-offline, where no reachable failure can be manufactured without adding fault injection to the production app. Covering it needs a lane that can toggle connectivity and read the device queue. The classification is pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["GET /habits/", "POST /goal_completions/"],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2474
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
     "crosses": {
