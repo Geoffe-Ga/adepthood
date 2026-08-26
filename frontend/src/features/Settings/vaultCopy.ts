@@ -17,8 +17,8 @@
  * they already run, and is allowed to spell a transport for exactly as long as
  * a field nobody can fill in would be worse. This surface also owns its own
  * refusal sentences rather than routing them through
- * ``src/api/errorMessages.ts``: the four are swept by the copy guards here, and
- * a second home for them is a second place for them to drift.
+ * ``src/api/errorMessages.ts``: all seven are swept by the copy guards here,
+ * and a second home for them is a second place for them to drift.
  */
 
 /** Hub row label. Names the destination without implying an action is pending. */
@@ -139,6 +139,16 @@ export const VAULT_CONNECTED_LABEL = 'Connected to';
 export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
 
 /**
+ * Said when the read could not establish whether a vault is attached at all.
+ * "No vault connected yet" would be an answer nobody gave, and for somebody who
+ * does have one it would be a false report of losing it, so this states the gap
+ * instead. The second clause is not reassurance but a promise the confirmation
+ * gate keeps: a connect made from this state asks before it sends.
+ */
+export const VAULT_CONNECTION_UNKNOWN =
+  'Adepthood could not tell whether a vault is already connected. You can still connect one, and Adepthood will ask first.';
+
+/**
  * Said after a successful connect. Describes what changed from here on — new
  * entries — because nothing already written is sent backwards, and a sentence
  * that implied otherwise would promise a backfill there is no path for.
@@ -162,6 +172,43 @@ export const VAULT_DISCONNECT_CONFIRM_TITLE = 'Disconnect this vault?';
  */
 export const VAULT_DISCONNECT_CONFIRM_BODY =
   'Adepthood will stop sending copies there. Every entry stays exactly where it is, and you can connect again whenever you like.';
+
+/** Confirmation title for a connect that would replace one already attached. */
+export const VAULT_REPLACE_CONFIRM_TITLE = 'Replace this vault?';
+
+/**
+ * Confirmation body. Bounds the swap in both directions — where copies go from
+ * here, and what happens to the vault being left — because the fear worth
+ * answering at that moment is that replacing empties the old space. It does
+ * not: Adepthood only ever stops writing to it.
+ */
+export const VAULT_REPLACE_CONFIRM_BODY =
+  'Adepthood will send copies to the new vault instead. Everything in the vault you are connected to now stays exactly where it is, and nothing you have written changes.';
+
+/**
+ * Confirmation title when the read could not say whether anything is attached.
+ * It asks about the vault in hand rather than about one it cannot see: claiming
+ * there is another to replace would invent the same answer the notice above it
+ * declines to invent.
+ */
+export const VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE = 'Connect this vault?';
+
+/**
+ * Confirmation body for that case. The uncertainty comes first and its
+ * consequence second, so the decision is made on what is actually known, and
+ * the closing clause is the same promise the certain version makes about the
+ * same thing — a vault that is replaced keeps everything in it.
+ */
+export const VAULT_REPLACE_UNKNOWN_CONFIRM_BODY =
+  'Adepthood could not tell whether another vault is already connected. If one is, this replaces it, and everything in it stays exactly where it is.';
+
+/**
+ * The affirmative in both replace confirmations. It names the act rather than
+ * agreeing ("OK"), and it says "Replace" even in the dialog that could not
+ * establish there is anything to replace, because that is the outcome the
+ * person is accepting the risk of.
+ */
+export const VAULT_REPLACE_BUTTON = 'Replace';
 
 /** The way out of the confirmation. The conventional word, deliberately. */
 export const VAULT_CANCEL = 'Cancel';
@@ -202,11 +249,17 @@ export const VAULT_ADDRESS_UNREADABLE =
   'Adepthood cannot read that as an address. Copy it again from your vault.';
 
 /**
- * The address parsed but named nothing. Says which part is missing so somebody
- * looking at their own paste can see the gap rather than re-pasting the same
- * thing and being refused identically.
+ * The address parsed but did not name a vault. One classifier defect covers
+ * three different gaps — ``vault.example.com`` and ``//vault.example.com`` are
+ * missing the transport, ``https://`` is missing the name — and the server
+ * withholds which on purpose, so no sentence here can name the missing part
+ * without being wrong about the other two. It was named anyway, and it was
+ * named wrongly for the commonest paste of all: a bare vault name, told it was
+ * missing its own name. So this draws the whole span an address has to cover
+ * and states the fix rather than the defect.
  */
-export const VAULT_ADDRESS_INCOMPLETE = 'That address is missing the part that names your vault.';
+export const VAULT_ADDRESS_INCOMPLETE =
+  'Use the whole address, from https:// through the name of your vault.';
 
 /**
  * The address carried more than a vault. Lists the three shapes people
@@ -217,10 +270,41 @@ export const VAULT_ADDRESS_EXTRA_PARTS =
   'Use the plain address of your vault, with no sign-in, no question mark, and nothing after a #.';
 
 /**
- * The address asked for a transport Adepthood will not carry a key over. The
- * second of the two strings allowed to spell one, and it names the exception
- * rather than a flat rule, so somebody running a vault on their own machine is
- * not left thinking they were refused for good.
+ * The address asked for a transport Adepthood will not carry a key over. One
+ * of the strings allowed to spell a transport, and it states the whole rule
+ * rather than an exception to it: the exception it used to name is now false,
+ * because a vault on the reader's own machine is refused outright by the
+ * destination guard. Copy implying otherwise sends somebody chasing a
+ * connection that cannot be made.
  */
 export const VAULT_ADDRESS_INSECURE =
-  'Adepthood reaches a vault over https:// unless it runs on this machine.';
+  'Adepthood reaches a vault over https://, and cannot reach one that runs on this machine.';
+
+/**
+ * The address named a destination only the reader's own network can reach.
+ * Says where the address points and what would be reachable instead, rather
+ * than repeating the classifier's ``detail``: that phrase is withheld from the
+ * refusal body on purpose, being written for whoever reads the server's logs.
+ */
+export const VAULT_ADDRESS_PRIVATE =
+  'That address points somewhere only your own network can reach. Connect a vault Adepthood can reach from the open internet.';
+
+/**
+ * Nothing could be found at that address. It invites a re-check and a retry
+ * together because the server cannot tell a name that does not exist from a
+ * resolver it could not reach, and refuses both identically — so a sentence
+ * offering only one of the two remedies would be the wrong advice half the
+ * time, and neither half is the reader's fault.
+ */
+export const VAULT_ADDRESS_NOT_FOUND =
+  'Adepthood could not work out where that address points. Check it against your vault, and try again in a moment.';
+
+/**
+ * The key could not be carried. Names the shape of the problem — a stray space,
+ * or a character that cannot travel — and quotes nothing, because on this one
+ * field the rejected value is the secret. The remedy is to copy it again rather
+ * than to edit it: a key that arrived with a hole in it is not worth patching
+ * by hand.
+ */
+export const VAULT_KEY_REFUSED =
+  'That key has a space or a character Adepthood cannot send. Copy it again from your vault.';

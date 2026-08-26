@@ -11,20 +11,29 @@
  *
  * **The key is write-only across the whole seam.** It goes out on one body and
  * comes back on no response: it is never persisted on the device, never logged,
- * never echoed into a status line, a refusal or the connected card, and the
- * field is cleared the moment it has been sent.
+ * and never echoed into a status line, a refusal or the connected card. The
+ * field is cleared as soon as a connection has been *accepted*, and the reveal
+ * is dropped on every send — but a refused key is deliberately kept, behind the
+ * mask, so the address can be corrected without fetching it again. Most
+ * refusals on this seam are about the address, and clearing the key on those
+ * would charge a re-paste for every typo.
  *
  * **The address is judged by the server alone.** This screen checks only that
- * the two fields are non-empty; every verdict on the shape of an address comes
- * back as one of four codes, which is why there are four different sentences
- * rather than one "something went wrong". A screen that collapsed them would
- * leave somebody re-pasting the same address forever.
+ * the two fields are non-empty; every verdict on an address — on its shape, and
+ * on where it points — comes back as one of seven codes, which is why there are
+ * seven different sentences rather than one "something went wrong". A screen
+ * that collapsed them would leave somebody re-pasting the same address forever.
+ *
+ * **What the read found is a three-state answer.** A read that failed is not a
+ * report that nothing is attached, so the screen says so and a connect made
+ * from that state asks before it sends. See ``vaultConnectionState``.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  type AlertButton,
   StyleSheet,
   Text,
   TextInput,
@@ -43,17 +52,26 @@ import {
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 import {
+  CONNECTION_UNKNOWN,
+  NOTHING_CONNECTED,
+  readConnectionState,
+  type VaultConnectionState,
+} from './vaultConnectionState';
+import {
   VAULT_ADDRESS_EXTRA_PARTS,
   VAULT_ADDRESS_INCOMPLETE,
   VAULT_ADDRESS_INSECURE,
   VAULT_ADDRESS_LABEL,
   VAULT_ADDRESS_MISSING,
+  VAULT_ADDRESS_NOT_FOUND,
   VAULT_ADDRESS_PLACEHOLDER,
+  VAULT_ADDRESS_PRIVATE,
   VAULT_ADDRESS_UNREADABLE,
   VAULT_ADD_HEADING,
   VAULT_CANCEL,
   VAULT_CONNECTED_LABEL,
   VAULT_CONNECTING_BUTTON,
+  VAULT_CONNECTION_UNKNOWN,
   VAULT_CONNECT_BUTTON,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
@@ -69,18 +87,24 @@ import {
   VAULT_KEY_LABEL,
   VAULT_KEY_MISSING,
   VAULT_KEY_PLACEHOLDER,
+  VAULT_KEY_REFUSED,
   VAULT_KEY_SHOW,
   VAULT_LOAD_FAILED,
   VAULT_NONE_CONNECTED,
   VAULT_PROMISE,
+  VAULT_REPLACE_BUTTON,
+  VAULT_REPLACE_CONFIRM_BODY,
+  VAULT_REPLACE_CONFIRM_TITLE,
   VAULT_REPLACE_HEADING,
+  VAULT_REPLACE_UNKNOWN_CONFIRM_BODY,
+  VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE,
   VAULT_STATUS_CONNECTED,
   VAULT_STATUS_DISCONNECTED,
   VAULT_TITLE,
   VAULT_WHAT_IT_IS,
 } from './vaultCopy';
 
-import { ApiError, vault, type VaultConnection } from '@/api';
+import { ApiError, vault } from '@/api';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import {
@@ -94,25 +118,65 @@ import {
   type as typeRamp,
 } from '@/design/tokens';
 
-/** The status a refused address arrives with; every other fault is generic. */
+/** The status every refusal on this seam arrives with; other faults are generic. */
 const HTTP_UNPROCESSABLE = 422;
-
-/** The state the account is in once a disconnect has been accepted. */
-const NOTHING_CONNECTED: VaultConnection = { connected: false, vault_url: null };
 
 /**
  * The server's refusal vocabulary, mapped to the sentence written for each.
  *
  * Kept beside the screen that renders them rather than in ``vaultCopy`` (which
  * the copy guards sweep as strings) or in the shared ``errorMessages`` table:
- * these four exist to answer one classifier, and a second home for them is a
+ * these seven exist to answer one endpoint, and a second home for them is a
  * second place for them to drift out of step with it.
+ *
+ * Three questions, asked in this order and answered by the first that fails:
+ * the four verdicts on the shape of the address, then the two on where it
+ * points, then the one on whether the key could survive a header at all.
+ *
+ * Exported for the drift guard alone -- no other caller should reach for it,
+ * and the screen reaches it through ``refusalMessage``. The map mirrors a
+ * vocabulary three backend modules own, and a mirror is only honest while
+ * something fails when it drifts: the guard reads these keys directly and
+ * fails on the day a code is added or renamed on the server, on the backend
+ * pull request that does it, rather than years later on somebody's screen.
  */
-const REFUSAL_SENTENCES = new Map<string, string>([
+export const REFUSAL_SENTENCES = new Map<string, string>([
   ['vault_url_unparseable', VAULT_ADDRESS_UNREADABLE],
   ['vault_url_malformed', VAULT_ADDRESS_INCOMPLETE],
   ['vault_url_forbidden_components', VAULT_ADDRESS_EXTRA_PARTS],
   ['vault_url_insecure_transport', VAULT_ADDRESS_INSECURE],
+  ['vault_url_private_address', VAULT_ADDRESS_PRIVATE],
+  ['vault_url_unresolvable_host', VAULT_ADDRESS_NOT_FOUND],
+  ['vault_key_unusable', VAULT_KEY_REFUSED],
+]);
+
+/** What one confirmation dialog asks. */
+interface ConfirmPrompt {
+  readonly title: string;
+  readonly body: string;
+}
+
+/** Leaving a vault is asked about once, and always the same way. */
+const DISCONNECT_PROMPT: ConfirmPrompt = {
+  title: VAULT_DISCONNECT_CONFIRM_TITLE,
+  body: VAULT_DISCONNECT_CONFIRM_BODY,
+};
+
+/**
+ * What a connect asks before it sends, keyed on what the read established.
+ *
+ * A ``Map`` rather than a branch, and deliberately missing the ``none`` key: a
+ * miss is the answer for a first connection, which replaces nothing and so is
+ * charged no dialog. The unknown entry is the point of the whole state — the
+ * read that failed may have been hiding a vault, and the only honest thing to
+ * do with a binding nobody could see is to ask before overwriting it.
+ */
+const REPLACE_PROMPTS = new Map<VaultConnectionState['kind'], ConfirmPrompt>([
+  ['connected', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
+  [
+    'unknown',
+    { title: VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE, body: VAULT_REPLACE_UNKNOWN_CONFIRM_BODY },
+  ],
 ]);
 
 /**
@@ -137,16 +201,30 @@ function missingFieldMessage(address: string, key: string): string | null {
 }
 
 /**
- * The address of an attached vault, or ``null`` when there is none to show.
- *
- * Folds "not read yet", "read, nothing attached" and the impossible
- * connected-with-no-address into one answer, so the card, the heading and the
- * empty state all turn on a single value instead of re-deriving the same
- * condition three times.
+ * The form's heading. Only a named vault earns "Replace"; the other two states
+ * get the offer, which is an imperative rather than a claim about what is
+ * attached. "Replace this vault" over a read that failed would assert the very
+ * thing the read could not establish.
  */
-function attachedAddress(connection: VaultConnection | null): string | null {
-  if (connection === null || !connection.connected) return null;
-  return connection.vault_url;
+function connectHeading(state: VaultConnectionState): string {
+  return state.kind === 'connected' ? VAULT_REPLACE_HEADING : VAULT_ADD_HEADING;
+}
+
+/**
+ * What pressing Connect must ask first, or ``undefined`` to send straight
+ * through.
+ *
+ * A press with a blank field is never worth a dialog: it reaches the wire on no
+ * path at all, so it goes through to be refused by the field check and told
+ * which one is empty.
+ */
+function replacementPrompt(
+  state: VaultConnectionState,
+  address: string,
+  key: string,
+): ConfirmPrompt | undefined {
+  if (missingFieldMessage(address, key) !== null) return undefined;
+  return REPLACE_PROMPTS.get(state.kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,8 +424,8 @@ const VaultConnectForm = (props: VaultConnectFormProps): React.JSX.Element => (
 // ---------------------------------------------------------------------------
 
 interface ConnectionRead {
-  connection: VaultConnection | null;
-  setConnection: Dispatch<SetStateAction<VaultConnection | null>>;
+  state: VaultConnectionState;
+  setState: Dispatch<SetStateAction<VaultConnectionState>>;
   loading: boolean;
 }
 
@@ -356,21 +434,25 @@ interface ConnectionRead {
  *
  * The route answers every account rather than 404ing one that has connected
  * nothing, so a failure here is a failure to reach the server — reported as
- * such, and never as "you have no vault".
+ * such, and never as "you have no vault". The state a failure leaves behind
+ * says exactly that, and it is the state the read starts in: before the answer
+ * arrives, nobody has checked either.
  */
 function useConnectionRead(setError: Dispatch<SetStateAction<string | null>>): ConnectionRead {
-  const [connection, setConnection] = useState<VaultConnection | null>(null);
+  const [state, setState] = useState<VaultConnectionState>(CONNECTION_UNKNOWN);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let live = true;
     void vault
       .connection()
-      .then((state) => {
-        if (live) setConnection(state);
+      .then((answer) => {
+        if (live) setState(readConnectionState(answer));
       })
       .catch(() => {
-        if (live) setError(VAULT_LOAD_FAILED);
+        if (!live) return;
+        setState(CONNECTION_UNKNOWN);
+        setError(VAULT_LOAD_FAILED);
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -380,38 +462,48 @@ function useConnectionRead(setError: Dispatch<SetStateAction<string | null>>): C
     };
   }, [setError]);
 
-  return { connection, setConnection, loading };
+  return { state, setState, loading };
 }
 
 interface ConnectArgs {
   form: SettingsFormState;
   secret: string;
   setSecret: Dispatch<SetStateAction<string>>;
-  setConnection: Dispatch<SetStateAction<VaultConnection | null>>;
+  setReveal: Dispatch<SetStateAction<boolean>>;
+  setState: Dispatch<SetStateAction<VaultConnectionState>>;
 }
 
 /**
- * Send the address and the key, then forget the key.
+ * Send the address and the key, then keep no more of the key than the next
+ * attempt needs.
  *
  * Both values are trimmed: a pasted address or key arrives with the whitespace
- * the clipboard brought, and neither carries meaning at its edges. The field is
- * cleared inside the same success path that records the new connection, so the
- * credential's lifetime on the device ends with the request that used it.
+ * the clipboard brought, and neither carries meaning at its edges.
+ *
+ * The re-mask is the first thing here rather than part of either outcome.
+ * ``perform`` runs only once the field check has passed, so it marks exactly
+ * the presses that put a key on the wire, and a key that has been sent has no
+ * business still standing in the clear whichever way the request went. The
+ * field itself is cleared only on acceptance: most refusals on this seam are
+ * about the address, and clearing it on those would charge a fresh paste of the
+ * key for every typo in the address.
  */
 function useConnectSubmit({
   form,
   secret,
   setSecret,
-  setConnection,
+  setReveal,
+  setState,
 }: ConnectArgs): () => Promise<void> {
   const { draft, setStatus } = form;
   const validate = useCallback(() => missingFieldMessage(draft, secret), [draft, secret]);
   const perform = useCallback(async () => {
-    const state = await vault.connect({ vault_url: draft.trim(), api_key: secret.trim() });
+    setReveal(false);
+    const answer = await vault.connect({ vault_url: draft.trim(), api_key: secret.trim() });
     setSecret('');
-    setConnection(state);
+    setState(readConnectionState(answer));
     setStatus(VAULT_STATUS_CONNECTED);
-  }, [draft, secret, setSecret, setConnection, setStatus]);
+  }, [draft, secret, setReveal, setSecret, setState, setStatus]);
   const onError = useCallback((error: unknown) => refusalMessage(error), []);
   return useSettingsSubmit(form, { validate, perform, onError });
 }
@@ -419,35 +511,60 @@ function useConnectSubmit({
 /** Detach the vault, and say what that did and did not change. */
 function useDisconnectSubmit(
   form: SettingsFormState,
-  setConnection: Dispatch<SetStateAction<VaultConnection | null>>,
+  setState: Dispatch<SetStateAction<VaultConnectionState>>,
 ): () => Promise<void> {
   const { setStatus } = form;
   const validate = useCallback(() => null, []);
   const perform = useCallback(async () => {
     await vault.disconnect();
-    setConnection(NOTHING_CONNECTED);
+    setState(NOTHING_CONNECTED);
     setStatus(VAULT_STATUS_DISCONNECTED);
-  }, [setConnection, setStatus]);
+  }, [setState, setStatus]);
   const onError = useCallback(() => VAULT_DISCONNECT_FAILED, []);
   return useSettingsSubmit(form, { validate, perform, onError });
 }
 
-/** Ask before detaching: the button is destructive, so it is not the decision. */
-function useDisconnectConfirmation(performDisconnect: () => Promise<void>): () => void {
+interface ConfirmedActionArgs {
+  /** What to ask, or ``undefined`` when this press needs no asking. */
+  prompt: ConfirmPrompt | undefined;
+  confirmLabel: string;
+  destructive: boolean;
+  onConfirm: () => Promise<void>;
+}
+
+/**
+ * Ask before doing something that overwrites or undoes a binding.
+ *
+ * One hook for both the disconnect and the replace, because they are the same
+ * gesture in different words, and two copies of a confirmation is a fix applied
+ * to one of them. An absent ``prompt`` performs the action straight away:
+ * whether there is anything to confirm is a fact about the data, not a second
+ * code path for each caller to carry.
+ *
+ * The buttons are always [cancel, confirm] in that order, so the way out sits
+ * in the same place on every dialog this screen raises.
+ */
+function useConfirmedAction({
+  prompt,
+  confirmLabel,
+  destructive,
+  onConfirm,
+}: ConfirmedActionArgs): () => void {
   return useCallback(() => {
-    Alert.alert(VAULT_DISCONNECT_CONFIRM_TITLE, VAULT_DISCONNECT_CONFIRM_BODY, [
+    if (prompt === undefined) {
+      void onConfirm();
+      return;
+    }
+    const confirmStyle: AlertButton['style'] = destructive ? 'destructive' : 'default';
+    Alert.alert(prompt.title, prompt.body, [
       { text: VAULT_CANCEL, style: 'cancel' },
-      {
-        text: VAULT_DISCONNECT_BUTTON,
-        style: 'destructive',
-        onPress: () => void performDisconnect(),
-      },
+      { text: confirmLabel, style: confirmStyle, onPress: () => void onConfirm() },
     ]);
-  }, [performDisconnect]);
+  }, [prompt, confirmLabel, destructive, onConfirm]);
 }
 
 interface VaultController {
-  connection: VaultConnection | null;
+  state: VaultConnectionState;
   loading: boolean;
   form: SettingsFormState;
   secret: string;
@@ -459,23 +576,21 @@ interface VaultController {
   onRequestDisconnect: () => void;
 }
 
-/**
- * Everything the connection half of the screen renders from.
- *
- * The shared settings form holds a single draft, so the address rides in it and
- * the key gets its own state beside it. Widening the shared hook to two drafts
- * would push a credential-shaped field into the screens that have no credential.
- */
-function useVaultConnection(): VaultController {
-  const form = useSettingsFormState('');
-  const [secret, setSecret] = useState('');
-  const [reveal, setReveal] = useState(false);
-  const { setDraft, setError, setStatus } = form;
-  const { connection, setConnection, loading } = useConnectionRead(setError);
-  const onConnect = useConnectSubmit({ form, secret, setSecret, setConnection });
-  const performDisconnect = useDisconnectSubmit(form, setConnection);
-  const onRequestDisconnect = useDisconnectConfirmation(performDisconnect);
+type FieldEdits = Pick<VaultController, 'onChangeAddress' | 'onChangeSecret'>;
 
+/**
+ * Typing into either field, and the one thing both do besides.
+ *
+ * Editing clears the feedback banner: whatever the last attempt said was about
+ * the values that were there then. What the *read* found is deliberately not
+ * cleared with it — a keystroke changes nothing about whether a vault is
+ * attached — which is why that notice lives outside the banner.
+ */
+function useFieldEdits(
+  form: SettingsFormState,
+  setSecret: Dispatch<SetStateAction<string>>,
+): FieldEdits {
+  const { setDraft, setError, setStatus } = form;
   const clearFeedback = useCallback(() => {
     setError(null);
     setStatus(null);
@@ -492,44 +607,107 @@ function useVaultConnection(): VaultController {
       setSecret(value);
       clearFeedback();
     },
-    [clearFeedback],
+    [setSecret, clearFeedback],
   );
+  return { onChangeAddress, onChangeSecret };
+}
+
+/**
+ * Everything the connection half of the screen renders from.
+ *
+ * The shared settings form holds a single draft, so the address rides in it and
+ * the key gets its own state beside it. Widening the shared hook to two drafts
+ * would push a credential-shaped field into the screens that have no credential.
+ */
+function useVaultConnection(): VaultController {
+  const form = useSettingsFormState('');
+  const [secret, setSecret] = useState('');
+  const [reveal, setReveal] = useState(false);
+  const { setError } = form;
+  const { state, setState, loading } = useConnectionRead(setError);
+  const performConnect = useConnectSubmit({ form, secret, setSecret, setReveal, setState });
+  const performDisconnect = useDisconnectSubmit(form, setState);
+  const onConnect = useConfirmedAction({
+    prompt: replacementPrompt(state, form.draft, secret),
+    confirmLabel: VAULT_REPLACE_BUTTON,
+    destructive: false,
+    onConfirm: performConnect,
+  });
+  const onRequestDisconnect = useConfirmedAction({
+    prompt: DISCONNECT_PROMPT,
+    confirmLabel: VAULT_DISCONNECT_BUTTON,
+    destructive: true,
+    onConfirm: performDisconnect,
+  });
+  const edits = useFieldEdits(form, setSecret);
   const onToggleReveal = useCallback(() => setReveal((previous) => !previous), []);
 
   return {
-    connection,
+    state,
     loading,
     form,
     secret,
     reveal,
-    onChangeAddress,
-    onChangeSecret,
     onToggleReveal,
     onConnect,
     onRequestDisconnect,
+    ...edits,
   };
 }
 
-/** The card, the empty state, or neither — plus the form, which is always there. */
+interface VaultConnectionNoticeProps {
+  state: VaultConnectionState;
+  busy: boolean;
+  onRequestDisconnect: () => void;
+}
+
+/**
+ * What the read found: a card, a line, or the line that admits it does not know.
+ *
+ * Three states and three answers, and the third is the reason the union exists.
+ * Rendering the empty state over a read that failed tells somebody who has a
+ * vault that they have none, which is the worst sentence this screen could say.
+ */
+const VaultConnectionNotice = ({
+  state,
+  busy,
+  onRequestDisconnect,
+}: VaultConnectionNoticeProps): React.JSX.Element => {
+  if (state.kind === 'connected') {
+    return (
+      <ConnectedVaultCard
+        address={state.address}
+        busy={busy}
+        onRequestDisconnect={onRequestDisconnect}
+      />
+    );
+  }
+  if (state.kind === 'unknown') {
+    return (
+      <Text style={settingsFormStyles.body} testID="vault-connection-unknown">
+        {VAULT_CONNECTION_UNKNOWN}
+      </Text>
+    );
+  }
+  return (
+    <Text style={styles.empty} testID="vault-none-connected">
+      {VAULT_NONE_CONNECTED}
+    </Text>
+  );
+};
+
+/** What the read found, plus the form, which is offered in every state. */
 const VaultConnectionSection = (controller: VaultController): React.JSX.Element => {
-  const { connection, form } = controller;
-  const address = attachedAddress(connection);
+  const { state, form } = controller;
   return (
     <>
-      {connection !== null && address === null ? (
-        <Text style={styles.empty} testID="vault-none-connected">
-          {VAULT_NONE_CONNECTED}
-        </Text>
-      ) : null}
-      {address === null ? null : (
-        <ConnectedVaultCard
-          address={address}
-          busy={form.submitting}
-          onRequestDisconnect={controller.onRequestDisconnect}
-        />
-      )}
+      <VaultConnectionNotice
+        state={state}
+        busy={form.submitting}
+        onRequestDisconnect={controller.onRequestDisconnect}
+      />
       <VaultConnectForm
-        heading={address === null ? VAULT_ADD_HEADING : VAULT_REPLACE_HEADING}
+        heading={connectHeading(state)}
         address={form.draft}
         secret={controller.secret}
         reveal={controller.reveal}
