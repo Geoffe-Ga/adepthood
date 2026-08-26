@@ -27,7 +27,7 @@ import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
 import {
-  saveHabits as persistHabits,
+  saveHabits as saveHabitsToDisk,
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
   clearPendingCheckIns,
@@ -59,7 +59,24 @@ const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   ...habit,
   revealed: true,
   completions: [],
+  // The sole construction site for the demo tiles, so this mark keeps their placeholder dates out of the program anchor however they are seeded.
+  isDemoSeed: true,
 }));
+
+/**
+ * Demo tiles are in-memory placeholders: their ids and start dates are
+ * fabricated, so they must never reach the cache on disk (where the next
+ * launch would read them back as real data) nor the server.
+ */
+const isNotDemoSeed = (habit: { isDemoSeed?: boolean }): boolean => habit.isDemoSeed !== true;
+
+/**
+ * The single write path to the habit cache. It always writes, even when the
+ * filtered list is empty: an empty cache reads back as "no cache", which heals
+ * a cache poisoned before this guard existed on the user's first mutation.
+ */
+const persistHabits = (habits: Habit[]): Promise<void> =>
+  saveHabitsToDisk(habits.filter(isNotDemoSeed));
 
 const INSTRUCTIONAL_TOAST_DURATION_MS = 5000;
 
@@ -298,10 +315,17 @@ const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boole
   };
 };
 
-/** Earliest habit start date (the program start); takes the min, not index 0, in case the list is unsorted. */
-const earliestStartDate = (habits: ReadonlyArray<{ start_date: Date }>): Date | null => {
+/**
+ * Earliest habit start date (the program start); takes the min, not index 0, in
+ * case the list is unsorted. Demo-seed tiles are excluded because their
+ * hard-coded placeholder dates would otherwise anchor a day-one user's calendar
+ * years into the program.
+ */
+const earliestStartDate = (
+  habits: ReadonlyArray<{ start_date: Date; isDemoSeed?: boolean }>,
+): Date | null => {
   let earliest: number | null = null;
-  for (const habit of habits) {
+  for (const habit of habits.filter(isNotDemoSeed)) {
     const time = new Date(habit.start_date).getTime();
     if (Number.isNaN(time)) continue;
     if (earliest === null || time < earliest) earliest = time;
@@ -323,8 +347,9 @@ const sameCalendarDay = (a: Date, b: Date): boolean =>
  * — whose persisted anchor was wiped on logout, or who onboarded before the
  * anchor existed — keeps a calendar-correct Habits screen while every other
  * screen falls back to a divergent server value. Recomputing on load keeps all
- * screens in lockstep and self-heals a missing anchor. Skipped for the demo
- * FALLBACK seed, whose placeholder dates are not a real program start.
+ * screens in lockstep and self-heals a missing anchor. The demo FALLBACK seed
+ * is filtered out inside ``earliestStartDate``, so a store holding only demo
+ * tiles yields no anchor and this leaves the existing one untouched.
  */
 const syncProgramAnchorFromHabits = (): void => {
   const anchor = earliestStartDate(getHabits());
@@ -444,49 +469,42 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
   hasCachedData: boolean,
-): Promise<boolean> => {
+): Promise<void> => {
   // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.
   if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
     setHabits(FALLBACK_HABITS);
-    return true;
+    return;
   }
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits);
     setHabits(mapped);
     await persistHabits(mapped);
   }
-  return false;
 };
 
-const handleApiError = (err: unknown, hasCachedData: boolean): boolean => {
+const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
   // Mirrors the live-store guard in ``handleApiSuccess`` for the error path.
-  if (hasCachedData || getHabits().length > 0) return false;
+  if (hasCachedData || getHabits().length > 0) return;
   setError(
     formatApiError(err, {
       fallback: "We couldn't load your habits. Check your connection, then pull down to try again.",
     }),
   );
   setHabits(FALLBACK_HABITS);
-  return true;
 };
 
-// ``seededFallback`` is true only when the store now holds the demo FALLBACK
-// tiles — the caller skips the program-anchor sync so placeholder dates never
-// become a real program start.
-type FetchResult =
-  | { kind: 'ok'; count: number; seededFallback: boolean }
-  | { kind: 'error'; seededFallback: boolean };
+type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
 
 const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   try {
     const apiHabits = await habitsApi.listAll();
-    const seededFallback = await handleApiSuccess(apiHabits, hasCachedData);
+    await handleApiSuccess(apiHabits, hasCachedData);
     setError(null);
-    return { kind: 'ok', count: apiHabits.length, seededFallback };
+    return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
-    const seededFallback = handleApiError(err, hasCachedData);
-    return { kind: 'error', seededFallback };
+    handleApiError(err, hasCachedData);
+    return { kind: 'error' };
   }
 };
 
@@ -788,24 +806,26 @@ const loadHabits = async (tz?: string): Promise<void> => {
     setLoading(false);
   }
   const result = await fetchFromApi(hasCachedData);
-  let seededFallback = result.seededFallback;
-  // Stuck-user recovery: cache has habits, server returned an empty list.
-  // Push the cache back, then re-fetch so the store gets the server's ids.
-  if (result.kind === 'ok' && result.count === 0 && hasCachedData) {
-    await recoverStuckHabits(cached!);
+  // Stuck-user recovery: cache has real habits, server returned an empty list.
+  // Push those back, then re-fetch so the store gets the server's ids. Demo
+  // tiles left in an older cache are skipped on both legs, so a cache holding
+  // nothing else means the user was never stuck.
+  const recoverable = (cached ?? []).filter(isNotDemoSeed);
+  if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
+    await recoverStuckHabits(recoverable);
     const refetch = await fetchFromApi(true);
-    seededFallback = refetch.seededFallback;
     // #286: the recovery push seeded default goal targets — replay any
     // cached customizations onto the fresh server goals.
     if (refetch.kind === 'ok') {
-      await replayCachedGoalTargets(cached!, getHabits());
+      await replayCachedGoalTargets(recoverable, getHabits());
     }
   }
   setLoading(false);
 
   // Keep Map/Practice/Course/Journal aligned with the now-current habits by
-  // re-deriving the shared program anchor from the real (non-demo) tiles.
-  if (!seededFallback) syncProgramAnchorFromHabits();
+  // re-deriving the shared program anchor. Demo tiles are excluded at the
+  // source, so a demo-only store simply yields no anchor.
+  syncProgramAnchorFromHabits();
 
   // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay pending
   // check-ins queued during offline, and when one fails mid-batch only re-

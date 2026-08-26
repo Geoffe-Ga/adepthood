@@ -64,8 +64,9 @@ import {
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
-import { useProgramStore } from '../../../../store/useProgramStore';
+import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
 import { applyGoalUpdate, habitManager } from '../habitManager';
@@ -115,6 +116,17 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   revealed: true,
   ...overrides,
 });
+
+// Fixed so the program-clock assertions never drift with the calendar.
+const FIXED_TODAY = new Date(2026, 5, 1);
+
+// The demo seed as it looks once AsyncStorage hands it back on a later launch.
+const CACHED_DEMO_TILES: Habit[] = HABIT_DEFAULTS.map((habit): Habit => ({
+  ...habit,
+  revealed: true,
+  completions: [],
+  isDemoSeed: true,
+}));
 
 /** Server-default goal shape returned by the post-recovery re-fetch (#286 tests). */
 const freshServerGoal = (id: number, title: string, tier: string, target: number) => ({
@@ -604,6 +616,65 @@ describe('habitManager', () => {
 
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
       expect(useProgramStore.getState().programStartDate).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to the demo seed on a repeat load in the same session', async () => {
+      // Second load of the same session: the demo tiles are already in the
+      // store, so nothing re-seeds and the per-call guard opens. The anchor
+      // must still ignore their hard-coded 2025 dates.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to the demo seed on a repeat load after an API failure', async () => {
+      // Same repeat-load hazard down the ``handleApiError`` seeding path.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockRejectedValueOnce(new Error('boom') as never)
+        .mockRejectedValueOnce(new Error('boom') as never);
+
+      await habitManager.loadHabits();
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to demo tiles restored from the cache', async () => {
+      // A later launch reads the demo seed back out of AsyncStorage, so the
+      // tiles arrive as cached data rather than a fresh seed. They carry the
+      // demo marker and stay excluded from the anchor. A demo-only cache is
+      // not a stuck user, so recovery never runs and there is no second fetch.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce(CACHED_DEMO_TILES as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
     });
 
     it('records an error message when the API fails and no cache exists', async () => {
@@ -2393,6 +2464,135 @@ describe('habitManager', () => {
 
       expect(setStateSpy).not.toHaveBeenCalled();
       setStateSpy.mockRestore();
+    });
+  });
+
+  describe('demo-seed tiles never persist and never recover', () => {
+    // The demo seed is an in-memory placeholder for a user with no server
+    // habits. Once it reaches the AsyncStorage cache, the next launch reads it
+    // back as real data and stuck-user recovery POSTs it, minting fabricated
+    // server habits. It must never be written, and never be recovered.
+    const seedDemoTiles = async (): Promise<void> => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      await habitManager.loadHabits();
+    };
+
+    // "Nothing was written" and "an empty list was written" are the same
+    // invariant, so an uncalled saveHabits reads as an empty payload.
+    const lastPersisted = (): Habit[] => {
+      const call = (saveHabits as jest.Mock).mock.calls.at(-1);
+      if (!call) return [];
+      return call[0] as Habit[];
+    };
+
+    /** Server row shape returned by the post-recovery re-fetch. */
+    const serverHabit = (id: number, name: string) => ({
+      id,
+      name,
+      icon: '\u{1F9D8}',
+      start_date: '2025-01-01',
+      energy_cost: 1,
+      energy_return: 2,
+      stage: 'Beige',
+      streak: 0,
+      milestone_notifications: false,
+      goals: [
+        freshServerGoal(991, 'Low', 'low', 1),
+        freshServerGoal(992, 'Clear', 'clear', 2),
+        freshServerGoal(993, 'Stretch', 'stretch', 3),
+      ],
+    });
+
+    it('updateGoal on a demo tile writes no demo tile to the cache', async () => {
+      await seedDemoTiles();
+      const tile = useHabitStore.getState().habits[0]!;
+
+      habitManager.updateGoal(tile.id, { ...tile.goals[0]!, target: 42 });
+
+      expect(lastPersisted()).toEqual([]);
+      // The write itself still happens: it heals a cache poisoned before the guard.
+      expect(saveHabits).toHaveBeenCalledWith([]);
+    });
+
+    it('updateHabit on a demo tile writes no demo tile to the cache', async () => {
+      await seedDemoTiles();
+      const tile = useHabitStore.getState().habits[0]!;
+
+      habitManager.updateHabit({ ...tile, name: 'Renamed' });
+      // The notification reschedule persists asynchronously.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(lastPersisted()).toEqual([]);
+      expect(saveHabits).toHaveBeenCalledWith([]);
+    });
+
+    it('the logUnit pipeline on a demo tile writes no demo tile to the cache', async () => {
+      await seedDemoTiles();
+      const tile = useHabitStore.getState().habits[0]!;
+
+      const ctx = habitManager.prepareLogUnit(tile.id, 1, 'UTC')!;
+      habitManager.applyLogUnitContext(ctx);
+
+      expect(lastPersisted()).toEqual([]);
+      expect(saveHabits).toHaveBeenCalledWith([]);
+    });
+
+    it('a mixed store persists the real habit and drops the demo tiles', () => {
+      useHabitStore.setState({
+        habits: [...CACHED_DEMO_TILES, makeHabit({ id: 42, name: 'Real' })],
+      });
+      const real = useHabitStore.getState().habits.find((h) => h.id === 42)!;
+
+      habitManager.updateGoal(real.id, { ...real.goals[0]!, target: 30 });
+
+      expect(lastPersisted().map((h) => h.name)).toEqual(['Real']);
+    });
+
+    it('does not recover demo tiles restored from an already-poisoned cache', async () => {
+      // Caches written before this guard existed still hold demo tiles.
+      (loadHabits as jest.Mock).mockResolvedValueOnce(CACHED_DEMO_TILES as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      expect(goalsApi.update).not.toHaveBeenCalled();
+    });
+
+    it('still recovers a genuinely stuck real habit cached beside demo tiles', async () => {
+      const cachedReal = makeHabit({ id: 1, name: 'Real' });
+      (loadHabits as jest.Mock).mockResolvedValueOnce([cachedReal, ...CACHED_DEMO_TILES] as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([serverHabit(99, 'Real')] as never);
+
+      await habitManager.loadHabits();
+
+      expect(habitsApi.create).toHaveBeenCalledTimes(1);
+      expect(habitsApi.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Real' }));
+    });
+
+    it('a demo tile touched before a relaunch never becomes a server habit', async () => {
+      await seedDemoTiles();
+      const tile = useHabitStore.getState().habits[0]!;
+      habitManager.updateGoal(tile.id, { ...tile.goals[0]!, target: 42 });
+      const written = lastPersisted();
+
+      // The relaunch: a cold store rehydrating from exactly what was written.
+      resetStore();
+      (loadHabits as jest.Mock).mockResolvedValueOnce(written as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      // The offline demo UX survives the guard rather than being deleted.
+      const shown = useHabitStore.getState().habits;
+      expect(shown.length).toBeGreaterThan(0);
+      expect(shown.every((h) => h.isDemoSeed === true)).toBe(true);
     });
   });
 });
