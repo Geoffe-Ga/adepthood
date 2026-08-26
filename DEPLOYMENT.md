@@ -694,12 +694,12 @@ journal_encryption_enabled=True
 | `APPLE_OAUTH_CLIENT_IDS` | For Apple sign-in | *(empty)* | Comma-separated audiences accepted on Apple identity tokens — for this app the iOS bundle identifier, since Apple sign-in is offered only on iOS. Empty means every Apple token is rejected. |
 | `IPV6_THROTTLE_PREFIX_LEN` | No | `64` | Bit length of the IPv6 prefix that throttle keys (the rate limiter and the invalid-license throttle) group on, so one subscriber's delegated address range can't mint one bucket per address. Audit rows always keep the full address regardless. Valid range `1`-`128`; anything else falls back to the default rather than being clamped. A smaller number covers a larger delegation: lower it to `56`/`48` if you see IPv6 abuse, raise it to `128` to restore per-address keying (which reopens the bypass). |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
-| `EMAIL_BACKEND` | No | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). Required: `smtp` in production. |
-| `SMTP_HOST` | If `EMAIL_BACKEND=smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
-| `SMTP_PORT` | If `EMAIL_BACKEND=smtp` | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. |
-| `SMTP_USERNAME` | If `EMAIL_BACKEND=smtp` | — | SMTP relay username |
-| `SMTP_PASSWORD` | If `EMAIL_BACKEND=smtp` | — | SMTP relay password / API key |
-| `EMAIL_FROM` | If `EMAIL_BACKEND=smtp` | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
+| `EMAIL_BACKEND` | Yes in prod | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). `ENV=production` refuses to boot on anything but `smtp`, because the console fallback writes every password-reset link to the application log while the endpoint still answers 202. |
+| `SMTP_HOST` | Yes in prod | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
+| `SMTP_PORT` | Yes in prod | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. A value that is not a number, or one outside 1-65535, is refused at startup rather than defaulted. |
+| `SMTP_USERNAME` | Yes in prod | — | SMTP relay username |
+| `SMTP_PASSWORD` | Yes in prod | — | SMTP relay password / API key |
+| `EMAIL_FROM` | Yes in prod | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
 | `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
 | `SENTRY_DSN` | No (recommended in prod) | *(empty)* | Sentry DSN unhandled exceptions are reported to. Empty means no vendor: crashes are still caught, still answered with the sanitised 500 envelope, and still logged in full — only the operator inbox is lost. A value that will not parse degrades the same way with one boot warning; it never fails the deploy. See "Error monitoring" below for what a report does and does not contain. |
 | `SENTRY_RELEASE` | No | `RAILWAY_GIT_COMMIT_SHA`, else `unknown` | Version string every event is tagged with, so a regression can be pinned to a deploy. `ENV` is sent as the Sentry environment, which is what keeps a production alert distinguishable from a staging one. |
@@ -763,7 +763,9 @@ The forgotten-password flow needs an email path to ship reset links.
 The backend defaults to a console adapter that simply logs the rendered
 email -- safe in dev / test, useless in production. Set
 `EMAIL_BACKEND=smtp` plus the five `SMTP_*` / `EMAIL_FROM` variables
-above to switch on real delivery.
+above to switch on real delivery. All six are required in production:
+a production boot with any of them missing is refused at startup rather
+than left to answer 202 while the link goes to the log.
 
 Recommended setup with SendGrid:
 
