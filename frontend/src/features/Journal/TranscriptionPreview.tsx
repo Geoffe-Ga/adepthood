@@ -8,7 +8,7 @@
  * PRIVACY: a block renders status, text, and a failure's copy only — never the
  * page image — so no base64 reaches the tree, a testID, or the accessibility layer.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
 import type { CapturePage } from './captureSession';
@@ -101,13 +101,19 @@ function DoneBlock({
   onRetry,
   onConfirmRedo,
 }: DoneBlockProps): React.JSX.Element {
+  // The browser's focus ring is dropped on web, and this field's own hairline
+  // box does not otherwise react to focus — so it warms its border instead,
+  // keeping a visual cue for anyone tabbing between blocks without typing.
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.blockBody}>
       <TextInput
         testID={`photograph-block-${position}-input`}
-        style={[styles.blockInput, writingFieldFocus]}
+        style={[styles.blockInput, writingFieldFocus, focused && styles.blockInputFocused]}
         value={block.text}
         onChangeText={(text) => onEdit(block.id, text)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         selectionColor={writingField.caret}
         cursorColor={writingField.caret}
         multiline

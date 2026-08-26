@@ -7,6 +7,7 @@ import { StyleSheet } from 'react-native';
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
   editorialType,
   spacing,
@@ -168,6 +169,17 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.hairline,
     padding: SPACING.md,
     textAlignVertical: 'top',
+  },
+  /**
+   * Focused state for {@link blockInput}. The browser's own focus ring is
+   * removed on web (``writingFieldFocus``), and unlike the entry's borderless
+   * paper fields this one already draws a box that would otherwise sit
+   * unchanged through focus — leaving someone tabbing between blocks with the
+   * caret as their only cue. Warming the existing border replaces the ring
+   * rather than merely deleting it, matching ``SearchBar``'s accent-on-focus.
+   */
+  blockInputFocused: {
+    borderColor: accent.primary,
   },
   /** Row of block-level affordances (redo, retry/retake, remove) under a block. */
   blockActions: {

@@ -102,9 +102,6 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalEntry.styles.ts::privacyResonanceReason',
   'features/Journal/JournalEntry.styles.ts::privacyTierExplainer',
   'features/Journal/JournalEntry.styles.ts::savedHint',
-  // The live word count under the writing column: reference the writer glances
-  // at, not an affordance — nothing about it is tappable.
-  'features/Journal/JournalEntry.styles.ts::wordCount',
   'features/Journal/JournalHero.styles.ts::eyebrow',
   'features/Journal/JournalPhotograph.styles.ts::pageBadgeText',
   'features/Journal/JournalShelf.styles.ts::cardCaption',

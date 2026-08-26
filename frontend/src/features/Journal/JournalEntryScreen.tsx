@@ -1152,7 +1152,7 @@ function WritingFooter({ body, saveState }: { body: string; saveState: SaveState
       <Text style={styles.savedHint} testID="journal-save-hint">
         {savedHintLabel(saveState)}
       </Text>
-      <Text style={styles.wordCount} testID="journal-word-count">
+      <Text style={styles.savedHint} testID="journal-word-count">
         {wordCountLabel(words)}
       </Text>
     </View>

@@ -2,11 +2,12 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import SearchBar from '../SearchBar';
 import TranscriptionPreview from '../TranscriptionPreview';
 
-import { writingField, writingFieldFocus } from '@/design/tokens';
+import { accent, colors, writingField, writingFieldFocus } from '@/design/tokens';
 import type { CapturePage } from '@/features/Journal/captureSession';
 import type { TranscriptionBlock } from '@/features/Journal/transcriptionRun';
 
@@ -57,8 +58,8 @@ describe('transcribed page editor', () => {
     error: null,
   };
 
-  it('drops the browser focus ring and carries the accent caret', () => {
-    const { getByTestId } = render(
+  function renderBlock() {
+    return render(
       <TranscriptionPreview
         pages={[page]}
         blocks={{ p1: block }}
@@ -70,6 +71,26 @@ describe('transcribed page editor', () => {
         isConfirmingRedo={() => false}
       />,
     );
-    expectWritingFieldTreatment(getByTestId('photograph-block-1-input'));
+  }
+
+  it('drops the browser focus ring and carries the accent caret', () => {
+    expectWritingFieldTreatment(renderBlock().getByTestId('photograph-block-1-input'));
+  });
+
+  /**
+   * Unlike the entry's borderless paper fields, this one already draws a
+   * hairline box that does NOT change on focus — so dropping the browser ring
+   * would leave someone tabbing between blocks with the caret alone. It warms
+   * its own border instead, the way ``SearchBar`` does.
+   */
+  it('warms its own border on focus so the ring it lost is replaced, not just removed', () => {
+    const input = renderBlock().getByTestId('photograph-block-1-input');
+    expect(StyleSheet.flatten(input.props.style).borderColor).toBe(colors.paper.hairline);
+
+    fireEvent(input, 'focus');
+    expect(StyleSheet.flatten(input.props.style).borderColor).toBe(accent.primary);
+
+    fireEvent(input, 'blur');
+    expect(StyleSheet.flatten(input.props.style).borderColor).toBe(colors.paper.hairline);
   });
 });

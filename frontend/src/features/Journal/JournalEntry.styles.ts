@@ -135,13 +135,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing(2),
   },
+  /**
+   * The page's quiet caption face, shared by every footer line that reports
+   * state rather than offering an action: the save hint, the live word count
+   * beside it, and the quote-inclusion hint. They sit at one weight on purpose
+   * — the count is reference the writer glances at, not a target that should
+   * out-shout the save state.
+   */
   savedHint: {
-    ...editorialType.caption,
-    color: colors.paper.inkSoft,
-    paddingTop: spacing(1),
-  },
-  /** Quieter than the save hint beside it: reference the writer glances at, never a target. */
-  wordCount: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
