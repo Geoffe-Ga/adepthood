@@ -1,4 +1,9 @@
-# Authorization-matrix DAST harness
+# DAST harness
+
+Two checks live here, sharing one identity bootstrap. The authorization matrix
+is documented below; the contract-fuzz job is documented at the end.
+
+## Authorization matrix
 
 Asks one question of every route that names an object by id in its path: **can
 identity B reach identity A's object?**
@@ -171,3 +176,135 @@ the gap systemic rather than a one-off in `goals`: a clean matrix report is
 still not a claim that no other route has an unguarded body reference.
 Issue #2124 tracks closing the body-parameter gap described above; nothing
 in this change closes it.
+
+## Minting a token: `tokens.py`
+
+Both checks need the same thing before they can start, and neither can get it
+the way a user would. Signup is gated on a live license verification that cannot
+be satisfied across a socket, so `tokens.py` inserts a user row through the
+application's own ORM, hashes it with the application's own hasher, and then
+mints the token over the real `POST /auth/login`. Only the row creation is
+bypassed; every credential either check sends came out of the genuine auth
+stack. The matrix imports `mint_identities` for its owner/intruder pair.
+
+It is also a command, which is how the contract-fuzz job gets its credential:
+
+```bash
+cd backend
+TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
+    --base-url "$BASE_URL" --database-url "$DATABASE_URL")
+```
+
+Stdout carries the bare token and nothing else, because the caller splices it
+straight into an `Authorization` header; every diagnostic goes to stderr. Before
+printing anything the command spends the token once on an authenticated route
+and exits `3` if that probe is not a 2xx. That guard is the whole reason this is
+a module rather than two lines of shell: a fuzz run holding a broken credential
+is denied uniformly, violates none of its response checks, and reports a clean
+gate having reached no handler at all.
+
+## Contract fuzz
+
+`.github/workflows/dast-contract.yml` boots the same kind of ephemeral instance
+and property-fuzzes every operation in the document *that instance publishes*,
+using Schemathesis. Reading the live `/openapi.json` rather than the checked-in
+export is the point: the spec the gate judges against cannot drift away from the
+code it is judging.
+
+The command itself is `backend/scripts/dast/contract_fuzz.sh`, not an inline
+`run:` block, and that is a testability decision. A YAML block can only be
+asserted about by grepping the file, and a substring search cannot tell a live
+invocation from a commented-out one — the first version of this job's guard
+passed with the whole fuzz command commented out and with the exclusion list
+wired to no argument at all. The script is executed instead, by
+`backend/tests/scripts/dast/test_contract_fuzz_script.py`, with a recording stub
+named `schemathesis` first on `PATH`; every assertion there is about the argv
+the script actually built. It reads `BASE_URL`, `DAST_TOKEN` and `REPORT_DIR`
+from the environment, refuses to run if any is missing, takes no arguments (an
+argument would be a way to append a filter the exclusion cap cannot see), and
+`exec`s the fuzzer so that no trailing command can stand between a failing run
+and a failing job.
+
+Before the job trusts the fuzzer against the real application, it proves the
+fuzzer can fail. The `Prove the fuzzer catches a planted bug` step runs
+`backend/tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py`, which
+serves a deliberately broken `FastAPI` app over a real socket — one handler that
+raises (a 500) and one that returns `{"count": "not-a-number"}` against a
+published `{"count": integer}` — runs the real `contract_fuzz.sh` against it,
+and requires the run to fail naming both findings. It then serves the repaired
+twin and requires that run to pass *with every operation reached*, because
+"green" and "fuzzed nothing" are the two states this whole gate exists to tell
+apart. Argv assertions can only prove the command was built correctly; this is
+the only thing that proves the checks fire.
+
+That suite needs the `schemathesis` executable and deliberately does not use
+`pytest.importorskip`. Where the tool is absent it skips with a reason naming
+`requirements-dast.txt` and the `DAST_LANE_REQUIRE_SCHEMATHESIS` variable; the
+workflow sets that variable, so in the one environment that installs the tool a
+missing tool is a red job rather than a quiet pass. Nothing in Python imports
+`schemathesis` — the CLI is driven by subprocess, exactly as CI drives it — so
+`mypy --strict` never has to resolve a package that only one workflow installs,
+and no suppression is needed anywhere.
+
+**The job is not a pull-request gate yet.** It runs nightly and on
+`workflow_dispatch`. Its first honest run — with the token-revoking operation
+excluded, so the credential survives the whole run — is red: 19 operations
+answer `500` to an out-of-`int32` path parameter, and the failure cap truncates
+before 41 of the selected operations have been looked at. Making that a required
+check would red every backend PR for bugs its author did not write, which is how
+a gate gets muted. The follow-up issue tracking those 500s also tracks promoting
+this job back to `pull_request`. Adding `continue-on-error` instead would be
+worse than not having the job: a permanently green report of a permanently red
+run.
+
+Three checks are enabled — `not_a_server_error`, `content_type_conformance` and
+`response_schema_conformance`. `status_code_conformance` is not, and the reason
+is a measured property of this API rather than a preference: not one of its 128
+operations declares a `401`, `403`, `404` or `429` response, so the check would
+fail almost everywhere for a documentation gap rather than a fuzzing finding.
+Issue #2425 tracks declaring those responses and turning the check on.
+
+Operations are excluded **by exact name, with a reason on the same line**, never
+by a path pattern — a named exclusion has to be defended and a pattern quietly
+grows. `test_contract_fuzz_script.py` checks every name in that list against the
+operations the application actually publishes, so a renamed route turns red
+instead of leaving a dead line behind; proves each name reaches the fuzzer as an
+`--exclude-name` argument; fails if any other `--exclude-*`/`--include-*` filter
+appears, since a class filter is how the list stays small on paper while the run
+shrinks; and fails if the list ever excuses half the API.
+
+Two exclusions are load-bearing, and both destroy the credential the run depends
+on: `DELETE /users/me` deletes the fuzzing identity, and `POST /auth/refresh`
+revokes the presented token's `jti` before minting its replacement. Losing the
+credential mid-run is invisible — every later request answers `401`, which is
+not a 5xx and is undeclared on every operation, so all three enabled checks pass
+and the job reports success having reached no handler. Those two are the only
+operations reachable by the fuzzer that do this: a sweep of the auth and user
+routers found `_revoke_token_payload` called from `/auth/refresh` alone, and the
+only other credential-invalidating path (`password_changed_at`, advanced by
+`/auth/password-reset/confirm`) needs a reset token the fuzzer cannot mint.
+
+Schemathesis is pinned in `backend/requirements-dast.txt` rather than
+`requirements-dev.txt`; that file's header says why.
+
+The instance is started with `ADEPTHOOD_DEFAULT_RATE_LIMIT` set wide. The matrix varies
+`X-Forwarded-For` per request to stay under the global limit, but the
+Schemathesis CLI sends one fixed header set for a whole run and cannot, so
+without a wider default the fuzzer would spend its budget collecting 429s — a
+uniform denial none of the enabled checks can tell apart from a healthy API. No
+deployment sets that variable; `backend/src/rate_limit.py` refuses to start on a
+value it cannot parse rather than falling back to no limit at all. The name is
+namespaced on purpose: a bare `DEFAULT_RATE_LIMIT` is one another tool in the
+same environment may already own, and this knob both loosens a global limit and
+refuses to boot on an unparseable value.
+
+The JUnit report is uploaded as a build artifact, and Schemathesis prints a
+reproduction `curl` for every finding — so the question of whether the bearer
+token lands in it is a real one. Checked against 4.25.2: it does not. The
+library filters the headers it was handed, rendering them as `Authorization:
+[Filtered]`. Nothing in this repository redacts anything, because machinery for
+a leak that does not exist is machinery that rots the day the library changes.
+Instead the planted-bug suite asserts both halves — that the filtered marker is
+present, proving the header really was sent, and that the sentinel token appears
+nowhere in the report or the output — so a library upgrade that stopped
+filtering fails the build.

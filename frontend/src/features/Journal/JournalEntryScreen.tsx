@@ -34,6 +34,7 @@ import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
+import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
@@ -1301,10 +1302,40 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   return { quotes, hint, promoting, promoted, retryPromote, ...interaction };
 }
 
-/** Read-mode affordances: the Promote-a-quote action and the Edit link. */
-function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: () => void }) {
+/**
+ * The reading view's resonance affordance, threaded as one value so the row and
+ * the column that hosts it stay short-signatured.
+ */
+interface ReadResonanceAction {
+  visible: boolean;
+  disabled: boolean;
+  loading: boolean;
+  /** Why resonance is withheld, shown only while it is disabled. */
+  reason: string;
+  onPress: () => Promise<void>;
+}
+
+interface ReadControlsProps {
+  quote: QuotePromotion;
+  resonance: ReadResonanceAction;
+  onEdit: () => void;
+}
+
+/**
+ * The reading view's action row, closing the reading column. One layout system
+ * for all three controls: resonance as the primary, Promote and Edit beside it
+ * as quiet tertiaries.
+ */
+function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX.Element {
   return (
-    <>
+    <View style={styles.readActionsRow} testID="journal-read-actions">
+      <GetResonanceButton
+        layout="inline"
+        visible={resonance.visible}
+        loading={resonance.loading}
+        disabled={resonance.disabled}
+        onPress={resonance.onPress}
+      />
       <Button
         variant="tertiary"
         onPress={quote.startSelecting}
@@ -1313,14 +1344,32 @@ function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: ()
         label="Promote a quote"
         busy={quote.promoting}
       />
-      <TouchableOpacity
+      <Button
+        variant="tertiary"
         onPress={onEdit}
-        accessibilityRole="button"
         accessibilityLabel="Edit this entry"
         testID="journal-edit-button"
-      >
-        <Text style={styles.controlLink}>Edit</Text>
-      </TouchableOpacity>
+        label="Edit"
+      />
+    </View>
+  );
+}
+
+/**
+ * Read-mode affordances: the privacy reason (when resonance is withheld) above
+ * the single action row. Unlike the writing surface's floating button, nothing
+ * here fades on idleness — a reader is not typing, so nothing needs to get out
+ * of the way.
+ */
+function ReadModeControls(props: ReadControlsProps): React.JSX.Element {
+  const { resonance } = props;
+  return (
+    <>
+      <PrivacyResonanceReason
+        visible={resonance.visible && resonance.disabled}
+        reason={resonance.reason}
+      />
+      <ReadActions {...props} />
     </>
   );
 }
@@ -1411,12 +1460,13 @@ function ReadBodyContent({
   );
 }
 
-/** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
+/** Read-mode body: the title + the highlighted passage tree + the action row. */
 function ReadColumn({
   title,
   body,
   notes,
   quote,
+  resonance,
   justSaved,
   onOpen,
   onEdit,
@@ -1425,6 +1475,7 @@ function ReadColumn({
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
+  resonance: ReadResonanceAction;
   /** True when this entry was just saved from photograph capture; shows "Saved". */
   justSaved: boolean;
   onOpen: (_note: Marginalia) => void;
@@ -1432,7 +1483,7 @@ function ReadColumn({
 }) {
   return (
     <ScrollView
-      style={styles.writingColumn}
+      style={[styles.writingColumn, readingScrollStyle]}
       contentContainerStyle={styles.writingColumnContent}
       keyboardShouldPersistTaps="handled"
     >
@@ -1451,7 +1502,9 @@ function ReadColumn({
       <Text style={styles.savedHint} testID="journal-save-hint">
         {justSaved ? SAVED_HINT : BLANK_HINT}
       </Text>
-      {quote.selecting ? null : <ReadModeControls quote={quote} onEdit={onEdit} />}
+      {quote.selecting ? null : (
+        <ReadModeControls quote={quote} resonance={resonance} onEdit={onEdit} />
+      )}
     </ScrollView>
   );
 }
@@ -1807,6 +1860,22 @@ function useJournalEntryController(
 
 type Controller = ReturnType<typeof useJournalEntryController>;
 
+/**
+ * The reading view's resonance action. Steady where the writing surface's is
+ * idle-gated: reading involves no keystrokes, so there is no pause to detect and
+ * nothing to tuck away. Only an empty page (nothing to read back) or the privacy
+ * gate takes it out of reach.
+ */
+function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
+  return {
+    visible: !ctl.isPromptCompose && ctl.autosave.body.trim().length > 0,
+    disabled: ctl.resonanceDisabled,
+    loading: ctl.resonance.loading,
+    reason: ctl.resonanceReason,
+    onPress: ctl.resonance.requestResonance,
+  };
+}
+
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
@@ -1844,6 +1913,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       body={body}
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
+      resonance={buildReadResonanceAction(ctl)}
       justSaved={ctl.justSaved}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
@@ -1878,7 +1948,15 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
         style={[styles.sheet, narrow && styles.sheetNarrow, settle]}
         testID="journal-sheet"
       >
-        <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
+        <View
+          style={[
+            styles.page,
+            narrow && styles.pageNarrow,
+            // Only the writing surface has a button floating over it to clear.
+            ctl.editGate.editMode && styles.pageWithFloatingAction,
+          ]}
+          testID="journal-page"
+        >
           <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
           <View
             style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
@@ -1927,7 +2005,9 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
 
 /**
  * The one-line reason shown when resonance is gated off for an intimate entry.
- * A sibling above the floating button so it reads as the button's own caption.
+ * Always a sibling directly above the affordance it explains — the floating
+ * button while writing, the action row while reading — so it reads as that
+ * control's own caption rather than as a stray notice.
  */
 function PrivacyResonanceReason({
   visible,
@@ -2161,7 +2241,12 @@ function EntryOverlays({
   );
 }
 
-/** The privacy-tier reason line paired with the floating resonance affordance. */
+/**
+ * The writing surface's floating resonance affordance and its privacy-tier reason
+ * line. Screen-level (not inside the page) so it can lift clear of the writing
+ * area, and rendered in edit mode only — the reading view carries its own inline
+ * action row instead.
+ */
 function ResonanceControls({
   visible,
   disabled,
@@ -2232,13 +2317,15 @@ function JournalEntryScreen({
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
-      <ResonanceControls
-        visible={ctl.visible}
-        disabled={ctl.resonanceDisabled}
-        loading={ctl.resonance.loading}
-        reason={ctl.resonanceReason}
-        onPress={ctl.resonance.requestResonance}
-      />
+      {ctl.editGate.editMode ? (
+        <ResonanceControls
+          visible={ctl.visible}
+          disabled={ctl.resonanceDisabled}
+          loading={ctl.resonance.loading}
+          reason={ctl.resonanceReason}
+          onPress={ctl.resonance.requestResonance}
+        />
+      ) : null}
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}
