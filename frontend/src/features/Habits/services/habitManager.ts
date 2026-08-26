@@ -701,6 +701,9 @@ const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
  * only in the store. Fans the PUTs out via ``Promise.all`` so a single
  * rejection triggers one deterministic rollback to ``prev`` (mirrors
  * ``saveHabitOrder``), restoring both the store and the on-disk snapshot.
+ *
+ * Demo tiles flip in the store like any other row but are never PUT: their ids
+ * are fabricated placeholders, so there is no server row for the write to land on.
  */
 const syncRevealState = (next: Habit[], failureMessage: string): void => {
   const prev = getHabits();
@@ -710,6 +713,7 @@ const syncRevealState = (next: Habit[], failureMessage: string): void => {
   const updates: Array<Promise<unknown>> = [];
   for (const habit of next) {
     if (habit.id == null) continue;
+    if (!isNotDemoSeed(habit)) continue;
     // Only PUT rows whose unlock flag actually flipped, so a single unlock
     // does not rewrite every untouched row.
     if (habit.revealed === revealedBefore.get(habit.id)) continue;
@@ -1040,6 +1044,10 @@ export const habitManager = {
    * implementation chained ``revertOnFailure`` on every PUT, so the second
    * (and third…) failure each restored ``prev``, clobbering successful
    * sibling writes that were already in the store.
+   *
+   * Demo tiles keep their positions and are stamped locally like any other row,
+   * but are never PUT: their ids are fabricated placeholders, so there is no
+   * server row for the write to land on.
    */
   saveHabitOrder: (ordered: Habit[]): void => {
     const prev = getHabits();
@@ -1049,6 +1057,7 @@ export const habitManager = {
     const updates: Array<Promise<unknown>> = [];
     for (const habit of stamped) {
       if (habit.id == null) continue;
+      if (!isNotDemoSeed(habit)) continue;
       updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
     }
     if (updates.length === 0) return;

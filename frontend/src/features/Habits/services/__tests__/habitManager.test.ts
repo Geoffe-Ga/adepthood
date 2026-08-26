@@ -1531,6 +1531,32 @@ describe('habitManager', () => {
         ]),
       );
     });
+
+    it('stamps and persists a demo-only reorder without PUTting the fabricated ids', () => {
+      const d1 = makeHabit({ id: 1, name: 'First', isDemoSeed: true });
+      const d2 = makeHabit({ id: 2, name: 'Second', isDemoSeed: true });
+      useHabitStore.setState({ habits: [d1, d2] });
+
+      habitManager.saveHabitOrder([d2, d1]);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
+      expect(habitsApi.update).not.toHaveBeenCalled();
+    });
+
+    it('PUTs only the server-backed row while demo tiles still occupy their sort positions', () => {
+      // id 42 sits outside the demo seed's 1..10 range, so the assertion cannot pass by coincidence.
+      const d1 = makeHabit({ id: 1, name: 'First', isDemoSeed: true });
+      const d2 = makeHabit({ id: 2, name: 'Second', isDemoSeed: true });
+      const real = makeHabit({ id: 42, name: 'Real' });
+      useHabitStore.setState({ habits: [d1, d2, real] });
+
+      habitManager.saveHabitOrder([d2, real, d1]);
+
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
+      expect(habitsApi.update).toHaveBeenCalledWith(42, expect.objectContaining({ sort_order: 1 }));
+    });
   });
 
   describe('logUnit primitives (apply / commit / rollback)', () => {
@@ -2170,6 +2196,43 @@ describe('habitManager', () => {
 
       const habits = useHabitStore.getState().habits;
       expect(habits.every((h) => h.revealed === false)).toBe(true);
+    });
+
+    it('revealAllHabits unlocks demo tiles locally without PUTting their fabricated ids', async () => {
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, isDemoSeed: true, revealed: false }),
+          makeHabit({ id: 2, isDemoSeed: true, revealed: false }),
+        ],
+      });
+
+      habitManager.revealAllHabits();
+      await Promise.resolve();
+
+      expect(useHabitStore.getState().habits.map((h) => h.revealed)).toEqual([true, true]);
+      expect(habitsApi.update).not.toHaveBeenCalled();
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it('revealAllHabits PUTs only the server-backed row when demo tiles sit beside it', async () => {
+      // id 42 sits outside the demo seed's 1..10 range, so the assertion cannot pass by coincidence.
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, isDemoSeed: true, revealed: false }),
+          makeHabit({ id: 42, revealed: false }),
+        ],
+      });
+
+      habitManager.revealAllHabits();
+      await Promise.resolve();
+
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ revealed: true }),
+      );
+      expect(useHabitStore.getState().habits.map((h) => h.revealed)).toEqual([true, true]);
     });
 
     it('lockUntouchedHabits re-locks only habits with zero logged completions', () => {
