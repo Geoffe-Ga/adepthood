@@ -121,7 +121,7 @@ jobs:
           # checks can tell apart from a healthy API. Read only by this job: no
           # deployment sets this variable, and the shipped default (60/minute)
           # is what every deployment gets.
-          DEFAULT_RATE_LIMIT: 6000/minute
+          ADEPTHOOD_DEFAULT_RATE_LIMIT: 6000/minute
         run: |
           # Started the way the Dockerfile does -- module ``main`` with
           # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
@@ -169,6 +169,12 @@ jobs:
         working-directory: backend
         run: scripts/dast/contract_fuzz.sh
 
+      # Checked against schemathesis 4.25.2: the reproduction `curl` it prints for
+      # every finding renders the header it was handed as `Authorization:
+      # [Filtered]`, so the bearer token does not reach this public artifact.
+      # Nothing here redacts anything -- that would be machinery for a leak that
+      # does not exist. The planted-bug suite asserts the filtering still happens,
+      # so an upgrade that stopped doing it fails the build.
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

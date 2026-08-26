@@ -21,7 +21,13 @@ FALLBACK_RATE_LIMIT = "60/minute"
 # 429s -- a uniform denial the fuzzer's response checks cannot distinguish from
 # a healthy API. This is NOT a production default; no deployment sets it, and
 # ``FALLBACK_RATE_LIMIT`` above is what every deployment gets.
-DEFAULT_RATE_LIMIT_ENV_VAR = "DEFAULT_RATE_LIMIT"
+#
+# Namespaced deliberately. A bare ``DEFAULT_RATE_LIMIT`` is a name another tool
+# in the same environment may already own, and this knob both loosens a global
+# limit and refuses to boot on a value it cannot parse -- so reading somebody
+# else's variable would be either a silent weakening or a crash whose cause is
+# nowhere near its symptom.
+RATE_LIMIT_OVERRIDE_ENV_VAR = "ADEPTHOOD_DEFAULT_RATE_LIMIT"
 
 
 def resolve_default_rate_limit(raw: str | None) -> str:
@@ -46,12 +52,12 @@ def resolve_default_rate_limit(raw: str | None) -> str:
     try:
         parse(candidate)
     except ValueError as error:
-        message = f"{DEFAULT_RATE_LIMIT_ENV_VAR}={candidate!r} is not a rate limit: {error}"
+        message = f"{RATE_LIMIT_OVERRIDE_ENV_VAR}={candidate!r} is not a rate limit: {error}"
         raise ValueError(message) from error
     return candidate
 
 
-DEFAULT_RATE_LIMIT = resolve_default_rate_limit(os.getenv(DEFAULT_RATE_LIMIT_ENV_VAR))
+DEFAULT_RATE_LIMIT = resolve_default_rate_limit(os.getenv(RATE_LIMIT_OVERRIDE_ENV_VAR))
 
 # Rate limiter keyed by the trusted-proxy-resolved *throttle* key rather than a
 # forgeable header or a proxy every user shares: one customer, one budget. That

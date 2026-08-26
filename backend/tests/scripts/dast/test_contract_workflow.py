@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 
+from rate_limit import RATE_LIMIT_OVERRIDE_ENV_VAR
 from tests.scripts.dast.test_contract_fuzz_catches_a_planted_bug import REQUIRE_ENV_VAR
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -272,8 +273,15 @@ def test_the_report_is_uploaded_even_when_the_run_fails(workflow: str) -> None:
 
 
 def test_the_instance_is_started_with_the_dast_rate_limit_override(workflow: str) -> None:
-    """Without it the global 60/minute limit answers most of the run with 429."""
-    assert "DEFAULT_RATE_LIMIT:" in without_comment_lines(workflow)
+    """Without it the global 60/minute limit answers most of the run with 429.
+
+    Anchored to the start of the line rather than searched for as a substring:
+    the variable is namespaced, and a plain containment check would be satisfied
+    by any variable whose name merely ends with the one the application reads.
+    """
+    declared = rf"^\s*{re.escape(RATE_LIMIT_OVERRIDE_ENV_VAR)}: \S+$"
+    live = without_comment_lines(workflow)
+    assert re.search(declared, live, re.MULTILINE), live
 
 
 def test_the_job_installs_the_pinned_dast_tooling(workflow: str) -> None:

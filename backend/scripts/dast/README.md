@@ -287,10 +287,24 @@ only other credential-invalidating path (`password_changed_at`, advanced by
 Schemathesis is pinned in `backend/requirements-dast.txt` rather than
 `requirements-dev.txt`; that file's header says why.
 
-The instance is started with `DEFAULT_RATE_LIMIT` set wide. The matrix varies
+The instance is started with `ADEPTHOOD_DEFAULT_RATE_LIMIT` set wide. The matrix varies
 `X-Forwarded-For` per request to stay under the global limit, but the
 Schemathesis CLI sends one fixed header set for a whole run and cannot, so
 without a wider default the fuzzer would spend its budget collecting 429s — a
 uniform denial none of the enabled checks can tell apart from a healthy API. No
 deployment sets that variable; `backend/src/rate_limit.py` refuses to start on a
-value it cannot parse rather than falling back to no limit at all.
+value it cannot parse rather than falling back to no limit at all. The name is
+namespaced on purpose: a bare `DEFAULT_RATE_LIMIT` is one another tool in the
+same environment may already own, and this knob both loosens a global limit and
+refuses to boot on an unparseable value.
+
+The JUnit report is uploaded as a build artifact, and Schemathesis prints a
+reproduction `curl` for every finding — so the question of whether the bearer
+token lands in it is a real one. Checked against 4.25.2: it does not. The
+library filters the headers it was handed, rendering them as `Authorization:
+[Filtered]`. Nothing in this repository redacts anything, because machinery for
+a leak that does not exist is machinery that rots the day the library changes.
+Instead the planted-bug suite asserts both halves — that the filtered marker is
+present, proving the header really was sent, and that the sentinel token appears
+nowhere in the report or the output — so a library upgrade that stopped
+filtering fails the build.

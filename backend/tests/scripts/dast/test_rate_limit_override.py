@@ -37,8 +37,8 @@ import pytest
 
 from rate_limit import (
     DEFAULT_RATE_LIMIT,
-    DEFAULT_RATE_LIMIT_ENV_VAR,
     FALLBACK_RATE_LIMIT,
+    RATE_LIMIT_OVERRIDE_ENV_VAR,
     resolve_default_rate_limit,
 )
 
@@ -93,6 +93,11 @@ _TOO_MANY_REQUESTS = 429
 
 _SUBPROCESS_TIMEOUT_SECONDS = 60
 
+# Every variable this application invents for itself carries this prefix, so a
+# name collision with an unrelated tool in the same environment is impossible.
+_APPLICATION_PREFIX = "ADEPTHOOD_"
+_NAMESPACED_VARIABLE = "ADEPTHOOD_DEFAULT_RATE_LIMIT"
+
 
 def _child_process(payload: str, value: str | None) -> subprocess.CompletedProcess[str]:
     """Run one payload in a fresh interpreter under one environment.
@@ -107,9 +112,9 @@ def _child_process(payload: str, value: str | None) -> subprocess.CompletedProce
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(_BACKEND_ROOT / "src")
     if value is None:
-        environment.pop(DEFAULT_RATE_LIMIT_ENV_VAR, None)
+        environment.pop(RATE_LIMIT_OVERRIDE_ENV_VAR, None)
     else:
-        environment[DEFAULT_RATE_LIMIT_ENV_VAR] = value
+        environment[RATE_LIMIT_OVERRIDE_ENV_VAR] = value
     return subprocess.run(
         [sys.executable, "-c", payload],
         check=False,
@@ -147,6 +152,18 @@ def _probe_statuses_with(value: str | None) -> list[int]:
     return [int(status) for status in completed.stdout.strip().split(",")]
 
 
+def test_the_override_variable_is_namespaced_to_this_application() -> None:
+    """A generic name is one some other tool in the same environment may own.
+
+    This variable fails closed -- an unparseable value refuses to boot -- and it
+    loosens a global limit. A deployment already setting a bare
+    ``DEFAULT_RATE_LIMIT`` for something unrelated would silently be read by
+    this application, and its operator would have no way to know.
+    """
+    assert RATE_LIMIT_OVERRIDE_ENV_VAR == _NAMESPACED_VARIABLE
+    assert RATE_LIMIT_OVERRIDE_ENV_VAR.startswith(_APPLICATION_PREFIX)
+
+
 def test_the_default_is_unchanged_when_the_environment_is_silent() -> None:
     """Nothing about production moves because this override exists."""
     assert resolve_default_rate_limit(None) == FALLBACK_RATE_LIMIT
@@ -170,7 +187,7 @@ def test_an_unparseable_limit_is_refused_rather_than_ignored() -> None:
     The message has to name the variable, because the only person who will ever
     read it is looking at a container that refused to boot.
     """
-    with pytest.raises(ValueError, match=DEFAULT_RATE_LIMIT_ENV_VAR) as raised:
+    with pytest.raises(ValueError, match=RATE_LIMIT_OVERRIDE_ENV_VAR) as raised:
         resolve_default_rate_limit("sixty per minute")
     assert "sixty per minute" in str(raised.value)
 
@@ -222,4 +239,4 @@ def test_an_unparseable_environment_value_refuses_to_start() -> None:
     """The refusal has to happen at import, before a request is ever served."""
     completed = _import_rate_limit_with("sixty per minute")
     assert completed.returncode != 0, completed.stdout
-    assert DEFAULT_RATE_LIMIT_ENV_VAR in completed.stderr, completed.stderr
+    assert RATE_LIMIT_OVERRIDE_ENV_VAR in completed.stderr, completed.stderr

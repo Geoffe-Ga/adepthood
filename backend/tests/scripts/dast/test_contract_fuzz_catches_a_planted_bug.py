@@ -78,9 +78,18 @@ _BOOT_POLL_SECONDS = 0.2
 _FUZZ_TIMEOUT_SECONDS = 180
 _SHUTDOWN_TIMEOUT_SECONDS = 10
 
-# A token is required by the script and irrelevant to the planted app, which
-# authenticates nothing: what is under test is whether a violation is caught.
-_UNUSED_TOKEN = "unused-by-the-planted-app"  # pragma: allowlist secret
+# A sentinel rather than a placeholder. The planted app authenticates nothing,
+# so this token's only job is to be searched for afterwards: the JUnit report is
+# uploaded as a build artifact, and Schemathesis prints a reproduction `curl`
+# for every finding. If it ever stops filtering the header it was handed, this
+# exact string lands in a public artifact and the assertion below turns red.
+_SENTINEL_TOKEN = "dast-sentinel-token-4f2b9c7e"  # pragma: allowlist secret
+
+# What Schemathesis 4.25.2 writes in place of a header value it was given.
+# Asserting the marker is present matters as much as asserting the token is
+# absent: it proves the header was actually sent, so the token's absence is
+# filtering rather than a run that never authenticated at all.
+_FILTERED_HEADER = "Authorization: [Filtered]"
 
 _SHARED_ROUTES = '''
 from fastapi import FastAPI
@@ -281,7 +290,7 @@ def fuzz(source: str, tmp_path: Path) -> FuzzResult:
             env={
                 **os.environ,
                 "BASE_URL": base_url,
-                "DAST_TOKEN": _UNUSED_TOKEN,
+                "DAST_TOKEN": _SENTINEL_TOKEN,
                 "REPORT_DIR": str(report_dir),
             },
         )
@@ -339,3 +348,18 @@ def test_the_passing_run_actually_reached_every_operation(repaired: FuzzResult) 
     assert f"Selected: {_PUBLISHED_OPERATIONS}/{_PUBLISHED_OPERATIONS}" in repaired.output
     assert f"Tested: {_PUBLISHED_OPERATIONS}" in repaired.output
     assert _HEALTHY in repaired.report, repaired.report
+
+
+def test_the_bearer_token_never_reaches_the_uploaded_artifact(planted: FuzzResult) -> None:
+    """A token in the JUnit report is a token in a downloadable build artifact.
+
+    Nothing here redacts anything: Schemathesis filters the headers it was handed
+    when it prints a reproduction command, and adding a redaction step of our own
+    would be machinery for a leak that does not exist -- machinery that would rot
+    the day the library changed its own behaviour. What this asserts is that the
+    library still does it, so an upgrade that stopped filtering fails the build
+    instead of quietly publishing a credential.
+    """
+    assert _FILTERED_HEADER in planted.report, planted.report
+    assert _SENTINEL_TOKEN not in planted.report, "the bearer token reached the JUnit report"
+    assert _SENTINEL_TOKEN not in planted.output, "the bearer token reached the run output"
