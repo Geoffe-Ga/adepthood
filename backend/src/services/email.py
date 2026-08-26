@@ -41,9 +41,14 @@ logger = logging.getLogger(__name__)
 # replayed to confirm a reset (the full token is 32 url-safe bytes).
 _TOKEN_LOG_PREFIX = 8
 
-_ENV_EMAIL_BACKEND = "EMAIL_BACKEND"
-_BACKEND_CONSOLE = "console"
-_BACKEND_SMTP = "smtp"
+# Public because the startup configuration check in ``main`` names this
+# variable, and the backend names it compares against, back to the operator.
+# A refusal that spells the variable differently from the string this module
+# actually reads sends them to edit a setting nothing consults -- which is the
+# outage the check exists to prevent, wearing the check's own message.
+EMAIL_BACKEND_ENV_VAR = "EMAIL_BACKEND"
+BACKEND_CONSOLE = "console"
+BACKEND_SMTP = "smtp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,12 +165,43 @@ class RecordingEmailSender:
 
 
 def _required_env(name: str) -> str:
-    """Return ``os.environ[name]`` or raise -- prod cannot boot without it."""
+    """Return a non-empty ``name`` or raise -- prod cannot boot without it.
+
+    Unset and empty are one case on purpose: a variable exported as ``""`` is
+    not a configured relay, and treating it as one only moves the failure to
+    the first send.
+    """
     value = os.getenv(name, "")
     if not value:
-        msg = f"{name} environment variable must be set when EMAIL_BACKEND=smtp"
+        selector = f"{EMAIL_BACKEND_ENV_VAR}={BACKEND_SMTP}"
+        msg = f"{name} environment variable must be set when {selector}"
         raise RuntimeError(msg)
     return value
+
+
+# Named once each so the tuple below and the lookups in ``from_env`` cannot
+# spell the same variable two ways. The credential one is named for the role it
+# fills rather than for the variable it points at: a module constant whose own
+# identifier says PASSWORD reads to the security linters as a hardcoded
+# credential, and this is a variable name, not a value.
+SMTP_HOST_ENV_VAR = "SMTP_HOST"
+SMTP_PORT_ENV_VAR = "SMTP_PORT"
+SMTP_USERNAME_ENV_VAR = "SMTP_USERNAME"
+SMTP_CREDENTIAL_ENV_VAR = "SMTP_PASSWORD"
+EMAIL_FROM_ENV_VAR = "EMAIL_FROM"
+
+# Every variable :meth:`SmtpEmailSender.from_env` reads, in the order it reads
+# them. Public because the startup check in ``main`` quotes the list in its
+# refusal: an operator told to set the backend switch and nothing else has only
+# been moved to the next failure. One tuple, so the remedy an operator is handed
+# cannot drift from the settings the sender actually requires.
+SMTP_RELAY_ENV_VARS = (
+    SMTP_HOST_ENV_VAR,
+    SMTP_PORT_ENV_VAR,
+    SMTP_USERNAME_ENV_VAR,
+    SMTP_CREDENTIAL_ENV_VAR,
+    EMAIL_FROM_ENV_VAR,
+)
 
 
 @dataclass(slots=True)
@@ -188,13 +224,28 @@ class SmtpEmailSender:
 
     @classmethod
     def from_env(cls) -> SmtpEmailSender:
-        """Build an instance from the ``SMTP_*`` env vars; raise on missing."""
+        """Build an instance from the relay env vars; raise on the first missing one.
+
+        :data:`SMTP_RELAY_ENV_VARS` is the one list both this build and the
+        startup refusal read, so an operator is never handed a remedy shorter
+        than what the sender needs. Each value is looked up by name rather than
+        unpacked in order: an unpack is coupled to the tuple's length, which no
+        type checker can see, so a sixth entry would land as ``too many values
+        to unpack`` on a production boot -- fail-closed, but unreadable at
+        exactly the moment someone is following the remedy. A name below that
+        the tuple does not carry is a ``KeyError`` naming it, which keeps the
+        two in step; an unset *variable* is the operator's case and raises
+        ``RuntimeError`` from :func:`_required_env` instead. The comprehension
+        preserves the tuple's order, so the variable the refusal lists first is
+        still the first to raise.
+        """
+        values = {name: _required_env(name) for name in SMTP_RELAY_ENV_VARS}
         return cls(
-            host=_required_env("SMTP_HOST"),
-            port=int(_required_env("SMTP_PORT")),
-            username=_required_env("SMTP_USERNAME"),
-            password=_required_env("SMTP_PASSWORD"),
-            from_address=_required_env("EMAIL_FROM"),
+            host=values[SMTP_HOST_ENV_VAR],
+            port=int(values[SMTP_PORT_ENV_VAR]),
+            username=values[SMTP_USERNAME_ENV_VAR],
+            password=values[SMTP_CREDENTIAL_ENV_VAR],
+            from_address=values[EMAIL_FROM_ENV_VAR],
         )
 
     async def send(
@@ -268,16 +319,33 @@ class SmtpEmailSender:
 _default_sender: EmailSender | None = None
 
 
+def configured_backend() -> str:
+    """Return the selected backend name, normalized the one way that counts.
+
+    Exists so the startup check in ``main`` and this module's factory cannot
+    disagree about what counts as ``smtp``.  A validator that re-read the
+    variable with its own strip / lower semantics could certify a boot whose
+    mail the factory then routes to the console adapter -- and every symptom of
+    that would look like successful delivery.  One read, one normalization,
+    shared by both callers.
+
+    Unset, blank and whitespace all read as :data:`BACKEND_CONSOLE`, because
+    that is where the factory sends them: the default is a real choice the
+    caller can compare against, not an absence they have to re-derive.
+    """
+    return os.getenv(EMAIL_BACKEND_ENV_VAR, "").strip().lower() or BACKEND_CONSOLE
+
+
 def _build_default_sender() -> EmailSender:
     """Return the configured backend, defaulting to console.
 
-    Reads ``EMAIL_BACKEND`` -- ``console`` is the safe default for
-    dev / test; ``smtp`` flips to the production adapter and forces
-    every required env var to be present (raising on first use is
-    much more debuggable than silently dropping the email).
+    ``console`` is the safe default for dev / test; ``smtp`` flips to the
+    production adapter and forces every required env var to be present
+    (raising on first use is much more debuggable than silently dropping the
+    email).  Every other value -- including a typo -- lands on console, which
+    is why production refuses to boot on anything but ``smtp``.
     """
-    backend = os.getenv(_ENV_EMAIL_BACKEND, _BACKEND_CONSOLE).strip().lower()
-    if backend == _BACKEND_SMTP:
+    if configured_backend() == BACKEND_SMTP:
         return SmtpEmailSender.from_env()
     return ConsoleEmailSender()
 
