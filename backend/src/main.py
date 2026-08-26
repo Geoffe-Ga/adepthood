@@ -73,7 +73,7 @@ from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
-from services import journal_encryption
+from services import email, journal_encryption
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -347,6 +347,75 @@ def validate_journal_encryption_config() -> None:
     raise RuntimeError(msg)
 
 
+def validate_email_config() -> None:
+    """Refuse a production boot that would write password-reset mail to the log.
+
+    The email backend defaults to the console adapter, which is exactly right on
+    a laptop: reading the reset link out of terminal output is how development
+    works here, and requiring a relay to run the server or the suite would be
+    friction with no benefit. On a server the same default is silently
+    catastrophic. The mail is logged instead of sent, yet
+    ``POST /auth/password-reset/request`` still answers 202 -- deliberately, so
+    it cannot be used to enumerate accounts -- so "delivered" and "the user is
+    permanently locked out" are indistinguishable from outside. A real external
+    tester was locked out by exactly that.
+
+    Three of this module's startup checks only warn.
+    ``validate_trusted_proxy_config``, ``validate_ipv6_throttle_prefix_config``
+    and ``validate_creek_vault_url_config`` all describe degraded-but-serviceable
+    states: an app with no proxy allowlist still serves every request, and an
+    unusable vault URL still saves the entry to Postgres. An unconfigured email
+    backend in production is not degraded service. It is a feature that reports
+    success while failing, which is the shape of
+    ``validate_journal_encryption_config``, so it takes that check's remedy and
+    raises.
+
+    The gate is "not smtp" rather than "unset or console" because that is the set
+    the factory routes to the console adapter. ``configured_backend`` is the one
+    read and the one normalization, so a casing difference or a stray space
+    cannot certify a boot whose mail then goes to the log anyway; a name this app
+    does not implement is refused for the same reason.
+
+    Staging is deliberately left with development, as it is for journal
+    encryption: taking a staging deploy down over an unset variable only teaches
+    operators to set a throwaway value, and throwaway values ride to production.
+
+    Unlike the journal-key check this one renders the value it was given. A
+    backend name is a mode selector, not a credential, and echoing ``sendgrid``
+    back turns a typo from a bisect into a one-line fix.
+
+    The relay itself is built eagerly, and only here. ``from_env`` otherwise
+    raises on the first user to ask for a reset, which is the same "first user
+    pays" cost that calling ``_get_secret_key`` at boot exists to convert into
+    "deploy never goes live". Outside production the lazy raise is kept on
+    purpose, so a developer pointing at a half-configured relay still gets a
+    server and finds out when they send.
+    """
+    if os.getenv("ENV", "development") != "production":
+        return
+    backend = email.configured_backend()
+    if backend != email.BACKEND_SMTP:
+        msg = (
+            f"{email.EMAIL_BACKEND_ENV_VAR} resolves to {backend!r} in production, so every "
+            "password-reset email is written to the application log instead of being "
+            "delivered while POST /auth/password-reset/request still answers 202: account "
+            "recovery is broken and nothing in the running system says so. Set "
+            f"{email.EMAIL_BACKEND_ENV_VAR}={email.BACKEND_SMTP} together with "
+            f"{', '.join(email.SMTP_RELAY_ENV_VARS)}. backend/.env.example and DEPLOYMENT.md "
+            "document them."
+        )
+        raise RuntimeError(msg)
+    # Built and discarded: the value is not needed here, only the failure it
+    # raises when the switch is set and the relay behind it is not. What this
+    # accepts is that boot and the first request each read ``os.environ``
+    # afresh, so the object certified here is a twin of the one
+    # ``get_email_sender`` later caches rather than that object itself --
+    # priming the module singleton instead would outlive
+    # ``reset_email_sender_for_tests`` and leak one test's sender into the next,
+    # and nothing rewrites a running deploy's environment between the two reads.
+    email.SmtpEmailSender.from_env()
+
+
 def validate_trusted_proxy_config() -> None:
     """Announce a production boot that trusts no reverse proxy.
 
@@ -604,6 +673,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # than dropping purchase webhooks later, while a wholly unset pair only
     # warns: that is the pre-adoption state, and the endpoints fail closed.
     validate_gumroad_config()
+
+    # Last of the refusals, and ahead of the warn-only trio: a production deploy
+    # whose password-reset mail goes to the log answers 202 to every reset
+    # request while nobody can recover an account, so it must never go live.
+    validate_email_config()
 
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --
