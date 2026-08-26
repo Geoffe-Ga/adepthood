@@ -64,8 +64,9 @@ import {
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
-import { useProgramStore } from '../../../../store/useProgramStore';
+import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
 import { applyGoalUpdate, habitManager } from '../habitManager';
@@ -115,6 +116,17 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   revealed: true,
   ...overrides,
 });
+
+// Fixed so the program-clock assertions never drift with the calendar.
+const FIXED_TODAY = new Date(2026, 5, 1);
+
+// The demo seed as it looks once AsyncStorage hands it back on a later launch.
+const CACHED_DEMO_TILES: Habit[] = HABIT_DEFAULTS.map((habit): Habit => ({
+  ...habit,
+  revealed: true,
+  completions: [],
+  isDemoSeed: true,
+}));
 
 /** Server-default goal shape returned by the post-recovery re-fetch (#286 tests). */
 const freshServerGoal = (id: number, title: string, tier: string, target: number) => ({
@@ -604,6 +616,67 @@ describe('habitManager', () => {
 
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
       expect(useProgramStore.getState().programStartDate).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to the demo seed on a repeat load in the same session', async () => {
+      // Second load of the same session: the demo tiles are already in the
+      // store, so nothing re-seeds and the per-call guard opens. The anchor
+      // must still ignore their hard-coded 2025 dates.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to the demo seed on a repeat load after an API failure', async () => {
+      // Same repeat-load hazard down the ``handleApiError`` seeding path.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockRejectedValueOnce(new Error('boom') as never)
+        .mockRejectedValueOnce(new Error('boom') as never);
+
+      await habitManager.loadHabits();
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+    });
+
+    it('does NOT anchor the program calendar to demo tiles restored from the cache', async () => {
+      // A later launch reads the demo seed back out of AsyncStorage, so the
+      // tiles arrive as cached data rather than a fresh seed. They carry the
+      // demo marker and stay excluded from the anchor. The empty server list
+      // also drives stuck-user recovery, whose re-fetch is the second listAll.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce(CACHED_DEMO_TILES as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits();
+
+      const anchor = useProgramStore.getState().programStartDate;
+      expect(anchor).toBeNull();
+      expect(programStage(anchor, FIXED_TODAY)).toBeNull();
+      expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
     });
 
     it('records an error message when the API fails and no cache exists', async () => {
