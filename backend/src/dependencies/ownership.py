@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 from sqlmodel import and_, col, or_, select
 
+from bounds import RowIdPath, RowIdQuery
 from database import get_session
 from dependencies.auth import get_current_user_model
 from errors import forbidden, not_found
@@ -76,7 +77,7 @@ def log_ownership_denied(resource: str, resource_id: int, current_user: int) -> 
 
 
 async def require_owned_habit(
-    habit_id: int,
+    habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
@@ -119,7 +120,7 @@ async def resolve_owned_goal_and_habit(
 
 
 async def require_owned_goal(
-    goal_id: int,
+    goal_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Goal:
@@ -134,7 +135,7 @@ async def require_owned_goal(
 
 
 async def require_owned_journal_entry(
-    entry_id: int,
+    entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JournalEntry:
@@ -179,7 +180,7 @@ async def resolve_owned_user_practice(
 
 
 async def require_owned_user_practice(
-    user_practice_id: int,
+    user_practice_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserPractice:
@@ -188,6 +189,24 @@ async def require_owned_user_practice(
     Delegates to :func:`resolve_owned_user_practice`, which owns the rule and
     emits the ``resource_access_denied`` audit row on a cross-tenant probe,
     matching :func:`require_owned_habit`.
+    """
+    return await resolve_owned_user_practice(session, user_practice_id, current_user)
+
+
+async def require_owned_user_practice_from_query(
+    user_practice_id: RowIdQuery,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> UserPractice:
+    """The same rule as :func:`require_owned_user_practice`, for a query-string id.
+
+    A declared bound has to name the position it bounds -- a ``Path`` marker is
+    what puts ``minimum`` / ``maximum`` onto a *path* parameter -- so one
+    dependency cannot serve both surfaces once it carries one. Splitting the
+    two apart keeps ``GET /practice-sessions/?user_practice_id=`` a query
+    parameter, which is what it has always been, and both spellings still
+    delegate to :func:`resolve_owned_user_practice` so the 404-then-403 rule
+    and its audit row stay in exactly one place.
     """
     return await resolve_owned_user_practice(session, user_practice_id, current_user)
 
@@ -212,7 +231,7 @@ async def resolve_owned_practice_session(
 
 
 async def require_visible_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
@@ -247,7 +266,7 @@ async def resolve_owned_goal_group(session: AsyncSession, group_id: int, user_id
 
 
 async def require_manageable_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     caller: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GoalGroup:
@@ -285,7 +304,7 @@ async def require_manageable_goal_group(
 
 
 async def require_visible_practice(
-    practice_id: int,
+    practice_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Practice:

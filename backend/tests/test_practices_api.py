@@ -11,6 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.practice import Practice
 
 _APPROVED_STAGE_1_COUNT = 2
+# A stage the program really has, which the fixtures deliberately leave
+# without any practice, so an empty listing is about emptiness rather than
+# about a stage number the curriculum does not carry.
+_UNSEEDED_STAGE_NUMBER = 3
 
 
 async def _signup(
@@ -216,7 +220,9 @@ async def test_list_practices_empty_stage(
     headers, _ = await _signup(async_client)
     await _seed_practices(db_session)
 
-    resp = await async_client.get("/practices/", params={"stage_number": 99}, headers=headers)
+    resp = await async_client.get(
+        "/practices/", params={"stage_number": _UNSEEDED_STAGE_NUMBER}, headers=headers
+    )
     assert resp.status_code == HTTPStatus.OK
     assert resp.json() == []
 

@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
@@ -267,7 +268,7 @@ async def list_habits(
 
 @router.get("/{habit_id}", response_model=HabitWithGoals)
 async def get_habit(
-    habit_id: int,
+    habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -438,7 +439,7 @@ async def update_goal_units(
 
 @router.get("/{habit_id}/stats", response_model=HabitStats)
 async def get_habit_stats(
-    habit_id: int,
+    habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],

@@ -13,6 +13,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from bounds import RowIdField
+
 # Upper bound on how many habits one release request may name. A generous cap
 # that no real caller reaches, present only to reject pathological payloads
 # before any DB work.
@@ -57,7 +59,7 @@ class ReleaseHabitsRequest(BaseModel):
     unowned id and a nonexistent id are indistinguishable in the response.
     """
 
-    habit_ids: list[int] = Field(min_length=1, max_length=MAX_RELEASE_BATCH)
+    habit_ids: list[RowIdField] = Field(min_length=1, max_length=MAX_RELEASE_BATCH)
 
 
 class ReleasedHabitResponse(BaseModel):

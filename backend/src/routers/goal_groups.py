@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.auth import get_current_user_model
 from dependencies.ownership import (
@@ -105,7 +106,7 @@ async def list_goal_groups(
 
 @router.get("/{group_id}", response_model=GoalGroupResponse)
 async def get_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     session: Annotated[AsyncSession, Depends(get_session)],
     _visible: Annotated[GoalGroup, Depends(require_visible_goal_group)],
 ) -> GoalGroup:
@@ -210,7 +211,7 @@ async def update_goal_group(
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     _owned: Annotated[GoalGroup, Depends(require_manageable_goal_group)],

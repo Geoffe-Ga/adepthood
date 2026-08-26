@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from errors import not_found, unprocessable
@@ -133,7 +134,7 @@ async def _load_owned_quote(
 
 @router.delete("/promotions/{promotion_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_promotion(
-    promotion_id: int,
+    promotion_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
@@ -175,7 +176,7 @@ async def _validate_inclusion_target(session: AsyncSession, target_id: int, user
 
 @router.patch("/promotions/{promotion_id}", response_model=PromotedQuoteResponse)
 async def update_promotion(
-    promotion_id: int,
+    promotion_id: RowIdPath,
     payload: PromotionUpdate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],

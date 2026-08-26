@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import StageNumberPath
 from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
@@ -232,7 +233,7 @@ async def get_wheel_balance(
 
 @router.get("/{stage_number}/progress", response_model=StageProgressResponse)
 async def get_stage_progress(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageProgressResponse:
@@ -246,7 +247,7 @@ async def get_stage_progress(
 
 @router.get("/{stage_number}/history", response_model=StageHistoryResponse)
 async def get_stage_history(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from bounds import RowIdField
 from domain.streaks import WEEKDAY_ABBREVIATIONS
 from models.goal import GoalTier
 
@@ -78,7 +79,7 @@ class GoalUpdate(BaseModel):
     frequency: float = Field(gt=0)
     frequency_unit: str = Field(min_length=1, max_length=50)
     is_additive: bool = True
-    goal_group_id: int | None = None
+    goal_group_id: RowIdField | None = None
     #: Weekly cadence, e.g. ["Mon", "Wed"]; None means every day.
     days_of_week: list[str] | None = None
 

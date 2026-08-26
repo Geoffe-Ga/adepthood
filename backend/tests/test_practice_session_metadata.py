@@ -7,12 +7,14 @@ from pydantic import ValidationError
 
 from schemas.practice_mode_config import (
     CARD_MEDITATION_CARDS_MAX,
+    SESSION_DURATION_MAX_SECONDS,
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
     TALLIED_TARGET_MAX,
 )
 from schemas.practice_session_metadata import (
     MAX_CARD_INDEX,
+    MAX_INTERVAL_SECONDS,
     MAX_TALLIED_ITEMS,
     MAX_TALLIED_ROUNDS,
     CardMeditationMetadata,
@@ -518,6 +520,40 @@ def test_random_interval_bell_metadata_rejects_nonpositive_interval() -> None:
             RandomIntervalBellMetadata(
                 mode="random_interval_bell", bells_struck=1, interval_seconds=[bad]
             )
+
+
+def test_random_interval_bell_metadata_accepts_gap_at_session_length() -> None:
+    """A gap as long as the longest permitted session is still a record of it.
+
+    A backgrounded device can report one enormous span between bells; the
+    cap only exists to keep the value inside the column, so the boundary
+    itself must persist rather than 422.
+    """
+    payload = RandomIntervalBellMetadata(
+        mode="random_interval_bell", bells_struck=1, interval_seconds=[MAX_INTERVAL_SECONDS]
+    )
+    assert payload.interval_seconds == [MAX_INTERVAL_SECONDS]
+
+
+def test_random_interval_bell_metadata_rejects_gap_past_session_length() -> None:
+    """A gap outlasting the longest permitted session cannot have happened."""
+    with pytest.raises(ValidationError):
+        RandomIntervalBellMetadata(
+            mode="random_interval_bell",
+            bells_struck=1,
+            interval_seconds=[MAX_INTERVAL_SECONDS + 1],
+        )
+
+
+def test_random_interval_bell_gap_ceiling_matches_session_duration_cap() -> None:
+    """Lock the recorded-gap ceiling to the session-duration cap, not a config bound.
+
+    A recorded gap is wall-clock time inside one session, so it is bounded
+    by the longest session the app permits -- never by the authoring-side
+    per-interval ceiling, which is smaller and would reject a legitimately
+    recorded session. This pins the derivation against a future inline.
+    """
+    assert MAX_INTERVAL_SECONDS == SESSION_DURATION_MAX_SECONDS
 
 
 def test_random_interval_bell_metadata_rejects_more_intervals_than_bells() -> None:

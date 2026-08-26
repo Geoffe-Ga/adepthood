@@ -21,13 +21,15 @@ from schemas.practice_mode_config import (
     CARD_NAME_MAX,
     OPTION_KEY_MAX,
     OPTION_KEY_PATTERN,
+    REP_TARGET_MAX,
+    SESSION_DURATION_MAX_SECONDS,
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
     TALLIED_TARGET_MAX,
     Sense,
 )
 
-_MAX_REPS = 1_000_000
+_MAX_REPS = REP_TARGET_MAX
 _MAX_BPM = 240
 _MIN_BPM = 1
 _MAX_TAROT_INDEX = 21  # 22-card major arcana, zero-indexed.
@@ -48,6 +50,15 @@ _MAX_ANCHOR_DURATION_SECONDS = 4 * 60 * 60  # 4 hours; well above any plausible 
 # at module scope so the contract test asserts against the same name a
 # caller would import.
 MAX_CARD_INDEX = CARD_MEDITATION_CARDS_MAX - 1
+# Ceiling on one recorded gap between bells. A gap is wall-clock time
+# elapsed inside a single session, so the longest session the app permits
+# is the only ceiling that cannot reject something that actually happened
+# -- a device that backgrounds mid-session legitimately records a gap far
+# longer than any interval the authoring side could have asked for.
+# Derived so a bump to the session duration cap carries this cap with it;
+# the cross-module guard in ``test_practice_session_metadata.py`` locks
+# the derivation in case the underlying constant is ever inlined.
+MAX_INTERVAL_SECONDS = SESSION_DURATION_MAX_SECONDS
 
 
 class _MetadataBase(BaseModel):
@@ -112,7 +123,7 @@ class RandomIntervalBellMetadata(_MetadataBase):
 
     mode: Literal["random_interval_bell"] = "random_interval_bell"
     bells_struck: int = Field(ge=0, le=_MAX_INTERVALS)
-    interval_seconds: list[Annotated[int, Field(ge=1)]] = Field(
+    interval_seconds: list[Annotated[int, Field(ge=1, le=MAX_INTERVAL_SECONDS)]] = Field(
         default_factory=list, max_length=_MAX_INTERVALS
     )
 

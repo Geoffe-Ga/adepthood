@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
@@ -566,10 +566,29 @@ async def test_idor_practice_session_create_returns_403(
     assert getattr(denials[0], "user_id", None) == bob_id
 
 
+async def _probe_missing_user_practice(
+    async_client: AsyncClient, spelling: str, headers: dict[str, str]
+) -> Response:
+    """Name a nonexistent user practice in the request position ``spelling`` asks for."""
+    if spelling == "body":
+        return await async_client.post(
+            "/practice-sessions/",
+            json=_session_window_payload(_DEFINITELY_MISSING_ID),
+            headers=headers,
+        )
+    return await async_client.get(
+        "/practice-sessions/",
+        params={"user_practice_id": _DEFINITELY_MISSING_ID},
+        headers=headers,
+    )
+
+
+@pytest.mark.parametrize("spelling", ["body", "query"])
 @pytest.mark.asyncio
-async def test_practice_session_create_missing_user_practice_is_404_and_unaudited(
+async def test_practice_session_missing_user_practice_is_404_and_unaudited(
     async_client: AsyncClient,
     caplog: pytest.LogCaptureFixture,
+    spelling: str,
 ) -> None:
     """A ``user_practice_id`` that exists for nobody 404s, and audits nothing.
 
@@ -578,15 +597,15 @@ async def test_practice_session_create_missing_user_practice_is_404_and_unaudite
     that never existed would likewise poison the audit signal that genuine
     cross-tenant probes are meant to raise.  The sibling case is pinned for
     ``POST /journal/`` but was unpinned for this endpoint.
+
+    The create body and the list query string reach the rule through two
+    separate dependencies, so both spellings are pinned rather than only the
+    one that happened to be written first.
     """
-    headers, _ = await _signup(async_client, "ps_post_missing_up")
+    headers, _ = await _signup(async_client, f"ps_missing_up_{spelling}")
 
     with caplog.at_level(logging.WARNING):
-        resp = await async_client.post(
-            "/practice-sessions/",
-            json=_session_window_payload(_DEFINITELY_MISSING_ID),
-            headers=headers,
-        )
+        resp = await _probe_missing_user_practice(async_client, spelling, headers)
 
     assert resp.status_code == HTTPStatus.NOT_FOUND
     assert resp.json()["detail"] == "user_practice_not_found"
