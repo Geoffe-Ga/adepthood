@@ -1,11 +1,15 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, afterEach } from '@jest/globals';
-import { renderHook } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import { Animated } from 'react-native';
 
 import { motion } from '@/design/tokens';
 import * as reducedMotion from '@/hooks/useReducedMotion';
-import { useThresholdFade } from '@/hooks/useThresholdFade';
+import { FADE_COVER_LIFETIME_MS, useThresholdFade } from '@/hooks/useThresholdFade';
+
+// Flipped off to reproduce the web build where the screen never receives a
+// focus event, so the focus effect body never runs at all.
+const mockFocusRuns = { current: true };
 
 // useFocusEffect is stubbed to run the callback on mount and its cleanup on
 // unmount, mirroring the PracticeScreen test harness.
@@ -17,6 +21,7 @@ jest.mock('@react-navigation/native', () => {
     ...(jest.requireActual('@react-navigation/native') as object),
     useFocusEffect: (cb: () => void | (() => void)) => {
       reactMod.useEffect(() => {
+        if (!mockFocusRuns.current) return undefined;
         const cleanup = cb();
         return () => {
           if (typeof cleanup === 'function') cleanup();
@@ -45,9 +50,12 @@ const stubTiming = (
 describe('useThresholdFade', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
+    mockFocusRuns.current = true;
   });
 
-  it('resets to the light ground and schedules the threshold fade when motion is allowed', () => {
+  it('clears the light cover by the cover lifetime even when the fade never advances a frame', () => {
+    jest.useFakeTimers();
     jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
     const timing = stubTiming(stubAnimation());
 
@@ -58,8 +66,33 @@ describe('useThresholdFade', () => {
       result.current.overlayOpacity,
       expect.objectContaining({ toValue: 0, duration: motion.threshold, useNativeDriver: true }),
     );
-    // The stub runs no frames, so the value holds the reset-to-opaque light ground.
     expect(animatedValue(result.current.overlayOpacity)).toBe(1);
+
+    act(() => {
+      jest.advanceTimersByTime(FADE_COVER_LIFETIME_MS);
+    });
+
+    expect(animatedValue(result.current.overlayOpacity)).toBe(0);
+    // The floor must outlast the fade it backstops, never cut it short.
+    expect(FADE_COVER_LIFETIME_MS).toBeGreaterThan(motion.threshold);
+  });
+
+  it('clears the light cover by the cover lifetime when focus never fires', () => {
+    jest.useFakeTimers();
+    mockFocusRuns.current = false;
+    jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
+    const timing = stubTiming(stubAnimation());
+
+    const { result } = renderHook(() => useThresholdFade());
+
+    expect(timing).not.toHaveBeenCalled();
+    expect(animatedValue(result.current.overlayOpacity)).toBe(1);
+
+    act(() => {
+      jest.advanceTimersByTime(FADE_COVER_LIFETIME_MS);
+    });
+
+    expect(animatedValue(result.current.overlayOpacity)).toBe(0);
   });
 
   it('skips the fade entirely under reduced motion (overlay rests transparent)', () => {
@@ -72,7 +105,8 @@ describe('useThresholdFade', () => {
     expect(animatedValue(result.current.overlayOpacity)).toBe(0);
   });
 
-  it('stops the running fade when the focus effect cleans up', () => {
+  it('stops the running fade and leaves no timer pending when the hook unmounts', () => {
+    jest.useFakeTimers();
     jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
     const animation = stubAnimation();
     stubTiming(animation);
@@ -81,5 +115,6 @@ describe('useThresholdFade', () => {
     unmount();
 
     expect(animation.stop).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, afterEach, beforeEach } from '@jest/globals';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
+import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -311,6 +312,11 @@ describe('PracticeScreen', () => {
     mockRootNavigate.mockClear();
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
   it('shows loading indicator initially', async () => {
     mockPracticesList.mockReturnValue(new Promise(() => {}));
     mockUserPracticesList.mockReturnValue(new Promise(() => {}));
@@ -400,6 +406,28 @@ describe('PracticeScreen', () => {
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
     expect(getByTestId('practice-ground-fade').props.pointerEvents).toBe('none');
+  });
+
+  it('never leaves the ground fade resting opaque over the player', async () => {
+    // A frameless timing stub stands in for a driver that never advances, so
+    // only the hook's own floor can lift the cover off the player.
+    jest.useFakeTimers();
+    const { Animated } = require('react-native');
+    jest.spyOn(Animated, 'timing').mockReturnValue({ start: jest.fn(), stop: jest.fn() });
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+
+    const { StyleSheet } = require('react-native');
+    const fadeOpacity = (): number =>
+      StyleSheet.flatten(getByTestId('practice-ground-fade').props.style).opacity;
+    expect(fadeOpacity()).toBe(1);
+
+    act(() => {
+      jest.advanceTimersByTime(FADE_COVER_LIFETIME_MS);
+    });
+
+    expect(fadeOpacity()).toBe(0);
   });
 
   it('renders the session flat on the dark ground with no bottom fade', async () => {
@@ -496,7 +524,7 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('change-practice-button')).toBeNull();
   });
 
-  it('applies safe-area insets and the full-bleed umber ground with no outer scroll', async () => {
+  it('keeps the player body a plain flex view inside the scroller', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => {
@@ -505,8 +533,8 @@ describe('PracticeScreen', () => {
     const { showcase } = require('../../../design/tokens');
     const { StyleSheet } = require('react-native');
     // The dark shell pads the top exactly once; the session leaf owns the
-    // bottom inset. The body is a plain flex view (no ScrollView, so no
-    // contentContainerStyle).
+    // bottom inset. The scroller is the wrapper above this node, so the body
+    // itself stays a plain flex view (no contentContainerStyle of its own).
     expect(getByTestId('practice-screen-safe-area')).toHaveStyle({
       paddingTop: 47,
       backgroundColor: showcase.canvas,
@@ -519,11 +547,53 @@ describe('PracticeScreen', () => {
     expect(getByTestId('practice-screen').props.contentContainerStyle).toBeUndefined();
   });
 
-  it('pins the weekly progress footer inside the fixed player body', async () => {
+  it('pins the weekly progress footer at the foot of the player body', async () => {
     mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
     const { getByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
     expect(within(getByTestId('practice-screen')).getByTestId('weekly-progress')).toBeTruthy();
+  });
+
+  it('scrolls the player so Begin, the stage chip and the weekly footer stay reachable', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('ritual-start')).toBeTruthy());
+
+    const scroll = getByTestId('practice-player-scroll');
+    expect(scroll.type).toBe('RCTScrollView');
+    expect(within(scroll).getByTestId('practice-stage-chip')).toBeTruthy();
+    expect(within(scroll).getByTestId('ritual-start')).toBeTruthy();
+    expect(within(scroll).getByTestId('weekly-progress')).toBeTruthy();
+
+    const { StyleSheet } = require('react-native');
+    // The single grow keeps a tall viewport rendering exactly as before.
+    expect(StyleSheet.flatten(scroll.props.contentContainerStyle).flexGrow).toBe(1);
+  });
+
+  it('keeps the player body content-sized so Begin stays reachable on a short viewport', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('ritual-start')).toBeTruthy());
+
+    const { StyleSheet } = require('react-native');
+    const bodyFlat = StyleSheet.flatten(getByTestId('practice-screen').props.style);
+    // The scroll content container owns the single grow; its child must stay
+    // content-sized so contentSize tracks the real content height and scrolls.
+    expect(bodyFlat.flexGrow).toBe(1);
+    expect(bodyFlat.flex).toBeUndefined();
+  });
+
+  it('keeps the session region content-sized so the stage chip stays reachable on a short viewport', async () => {
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    const { getByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('ritual-start')).toBeTruthy());
+
+    const { StyleSheet } = require('react-native');
+    const regionFlat = StyleSheet.flatten(getByTestId('practice-session-region').props.style);
+    // The ring region contributes its real height to the scrollable range
+    // while still filling a tall viewport, and never shrinks below it.
+    expect(regionFlat.flexGrow).toBe(1);
+    expect(regionFlat.flex).toBeUndefined();
   });
 
   it('opens the configurator sheet when the pencil is pressed', async () => {

@@ -275,6 +275,15 @@ describe('CardMeditationView', () => {
       expect(flattened.maxHeight).toBe(SYMBOLISM_MAX_HEIGHT);
     });
 
+    it('keeps the symbolism region scrollable when the player is nested in a scroller', () => {
+      const view = renderLongCard();
+      const inner = view
+        .UNSAFE_getAllByType(ScrollView)
+        .find((scroll) => within(scroll).queryByTestId('card-meditation-card-symbolism') !== null);
+      if (inner === undefined) throw new Error('symbolism is not inside a ScrollView');
+      expect(inner.props.nestedScrollEnabled).toBe(true);
+    });
+
     it('keeps the card name on a single fitted line', () => {
       const { getByTestId } = renderLongCard();
       const name = getByTestId('card-meditation-card-name');
