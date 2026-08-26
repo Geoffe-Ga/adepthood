@@ -8,7 +8,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from domain.constants import TOTAL_STAGES as MAX_STAGE_NUMBER
+from bounds import RowIdField, StageNumberField
 from domain.practice_modes import PracticeMode
 from schemas._base import OwnedResourcePublic
 from schemas.practice_mode_config import (
@@ -122,7 +122,7 @@ class PracticeCreate(BaseModel):
     ``default_duration_minutes`` so existing clients keep working.
     """
 
-    stage_number: int = Field(ge=1, le=MAX_STAGE_NUMBER)
+    stage_number: StageNumberField
     name: str = Field(min_length=1, max_length=PRACTICE_NAME_MAX_LENGTH)
     description: str = Field(max_length=PRACTICE_DESCRIPTION_MAX_LENGTH)
     instructions: str = Field(max_length=PRACTICE_INSTRUCTIONS_MAX_LENGTH)
@@ -163,8 +163,8 @@ class PracticeCreate(BaseModel):
 class UserPracticeCreate(BaseModel):
     """Payload for selecting a practice for a stage."""
 
-    practice_id: int
-    stage_number: int = Field(ge=1, le=MAX_STAGE_NUMBER)
+    practice_id: RowIdField
+    stage_number: StageNumberField
 
 
 class UserPracticeResponse(OwnedResourcePublic):
@@ -309,7 +309,7 @@ class PracticeSessionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user_practice_id: int
+    user_practice_id: RowIdField
     started_at: datetime
     ended_at: datetime
     reflection: str | None = Field(default=None, max_length=PRACTICE_REFLECTION_MAX_LENGTH)

@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import StageNumberPath, WeekNumberPath
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.program_calendar import calendar_week, resolve_program_anchor
@@ -216,7 +217,7 @@ async def list_prompt_history(
 
 @router.get("/stage/{stage_number}", response_model=StagePromptsResponse)
 async def get_stage_prompts(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -256,7 +257,7 @@ async def get_stage_prompts(
 
 @router.get("/{week_number}", response_model=PromptDetail)
 async def get_prompt_by_week(
-    week_number: int,
+    week_number: WeekNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -303,7 +304,7 @@ def _resolve_entry_title(payload_title: str | None, resolved: WeekPrompt) -> str
     status_code=status.HTTP_201_CREATED,
 )
 async def submit_prompt_response(
-    week_number: int,
+    week_number: WeekNumberPath,
     payload: PromptSubmit,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],

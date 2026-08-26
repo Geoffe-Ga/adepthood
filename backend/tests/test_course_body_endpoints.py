@@ -26,6 +26,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from content_config import content_ref
+from domain.constants import TOTAL_STAGES
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
@@ -522,7 +523,7 @@ async def test_stage_intro_unknown_stage_is_not_found(
     headers, user_id = await _signup_with_id(async_client, "introghost")
     await _set_user_stage(db_session, user_id, stage_number=1, days_ago=1)
 
-    resp = await async_client.get("/course/stages/999/intro", headers=headers)
+    resp = await async_client.get(f"/course/stages/{TOTAL_STAGES}/intro", headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
     assert resp.json()["detail"] == "stage_not_found"
 

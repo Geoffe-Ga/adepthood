@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import MAX_PAGE_OFFSET
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
@@ -20,7 +21,7 @@ from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
-from errors import bad_request, conflict, not_found
+from errors import bad_request, conflict, not_found, unprocessable_validation
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -571,7 +572,7 @@ class EmbeddedSessionsParams:
     """
 
     sessions_limit: int = Query(default=EMBEDDED_SESSIONS_DEFAULT_LIMIT, ge=1, le=MAX_PAGE_SIZE)
-    sessions_offset: int = Query(default=0, ge=0)
+    sessions_offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET)
 
 
 async def load_recent_sessions(
@@ -633,8 +634,9 @@ def _validate_mode_config_against_catalog(
     ``ModeConfigAdapter`` and (b) match the catalog ``mode``.  Runs *before*
     persisting so a bad config never reaches the post-write resolver (which
     would 500).  A ``ValidationError`` becomes a 422 carrying Pydantic's
-    structured per-field errors (``unprocessable()`` only takes a string
-    detail); a mode mismatch becomes a domain-meaningful 400.  ``None``
+    structured per-field errors, redacted through
+    :func:`errors.unprocessable_validation` (``unprocessable()`` only takes a
+    string detail); a mode mismatch becomes a domain-meaningful 400.  ``None``
     (the customise "clear the override" case) short-circuits.
     """
     if config is None:
@@ -642,10 +644,7 @@ def _validate_mode_config_against_catalog(
     try:
         cfg = ModeConfigAdapter.validate_python(config)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
-        ) from exc
+        raise unprocessable_validation(exc) from exc
     if cfg.mode != practice.mode:
         raise bad_request("mode_mismatch")
 

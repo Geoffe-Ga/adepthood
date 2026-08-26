@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import StageNumberQuery
 from database import get_session
 from dependencies.ownership import require_visible_practice
 from models.practice import Practice
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/practices", tags=["practices"])
 
 @router.get("/", response_model=None)
 async def list_practices(
-    stage_number: int,
+    stage_number: StageNumberQuery,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],

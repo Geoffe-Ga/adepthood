@@ -189,12 +189,19 @@ async def test_get_progress_requires_auth(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_content_stage_not_found(
+async def test_list_content_stage_past_the_curriculum_is_rejected(
     async_client: AsyncClient,
 ) -> None:
+    """A stage the program does not have is refused before any lookup runs.
+
+    The rejection is located, not just counted: a 422 can arrive for a wholly
+    unrelated reason, so pinning ``loc`` is what proves the declared stage
+    bound is what refused this.
+    """
     headers, _ = await _signup(async_client)
     resp = await async_client.get("/course/stages/99/content", headers=headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["path", "stage_number"]
 
 
 _LOCKED_LISTING_KEYS = {
@@ -666,12 +673,19 @@ async def test_course_progress_next_unlock_day(
 
 
 @pytest.mark.asyncio
-async def test_course_progress_stage_not_found(
+async def test_course_progress_stage_past_the_curriculum_is_rejected(
     async_client: AsyncClient,
 ) -> None:
+    """Progress for a stage the program does not have is a bad request.
+
+    The rejection is located, not just counted: a 422 can arrive for a wholly
+    unrelated reason, so pinning ``loc`` is what proves the declared stage
+    bound is what refused this.
+    """
     headers, _ = await _signup(async_client)
     resp = await async_client.get("/course/stages/99/progress", headers=headers)
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["path", "stage_number"]
 
 
 # ── User isolation ──────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from bounds import RowIdField
 from domain.constants import TOTAL_STAGES
 from domain.reflection_hierarchy import ReflectionLevel, scope_weeks
 from models.journal_entry import (
@@ -67,8 +68,8 @@ class JournalMessageCreate(BaseModel):
     message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     classification: JournalClassification = JournalClassification.PERSONAL
-    practice_session_id: int | None = None
-    user_practice_id: int | None = None
+    practice_session_id: RowIdField | None = None
+    user_practice_id: RowIdField | None = None
     primary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
     secondary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)
     reflection_level: ReflectionLevel | None = None
