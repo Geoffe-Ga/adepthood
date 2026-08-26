@@ -42,8 +42,16 @@ export type CorpusSeedStatus =
   | 'document_too_long'
   | 'unclassified';
 
-/** The outcomes decided on device, before or instead of a request. */
-export type LocalSeedStatus = 'unsupported_format' | 'too_large' | 'unreadable' | 'failed';
+/**
+ * The outcomes decided on device, before or instead of a request.
+ *
+ * `cancelled` is the one of these that is nobody's refusal: the run was stopped
+ * while the document was still waiting its turn, so it never reached the
+ * network at all. It is a settled status rather than a return to `queued`
+ * because the run that would have sent it is over.
+ */
+export type LocalSeedStatus =
+  'unsupported_format' | 'too_large' | 'unreadable' | 'failed' | 'cancelled';
 
 /**
  * A settled document's outcome: what its destination said, or what the device
@@ -105,12 +113,14 @@ export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
  *  - `add`    — append a pick's documents, each with its starting status.
  *  - `start`  — mark a `queued` document in flight.
  *  - `settle` — record a document's terminal outcome.
+ *  - `cancel` — stop the run: everything still queued settles as never sent.
  *  - `clear`  — empty the run (the person starting over).
  */
 export type SeedRunAction =
   | { type: 'add'; entries: readonly SeedEntry[] }
   | { type: 'start'; id: string }
   | { type: 'settle'; id: string; status: SettledSeedStatus }
+  | { type: 'cancel' }
   | { type: 'clear' };
 
 /** Whether a status is terminal — nothing further will happen to the document. */
@@ -148,6 +158,25 @@ function applySettle(state: SeedRunState, id: string, status: SettledSeedStatus)
   return withItem(state, { ...item, status });
 }
 
+/**
+ * `cancel`: settle every document still queued as one that never went.
+ *
+ * A document already in flight is left `uploading` on purpose. Its request is
+ * with the server, and the server will answer it; calling it cancelled here
+ * would be this screen saying one thing while the corpus holds another, which
+ * is the divergence the whole cancel path exists to close.
+ */
+function applyCancel(state: SeedRunState): SeedRunState {
+  const items = { ...state.items };
+  for (const id of state.order) {
+    const item = items[id];
+    if (item && item.status === 'queued') {
+      items[id] = { ...item, status: 'cancelled' };
+    }
+  }
+  return { order: state.order, items };
+}
+
 /** Advance a run by one action. */
 export function seedRunReducer(state: SeedRunState, action: SeedRunAction): SeedRunState {
   switch (action.type) {
@@ -157,6 +186,8 @@ export function seedRunReducer(state: SeedRunState, action: SeedRunAction): Seed
       return applyStart(state, action.id);
     case 'settle':
       return applySettle(state, action.id, action.status);
+    case 'cancel':
+      return applyCancel(state);
     case 'clear':
       return EMPTY_SEED_RUN;
     default:

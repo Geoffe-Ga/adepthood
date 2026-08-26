@@ -87,6 +87,8 @@ from services.creek_vault_client import (
     build_creek_vault_client,
 )
 from services.creek_vault_telemetry import VaultTelemetryOutcome
+from services.creek_vault_url_resolution import classify_resolved_user_vault_url
+from services.creek_vault_url_user import vault_url_host
 from services.user_vault_config import load_vault_config
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,18 @@ _UNREADABLE_OWNER_EVENT = (
 # and it is the most a record can safely say.
 _BINDING_UNSET = "unset"
 _BINDING_UNREADABLE = "unreadable"
+
+# What the dial-time destination refusal says, and where the value it is about
+# came from. The message names no host and no account: the host is a string a
+# stranger chose and the account did nothing wrong -- an ordinary user whose
+# vault started resolving somewhere else is not an incident, and filing them in a
+# warning stream by id would read as one. The remedy is theirs, not an
+# operator's, which is why it is phrased as one they can act on.
+_FORBIDDEN_DESTINATION_EVENT = (
+    "a connected creek vault host resolves to a destination this server must not dial; "
+    "that user gets the local fallback -- they can reconnect their vault to fix it"
+)
+_STORED_VAULT_SOURCE = "user_vault_connection"
 
 
 def _log_unowned_vault(raw_owner: str | None) -> None:
@@ -197,11 +211,60 @@ async def get_creek_vault_client(
     One lookup per request, on the session the handler is already using, so this
     adds a single indexed read by ``user_id`` rather than a connection of its
     own.
+
+    A connected row is re-judged before it is dialled, by
+    :func:`_stored_host_is_undialable`. Write-time refusal is not enough on its
+    own: rows predate rules, and a name that resolved publicly when it was stored
+    can resolve privately by the time it is used. The re-judgement degrades to
+    the local fallback rather than refusing the request, for the reason the
+    module docstring gives -- a bad vault costs its owner a capability, never
+    their writing.
     """
     connection = await load_vault_config(session, current_user)
-    if connection is not None:
-        return build_connected_vault_client(connection.vault_url, connection.api_key)
-    return deployment_vault_client(current_user)
+    if connection is None:
+        return deployment_vault_client(current_user)
+    if await _stored_host_is_undialable(connection.vault_url):
+        return LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
+    return build_connected_vault_client(connection.vault_url, connection.api_key)
+
+
+async def _stored_host_is_undialable(vault_url: str) -> bool:
+    """Report whether this stored URL's host resolves somewhere this server must not dial.
+
+    The resolving half of the request-forgery guard, run here because this is the
+    first coroutine on the dial path and a name lookup cannot happen inside
+    :func:`~services.creek_vault_client.build_connected_vault_client`, which is
+    synchronous. That function still runs the pure half, so an address literal is
+    caught whether or not this check exists; what only this one can catch is the
+    name whose answer changed after the row was written, which is DNS rebinding
+    stated plainly.
+
+    A refusal degrades and never raises, like every other decision in this
+    module. This is a per-request dependency: a raise means the handler body
+    never executes, and the writer loses the entry they were saving to protect
+    them from a connection they never see. Their vault being misdirected must
+    cost them the optional capability and never their writing.
+
+    Counted under :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED` rather
+    than a member of its own, on the reasoning
+    :func:`~services.creek_vault_client.build_connected_vault_client` already
+    gives for its own degrade: it is true of the request -- there was no usable
+    vault behind it -- and a new member would be one the write path ordinarily
+    makes unreachable. What distinguishes this from a user who connected nothing
+    is the WARNING, which that path does not emit.
+    """
+    finding = await classify_resolved_user_vault_url(vault_url_host(vault_url))
+    if finding is None:
+        return False
+    logger.warning(
+        _FORBIDDEN_DESTINATION_EVENT,
+        extra={
+            "config_source": _STORED_VAULT_SOURCE,
+            "url_defect": finding.defect.value,
+            "url_detail": finding.detail,
+        },
+    )
+    return True
 
 
 def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:

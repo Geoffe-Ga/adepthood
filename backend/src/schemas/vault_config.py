@@ -16,13 +16,20 @@ somebody typed is worse than one replicating nowhere and saying so. A credential
 is refused unless it could survive an ``Authorization`` header; the exception is
 whitespace *around* it, which is trimmed, because that is what a terminal copy
 adds and it could not have been part of the secret in the first place.
+
+*Where* the credential is refused is a security decision rather than a layering
+one, and it moved. A validator raising here produces a ``RequestValidationError``,
+whose entries carry an ``input`` key holding the offending value -- so a schema
+that refused an unusable key described it by quoting it, and the one field on
+this request that is a secret went back out in the 422. The rule now lives in
+the router as :func:`credential_is_usable` plus an explicit refusal code, so what
+a client is told is a name this endpoint owns. The trimming validator stays: it
+repairs and never raises, so it is not an echo path.
 """
 
 from __future__ import annotations
 
-from typing import Self
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from models.user_vault_config import VAULT_URL_MAX_LENGTH
 from schemas._base import OwnedResourcePublic
@@ -49,6 +56,23 @@ def _is_header_safe(value: str) -> bool:
     return all(_HEADER_SAFE_FIRST <= ord(character) <= _HEADER_SAFE_LAST for character in value)
 
 
+def credential_is_usable(value: str) -> bool:
+    """Whether ``value`` is a credential an ``Authorization`` header could carry.
+
+    One rule rather than a length bound plus a character class, because they are
+    one question: can this string be sent? An empty value cannot -- there is no
+    credential -- and neither can one holding a control character, a space, or a
+    non-ASCII letter.
+
+    A predicate rather than a validator, so the caller chooses what to say about
+    a failure. The router answers with a refusal code it owns; a validator could
+    only answer with a ``RequestValidationError``, which carries the offending
+    value back to the client in its ``input`` key. That is the wrong shape for
+    the one field on this request that is a secret.
+    """
+    return bool(value) and _is_header_safe(value)
+
+
 class VaultConnectionRequest(BaseModel):
     """Where a user's own vault lives and the credential that opens it.
 
@@ -71,24 +95,6 @@ class VaultConnectionRequest(BaseModel):
         value is a different matter and is refused below.
         """
         return value.strip()
-
-    @model_validator(mode="after")
-    def _require_a_usable_credential(self) -> Self:
-        """Refuse a credential an ``Authorization`` header could not carry.
-
-        Stated as one rule rather than as a length bound plus a character class,
-        because they are one question: "can this string be sent?" An empty value
-        cannot (there is no credential), and neither can one holding a control
-        character, a space, or a non-ASCII letter.
-
-        The message names neither the value nor its length. It reaches a 422
-        body and, from there, whatever the client logs, and this is the one
-        field on this request that is a secret.
-        """
-        if not self.api_key or not _is_header_safe(self.api_key):
-            msg = "api_key must be non-empty and contain only visible ASCII characters"
-            raise ValueError(msg)
-        return self
 
 
 class VaultConnectionResponse(OwnedResourcePublic):

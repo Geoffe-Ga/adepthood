@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
@@ -29,6 +32,19 @@ INTERNAL_ERROR = "internal_error"
 # rotated out with un-migrated rows) so logs/clients can tell it apart from a
 # generic 500 — the difference between "rotation went wrong" and "unrelated bug".
 DECRYPTION_FAILURE = "decryption_failure"
+
+
+# The only keys a sanitised 422 entry keeps, and the whole of the redaction.
+# What goes is ``input`` -- a verbatim copy of the material that failed
+# validation -- and ``ctx``, which restates the violated bound and on some error
+# types embeds the offending value a second time. What stays is what a client
+# actually parses: which error, which field, and what to say about it.
+_VALIDATION_ENTRY_KEYS = ("type", "loc", "msg")
+
+# The envelope key FastAPI's own validation response uses. Kept, deliberately:
+# the fix is a redaction, not a contract change, and a client mapping ``loc``
+# onto a form field must go on working across it.
+_DETAIL_KEY = "detail"
 
 
 def not_found(resource: str) -> HTTPException:
@@ -204,6 +220,54 @@ async def _journal_encryption_error_handler(request: Request, exc: Exception) ->
     )
 
 
+def _sanitized_validation_entry(entry: Mapping[str, object]) -> dict[str, object]:
+    """Rebuild one validation error entry with only the three keys a client needs.
+
+    Rebuilt rather than pruned, so the redaction is an allowlist: a key added to
+    Pydantic's error shape in some future release arrives excluded rather than
+    included, which is the only direction this particular default may safely
+    fail. All three keys are required members of Pydantic's error shape, so none
+    of the lookups is conditional and there is no entry this can empty out.
+    """
+    return {key: entry[key] for key in _VALIDATION_ENTRY_KEYS}
+
+
+async def _validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Answer a schema rejection without handing the submitted material back.
+
+    FastAPI's stock handler serialises an ``input`` key into every entry, holding
+    whatever failed validation. On a shape rejection that is harmless; on an auth
+    payload it is a credential disclosure, because a 422 is exactly the response
+    a client feels safe logging verbatim, forwarding to an error tracker, or
+    pasting into a support ticket. Two shapes leak, and the nastier one leaks
+    material that was never rejected at all: for a *missing* required field
+    Pydantic has no offending value to point at, so ``input`` becomes the entire
+    request body and every secret that travelled beside the omitted field goes
+    back out with it.
+
+    Installed globally rather than per-endpoint, because the disclosure is not a
+    property of any endpoint. It is a property of the default handler, and it
+    reaches login, signup, both password-reset routes and both OAuth routes --
+    every place in this application where a credential arrives in a body.
+
+    ``jsonable_encoder`` runs over the rebuilt list for the reason FastAPI's own
+    handler runs it over the original: ``loc`` is a tuple whose members are not
+    all strings, and an entry is not guaranteed to hold nothing but primitives.
+    Dropping ``ctx``, which is the key most likely to carry an object no encoder
+    was written for, is a second reason the same way.
+
+    The ``exc`` parameter is typed as the base exception because Starlette hands
+    every handler the same signature; the narrowing below is what makes the
+    ``errors()`` call safe, and its false branch is unreachable through
+    registration.
+    """
+    entries = exc.errors() if isinstance(exc, RequestValidationError) else ()
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={_DETAIL_KEY: jsonable_encoder([_sanitized_validation_entry(e) for e in entries])},
+    )
+
+
 def install_exception_handlers(app: FastAPI) -> None:
     """Wire the global catch-all exception handler onto a FastAPI app.
 
@@ -215,8 +279,14 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     Kept as a function so tests can spin up a bare app and opt in
     selectively rather than inheriting the global handler from import.
+
+    The validation handler *replaces* FastAPI's own rather than adding to it:
+    registering the same exception class wins the lookup, which is the only way
+    to close an echo the framework opens by default.
     """
-    # Specific handler first so a journal decrypt/encrypt failure logs its own
-    # event instead of disappearing into the catch-all.
+    # Specific handlers first so a journal decrypt/encrypt failure logs its own
+    # event, and a schema rejection keeps its 422, instead of disappearing into
+    # the catch-all.
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(JournalEncryptionError, _journal_encryption_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

@@ -11,7 +11,15 @@
  * PRIVACY: a document's bytes live in the loop's local scope for the length of
  * its own request. Nothing about them enters the run state, a notice, or a log.
  */
-import { useCallback, useMemo, useReducer, useRef, useState, type Dispatch } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type Dispatch,
+} from 'react';
 
 import { importSeedDocument } from './importSeedDocument';
 import { pickSeedDocuments, type PickedDocument } from './pickSeedDocuments';
@@ -51,6 +59,12 @@ export interface SeedRunController {
   chooseClassification: (_tier: JournalClassification) => void;
   /** Open the picker and send whatever comes back. */
   choose: () => Promise<void>;
+  /**
+   * Stop the run: nothing still queued is sent, and each such document settles
+   * as `cancelled`. The document already in flight is left to finish, because
+   * its request is with the server and no client can un-send it.
+   */
+  cancel: () => void;
   /** A one-line word about a pick that yielded nothing; null otherwise. */
   notice: string | null;
   /** Whether documents are still going over. */
@@ -78,7 +92,13 @@ function toQueuedDocuments(documents: readonly PickedDocument[], from: number): 
   }));
 }
 
-/** What to say about a pick that produced no document to send. */
+/**
+ * What to say about a pick that produced no document to send.
+ *
+ * `cancelled` here is the picker being dismissed, which is not the run being
+ * stopped — that one settles a document at the `cancelled` *status*. The two
+ * words come from different vocabularies and say different things.
+ */
 function emptyPickNotice(kind: 'cancelled' | 'failed'): string {
   return kind === 'cancelled' ? SEED_CANCELLED_NOTICE : SEED_FAILED_PICK_NOTICE;
 }
@@ -92,11 +112,20 @@ function emptyPickNotice(kind: 'cancelled' | 'failed'): string {
  * "one in flight at a time" a property of the machine instead of a promise the
  * loop makes — the loop cannot start a second document while one is in flight,
  * because the selector will not offer it one.
+ *
+ * The signal is read between iterations rather than handed to the request. A
+ * loop held by this callback's stack outlives the screen that started it, so
+ * without the check an abandoned run keeps uploading while the person sees an
+ * empty screen — and aborting mid-request instead would leave the opposite
+ * divergence, a document the server accepted that nothing on device recorded.
+ * Checked here, an aborted run stops cleanly at a document boundary: what was
+ * sent is known, and what was not was never sent.
  */
 async function sendSequentially(
   queued: readonly QueuedDocument[],
   tier: JournalClassification,
   dispatch: Dispatch<SeedRunAction>,
+  signal: AbortSignal,
 ): Promise<void> {
   const documents = new Map(queued.map((item) => [item.entry.id, item.document]));
   let batch = seedRunReducer(EMPTY_SEED_RUN, {
@@ -104,6 +133,7 @@ async function sendSequentially(
     entries: queued.map((item) => item.entry),
   });
   for (let next = selectNextQueued(batch); next !== null; next = selectNextQueued(batch)) {
+    if (signal.aborted) break;
     const document = documents.get(next.id);
     if (!document) break;
     dispatch({ type: 'start', id: next.id });
@@ -136,6 +166,19 @@ export function useSeedRun(): SeedRunController {
   // Monotonic so a document picked twice, or two files of the same name, each
   // get their own row instead of overwriting one another.
   const mintedCount = useRef(0);
+  // Held in a ref rather than in state: the loop reads it, nothing renders it,
+  // and a re-render must not hand an in-flight run a fresh controller.
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    dispatch({ type: 'cancel' });
+  }, []);
+
+  // The safety net under the navigation guard: a screen can be torn down by
+  // routes the guard never sees, and an unmounted run that kept uploading is
+  // the exact divergence between what the person saw and what the server holds.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const choose = useCallback(async () => {
     const picked = await pickSeedDocuments();
@@ -147,9 +190,11 @@ export function useSeedRun(): SeedRunController {
     const queued = toQueuedDocuments(picked.documents, mintedCount.current);
     mintedCount.current += queued.length;
     dispatch({ type: 'add', entries: queued.map((item) => item.entry) });
+    const controller = new AbortController();
+    abortRef.current = controller;
     setIsSending(true);
     try {
-      await sendSequentially(queued, classification, dispatch);
+      await sendSequentially(queued, classification, dispatch, controller.signal);
     } finally {
       setIsSending(false);
     }
@@ -163,6 +208,7 @@ export function useSeedRun(): SeedRunController {
     classification,
     chooseClassification: setClassification,
     choose,
+    cancel,
     notice,
     isSending,
     needsConsent: items.some((item) => item.status === 'consent_required'),

@@ -348,12 +348,10 @@ async def test_submit_practice_rejects_unknown_mode_with_clear_error(
     resp = await async_client.post("/practices/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     body = resp.json()
-    # Pydantic emits an enum-validation error whose ``input`` is the bad
-    # value; the misleading "mode_config is required" message must not
-    # appear.
-    raw = repr(body)
-    assert "telepathy" in raw
-    assert "mode_config is required" not in raw
+    entry = body["detail"][0]
+    assert entry["type"] == "enum"
+    assert entry["loc"][-1] == "mode"
+    assert "mode_config is required" not in repr(body)
 
 
 @pytest.mark.asyncio

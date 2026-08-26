@@ -4,7 +4,13 @@ import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
 import {
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
+  SEED_LEAVE_BROWSER_WARNING,
+  SEED_LEAVE_CONFIRM_LABEL,
+  SEED_LEAVE_STAY_LABEL,
+  SEED_LEAVE_TITLE,
+  SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
+  seedProgressLine,
   seedSummaryLine,
 } from '../seedCopy';
 import type { SeedItemStatus } from '../seedRun';
@@ -30,6 +36,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'too_large',
   'unreadable',
   'failed',
+  'cancelled',
 ];
 
 describe('what each outcome says', () => {
@@ -140,5 +147,67 @@ describe('the run summary', () => {
       expect(String(line).toLowerCase()).not.toContain('vault');
       expect(String(line).toLowerCase()).not.toContain('corpus');
     }
+  });
+});
+
+describe('a document the run never got to', () => {
+  test('says it never left the device, and does not read as a failure', () => {
+    const line = SEED_STATUS_LINES.cancelled;
+
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+    expect(line.toLowerCase()).toContain('never sent');
+    expect(ranksOrShames(line)).toBe(false);
+  });
+});
+
+describe('the line shown while documents are going over', () => {
+  test('says nothing when nothing is in flight', () => {
+    expect(seedProgressLine({ total: 0, landed: 0, waiting: 0, refused: 0 })).toBeNull();
+    expect(seedProgressLine({ total: 3, landed: 3, waiting: 0, refused: 0 })).toBeNull();
+  });
+
+  test('names the position in the run and how long the run is', () => {
+    // Two settled and one in flight of twelve: the third document.
+    expect(seedProgressLine({ total: 12, landed: 2, waiting: 10, refused: 0 })).toContain(
+      '3 of 12',
+    );
+  });
+
+  test('counts the whole run rather than only the latest pick', () => {
+    // A second pick appends, so the position has to include what a first pick
+    // already sent -- otherwise the number restarts while the list does not.
+    expect(seedProgressLine({ total: 12, landed: 5, waiting: 7, refused: 0 })).toContain('6 of 12');
+  });
+
+  test('claims no destination it was not told', () => {
+    const line = String(seedProgressLine({ total: 4, landed: 1, waiting: 3, refused: 0 }));
+
+    expect(line.toLowerCase()).not.toContain('vault');
+    expect(line.toLowerCase()).not.toContain('corpus');
+  });
+});
+
+describe('the warning before leaving a run in flight', () => {
+  test('names what is happening and what becomes of each half of the run', () => {
+    expect(SEED_LEAVE_TITLE.toLowerCase()).toContain('still going over');
+    expect(SEED_LEAVE_WARNING.toLowerCase()).toContain('finish');
+    expect(SEED_LEAVE_WARNING.toLowerCase()).toContain('never sent');
+  });
+
+  test('offers both ways out, each labelled with what it does', () => {
+    expect(SEED_LEAVE_CONFIRM_LABEL.toLowerCase()).toContain('leave');
+    expect(SEED_LEAVE_STAY_LABEL.toLowerCase()).toContain('stay');
+    expect(SEED_LEAVE_CONFIRM_LABEL).not.toBe(SEED_LEAVE_STAY_LABEL);
+  });
+
+  test('the browser-level warning says the same thing in one line', () => {
+    expect(SEED_LEAVE_BROWSER_WARNING.toLowerCase()).toContain('still going over');
+    expect(SEED_LEAVE_BROWSER_WARNING.toLowerCase()).toContain('never sent');
+  });
+
+  test('nothing sold: leaving is a choice, not a lapse', () => {
+    expect(ranksOrShames(SEED_LEAVE_WARNING)).toBe(false);
+    expect(ranksOrShames(SEED_LEAVE_BROWSER_WARNING)).toBe(false);
+    expect(ranksOrShames(SEED_LEAVE_CONFIRM_LABEL)).toBe(false);
   });
 });

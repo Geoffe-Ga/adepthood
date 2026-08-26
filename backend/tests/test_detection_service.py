@@ -94,6 +94,22 @@ async def test_detects_and_anchors_hits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_is_parsed() -> None:
+    """Detection shares resonance's JSON reader, so it inherits fence tolerance.
+
+    Guarded here as well as in the resonance suite: the two features fail
+    independently for a user, and a future reader changing one parser should
+    see both call sites go red.
+    """
+    fenced = (
+        "```json\n" + _hits_json({"index": 0, "quote": "I meditated for twenty minutes"}) + "\n```"
+    )
+    hits = await detect_completions(_BODY, candidates=_CANDIDATES, llm=FakeLLM(fenced))
+    assert len(hits) == 1
+    assert hits[0].anchor_text == "I meditated for twenty minutes"
+
+
+@pytest.mark.asyncio
 async def test_empty_candidates_short_circuits_without_calling_llm() -> None:
     """No candidates ⇒ [] and the LLM is never called (the endpoint's cost guard)."""
     llm = FakeLLM(_hits_json({"index": 0, "quote": "I meditated for twenty minutes"}))
