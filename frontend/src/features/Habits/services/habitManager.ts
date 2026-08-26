@@ -11,6 +11,8 @@ import { Alert } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
+  ApiError,
+  ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
@@ -33,6 +35,7 @@ import {
   clearPendingCheckIns,
   replacePendingCheckIns,
 } from '../../../storage/habitStorage';
+import type { PendingCheckIn } from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
@@ -409,6 +412,8 @@ export interface LogUnitContext {
    * the completion to the current wall-clock time.
    */
   completedOn?: string;
+  /** Demo-seed tile: its goal id is client-fabricated, so a queued check-in could never post. */
+  isDemoSeed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -715,9 +720,67 @@ const syncRevealState = (next: Habit[], failureMessage: string): void => {
 };
 
 /**
+ * Statuses that mean this queued check-in will never post, however many
+ * times we try it. Deliberately a closed allowlist: an unrecognised status
+ * falls through to "transient", because mis-reading a transient failure as
+ * permanent destroys a check-in the user actually made, while the reverse
+ * only costs one retry.
+ *
+ * NOT the complement of ``TRANSIENT_STATUSES`` in ``api/index.ts``, and the
+ * two must not be unified. That set governs an in-flight retry milliseconds
+ * apart, where re-sending an expired token is pointless, so it excludes 401.
+ * This queue spans app launches and ``AuthContext`` re-hydrates the token at
+ * launch, so a 401 here means "not signed in right now", never "this
+ * check-in is invalid" — dropping on it would wipe the queue of exactly the
+ * user who has one.
+ */
+const PERMANENT_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 422]);
+
+/** Whether a replay failure is futile or harmful to retry, so the entry is dropped. */
+const isPermanentRejection = (err: unknown): err is ApiError | ApiValidationError => {
+  // Checked before any status lookup: ApiValidationError does not extend
+  // ApiError and carries the response's own status, which can be a 2xx. It
+  // means the body failed its Zod schema, so the request completed and the
+  // completion may already exist server-side; replay sends no idempotency
+  // key, so retrying risks the duplicate completion BUG-FE-HABIT-205 exists
+  // to prevent. A 4xx drops because retry is futile; this drops because
+  // retry is harmful.
+  if (err instanceof ApiValidationError) return true;
+  return err instanceof ApiError && PERMANENT_REJECTION_STATUSES.has(err.status);
+};
+
+/** POST one queued check-in, bucketing its day into the user's zone. */
+const postPendingCheckIn = async (
+  checkIn: PendingCheckIn,
+  zone: string,
+  today: string,
+): Promise<void> => {
+  const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
+  await goalCompletionsApi.create({
+    goal_id: checkIn.goal_id,
+    did_complete: checkIn.did_complete,
+    // An explicit backfill day (queued by a backdated offline log)
+    // wins; otherwise derive it from the queue timestamp.
+    completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
+  });
+};
+
+/** Surface a dropped check-in so a chronic rejection is diagnosable. */
+const warnDroppedCheckIn = (checkIn: PendingCheckIn, err: ApiError | ApiValidationError): void => {
+  console.warn(
+    'replayPendingCheckIns: dropping permanently rejected check-in for goal',
+    checkIn.goal_id,
+    'status',
+    err.status,
+  );
+};
+
+/**
  * Replay pending check-ins captured by an earlier offline session. On
- * partial failure, the suffix that didn't post is rewritten back to
- * disk so we don't double-post on the next replay.
+ * transient failure, the suffix that didn't post is rewritten back to
+ * disk so we don't double-post on the next replay; a permanently rejected
+ * entry is dropped so it cannot wedge the queue ahead of everything the
+ * user logged behind it.
  *
  * Each queued timestamp is forwarded as ``completed_on`` (the user-local
  * calendar day) so a check-in queued offline on Monday lands on Monday's
@@ -733,20 +796,17 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
   const today = todayInUserTZ(zone);
   for (let i = 0; i < pending.length; i += 1) {
     const checkIn = pending[i]!;
-    const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
     try {
-      await goalCompletionsApi.create({
-        goal_id: checkIn.goal_id,
-        did_complete: checkIn.did_complete,
-        // An explicit backfill day (queued by a backdated offline log)
-        // wins; otherwise derive it from the queue timestamp.
-        completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
-      });
-    } catch {
-      // Still offline (or the server rejected this one). Persist only
-      // the unprocessed suffix so the next replay doesn't repost the
-      // successful prefix — that was the BUG-FE-HABIT-205 partial-
-      // success regression.
+      await postPendingCheckIn(checkIn, zone, today);
+    } catch (err) {
+      if (isPermanentRejection(err)) {
+        warnDroppedCheckIn(checkIn, err);
+        continue;
+      }
+      // Still offline, or a failure worth retrying. Persist only the
+      // unprocessed suffix so the next replay doesn't repost the prefix —
+      // every index below ``i`` is terminal, posted or dropped. That was
+      // the BUG-FE-HABIT-205 partial-success regression.
       await replacePendingCheckIns(pending.slice(i));
       return;
     }
@@ -1021,9 +1081,11 @@ export const habitManager = {
     let oldProgress = 0;
     let newProgress = 0;
     let habitName = '';
+    let isDemoSeed = false;
     const next = prev.map((h) => {
       if (h.id !== habitId) return h;
       habitName = h.name;
+      isDemoSeed = h.isDemoSeed === true;
       const result = applyLogUnit(h, amount, tz, date);
       oldProgress = result.oldProgress;
       newProgress = result.newProgress;
@@ -1047,6 +1109,7 @@ export const habitManager = {
       currentGoal,
       nextGoal,
       completedOn,
+      isDemoSeed,
     };
   },
 

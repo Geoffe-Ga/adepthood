@@ -79,6 +79,7 @@ import {
   goalCompletions as goalCompletionsApi,
   habits as habitsApi,
 } from '../../../../api';
+import { colors } from '../../../../design/tokens';
 import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
@@ -361,6 +362,58 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
 
     expect(savePendingCheckIn).not.toHaveBeenCalled();
     expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
+  });
+
+  it('never queues a demo-seed tile and never promises it will sync later', async () => {
+    // A demo tile's goal id is client-fabricated, so a queued check-in can never post.
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new TypeError('fetch failed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.message.length).toBeGreaterThan(0);
+    expect(toast.message).not.toMatch(/sync when you reconnect/i);
+    expect(toast.color).toBe(colors.secondary);
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+  });
+});
+
+describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
+  it('explains the sample tile instead of blaming a sync problem', async () => {
+    // A demo tile is also seeded on a fresh account WITH a connection, so its
+    // fabricated goal id 404s for real. That looks exactly like the stale-id
+    // symptom, but no refresh can fix it — the refresh only re-seeds the demo.
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(404, 'goal_not_found')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.color).toBe(colors.secondary);
+    expect(toast.message).not.toMatch(/out of sync/i);
+    // Nothing is queued, and no futile refresh fires.
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).not.toHaveBeenCalled();
+    // The optimistic increment stays: the sample tile remains explorable.
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
   });
 });
 

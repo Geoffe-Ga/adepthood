@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 // Keep the real ``toLocalHabit`` mapper (the load path now delegates to it and
 // these tests assert its tier/notification sanitizing) while stubbing only the
@@ -51,6 +51,8 @@ jest.mock('react-native', () => ({
 
 import type * as ApiModule from '../../../../api';
 import {
+  ApiError,
+  ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
@@ -2593,6 +2595,136 @@ describe('habitManager', () => {
       const shown = useHabitStore.getState().habits;
       expect(shown.length).toBeGreaterThan(0);
       expect(shown.every((h) => h.isDemoSeed === true)).toBe(true);
+    });
+  });
+  describe('replayPendingCheckIns failure classification', () => {
+    const queued = (goalId: number, day: string) => ({
+      goal_id: goalId,
+      did_complete: true,
+      timestamp: `${day}T00:00:00Z`,
+    });
+
+    type QueuedCheckIn = ReturnType<typeof queued>;
+
+    // Nothing in this store is demo-seed, so a demo-tile-only guard cannot satisfy these.
+    const replay = async (pending: QueuedCheckIn[]): Promise<void> => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 7, name: 'Real' })] });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce(pending as never);
+      await habitManager.loadHabits('UTC');
+    };
+
+    const postedGoalIds = (): number[] =>
+      (goalCompletionsApi.create as jest.Mock).mock.calls.map(
+        (call) => (call[0] as { goal_id: number }).goal_id,
+      );
+
+    beforeEach(() => {
+      // ``clearMocks`` drops calls but not a leftover ``Once`` queue, so reset it here.
+      (goalCompletionsApi.create as jest.Mock).mockReset();
+      (goalCompletionsApi.create as jest.Mock).mockResolvedValue({} as never);
+      jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('drops a permanently rejected entry and keeps draining the queue behind it', async () => {
+      (goalCompletionsApi.create as jest.Mock)
+        .mockRejectedValueOnce(new ApiError(404, 'goal_not_found') as never)
+        .mockResolvedValueOnce({} as never)
+        .mockResolvedValueOnce({} as never);
+
+      await replay([queued(77, '2025-04-01'), queued(88, '2025-04-02'), queued(99, '2025-04-03')]);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(3);
+      expect(postedGoalIds()).toEqual([77, 88, 99]);
+      expect(clearPendingCheckIns).toHaveBeenCalled();
+      expect(replacePendingCheckIns).not.toHaveBeenCalled();
+    });
+
+    it('re-queues the unposted suffix when a real ApiError is transient (BUG-FE-HABIT-205)', async () => {
+      const pending = [queued(1, '2025-04-01'), queued(2, '2025-04-02'), queued(3, '2025-04-03')];
+      (goalCompletionsApi.create as jest.Mock)
+        .mockResolvedValueOnce({} as never)
+        .mockRejectedValueOnce(new ApiError(503, 'unavailable') as never);
+
+      await replay(pending);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
+      expect(clearPendingCheckIns).not.toHaveBeenCalled();
+      expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[1]!, pending[2]!]);
+    });
+
+    it('treats a 401 as transient because auth rehydrates on the next launch', async () => {
+      const pending = [queued(21, '2025-04-01'), queued(22, '2025-04-02')];
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(401, 'Not authenticated') as never,
+      );
+
+      await replay(pending);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+      expect(clearPendingCheckIns).not.toHaveBeenCalled();
+      expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[0]!, pending[1]!]);
+    });
+
+    it('drops an ApiValidationError even when its status alone would read as transient', async () => {
+      const pending = [queued(31, '2025-04-01'), queued(32, '2025-04-02')];
+      (goalCompletionsApi.create as jest.Mock)
+        .mockRejectedValueOnce(new ApiValidationError('/goal_completions/', 201, []) as never)
+        .mockResolvedValueOnce({} as never);
+
+      await replay(pending);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
+      expect(postedGoalIds()).toEqual([31, 32]);
+      expect(clearPendingCheckIns).toHaveBeenCalled();
+      expect(replacePendingCheckIns).not.toHaveBeenCalled();
+    });
+
+    it('announces the dropped check-in with its goal id and status', async () => {
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(422, 'unprocessable') as never,
+      );
+
+      await replay([queued(4242, '2025-04-01')]);
+
+      const warnMock = console.warn as unknown as jest.Mock;
+      expect(warnMock).toHaveBeenCalledTimes(1);
+      const logged = (warnMock.mock.calls[0] as unknown[]).map((arg) => String(arg)).join(' ');
+      expect(logged).toContain('4242');
+      expect(logged).toContain('422');
+    });
+
+    it('clears an all-permanent queue instead of wedging it forever', async () => {
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(400, 'bad_request') as never,
+      );
+
+      await replay([queued(51, '2025-04-01')]);
+
+      expect(clearPendingCheckIns).toHaveBeenCalled();
+      expect(replacePendingCheckIns).not.toHaveBeenCalled();
+    });
+
+    it('re-queues only the transiently failed suffix when a drop came before it', async () => {
+      const pending = [
+        queued(61, '2025-04-01'),
+        queued(62, '2025-04-02'),
+        queued(63, '2025-04-03'),
+      ];
+      (goalCompletionsApi.create as jest.Mock)
+        .mockRejectedValueOnce(new ApiError(404, 'goal_not_found') as never)
+        .mockResolvedValueOnce({} as never)
+        .mockRejectedValueOnce(new ApiError(500, 'server_error') as never);
+
+      await replay(pending);
+
+      expect(clearPendingCheckIns).not.toHaveBeenCalled();
+      expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[2]!]);
     });
   });
 });
