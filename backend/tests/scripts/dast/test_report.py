@@ -19,9 +19,17 @@ everything.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from http import HTTPStatus
 
 from scripts.dast.discovery import RouteSpec
+from scripts.dast.references import (
+    EvidenceStrategy,
+    EvidenceWitness,
+    ObjectReference,
+    ReferenceLocation,
+    WitnessCondition,
+)
 from scripts.dast.report import (
     EXIT_AUTHZ_FINDING,
     EXIT_CLEAN,
@@ -33,7 +41,13 @@ from scripts.dast.report import (
     render_curl,
     render_report,
 )
-from scripts.dast.verdict import Cell, CellResult, GuardFailure, Verdict
+from scripts.dast.verdict import (
+    Cell,
+    CellResult,
+    GuardFailure,
+    ReferenceCellResult,
+    Verdict,
+)
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -106,6 +120,7 @@ def build_report(
     results: tuple[CellResult, ...] = (),
     uncovered: tuple[str, ...] = (),
     guard_failures: tuple[GuardFailure, ...] = (),
+    reference_results: tuple[ReferenceCellResult, ...] = (),
 ) -> MatrixReport:
     """Assemble a report with everything but the field under test held constant."""
     return MatrixReport(
@@ -117,6 +132,7 @@ def build_report(
         results=results,
         guard_failures=guard_failures,
         elapsed_seconds=SAMPLE_ELAPSED_SECONDS,
+        reference_results=reference_results,
     )
 
 
@@ -199,11 +215,17 @@ def test_render_curl_builds_a_single_pasteable_command() -> None:
 
 
 def test_every_report_carries_the_scope_note() -> None:
-    """A green must never be read as "no BOLA anywhere"; the check reads paths only."""
-    assert SCOPE_NOTE == (
-        "scope: object references in the path only; ids carried in query params "
-        "or request bodies are not covered"
-    )
+    """The note has to describe the check that actually ran, in every report.
+
+    It used to disclaim body- and query-carried ids as out of scope. Leaving
+    that sentence in place once they are probed would understate a green run as
+    badly as overstating it, and the next reader would go looking for a gap that
+    is no longer there.
+    """
+    assert "path" in SCOPE_NOTE
+    assert "body" in SCOPE_NOTE or "bodies" in SCOPE_NOTE
+    assert "query" in SCOPE_NOTE
+    assert "not covered" not in SCOPE_NOTE
     assert f"  {SCOPE_NOTE}\n" in render_report(build_report())
     assert f"  {SCOPE_NOTE}\n" in render_report(build_report(results=(MARGINALIA_LEAK,)))
 
@@ -272,3 +294,211 @@ def test_a_finding_outranks_an_uncovered_route_in_the_exit_code() -> None:
     assert report.exit_code == EXIT_AUTHZ_FINDING
     assert "  FAIL  GET    /journal/{entry_id}/marginalia\n" in rendered
     assert "  UNCOVERED  GET    /course/{slug}\n" in rendered
+
+
+# --- Rendering a finding whose id never appeared in the path ------------------
+#
+# A reference finding has one fact more than a path finding: which field carried
+# the id. Without it the reader cannot reproduce the request, because the path
+# alone does not say what to send.
+
+JOURNAL_CREATE_ROUTE = RouteSpec(
+    method="POST",
+    path="/journal/",
+    params=(),
+    requires_auth=True,
+    body_id_refs=("practice_session_id",),
+)
+SESSION_LISTING_ROUTE = RouteSpec(
+    method="GET",
+    path="/journal/",
+    params=(),
+    requires_auth=True,
+    query_id_refs=("practice_session_id",),
+)
+
+SESSION_REFERENCE = ObjectReference(
+    field="practice_session_id",
+    location=ReferenceLocation.BODY,
+    seed_key="practice_session_id",
+    evidence=EvidenceStrategy.ECHO,
+)
+LISTING_REFERENCE = ObjectReference(
+    field="practice_session_id",
+    location=ReferenceLocation.QUERY,
+    seed_key="practice_session_id",
+    evidence=EvidenceStrategy.LISTING,
+)
+
+REFERENCE_LEAK = ReferenceCellResult(
+    route=JOURNAL_CREATE_ROUTE,
+    reference=SESSION_REFERENCE,
+    cell=Cell.CROSS_REFERENCE,
+    resolved_path="/journal/",
+    object_id="31",
+    status=HTTPStatus.CREATED,
+    object_was_reached=True,
+    verdict=Verdict.LEAK,
+)
+# A route whose whole answer is a flag: no id to scan for, so the finding has to
+# report what the declared witness read instead.
+WITNESSED_REFERENCE = ObjectReference(
+    field="included_in_entry_id",
+    location=ReferenceLocation.BODY,
+    seed_key="reflection_entry_id",
+    evidence=EvidenceStrategy.ECHO,
+    witness=EvidenceWitness(pointer=("pending",), condition=WitnessCondition.IS_FALSE),
+)
+
+WITNESSED_LEAK = ReferenceCellResult(
+    route=JOURNAL_CREATE_ROUTE,
+    reference=WITNESSED_REFERENCE,
+    cell=Cell.CROSS_REFERENCE,
+    resolved_path="/journal/",
+    object_id="31",
+    status=HTTPStatus.OK,
+    object_was_reached=True,
+    verdict=Verdict.LEAK,
+)
+REFERENCE_PASS = ReferenceCellResult(
+    route=SESSION_LISTING_ROUTE,
+    reference=LISTING_REFERENCE,
+    cell=Cell.CROSS_REFERENCE,
+    resolved_path="/journal/",
+    object_id="31",
+    status=HTTPStatus.OK,
+    object_was_reached=False,
+    verdict=Verdict.PASS,
+)
+
+
+def test_a_reference_leak_names_the_route_the_field_the_id_and_the_status() -> None:
+    """Everything needed to reproduce the request sits in the block itself.
+
+    The field name is the part a path finding never needs and a reference
+    finding cannot do without: "IDOR on POST /journal/" does not say what to put
+    in the body.
+    """
+    rendered = render_report(build_report(reference_results=(REFERENCE_LEAK,)))
+
+    assert "FAIL" in rendered
+    assert "POST" in rendered
+    assert "/journal/" in rendered
+    assert "practice_session_id=31" in rendered
+    assert "201 Created" in rendered
+
+
+def test_a_witnessed_finding_says_which_field_it_read_and_what_it_found() -> None:
+    """An operator has to be able to check the claim against the route by eye.
+
+    A witnessed cell carries no id in its evidence, so "the referenced object
+    came back in the response" would be a sentence about something nobody can
+    look at. Naming the field and the reading is what makes the finding
+    triageable without rerunning the harness.
+    """
+    rendered = render_report(build_report(reference_results=(WITNESSED_LEAK,)))
+
+    assert "pending false" in rendered
+    assert "only a landed write produces" in rendered
+
+
+def test_an_inconclusive_scan_says_the_object_never_appeared() -> None:
+    """A cell that learned nothing has to read differently from one that saw nothing.
+
+    An id-scanned cell that answered 2xx while showing no trace of the object,
+    with no control to explain the silence, is the run's most misleading
+    outcome. The block has to say that the evidence was empty rather than imply
+    the route was clean.
+    """
+    unexplained = replace(REFERENCE_LEAK, object_was_reached=False, verdict=Verdict.INCONCLUSIVE)
+
+    rendered = render_report(build_report(reference_results=(unexplained,)))
+
+    assert "never appeared in the response" in rendered
+
+
+def test_a_witnessed_cell_that_did_not_fire_says_the_write_never_landed() -> None:
+    """The negative reading has to be as legible as the positive one."""
+    quiet = replace(WITNESSED_LEAK, object_was_reached=False, verdict=Verdict.INCONCLUSIVE)
+
+    rendered = render_report(build_report(reference_results=(quiet,)))
+
+    assert "without pending false" in rendered
+    assert "the write never landed" in rendered
+
+
+def test_a_passing_reference_cell_is_counted_and_not_printed() -> None:
+    """Passing cells are the majority; printing them would bury the findings."""
+    report = build_report(reference_results=(REFERENCE_PASS,))
+    rendered = render_report(report)
+
+    assert report.reference_findings == ()
+    assert report.exit_code == EXIT_CLEAN
+    assert "FAIL" not in rendered
+    assert f"  {PASS_HEADLINE}\n" in rendered
+
+
+def test_reference_findings_are_exactly_the_reference_cells_that_did_not_pass() -> None:
+    """The same rule as the path dimension, applied to the parallel one."""
+    report = build_report(reference_results=(REFERENCE_PASS, REFERENCE_LEAK))
+
+    assert report.reference_findings == (REFERENCE_LEAK,)
+
+
+def test_a_reference_leak_alone_is_enough_to_fail_the_build() -> None:
+    """A body-carried leak is a leak; nothing about the path dimension may excuse it."""
+    report = build_report(reference_results=(REFERENCE_LEAK,))
+
+    assert report.findings == ()
+    assert report.exit_code == EXIT_AUTHZ_FINDING
+
+
+def test_a_guard_failure_still_outranks_a_reference_finding() -> None:
+    """A run that proved nothing stays louder than one that proved something wrong."""
+    report = build_report(
+        reference_results=(REFERENCE_LEAK,),
+        guard_failures=(THROTTLE_GUARD,),
+    )
+
+    assert report.exit_code == EXIT_HARNESS_ERROR
+
+
+UNREADABLE_EVIDENCE_CELL = ReferenceCellResult(
+    route=JOURNAL_CREATE_ROUTE,
+    reference=SESSION_REFERENCE,
+    cell=Cell.CROSS_REFERENCE,
+    resolved_path="/journal/",
+    object_id="31",
+    status=HTTPStatus.CREATED,
+    object_was_reached=False,
+    verdict=Verdict.INCONCLUSIVE,
+    evidence_unavailable=True,
+)
+
+
+def test_a_cell_with_no_readable_evidence_says_so_rather_than_reporting_an_absence() -> None:
+    """An unreadable answer and an absent object are different findings.
+
+    They have different fixes -- a broken read surface against an authorization
+    bug -- so a block that rendered the first as the second would send its
+    reader hunting in the wrong file.
+    """
+    rendered = render_report(build_report(reference_results=(UNREADABLE_EVIDENCE_CELL,)))
+
+    assert "no readable evidence" in rendered
+    assert "never appeared in the response" not in rendered
+
+
+def test_the_scope_note_names_the_shapes_a_reference_probe_cannot_see() -> None:
+    """A green has to be readable as what it is, so the note states both known gaps.
+
+    Grading a cross-user 2xx on the absence of the foreign id assumes the
+    response renders a reference it persisted the same way whoever owns the
+    object it names. And the body heuristic looks for a singular ``*_id``, so a
+    plural collection of them is never probed at all. Both are real, both are
+    invisible from a passing run, and a note that omitted either would let the
+    green claim more than it proved.
+    """
+    assert "*_ids" in SCOPE_NOTE
+    assert "owner-scoped" in SCOPE_NOTE
+    assert "creator-scoped" in SCOPE_NOTE

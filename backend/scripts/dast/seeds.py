@@ -15,12 +15,21 @@ check ever runs -- which is not a denial, merely a probe that proved nothing.
 The positive control catches that automatically, but the point is to exercise
 the real cell, so the bodies are here.
 
-Two substitutions run over both tables, and both are ordinary ``str.format``
-fields so a spec reads as the request it will become. ``{some_id}`` is filled
-from an object seeded earlier in the same cell, which is how a dependent create
-path finds its parent; ``{unique}`` is filled with a fresh random token, which
-is what keeps a slug or a habit name from colliding with the object seeded for
-the previous cell.
+Three kinds of substitution run over both tables, and all of them are ordinary
+``str.format`` fields so a spec reads as the request it will become.
+``{some_id}`` is filled from an object seeded earlier in the same cell, which is
+how a dependent create path finds its parent; ``{unique}`` is filled with a
+fresh random token, which is what keeps a slug or a habit name from colliding
+with the object seeded for the previous cell; and ``{started_at}`` /
+``{ended_at}`` are filled with a window that ends now, because a practice
+session is validated against the wall clock and a constant timestamp would be
+rejected as stale the day after it was written.
+
+A handful of specs exist only to be *named* by a body or query reference rather
+than by a path parameter. Each of those creates the row a filtered listing needs
+in order to have anything to return, and hands back the id of the object under
+test rather than of the row it just made -- a listing whose control answers with
+an empty page proves nothing, and the reference guards fail the run when it does.
 
 The two top-level tables are read-only proxies so they can be bound as
 configuration defaults; everything nested inside them is a plain dict, because
@@ -33,6 +42,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
 
 from scripts.dast.discovery import RouteSpec
@@ -44,6 +54,23 @@ _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 # The field every payload and create path may interpolate to stay unique across
 # the four cells of a route.
 UNIQUE_FIELD = "unique"
+
+# A practice session is validated against the wall clock: a window that ends in
+# the future, or starts more than a day ago, is answered 422 before the
+# ownership check ever runs -- a probe that proved nothing. So the two
+# timestamps are rendered per request rather than written down as constants.
+STARTED_AT_FIELD = "started_at"
+ENDED_AT_FIELD = "ended_at"
+_SESSION_MINUTES = 10
+
+# Spelled once and shared by the seed spec and the reference probe, so the two
+# cannot drift into disagreeing about what a valid session looks like.
+SESSION_WINDOW: Mapping[str, object] = MappingProxyType(
+    {
+        STARTED_AT_FIELD: f"{{{STARTED_AT_FIELD}}}",
+        ENDED_AT_FIELD: f"{{{ENDED_AT_FIELD}}}",
+    },
+)
 
 # Stage 1 is the curriculum's entry point, so it is the one stage every fresh
 # identity can select a practice for.
@@ -72,6 +99,9 @@ _HABIT_FIELDS: dict[str, object] = {
 
 _SEED_NOTE = "seeded by the authorization matrix"
 _REPLAY_NAME = "dast replay"
+
+# The one journal tag a promoted quote may be folded into.
+_HIERARCHICAL_REFLECTION = "hierarchical_reflection"
 
 
 @dataclass(frozen=True)
@@ -198,6 +228,44 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             id_pointer=("id",),
             depends_on=("entry_id",),
         ),
+        "practice_session_id": SeedSpec(
+            create_method="POST",
+            create_path="/practice-sessions/",
+            payload={"user_practice_id": "{user_practice_id}", **SESSION_WINDOW},
+            id_pointer=("id",),
+            depends_on=("user_practice_id",),
+        ),
+        # A quote may only be folded into a *hierarchical reflection*: any other
+        # tag is refused 422 for a reason that has nothing to do with who owns
+        # the target, which would let the probe pass while proving nothing. So
+        # the inclusion target is seeded with the tag the route demands rather
+        # than reusing the plain ``entry_id`` note.
+        "reflection_entry_id": SeedSpec(
+            create_method="POST",
+            create_path="/journal/",
+            payload={"message": _SEED_NOTE, "tag": _HIERARCHICAL_REFLECTION},
+            id_pointer=("id",),
+        ),
+        # The next two exist for the filtered listings, and each hands back the
+        # id of the object the *filter* names rather than of the row it just
+        # created. A listing scoped to the caller can only surface a session or
+        # a user-practice id once the caller owns something that carries it; a
+        # control answering with an empty page proves nothing, and the reference
+        # guard fails the run rather than let that count as a pass.
+        "journalled_practice_session_id": SeedSpec(
+            create_method="POST",
+            create_path="/journal/",
+            payload={"message": _SEED_NOTE, "practice_session_id": "{practice_session_id}"},
+            id_pointer=("practice_session_id",),
+            depends_on=("practice_session_id",),
+        ),
+        "logged_user_practice_id": SeedSpec(
+            create_method="POST",
+            create_path="/practice-sessions/",
+            payload={"user_practice_id": "{user_practice_id}", **SESSION_WINDOW},
+            id_pointer=("user_practice_id",),
+            depends_on=("user_practice_id",),
+        ),
     },
 )
 
@@ -229,6 +297,24 @@ REPLAY_BODIES: Mapping[tuple[str, str], Mapping[str, object]] = MappingProxyType
         ("PATCH", "/promotions/{promotion_id}"): {"included_in_entry_id": None},
     },
 )
+
+
+def window_fields(now: datetime) -> dict[str, str]:
+    """Return the session window every practice-session payload interpolates.
+
+    Args:
+        now: The instant the request is being built for. Passed in rather than
+            read here so this module stays pure and the window is testable.
+
+    Returns:
+        An ISO ``started_at`` / ``ended_at`` pair ending at ``now``, short
+        enough to satisfy the route's duration ceiling and recent enough to
+        satisfy its backdating limit.
+    """
+    return {
+        STARTED_AT_FIELD: (now - timedelta(minutes=_SESSION_MINUTES)).isoformat(),
+        ENDED_AT_FIELD: now.isoformat(),
+    }
 
 
 def render_text(template: str, values: Mapping[str, object]) -> str:

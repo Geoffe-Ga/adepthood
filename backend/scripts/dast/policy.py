@@ -16,6 +16,14 @@ An allow-list entry wins over a working seed strategy. The inverse precedence
 would let a route quietly re-enter the matrix and leave a stale entry behind,
 so opting out stays a deliberate act that has to be deliberately undone.
 
+The same three outcomes are decided a second time over a different unit. Ids
+carried in a request body or a query string are classified per ``(route,
+field)`` pair rather than per route, because one operation can name two objects
+and excusing both because of one would be exactly the quiet shrinkage this
+module exists to prevent. That granularity is why an entry may carry an
+optional ``field``: a narrow excuse stays narrow, and an entry without one still
+means the whole route, as it always did.
+
 Everything here is pure: a file path or a route list in, a decision out.
 """
 
@@ -27,7 +35,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
-from scripts.dast.discovery import RouteSpec, is_object_scoped
+from scripts.dast.discovery import RouteSpec, carries_reference, is_object_scoped
+from scripts.dast.references import ObjectReference, ReferenceRegistry
 from scripts.dast.seeds import SeedSpec
 
 # The shipped opt-out list sits beside the harness so the two are reviewed and
@@ -52,7 +61,8 @@ ALLOWLIST_CATEGORIES = frozenset(
 _ROUTE_TABLE = "route"
 _REQUIRED_KEYS = ("method", "path", "category", "reason")
 _TRACKING_ISSUE_KEY = "tracking_issue"
-_PERMITTED_KEYS = frozenset({*_REQUIRED_KEYS, _TRACKING_ISSUE_KEY})
+_FIELD_KEY = "field"
+_PERMITTED_KEYS = frozenset({*_REQUIRED_KEYS, _TRACKING_ISSUE_KEY, _FIELD_KEY})
 
 
 class AllowlistError(Exception):
@@ -78,6 +88,10 @@ class AllowlistEntry:
         reason: A sentence a reviewer can disagree with.
         tracking_issue: Where the remediation is tracked. Permitted only on a
             ``known_leak`` entry, so nothing else can be made to look tracked.
+        field: The single body property or query parameter this entry excuses.
+            ``None`` -- the usual case -- excuses the route itself, and an entry
+            naming a field excuses nothing else: not the route's path ids, and
+            not its other references.
     """
 
     method: str
@@ -85,6 +99,7 @@ class AllowlistEntry:
     category: str
     reason: str
     tracking_issue: int | None = None
+    field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +169,29 @@ def _require_tracking_issue_is_earned(raw: Mapping[str, object], index: int) -> 
     return tracking
 
 
+def _optional_field(raw: Mapping[str, object], index: int) -> str | None:
+    """Return the entry's field name, or ``None`` when it excuses a whole route.
+
+    Args:
+        raw: One validated ``[[route]]`` table.
+        index: The entry's 1-based position, for the error message.
+
+    Returns:
+        The field name, or ``None``.
+
+    Raises:
+        AllowlistError: When the value is not text. A number here would never
+            match a field name, so the entry would excuse nothing while looking
+            like it excused something.
+    """
+    value = raw.get(_FIELD_KEY)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise _reject(index, f"'{_FIELD_KEY}' must be a non-empty string")
+    return value
+
+
 def _parse_entry(raw: Mapping[str, object], index: int) -> AllowlistEntry:
     """Validate one ``[[route]]`` table and build its entry.
 
@@ -183,6 +221,7 @@ def _parse_entry(raw: Mapping[str, object], index: int) -> AllowlistEntry:
         category=category,
         reason=str(raw["reason"]),
         tracking_issue=_require_tracking_issue_is_earned(raw, index),
+        field=_optional_field(raw, index),
     )
 
 
@@ -206,9 +245,18 @@ def load_allowlist(path: Path) -> tuple[AllowlistEntry, ...]:
     return tuple(_parse_entry(raw, index) for index, raw in enumerate(raw_entries, start=1))
 
 
+def _names_route(entry: AllowlistEntry, spec: RouteSpec) -> bool:
+    """Report whether an entry names this operation, whatever it excuses on it."""
+    return entry.method == spec.method and entry.path == spec.path
+
+
 def _is_excused(spec: RouteSpec, allowlist: Sequence[AllowlistEntry]) -> bool:
-    """Report whether an allow-list entry names exactly this operation."""
-    return any(entry.method == spec.method and entry.path == spec.path for entry in allowlist)
+    """Report whether an allow-list entry excuses this operation as a whole.
+
+    An entry scoped to a single field is deliberately not enough: excusing one
+    body id must never quietly excuse the route's path ids as well.
+    """
+    return any(_names_route(entry, spec) and entry.field is None for entry in allowlist)
 
 
 def _is_probeable(spec: RouteSpec, seed_registry: Mapping[str, SeedSpec]) -> bool:
@@ -268,6 +316,185 @@ def classify_routes(
             continue
         buckets[classify_route(spec, seed_registry=seed_registry, allowlist=allowlist)].append(spec)
     return Classification(
+        covered=tuple(buckets[Coverage.COVERED]),
+        allowlisted=tuple(buckets[Coverage.ALLOWLISTED]),
+        uncovered=tuple(buckets[Coverage.UNCOVERED]),
+    )
+
+
+@dataclass(frozen=True)
+class ReferenceTarget:
+    """One id a route accepts, paired with what the harness knows about it.
+
+    Attributes:
+        route: The operation that publishes the field.
+        field: The body property or query parameter, as the document spells it.
+        reference: The registry's declaration for this field, or ``None`` when
+            nothing declares it -- which is the drift this dimension exists to
+            catch and is never a covered target.
+    """
+
+    route: RouteSpec
+    field: str
+    reference: ObjectReference | None = None
+
+
+@dataclass(frozen=True)
+class ReferenceClassification:
+    """The references of one document, split into the same three buckets.
+
+    Attributes:
+        covered: References the matrix will probe for real.
+        allowlisted: References with a written opt-out.
+        uncovered: References with neither, which fail the build.
+    """
+
+    covered: tuple[ReferenceTarget, ...]
+    allowlisted: tuple[ReferenceTarget, ...]
+    uncovered: tuple[ReferenceTarget, ...]
+
+
+def publishes_field(spec: RouteSpec, field: str) -> bool:
+    """Report whether the route still declares this body property or query parameter.
+
+    Public because the liveness guard asks the same question of a field-scoped
+    allow-list entry: the classifier refuses to let such an entry excuse a field
+    the route dropped, and the guard reports it, and both have to agree on what
+    "the route still declares it" means.
+    """
+    return field in spec.body_id_refs or field in spec.query_id_refs
+
+
+def _excuses_field(entry: AllowlistEntry, spec: RouteSpec, field: str) -> bool:
+    """Report whether one entry excuses one reference of one route.
+
+    An entry without a field excuses the whole route and everything it carries.
+    An entry naming a field excuses that field alone -- never its neighbours on
+    the same route -- and only while the route still declares it: an excuse for
+    a property that has since been renamed away is a graveyard entry, and it
+    must stop excusing rather than silently transfer to whatever is there now.
+    """
+    if not _names_route(entry, spec):
+        return False
+    if entry.field is None:
+        return True
+    return entry.field == field and publishes_field(spec, field)
+
+
+def _is_field_excused(
+    spec: RouteSpec,
+    field: str,
+    allowlist: Sequence[AllowlistEntry],
+) -> bool:
+    """Report whether any entry excuses this one field, or the route it sits on."""
+    return any(_excuses_field(entry, spec, field) for entry in allowlist)
+
+
+def classify_reference(
+    spec: RouteSpec,
+    reference: ObjectReference,
+    *,
+    seed_registry: Mapping[str, SeedSpec],
+    allowlist: Sequence[AllowlistEntry],
+) -> Coverage:
+    """Decide what the matrix does with one declared reference.
+
+    Args:
+        spec: The route that publishes the field.
+        reference: The registry's declaration for it.
+        seed_registry: Seed strategies, keyed by seed key.
+        allowlist: The loaded opt-out entries.
+
+    Returns:
+        ``ALLOWLISTED`` when an entry names this field or its whole route --
+        which wins even over a working seed strategy, exactly as it does for a
+        path. Otherwise ``COVERED`` when an object of the referenced kind can be
+        created, and ``UNCOVERED`` when it cannot: a reference nothing can seed
+        must surface as a gap rather than as a quiet skip.
+    """
+    if _is_field_excused(spec, reference.field, allowlist):
+        return Coverage.ALLOWLISTED
+    if reference.seed_key in seed_registry:
+        return Coverage.COVERED
+    return Coverage.UNCOVERED
+
+
+def _declared_reference(
+    spec: RouteSpec,
+    field: str,
+    reference_registry: ReferenceRegistry,
+) -> ObjectReference | None:
+    """Return the registry's declaration for one field of one route, if it has one."""
+    probe = reference_registry.get((spec.method, spec.path))
+    if probe is None:
+        return None
+    return next((item for item in probe.references if item.field == field), None)
+
+
+def _classify_target(
+    target: ReferenceTarget,
+    *,
+    seed_registry: Mapping[str, SeedSpec],
+    allowlist: Sequence[AllowlistEntry],
+) -> Coverage:
+    """Decide what the matrix does with one discovered field, declared or not."""
+    if target.reference is None:
+        if _is_field_excused(target.route, target.field, allowlist):
+            return Coverage.ALLOWLISTED
+        return Coverage.UNCOVERED
+    return classify_reference(
+        target.route,
+        target.reference,
+        seed_registry=seed_registry,
+        allowlist=allowlist,
+    )
+
+
+def _targets(spec: RouteSpec, reference_registry: ReferenceRegistry) -> list[ReferenceTarget]:
+    """Pair every id this route publishes with whatever the registry declares for it."""
+    return [
+        ReferenceTarget(
+            route=spec,
+            field=field,
+            reference=_declared_reference(spec, field, reference_registry),
+        )
+        for field in (*spec.body_id_refs, *spec.query_id_refs)
+    ]
+
+
+def classify_references(
+    specs: Sequence[RouteSpec],
+    *,
+    reference_registry: ReferenceRegistry,
+    seed_registry: Mapping[str, SeedSpec],
+    allowlist: Sequence[AllowlistEntry],
+) -> ReferenceClassification:
+    """Split every body- and query-carried id into the three buckets the report counts.
+
+    Args:
+        specs: Every route the document declares.
+        reference_registry: The declared probes, keyed by ``(method, path)``.
+        seed_registry: Seed strategies, keyed by seed key.
+        allowlist: The loaded opt-out entries.
+
+    Returns:
+        The classification, in document order. Routes carrying no body or query
+        id are left out entirely, the same way routes with no path parameters
+        are: they name nobody's object, so counting them would inflate the
+        denominator without covering anything.
+    """
+    buckets: dict[Coverage, list[ReferenceTarget]] = {coverage: [] for coverage in Coverage}
+    for spec in specs:
+        if not carries_reference(spec):
+            continue
+        for target in _targets(spec, reference_registry):
+            coverage = _classify_target(
+                target,
+                seed_registry=seed_registry,
+                allowlist=allowlist,
+            )
+            buckets[coverage].append(target)
+    return ReferenceClassification(
         covered=tuple(buckets[Coverage.COVERED]),
         allowlisted=tuple(buckets[Coverage.ALLOWLISTED]),
         uncovered=tuple(buckets[Coverage.UNCOVERED]),

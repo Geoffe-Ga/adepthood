@@ -200,3 +200,14 @@ method   = "POST"
 path     = "/journal/suggestions/{suggestion_id}/dismiss"
 category = "no_seed_strategy"
 reason   = "suggestions are model-generated; a fresh entry's suggestion list comes back empty"
+
+# --- Shared catalog, one field of one route -------------------------------
+# Scoped to the field rather than to the whole route: only the practice named
+# in the body is excused, so any other id this route ever grows is probed.
+
+[[route]]
+method   = "POST"
+path     = "/user-practices/"
+category = "shared_catalog"
+field    = "practice_id"
+reason   = "practice_id names the shared preset catalog: require_visible_practice returns any approved preset to every authenticated user by design, so adopting one that another user also adopted is the feature, and probing it would report a false LEAK"
