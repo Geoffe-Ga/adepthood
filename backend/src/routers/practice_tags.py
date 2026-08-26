@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import (
     require_personal_row,
@@ -118,7 +119,7 @@ async def create_practice_tag(
 
 @router.get("/{tag_id}", response_model=PracticeTagOut)
 async def get_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeTag:
@@ -128,7 +129,7 @@ async def get_practice_tag(
 
 @router.patch("/{tag_id}", response_model=PracticeTagOut)
 async def update_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     payload: PracticeTagUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -145,7 +146,7 @@ async def update_practice_tag(
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:

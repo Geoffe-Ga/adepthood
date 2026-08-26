@@ -9,6 +9,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.constants import TOTAL_STAGES
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -76,7 +77,7 @@ async def test_history_requires_auth(async_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_history_stage_not_found(async_client: AsyncClient) -> None:
     headers, _uid = await _signup(async_client)
-    resp = await async_client.get("/stages/99/history", headers=headers)
+    resp = await async_client.get(f"/stages/{TOTAL_STAGES}/history", headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 

@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
 from database import get_session
-from dependencies.ownership import require_owned_user_practice, resolve_owned_user_practice
+from dependencies.ownership import (
+    require_owned_user_practice_from_query,
+    resolve_owned_user_practice,
+)
 from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
@@ -321,13 +324,13 @@ async def list_sessions(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pagination: Annotated[PaginationParams, Depends()],
-    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice_from_query)],
 ) -> Page[PracticeSessionResponse] | list[PracticeSessionResponse]:
     """List sessions for a specific user-practice, newest first.
 
     Cross-user calls used to return an empty list (the ``user_id`` filter
-    silently masked them); now ``require_owned_user_practice`` runs the
-    canonical 404→403 split before we hit the sessions table so the
+    silently masked them); now ``require_owned_user_practice_from_query``
+    runs the canonical 404→403 split before we hit the sessions table so the
     auth-failure path is uniform with every other owned-resource route.
 
     BUG-INFRA-014: returns ``Page[PracticeSessionResponse]`` when

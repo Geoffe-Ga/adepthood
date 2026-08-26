@@ -38,6 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
@@ -251,7 +252,7 @@ def _clone_practice_for_recipient(source: Practice, recipient_user_id: int) -> P
 @limiter.limit(_MINT_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def create_share_link(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    practice_id: int,
+    practice_id: RowIdPath,
     payload: ShareLinkCreateRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -438,7 +439,7 @@ async def import_share_link(
 
 @router.delete("/share-links/{share_link_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_share_link(
-    share_link_id: int,
+    share_link_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
@@ -470,7 +471,7 @@ _LIST_LIMIT_MAX = 200
 
 @router.get("/{practice_id}/share-links", response_model=list[ShareLinkResponse])
 async def list_share_links(
-    practice_id: int,
+    practice_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[

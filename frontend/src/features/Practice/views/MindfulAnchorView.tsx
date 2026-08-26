@@ -138,7 +138,7 @@ const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): Reac
     <SessionContainer testID="mindful-anchor-view">
       <InstructionCard instruction={config.instruction} surface={surface} />
       {status === 'idle' && config.options.length > 0 && (
-        <ScrollView style={styles.chooserScroll}>
+        <ScrollView style={styles.chooserScroll} nestedScrollEnabled>
           <OptionChooser
             options={config.options}
             selectedKey={anchor.selectedOptionKey}

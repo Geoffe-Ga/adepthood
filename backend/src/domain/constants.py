@@ -10,9 +10,9 @@ from __future__ import annotations
 # :mod:`seed_stages` (stages 1..10).  Router-level stage mutations clamp
 # their inputs to this range and callers use it to detect the
 # "everything is done" boundary.  Re-exported as ``TOTAL_STAGES`` from
-# :mod:`domain.stage_progress` and aliased as ``MAX_STAGE_NUMBER`` by the
-# Pydantic schemas.  (Issue #386: the previous value, 36, conflated the
-# 36-week calendar with the 10-stage curriculum.)
+# :mod:`domain.stage_progress` and used by :mod:`bounds` as the upper bound of
+# every stage number the API accepts.  (Issue #386: the previous value, 36,
+# conflated the 36-week calendar with the 10-stage curriculum.)
 TOTAL_STAGES = 10
 
 # Days each stage lasts, in stage order — eight 3-week stages followed by

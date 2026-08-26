@@ -1,8 +1,9 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 
@@ -19,6 +20,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockRespond = jest.fn() as jest.MockedFunction<
   (_w: number, _b: string, _t?: string) => Promise<unknown>
 >;
+const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<unknown>>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -31,7 +33,7 @@ jest.mock('@/api', () => ({
   },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
-    generate: jest.fn(),
+    generate: (...a: unknown[]) => (mockGenerate as unknown as (...x: unknown[]) => unknown)(...a),
   },
   completionSuggestions: {
     list: jest.fn(() => Promise.resolve({ items: [] })),
@@ -106,9 +108,33 @@ beforeEach(() => {
   mockList.mockResolvedValue({ items: [] });
   mockRespond.mockReset();
   mockRespond.mockResolvedValue({});
+  mockGenerate.mockReset();
+  mockGenerate.mockResolvedValue({ marginalia: [], suggestions: [] });
 });
 
+type StyledNode = {
+  type: unknown;
+  props: { style?: StyleProp<ViewStyle> };
+  parent: StyledNode | null;
+};
+
+/** Flatten the nearest host ancestor's style — where a wrapper's layout lives. */
+function hostWrapperStyle(element: { parent: unknown }): ViewStyle {
+  let node = element.parent as StyledNode | null;
+  while (node && typeof node.type !== 'string') node = node.parent;
+  return StyleSheet.flatten(node?.props.style) ?? {};
+}
+
 describe('JournalEntryScreen', () => {
+  /** A finished entry loaded into read mode, shared by the read-mode specs. */
+  async function renderFinished(message = 'I walked.') {
+    mockGet.mockResolvedValue(entry({ id: 7, message, status: 'finished' }));
+    mockList.mockResolvedValue({ items: [] });
+    const view = renderScreen({ entryId: 7 });
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+    return view;
+  }
+
   it('records a weekly-prompt page via respond, not a duplicate create', async () => {
     jest.useFakeTimers();
     try {
@@ -266,10 +292,54 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance so the floating Get Resonance button never overlaps content', () => {
+  it('reserves bottom clearance in edit mode, where Get Resonance floats over the page', () => {
     const { getByTestId } = renderScreen();
     const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
     expect(page.paddingBottom).toBe(RESONANCE_BUTTON_CLEARANCE);
+  });
+
+  it('leaves no dead band below the entry in read mode, where nothing floats', async () => {
+    const { getByTestId } = await renderFinished();
+    const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
+    expect(page.paddingBottom).toBeUndefined();
+  });
+
+  it('gathers the read-mode actions into one row', async () => {
+    const { getByTestId } = await renderFinished();
+    const row = within(getByTestId('journal-read-actions'));
+    expect(row.getByTestId('get-resonance-button')).toBeTruthy();
+    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
+    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
+  });
+
+  it('does not float the resonance affordance over the entry in read mode', async () => {
+    const { getByTestId } = await renderFinished();
+    expect(hostWrapperStyle(getByTestId('get-resonance-button')).position).not.toBe('absolute');
+  });
+
+  it('leaves no phantom gap in the read row when an empty entry hides resonance', async () => {
+    const { getByTestId, queryByTestId } = await renderFinished('');
+    const row = within(getByTestId('journal-read-actions'));
+    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
+    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
+    expect(queryByTestId('get-resonance-button')).toBeNull();
+    const hidden = getByTestId('get-resonance-button', { includeHiddenElements: true });
+    expect(hostWrapperStyle(hidden).height).toBe(0);
+  });
+
+  it('runs a resonance pass exactly once from the inline read-mode action', async () => {
+    const { getByTestId } = await renderFinished();
+    const row = within(getByTestId('journal-read-actions'));
+    fireEvent.press(row.getByTestId('get-resonance-button'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
+    expect(mockGenerate).toHaveBeenCalledWith(7);
+  });
+
+  it('still enters edit mode from the Edit action in the read-mode row', async () => {
+    const { getByTestId, findByTestId } = await renderFinished();
+    fireEvent.press(within(getByTestId('journal-read-actions')).getByTestId('journal-edit-button'));
+    fireEvent.press(getByTestId('edit-confirm-edit'));
+    expect(await findByTestId('journal-body-input')).toBeTruthy();
   });
 
   it('floats the writing area as a lighter sheet above the deeper desk', () => {
@@ -524,14 +594,6 @@ describe('JournalEntryScreen', () => {
   });
 
   describe('edit gate (finished entries)', () => {
-    async function renderFinished() {
-      mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
-      mockList.mockResolvedValue({ items: [] });
-      const view = renderScreen({ entryId: 7 });
-      await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
-      return view;
-    }
-
     it('opens the confirm dialog when editing a finished entry', async () => {
       const { getByTestId, queryByTestId } = await renderFinished();
       fireEvent.press(getByTestId('journal-edit-button'));

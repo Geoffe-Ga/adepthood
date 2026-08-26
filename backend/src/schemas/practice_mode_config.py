@@ -77,6 +77,17 @@ _RANDOM_BELL_MAX_INTERVAL_FLOOR = 10
 _RANDOM_BELL_INTERVAL_CEILING = 3_600
 _RANDOM_BELL_MAX_BELLS_CEILING = 1_000
 _SECONDS_PER_MINUTE = 60
+# The longest session the app permits, in seconds. Public because the
+# post-session metadata bounds a single *recorded* wall-clock span by it,
+# and a bump to the duration cap must carry the recorded cap with it.
+SESSION_DURATION_MAX_SECONDS = _DURATION_MAX_MINUTES * _SECONDS_PER_MINUTE
+# The largest rep target a practice may be configured to ask for. A
+# million taps is already three orders of magnitude past the longest
+# traditional count, so anything beyond it is a client bug rather than a
+# practice -- and an unbounded target reaches the column that stores it.
+# Public because the post-session recorded count derives its own ceiling
+# from this one, so a bump here cannot leave that cap silently stale.
+REP_TARGET_MAX = 1_000_000
 
 Sense = Literal["sight", "touch", "hearing", "smell", "taste"]
 BellTone = Literal["bowl", "chime", "gong"]
@@ -210,7 +221,7 @@ class RepCounterConfig(_ConfigBase):
     """Count manual taps toward a target (e.g. 108 breath cycles)."""
 
     mode: Literal["rep_counter"] = "rep_counter"
-    target_reps: int = Field(ge=1)
+    target_reps: int = Field(ge=1, le=REP_TARGET_MAX)
     unit_label: str = Field(min_length=1, max_length=_UNIT_LABEL_MAX)
     time_cap_minutes: float | None = Field(
         default=None, ge=_DURATION_MIN_MINUTES, le=_DURATION_MAX_MINUTES
