@@ -26,9 +26,11 @@ name: Live model check
 #     check would otherwise skip forever while reporting success.
 
 on:
-  schedule:
-    # Mondays 06:40 UTC -- clear of graph-build's 04:40 and graph-semantic's 05:20.
-    - cron: "40 6 * * 1"
+  # PAUSED 2026-08-26: automated issue inflow paused by owner request.
+  # Re-enable by uncommenting; workflow_dispatch still allows manual runs.
+  # schedule:
+  # # Mondays 06:40 UTC -- clear of graph-build's 04:40 and graph-semantic's 05:20.
+  # - cron: "40 6 * * 1"
   workflow_dispatch:
 
 permissions:
