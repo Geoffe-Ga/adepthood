@@ -26,9 +26,24 @@ const TIMEZONE = 'UTC';
 const LICENSE_KEY = 'e2e-license';
 const HTTP_UNPROCESSABLE = 422;
 
-const SECURE_VAULT_URL = 'https://vault.example';
+// An address literal, deliberately. The server now refuses any destination it
+// cannot establish as globally routable, and a literal is judged from the string
+// alone -- `classify_user_vault_url_host` parses it, and
+// `classify_resolved_user_vault_url` returns early on one rather than looking it
+// up. Connecting stores the address rather than dialling it, so this proves the
+// accept path over the wire without making the lane depend on DNS.
+const REACHABLE_VAULT_URL = 'https://1.1.1.1';
+// `.example` is an RFC 6761 reserved TLD that never resolves, and a resolver the
+// lane cannot reach yields the same code by design, so this is deterministic
+// with or without a network.
+const UNRESOLVABLE_VAULT_URL = 'https://vault.example';
 const INSECURE_VAULT_URL = 'http://vault.example';
+// Loopback, judged from the string with no lookup at all.
+const PRIVATE_VAULT_URL = 'https://127.0.0.1';
 const VAULT_API_KEY = 'e2e-vault-credential'; // pragma: allowlist secret
+// An interior space is the one thing an `Authorization` header value may not
+// carry, and the trimming validator only strips the edges.
+const UNUSABLE_VAULT_API_KEY = 'e2e vault credential'; // pragma: allowlist secret
 
 const email = `e2e-vault-${randomUUID()}${EMAIL_DOMAIN}`;
 const neighbourEmail = `e2e-vault-neighbour-${randomUUID()}${EMAIL_DOMAIN}`;
@@ -75,6 +90,8 @@ describe('vault-connection journey against a live server', () => {
   });
 
   it('refuses an address it cannot reach securely, with the code the screen maps', async () => {
+    // The shape classifier runs first, so a plain-http address is refused for
+    // its transport before anything asks where it points.
     const failure = await rejection(
       vault.connect({ vault_url: INSECURE_VAULT_URL, api_key: VAULT_API_KEY }),
     );
@@ -84,7 +101,41 @@ describe('vault-connection journey against a live server', () => {
     expect((failure as ApiError).detail).toBe('vault_url_insecure_transport');
   });
 
-  it('leaves no row behind when it refuses', async () => {
+  it('refuses an address that points nowhere, and says which', async () => {
+    const failure = await rejection(
+      vault.connect({ vault_url: UNRESOLVABLE_VAULT_URL, api_key: VAULT_API_KEY }),
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(HTTP_UNPROCESSABLE);
+    expect((failure as ApiError).detail).toBe('vault_url_unresolvable_host');
+  });
+
+  it('refuses an address only this machine could reach', async () => {
+    const failure = await rejection(
+      vault.connect({ vault_url: PRIVATE_VAULT_URL, api_key: VAULT_API_KEY }),
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(HTTP_UNPROCESSABLE);
+    expect((failure as ApiError).detail).toBe('vault_url_private_address');
+  });
+
+  it('refuses a key no Authorization header could carry, without quoting it', async () => {
+    const failure = await rejection(
+      vault.connect({ vault_url: REACHABLE_VAULT_URL, api_key: UNUSABLE_VAULT_API_KEY }),
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(HTTP_UNPROCESSABLE);
+    expect((failure as ApiError).detail).toBe('vault_key_unusable');
+    // The refusal is a code this endpoint owns rather than a validator's prose,
+    // because prose would quote the rejected value -- and on this request the
+    // rejected value is the secret.
+    expect((failure as ApiError).message).not.toContain(UNUSABLE_VAULT_API_KEY);
+  });
+
+  it('leaves no row behind when any of those refusals lands', async () => {
     // A half-applied replacement would pair a new address with an old
     // credential, so the refusal has to happen before anything is written.
     const state = await vault.connection();
@@ -95,12 +146,12 @@ describe('vault-connection journey against a live server', () => {
 
   it('connects, echoes the address back, and hands back no credential', async () => {
     const state = await vault.connect({
-      vault_url: SECURE_VAULT_URL,
+      vault_url: REACHABLE_VAULT_URL,
       api_key: VAULT_API_KEY,
     });
 
     expect(state.connected).toBe(true);
-    expect(state.vault_url).toBe(SECURE_VAULT_URL);
+    expect(state.vault_url).toBe(REACHABLE_VAULT_URL);
     // Write-only by construction: no response schema on this seam has a field
     // to put a credential in, and this is the assertion that says so on the
     // wire rather than in a docstring.
@@ -114,7 +165,7 @@ describe('vault-connection journey against a live server', () => {
     const state = await vault.connection();
 
     expect(state.connected).toBe(true);
-    expect(state.vault_url).toBe(SECURE_VAULT_URL);
+    expect(state.vault_url).toBe(REACHABLE_VAULT_URL);
   });
 
   it("keeps one account's vault off another account", async () => {

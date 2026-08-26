@@ -56,10 +56,16 @@ const FORM_KEYS = [
   'VAULT_DISCONNECTING_BUTTON',
   'VAULT_CONNECTED_LABEL',
   'VAULT_NONE_CONNECTED',
+  'VAULT_CONNECTION_UNKNOWN',
   'VAULT_STATUS_CONNECTED',
   'VAULT_STATUS_DISCONNECTED',
   'VAULT_DISCONNECT_CONFIRM_TITLE',
   'VAULT_DISCONNECT_CONFIRM_BODY',
+  'VAULT_REPLACE_CONFIRM_TITLE',
+  'VAULT_REPLACE_CONFIRM_BODY',
+  'VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE',
+  'VAULT_REPLACE_UNKNOWN_CONFIRM_BODY',
+  'VAULT_REPLACE_BUTTON',
   'VAULT_CANCEL',
   'VAULT_ADDRESS_MISSING',
   'VAULT_KEY_MISSING',
@@ -70,6 +76,9 @@ const FORM_KEYS = [
   'VAULT_ADDRESS_INCOMPLETE',
   'VAULT_ADDRESS_EXTRA_PARTS',
   'VAULT_ADDRESS_INSECURE',
+  'VAULT_ADDRESS_PRIVATE',
+  'VAULT_ADDRESS_NOT_FOUND',
+  'VAULT_KEY_REFUSED',
 ] as const;
 
 const ALL_KEYS = [...PROMISE_KEYS, ...FORM_KEYS];
@@ -99,8 +108,16 @@ const BANNED_PRESSURE =
 const BANNED_DURABILITY =
   /\b(guarantee|guaranteed|never lose|always safe|permanent|permanently stored)\b/iu;
 
-/** The only two constants allowed to spell a transport. */
-const TRANSPORT_BEARERS = ['VAULT_ADDRESS_PLACEHOLDER', 'VAULT_ADDRESS_INSECURE'];
+// The only three constants allowed to spell a transport. The third is the
+// malformed refusal, which is the one case where the missing piece may sit at
+// either end of the address -- so the only sentence true of every instance of
+// it has to draw the whole span, and the left edge of that span is the
+// transport. Exact, so a fourth bearer fails here rather than drifting in.
+const TRANSPORT_BEARERS = [
+  'VAULT_ADDRESS_PLACEHOLDER',
+  'VAULT_ADDRESS_INSECURE',
+  'VAULT_ADDRESS_INCOMPLETE',
+];
 
 // ---------------------------------------------------------------------------
 // Export surface
@@ -308,9 +325,9 @@ describe('vaultCopy — the form deck, verbatim', () => {
     );
   });
 
-  it('VAULT_ADDRESS_INCOMPLETE covers an address missing its name', () => {
+  it('VAULT_ADDRESS_INCOMPLETE draws the whole span an address has to cover', () => {
     expect(vaultCopy.VAULT_ADDRESS_INCOMPLETE).toBe(
-      'That address is missing the part that names your vault.',
+      'Use the whole address, from https:// through the name of your vault.',
     );
   });
 
@@ -320,10 +337,58 @@ describe('vaultCopy — the form deck, verbatim', () => {
     );
   });
 
-  it('VAULT_ADDRESS_INSECURE names the one exception to https', () => {
+  it('VAULT_ADDRESS_INSECURE asks for https and rules out this machine', () => {
     expect(VAULT_ADDRESS_INSECURE).toBe(
-      'Adepthood reaches a vault over https:// unless it runs on this machine.',
+      'Adepthood reaches a vault over https://, and cannot reach one that runs on this machine.',
     );
+  });
+
+  it('VAULT_ADDRESS_PRIVATE covers a vault only the local network can reach', () => {
+    expect(vaultCopy.VAULT_ADDRESS_PRIVATE).toBe(
+      'That address points somewhere only your own network can reach. Connect a vault Adepthood can reach from the open internet.',
+    );
+  });
+
+  it('VAULT_ADDRESS_NOT_FOUND covers an address that pointed nowhere', () => {
+    expect(vaultCopy.VAULT_ADDRESS_NOT_FOUND).toBe(
+      'Adepthood could not work out where that address points. Check it against your vault, and try again in a moment.',
+    );
+  });
+
+  it('VAULT_KEY_REFUSED names the paste rather than quoting the key', () => {
+    expect(vaultCopy.VAULT_KEY_REFUSED).toBe(
+      'That key has a space or a character Adepthood cannot send. Copy it again from your vault.',
+    );
+  });
+
+  it('VAULT_CONNECTION_UNKNOWN reports the unread state and still offers the form', () => {
+    expect(vaultCopy.VAULT_CONNECTION_UNKNOWN).toBe(
+      'Adepthood could not tell whether a vault is already connected. You can still connect one, and Adepthood will ask first.',
+    );
+  });
+
+  it('VAULT_REPLACE_CONFIRM_TITLE asks before it replaces', () => {
+    expect(vaultCopy.VAULT_REPLACE_CONFIRM_TITLE).toBe('Replace this vault?');
+  });
+
+  it('VAULT_REPLACE_CONFIRM_BODY bounds what replacing does to the old vault', () => {
+    expect(vaultCopy.VAULT_REPLACE_CONFIRM_BODY).toBe(
+      'Adepthood will send copies to the new vault instead. Everything in the vault you are connected to now stays exactly where it is, and nothing you have written changes.',
+    );
+  });
+
+  it('VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE asks without claiming to know', () => {
+    expect(vaultCopy.VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE).toBe('Connect this vault?');
+  });
+
+  it('VAULT_REPLACE_UNKNOWN_CONFIRM_BODY names the uncertainty and its consequence', () => {
+    expect(vaultCopy.VAULT_REPLACE_UNKNOWN_CONFIRM_BODY).toBe(
+      'Adepthood could not tell whether another vault is already connected. If one is, this replaces it, and everything in it stays exactly where it is.',
+    );
+  });
+
+  it('VAULT_REPLACE_BUTTON reads "Replace"', () => {
+    expect(vaultCopy.VAULT_REPLACE_BUTTON).toBe('Replace');
   });
 });
 
@@ -341,16 +406,26 @@ describe('vaultCopy — banned technical vocabulary', () => {
   });
 });
 
-describe('vaultCopy — the transport is spelled twice and nowhere else', () => {
-  it('only the placeholder and the insecure-transport refusal say https', () => {
+describe('vaultCopy — the transport is spelled three times and nowhere else', () => {
+  it('only the placeholder and the two shape refusals say https', () => {
     const bearers = ALL_KEYS.filter((key) => /https/iu.test(vaultCopy[key]));
 
     expect([...bearers].sort()).toEqual([...TRANSPORT_BEARERS].sort());
   });
 
-  it('the two that do say it are the ones the form cannot work without', () => {
+  it('the three that do say it are the ones the form cannot work without', () => {
     expect(VAULT_ADDRESS_PLACEHOLDER).toMatch(/https/u);
     expect(VAULT_ADDRESS_INSECURE).toMatch(/https/u);
+    expect(vaultCopy.VAULT_ADDRESS_INCOMPLETE).toMatch(/https/u);
+  });
+});
+
+describe('vaultCopy — no copy survives the destination guard being wrong about it', () => {
+  it('never says a vault is reachable when it runs on this machine', () => {
+    // The clause is now false: a vault on the user's own machine is refused
+    // outright, so copy implying otherwise sends somebody chasing a connection
+    // that cannot exist.
+    expect(ALL_COPY).not.toMatch(/unless it runs on this machine/iu);
   });
 });
 

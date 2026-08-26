@@ -2,15 +2,18 @@
 /* global describe, test, expect, beforeEach, jest */
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, type AlertButton } from 'react-native';
 
 import {
   VAULT_ADDRESS_EXTRA_PARTS,
   VAULT_ADDRESS_INCOMPLETE,
   VAULT_ADDRESS_INSECURE,
   VAULT_ADDRESS_MISSING,
+  VAULT_ADDRESS_NOT_FOUND,
+  VAULT_ADDRESS_PRIVATE,
   VAULT_ADDRESS_UNREADABLE,
   VAULT_ADD_HEADING,
+  VAULT_CONNECTION_UNKNOWN,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
   VAULT_DISCONNECT_CONFIRM_BODY,
@@ -19,11 +22,16 @@ import {
   VAULT_FLOOR,
   VAULT_INTIMATE,
   VAULT_KEY_MISSING,
+  VAULT_KEY_REFUSED,
   VAULT_KEY_SHOW,
   VAULT_LOAD_FAILED,
   VAULT_NONE_CONNECTED,
   VAULT_PROMISE,
+  VAULT_REPLACE_CONFIRM_BODY,
+  VAULT_REPLACE_CONFIRM_TITLE,
   VAULT_REPLACE_HEADING,
+  VAULT_REPLACE_UNKNOWN_CONFIRM_BODY,
+  VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE,
   VAULT_STATUS_CONNECTED,
   VAULT_STATUS_DISCONNECTED,
   VAULT_TITLE,
@@ -46,9 +54,15 @@ import { ApiError, vault, type VaultConnection } from '@/api';
  * tests assert it appears in no rendered text, is masked until the person asks
  * to see it, and is gone from the field once it has been sent.
  *
- * The four refusals are four different sentences on purpose. The server answers
- * a bad address with one of four codes, and a screen that collapsed them into
- * "something went wrong" would leave a person re-pasting the same URL forever.
+ * The seven refusals are seven different sentences on purpose. The server judges
+ * an address on its shape, on where it points, and on whether the key could
+ * survive a header, and a screen that collapsed those into "something went
+ * wrong" would leave a person re-pasting the same URL forever.
+ *
+ * The read is a three-state answer rather than a nullable one. "Nobody checked"
+ * is not "nothing is connected", so a failed read says so, and a connect made
+ * from that state asks before it sends -- because the thing it may be replacing
+ * is precisely the thing that could not be read.
  */
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
@@ -66,12 +80,17 @@ const mockConnect = vault.connect as jest.MockedFunction<typeof vault.connect>;
 const mockDisconnect = vault.disconnect as jest.MockedFunction<typeof vault.disconnect>;
 
 const VAULT_URL = 'https://vault.example';
+const REPLACEMENT_VAULT_URL = 'https://other-vault.example';
 const TYPED_KEY = 'typed-vault-key-never-rendered'; // pragma: allowlist secret
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_SERVER_ERROR = 500;
 
 const NOT_CONNECTED: VaultConnection = { connected: false, vault_url: null };
 const CONNECTED: VaultConnection = { connected: true, vault_url: VAULT_URL };
+const REPLACED: VaultConnection = { connected: true, vault_url: REPLACEMENT_VAULT_URL };
+// The server cannot produce this pair, but the type can, and a screen that
+// read it as "nothing connected" would be inventing an answer nobody gave.
+const CONNECTED_WITHOUT_ADDRESS: VaultConnection = { connected: true, vault_url: null };
 
 /** Copy blocks paired with the testID the screen renders them in. */
 const COPY_BLOCKS: [string, string][] = [
@@ -81,12 +100,15 @@ const COPY_BLOCKS: [string, string][] = [
   ['vault-connect-intro', VAULT_CONNECT_INTRO],
 ];
 
-/** Each refusal code the server can answer a bad address with, and its sentence. */
+/** Every refusal code the connect route can answer with, and its sentence. */
 const REFUSALS: [string, string][] = [
   ['vault_url_unparseable', VAULT_ADDRESS_UNREADABLE],
   ['vault_url_malformed', VAULT_ADDRESS_INCOMPLETE],
   ['vault_url_forbidden_components', VAULT_ADDRESS_EXTRA_PARTS],
   ['vault_url_insecure_transport', VAULT_ADDRESS_INSECURE],
+  ['vault_url_private_address', VAULT_ADDRESS_PRIVATE],
+  ['vault_url_unresolvable_host', VAULT_ADDRESS_NOT_FOUND],
+  ['vault_key_unusable', VAULT_KEY_REFUSED],
 ];
 
 interface Deferred<T> {
@@ -126,15 +148,59 @@ async function submitConnection(view: Rendered, address: string, key: string): P
   });
 }
 
-/** Press disconnect and take whichever button the given style names. */
-async function pressDisconnect(view: Rendered, style: 'destructive' | 'cancel'): Promise<void> {
-  const spy = jest.spyOn(Alert, 'alert').mockImplementation((_title, _body, buttons) => {
-    buttons?.find((button) => button.style === style)?.onPress?.();
+/** How a test answers the confirmation a press may raise. */
+type AlertAnswer = 'confirm' | 'cancel' | 'none';
+
+/** What one raised confirmation was asked with. */
+type AlertArgs = [string, string | undefined, AlertButton[] | undefined];
+
+// Both confirmations on this screen offer [cancel, confirm] in that order, so
+// the answer is chosen by position rather than by style: the connect dialog's
+// affirmative button is not destructive, and picking it by style would need a
+// second copy of this helper for the sake of one word.
+const CANCEL_INDEX = 0;
+const CONFIRM_INDEX = 1;
+
+/**
+ * Press ``testID``, answer whatever confirmation it raises, and report what it
+ * was asked with.
+ *
+ * ``'none'`` leaves the dialog standing, which is how a test asserts that a
+ * press asked rather than acted. An empty return says no dialog was raised at
+ * all -- the assertion the anti-over-confirmation cases turn on.
+ */
+async function pressThroughAlert(
+  view: Rendered,
+  testID: string,
+  answer: AlertAnswer,
+): Promise<AlertArgs[]> {
+  const raised: AlertArgs[] = [];
+  const spy = jest.spyOn(Alert, 'alert').mockImplementation((title, body, buttons) => {
+    raised.push([title, body, buttons]);
+    if (answer === 'none') return;
+    buttons?.[answer === 'cancel' ? CANCEL_INDEX : CONFIRM_INDEX]?.onPress?.();
   });
   await act(async () => {
-    fireEvent.press(view.getByTestId('disconnect-vault-button'));
+    fireEvent.press(view.getByTestId(testID));
   });
   spy.mockRestore();
+  return raised;
+}
+
+/** Press disconnect and answer its confirmation. */
+async function pressDisconnect(view: Rendered, answer: AlertAnswer): Promise<void> {
+  await pressThroughAlert(view, 'disconnect-vault-button', answer);
+}
+
+/** Fill both fields, press Connect, and answer any confirmation that follows. */
+async function pressConnectThroughAlert(
+  view: Rendered,
+  fields: { address: string; key: string },
+  answer: AlertAnswer,
+): Promise<AlertArgs[]> {
+  fireEvent.changeText(view.getByTestId('vault-address-input'), fields.address);
+  fireEvent.changeText(view.getByTestId('vault-key-input'), fields.key);
+  return pressThroughAlert(view, 'connect-vault-button', answer);
 }
 
 beforeEach(() => {
@@ -264,6 +330,149 @@ describe('VaultSettingsScreen — reading the connection', () => {
       expect(within(getByTestId(testID)).getByText(copy)).toBeTruthy();
     }
   });
+
+  test('a failed read never claims nothing is connected', async () => {
+    // "Nobody could check" and "there is nothing there" are different answers,
+    // and rendering the second for the first tells somebody their vault is gone.
+    const view = await renderUnreachable();
+
+    expect(view.queryByTestId('vault-none-connected')).toBeNull();
+    expect(
+      within(view.getByTestId('vault-connection-unknown')).getByText(VAULT_CONNECTION_UNKNOWN),
+    ).toBeTruthy();
+    expect(view.queryByTestId('vault-connected-card')).toBeNull();
+    expect(within(view.getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
+  });
+
+  test('the unknown notice survives typing', async () => {
+    // Typing clears the banner. The notice reports what the read found and so
+    // must come from the connection state rather than riding on that banner.
+    const view = await renderUnreachable();
+
+    fireEvent.changeText(view.getByTestId('vault-address-input'), VAULT_URL);
+
+    expect(view.queryByTestId('vault-error')).toBeNull();
+    expect(view.getByTestId('vault-connection-unknown')).toBeTruthy();
+  });
+
+  test('treats a connected answer with no address as unknown', async () => {
+    const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
+
+    expect(
+      within(view.getByTestId('vault-connection-unknown')).getByText(VAULT_CONNECTION_UNKNOWN),
+    ).toBeTruthy();
+    expect(view.queryByTestId('vault-none-connected')).toBeNull();
+  });
+
+  test('offers the add heading when it could not check', async () => {
+    const view = await renderUnreachable();
+
+    expect(view.getByText(VAULT_ADD_HEADING)).toBeTruthy();
+    expect(view.queryByText(VAULT_REPLACE_HEADING)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Replacing what may already be there
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — asking before it replaces', () => {
+  test('asks before replacing a connected vault', async () => {
+    const view = await renderVault(CONNECTED);
+
+    const raised = await pressConnectThroughAlert(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'none',
+    );
+
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toEqual([
+      VAULT_REPLACE_CONFIRM_TITLE,
+      VAULT_REPLACE_CONFIRM_BODY,
+      expect.anything(),
+    ]);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  test('replaces once on the confirming answer', async () => {
+    const view = await renderVault(CONNECTED);
+    mockConnect.mockResolvedValue(REPLACED);
+
+    const raised = await pressConnectThroughAlert(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'confirm',
+    );
+
+    expect(raised).toHaveLength(1);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(mockConnect).toHaveBeenCalledWith({
+      vault_url: REPLACEMENT_VAULT_URL,
+      api_key: TYPED_KEY,
+    });
+    expect(
+      within(view.getByTestId('vault-connected-card')).getByText(REPLACEMENT_VAULT_URL),
+    ).toBeTruthy();
+  });
+
+  test('leaves the old vault and the typed key alone on cancel', async () => {
+    const view = await renderVault(CONNECTED);
+
+    await pressConnectThroughAlert(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'cancel',
+    );
+
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(within(view.getByTestId('vault-connected-card')).getByText(VAULT_URL)).toBeTruthy();
+    // Nothing was sent, so nothing was cleared and nothing was re-masked.
+    expect(view.getByTestId('vault-key-input').props.value).toBe(TYPED_KEY);
+  });
+
+  test('asks before connecting when it could not check', async () => {
+    const view = await renderUnreachable();
+
+    const raised = await pressConnectThroughAlert(
+      view,
+      { address: VAULT_URL, key: TYPED_KEY },
+      'confirm',
+    );
+
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toEqual([
+      VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE,
+      VAULT_REPLACE_UNKNOWN_CONFIRM_BODY,
+      expect.anything(),
+    ]);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not ask when the read said nothing is connected', async () => {
+    // Confirming a first connection would charge every new vault a dialog for
+    // a replacement that cannot be happening.
+    const view = await renderVault(NOT_CONNECTED);
+
+    const raised = await pressConnectThroughAlert(
+      view,
+      { address: VAULT_URL, key: TYPED_KEY },
+      'none',
+    );
+
+    expect(raised).toHaveLength(0);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not ask about replacing when there is nothing to send', async () => {
+    const view = await renderVault(CONNECTED);
+
+    const raised = await pressConnectThroughAlert(view, { address: '', key: TYPED_KEY }, 'none');
+
+    expect(raised).toHaveLength(0);
+    expect(within(view.getByTestId('vault-error')).getByText(VAULT_ADDRESS_MISSING)).toBeTruthy();
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -356,7 +565,7 @@ describe('VaultSettingsScreen — disconnecting', () => {
     const view = await renderVault(CONNECTED);
     mockConnection.mockResolvedValue(NOT_CONNECTED);
 
-    await pressDisconnect(view, 'destructive');
+    await pressDisconnect(view, 'confirm');
 
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
     expect(
@@ -407,6 +616,59 @@ describe('VaultSettingsScreen — the key is write-only', () => {
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
     expect(view.getByTestId('vault-key-input').props.value).toBe('');
+  });
+
+  test('re-masks the key when a connect is sent', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    fireEvent.press(view.getByText(VAULT_KEY_SHOW));
+
+    await submitConnection(view, VAULT_URL, TYPED_KEY);
+
+    expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(true);
+    expect(view.getByTestId('vault-key-input').props.value).toBe('');
+  });
+
+  test('re-masks the key when the server refuses, and keeps it to correct the address', async () => {
+    // The address is the part that was wrong, so the key stays put rather than
+    // making somebody fetch it again -- but it goes back behind the mask.
+    mockConnect.mockRejectedValue(new ApiError(HTTP_UNPROCESSABLE, 'vault_url_malformed'));
+    const view = await renderVault(NOT_CONNECTED);
+    fireEvent.press(view.getByText(VAULT_KEY_SHOW));
+
+    await submitConnection(view, 'not-a-vault', TYPED_KEY);
+
+    expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(true);
+    expect(view.getByTestId('vault-key-input').props.value).toBe(TYPED_KEY);
+  });
+
+  test('keeps the reveal when nothing was sent', async () => {
+    // A press blocked by a blank field never reached the wire, so the reset
+    // belongs to the send rather than to the button.
+    const view = await renderVault(NOT_CONNECTED);
+    fireEvent.press(view.getByText(VAULT_KEY_SHOW));
+
+    await submitConnection(view, '', TYPED_KEY);
+
+    expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(false);
+    expect(within(view.getByTestId('vault-error')).getByText(VAULT_ADDRESS_MISSING)).toBeTruthy();
+  });
+
+  test('keeps the reveal when the replacement is cancelled', async () => {
+    // The third way a press sends nothing. A blank field is caught before the
+    // dialog; this one raises the dialog and is declined, so the key never
+    // reached the wire and the reset that belongs to the send must not run.
+    const view = await renderVault(CONNECTED);
+    fireEvent.press(view.getByText(VAULT_KEY_SHOW));
+
+    await pressConnectThroughAlert(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'cancel',
+    );
+
+    expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(false);
+    expect(view.getByTestId('vault-key-input').props.value).toBe(TYPED_KEY);
+    expect(mockConnect).not.toHaveBeenCalled();
   });
 
   test('shows the address on the connected card and nothing key-shaped', async () => {

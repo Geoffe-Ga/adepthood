@@ -119,7 +119,7 @@ describe('vault.connect', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(HTTP_UNPROCESSABLE);
     // The screen maps this code to its own sentence; a swallowed detail would
-    // collapse four different refusals into one piece of copy.
+    // collapse seven different refusals into one piece of copy.
     expect((err as ApiError).detail).toBe('vault_url_insecure_transport');
   });
 });
