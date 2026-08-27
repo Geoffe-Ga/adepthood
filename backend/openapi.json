@@ -1000,51 +1000,23 @@
         "type": "object"
       },
       "DepthPreferencesUpdate": {
-        "description": "Partial update for the ring toggles (PATCH).\n\nEvery field is optional; an empty payload is rejected (422) so a no-op\nPATCH cannot reach the database. Only the fields the caller sets are\napplied — unspecified rings keep their stored value.",
+        "description": "Partial update for the ring toggles (PATCH).\n\nEvery field is a plain boolean defaulting to its column's own default, so an\nexplicit ``null`` is refused by the annotation at a ``loc`` naming the ring\nrather than reaching a NOT NULL column. Only the fields the caller sets are\napplied -- unspecified rings keep their stored value, because the router\ndumps with ``exclude_unset=True`` and no default here is ever written on its\nown. An empty payload is rejected (422) by\n:class:`~schemas.partial_update.PartialUpdateModel`.",
         "properties": {
           "enable_course": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enable Course"
+            "title": "Enable Course",
+            "type": "boolean"
           },
           "enable_habits": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enable Habits"
+            "title": "Enable Habits",
+            "type": "boolean"
           },
           "enable_practices": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enable Practices"
+            "title": "Enable Practices",
+            "type": "boolean"
           },
           "enable_sangha": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enable Sangha"
+            "title": "Enable Sangha",
+            "type": "boolean"
           }
         },
         "title": "DepthPreferencesUpdate",
@@ -6224,29 +6196,15 @@
         "type": "object"
       },
       "UiFlagsUpdate": {
-        "description": "Partial update for the UI flags (PATCH).\n\nEvery field is optional; an empty payload is rejected (422) so a no-op\nPATCH cannot reach the database. Only the fields the caller sets are\napplied — unspecified flags keep their stored value.",
+        "description": "Partial update for the UI flags (PATCH).\n\nEvery field is a plain boolean defaulting to its column's own default, so an\nexplicit ``null`` is refused by the annotation at a ``loc`` naming the flag\nrather than reaching a NOT NULL column. Only the fields the caller sets are\napplied -- unspecified flags keep their stored value, because the router\ndumps with ``exclude_unset=True`` and no default here is ever written on its\nown. An empty payload is rejected (422) by\n:class:`~schemas.partial_update.PartialUpdateModel`.",
         "properties": {
           "energy_scaffolding_archived": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Energy Scaffolding Archived"
+            "title": "Energy Scaffolding Archived",
+            "type": "boolean"
           },
           "has_seen_welcome": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Has Seen Welcome"
+            "title": "Has Seen Welcome",
+            "type": "boolean"
           }
         },
         "title": "UiFlagsUpdate",
