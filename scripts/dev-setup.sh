@@ -27,8 +27,17 @@ if [ -d frontend ]; then
 fi
 
 echo "📦 Ensuring Expo dependencies are aligned..."
+# This script has no `set -e`, so the guard's exit code is branched on explicitly
+# rather than left to be ignored. It is not redundant with the install above: that
+# block is skipped when there is no frontend/ directory, and the Expo CLI is then
+# called anyway. Calling ./node_modules/.bin/expo rather than `npx expo` is what
+# makes the failure a failure -- npx would download an `expo` off the registry and
+# run it against a tree that has no dependencies.
+if ! scripts/frontend/require-node-modules.sh; then
+  exit 1
+fi
 pushd frontend >/dev/null || exit 1
-npx expo install
+./node_modules/.bin/expo install
 popd >/dev/null || exit 1
 
 echo "✅ Installing pre-commit hooks..."

@@ -51,6 +51,10 @@ EOF
 done
 
 cd "$PROJECT_ROOT"
+# The tools below are called as ./node_modules/.bin/<tool> so the pinned version
+# runs, resolved from disk with no network. This turns the resulting bare
+# `command not found` into a message that names the install. See the helper.
+"$SCRIPT_DIR/require-node-modules.sh"
 
 if $VERBOSE; then
     set -x
@@ -62,12 +66,12 @@ if $FIX; then
     if $VERBOSE; then
         echo "Fixing linting issues..."
     fi
-    npx eslint . --fix || { echo "✗ ESLint fix failed" >&2; exit 1; }
+    ./node_modules/.bin/eslint . --fix || { echo "✗ ESLint fix failed" >&2; exit 1; }
 else
     if $VERBOSE; then
         echo "Checking for linting issues..."
     fi
-    npx eslint . || { echo "✗ ESLint check failed" >&2; exit 1; }
+    ./node_modules/.bin/eslint . || { echo "✗ ESLint check failed" >&2; exit 1; }
 fi
 
 echo "✓ Linting checks passed"

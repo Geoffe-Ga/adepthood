@@ -51,6 +51,10 @@ EOF
 done
 
 cd "$PROJECT_ROOT"
+# The tools below are called as ./node_modules/.bin/<tool> so the pinned version
+# runs, resolved from disk with no network. This turns the resulting bare
+# `command not found` into a message that names the install. See the helper.
+"$SCRIPT_DIR/require-node-modules.sh"
 
 if $VERBOSE; then
     set -x
@@ -62,13 +66,13 @@ if $CHECK; then
     if $VERBOSE; then
         echo "Checking formatting..."
     fi
-    npx prettier --check "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting check failed" >&2; exit 1; }
+    ./node_modules/.bin/prettier --check "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting check failed" >&2; exit 1; }
     echo "✓ Code formatting check passed"
 else
     if $VERBOSE; then
         echo "Formatting code..."
     fi
-    npx prettier --write "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting failed" >&2; exit 1; }
+    ./node_modules/.bin/prettier --write "src/**/*.{ts,tsx}" "*.{js,json}" || { echo "✗ Formatting failed" >&2; exit 1; }
     echo "✓ Code formatted successfully"
 fi
 exit 0

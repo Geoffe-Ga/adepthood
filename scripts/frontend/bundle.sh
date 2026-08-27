@@ -72,6 +72,10 @@ EOF
 done
 
 cd "$PROJECT_ROOT"
+# The tools below are called as ./node_modules/.bin/<tool> so the pinned version
+# runs, resolved from disk with no network. This turns the resulting bare
+# `command not found` into a message that names the install. See the helper.
+"$SCRIPT_DIR/require-node-modules.sh"
 
 if $VERBOSE; then
     set -x
@@ -79,7 +83,7 @@ fi
 
 echo "=== Web bundle (expo export) ==="
 
-npx expo export --platform web || { echo "✗ Web bundle failed" >&2; exit 1; }
+./node_modules/.bin/expo export --platform web || { echo "✗ Web bundle failed" >&2; exit 1; }
 
 echo "✓ Web bundle built"
 exit 0

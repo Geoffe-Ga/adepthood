@@ -120,26 +120,45 @@ repos:
   # Frontend (React Native) checks using local hooks (requires Node in the environment).
   # `bash -c` is used (not `bash -lc`) so hooks do not depend on interactive shell
   # profiles (.bashrc/.bash_profile), which keeps CI environments reproducible.
+  #
+  # Every entry below has the same three-part shape, and each part is load-bearing:
+  #
+  #   1. `scripts/frontend/require-node-modules.sh &&` — pre-commit runs hooks with
+  #      the repo root as cwd, so this path resolves before the `cd`. Without it a
+  #      tree that has no deps fails as `eslint: command not found`, which names the
+  #      wrong problem.
+  #   2. `cd frontend &&` — pre-commit appends the matched filenames to the argv of
+  #      `bash -c`, where they land in $0/$1 and are ignored. That is what lets the
+  #      hooks below that do NOT set `pass_filenames: false` run a whole-project
+  #      command safely; passing repo-root-relative paths to a tool running with
+  #      cwd=frontend would not resolve.
+  #   3. `./node_modules/.bin/<tool>` — never `npx <tool>`. npx answers a missing
+  #      binary by downloading one: in a tree without node_modules (every Ralph
+  #      fleet worktree, until fleet.sh started provisioning them) it fetched and
+  #      executed an unrelated registry package that merely shares the name `tsc`,
+  #      and a Jest this project does not pin. `--no-install` does not close it
+  #      either — it still resolves from the shared ~/.npm/_npx cache. The explicit
+  #      path runs the pinned binary or nothing at all.
   - repo: local
     hooks:
       - id: frontend-eslint
         name: frontend eslint
         language: system
-        entry: bash -c 'cd frontend && npm run lint'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && npm run lint'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
       - id: frontend-prettier
         name: frontend prettier (write)
-        entry: bash -c 'cd frontend && npx prettier --write .'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/prettier --write .'
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/|^frontend/(?:tsconfig\.json|package-lock\.json)$
 
       - id: frontend-typecheck
         name: frontend typecheck
-        entry: bash -c 'cd frontend && npx tsc -p tsconfig.json --noEmit'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
         files: ^frontend/.*\.(ts|tsx)$
@@ -147,7 +166,7 @@ repos:
 
       - id: frontend-tests
         name: frontend tests
-        entry: bash -c 'cd frontend && npx jest --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --passWithNoTests'
         language: system
         pass_filenames: false
         files: ^frontend/
@@ -192,7 +211,7 @@ repos:
       - id: frontend-tests-coverage
         name: frontend tests (coverage required)
         language: system
-        entry: bash -c 'cd frontend && npx jest --coverage --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --coverage --passWithNoTests'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
@@ -201,7 +220,17 @@ repos:
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -c 'cd frontend && npx commitlint --extends @commitlint/config-conventional --edit "$1"'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/commitlint --extends @commitlint/config-conventional --edit "$1"'
         stages: [commit-msg]
-        # IMPORTANT: commit-msg hooks receive the commit message path as $1
-        # so do NOT set pass_filenames: false here.
+        # IMPORTANT: leave pass_filenames alone here -- a commit-msg hook needs the
+        # message path handed to it. Two measured facts about how it arrives, so the
+        # next reader does not have to re-derive them:
+        #   * pre-commit appends filenames to `bash -c <script>`'s argv, where the
+        #     FIRST one binds to $0, not $1. `"$1"` below is therefore empty.
+        #   * `--edit ""` makes commitlint fall back to the git dir's COMMIT_EDITMSG,
+        #     resolved through git rather than the cwd -- which survives the
+        #     `cd frontend`, and which is exactly the file `git commit` writes before
+        #     invoking this hook. So real commits are gated; it is `pre-commit run
+        #     --commit-msg-filename <other>` that silently lints COMMIT_EDITMSG
+        #     instead of the file named. Fixing that means passing $0 through as an
+        #     absolute path, which is a separate change from the npx removal.
