@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -16,6 +16,7 @@ from dependencies.ownership import (
     require_manageable_goal_group,
     require_visible_goal_group,
 )
+from error_responses import build_router
 from errors import forbidden, not_found
 from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
@@ -27,7 +28,7 @@ from schemas.pagination import paginate_query
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/goal-groups", tags=["goal-groups"])
+router = build_router(prefix="/goal-groups", tags=["goal-groups"])
 
 SEED_TEMPLATES: list[dict[str, object]] = [
     {

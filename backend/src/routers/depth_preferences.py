@@ -11,16 +11,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from domain.depth_preferences import ensure_depth_preferences
+from error_responses import build_router
 from models.user_depth_preferences import UserDepthPreferences
 from routers.auth import get_current_user
 from schemas.depth_preferences import DepthPreferencesResponse, DepthPreferencesUpdate
 
-router = APIRouter(prefix="/depth-preferences", tags=["depth-preferences"])
+router = build_router(prefix="/depth-preferences", tags=["depth-preferences"])
 
 
 def _to_response(preferences: UserDepthPreferences) -> DepthPreferencesResponse:

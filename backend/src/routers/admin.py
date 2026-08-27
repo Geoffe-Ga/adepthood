@@ -12,7 +12,7 @@ from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
@@ -22,6 +22,7 @@ from database import get_session
 from dependencies.auth import require_admin
 from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
+from error_responses import build_router
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
@@ -94,7 +95,7 @@ def _to_decimal(value: object) -> Decimal:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = build_router(prefix="/admin", tags=["admin"])
 
 
 async def _fetch_per_user(

@@ -20,11 +20,12 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from domain.transcription import build_transcription_prompt
+from error_responses import build_router
 from errors import bad_gateway, unprocessable
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -43,7 +44,13 @@ from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/journal", tags=["journal"])
+router = build_router(
+    prefix="/journal",
+    tags=["journal"],
+    # 402 is the wallet's: ``preflight_deduction`` refuses a page when neither
+    # wallet has capacity, and ``resolve_chat_api_key`` when no key is available.
+    extra_statuses=(status.HTTP_402_PAYMENT_REQUIRED, status.HTTP_502_BAD_GATEWAY),
+)
 
 # Anthropic caps a single image at 5 MB of *decoded* bytes; larger attachments
 # are rejected by the provider after we would have already burned the request,

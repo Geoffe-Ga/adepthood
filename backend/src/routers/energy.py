@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from error_responses import build_router
 from models.energy_plan import IDEM_KEY_MAX_LENGTH
 from routers.auth import get_current_user
 from schemas import EnergyPlanRequest, EnergyPlanResponse
@@ -16,7 +17,7 @@ from services.energy import get_or_create_persisted_plan, resolve_trusted_habits
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/energy", tags=["energy"])
+router = build_router(prefix="/v1/energy", tags=["energy"])
 
 
 @router.post("/plan", response_model=EnergyPlanResponse)

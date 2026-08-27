@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import Depends, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,7 @@ from dependencies.ownership import (
     visible_to_user,
 )
 from domain.practice_resolution import effective_config, effective_name
+from error_responses import build_router
 from errors import bad_request, conflict, not_found
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -66,7 +67,11 @@ from schemas.practice_recipe import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/practice-recipes", tags=["practice-recipes"])
+router = build_router(
+    prefix="/practice-recipes",
+    tags=["practice-recipes"],
+    extra_statuses=(status.HTTP_409_CONFLICT,),
+)
 
 
 async def _load_steps(recipe_id: int, session: AsyncSession) -> list[PracticeRecipeStep]:

@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -29,13 +29,14 @@ from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
 from domain.creek_vault import CreekVaultClient
+from error_responses import build_router
 from errors import not_found
 from models.invitation_signal import InvitationSignal
 from routers.auth import get_current_user
 from schemas.invitations import InvitationResponse
 from services.invitations import generate_invitation_signals
 
-router = APIRouter(prefix="/invitations", tags=["invitations"])
+router = build_router(prefix="/invitations", tags=["invitations"])
 
 
 def _to_response(signal: InvitationSignal) -> InvitationResponse:

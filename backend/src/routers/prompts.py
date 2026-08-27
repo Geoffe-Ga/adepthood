@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import Depends, Query, status
 from sqlalchemy import Select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from domain.weekly_prompts import (
     resolve_week_prompt,
     stage_prompts,
 )
+from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH, JournalEntry, JournalTag
 from models.prompt_response import PromptResponse
@@ -41,7 +42,9 @@ from security import TextTooLongError, sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/prompts", tags=["prompts"])
+router = build_router(
+    prefix="/prompts", tags=["prompts"], extra_statuses=(status.HTTP_409_CONFLICT,)
+)
 
 
 async def _get_user_week(

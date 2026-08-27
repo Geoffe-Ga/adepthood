@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,7 @@ from domain.resonance import (
 )
 from domain.safety import assess_distress
 from domain.stage_progress import get_user_progress, is_stage_unlocked
+from error_responses import build_router
 from errors import (
     bad_gateway,
     conflict,
@@ -151,7 +152,17 @@ def _coerce_reflection_level(data: dict[str, object]) -> None:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/journal", tags=["journal"])
+router = build_router(
+    prefix="/journal",
+    tags=["journal"],
+    # 402 is the wallet's, on the metered reflection paths: ``preflight_deduction``
+    # refuses a spend with no capacity, ``resolve_chat_api_key`` a call with no key.
+    extra_statuses=(
+        status.HTTP_402_PAYMENT_REQUIRED,
+        status.HTTP_409_CONFLICT,
+        status.HTTP_502_BAD_GATEWAY,
+    ),
+)
 
 
 # BUG-JOURNAL-009: ``search`` is run as ``ILIKE '%term%'`` against an

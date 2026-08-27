@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import Depends, Query, Request, status
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -13,6 +13,7 @@ from sqlmodel import col, select
 from bounds import StageNumberQuery
 from database import get_session
 from dependencies.ownership import require_visible_practice
+from error_responses import build_router
 from models.practice import Practice
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
@@ -23,7 +24,7 @@ from schemas.practice import PracticeCreate, PracticeResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/practices", tags=["practices"])
+router = build_router(prefix="/practices", tags=["practices"])
 
 
 @router.get("/", response_model=None)

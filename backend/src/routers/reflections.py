@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -35,6 +35,7 @@ from domain.reflection_hierarchy import (
     scope_weeks,
 )
 from domain.stage_progress import get_user_progress
+from error_responses import build_router
 from errors import forbidden, unprocessable
 from models.journal_entry import EntryStatus, JournalEntry
 from models.promoted_quote import PromotedQuote
@@ -55,7 +56,7 @@ _DAYS_PER_WEEK = 7
 # unlock check treats them as sitting in week 1.
 _UNSTARTED_USER_WEEK = 1
 
-router = APIRouter(prefix="/reflections", tags=["reflections"])
+router = build_router(prefix="/reflections", tags=["reflections"])
 
 
 def _due_window(anchor: datetime, level: ReflectionLevel, key: str) -> tuple[datetime, datetime]:

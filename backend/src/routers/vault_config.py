@@ -43,10 +43,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from error_responses import build_router
 from errors import unprocessable
 from models.user_vault_config import UserVaultConfig
 from routers.auth import get_current_user
@@ -60,7 +61,7 @@ from services.creek_vault_url_resolution import classify_resolved_user_vault_url
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
 from services.user_vault_config import clear_vault_config, load_vault_config, store_vault_config
 
-router = APIRouter(prefix="/vault", tags=["vault"])
+router = build_router(prefix="/vault", tags=["vault"])
 
 # The refusal a caller sees for a URL this seam cannot use, prefixed so it reads
 # as a code rather than as prose, and suffixed with the classifier's own defect

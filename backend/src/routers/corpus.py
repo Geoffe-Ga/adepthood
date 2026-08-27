@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -47,6 +47,7 @@ from dependencies.creek_vault import get_creek_vault_client
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
 from domain.creek_vault import CreekVaultClient
+from error_responses import build_router
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -68,7 +69,12 @@ from services.corpus_import import (
 )
 from services.creek_vault_upload import UploadedDocument
 
-router = APIRouter(prefix="/corpus", tags=["corpus"])
+router = build_router(
+    prefix="/corpus",
+    tags=["corpus"],
+    # ``guard_document_payload`` refuses an oversized import before it is decoded.
+    extra_statuses=(status.HTTP_413_CONTENT_TOO_LARGE,),
+)
 
 
 def _to_response(state: ConsentState) -> CorpusConsentResponse:
