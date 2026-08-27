@@ -21577,11 +21577,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "application/json": {}
             },
-            "description": "Successful Response"
+            "description": "The caller's whole archive, streamed as one JSON document."
           },
           "400": {
             "content": {
@@ -21675,11 +21673,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "text/markdown": {}
             },
-            "description": "Successful Response"
+            "description": "The caller's journal, streamed as Markdown."
           },
           "400": {
             "content": {

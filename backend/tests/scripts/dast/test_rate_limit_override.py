@@ -225,9 +225,9 @@ def test_the_configured_limit_is_the_one_the_limiter_actually_enforces() -> None
 
     A limiter built from ``FALLBACK_RATE_LIMIT`` rather than from the resolved
     override would leave the job silently capped at 60/minute, answering most of
-    a fuzz run with 429 -- not a 5xx, undeclared on every operation, so all three
-    enabled checks pass and the gate reports clean having reached no handler.
-    Reading the constant back cannot see that; being refused can.
+    a fuzz run with 429 -- not a 5xx, and a refusal every operation declares, so
+    all four enabled checks pass and the gate reports clean having reached no
+    handler. Reading the constant back cannot see that; being refused can.
     """
     statuses = _probe_statuses_with(_THROTTLING_OVERRIDE)
     allowed = _THROTTLING_OVERRIDE_ALLOWANCE

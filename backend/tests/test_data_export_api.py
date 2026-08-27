@@ -29,12 +29,21 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.data_export import EXPORT_PAGE_SIZE
+from main import app
 from models.journal_entry import JournalEntry
 from services import journal_encryption as je
 from services.data_export import ExportSubject, stream_json_export
 
 _EXPORT_PATH = "/users/me/export"
 _JOURNAL_MARKDOWN_PATH = "/users/me/export/journal.md"
+
+# What each download actually puts on the wire. The published document has to
+# say the same thing, or every consumer generated from it -- client, contract
+# test, fuzzer -- is told to expect a body the route never sends.
+_DOWNLOAD_MEDIA_TYPES = (
+    (_EXPORT_PATH, "application/json"),
+    (_JOURNAL_MARKDOWN_PATH, "text/markdown"),
+)
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
 
@@ -395,3 +404,31 @@ async def test_the_json_archive_leaves_out_entries_the_user_deleted(
     assert resp.status_code == HTTPStatus.OK
     assert _MINE in resp.text
     assert _THEIRS not in resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "expected_media_type"), _DOWNLOAD_MEDIA_TYPES)
+async def test_each_download_declares_the_media_type_it_sends(
+    async_client: AsyncClient,
+    path: str,
+    expected_media_type: str,
+) -> None:
+    """The document's 200 media type is exactly the one the live response sends.
+
+    Asserted as an equality on the declared key set rather than a prefix match,
+    because a prefix match is what the older header assertions in this file do
+    and it is precisely what cannot tell a truthful declaration from a
+    convenient one. A stray ``application/json`` published alongside
+    ``text/markdown`` fails here, and so does declaring only JSON for a route
+    that streams Markdown.
+    """
+    declared = app.openapi()["paths"][path]["get"]["responses"]["200"]["content"]
+    assert set(declared) == {expected_media_type}
+
+    subtype = expected_media_type.split("/")[1]
+    headers, _ = await _signup(async_client, f"declares{subtype}")
+    resp = await async_client.get(path, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    sent = resp.headers["content-type"].split(";")[0].strip().lower()
+    assert sent == expected_media_type

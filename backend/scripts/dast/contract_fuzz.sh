@@ -60,8 +60,8 @@ fi
 # a hand-built HTTPException that its operations do not declare.
 CHECKS="not_a_server_error,content_type_conformance,response_schema_conformance,status_code_conformance"
 
-# Budget: the live document publishes 128 operations, 14 of which are excluded
-# below, leaving 114. At this example count that is at most ~1,140 generated
+# Budget: the live document publishes 128 operations, 12 of which are excluded
+# below, leaving 116. At this example count that is at most ~1,160 generated
 # cases in the fuzzing phase plus the handful the examples phase replays --
 # roughly a minute of request time against a loopback instance. Raise it once
 # the measured wall clock of a real run is known.
@@ -94,9 +94,14 @@ PHASES="examples,fuzzing"
 #
 # The first two entries are the load-bearing ones: both destroy the credential
 # this whole run depends on, and losing it mid-run is invisible. Every request
-# after it answers 401, which is not a 5xx and is undeclared on every operation,
-# so all three enabled checks pass and the job goes green having reached no
-# handler at all.
+# after it answers 401, which is not a 5xx and is a refusal every operation
+# declares, so all four enabled checks pass and the job goes green having
+# reached no handler at all.
+#
+# Nothing may be excluded here for a defect in the document. An operation whose
+# published contract disagrees with what it sends is the finding this gate
+# exists to make, and excluding it turns the check that would have caught it
+# into a check that cannot fail.
 EXCLUDED=(
   'DELETE /users/me'                    # deletes the fuzzing identity; every later request would be unauthenticated
   'POST /auth/refresh'                  # revokes the presented token's jti; every later request would be unauthenticated
@@ -110,8 +115,6 @@ EXCLUDED=(
   'POST /user/balance/add'              # external Botmason credit API (routers/botmason.py)
   'POST /webhooks/gumroad/ping'         # HMAC-signed vendor webhook, not a client route (routers/gumroad.py)
   'POST /corpus/import'                 # dials the external Creek vault
-  'GET /users/me/export'                # streams a non-JSON media type the document declares as JSON
-  'GET /users/me/export/journal.md'     # streams Markdown the document declares as JSON
 )
 
 exclusions=()
