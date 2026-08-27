@@ -96,10 +96,14 @@ if $LIST_ONLY; then
 fi
 
 cd "$FRONTEND_DIR"
+# The tools below are called as ./node_modules/.bin/<tool> so the pinned version
+# runs, resolved from disk with no network. This turns the resulting bare
+# `command not found` into a message that names the install. See the helper.
+"$SCRIPT_DIR/require-node-modules.sh"
 
 # --runTestsByPath: these exact files, not a name pattern that could silently
 # match none of them.
-npx jest --runTestsByPath "${DISCOVERED[@]}" || {
+./node_modules/.bin/jest --runTestsByPath "${DISCOVERED[@]}" || {
     echo "✗ The frontend and the backend disagree" >&2
     exit 1
 }

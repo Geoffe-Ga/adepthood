@@ -52,6 +52,10 @@ EOF
 done
 
 cd "$PROJECT_ROOT"
+# The tools below are called as ./node_modules/.bin/<tool> so the pinned version
+# runs, resolved from disk with no network. This turns the resulting bare
+# `command not found` into a message that names the install. See the helper.
+"$SCRIPT_DIR/require-node-modules.sh"
 
 if $VERBOSE; then
     set -x
@@ -69,7 +73,7 @@ if $WATCH; then
     JEST_ARGS+=(--watch)
 fi
 
-npx jest ${JEST_ARGS[@]+"${JEST_ARGS[@]}"} || { echo "✗ Tests failed" >&2; exit 1; }
+./node_modules/.bin/jest ${JEST_ARGS[@]+"${JEST_ARGS[@]}"} || { echo "✗ Tests failed" >&2; exit 1; }
 
 echo "✓ Tests passed"
 exit 0

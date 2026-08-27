@@ -66,6 +66,70 @@ Ralph manages its **own persistent** worktrees rather than the `Agent` tool's
 ephemeral `isolation: "worktree"` because a worktree must **survive across wakes**:
 Gates 3–4 (CI + review) span many wakes, with the turn ending in between.
 
+## Gates inside a worktree: what to trust at commit time
+
+A worktree shares the object store, the config and the hooks. It does **not**
+inherit the untracked build inputs those hooks need, and it is not always handed
+the file set you think it is. Three things a lane has to know.
+
+### `frontend/node_modules` has to be provisioned
+
+Without it the frontend hooks still *run* — they just cannot say anything true
+about your diff. Measured in a fresh lane, on a commit staging one clean
+`frontend/src/*.ts`:
+
+| Hook | What it actually did |
+| --- | --- |
+| `frontend eslint` | exit 127, `sh: eslint: command not found` |
+| `frontend prettier (write)` | exit 1, `Cannot find package 'prettier-plugin-tailwindcss'` |
+| `frontend typecheck` | `npx` downloaded and executed a **squatter package**, `tsc@2.0.4`, instead of the pinned TypeScript |
+| `frontend tests` | `npx` downloaded `jest@30.4.2`, then failed on a missing preset |
+
+Every verdict described the environment rather than the change, and a git hook
+was performing an unreviewed network install on every commit.
+
+Two mechanisms now prevent that. `fleet.sh assign` and `adopt` symlink the main
+checkout's `frontend/node_modules` into each new worktree — a symlink, not a
+copy, because four lanes times ~700 packages is not something this disk has room
+for. And the frontend hooks resolve their binaries out of
+`frontend/node_modules/.bin` (directly, or through `npm run`) behind one shared
+guard, `scripts/frontend/require-node-modules.sh`, instead of through `npx`: a
+missing install now fails fast with an actionable message and can never reach the
+registry. `npx --no-install` is *not* a substitute — it still resolves out of the
+global `~/.npm/_npx` cache and still queries the registry before refusing.
+
+**A lane that edits `package.json` or `package-lock.json` must replace the
+symlink with a real install** (`rm frontend/node_modules && cd frontend &&
+npm ci`), or it is linting its own change against `main`'s installed tree.
+
+### A conflict-resolution commit is gated narrowly, by design
+
+`fleet.sh sync` integrates `main` by merge. When that merge conflicts, the commit
+that resolves it is not gated on its staged diff: with `MERGE_HEAD` and
+`MERGE_MSG` present, pre-commit deliberately checks only the **conflicted** files
+rather than everything staged. Measured in a controlled reproduction: five files
+staged, one gated.
+
+That is upstream design and not worth working around, but it does mean the
+commit stage is not a sweep of a conflict-resolution commit. Gate 2
+(`./scripts/<side>/check-all.sh`) and the pre-push stage are the authoritative
+sweep for that commit, and both run before the lane pushes.
+
+### A commit-stage transcript is weak evidence while lanes are concurrent
+
+Hook selection itself is sound: a frontend-only commit made inside a worktree
+runs the frontend hooks and reports every Python hook as `(no files to check)`,
+and a Python-only commit does exactly the inverse. Both directions are pinned by
+a meta-test in `backend/tests/scripts/`, which also fails if a hook's `files:`
+pattern is ever weakened.
+
+What is *not* reliable is reading one lane's terminal while three siblings commit
+into the same `.git`. A transcript that appears to show the hooks gating some
+other lane's files has, so far, always turned out to be misattributed output
+rather than a real inversion — but the cheap way to settle it is to re-read the
+commit itself (`git show --stat`) rather than the scrollback. Pre-push and CI
+were correct in every incident examined and remain the layers to trust.
+
 ## Execution model — an event-driven worker pool
 
 One re-entrant orchestrator session (`/loop /ralph-tick`) is the single brain. It
@@ -257,8 +321,8 @@ back to the one-issue-at-a-time loop with zero other changes.
 | `active` | Active issue numbers, space-separated. |
 | `count` / `free` | Active count / remaining capacity (honors `parallel_enabled`). |
 | `path <N>` | Worktree path for issue N (exit 1 if none). |
-| `assign <N> <slug>` | Create/reuse a worktree off `origin/main`; prints its path; refuses when full. |
-| `adopt <N> <PR>` | Create/reuse a worktree for issue N on PR's **existing** head branch (a bot PR's), so fixes push there instead of opening a second PR; prints its path; refuses a fork PR, a full fleet, and reuse of an existing worktree that sits on a different branch (an `assign`ed lane would push to `issue/<N>-<slug>` and open that second PR). |
+| `assign <N> <slug>` | Create/reuse a worktree off `origin/main`; links the main checkout's `frontend/node_modules` in; prints its path; refuses when full. |
+| `adopt <N> <PR>` | Create/reuse a worktree for issue N on PR's **existing** head branch (a bot PR's), so fixes push there instead of opening a second PR; links `frontend/node_modules` in as `assign` does; prints its path; refuses a fork PR, a full fleet, and reuse of an existing worktree that sits on a different branch (an `assign`ed lane would push to `issue/<N>-<slug>` and open that second PR). |
 | `sync <N>` | Merge latest `origin/main` into issue N's branch (no force-push); exit 3 on conflict (aborted, left clean). |
 | `release <N>` | Remove issue N's worktree + delete its branch. |
 | `reconcile` | Release worktrees whose PR merged/closed or whose issue is closed; prune. |
@@ -330,3 +394,6 @@ python -m pytest scripts/ralph -q
 | Fleet silts up with merged work | `reconcile` at the top of every wake GCs merged/closed worktrees. |
 | A genuinely serial issue | Label it `solo`; it runs alone and blocks fills until done. |
 | Want to disable parallelism | `parallel_enabled: false` in `state.json`. |
+| A frontend hook fails on `command not found` in a lane | The worktree has no `frontend/node_modules`. `assign`/`adopt` symlink the main checkout's in at creation and warn if it has none either; the fix there is one `npm ci` in `frontend/`. The hooks no longer fall back to `npx`, so this can never become a silent registry download. |
+| A lane changes `package.json` but lints against `main`'s packages | The provisioned `frontend/node_modules` is a symlink to the main checkout's. A lane touching a manifest or the lockfile replaces it with its own `npm ci`. |
+| A conflict-resolution commit is gated on fewer files than it changed | By design: while `MERGE_HEAD` exists pre-commit checks only the conflicted files. Gate 2 and the pre-push stage sweep the whole change before it leaves the lane. |

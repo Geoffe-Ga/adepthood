@@ -54,6 +54,8 @@ set -euo pipefail
 readonly DEFAULT_MAX_WORKERS=4
 readonly WORKTREE_ROOT=".ralph/worktrees"
 readonly STATE_FILE="scripts/ralph/state.json"
+# The dependency tree a lane needs before its frontend hooks can gate anything.
+readonly FRONTEND_DEPS_PATH="frontend/node_modules"
 
 die() {
   echo "fleet: $*" >&2
@@ -115,6 +117,70 @@ parallel_enabled() {
 # Absolute path of the worktree directory for an issue (may not exist yet).
 issue_dir() {
   printf '%s/%s/issue-%s\n' "$(repo_root)" "$WORKTREE_ROOT" "$1"
+}
+
+# Hand a freshly created lane the main checkout's frontend dependency tree.
+#
+# `git worktree add` materializes TRACKED files only, and `frontend/node_modules`
+# is git-ignored, so every lane was born without it. That is not a missing
+# convenience — it silently disarmed the frontend half of the commit gate, and
+# then armed something worse. Measured in a real lane, one `git commit` of a
+# single clean frontend file produced: `frontend eslint` exit 127 (`eslint:
+# command not found`), `frontend prettier` unable to load its Tailwind plugin,
+# and — because `npx` answers a missing binary by *fetching one* — `frontend
+# typecheck` downloading and executing an unrelated registry package that merely
+# shares the name `tsc`, plus `frontend tests` downloading a Jest the project
+# does not pin. A git hook performing an unreviewed network install is a supply
+# chain the reviewer never sees, and it reports a verdict either way.
+#
+# A symlink rather than a copy or a per-lane `npm ci`: the tree is ~700 packages,
+# the fleet runs four lanes at once, and every lane is checked out of the same
+# commit as the main worktree, so they agree on the lockfile by construction. A
+# lane that genuinely needs its own tree can still install one — see the
+# already-provisioned early return below.
+provision_frontend_deps() {
+  local dir="$1" root source_deps target
+  root="$(repo_root)"
+  source_deps="$root/$FRONTEND_DEPS_PATH"
+  target="$dir/$FRONTEND_DEPS_PATH"
+
+  # Re-entrant, like every other step here: `assign` and `adopt` both reuse an
+  # existing worktree, and a lane that installed its own real node_modules must
+  # keep it. -L as well as -e, so a dangling link counts as "already handled"
+  # instead of being relinked to the same absent path.
+  if [[ -e "$target" || -L "$target" ]]; then
+    return 0
+  fi
+
+  # A backend-only lane must not fail `assign` over frontend deps it will never
+  # use, so this warns and continues. The warning is the point: the alternative
+  # is a lane whose frontend hooks quietly pass without checking anything.
+  if [[ ! -d "$source_deps" ]]; then
+    echo "fleet: $source_deps is absent, so this lane gets no frontend node_modules;" >&2
+    echo "fleet: its frontend hooks will fail until you run 'npm ci' in frontend/." >&2
+    return 0
+  fi
+
+  # Best-effort, never fatal -- this function must not be able to return
+  # non-zero. It runs under `set -e` AFTER `git worktree add` has succeeded and
+  # BEFORE the caller prints "$dir", so a failure here would abort cmd_assign
+  # with a real worktree and branch already on disk and no path handed back:
+  # count_active would go on counting that lane against max_workers forever,
+  # and the orchestrator would never learn it exists. A lane that did not get
+  # its node_modules is not a silent hazard -- require-node-modules.sh fails
+  # every frontend gate with an actionable message -- so degrading is strictly
+  # better here than leaking a slot. Same reasoning as the absent-source branch
+  # above, applied to the two ways linking itself can fail.
+  if ! mkdir -p "$(dirname "$target")"; then
+    echo "fleet: could not create $(dirname "$target") to hold the node_modules link;" >&2
+    echo "fleet: this lane's frontend hooks will fail until you run 'npm ci' in frontend/." >&2
+    return 0
+  fi
+  if ! ln -s "$source_deps" "$target"; then
+    echo "fleet: could not link $source_deps into the lane at $target;" >&2
+    echo "fleet: this lane's frontend hooks will fail until you run 'npm ci' in frontend/." >&2
+    return 0
+  fi
 }
 
 # Emit "<issue>\t<branch>\t<path>" for every active Ralph worktree, sorted by
@@ -207,6 +273,7 @@ cmd_assign() {
   else
     git -C "$root" worktree add "$dir" -b "$branch" "$base" >&2
   fi
+  provision_frontend_deps "$dir"
   printf '%s\n' "$dir"
 }
 
@@ -277,6 +344,7 @@ cmd_adopt() {
   else
     git -C "$root" worktree add --track -b "$head_ref" "$dir" "origin/$head_ref" >&2
   fi
+  provision_frontend_deps "$dir"
   printf '%s\n' "$dir"
 }
 
