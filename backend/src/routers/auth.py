@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import bcrypt
 import jwt
 from cachetools import TTLCache
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +36,7 @@ from domain.entitlements import (
     verify_aptitude_license,
 )
 from domain.timezone import normalize_timezone
+from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.gumroad_sale import GumroadSale
@@ -67,7 +68,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = build_router(
+    prefix="/auth",
+    tags=["auth"],
+    extra_statuses=(status.HTTP_409_CONFLICT, status.HTTP_503_SERVICE_UNAVAILABLE),
+)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 _JWT_ALGORITHM = "HS256"

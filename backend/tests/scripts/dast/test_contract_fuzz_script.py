@@ -53,12 +53,14 @@ _IDENTITY_DESTROYING_OPERATION = "DELETE /users/me"
 # the CLI sends for the whole run is dead from this operation onward.
 _TOKEN_REVOKING_OPERATION = "POST /auth/refresh"
 
-# ``--checks all`` would silently change meaning with every upgrade.
-# ``status_code_conformance`` is deliberately absent; see the script's comment.
+# ``--checks all`` would silently change meaning with every upgrade, so each
+# check is named. ``status_code_conformance`` joined the list once every
+# operation declared the refusals it can send; see the script's comment.
 _REQUIRED_CHECKS = (
     "not_a_server_error",
     "content_type_conformance",
     "response_schema_conformance",
+    "status_code_conformance",
 )
 
 _EXPECTED_PHASES = "examples,fuzzing"

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import Depends, Header, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
@@ -20,6 +20,7 @@ from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
 from domain.stage_progress import get_user_progress, is_stage_unlocked
+from error_responses import build_router
 from errors import bad_request, conflict, forbidden, not_found
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -50,7 +51,11 @@ _INSIGHTS_CACHE_CONTROL = "private, max-age=60"
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/practice-sessions", tags=["practice-sessions"])
+router = build_router(
+    prefix="/practice-sessions",
+    tags=["practice-sessions"],
+    extra_statuses=(status.HTTP_409_CONFLICT,),
+)
 
 
 async def _require_stage_unlocked_for_session(

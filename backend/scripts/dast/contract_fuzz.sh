@@ -46,11 +46,19 @@ fi
 # The checks the run enforces, named one by one. `--checks all` would silently
 # change meaning with every upgrade.
 #
-# status_code_conformance is deliberately absent: not one of the operations the
-# app publishes declares a 401, 403, 404 or 429 response, so the check would
-# fail on almost every route for a documentation gap rather than a fuzzing
-# finding. Enabling it is tracked separately.
-CHECKS="not_a_server_error,content_type_conformance,response_schema_conformance"
+# status_code_conformance is enabled now that every operation declares the
+# refusals it can actually send. It was held back while the document declared no
+# 401, 403, 404 or 429 anywhere, which made it measure a documentation gap
+# rather than a fuzzing finding: 66 of the 114 selected operations failed it.
+#
+# Turned on against evidence rather than hope. With the declarations in place a
+# real run answers 899/899 at this seed and budget, and three further seeds at
+# three times the budget -- roughly 8,700 generated cases -- raised no failure
+# this check found on its own. Two unit guards keep it that way without a live
+# run: one fails any router module that builds its own APIRouter instead of the
+# shared factory, the other any module naming a status in an `errors` helper or
+# a hand-built HTTPException that its operations do not declare.
+CHECKS="not_a_server_error,content_type_conformance,response_schema_conformance,status_code_conformance"
 
 # Budget: the live document publishes 128 operations, 14 of which are excluded
 # below, leaving 114. At this example count that is at most ~1,140 generated

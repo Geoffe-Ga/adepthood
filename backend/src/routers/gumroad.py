@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,7 @@ from domain.entitlements import (
     is_token_pack_product_id,
     token_pack_size,
 )
+from error_responses import build_router
 from errors import bad_request
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.user import User
@@ -57,7 +58,7 @@ from services.token_packs import credit_token_pack_sale
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/webhooks/gumroad", tags=["gumroad"])
+router = build_router(prefix="/webhooks/gumroad", tags=["gumroad"])
 
 # Gumroad posts booleans as the form strings "true"/"false".
 _TRUE_FORM_VALUE = "true"

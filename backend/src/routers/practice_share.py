@@ -30,7 +30,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import or_ as sa_or
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import CursorResult
@@ -40,6 +40,7 @@ from sqlmodel import col, select
 
 from bounds import RowIdPath
 from database import get_session
+from error_responses import build_router
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
 from models.practice_share_link import PracticeShareLink
@@ -82,7 +83,14 @@ _MINT_RATE_LIMIT = "10/hour"
 _REDEEM_RATE_LIMIT = "30/hour"
 
 
-router = APIRouter(prefix="/practices", tags=["practice-share"])
+router = build_router(
+    prefix="/practices",
+    tags=["practice-share"],
+    # ``_gone`` answers a link that resolved but is spent or withdrawn. Reaching
+    # it needs a token that was once real, which no generated input can build --
+    # so this declaration comes from reading the raise, not from a fuzz finding.
+    extra_statuses=(status.HTTP_410_GONE,),
+)
 
 
 def _gone(detail: str) -> HTTPException:

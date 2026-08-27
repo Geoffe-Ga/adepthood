@@ -14,11 +14,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import require_admin
+from error_responses import build_router
 from errors import forbidden
 from models.user import User
 from rate_limit import limiter
@@ -35,7 +36,7 @@ from services.wallet import require_user_fresh, reset_monthly_usage_if_due
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["botmason"])
+router = build_router(tags=["botmason"])
 
 
 @router.get("/user/balance", response_model=BalanceResponse)

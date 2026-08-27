@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Request, status
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ from domain.course import (
 from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
+from error_responses import build_router
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
@@ -56,7 +57,9 @@ _CMS_PROXY_RATE_LIMIT = "30/minute"
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/course", tags=["course"])
+router = build_router(
+    prefix="/course", tags=["course"], extra_statuses=(status.HTTP_502_BAD_GATEWAY,)
+)
 
 
 def _stage_duration_days(stage_number: int) -> int:

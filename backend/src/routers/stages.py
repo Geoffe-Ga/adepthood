@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -29,6 +29,7 @@ from domain.stage_progress import (
     is_stage_unlocked,
     stage_exists,
 )
+from error_responses import build_router
 from errors import conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
@@ -49,7 +50,7 @@ from services.creek_vault_wheel import select_wheel_balance
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/stages", tags=["stages"])
+router = build_router(prefix="/stages", tags=["stages"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 
 def _stage_manifestations(stage_number: int) -> list[StageManifestation]:

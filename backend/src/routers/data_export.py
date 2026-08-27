@@ -19,12 +19,13 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import get_current_user_model
+from error_responses import build_router
 from errors import bad_request
 from models.user import User
 from services.data_export import (
@@ -33,7 +34,7 @@ from services.data_export import (
     stream_json_export,
 )
 
-router = APIRouter(prefix="/users", tags=["export"])
+router = build_router(prefix="/users", tags=["export"])
 
 _JSON_MEDIA_TYPE = "application/json"
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"

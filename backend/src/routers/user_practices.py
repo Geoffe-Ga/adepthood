@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import Depends, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
+from error_responses import build_router
 from errors import bad_request, conflict, not_found, unprocessable_validation
 from models.course_stage import CourseStage
 from models.practice import Practice
@@ -43,7 +44,9 @@ from seed_stages import STAGE_DEFINITIONS
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/user-practices", tags=["user-practices"])
+router = build_router(
+    prefix="/user-practices", tags=["user-practices"], extra_statuses=(status.HTTP_409_CONFLICT,)
+)
 
 
 async def _resolve_selectable_practice(

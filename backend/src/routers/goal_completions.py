@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +13,12 @@ from bounds import RowIdField
 from database import get_session
 from dependencies.ownership import resolve_owned_goal_and_habit
 from dependencies.timezone import current_user_timezone
+from error_responses import build_router
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.checkin import CheckInContext, record_goal_completion
 
-router = APIRouter(prefix="/goal_completions", tags=["goals"])
+router = build_router(prefix="/goal_completions", tags=["goals"])
 
 
 class GoalCompletionRequest(BaseModel):

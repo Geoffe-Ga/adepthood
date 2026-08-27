@@ -18,11 +18,12 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import get_current_user_model
+from error_responses import build_router
 from errors import bad_request
 from models.user import User
 from schemas.account_deletion import (
@@ -35,7 +36,7 @@ from services.account_deletion import Account, DeletionReceipt, delete_account
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = build_router(prefix="/users", tags=["users"])
 
 # Deletion here is immediate and final: no grace period, no reversal window.
 # A "deletion" that can be undone by logging back in is a deactivation, which

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -27,6 +27,7 @@ from client_ip import (
     unusable_throttle_prefix_config,
 )
 from database import async_session_factory, get_session
+from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
     CorrelationIdMiddleware,
@@ -860,7 +861,17 @@ async def _probe_db(session: AsyncSession, *, log_event: str, detail: str) -> No
         raise HTTPException(status_code=503, detail=detail) from exc
 
 
-@app.get("/health/live")
+# The probes answer under the global limiter like every other route, and the two
+# that touch the database answer 503 when it does not respond in time. Declared
+# here because these three are the only operations mounted on the application
+# itself rather than through the router factory, so nothing else would say so.
+_LIVENESS_RESPONSES = refusal_responses((status.HTTP_429_TOO_MANY_REQUESTS,))
+_DB_PROBE_RESPONSES = refusal_responses(
+    (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_503_SERVICE_UNAVAILABLE)
+)
+
+
+@app.get("/health/live", responses=_LIVENESS_RESPONSES)
 async def liveness() -> dict[str, str]:
     """Liveness probe: process is responsive (no DB dependency).
 
@@ -872,7 +883,7 @@ async def liveness() -> dict[str, str]:
     return {"status": "alive"}
 
 
-@app.get("/health/ready")
+@app.get("/health/ready", responses=_DB_PROBE_RESPONSES)
 async def readiness(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, str]:
@@ -894,7 +905,7 @@ async def readiness(
     return {"status": "ready", "database": "connected"}
 
 
-@app.get("/health")
+@app.get("/health", responses=_DB_PROBE_RESPONSES)
 async def health_check(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict[str, str]:
