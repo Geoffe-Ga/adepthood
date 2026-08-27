@@ -71,6 +71,7 @@ import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
 import { carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
+import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
@@ -118,6 +119,42 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   revealed: true,
   ...overrides,
 });
+
+// A frozen stand-in for the ``-Date.now()`` placeholder ``buildAddedHabit``
+// mints, so the synthetic-id cases never drift with the clock.
+const SYNTHETIC_HABIT_ID = -1_756_000_000_000;
+
+// Ids well outside the demo seed's 1..10 habit / 1..30 goal ranges, so an
+// assertion on them cannot pass by coincidence.
+const SERVER_HABIT_ID = 42;
+const SERVER_GOAL_IDS = [91, 92, 93];
+
+/** A demo placeholder tile: a positive, truthy, entirely fabricated id. */
+const makeDemoHabit = (overrides: Partial<Habit> = {}): Habit =>
+  makeHabit({ isDemoSeed: true, ...overrides });
+
+/** A pre-sync added habit: negative habit id, negative goal ids, no demo marker. */
+const makeSyntheticHabit = (overrides: Partial<Habit> = {}): Habit =>
+  makeHabit({
+    id: SYNTHETIC_HABIT_ID,
+    goals: makeHabit().goals.map((g, i) => ({ ...g, id: SYNTHETIC_HABIT_ID - i - 1 })),
+    ...overrides,
+  });
+
+/** A row the server really issued ids for. */
+const makeServerHabit = (overrides: Partial<Habit> = {}): Habit =>
+  makeHabit({
+    id: SERVER_HABIT_ID,
+    name: 'Real',
+    goals: makeHabit().goals.map((g, i) => ({ ...g, id: SERVER_GOAL_IDS[i]! })),
+    ...overrides,
+  });
+
+/** Goal ids in the order they were POSTed, so a test can pin both count and value. */
+const postedGoalIds = (): number[] =>
+  (goalCompletionsApi.create as jest.Mock).mock.calls.map(
+    (call) => (call[0] as { goal_id: number }).goal_id,
+  );
 
 // Fixed so the program-clock assertions never drift with the calendar.
 const FIXED_TODAY = new Date(2026, 5, 1);
@@ -2660,6 +2697,406 @@ describe('habitManager', () => {
       expect(shown.every((h) => h.isDemoSeed === true)).toBe(true);
     });
   });
+  describe('non-server ids never reach the wire', () => {
+    // Three id families share the store: demo placeholders (positive, marked),
+    // pre-sync added habits (negative, unmarked), and genuinely server-backed rows.
+    const DEMO_TILE_ID = 3;
+    const NEW_ICON = '\u{1F525}';
+
+    const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+    const demoTile = (overrides: Partial<Habit> = {}): Habit =>
+      makeDemoHabit({ id: DEMO_TILE_ID, name: 'Sample', ...overrides });
+
+    describe('deleteHabit', () => {
+      it('removes a demo tile locally and cancels its reminders without a DELETE', () => {
+        useHabitStore.setState({ habits: [demoTile()] });
+
+        habitManager.deleteHabit(DEMO_TILE_ID);
+
+        expect(habitsApi.delete).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits).toEqual([]);
+        expect(cancelForHabit).toHaveBeenCalledWith(DEMO_TILE_ID);
+      });
+
+      it('removes a pre-sync added habit locally without a DELETE', () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
+
+        habitManager.deleteHabit(SYNTHETIC_HABIT_ID);
+
+        expect(habitsApi.delete).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits).toEqual([]);
+        expect(cancelForHabit).toHaveBeenCalledWith(SYNTHETIC_HABIT_ID);
+      });
+
+      it('removes a habit whose id is zero without a DELETE', () => {
+        useHabitStore.setState({ habits: [makeHabit({ id: 0 })] });
+
+        habitManager.deleteHabit(0);
+
+        expect(habitsApi.delete).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits).toEqual([]);
+        expect(cancelForHabit).toHaveBeenCalledWith(0);
+      });
+
+      it('DELETEs only the server-backed row when a demo tile sits beside it', () => {
+        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
+
+        habitManager.deleteHabit(SERVER_HABIT_ID);
+
+        expect(habitsApi.delete).toHaveBeenCalledTimes(1);
+        expect(habitsApi.delete).toHaveBeenCalledWith(SERVER_HABIT_ID);
+        expect(useHabitStore.getState().habits.map((h) => h.id)).toEqual([DEMO_TILE_ID]);
+      });
+
+      it('cannot delete a real row through a demo tile seeded by an unreachable server', async () => {
+        (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+        (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+        await habitManager.loadHabits();
+
+        const seeded = useHabitStore.getState().habits;
+        expect(seeded).toHaveLength(10);
+        expect(seeded.filter((h) => h.isDemoSeed === true)).toHaveLength(10);
+
+        habitManager.deleteHabit(seeded[0]!.id);
+
+        expect(habitsApi.delete).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits).toHaveLength(9);
+      });
+    });
+
+    describe('updateHabit', () => {
+      it('renames a demo tile locally without PUTting its fabricated id', async () => {
+        const tile = demoTile();
+        useHabitStore.setState({ habits: [tile] });
+
+        habitManager.updateHabit({ ...tile, name: 'Renamed' });
+        await settle();
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.name).toBe('Renamed');
+      });
+
+      it('renames a pre-sync added habit locally without PUTting its negative id', async () => {
+        const synthetic = makeSyntheticHabit();
+        useHabitStore.setState({ habits: [synthetic] });
+
+        habitManager.updateHabit({ ...synthetic, name: 'Renamed' });
+        await settle();
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.name).toBe('Renamed');
+      });
+
+      it('PUTs only the server-backed row when a demo tile sits beside it', async () => {
+        const real = makeServerHabit();
+        useHabitStore.setState({ habits: [demoTile(), real] });
+
+        habitManager.updateHabit({ ...real, name: 'Renamed' });
+        await settle();
+
+        expect(habitsApi.update).toHaveBeenCalledTimes(1);
+        expect(habitsApi.update).toHaveBeenCalledWith(
+          SERVER_HABIT_ID,
+          expect.objectContaining({ name: 'Renamed' }),
+        );
+      });
+    });
+
+    describe('setEmojiForHabit', () => {
+      it('changes a demo tile icon locally without PUTting its fabricated id', () => {
+        useHabitStore.setState({ habits: [demoTile()] });
+
+        habitManager.setEmojiForHabit(0, NEW_ICON);
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.icon).toBe(NEW_ICON);
+      });
+
+      it('changes a pre-sync added habit icon locally without PUTting its negative id', () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
+
+        habitManager.setEmojiForHabit(0, NEW_ICON);
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.icon).toBe(NEW_ICON);
+      });
+
+      it('PUTs the new icon only for the server-backed row at that index', () => {
+        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
+
+        habitManager.setEmojiForHabit(1, NEW_ICON);
+
+        expect(habitsApi.update).toHaveBeenCalledTimes(1);
+        expect(habitsApi.update).toHaveBeenCalledWith(
+          SERVER_HABIT_ID,
+          expect.objectContaining({ icon: NEW_ICON }),
+        );
+      });
+    });
+
+    describe('setNewStartDate', () => {
+      const NEW_START = new Date('2026-03-01T00:00:00Z');
+
+      const withHistory = (habit: Habit): Habit => ({
+        ...habit,
+        streak: 5,
+        completions: [{ timestamp: new Date('2025-02-01T00:00:00Z'), completed_units: 1 }],
+      });
+
+      it('resets a demo tile locally without a PUT and without clearing server check-ins', async () => {
+        useHabitStore.setState({ habits: [withHistory(demoTile())] });
+
+        habitManager.setNewStartDate(DEMO_TILE_ID, NEW_START);
+        await settle();
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
+        const stored = useHabitStore.getState().habits[0]!;
+        expect(stored.streak).toBe(0);
+        expect(stored.completions).toEqual([]);
+      });
+
+      it('resets a pre-sync added habit locally without a PUT and without clearing check-ins', async () => {
+        useHabitStore.setState({ habits: [withHistory(makeSyntheticHabit())] });
+
+        habitManager.setNewStartDate(SYNTHETIC_HABIT_ID, NEW_START);
+        await settle();
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
+        const stored = useHabitStore.getState().habits[0]!;
+        expect(stored.streak).toBe(0);
+        expect(stored.completions).toEqual([]);
+      });
+
+      it('PUTs then clears check-ins only for the server-backed row', async () => {
+        useHabitStore.setState({ habits: [demoTile(), withHistory(makeServerHabit())] });
+
+        habitManager.setNewStartDate(SERVER_HABIT_ID, NEW_START);
+        await settle();
+
+        expect(habitsApi.update).toHaveBeenCalledTimes(1);
+        expect(habitsApi.update).toHaveBeenCalledWith(
+          SERVER_HABIT_ID,
+          expect.objectContaining({ start_date: '2026-03-01' }),
+        );
+        expect(habitsApi.clearCompletions).toHaveBeenCalledTimes(1);
+        expect(habitsApi.clearCompletions).toHaveBeenCalledWith(SERVER_HABIT_ID);
+      });
+    });
+
+    describe('updateGoalUnits', () => {
+      const MINUTES = ['minutes', 'minutes', 'minutes'];
+
+      it('applies new units to a demo tile locally without a batch PUT', () => {
+        useHabitStore.setState({ habits: [demoTile()] });
+
+        habitManager.updateGoalUnits(DEMO_TILE_ID, { target_unit: 'minutes' });
+
+        expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.goals.map((g) => g.target_unit)).toEqual(
+          MINUTES,
+        );
+      });
+
+      it('applies new units to a pre-sync added habit locally without a batch PUT', () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
+
+        habitManager.updateGoalUnits(SYNTHETIC_HABIT_ID, { target_unit: 'minutes' });
+
+        expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.goals.map((g) => g.target_unit)).toEqual(
+          MINUTES,
+        );
+      });
+
+      it('refuses a server-backed habit whose tier goals still carry negative ids', () => {
+        const straggler = makeServerHabit({
+          goals: makeHabit().goals.map((g, i) => ({ ...g, id: SYNTHETIC_HABIT_ID - i - 1 })),
+        });
+        useHabitStore.setState({ habits: [straggler] });
+
+        habitManager.updateGoalUnits(SERVER_HABIT_ID, { target_unit: 'minutes' });
+
+        expect(habitsApi.updateGoalUnits).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.goals.map((g) => g.target_unit)).toEqual(
+          MINUTES,
+        );
+      });
+
+      it('PUTs the batch only for the server-backed row', () => {
+        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
+
+        habitManager.updateGoalUnits(SERVER_HABIT_ID, { target_unit: 'minutes' });
+
+        expect(habitsApi.updateGoalUnits).toHaveBeenCalledTimes(1);
+        expect(habitsApi.updateGoalUnits).toHaveBeenCalledWith(
+          SERVER_HABIT_ID,
+          expect.objectContaining({ target_unit: 'minutes' }),
+        );
+      });
+    });
+
+    describe('updateGoal', () => {
+      const NEW_TARGET = 42;
+
+      it('edits a demo tile goal locally without PUTting the goal', () => {
+        const tile = demoTile();
+        useHabitStore.setState({ habits: [tile] });
+
+        habitManager.updateGoal(DEMO_TILE_ID, { ...tile.goals[0]!, target: NEW_TARGET });
+
+        expect(goalsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.goals[0]!.target).toBe(NEW_TARGET);
+      });
+
+      it('edits a pre-sync added habit goal locally without PUTting the goal', () => {
+        const synthetic = makeSyntheticHabit();
+        useHabitStore.setState({ habits: [synthetic] });
+
+        habitManager.updateGoal(SYNTHETIC_HABIT_ID, { ...synthetic.goals[0]!, target: NEW_TARGET });
+
+        expect(goalsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.goals[0]!.target).toBe(NEW_TARGET);
+      });
+
+      it('PUTs the goal only when its parent habit is server-backed', () => {
+        const real = makeServerHabit();
+        useHabitStore.setState({ habits: [demoTile(), real] });
+
+        habitManager.updateGoal(SERVER_HABIT_ID, { ...real.goals[0]!, target: NEW_TARGET });
+
+        expect(goalsApi.update).toHaveBeenCalledTimes(1);
+        expect(goalsApi.update).toHaveBeenCalledWith(
+          SERVER_GOAL_IDS[0],
+          expect.objectContaining({ target: NEW_TARGET }),
+        );
+      });
+    });
+
+    describe('commitLogUnitContext', () => {
+      it('keeps a demo tile log local and posts no goal completion', async () => {
+        useHabitStore.setState({ habits: [demoTile()] });
+        const ctx = habitManager.prepareLogUnit(DEMO_TILE_ID, 1, 'UTC')!;
+        habitManager.applyLogUnitContext(ctx);
+
+        const result = await habitManager.commitLogUnitContext(ctx);
+
+        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+        expect(result).toBeNull();
+        expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+      });
+
+      it('still posts a negative synthetic goal id, whose 404 is what drives the resync', async () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
+        const ctx = habitManager.prepareLogUnit(SYNTHETIC_HABIT_ID, 1, 'UTC')!;
+        habitManager.applyLogUnitContext(ctx);
+
+        await habitManager.commitLogUnitContext(ctx);
+
+        expect(postedGoalIds()).toEqual([SYNTHETIC_HABIT_ID - 1]);
+      });
+
+      it('posts the server goal id when a demo tile sits beside the real row', async () => {
+        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
+        const ctx = habitManager.prepareLogUnit(SERVER_HABIT_ID, 1, 'UTC')!;
+        habitManager.applyLogUnitContext(ctx);
+
+        await habitManager.commitLogUnitContext(ctx);
+
+        expect(postedGoalIds()).toEqual([SERVER_GOAL_IDS[0]]);
+      });
+    });
+
+    describe('backfillMissedDays', () => {
+      const MISSED_DAY = new Date('2025-06-01T12:00:00Z');
+
+      it('keeps a demo tile backfill local and posts no completions', () => {
+        useHabitStore.setState({ habits: [demoTile()] });
+
+        habitManager.backfillMissedDays(DEMO_TILE_ID, [MISSED_DAY], 'UTC');
+
+        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+        const stored = useHabitStore.getState().habits[0]!;
+        expect(stored.completions).toHaveLength(1);
+        expect(stored.streak).toBe(1);
+      });
+
+      it('keeps a pre-sync added habit backfill local and posts no completions', () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
+
+        habitManager.backfillMissedDays(SYNTHETIC_HABIT_ID, [MISSED_DAY], 'UTC');
+
+        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+        const stored = useHabitStore.getState().habits[0]!;
+        expect(stored.completions).toHaveLength(1);
+        expect(stored.streak).toBe(1);
+      });
+
+      it('posts one completion against the low goal of the server-backed row', () => {
+        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
+
+        habitManager.backfillMissedDays(SERVER_HABIT_ID, [MISSED_DAY], 'UTC');
+
+        expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+        expect(goalCompletionsApi.create).toHaveBeenCalledWith({
+          goal_id: SERVER_GOAL_IDS[0],
+          did_complete: true,
+          completed_on: '2025-06-01',
+        });
+      });
+    });
+
+    describe('syncRevealState', () => {
+      it('unlocks a pre-sync added habit locally without PUTting its negative id', () => {
+        useHabitStore.setState({ habits: [makeSyntheticHabit({ revealed: false })] });
+
+        habitManager.revealAllHabits();
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        expect(useHabitStore.getState().habits[0]!.revealed).toBe(true);
+      });
+
+      it('still PUTs every row when the whole store is server-backed', () => {
+        useHabitStore.setState({
+          habits: [42, 43, 44].map((id) => makeServerHabit({ id, revealed: false })),
+        });
+
+        habitManager.revealAllHabits();
+
+        expect(habitsApi.update).toHaveBeenCalledTimes(3);
+        expect(useHabitStore.getState().habits.map((h) => h.revealed)).toEqual([true, true, true]);
+      });
+    });
+
+    describe('saveHabitOrder', () => {
+      it('reorders pre-sync added habits locally without PUTting their negative ids', () => {
+        const first = makeSyntheticHabit({ name: 'First' });
+        const second = makeSyntheticHabit({ id: SYNTHETIC_HABIT_ID - 100, name: 'Second' });
+        useHabitStore.setState({ habits: [first, second] });
+
+        habitManager.saveHabitOrder([second, first]);
+
+        expect(habitsApi.update).not.toHaveBeenCalled();
+        const stored = useHabitStore.getState().habits;
+        expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
+        expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
+      });
+
+      it('still PUTs every row of a reorder when the whole store is server-backed', () => {
+        const rows = [42, 43, 44].map((id) => makeServerHabit({ id, name: `Real ${id}` }));
+        useHabitStore.setState({ habits: rows });
+
+        habitManager.saveHabitOrder([rows[2]!, rows[0]!, rows[1]!]);
+
+        expect(habitsApi.update).toHaveBeenCalledTimes(3);
+        expect(useHabitStore.getState().habits.map((h) => h.id)).toEqual([44, 42, 43]);
+      });
+    });
+  });
+
   describe('replayPendingCheckIns failure classification', () => {
     const queued = (goalId: number, day: string) => ({
       goal_id: goalId,
@@ -2677,11 +3114,6 @@ describe('habitManager', () => {
       (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce(pending as never);
       await habitManager.loadHabits('UTC');
     };
-
-    const postedGoalIds = (): number[] =>
-      (goalCompletionsApi.create as jest.Mock).mock.calls.map(
-        (call) => (call[0] as { goal_id: number }).goal_id,
-      );
 
     beforeEach(() => {
       // ``clearMocks`` drops calls but not a leftover ``Once`` queue, so reset it here.
