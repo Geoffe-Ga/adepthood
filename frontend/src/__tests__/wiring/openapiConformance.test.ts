@@ -130,7 +130,7 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
   dataExportArchiveSchema: {
     component: null,
     reason:
-      'GET /users/me/export declares no response_model, so the document types its body as an empty schema and there is nothing to compare the envelope against.',
+      'GET /users/me/export streams its archive instead of returning a response_model, so the document names the media type it sends and declares no schema under it; there is nothing to compare the envelope against.',
   },
   invitationKindSchema: {
     component: null,

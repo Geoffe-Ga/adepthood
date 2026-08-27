@@ -19,7 +19,7 @@ Two exclusions are load-bearing and are asserted by name. ``DELETE /users/me``
 deletes the fuzzing identity; ``POST /auth/refresh`` revokes the presented
 token's ``jti`` before minting its replacement. Either one kills the credential
 partway through a run, and the loss is invisible: every later request answers
-401, which is not a 5xx and is undeclared on every operation, so all three
+401, which is not a 5xx and is a refusal every operation declares, so all four
 enabled checks pass and the job reports success having reached no handler.
 """
 
@@ -30,6 +30,7 @@ import re
 import stat
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -52,6 +53,16 @@ _IDENTITY_DESTROYING_OPERATION = "DELETE /users/me"
 # Revokes the *presented* token before minting the replacement, so the header
 # the CLI sends for the whole run is dead from this operation onward.
 _TOKEN_REVOKING_OPERATION = "POST /auth/refresh"
+
+# The two downloads that were excused from the run while the document declared
+# their bodies as JSON. Named rather than derived, because the derived guard
+# further down only notices an operation that publishes something other than
+# JSON. The JSON archive never enters that set, so nothing there would catch it
+# being excused a second time under a freshly written reason.
+_DOWNLOAD_OPERATIONS = (
+    "GET /users/me/export",
+    "GET /users/me/export/journal.md",
+)
 
 # ``--checks all`` would silently change meaning with every upgrade, so each
 # check is named. ``status_code_conformance`` joined the list once every
@@ -231,6 +242,76 @@ def live_operation_labels() -> set[str]:
     }
 
 
+def _is_json_media_type(media_type: str) -> bool:
+    """Decide whether a media type carries JSON, the way the fuzzer's check does.
+
+    Args:
+        media_type: One media type as the document declares it, parameters and all.
+
+    Returns:
+        True for ``application/json`` and for any ``application/*+json`` suffix
+        type; False for everything else, Markdown included.
+    """
+    declared = media_type.split(";", maxsplit=1)[0].strip().lower()
+    main_type, _, subtype = declared.partition("/")
+    return main_type == "application" and (subtype == "json" or subtype.endswith("+json"))
+
+
+def _success_media_types(operation: dict[str, Any]) -> list[str]:
+    """Return every media type one operation declares on any 2xx it publishes.
+
+    Every status is read, not just ``200``. This API already answers 201, 202
+    and 204 as well, so a lookup fixed on ``200`` would quietly stop seeing a
+    non-JSON body the day one arrives on a created or accepted response -- and
+    a guard nobody notices going blind is the failure this whole file is about.
+
+    Args:
+        operation: One operation object out of the published document.
+
+    Returns:
+        The declared media types, in document order, across every 2xx.
+    """
+    return [
+        media_type
+        for status_code, response in operation.get("responses", {}).items()
+        if status_code.startswith("2")
+        for media_type in response.get("content", {})
+    ]
+
+
+def declared_success_media_types() -> dict[str, list[str]]:
+    """Map every published operation label to the media types its successes declare.
+
+    Returns:
+        One entry per operation, keyed ``METHOD /path`` exactly as
+        ``live_operation_labels`` spells it. An operation declaring no success
+        body -- a 204, say -- maps to an empty list.
+    """
+    document = app.openapi()
+    return {
+        f"{method.upper()} {path}": _success_media_types(operation)
+        for path, operations in document["paths"].items()
+        for method, operation in operations.items()
+        if method in _HTTP_METHODS
+    }
+
+
+def operations_publishing_a_non_json_body() -> set[str]:
+    """Return every operation declaring at least one non-JSON success media type.
+
+    Derived from the live document rather than from a list of route names, so
+    the guard below keeps meaning something as routes come and go.
+
+    Returns:
+        Labels shaped ``METHOD /path``.
+    """
+    return {
+        label
+        for label, media_types in declared_success_media_types().items()
+        if any(not _is_json_media_type(media_type) for media_type in media_types)
+    }
+
+
 def excluded_operations(text: str) -> dict[str, str]:
     """Return the script's exclusion list, mapping each operation to its reason.
 
@@ -305,6 +386,22 @@ def test_the_token_revoking_operation_is_excluded(fuzz_run: FuzzRun) -> None:
     assert _TOKEN_REVOKING_OPERATION in fuzz_run.values_for(_ALLOWED_FILTER_FLAG)
 
 
+def test_the_downloads_are_fuzzed_rather_than_excused(fuzz_run: FuzzRun) -> None:
+    """The two operations this run was blind to reach the fuzzer.
+
+    Both were excluded for a defect in the document rather than for anything
+    the fuzzer would break, which is the one reason an exclusion may never
+    carry: it retires the check that would have reported the defect. Asserted
+    against the argv the script built, and against the live document, so a
+    renamed route fails here instead of leaving a guard that watches nothing.
+    """
+    assert set(_DOWNLOAD_OPERATIONS) <= live_operation_labels(), (
+        f"these operations are no longer published: {sorted(_DOWNLOAD_OPERATIONS)}"
+    )
+    excused = sorted(set(_DOWNLOAD_OPERATIONS) & set(fuzz_run.values_for(_ALLOWED_FILTER_FLAG)))
+    assert not excused, f"excused from the run for a documentation defect: {excused}"
+
+
 def test_no_other_filter_flag_widens_the_exclusion(fuzz_run: FuzzRun) -> None:
     """A class filter is how the list stays small on paper while the run shrinks."""
     widening = [
@@ -369,3 +466,23 @@ def test_the_recorded_argv_can_tell_a_wired_list_from_an_unwired_one(
     run = run_fuzz_script(tmp_path, script=unwired)
     assert run.returncode == 0, run.stderr
     assert run.values_for(_ALLOWED_FILTER_FLAG) == []
+
+
+def test_a_non_json_response_body_is_fuzzed_rather_than_excluded(script_text: str) -> None:
+    """The content-type check has to be pointed at the bodies that can break it.
+
+    ``content_type_conformance`` compares what a response sends against what the
+    document declares for it. Every operation answering ``application/json``
+    passes it by construction, so a run in which no selected operation publishes
+    anything else exercises the check without ever being able to fail it. Both
+    halves are asserted together: excluding the routes that stream another media
+    type disarms the check, and so does going back to declaring their bodies as
+    JSON, because then nothing publishes a non-JSON body at all.
+    """
+    non_json = operations_publishing_a_non_json_body()
+    assert non_json, (
+        "no operation declares a non-JSON 200 body, so content_type_conformance "
+        "is vacuous -- it can only ever compare JSON against JSON"
+    )
+    excused = sorted(non_json & set(excluded_operations(script_text)))
+    assert not excused, f"the only non-JSON bodies in the API are excluded from the run: {excused}"

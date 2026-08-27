@@ -379,12 +379,21 @@ this job back to `pull_request`. Adding `continue-on-error` instead would be
 worse than not having the job: a permanently green report of a permanently red
 run.
 
-Three checks are enabled — `not_a_server_error`, `content_type_conformance` and
-`response_schema_conformance`. `status_code_conformance` is not, and the reason
-is a measured property of this API rather than a preference: not one of its 128
-operations declares a `401`, `403`, `404` or `429` response, so the check would
-fail almost everywhere for a documentation gap rather than a fuzzing finding.
-Issue #2425 tracks declaring those responses and turning the check on.
+Four checks are enabled — `not_a_server_error`, `content_type_conformance`,
+`response_schema_conformance` and `status_code_conformance`. The last of those
+was held back for a measured property of this API rather than a preference: not
+one of its 128 operations declared a `401`, `403`, `404` or `429` response, so
+it measured a documentation gap rather than a fuzzing finding. It went on once
+`error_responses.build_router` gave every operation the refusals it can actually
+send.
+
+`content_type_conformance` is the check with the narrowest target: it can only
+fail where a response answers with something other than what its operation
+publishes, and every operation returning `application/json` passes it by
+construction. `GET /users/me/export/journal.md` is the one body on this API that
+is not JSON, which makes it the only operation that check can be exercised
+against — so it must never be excluded from the run, and
+`test_contract_fuzz_script.py` fails if it is.
 
 Operations are excluded **by exact name, with a reason on the same line**, never
 by a path pattern — a named exclusion has to be defended and a pattern quietly
@@ -399,11 +408,12 @@ Two exclusions are load-bearing, and both destroy the credential the run depends
 on: `DELETE /users/me` deletes the fuzzing identity, and `POST /auth/refresh`
 revokes the presented token's `jti` before minting its replacement. Losing the
 credential mid-run is invisible — every later request answers `401`, which is
-not a 5xx and is undeclared on every operation, so all three enabled checks pass
-and the job reports success having reached no handler. Those two are the only
-operations reachable by the fuzzer that do this: a sweep of the auth and user
-routers found `_revoke_token_payload` called from `/auth/refresh` alone, and the
-only other credential-invalidating path (`password_changed_at`, advanced by
+not a 5xx and is a refusal every operation now declares, so all four enabled
+checks pass and the job reports success having reached no handler. Those two
+are the only operations reachable by the fuzzer that do this: a sweep of the
+auth and user routers found `_revoke_token_payload` called from
+`/auth/refresh` alone, and the only other credential-invalidating path
+(`password_changed_at`, advanced by
 `/auth/password-reset/confirm`) needs a reset token the fuzzer cannot mint.
 
 Schemathesis is pinned in `backend/requirements-dast.txt` rather than

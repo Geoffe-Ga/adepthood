@@ -19,13 +19,13 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import get_current_user_model
-from error_responses import build_router
+from error_responses import ResponseDeclarations, build_router
 from errors import bad_request
 from models.user import User
 from services.data_export import (
@@ -39,6 +39,13 @@ router = build_router(prefix="/users", tags=["export"])
 _JSON_MEDIA_TYPE = "application/json"
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 
+# What separates a media type from its parameters, in a header and in the
+# document key alike: ``text/markdown; charset=utf-8``.
+_MEDIA_TYPE_PARAMETER_SEPARATOR = ";"
+
+_JSON_DESCRIPTION = "The caller's whole archive, streamed as one JSON document."
+_MARKDOWN_DESCRIPTION = "The caller's journal, streamed as Markdown."
+
 # The names the two files land under, dated at request time. Documented for
 # users in ``docs/your-data.md``; a change here belongs there too.
 _JSON_FILENAME = ("adepthood-export", "json")
@@ -47,6 +54,40 @@ _MARKDOWN_FILENAME = ("adepthood-journal", "md")
 # Every persisted account has an id; a caller holding a token for one that does
 # not is a broken invariant rather than a request worth serving.
 _ACCOUNT_NOT_PERSISTED = "account_not_persisted"
+
+
+def _sends(media_type: str, description: str) -> ResponseDeclarations:
+    """Declare a 200 carrying exactly ``media_type``, and nothing besides.
+
+    The precedent for declaring a success media type in this codebase: no
+    router had needed one before, because every other route answers the JSON
+    FastAPI assumes on its own. Three things about the shape are deliberate.
+
+    The parameter is stripped off the document key -- ``text/markdown``, not
+    ``text/markdown; charset=utf-8`` -- while the caller hands over the very
+    constant the route gives ``StreamingResponse``. That keeps the wire value
+    the single source of truth, so the paper cannot drift from the header. A
+    conformance check parses parameters off both sides before comparing, so the
+    bare type still matches the charset-bearing header it describes.
+
+    No ``schema`` is declared under the media type. FastAPI would synthesise
+    ``{"type": "string"}`` for a route whose response class is not
+    ``JSONResponse``, and the JSON archive -- an object -- would then fail its
+    own published schema; a response-schema validator skips a body it has no
+    schema for, so declaring nothing is both honest and safe.
+
+    Args:
+        media_type: The value the route passes ``StreamingResponse``,
+            parameters and all.
+        description: What the body is, for the reader of the document.
+
+    Returns:
+        A ``responses=`` mapping carrying that single 200.
+    """
+    documented = media_type.split(_MEDIA_TYPE_PARAMETER_SEPARATOR, maxsplit=1)[0].strip()
+    return {
+        status.HTTP_200_OK: {"description": description, "content": {documented: {}}},
+    }
 
 
 def _subject(current_user: User) -> ExportSubject:
@@ -76,7 +117,16 @@ def _streamed(
     return StreamingResponse(chunks, media_type=media_type, headers=_attachment(filename))
 
 
-@router.get("/me/export")
+# ``response_class=StreamingResponse`` is load-bearing rather than cosmetic:
+# that class carries no class-level ``media_type``, which is what makes
+# FastAPI's generator skip the block that would otherwise publish a default
+# ``application/json`` entry. Declaring ``responses=`` alone would merely add a
+# second media type beside the bogus JSON one.
+@router.get(
+    "/me/export",
+    response_class=StreamingResponse,
+    responses=_sends(_JSON_MEDIA_TYPE, _JSON_DESCRIPTION),
+)
 async def export_my_data(
     current_user: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -94,7 +144,11 @@ async def export_my_data(
     )
 
 
-@router.get("/me/export/journal.md")
+@router.get(
+    "/me/export/journal.md",
+    response_class=StreamingResponse,
+    responses=_sends(_MARKDOWN_MEDIA_TYPE, _MARKDOWN_DESCRIPTION),
+)
 async def export_my_journal_as_markdown(
     current_user: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
