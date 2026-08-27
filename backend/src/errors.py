@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
+from security.pg_text_guard import UnstorableTextError
 from sentry import capture_exception
 from services.journal_encryption import JournalEncryptionError
 
@@ -46,6 +47,18 @@ _VALIDATION_ENTRY_KEYS = ("type", "loc", "msg")
 # the fix is a redaction, not a contract change, and a client mapping ``loc``
 # onto a form field must go on working across it.
 _DETAIL_KEY = "detail"
+
+# The ``type`` code a caller matches on to learn that a value they sent held a
+# code point no text column can store, and the ``loc`` prefix that says the value
+# came out of the request body -- the same prefix FastAPI's own body rejections
+# use, because to the client this is one.
+UNSTORABLE_TEXT = "unstorable_text"
+_BODY_LOC = "body"
+
+# Says which rule fired and nothing about what tripped it. The value is a
+# person's text; naming it here would hand it back out through the very response
+# a client is most likely to log verbatim.
+_UNSTORABLE_TEXT_MESSAGE = "value contains a character that cannot be stored"
 
 
 def not_found(resource: str) -> HTTPException:
@@ -306,6 +319,47 @@ async def _validation_error_handler(_request: Request, exc: Exception) -> JSONRe
     )
 
 
+def _unstorable_text_entries(exc: Exception) -> list[dict[str, object]]:
+    """Build the one-entry ``detail`` list for an unstorable-text refusal.
+
+    A ``list`` of ``{type, loc, msg}`` rather than a bare string because that is
+    what a 422 means on this API everywhere else, and a route that answered one
+    with a string would break its own published response schema -- a live
+    failure mode here, not a hypothetical one. Routed through
+    :func:`sanitized_validation_entries` so the shape has exactly one author.
+
+    ``exc`` is typed as the base exception because Starlette hands every handler
+    the same signature; the narrowing is what makes the attribute reads safe,
+    and its false branch is unreachable through registration.
+    """
+    attribute = exc.attribute if isinstance(exc, UnstorableTextError) else ""
+    return sanitized_validation_entries(
+        [
+            {
+                "type": UNSTORABLE_TEXT,
+                "loc": [_BODY_LOC, attribute],
+                "msg": _UNSTORABLE_TEXT_MESSAGE,
+            }
+        ]
+    )
+
+
+async def _unstorable_text_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Answer a write refused by the text guard as the 422 the caller earned.
+
+    :class:`security.pg_text_guard.UnstorableTextError` is raised from
+    ``before_flush``, which is to say from inside the handler that was writing,
+    so without this it would reach the catch-all and become a 500 -- telling a
+    caller who sent an unstorable code point that the server broke. The
+    ``loc`` names the attribute the value was bound for, which is the request
+    field it arrived in for every write surface in this application.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={_DETAIL_KEY: jsonable_encoder(_unstorable_text_entries(exc))},
+    )
+
+
 def install_exception_handlers(app: FastAPI) -> None:
     """Wire the global catch-all exception handler onto a FastAPI app.
 
@@ -323,8 +377,10 @@ def install_exception_handlers(app: FastAPI) -> None:
     to close an echo the framework opens by default.
     """
     # Specific handlers first so a journal decrypt/encrypt failure logs its own
-    # event, and a schema rejection keeps its 422, instead of disappearing into
-    # the catch-all.
+    # event, and both kinds of schema rejection -- the one FastAPI raises and the
+    # one the flush-time text guard raises -- keep their 422, instead of
+    # disappearing into the catch-all.
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(UnstorableTextError, _unstorable_text_handler)
     app.add_exception_handler(JournalEncryptionError, _journal_encryption_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

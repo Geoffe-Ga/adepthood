@@ -5,6 +5,15 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from security.pg_text_guard import register_pg_text_guard
+
+# Installed at import rather than at app startup, and idempotently, because the
+# guard has to cover every ``Session`` in the process -- the sessions this
+# module hands out, and the ones the test suite builds from its own factory.
+# Nothing can open a session without importing this module, which is what makes
+# the coverage total; :func:`register_pg_text_guard` absorbs a repeat import.
+register_pg_text_guard()
+
 
 def normalize_database_url(url: str) -> str:
     """Normalize a database URL for use with SQLAlchemy's async engine.
@@ -42,6 +51,12 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     ``async with`` is what releases the connection (it guarantees
     ``close()``); the explicit rollback prevents an in-flight ``BEGIN``
     from being silently committed by the connection pool when reused.
+
+    That rollback is also what makes raising from ``before_flush`` safe: a
+    :class:`security.pg_text_guard.UnstorableTextError` aborts the flush before
+    any statement is emitted, and this handler discards the transaction the
+    reads before it had already opened, so the refused write leaves nothing
+    half-applied behind.
     """
     async with async_session_factory() as session:
         try:

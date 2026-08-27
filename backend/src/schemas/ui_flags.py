@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Self
+from pydantic import BaseModel
 
-from pydantic import BaseModel, model_validator
+from schemas.partial_update import PartialUpdateModel
 
 
 class UiFlagsResponse(BaseModel):
@@ -18,24 +18,17 @@ class UiFlagsResponse(BaseModel):
     energy_scaffolding_archived: bool
 
 
-class UiFlagsUpdate(BaseModel):
+class UiFlagsUpdate(PartialUpdateModel):
     """Partial update for the UI flags (PATCH).
 
-    Every field is optional; an empty payload is rejected (422) so a no-op
-    PATCH cannot reach the database. Only the fields the caller sets are
-    applied — unspecified flags keep their stored value.
+    Every field is a plain boolean defaulting to its column's own default, so an
+    explicit ``null`` is refused by the annotation at a ``loc`` naming the flag
+    rather than reaching a NOT NULL column. Only the fields the caller sets are
+    applied -- unspecified flags keep their stored value, because the router
+    dumps with ``exclude_unset=True`` and no default here is ever written on its
+    own. An empty payload is rejected (422) by
+    :class:`~schemas.partial_update.PartialUpdateModel`.
     """
 
-    has_seen_welcome: bool | None = None
-    energy_scaffolding_archived: bool | None = None
-
-    @model_validator(mode="after")
-    def _require_at_least_one_field(self) -> Self:
-        provided = (
-            self.has_seen_welcome,
-            self.energy_scaffolding_archived,
-        )
-        if all(value is None for value in provided):
-            msg = "at least one field must be provided"
-            raise ValueError(msg)
-        return self
+    has_seen_welcome: bool = False
+    energy_scaffolding_archived: bool = False
