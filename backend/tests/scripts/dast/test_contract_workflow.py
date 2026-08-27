@@ -14,9 +14,10 @@ commented-out one. So the command moved into
 exclusion list moved with it. Everything about the fuzzer's arguments is now
 asserted by running it under a recording stub, in
 ``test_contract_fuzz_script.py``. What is left here reads the workflow, and the
-two mechanisms it reads it with -- comment-stripping and per-step extraction --
-are themselves tested against deliberately violating fixtures at the bottom of
-this file, because a guard nobody has watched fail is not known to work.
+three mechanisms it reads it with -- comment-stripping, per-step extraction and
+trigger-block extraction -- are themselves tested against deliberately violating
+fixtures at the bottom of this file, because a guard nobody has watched fail is
+not known to work.
 
 The workflow is parsed as plain text rather than with PyYAML on purpose. PyYAML
 is absent from ``requirements.txt``, ``requirements-lock.txt`` and
@@ -73,6 +74,25 @@ _RUN_KEY = re.compile(r"^(?P<indent>\s*)run:\s*(?P<inline>.*?)\s*$")
 # YAML block scalar introducers; anything else after ``run:`` is the command.
 _BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+")
 
+# The whole trigger block, as it reads once comment lines are stripped. Held as
+# one string rather than as a list of fragments because equality over the block
+# is what makes a partial disarm visible; see the test that uses it.
+_CANONICAL_TRIGGERS = """\
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  workflow_dispatch:"""
+
+# Claims the header made while the job was advisory. Each one describes the
+# opposite of what the triggers now say.
+_RETIRED_CLAIMS = ("not a pull-request gate", "nightly")
+
 
 @pytest.fixture(scope="module")
 def workflow() -> str:
@@ -98,6 +118,101 @@ def without_comment_lines(workflow_text: str) -> str:
     return "\n".join(
         line for line in workflow_text.splitlines() if not line.strip().startswith("#")
     )
+
+
+def comment_lines(workflow_text: str) -> str:
+    """Return only the workflow's whole-line comments.
+
+    The exact inverse of ``without_comment_lines``. What that reader throws away
+    so prose cannot satisfy a search, this one keeps, so a claim the header makes
+    about the job can itself be asserted about.
+
+    Args:
+        workflow_text: The workflow file's contents.
+
+    Returns:
+        Every comment-only line, newline-joined.
+    """
+    return "\n".join(line for line in workflow_text.splitlines() if line.strip().startswith("#"))
+
+
+def trigger_block(workflow_text: str) -> str:
+    """Return the body of the workflow's top-level ``on:`` block.
+
+    Comments are stripped first, and that is the whole point: the header
+    discusses ``pull_request`` at length in prose, so a raw search over the file
+    would be answered by an explanation of the trigger rather than by the
+    trigger.
+
+    Args:
+        workflow_text: The workflow file's contents.
+
+    Returns:
+        Every line indented under the column-0 ``on:`` key, up to the next
+        non-blank column-0 line, with leading and trailing blank lines removed.
+
+    Raises:
+        AssertionError: If the workflow declares no trigger block at all.
+    """
+    lines = without_comment_lines(workflow_text).splitlines()
+    start = _line_index(lines, "on:")
+    run: list[str] = [] if start is None else _indented_run(lines, start + 1)
+    body = _without_edge_blanks(run)
+    assert body, "the workflow has no trigger block"
+    return "\n".join(body)
+
+
+def _line_index(lines: list[str], key: str) -> int | None:
+    """Return the index of the first line equal to a key, ignoring trailing space.
+
+    Args:
+        lines: The workflow's lines.
+        key: The exact line to look for, indentation included.
+
+    Returns:
+        That line's index, or ``None`` when no line matches.
+    """
+    for index, line in enumerate(lines):
+        if line.rstrip() == key:
+            return index
+    return None
+
+
+def _indented_run(lines: list[str], start: int) -> list[str]:
+    """Return the run of indented lines beginning at an index.
+
+    Blank lines belong to the run: a blank line inside a YAML block does not end
+    it, and trimming them is the caller's job.
+
+    Args:
+        lines: The workflow's lines.
+        start: Index of the first line to consider.
+
+    Returns:
+        Lines from ``start`` up to the first non-blank line at column 0.
+    """
+    body: list[str] = []
+    for line in lines[start:]:
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        body.append(line)
+    return body
+
+
+def _without_edge_blanks(lines: list[str]) -> list[str]:
+    """Return the lines trimmed of leading and trailing blank ones.
+
+    Args:
+        lines: Lines that may begin or end with blank ones.
+
+    Returns:
+        The span from the first non-blank line to the last, or nothing when
+        every line is blank.
+    """
+    filled = [index for index, line in enumerate(lines) if line.strip()]
+    if not filled:
+        return []
+    return lines[filled[0] : filled[-1] + 1]
 
 
 def step_body(workflow_text: str, step_name: str) -> list[str]:
@@ -191,17 +306,31 @@ def test_the_job_never_runs_on_pull_request_target(workflow: str) -> None:
     assert re.search(r"^permissions:\n  contents: read$", workflow, re.MULTILINE), workflow
 
 
-def test_the_job_is_reachable_on_demand_and_on_a_schedule(workflow: str) -> None:
-    """Landing non-blocking is only honest if it still actually runs.
+def test_the_job_gates_backend_pull_requests_and_pushes_to_main(workflow: str) -> None:
+    """The whole trigger block by equality, because a disarm here is a narrowing.
 
-    The job is deliberately not a pull-request gate yet -- its first honest run
-    is red on pre-existing 500s that no PR author introduced -- but a job with
-    no trigger is a job nobody will ever read the findings of.
+    Equality is chosen over containment deliberately: it catches every partial
+    disarm at once, and there are many. A dropped ``pull_request``, an added
+    ``branches:`` filter that quietly gates only some pull requests, a
+    ``paths-ignore``, a shrunken path list, a ``schedule:`` re-added so the job
+    looks alive while no PR waits on it, a dropped ``workflow_dispatch``, or a
+    ``push`` left unscoped -- each of them is one inequality here, and no
+    containment check would see more than the one fragment it names.
     """
-    live = without_comment_lines(workflow)
-    assert re.search(r"^  workflow_dispatch:$", live, re.MULTILINE), live
-    assert re.search(r"^  schedule:$", live, re.MULTILINE), live
-    assert re.search(r'^    - cron: "[^"]+"$', live, re.MULTILINE), live
+    assert trigger_block(workflow) == _CANONICAL_TRIGGERS
+
+
+def test_the_header_no_longer_calls_the_job_advisory(workflow: str) -> None:
+    """A gate whose header still calls it non-blocking is a lie that outlives it.
+
+    The header carried a long argument for why this job could not be a
+    pull-request gate, and pointed instead at a nightly run. Both claims are now
+    false, and prose that contradicts the triggers is worse than no prose: the
+    next reader believes the paragraph over the YAML.
+    """
+    prose = comment_lines(workflow).lower()
+    for claim in _RETIRED_CLAIMS:
+        assert claim not in prose, f"the header still describes the job as {claim!r}"
 
 
 def test_every_action_is_sha_pinned(workflow: str) -> None:
@@ -373,3 +502,93 @@ def test_the_disarm_guard_ignores_prose_and_catches_the_real_thing() -> None:
     assert "continue-on-error" not in without_comment_lines(prose)
     real = "jobs:\n  contract-fuzz:\n    continue-on-error: true\n"
     assert "continue-on-error" in without_comment_lines(real)
+
+
+_TRIGGER_FIXTURE = """\
+name: Example
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+
+permissions:
+  contents: read
+
+jobs:
+  contract-fuzz:
+    runs-on: ubuntu-latest
+"""
+
+_PROSE_FIXTURE = """\
+# It runs on a schedule rather than on pull_request, and the header says why.
+on:
+  # pull_request belongs here one day, but not yet.
+  workflow_dispatch:
+
+jobs:
+  contract-fuzz:
+"""
+
+
+def _workflow_with_triggers(block: str) -> str:
+    """Build a miniature workflow whose ``on:`` block is the given text.
+
+    Args:
+        block: The trigger block, indented as it appears under ``on:``.
+
+    Returns:
+        Workflow text ``trigger_block`` can be pointed at.
+    """
+    return f"name: Example\n\non:\n{block}\n\njobs:\n  contract-fuzz:\n"
+
+
+def test_the_trigger_reader_stops_at_the_next_top_level_key() -> None:
+    """A reader that ran on would read permissions and jobs as triggers."""
+    block = trigger_block(_TRIGGER_FIXTURE)
+    assert block == '  pull_request:\n    paths:\n      - "backend/**"'
+    assert "permissions" not in block
+    assert "jobs" not in block
+
+
+def test_the_trigger_reader_is_blind_to_prose_about_pull_requests() -> None:
+    """The header argues about ``pull_request`` in prose; only the YAML counts."""
+    assert "pull_request" in _PROSE_FIXTURE
+    assert "pull_request" not in trigger_block(_PROSE_FIXTURE)
+    assert trigger_block(_PROSE_FIXTURE) == "  workflow_dispatch:"
+
+
+def test_the_trigger_reader_refuses_a_workflow_with_no_triggers() -> None:
+    """A workflow that runs on nothing must fail loudly, not assert about nothing."""
+    with pytest.raises(AssertionError, match="no trigger block"):
+        trigger_block("jobs:\n  contract-fuzz:\n    runs-on: ubuntu-latest\n")
+
+
+def test_the_trigger_reader_round_trips_the_canonical_block() -> None:
+    """Without this, a red equality test could mean a reader bug, not a disarm."""
+    assert trigger_block(_workflow_with_triggers(_CANONICAL_TRIGGERS)) == _CANONICAL_TRIGGERS
+
+
+def test_the_trigger_comparison_sees_a_reinstated_schedule() -> None:
+    """A schedule beside the gate keeps the job alive while no PR waits on it."""
+    rescheduled = _CANONICAL_TRIGGERS.replace(
+        "  workflow_dispatch:",
+        '  schedule:\n    - cron: "50 5 * * *"\n  workflow_dispatch:',
+    )
+    assert trigger_block(_workflow_with_triggers(rescheduled)) != _CANONICAL_TRIGGERS
+
+
+def test_the_trigger_comparison_sees_a_narrowed_pull_request() -> None:
+    """``branches: [main]`` under ``pull_request`` ungates every stacked PR."""
+    narrowed = _CANONICAL_TRIGGERS.replace(
+        "  pull_request:\n",
+        "  pull_request:\n    branches: [main]\n",
+    )
+    assert trigger_block(_workflow_with_triggers(narrowed)) != _CANONICAL_TRIGGERS
+
+
+def test_the_comment_reader_separates_prose_from_the_live_line() -> None:
+    """The rot guard reads comments only, so a live key cannot answer for one."""
+    mixed = '# the job used to run nightly\n  nightly_report: "on"\n'
+    assert comment_lines(mixed) == "# the job used to run nightly"
+    assert "nightly_report" not in comment_lines(mixed)
