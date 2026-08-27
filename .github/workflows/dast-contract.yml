@@ -8,27 +8,55 @@ name: DAST Contract Fuzz
 # so the spec this gate judges against can never drift away from the code it is
 # judging.
 #
-# WHY THIS IS NOT A PULL-REQUEST GATE YET. It was written as one, and its first
-# honest run -- with the token-revoking operation excluded so the credential
-# survives -- is red: 19 operations answer 500 to an out-of-int32 path
-# parameter, and the failure cap truncates the report before 41 of the selected
-# operations have been looked at. Merging that as a required check would red
-# every backend PR for pre-existing bugs the author did not write, which is how
-# a gate gets muted. So it runs nightly and on demand until those findings are
-# triaged, and the follow-up issue tracking their fix also tracks promoting this
-# job back to ``pull_request``. The alternative -- keeping the PR trigger and
-# adding ``continue-on-error`` -- is worse than not having the job: it is a
-# permanently green report of a permanently red run.
+# THIS IS A PULL-REQUEST GATE. It runs on every pull request, on every push to
+# main that touches ``backend/**`` or this file, and on demand. There is
+# deliberately no ``schedule:``, and re-adding one has to get past two facts.
+# Every input to a run is pinned -- the seed is fixed inside contract_fuzz.sh,
+# schemathesis is pinned by exact ``==``, every action is pinned to a SHA -- so
+# a cron re-run of unchanged code is a bit-identical repeat that can only report
+# what the previous run already reported; anything that could change the answer
+# changes a file under ``backend/**``, which now starts a run with an author and
+# a pull request attached to it. And the cron earned nothing while it existed:
+# across this workflow's whole history it fired exactly once, that run went red,
+# and nothing came of it -- no issue, no fix. A red run with no author and no
+# pull request waiting on it is a finding nobody reads, which disarms this job
+# as thoroughly as marking its verdict advisory would.
+#
+# Running on ``pull_request`` does not by itself make this a required check.
+# Blocking a merge on it takes a branch-protection ruleset that names this job,
+# and such a ruleset has to reckon with the path filter below: a check that is
+# required but filtered out never reports at all, so a pull request touching no
+# backend file would wait on it forever. Making it required therefore means
+# dropping the filter and having the job decide for itself when to stand down.
 #
 # Never ``pull_request_target``: whichever trigger this job runs on, it checks
 # out and executes application code, so it must not hold write-scoped
 # credentials.
 
 on:
+  # ``push`` is scoped to main deliberately. Left unscoped it also fires on
+  # every push to a PR branch, so one push starts TWO identical runs seconds
+  # apart -- one ``push``, one ``pull_request``. That is not hypothetical: this
+  # very workflow did it on 2026-08-25, producing two simultaneous runs on the
+  # same branch. backend-ci.yml records the same defect and the same fix.
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  # The path list is complete. Every input this gate consumes lives under
+  # backend/: src/, alembic.ini and the migrations, scripts/dast/, all four
+  # requirements files, and the tests this job runs. ``scripts/backend/**``,
+  # which backend-ci.yml must list, is deliberately absent -- it holds
+  # export_openapi.py, which writes the checked-in export, and this job reads
+  # the document from the running app and never from that export. This
+  # workflow's own path is listed so the gate cannot be edited, or narrowed,
+  # while nothing runs.
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
   workflow_dispatch:
-  schedule:
-    # Daily 05:50 UTC, off the :00 mark shared by the scan workflows.
-    - cron: "50 5 * * *"
 
 permissions:
   contents: read

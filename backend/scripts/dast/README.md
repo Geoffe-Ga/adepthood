@@ -368,16 +368,57 @@ missing tool is a red job rather than a quiet pass. Nothing in Python imports
 `mypy --strict` never has to resolve a package that only one workflow installs,
 and no suppression is needed anywhere.
 
-**The job is not a pull-request gate yet.** It runs nightly and on
-`workflow_dispatch`. Its first honest run — with the token-revoking operation
-excluded, so the credential survives the whole run — is red: 19 operations
-answer `500` to an out-of-`int32` path parameter, and the failure cap truncates
-before 41 of the selected operations have been looked at. Making that a required
-check would red every backend PR for bugs its author did not write, which is how
-a gate gets muted. The follow-up issue tracking those 500s also tracks promoting
-this job back to `pull_request`. Adding `continue-on-error` instead would be
-worse than not having the job: a permanently green report of a permanently red
-run.
+**The job is a pull-request gate.** Its triggers are `pull_request`, `push`
+scoped to `branches: [main]`, and `workflow_dispatch`; both event triggers are
+filtered on paths `backend/**` and `.github/workflows/dast-contract.yml`. That
+list is exactly what the gate consumes and nothing wider: the application
+under `src/`, `alembic.ini` and the migrations, `scripts/dast/contract_fuzz.sh`,
+the requirements files, and the self-proof suite. It deliberately excludes
+`scripts/backend/**`, even though `backend-ci.yml` has to include that
+directory: `scripts/backend/export_openapi.py` writes the checked-in OpenAPI
+export, and this job never reads that export — it reads the document the
+running app publishes about itself, so a change confined to the export changes
+nothing this gate measures. The workflow's own path is in the filter too, so
+the gate cannot be edited into doing less while no run exists to prove it.
+`push` is scoped to `main` rather than left open, because an unscoped `push`
+fires on every push to a PR branch as well as on merge, starting two identical
+runs seconds apart — one from `push`, one from `pull_request` — and this
+workflow did exactly that on 2026-08-25.
+
+What unblocked the promotion is that the blocking findings are gone. A
+`workflow_dispatch` run against `main` — run 33039651652, commit 479c1f3d —
+concluded success: "Operations: 116 selected / 128 total", all 116 tested,
+"116 passed", all four checks enabled (`not_a_server_error`,
+`content_type_conformance`, `response_schema_conformance`,
+`status_code_conformance`), and no failure-cap truncation. The run this
+paragraph used to describe was the opposite of that: 19 operations answering
+`500` to an out-of-`int32` path parameter, and a report truncated before 41 of
+the selected operations were even reached.
+
+There is no scheduled run any more. Every input to a run here is pinned — the
+fuzz seed is fixed at `1337` in `contract_fuzz.sh`, Schemathesis is pinned
+`==` in `requirements-dast.txt`, and the actions in this workflow are
+SHA-pinned — so a cron firing against unchanged code cannot discover anything
+a previous run did not already report: it is a bit-identical repeat. Anything
+that could change the answer changes a file under `backend/**`, which now
+starts a run with an author and a pull request attached instead. The schedule
+also earned nothing empirically: across this workflow's whole history it
+fired exactly once, on 2026-08-26, that run failed, and no issue or fix
+followed from it.
+
+`continue-on-error` on the `pull_request` trigger was considered and rejected,
+not merely never added: it would produce a permanently green report of a
+permanently red run, which is worse than not having the job at all.
+`test_contract_workflow.py` asserts the string never appears in the workflow.
+
+Measured across five successful runs, the whole job — Postgres service
+startup, install, migration, instance boot, token mint, and the fuzz itself —
+takes 64-78 seconds end to end.
+
+Running on `pull_request` does not, by itself, make this a required check.
+This repository has no branch protection and no rulesets on `main`, so
+nothing here blocks a merge automatically; that would need a human to add a
+ruleset naming this job.
 
 Four checks are enabled — `not_a_server_error`, `content_type_conformance`,
 `response_schema_conformance` and `status_code_conformance`. The last of those
