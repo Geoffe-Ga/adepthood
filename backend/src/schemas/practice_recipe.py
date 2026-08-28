@@ -31,12 +31,12 @@ recipes round-trip through ``ModeConfigAdapter`` cleanly.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from domain.practice_modes import PracticeMode
-from models.practice_recipe import RECIPE_MODES
+from models.practice_recipe import RecipeMode
 from schemas.practice_mode_config import (
     TALLIED_CATEGORIES_MAX,
     TALLIED_ROUNDS_MAX,
@@ -62,8 +62,6 @@ _TARGET_COUNT_MAX = TALLIED_TARGET_MAX
 # user walks the prompt list once.  Recipes built for that mode are
 # pinned to a single round to keep the materialised payload valid.
 SENSE_GROUNDING_ROUNDS = 1
-
-RecipeMode = Annotated[str, Field(pattern="|".join(RECIPE_MODES))]
 
 
 class PracticeRecipeStepOut(BaseModel):
@@ -211,9 +209,10 @@ def materialise_mode_config(recipe: PracticeRecipeOut) -> dict[str, Any]:
         return _materialise_sense_grounding(recipe.steps)
     if recipe.mode == PracticeMode.TALLIED_GROUNDING.value:
         return _materialise_tallied_grounding(recipe.steps, recipe.rounds)
-    # Unreachable: ``mode`` is constrained by RECIPE_MODES at the
-    # schema and DB layers.  Defensive raise keeps mypy happy and
-    # surfaces a clear error if a new mode is added to RECIPE_MODES
-    # without updating this dispatcher.
+    # Unreachable: ``mode`` is constrained to ``RecipeMode`` at the
+    # schema layer and to the matching CHECK constraint at the DB
+    # layer.  Defensive raise keeps mypy happy and surfaces a clear
+    # error if a new mode joins ``RecipeMode`` without updating this
+    # dispatcher.
     msg = f"unsupported recipe mode: {recipe.mode!r}"
     raise ValueError(msg)

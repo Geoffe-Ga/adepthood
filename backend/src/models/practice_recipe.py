@@ -24,11 +24,10 @@ steps.  For ``sense_grounding`` mode the rounds value is always 1.
 """
 
 from datetime import UTC, datetime
+from typing import Literal, get_args
 
 from sqlalchemy import CheckConstraint, Column, DateTime, Index, Integer
 from sqlmodel import Field, SQLModel
-
-from domain.practice_modes import PracticeMode
 
 # Bound at module scope so :class:`Index`'s ``*_where`` predicates can
 # resolve the column at table-creation time.  Both Postgres and SQLite
@@ -46,10 +45,16 @@ _STEP_TARGET_COUNT_MAX = 20
 # Recipes that can be applied directly into a UserPractice override:
 # the override mechanism cannot change ``mode`` so a recipe whose
 # ``mode`` does not match the catalog row is rejected at apply time.
-RECIPE_MODES: tuple[str, ...] = (
-    PracticeMode.SENSE_GROUNDING.value,
-    PracticeMode.TALLIED_GROUNDING.value,
-)
+#
+# The Literal is the source and the tuple its derivative because mypy
+# cannot build a Literal out of a runtime tuple, only the reverse.  Both
+# live here rather than in ``schemas`` because schemas imports models and
+# not the other way round, making this the one module where the DB CHECK
+# constraint and the request-body type can share a single declaration.
+# Declaration order is load-bearing: ``_recipe_mode_check`` renders the
+# constraint SQL by joining these in order.
+RecipeMode = Literal["sense_grounding", "tallied_grounding"]
+RECIPE_MODES: tuple[str, ...] = get_args(RecipeMode)
 
 
 def _recipe_mode_check() -> CheckConstraint:

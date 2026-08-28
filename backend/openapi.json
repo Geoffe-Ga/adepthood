@@ -3720,7 +3720,10 @@
             "type": "string"
           },
           "mode": {
-            "pattern": "sense_grounding|tallied_grounding",
+            "enum": [
+              "sense_grounding",
+              "tallied_grounding"
+            ],
             "title": "Mode",
             "type": "string"
           },
