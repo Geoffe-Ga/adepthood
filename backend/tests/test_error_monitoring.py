@@ -60,6 +60,9 @@ TEST_DSN = "https://0123456789abcdef@o0.ingest.sentry.io/1"
 JOURNAL_SENTINEL = "sat with the grief about my father and did not look away"
 TRANSCRIPTION_SENTINEL = "and then she said the thing I have never written down"
 CREDENTIAL_SENTINEL = "creek-vault-live-2f9c41d7b6e84a15"  # pragma: allowlist secret
+SMTP_PASSWORD_SENTINEL = (
+    "SG.7Qb2mVfN4tRwXcYd.h3LpZ0AeGiJoNqUvW9BdFhKmPrTxZ2"  # pragma: allowlist secret
+)
 
 BOOM_PATH = "/__boom__"
 
@@ -367,29 +370,38 @@ def test_scrub_event_leaves_a_clean_event_untouched() -> None:
     assert error_monitoring.scrub_event(clean, {}) == expected
 
 
+@pytest.mark.parametrize(
+    ("env_var", "sentinel"),
+    [
+        ("CREEK_VAULT_API_KEY", CREDENTIAL_SENTINEL),
+        ("SMTP_PASSWORD", SMTP_PASSWORD_SENTINEL),
+    ],
+    ids=["vault_api_key", "smtp_password"],
+)
 def test_scrub_event_redacts_a_configured_credential_value(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, env_var: str, sentinel: str
 ) -> None:
     """A credential that reached a message by its *value* is redacted too.
 
-    Pattern matching alone cannot recognise an opaque vault key, so the
-    scrubber also redacts the literal values of the deployment's own secret
-    environment variables.
+    Pattern matching alone cannot recognise an opaque vault key or a relay
+    password, so the scrubber also redacts the literal values of the
+    deployment's own secret environment variables. Every name on that list is
+    a separate promise, so each one is exercised here.
     """
-    monkeypatch.setenv("CREEK_VAULT_API_KEY", CREDENTIAL_SENTINEL)
+    monkeypatch.setenv(env_var, sentinel)
     event: CapturedEvent = {
         "exception": {
-            "values": [{"type": "RuntimeError", "value": f"vault said no: {CREDENTIAL_SENTINEL}"}]
+            "values": [{"type": "RuntimeError", "value": f"upstream refused the call: {sentinel}"}]
         }
     }
 
     scrubbed = error_monitoring.scrub_event(event, {})
 
     message = _text(_reported_exception(scrubbed), "value")
-    assert CREDENTIAL_SENTINEL not in message
+    assert sentinel not in message
     assert error_monitoring.REDACTED in message
     # The non-secret part of the message survives, or the report is useless.
-    assert "vault said no" in message
+    assert "upstream refused the call" in message
 
 
 def test_scrub_event_ignores_a_blank_secret_environment_variable(

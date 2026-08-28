@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
@@ -1041,7 +1041,7 @@ class _ReflectionClients:
     routing choice between them stays in :func:`select_reflection_llm`.
     """
 
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     vault_client: CreekVaultClient
 
 

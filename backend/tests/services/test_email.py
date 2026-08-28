@@ -39,6 +39,10 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 # somewhere that formats numbers.
 UNPARSEABLE_PORTS = ["eighty", "58.7"]
 
+# A relay password no other test uses, long enough to be unmistakable if it
+# ever renders. Defined here so the repr assertion reads as one value.
+REPR_PASSWORD_SENTINEL = "relay-secret-do-not-log-4c81ba"  # pragma: allowlist secret
+
 # Port values that parse cleanly and still cannot be dialled. Zero and the
 # negative are what an unset-looking default and an off-by-one edit produce;
 # 70000 is a transposed digit.
@@ -599,3 +603,26 @@ async def test_smtp_send_propagates_non_wire_errors_unchanged(
         await sender.send(
             EmailMessagePayload(to="x@y.z", subject="s", body="b"),
         )
+
+
+def test_smtp_sender_repr_hides_the_password_but_keeps_the_rest() -> None:
+    """The relay password never renders, while the rest of the repr stays useful.
+
+    A repr is what a traceback, a log line, and a debugger all print. The
+    password must be absent from it, and the host and username must still be
+    present -- blanking the whole repr would hide the password and the
+    diagnostic value with it.
+    """
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="relay-user",
+        password=REPR_PASSWORD_SENTINEL,
+        from_address="from@example.com",
+    )
+
+    rendered = repr(sender)
+
+    assert REPR_PASSWORD_SENTINEL not in rendered
+    assert "smtp.example.com" in rendered
+    assert "relay-user" in rendered

@@ -274,7 +274,7 @@ class SmtpEmailSender:
     host: str
     port: int
     username: str
-    password: str
+    password: str = field(repr=False)
     from_address: str
 
     @classmethod
