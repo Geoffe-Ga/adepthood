@@ -538,3 +538,60 @@ def test_classifying_on_neither_signal_is_caught(tmp_path: Path) -> None:
     )
 
     assert _conclusion_wiring_shortfall(blind) is not None
+
+
+# --- Every verdict the classifier can reach must be handled by its callers ---
+#
+# The classifier answers with one word and exits 0, so the caller's `case` is
+# what turns that word into a job result. A token the script can emit and the
+# caller has never heard of falls to the wildcard, which fails closed -- safe,
+# but it means a benign outcome reports red. That is how the `skipped` verdict
+# was found in the first place: the action declined to run, the caller had no
+# branch for it, and a run where nothing was wrong went red.
+
+_CLASSIFIER_TOKENS = (
+    "completed",
+    "turn-cap-overrun",
+    "usage-limit",
+    "auth-failure",
+    "agent-error",
+    "no-result",
+    "skipped",
+)
+
+
+def test_the_token_list_matches_the_classifier() -> None:
+    """A token added to the script without being listed here escapes the check below."""
+    script = (_REPO_ROOT / "scripts" / "ci" / _CLASSIFIER).read_text(encoding="utf-8")
+    missing = [token for token in _CLASSIFIER_TOKENS if f'verdict "{token}"' not in script]
+
+    assert not missing, f"listed here but never emitted by the classifier: {missing}"
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [w for w in sorted(_WORKFLOWS.glob("*.yml")) if _CLASSIFIER in _code(w)],
+    ids=lambda path: str(path.name),
+)
+def test_a_caller_handles_every_verdict_the_classifier_can_reach(workflow: Path) -> None:
+    """An unhandled benign verdict reports red, which is the defect being fixed."""
+    body = "\n".join(b for b in _jobs(workflow).values() if _CLASSIFIER in b)
+    unhandled = [token for token in _CLASSIFIER_TOKENS if f"{token})" not in body]
+
+    assert not unhandled, f"{workflow.name} runs the classifier but never branches on: {unhandled}"
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [w for w in sorted(_WORKFLOWS.glob("*.yml")) if _CLASSIFIER in _code(w)],
+    ids=lambda path: str(path.name),
+)
+def test_a_caller_tells_the_classifier_whether_a_skip_is_possible(workflow: Path) -> None:
+    """Silence means the strict reading, which reddens every dispatch from a branch."""
+    body = "\n".join(b for b in _jobs(workflow).values() if _CLASSIFIER in b)
+
+    assert "--skip-permitted" in body, (
+        f"{workflow.name} never passes --skip-permitted, so a dispatch from any "
+        "branch that edits this file reports a failure for a run that was "
+        "deliberately declined"
+    )

@@ -40,6 +40,13 @@
 #      mis-wire that reports green is exactly the "green checkmark meaning nobody
 #      looked" that this change exists to remove.
 #
+#      ONE carve-out, and it is deliberately narrow: `--skip-permitted`, below.
+#      A transcript that is MISSING beside a SUCCESSFUL step, on a ref the caller
+#      has positively established is not the default branch, is `skipped` rather
+#      than `no-result` -- the action declined to run, which is not the run
+#      having gone wrong. A transcript that is present but unreadable is never a
+#      skip, because a skip writes nothing at all.
+#
 # NO VERDICT IS EVER KEYED ON TIME OR MONEY. A usage-limit failure and an expired
 # credential have the same timing shape -- one turn, under a second, zero dollars
 # -- and need opposite advice ("wait for the reset, retrying is wasted" versus
@@ -64,17 +71,28 @@
 #   auth-failure       the credential was rejected; rotating it is the fix
 #   agent-error        it failed, and the cause is not one of the known ones
 #   no-result          nothing to read; the run cannot be judged at all
+#   skipped            the action declined to run; nothing was attempted, and
+#                      nothing is wrong (see `--skip-permitted`)
 #
 # A usage fault still writes `outcome=classifier-fault` and a headline to
 # $GITHUB_OUTPUT, because an unset output reads downstream as the empty string
 # and every `if:` comparing against it takes the "not that outcome" branch -- the
 # workflow then proceeds as though it had been told something. `classifier-fault`
-# is deliberately not one of the six verdicts.
+# is deliberately not one of the seven verdicts.
 #
 # Usage:
 #   classify_claude_outcome.sh --execution-file <path> \
 #                              --step-outcome <success|failure> \
-#                              --max-turns <N>
+#                              --max-turns <N> \
+#                              [--skip-permitted <true|false>]
+#
+# `--step-outcome` is `steps.<id>.outcome`, never `.conclusion` (see above).
+# `--skip-permitted` says whether the action could legitimately have declined to
+# run: true ONLY when the caller has positively established that its ref is
+# something other than the default branch. It defaults to false, and anything
+# other than the two literals is a usage fault rather than a guess -- so a
+# caller that cannot establish the ref, or never wired the value at all, keeps
+# the strict reading in which a missing transcript is a failure.
 #
 # Tested at backend/tests/scripts/test_classify_claude_outcome.py.
 set -uo pipefail
@@ -170,6 +188,9 @@ verdict() { # verdict <outcome> <headline> [detail]
 execution_file=""
 step_outcome=""
 max_turns=""
+# Strict by default: a caller that says nothing about its ref gets the reading
+# in which a missing transcript is a fault.
+skip_permitted="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --execution-file)
@@ -181,6 +202,9 @@ while [[ $# -gt 0 ]]; do
     --max-turns)
       [[ $# -ge 2 ]] || usage_fault "--max-turns needs a value"
       max_turns="$2"; shift 2 ;;
+    --skip-permitted)
+      [[ $# -ge 2 ]] || usage_fault "--skip-permitted needs a value"
+      skip_permitted="$2"; shift 2 ;;
     *)
       usage_fault "unknown argument: $1" ;;
   esac
@@ -198,11 +222,29 @@ case "$step_outcome" in
   *) usage_fault "--step-outcome must be success or failure, got: $step_outcome" ;;
 esac
 [[ "$max_turns" =~ ^[0-9]+$ ]] || usage_fault "--max-turns must be a number, got: $max_turns"
+# Not guessed at. Treating an unrecognised value as "true" would quietly
+# discard the strict default on the one branch that most needs it.
+case "$skip_permitted" in
+  true|false) ;;
+  *) usage_fault "--skip-permitted must be true or false, got: $skip_permitted" ;;
+esac
 
 # --- Is there anything to read at all? --------------------------------------
 # `-s` rather than `-f`: the action creates the file before it writes to it, so
 # an empty one is a step that died before the SDK spoke.
 if [[ ! -s "$execution_file" ]]; then
+  # The action refuses to run when this workflow file differs from the copy on
+  # the default branch -- an anti-tamper check -- and it declines by exiting
+  # SUCCESS having written no transcript at all. From here that is byte-for-byte
+  # a mis-wired path, and the two want opposite answers, so the CALLER settles
+  # it: it knows its own ref, and on the default branch a skip is impossible.
+  # Failing a legitimate skip would manufacture precisely the false red this
+  # script exists to remove. Only a MISSING transcript qualifies: an unreadable
+  # one means the action did run, and that is never a skip.
+  if [[ "$skip_permitted" == "true" && "$step_outcome" == "success" ]]; then
+    verdict "skipped" \
+      "skipped: the action declined to run because this workflow file differs from the copy on the default branch, so NOTHING was done here and nothing is wrong. This run proves only that the job was created; the work itself is first exercised once the change is on the default branch."
+  fi
   verdict "no-result" \
     "no result: the execution file is missing or empty, so the run left nothing to judge. That is a failure in itself -- either the step died before the SDK spoke, or this classifier is pointed at the wrong path."
 fi
