@@ -91,6 +91,7 @@ _SECRET_ENV_VARS: Final = (
     "LLM_API_KEY",
     "GUMROAD_API_TOKEN",
     "GUMROAD_WEBHOOK_SECRET",
+    "SMTP_PASSWORD",
 )
 # Below this length a "secret" is either unset, a placeholder, or so short that
 # redacting every occurrence of it would shred unrelated text.
