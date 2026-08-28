@@ -1174,8 +1174,11 @@ export const habitManager = {
    * Compute the next habit list for a logUnit operation without mutating
    * the store. Returns null when no habit matches `habitId`. The
    * resulting context is the input to `useOptimisticMutation` — `apply`
-   * writes `next`, `commit` POSTs `currentGoal.id`, and `rollback`
-   * restores `prev`. Splitting the computation out of the side-effecting
+   * writes `next`, `commit` POSTs `serverGoalId`, and `rollback`
+   * restores `prev`. `serverGoalId` is `currentGoal.id` only when the goal
+   * is server-backed, and `null` otherwise, so a client-minted id never
+   * reaches the wire: `commit` resyncs instead of posting.
+   * Splitting the computation out of the side-effecting
    * apply step is what keeps the rollback closure correct: the snapshot
    * is captured by value before the optimistic write, so a later
    * concurrent mutate cannot clobber it.
