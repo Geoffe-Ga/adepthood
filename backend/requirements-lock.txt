@@ -93,7 +93,7 @@ mako==1.4.1
     # via alembic
 markupsafe==3.0.3
     # via mako
-openai==3.3.0
+openai==3.3.1
     # via -r backend/requirements.txt
 packaging==26.3
     # via
@@ -130,7 +130,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-sentry-sdk==2.68.0
+sentry-sdk==2.68.1
     # via -r backend/requirements.txt
 slowapi==0.1.10
     # via -r backend/requirements.txt

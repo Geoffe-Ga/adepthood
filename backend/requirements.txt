@@ -47,7 +47,7 @@ httpx==0.28.1
 # openai alone. The two are unrelated at the type level — httpx2.Request is
 # not httpx.Request — which is why the mypy hook pins both. httpx2 also trusts
 # the OS certificate store rather than certifi.
-openai==3.3.0
+openai==3.3.1
 anthropic==0.123.0
 # Error monitoring. Wholly optional at runtime: with SENTRY_DSN unset the SDK
 # is never initialised and every capture is a no-op, so local dev and CI carry
@@ -55,4 +55,4 @@ anthropic==0.123.0
 # envelope wire format is the vendor's to change, not ours -- a hand-rolled
 # client that silently stops being accepted would reproduce the invisibility
 # this dependency exists to remove.
-sentry-sdk==2.68.0
+sentry-sdk==2.68.1
