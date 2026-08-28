@@ -41,6 +41,15 @@ DECRYPTION_FAILURE = "decryption_failure"
 # validation -- and ``ctx``, which restates the violated bound and on some error
 # types embeds the offending value a second time. What stays is what a client
 # actually parses: which error, which field, and what to say about it.
+#
+# Because ``msg`` stays, it is a client-visible channel, and a validator that
+# builds one by interpolating the submitted value must quote it with ``!r``.
+# ``repr()`` of an unpaired surrogate is pure ASCII, so ``{value!r}`` renders;
+# bare ``{value}`` raises ``UnicodeEncodeError`` inside ``validate_python`` --
+# before any renderer is reached, so nothing downstream can catch it -- and the
+# caller who typed an odd character is told the server broke. Pinned by
+# ``tests/security/test_validator_message_escaping.py``, which sweeps every
+# request-body model rather than a list of known sites.
 _VALIDATION_ENTRY_KEYS = ("type", "loc", "msg")
 
 # The envelope key FastAPI's own validation response uses. Kept, deliberately:

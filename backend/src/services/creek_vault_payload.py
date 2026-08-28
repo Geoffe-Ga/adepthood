@@ -476,6 +476,22 @@ def _is_storable_ref(fragment_id: str) -> bool:
     already-saved entry), CR/LF (log injection, should the ref ever be
     rendered), and the zero-width and bidi-override codepoints the journal's own
     write boundary already sanitizes out of user text.
+
+    It also rejects an unpaired surrogate, and that is load-bearing rather than
+    incidental to the ones listed above. ``vault_ref`` is the only string a vault
+    chooses that reaches a *response body* with no database row in between --
+    ``POST /corpus/import`` returns it directly, and the vault branch of that
+    route writes nothing: :func:`services.corpus_import._to_vault` takes no
+    session at all, so the route's commit flushes an empty unit of work and the
+    guard in :mod:`security.pg_text_guard` -- which inspects only values bound
+    for mapped columns -- has nothing to look at. A lone surrogate has no UTF-8
+    encoding at all, so rendering one is a 500; ``str.isprintable`` is what stops
+    that, because U+D800-U+DFFF is Unicode category ``Cs`` and no ``Cs`` code
+    point is printable.
+
+    Narrowing this check to the specific code points named above -- an obvious
+    tidy-up, since the docstring reads like an inventory -- would reopen that
+    path. Pinned by ``test_storable_ref_bound_excludes_lone_surrogates``.
     """
     return (
         bool(fragment_id)
