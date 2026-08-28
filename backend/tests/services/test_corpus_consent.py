@@ -142,6 +142,47 @@ async def test_repeating_a_decision_does_not_repeat_the_event(
 
 
 @pytest.mark.asyncio
+async def test_repeating_a_decision_reports_the_one_already_standing(
+    db_session: AsyncSession,
+) -> None:
+    """A repeat appends nothing and hands back the decision it re-affirmed.
+
+    Work a repeat sets off has to be attributable to the permission that
+    authorised it: a repeated yes re-runs the grant's sweep over the writing
+    the earlier sweeps did not reach, and a repeat is exactly the case where
+    that permission is not the row this call appended. Reporting nothing here
+    would leave that work with no decision to name.
+    """
+    first = await set_consent(db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True)
+    again = await set_consent(db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True)
+    await db_session.commit()
+
+    assert first.event is not None
+    assert again.event is not None
+    assert again.event.id == first.event.id
+
+
+@pytest.mark.asyncio
+async def test_no_event_means_the_account_has_never_decided_anything(
+    db_session: AsyncSession,
+) -> None:
+    """The one case with nothing to report is the source nobody has answered about.
+
+    A refusal that matches the default appends no row because the default is
+    already a refusal, and there is genuinely no decision on the record to hand
+    back -- which is a different answer from "this call decided nothing".
+    """
+    change = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=False
+    )
+    await db_session.commit()
+
+    assert change.event is None
+    assert change.state.granted is False
+    assert change.state.decided_at is None
+
+
+@pytest.mark.asyncio
 async def test_revoking_consent_removes_the_writing_it_admitted(
     db_session: AsyncSession,
 ) -> None:

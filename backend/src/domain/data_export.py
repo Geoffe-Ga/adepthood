@@ -43,6 +43,7 @@ from models.completion_suggestion import CompletionSuggestion
 from models.content_completion import ContentCompletion
 from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment
+from models.corpus_sweep import CorpusSweep
 from models.energy_plan import EnergyPlan
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -184,7 +185,9 @@ MANIFEST: Mapping[str, ExportRule] = {
         "what was agreed to -- and of a revocation, and how many fragments it "
         "removed -- belongs with it; an archive that shows the writing but not "
         "the consent behind it answers half the question a person asks when "
-        "they ask what is held.",
+        "they ask what is held. What a grant reached rather than removed is in "
+        "corpus_sweep_history, a row per sweep, because a grant reaches in "
+        "more than one pass.",
     ),
     "corpusfragment": _include(
         "corpus_fragments",
@@ -194,6 +197,16 @@ MANIFEST: Mapping[str, ExportRule] = {
         "separately, which is exactly why leaving it out would be leaving out "
         "the journal in another shape.",
         drop_columns=("embedding",),
+    ),
+    "corpussweep": _include(
+        "corpus_sweep_history",
+        CorpusSweep,
+        "How much of the account's own writing each grant actually reached, "
+        "one row per pass. The archive already carries the corpus and the "
+        "decisions that admitted it; this is what joins them -- what was "
+        "considered, what was ontologized, what was still waiting, and which "
+        "decision authorised the pass. ``consent_event_id`` is kept for that "
+        "last part: without it a reach names no permission.",
     ),
     "coursestage": Omitted(
         "The shared 36-week curriculum, identical for every account. Nobody "

@@ -6,6 +6,7 @@ from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
 from .corpus_consent import CorpusConsentEvent
 from .corpus_fragment import CorpusFragment
+from .corpus_sweep import CorpusSweep
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
@@ -48,6 +49,7 @@ __all__ = [
     "ContentCompletion",
     "CorpusConsentEvent",
     "CorpusFragment",
+    "CorpusSweep",
     "CourseStage",
     "EnergyPlan",
     "Entitlement",
