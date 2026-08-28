@@ -122,6 +122,61 @@ because the account it belonged to will not be there to ask.
 *Pinned by*
 `backend/tests/test_account_deletion_api.py::test_deletion_logs_counts_and_never_content`.
 
+**AMENDED 2026-08-28:** "it does not earn a table of its own" does not
+reach an action that *writes* corpus material and can be resumed.
+`services.corpus_backfill` sweeps the writing an account already had
+under a grant it already gave; it is bounded by a ceiling and two
+clocks, so it leaves a remainder that a later request under that same
+grant continues. Three things separate it from the reads and exports
+this decision was written about. It changes durable state rather than
+observing it. It is *incomplete*, so what one decision eventually
+reached is a running total across several sweeps rather than a fact
+about any one of them. And it already sits on a write path, so the
+objection about putting a database write on a read path does not
+apply. A log line cannot carry a running total: recovering one means
+re-reading an aggregator, which is exactly the reconstruction
+Decision 1 exists to make unnecessary. So a resumable sweep appends a
+row to an append-only log of its own, `corpussweep`, naming the
+`corpusconsentevent` row that authorised it.
+
+The consent log is untouched by this. It is still one row per
+decision, its only read is still its newest row per source, and a
+repeated answer still appends nothing to it — which is the whole
+reason the sweeps that do most of the reaching for a long journal had
+nowhere to be recorded. The sweep log takes Decision 1's rule with it
+rather than leaving it behind: a sweep appends a row when some number
+moved, so one that offered nothing, or that reports exactly what the
+last sweep under the same decision reported, appends nothing. A table
+that mostly recorded that nothing happened would be the request log
+Decision 1 refuses, one table over.
+
+This amendment also brings `corpusconsentevent` into line with the
+enumeration in Decision 1, which never listed a grant's added-count.
+`fragments_added` is retired from that row. What a grant reached now
+lives only in the sweep log, where the sweeps it authorised after the
+first one can be recorded beside it — a count on the decision row
+could only ever have described the first of them, and a first-of-many
+sitting beside the log of all of them is the second source of truth
+this record is written to avoid.
+
+Reading and exporting stay exactly as this decision leaves them: a
+content-free log line, no consent row, no table. Erasure was always
+the other way round, and this record already said so — it "leaves a
+durable receipt row because the account it belonged to will not be
+there to ask", and that receipt is `accountdeletionaudit`, a table of
+its own. So "it does not earn a table" was never the flat rule the
+sentence made it sound; two exceptions with one shape are a pattern.
+An action under a standing consent earns a table when what it did
+outlives the request that did it — because the account will not be
+there to ask, or because the work is not finished and the next request
+continues it. Reads and exports are neither.
+
+*Pinned by*
+`backend/tests/services/test_corpus_backfill.py::test_a_resumed_sweep_is_logged_under_the_yes_that_was_already_standing`
+— three sweeps under one standing decision leave three rows and still
+only one consent row — and
+`::test_a_sweep_that_found_nothing_pending_logs_nothing`.
+
 ## Decision 3 — Nothing is consented by default, and withdrawal takes the writing with it
 
 `CONSENT_GRANTED_BY_DEFAULT` is `False`. An account with no row for a

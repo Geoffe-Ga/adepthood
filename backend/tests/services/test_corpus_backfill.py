@@ -32,6 +32,11 @@ capped as well.
 stays pending forever, so a queue that always offers the newest first would
 offer the same stuck entries to every future grant and never reach the older
 history the sweep exists for.
+
+*What a sweep reached is a record of its own.* A repeated yes resumes the
+bounded sweep without appending a second decision, so every sweep a permission
+authorises -- the first one and the ones that finish what it could not --
+writes its own row, naming the decision it ran under.
 """
 
 from __future__ import annotations
@@ -43,17 +48,19 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import DateTime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 
 from domain.frequencies import Frequency
 from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment, CorpusSource
+from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
 from services.corpus_backfill import backfill_after_consent
-from services.corpus_consent import set_consent
+from services.corpus_consent import ConsentChange, ConsentState, set_consent
 
 _OWNER = 1
 
@@ -276,6 +283,11 @@ async def test_the_deadline_stops_the_sweep_inside_the_callers_patience(
 
     With no time at all to spend, one entry is still ontologized: a grant that
     could return having done nothing would be a permission with no reach.
+
+    And the sweep says it considered the one entry it offered rather than the
+    two it fetched. The batch is read before the clock is consulted, so a
+    degraded provider would otherwise have every truncated sweep claim credit
+    for writing it never reached -- durably, and in the account's own export.
     """
     _patch_provider(monkeypatch)
     monkeypatch.setattr(cb, "BACKFILL_DEADLINE_SECONDS", 0.0)
@@ -285,27 +297,7 @@ async def test_the_deadline_stops_the_sweep_inside_the_callers_patience(
     outcome = await _decide(db_session, granted=True)
 
     assert (outcome.fragments_added, outcome.entries_remaining) == (1, 1)
-
-
-@pytest.mark.asyncio
-async def test_the_grant_records_what_its_reach_added(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The audit row is evidence the sweep ran, in the direction it ran.
-
-    ``fragments_removed`` keeps meaning removed -- a grant removes nothing --
-    and the count of what a grant *added* is its own column, so neither number
-    has to be read as the other.
-    """
-    _patch_provider(monkeypatch)
-    await _entry(db_session, body=_FIRST)
-    await _entry(db_session, body=_SECOND)
-
-    await _decide(db_session, granted=True)
-
-    rows = await db_session.execute(select(CorpusConsentEvent).order_by(col(CorpusConsentEvent.id)))
-    event = rows.scalars().one()
-    assert (event.fragments_added, event.fragments_removed) == (2, 0)
+    assert outcome.entries_considered == 1
 
 
 @pytest.mark.asyncio
@@ -517,3 +509,310 @@ async def test_being_swept_is_not_being_edited(
     await _decide(db_session, granted=True)
 
     assert await _last_written_at(db_session, entry_id) == before
+
+
+# --- what a sweep reached is a record of its own ------------------------------
+
+
+async def _sweeps(session: AsyncSession) -> list[CorpusSweep]:
+    """Every sweep the owner's decisions logged, oldest row first."""
+    rows = await session.execute(select(CorpusSweep).order_by(col(CorpusSweep.id)))
+    return list(rows.scalars().all())
+
+
+async def _reaches(session: AsyncSession) -> list[tuple[int, int, int]]:
+    """What each of those sweeps considered, added and left behind."""
+    return [
+        (row.entries_considered, row.fragments_added, row.entries_remaining)
+        for row in await _sweeps(session)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_grant_logs_the_sweep_under_the_decision_that_authorised_it(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One appended row per sweep, carrying what it reached and whose permission it ran on.
+
+    The counts belong here rather than on the consent event because the two
+    records count different things: a decision is recorded once, and the sweeps
+    that decision authorises can happen many times.
+    """
+    _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+
+    await _decide(db_session, granted=True)
+
+    events = await db_session.execute(select(CorpusConsentEvent))
+    event = events.scalars().one()
+    assert await _reaches(db_session) == [(2, 2, 0)]
+    assert [row.consent_event_id for row in await _sweeps(db_session)] == [event.id]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_sweep_is_logged_under_the_yes_that_was_already_standing(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three sweeps, three rows, one decision -- and a remainder that falls to zero.
+
+    A repeated yes appends no second decision but does run the sweep again, so
+    without a record of its own the reach of every sweep after the first would
+    survive nowhere. Attributing all three to the standing decision is what
+    makes the log answer "how far has this permission got?" rather than only
+    "how far did the request that granted it get?".
+
+    Each row considered one entry rather than the three, two and one still
+    outstanding: what a sweep considered is the batch it actually offered the
+    writer, bounded by the ceiling, and the backlog behind that batch is what
+    ``entries_remaining`` is for. Two numbers for two questions.
+    """
+    _patch_provider(monkeypatch)
+    monkeypatch.setattr(cb, "BACKFILL_ENTRY_CEILING", 1)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+    await _entry(db_session, body=_THIRD)
+
+    for _ in range(3):
+        await _decide(db_session, granted=True)
+
+    swept = await _sweeps(db_session)
+    assert await _reaches(db_session) == [(1, 1, 2), (1, 1, 1), (1, 1, 0)]
+    events = await db_session.execute(select(CorpusConsentEvent))
+    event = events.scalars().one()
+    assert [row.consent_event_id for row in swept] == [event.id] * 3
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_that_found_nothing_pending_logs_nothing(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An append-only log of reaches must not fill up with reaches of nothing.
+
+    Every repeated yes runs the sweep, and once the backlog is exhausted that
+    is every repeat forever; a row each time would grow without bound and say
+    nothing.
+    """
+    _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+
+    await _decide(db_session, granted=True)
+    first = await _reaches(db_session)
+    await _decide(db_session, granted=True)
+    await _decide(db_session, granted=True)
+
+    assert first == [(1, 1, 0)]
+    assert await _reaches(db_session) == first
+
+
+@pytest.mark.asyncio
+async def test_a_revocation_logs_no_sweep(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saying no reaches no writing, so there is no reach to record."""
+    _forbid_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+
+    await _decide(db_session, granted=False)
+
+    assert await _sweeps(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_grant_for_a_source_with_no_history_logs_no_sweep(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uploads are not kept, so agreeing to ontologize them sweeps nothing to log."""
+    _forbid_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+
+    await _decide(db_session, granted=True, source=CorpusSource.UPLOAD)
+
+    assert await _sweeps(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_grant_with_no_decision_behind_it_sweeps_nothing(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A permission the consent log cannot name is not one the sweep will act on.
+
+    A granted state with no decision behind it is not a state the consent log
+    can produce -- every grant it reports is a row it appended or a row it
+    re-affirmed. Handed one anyway, the sweep declines rather than reaching an
+    account's history under a permission it could not attribute the reach to.
+    """
+    _forbid_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    unattributable = ConsentChange(
+        state=ConsentState(source=CorpusSource.JOURNAL, granted=True, decided_at=None),
+        event=None,
+    )
+
+    outcome = await backfill_after_consent(db_session, user_id=_OWNER, change=unattributable)
+    await db_session.commit()
+
+    assert (outcome.entries_considered, outcome.fragments_added, outcome.entries_remaining) == (
+        0,
+        0,
+        0,
+    )
+    assert await _sweeps(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_backlog_that_never_empties_still_stops_logging(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing the classifier places nowhere must not turn the log into a faucet.
+
+    An unpositioned entry stays pending on purpose, so an account holding one
+    has a backlog that is never exhausted. A valve that closed only on an empty
+    backlog would therefore never close for exactly the accounts this sweep was
+    written for, and every repeated yes -- five a minute, for as long as the
+    account exists -- would append another row saying what the last one said.
+    The first outage is worth recording once; the fortieth identical report of
+    it is a log of requests.
+    """
+
+    async def unplaced(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=_UNCLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", unplaced)
+    await _entry(db_session, body=_FIRST)
+
+    for _ in range(4):
+        await _decide(db_session, granted=True)
+
+    assert await _reaches(db_session) == [(1, 0, 1)]
+
+
+@pytest.mark.asyncio
+async def test_new_writing_under_a_stalled_grant_is_still_logged(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Suppressing a repeat must not suppress a remainder that actually changed.
+
+    The surface that tells somebody how much of their writing is still waiting
+    reads the newest row, so a sweep that reaches nothing new but finds more
+    waiting than the last one did has moved a number and has to say so.
+    """
+
+    async def unplaced(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=_UNCLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", unplaced)
+    await _entry(db_session, body=_FIRST)
+    await _decide(db_session, granted=True)
+
+    await _entry(db_session, body=_SECOND)
+    await _decide(db_session, granted=True)
+
+    assert await _reaches(db_session) == [(1, 0, 1), (2, 0, 2)]
+
+
+@pytest.mark.asyncio
+async def test_writing_that_arrives_mid_sweep_is_counted_as_still_waiting(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The remainder is counted when the sweep stops, not inferred from its start.
+
+    What is pending is read once to decide whether to sweep and again to build
+    the batch, and those are separate statements: a database that gives each its
+    own snapshot can hand the batch an entry the opening count never saw. Infer
+    the remainder by subtracting instead, and it goes negative -- which the
+    remainder's own CHECK refuses, so the commit fails and the decision the
+    caller came to record is lost behind an error.
+
+    The entry written here while the classifier is working stands for that
+    entry. Subtracting would report nothing left; counting again reports the one
+    thing that is.
+    """
+
+    async def writes_while_classifying(**_kwargs: object) -> SimpleNamespace:
+        db_session.add(
+            JournalEntry(
+                message=_SECOND,
+                sender="user",
+                user_id=_OWNER,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+        await db_session.flush()
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", writes_while_classifying)
+    await _entry(db_session, body=_FIRST)
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert (outcome.fragments_added, outcome.entries_remaining) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_decision_belonging_to_somebody_else_authorises_nothing(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reach is filed under a permission the same account holds, or not at all.
+
+    ``user_id`` and ``consent_event_id`` are independent columns, so nothing in
+    the schema would stop one account's writing being swept under another
+    account's decision. The refusal is here because that is the only place it
+    can be. No caller produces this today -- the consent read is already
+    filtered by the account asking -- which is why it is asserted rather than
+    assumed.
+    """
+    _forbid_provider(monkeypatch)
+    stranger = _OWNER + 1
+    db_session.add(
+        JournalEntry(
+            message=_FIRST,
+            sender="user",
+            user_id=stranger,
+            classification=JournalClassification.PERSONAL.value,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+    change = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
+    )
+
+    outcome = await backfill_after_consent(db_session, user_id=stranger, change=change)
+    await db_session.commit()
+
+    assert outcome.entries_considered == 0
+    assert await _sweeps(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_logged_sweep_says_when_it_ran(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The instant is real and the column keeps its offset.
+
+    The remainder a sweep leaves is chased by the sweeps that come after it, so
+    "when did this one run?" is a question asked across rows written by
+    different requests, and an unzoned answer makes their order a guess.
+
+    The offset is asserted against the declaration rather than against a row
+    read back, because SQLite has no zoned type and hands every timestamp back
+    naive: a round-trip assertion would fail on the fixture while passing on
+    the deployment, which is the wrong way round for a guard. What the row
+    itself is asked is that the instant is the one the sweep ran at, bracketed
+    rather than measured so a loaded machine cannot make it flake.
+    """
+    _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+
+    before = datetime.now(UTC).replace(tzinfo=None)
+    await _decide(db_session, granted=True)
+    after = datetime.now(UTC).replace(tzinfo=None)
+
+    swept = await _sweeps(db_session)
+    assert len(swept) == 1
+    assert before <= swept[0].swept_at.replace(tzinfo=None) <= after
+    stored = SQLModel.metadata.tables["corpussweep"].c.swept_at
+    assert isinstance(stored.type, DateTime)
+    assert stored.type.timezone is True

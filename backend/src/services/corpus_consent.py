@@ -29,8 +29,10 @@ everything before it. :mod:`services.corpus_backfill` is what closes that, and
 it lives outside this module because it goes through the ordinary corpus writer
 and the writer reads its consent from here — so the sweep cannot be invoked
 from inside the state it depends on. :func:`set_consent` therefore returns the
-event it appended as well as the state, and the caller that owns the
-transaction runs the sweep and records its count on that event.
+decision in force alongside the state, and the caller that owns the transaction
+runs the sweep and logs it against that decision. Only this module can say
+which decision that is: a repeated yes appends nothing, so the permission its
+sweep runs under is a row some earlier request left standing.
 
 **A decision is recorded once.** A client that re-sends the answer it already
 gave has not made a decision, so no row is appended. The log holds decisions,
@@ -83,14 +85,19 @@ class ConsentState:
 
 @dataclass(frozen=True)
 class ConsentChange:
-    """What one call to :func:`set_consent` produced.
+    """What one call to :func:`set_consent` produced, and under what decision.
 
-    ``event`` is the row this call appended, and it is ``None`` when the client
-    re-sent an answer the account had already given — the log holds decisions,
-    not requests, so a repeat appends nothing to attach a count to. A caller
-    with work to attribute to *this* decision writes the count onto ``event``
-    before the commit; a caller looking at ``None`` is looking at a request
-    that decided nothing.
+    ``event`` is the decision in force once the call returns: the row this call
+    appended, or — when the client re-sent an answer the account had already
+    given — the standing row that repeat re-affirmed. It is ``None`` in exactly
+    one case, which is the account that has never recorded any decision about
+    the source at all.
+
+    Reported this way because the work a call sets off has to be attributable
+    to the permission that authorised it, and a repeat is precisely the case
+    where that permission is not the row this call appended: a repeated yes
+    re-runs the bounded sweep over what the earlier sweeps could not reach, and
+    a caller told "nothing was decided" would have no decision to name.
     """
 
     state: ConsentState
@@ -154,8 +161,13 @@ async def set_consent(
     """Record ``user_id``'s decision about ``source`` and return what it produced.
 
     A decision that repeats the current state appends nothing and reports the
-    state that was already there, with no event to attribute anything to. A
-    revocation purges that source's fragments *before* the event is appended,
+    state that was already there — together with the row that put it there, so
+    that the sweep such a repeat re-runs still has a decision to be logged
+    under. Reading the newest event directly rather than through
+    :func:`load_consent` is what makes that free: the query the state is
+    projected from is the query the standing row comes out of.
+
+    A revocation purges that source's fragments *before* the event is appended,
     so the count the row carries is the count that actually went; the caller
     owns the commit, so the purge and its receipt land together or not at all.
 
@@ -164,9 +176,10 @@ async def set_consent(
     function has just appended, so the event has to exist and be flushed before
     the first fragment can be written. See :mod:`services.corpus_backfill`.
     """
-    current = await load_consent(session, user_id=user_id, source=source)
+    standing = await _newest_event(session, user_id, source)
+    current = _state_of(source, standing)
     if current.granted == granted:
-        return ConsentChange(state=current, event=None)
+        return ConsentChange(state=current, event=standing)
     removed = (
         _NOTHING_REMOVED
         if granted

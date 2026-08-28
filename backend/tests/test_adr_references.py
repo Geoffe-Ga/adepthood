@@ -129,6 +129,10 @@ _CONSENT_ADR_PINNING_TESTS = {
         "test_repeating_a_decision_does_not_repeat_the_event",
     ),
     "test_account_deletion_api.py": ("test_deletion_logs_counts_and_never_content",),
+    "services/test_corpus_backfill.py": (
+        "test_a_resumed_sweep_is_logged_under_the_yes_that_was_already_standing",
+        "test_a_sweep_that_found_nothing_pending_logs_nothing",
+    ),
 }
 
 # The two questions ADR 0005 left open that this record may not close, in the

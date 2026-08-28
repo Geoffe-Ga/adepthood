@@ -394,6 +394,16 @@ def _table_exists(db_url: str, table: str) -> bool:
         engine.dispose()
 
 
+def _check_constraints_of(db_url: str, table: str) -> set[str]:
+    """Every named CHECK constraint the table carries, as the database has it."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        found = inspect(engine).get_check_constraints(table)
+        return {str(constraint["name"]) for constraint in found if constraint.get("name")}
+    finally:
+        engine.dispose()
+
+
 def test_password_reset_migrations_round_trip_on_sqlite(
     alembic_sqlite_config: Config,
 ) -> None:
@@ -3894,3 +3904,132 @@ def test_session_prose_encryption_migration_is_a_no_op_without_a_key(
 
     command.downgrade(cfg, _SESSION_PROSE_BASE_REVISION)
     assert _stored_session_prose(db_url) == _SEEDED_SESSION_PROSE
+
+
+# -- 4e1a9c72bd60: the sweep log arrives and the grant's own count leaves ----
+
+# The consent event carried ``fragments_added``, one number per decision, while
+# a repeated yes runs the sweep again without appending a decision. The sweep
+# log is the table that can hold one row per sweep; this migration adds it and
+# retires the column it replaces.
+_CORPUS_SWEEP_BASE_REVISION = "b1c2d3e4f5a7"  # pragma: allowlist secret
+_CORPUS_SWEEP_REVISION = "4e1a9c72bd60"  # pragma: allowlist secret
+
+# The CHECK that made the retired count a count. The downgrade has to bring it
+# back with the column: a restore that returns the column alone would leave the
+# consent log accepting a negative number of fragments.
+_CONSENT_ADDED_CHECK = "ck_corpusconsentevent_fragments_added_range"
+
+# Every column ``corpussweep`` is expected to carry, and no others.
+_CORPUS_SWEEP_COLUMNS = {
+    "id",
+    "user_id",
+    "consent_event_id",
+    "entries_considered",
+    "fragments_added",
+    "entries_remaining",
+    "swept_at",
+}
+
+
+def _bootstrap_corpus_consent_baseline(sync_url: str) -> None:
+    """Pre-create ``user`` and ``corpusconsentevent`` as they stand at the baseline.
+
+    The consent table is reproduced with its CHECK constraints because the
+    migration has to remove one of them, and a table rebuilt from a definition
+    that never had it would prove nothing about the migration that does. One
+    decision row is seeded so the sweep log's foreign key has something real to
+    name.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'alice@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE corpusconsentevent ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL REFERENCES user (id) ON DELETE CASCADE,"
+                " source VARCHAR(20) NOT NULL,"
+                " decision VARCHAR(20) NOT NULL,"
+                " fragments_removed INTEGER NOT NULL,"
+                " fragments_added INTEGER NOT NULL,"
+                " recorded_at DATETIME NOT NULL,"
+                " CONSTRAINT ck_corpusconsentevent_source_valid"
+                "  CHECK (source IN ('journal', 'upload', 'import')),"
+                " CONSTRAINT ck_corpusconsentevent_decision_valid"
+                "  CHECK (decision IN ('granted', 'revoked')),"
+                " CONSTRAINT ck_corpusconsentevent_fragments_removed_range"
+                "  CHECK (fragments_removed >= 0),"
+                " CONSTRAINT ck_corpusconsentevent_fragments_added_range"
+                "  CHECK (fragments_added >= 0)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO corpusconsentevent"
+                " (id, user_id, source, decision, fragments_removed, fragments_added, recorded_at)"
+                " VALUES (1, 1, 'journal', 'granted', 0, 0, CURRENT_TIMESTAMP)"
+            )
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_corpus_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``4e1a9c72bd60``."""
+    db_path = tmp_path / "corpus_sweep_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_corpus_consent_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CORPUS_SWEEP_BASE_REVISION)
+    return cfg
+
+
+def test_corpus_sweep_migration_round_trips_on_sqlite(
+    alembic_sqlite_config_corpus_sweep: Config,
+) -> None:
+    """Round-trip ``4e1a9c72bd60``: the sweep log arrives, the grant's count leaves.
+
+    Phase 1: upgrade creates ``corpussweep`` with exactly its seven columns and
+    drops ``corpusconsentevent.fragments_added``, whose one meaning the new
+    table now carries per sweep rather than per decision.
+    Phase 2: downgrade drops the table and puts the column and its CHECK back,
+    so a deploy that has to go back finds the column shaped as it was -- its
+    values zeroed rather than restored, which the migration says plainly.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_corpus_sweep
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the sweep log and retires the column it replaces.
+    command.upgrade(cfg, _CORPUS_SWEEP_REVISION)
+    assert _table_exists(db_url, "corpussweep")
+    assert _columns_of(db_url, "corpussweep") == _CORPUS_SWEEP_COLUMNS
+    assert "fragments_added" not in _columns_of(db_url, "corpusconsentevent")
+
+    # Phase 2: downgrade restores exactly what the upgrade changed -- the
+    # column and the CHECK that made it a count, not the column alone.
+    command.downgrade(cfg, _CORPUS_SWEEP_BASE_REVISION)
+    assert not _table_exists(db_url, "corpussweep")
+    assert "fragments_added" in _columns_of(db_url, "corpusconsentevent")
+    assert _CONSENT_ADDED_CHECK in _check_constraints_of(db_url, "corpusconsentevent")
+
+    # Phase 3: re-upgrade is idempotent.
+    command.upgrade(cfg, _CORPUS_SWEEP_REVISION)
+    assert _table_exists(db_url, "corpussweep")
+    assert "fragments_added" not in _columns_of(db_url, "corpusconsentevent")
