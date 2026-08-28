@@ -107,6 +107,9 @@ jest.mock('../../../storage/habitStorage', () => ({
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('../../../context/AuthContext', () => ({

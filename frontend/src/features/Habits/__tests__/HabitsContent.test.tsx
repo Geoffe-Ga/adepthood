@@ -10,6 +10,8 @@ import { View } from 'react-native';
 import type { Habit } from '../Habits.types';
 import { HabitsContent } from '../HabitsScreen';
 
+import type { DroppedCheckInState } from '@/store/useDroppedCheckInStore';
+
 // Stub the modal components — importing HabitsScreen pulls them in, and some
 // carry native deps (e.g. datetimepicker) that don't load under jest.
 jest.mock('expo-notifications', () => ({
@@ -208,5 +210,39 @@ describe('HabitsContent', () => {
       />,
     );
     expect(getByText(/Stages\s*1[\s\S]*10/)).toBeTruthy();
+  });
+
+  // A notice nobody renders is the failure this guards: the banner must hang
+  // off the Habits body, not only off its own unit test.
+  it('mounts the dropped-check-in notice when the quarantine store has an entry', () => {
+    const { useDroppedCheckInStore } = require('@/store/useDroppedCheckInStore') as {
+      useDroppedCheckInStore: { getState: () => DroppedCheckInState };
+    };
+    useDroppedCheckInStore.getState().setEntries([
+      {
+        goal_id: 77,
+        did_complete: true,
+        timestamp: '2025-04-01T00:00:00Z',
+        status: 404,
+        dropped_at: '2025-04-02T09:00:00Z',
+      },
+    ]);
+
+    const { getByTestId } = render(
+      <HabitsContent
+        habits={[makeHabit(1)]}
+        loading={false}
+        error={null}
+        columns={1}
+        gridGutter={8}
+        renderItem={renderRow}
+        onRetry={jest.fn()}
+        onAddHabit={jest.fn()}
+        pagination={null}
+      />,
+    );
+
+    expect(getByTestId('dropped-check-in-notice')).toBeTruthy();
+    useDroppedCheckInStore.getState().reset();
   });
 });

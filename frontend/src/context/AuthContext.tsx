@@ -18,7 +18,7 @@ import {
   markLogoutPending,
   saveToken,
 } from '@/storage/authStorage';
-import { clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
+import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
 import { resetAllStores } from '@/store/registry';
@@ -195,8 +195,11 @@ interface AuthMutators {
  * getter (via ``resetLlmApiKey``) and the persisted SecureStore key (via
  * ``clearLlmApiKey``). ``resetLlmApiKey`` runs first and synchronously so the
  * getter is nulled immediately even if the async storage clears are slow or
- * fail. The storage clears are wrapped in try/catch so one failing key doesn't
- * leave the rest of the wipe half-done.
+ * fail. The dropped-check-in quarantine is wiped for the same reason rather
+ * than for tidiness: it names a check-in the previous user made, so leaving it
+ * would show user A's lost log to user B on a shared device. The storage
+ * clears are wrapped in try/catch so one failing key doesn't leave the rest of
+ * the wipe half-done.
  */
 async function wipeUserState(): Promise<void> {
   resetLlmApiKey();
@@ -204,6 +207,7 @@ async function wipeUserState(): Promise<void> {
   const clears: Array<[string, Promise<void>]> = [
     ['habits', clearHabits()],
     ['pending check-ins', clearPendingCheckIns()],
+    ['dropped check-ins', clearDroppedCheckIns()],
     ['LLM API key', clearLlmApiKey()],
     ['notification data', clearAllNotificationData()],
   ];

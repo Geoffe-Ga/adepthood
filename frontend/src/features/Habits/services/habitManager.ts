@@ -32,10 +32,14 @@ import {
   saveHabits as saveHabitsToDisk,
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
+  clearDroppedCheckIns,
   clearPendingCheckIns,
+  loadDroppedCheckIns,
+  recordDroppedCheckIn,
   replacePendingCheckIns,
 } from '../../../storage/habitStorage';
-import type { PendingCheckIn } from '../../../storage/habitStorage';
+import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStorage';
+import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
@@ -740,15 +744,18 @@ const syncRevealState = (next: Habit[], failureMessage: string): void => {
  */
 const PERMANENT_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 422]);
 
-/** Whether a replay failure is futile or harmful to retry, so the entry is dropped. */
+/** Whether a replay failure is futile to retry, so the entry is dropped. */
 const isPermanentRejection = (err: unknown): err is ApiError | ApiValidationError => {
   // Checked before any status lookup: ApiValidationError does not extend
-  // ApiError and carries the response's own status, which can be a 2xx. It
-  // means the body failed its Zod schema, so the request completed and the
-  // completion may already exist server-side; replay sends no idempotency
-  // key, so retrying risks the duplicate completion BUG-FE-HABIT-205 exists
-  // to prevent. A 4xx drops because retry is futile; this drops because
-  // retry is harmful.
+  // ApiError and carries the response's own status, which can be a 2xx. It is
+  // raised only when a received body failed its Zod schema — a deterministic
+  // client/server contract defect, so a retry receives the same shape and
+  // fails identically, forever. Retrying is futile rather than harmful:
+  // ``POST /goal_completions/`` is idempotent by natural key (a unique index
+  // over goal, user, and local day, with the service short-circuiting to
+  // ``already_logged_today``), so a replay cannot duplicate a completion.
+  // Treating it as transient would re-queue the entry at the head and wedge
+  // every genuine check-in behind it — the wedge this drop exists to prevent.
   if (err instanceof ApiValidationError) return true;
   return err instanceof ApiError && PERMANENT_REJECTION_STATUSES.has(err.status);
 };
@@ -769,14 +776,41 @@ const postPendingCheckIn = async (
   });
 };
 
-/** Surface a dropped check-in so a chronic rejection is diagnosable. */
-const warnDroppedCheckIn = (checkIn: PendingCheckIn, err: ApiError | ApiValidationError): void => {
+/**
+ * Record a dropped check-in twice over: a console warning so a chronic
+ * rejection is diagnosable, and a durable on-device quarantine so the loss is
+ * reportable to the user who made the check-in. ``loadHabits`` has already
+ * overwritten their optimistic completion with the server's canonical state by
+ * the time we get here, so without the quarantine the action vanishes with no
+ * trace anyone will ever see.
+ */
+const warnDroppedCheckIn = async (
+  checkIn: PendingCheckIn,
+  err: ApiError | ApiValidationError,
+): Promise<void> => {
   console.warn(
     'replayPendingCheckIns: dropping permanently rejected check-in for goal',
     checkIn.goal_id,
     'status',
     err.status,
   );
+  const quarantined: DroppedCheckIn = {
+    ...checkIn,
+    status: err.status,
+    dropped_at: new Date().toISOString(),
+  };
+  await recordDroppedCheckIn(quarantined);
+};
+
+/**
+ * Publish the on-device quarantine to the store the notice subscribes to. Runs
+ * on every replay exit, including the ones that dropped nothing: an entry
+ * quarantined in a previous session must still surface at launch, and an empty
+ * list is what retracts a notice the user has since dismissed.
+ */
+const hydrateDroppedCheckIns = async (): Promise<void> => {
+  const entries = await loadDroppedCheckIns();
+  useDroppedCheckInStore.getState().setEntries(entries);
 };
 
 /**
@@ -792,7 +826,7 @@ const warnDroppedCheckIn = (checkIn: PendingCheckIn, err: ApiError | ApiValidati
  * BUG-FE-HABIT-205). Same-day replays omit the field so the server
  * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-const replayPendingCheckIns = async (tz?: string): Promise<void> => {
+const drainPendingCheckIns = async (tz?: string): Promise<void> => {
   const pending = await loadPendingCheckIns();
   if (pending.length === 0) return;
   // Device zone is the stand-in until auth hydrates the stored zone.
@@ -804,7 +838,9 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
       await postPendingCheckIn(checkIn, zone, today);
     } catch (err) {
       if (isPermanentRejection(err)) {
-        warnDroppedCheckIn(checkIn, err);
+        // Awaited, not fired and forgotten: a floating quarantine write can
+        // outlive the drain and lose the record it exists to keep.
+        await warnDroppedCheckIn(checkIn, err);
         continue;
       }
       // Still offline, or a failure worth retrying. Persist only the
@@ -816,6 +852,17 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
     }
   }
   await clearPendingCheckIns();
+};
+
+/**
+ * Drain the queue, then publish whatever the quarantine holds. Hydration is
+ * outside the drain so it happens on every exit the drain has — nothing
+ * queued, a transient abort, or a full pass — because a check-in dropped in an
+ * earlier session is only real to the user once the notice can read it.
+ */
+const replayPendingCheckIns = async (tz?: string): Promise<void> => {
+  await drainPendingCheckIns(tz);
+  await hydrateDroppedCheckIns();
 };
 
 /**
@@ -902,6 +949,27 @@ const loadHabits = async (tz?: string): Promise<void> => {
 
 export const habitManager = {
   loadHabits,
+
+  /**
+   * Acknowledge the dropped-check-in notice: erase the on-device quarantine,
+   * then retract the notice. Storage work lives here rather than in the store
+   * so the store stays a dumb container the notice can subscribe to.
+   *
+   * The notice fires this and forgets it, so a rejected erase would surface as
+   * an unhandled rejection. It is caught, and the notice is deliberately left
+   * standing: the quarantine is still on disk, and retracting the report of a
+   * loss whose record survived would claim a clearing that did not happen —
+   * and the next hydration would republish it anyway.
+   */
+  dismissDroppedCheckIns: async (): Promise<void> => {
+    try {
+      await clearDroppedCheckIns();
+    } catch (err: unknown) {
+      console.warn('[habits] could not erase the dropped check-in quarantine', err);
+      return;
+    }
+    useDroppedCheckInStore.getState().setEntries([]);
+  },
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
     const prev = getHabits();

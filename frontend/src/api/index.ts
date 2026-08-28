@@ -306,9 +306,14 @@ let llmApiKeyReset: (() => void) | null = null;
 export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
 
 /**
- * Canonical header name for client-supplied idempotency keys (BUG-API-008).
- * Matches the IETF draft (``draft-ietf-httpapi-idempotency-key-header``)
- * the backend already routes through its dedupe middleware.
+ * Canonical header name for client-supplied idempotency keys (BUG-API-008),
+ * matching the IETF draft (``draft-ietf-httpapi-idempotency-key-header``).
+ *
+ * There is no dedupe middleware behind it: the header is honoured per-route by
+ * the routes that opted in (``POST /practice-sessions``, and the energy
+ * router's ``X-Idempotency-Key``), so sending it elsewhere is inert
+ * server-side. Client-side its effect is universal — ``hasIdempotencyHeader``
+ * reads it to make a mutation retry-eligible.
  */
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 
@@ -1318,11 +1323,12 @@ export const goalCompletions = {
   //
   // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
   // screen) pass a deterministic key built via :func:`idempotencyKey`
-  // (e.g. ``log-unit:${goalId}:${dayISO}``).  Without it, a network blip
-  // mid-tap or the user mashing the button surfaces as duplicate
-  // completions; with it, the backend's dedupe layer reuses the prior
-  // result.  Optional for back-compat with screens that have not yet
-  // adopted the helper.
+  // (e.g. ``log-unit:${goalId}:${dayISO}``).  This route reads no such
+  // header — it is idempotent by natural key instead, on (user, goal, local
+  // day) — so the key's effect here is client-side: it marks the mutation
+  // retry-eligible so a network blip mid-tap is retried rather than
+  // surfaced as a failure.  Optional for back-compat with screens that have
+  // not yet adopted the helper.
   create(
     payload: GoalCompletionPayload,
     options: { token?: string; idempotencyKey?: string } = {},

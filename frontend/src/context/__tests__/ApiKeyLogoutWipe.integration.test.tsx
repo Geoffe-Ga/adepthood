@@ -6,6 +6,7 @@ import React from 'react';
 import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { clearDroppedCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
 
 // Reproduces the BYOK leak end-to-end: mount the real AuthProvider +
@@ -44,6 +45,7 @@ jest.mock('@/storage/llmKeyStorage', () => ({
 jest.mock('@/storage/habitStorage', () => ({
   clearHabits: jest.fn(() => Promise.resolve()),
   clearPendingCheckIns: jest.fn(() => Promise.resolve()),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('@/storage/notificationStorage', () => ({
@@ -214,5 +216,54 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     });
     expect(lastLlmHeader()).toBe('sk-user-b');
     expect(lastLlmHeader()).not.toBe('sk-user-a');
+  });
+});
+
+describe('the dropped-check-in quarantine does not survive a logout on a shared device', () => {
+  async function signIn() {
+    mockAuthApi.login.mockResolvedValueOnce({ token: 'token-a', user_id: 1 });
+    const { result } = renderHook(useHarness, { wrapper });
+    await waitFor(() => expect(result.current.auth.authStatus).not.toBe('loading'));
+    await waitFor(() => expect(result.current.apiKey.isLoading).toBe(false));
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    return result;
+  }
+
+  test('logout clears the quarantine', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      await result.current.auth.logout();
+    });
+
+    expect(clearDroppedCheckIns).toHaveBeenCalledTimes(1);
+  });
+
+  test('dismissing the re-auth sheet clears the quarantine', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+
+    await act(async () => {
+      await result.current.auth.dismissReauth();
+    });
+
+    expect(clearDroppedCheckIns).toHaveBeenCalledTimes(1);
+  });
+
+  test('a forced reauth alone leaves the quarantine intact', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+
+    expect(clearDroppedCheckIns).not.toHaveBeenCalled();
   });
 });
