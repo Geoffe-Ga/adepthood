@@ -337,16 +337,21 @@ jobs:
     name: Report the failure so it is not silent
     needs: build
     if: failure()
-    runs-on: ubuntu-latest
     # This job is the whole reason the previous six failures should have been
     # noticed and were not. The workflow runs weekly on a cron, so its failures
     # reach nobody: a scheduled job that has never succeeded looks exactly like
     # one with nothing to do. It failed every week for over a month while
-    # CLAUDE.md told every agent to prefer the knowledge graph over grep — a
+    # CLAUDE.md told every agent to prefer the knowledge graph over grep -- a
     # tool that had never been built.
     #
     # It opens or UPDATES a single tracking issue, never one per run. A bot that
     # files weekly is noise, and noise is how the original failures went unread.
+    #
+    # The body used to live here. It now lives in _report-failure.yml, which
+    # every other scheduled workflow calls too: five of the six could not report
+    # a failure at all, and the way to fix that was to share this one rather than
+    # copy it five times. The `--workflow` value must stay graph-semantic.yml so
+    # the existing tracking issue's marker keeps matching.
     #
     # Its own permissions block replaces the workflow's `contents: write`: this
     # job writes issues and reads logs, and has no business near the release.
@@ -354,24 +359,7 @@ jobs:
       contents: read
       issues: write
       actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Open or update the tracking issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          # An unreadable log must still produce a report: the run failed, and
-          # that fact reaching a human matters more than the detail attached to
-          # it. The reporter says so explicitly rather than filing a blank.
-          log="$RUNNER_TEMP/log-failed.txt"
-          gh run view "$GITHUB_RUN_ID" --log-failed > "$log" 2>/dev/null || : > "$log"
-          bash scripts/graph/report_workflow_failure.sh \
-            --workflow graph-semantic.yml \
-            --run-url "$RUN_URL" \
-            --log-file "$log" \
-            --label bug \
-            --label infra
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: graph-semantic.yml
+      labels: bug,infra

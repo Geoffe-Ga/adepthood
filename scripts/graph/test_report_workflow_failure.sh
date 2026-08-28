@@ -229,14 +229,62 @@ ec=0
 PATH="$BIN:$PATH" GH_CALLS="$CALLS" "$REPORT" --workflow graph-semantic.yml >/dev/null 2>&1 || ec=$?
 check "a missing --run-url is a usage error" "2" "$ec"
 
-# --- the workflow actually calls it ------------------------------------------
-# An alarm nothing invokes is the same silent gap it exists to close.
-WORKFLOW="$(cd "$HERE/../.." && pwd)/.github/workflows/graph-semantic.yml"
+# --- a headline leads the report --------------------------------------------
+# The log excerpt says what the runner printed; the headline says which failure
+# mode it was. "turn-cap overrun (benign)" and "usage limit reached" are the
+# same `##[error]` to this script and opposite instructions to a human, so the
+# classified cause has to reach the issue rather than dying in a step summary
+# nobody opens.
+: > "$CALLS"
+out="$(ISSUE_LIST_JSON='[]' PATH="$BIN:$PATH" GH_CALLS="$CALLS" "$REPORT" \
+  --workflow graph-semantic.yml --run-url "$RUN_URL" --log-file "$LOG" \
+  --headline "usage limit reached (HTTP 429): retrying before the reset is wasted" 2>&1)"; ec=$?
+check "a headline does not change the exit code" "0" "$ec"
+calls="$(cat "$CALLS")"
+contains "a new issue leads with the headline" "usage limit reached (HTTP 429)" "$calls"
+
+: > "$CALLS"
+out="$(ISSUE_LIST_JSON="$EXISTING" PATH="$BIN:$PATH" GH_CALLS="$CALLS" "$REPORT" \
+  --workflow graph-semantic.yml --run-url "$RUN_URL" --log-file "$LOG" \
+  --headline "turn-cap overrun (benign): the work landed" 2>&1)"
+calls="$(cat "$CALLS")"
+contains "a repeat-failure comment leads with the headline too" \
+  "turn-cap overrun (benign)" "$calls"
+
+# Omitted, not defaulted: an absent headline must never read as a
+# classification that was made and came back empty.
+: > "$CALLS"
+out="$(ISSUE_LIST_JSON='[]' run)"
+contains "without a headline the report starts at the workflow line" \
+  "--body **Workflow:" "$(cat "$CALLS")"
+
+ec=0
+PATH="$BIN:$PATH" GH_CALLS="$CALLS" "$REPORT" --workflow x.yml --run-url "$RUN_URL" \
+  --headline >/dev/null 2>&1 || ec=$?
+check "a valueless --headline is a usage error" "2" "$ec"
+
+# --- the workflows actually call it ------------------------------------------
+# An alarm nothing invokes is the same silent gap it exists to close. The call
+# moved: five of the six actively scheduled workflows could not report a failure
+# at all, so the hand-rolled job that lived in graph-semantic.yml became the
+# shared _report-failure.yml that all six now call. Both halves of that chain
+# are checked, because either one alone is an alarm that goes nowhere.
+ROOT="$(cd "$HERE/../.." && pwd)"
+REUSABLE="$ROOT/.github/workflows/_report-failure.yml"
+reusable="$(cat "$REUSABLE" 2>/dev/null || true)"
+contains "_report-failure.yml invokes the failure reporter" \
+  "scripts/graph/report_workflow_failure.sh" "$reusable"
+contains "the reusable reporter may write issues" "issues: write" "$reusable"
+contains "the reusable reporter takes the caller's own filename" "workflow-file" "$reusable"
+
+WORKFLOW="$ROOT/.github/workflows/graph-semantic.yml"
 wf="$(cat "$WORKFLOW" 2>/dev/null || true)"
-contains "graph-semantic.yml invokes the failure reporter" \
-  "scripts/graph/report_workflow_failure.sh" "$wf"
+contains "graph-semantic.yml calls the shared reporter" \
+  "./.github/workflows/_report-failure.yml" "$wf"
 contains "the reporter runs only on failure" "if: failure()" "$wf"
 contains "the reporting job may write issues" "issues: write" "$wf"
+contains "graph-semantic.yml keeps its tracking issue's marker stable" \
+  "workflow-file: graph-semantic.yml" "$wf"
 
 printf '\nreport_workflow_failure tests: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

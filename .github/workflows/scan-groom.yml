@@ -10,6 +10,17 @@ name: "Scan: Backlog grooming"
 # Runs daily at 04:00 UTC — BEFORE the day's producer scans (05:00+), so the
 # queue is deduped and trued-up against HEAD before new findings land.
 #
+# WHY THE CLAUDE STEP IS ALLOWED TO FAIL: this workflow reported failure on ten
+# of its last twelve scheduled runs, two different ways that render identically
+# in the run list. Most were FALSE reds -- the grooming finished and wrote its
+# summary, and the action then exited non-zero for using more turns (41, 44, 45)
+# than the cap allowed. One was a REAL red: a weekly usage limit, one turn,
+# nothing attempted. So the step's raw exit code is not the verdict; the
+# classifier below is, and it fails the job for every mode except the benign
+# overrun. `continue-on-error` without that classifier would green the real reds
+# too, which is why the two are required to travel together
+# (backend/tests/scripts/test_scheduled_workflow_legibility.py).
+#
 # Required configuration:
 #   secret  CLAUDE_CODE_OAUTH_TOKEN  - same token the other Claude workflows use.
 
@@ -34,6 +45,16 @@ jobs:
     name: Groom the Ralph backlog
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # ONE cap, read twice: the action enforces it and the classifier compares
+      # against it. Written in two places these drift, and a classifier holding
+      # a stale cap calls a genuine overrun an agent error, or the reverse.
+      MAX_TURNS: "40"
+    outputs:
+      # Carried to the reporting job so the tracking issue names the failure
+      # mode instead of a generic `##[error]` line from the log.
+      outcome: ${{ steps.classify.outputs.outcome }}
+      headline: ${{ steps.classify.outputs.headline }}
     steps:
       - name: Checkout repository (recent history to verify resolved findings)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -41,6 +62,11 @@ jobs:
           fetch-depth: 50
 
       - name: Run backlog grooming
+        id: groom
+        # Failure is deferred to the classifier below, never swallowed. See the
+        # header: the raw exit code cannot tell "the work landed and the cap
+        # bit" from "the account is out of budget".
+        continue-on-error: true
         uses: anthropics/claude-code-action@e2a4b761cd77a1138a5b41410eda9b28581f9bcd  # v1.0.196
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,7 +77,7 @@ jobs:
           claude_args: >-
             --allowed-tools "Bash,Read,Grep,Glob,Skill,Task"
             --model opus
-            --max-turns 40
+            --max-turns ${{ env.MAX_TURNS }}
           prompt: |
             Use the `backlog-grooming` skill and follow its instructions exactly.
 
@@ -65,3 +91,100 @@ jobs:
             comment for confirmation rather than closing when "resolved/stale"
             is uncertain. End with the run summary groom.md specifies, appended
             to $GITHUB_STEP_SUMMARY.
+
+            State in that summary how many candidates you found BEFORE
+            verification, alongside how many survived it. "Nothing to groom" and
+            "everything I looked at was still valid" are different results and
+            currently read the same.
+
+      - name: Classify how the grooming run ended
+        id: classify
+        # `always()` so the classification happens on the failing runs too --
+        # which are the only ones anybody needs it for.
+        if: always()
+        env:
+          # `outcome`, NOT `conclusion`. Under `continue-on-error: true` a failed
+          # step's `outcome` stays `failure` while its `conclusion` becomes
+          # `success`; wiring `conclusion` here would feed the classifier
+          # `success` for every failure and silently disable all of this.
+          STEP_OUTCOME: ${{ steps.groom.outcome }}
+          EXECUTION_FILE: ${{ steps.groom.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          # The action writes the transcript BEFORE it throws for a turn-cap
+          # overrun, and its catch path sets `execution_file` -- but whether a
+          # composite action's outputs survive an inner step failure is not
+          # something to bet the whole mechanism on, so the documented default
+          # path is the fallback. If neither exists the classifier says
+          # `no-result`, which is a failure and not a silence.
+          file="$EXECUTION_FILE"
+          if [ ! -s "$file" ]; then
+            file="$RUNNER_TEMP/claude-execution-output.json"
+          fi
+
+          status=0
+          outcome="$(scripts/ci/classify_claude_outcome.sh \
+            --execution-file "$file" \
+            --step-outcome "$STEP_OUTCOME" \
+            --max-turns "$MAX_TURNS")" || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the outcome classifier could not run, so this run is unclassified -- treat it as failed and fix the wiring."
+            exit 1
+          fi
+
+          # Every token is named, and each branch says what the JOB did about
+          # it -- which is a different fact from what the classifier said
+          # happened, and the one a reader of the run list needs. Anything
+          # unrecognised fails closed: a verdict this block has not been taught
+          # must never fall through to green.
+          case "$outcome" in
+            completed)
+              note="Grooming completed. The job passes."
+              fail=0 ;;
+            turn-cap-overrun)
+              note="Grooming finished its work and then exceeded the ${MAX_TURNS}-turn cap. Benign: the grooming summary above is the real outcome and there is nothing to re-run, so the job passes."
+              fail=0 ;;
+            usage-limit)
+              note="No grooming happened: the account allowance is exhausted. Re-running before the reset cannot succeed. Failing the job."
+              fail=1 ;;
+            auth-failure)
+              note="No grooming happened: CLAUDE_CODE_OAUTH_TOKEN was rejected. Rotate it -- unlike a usage limit this will never clear on its own. Failing the job."
+              fail=1 ;;
+            agent-error)
+              note="Grooming failed for a reason the classifier does not recognise. Read the transcript. Failing the job."
+              fail=1 ;;
+            no-result)
+              note="Grooming left no readable transcript, so nothing can be said about this run. Either the step died before the SDK spoke or this classification is mis-wired -- both are failures. Failing the job."
+              fail=1 ;;
+            *)
+              note="Unrecognised classifier verdict: $outcome. Failing closed rather than guessing."
+              fail=1 ;;
+          esac
+
+          printf '\nWhat this run did about it: %s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" -eq 1 ]; then
+            echo "::error::$note"
+            exit 1
+          fi
+          echo "::notice::$note"
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: groom
+    if: failure()
+    # Job-level, deliberately: the top-level block above holds `id-token: write`
+    # for the model's auth exchange, and this job has no business near it. A job
+    # `permissions:` block REPLACES the file's, so this is the narrower grant,
+    # not an addition to it.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: scan-groom.yml
+      # Names the mode in the tracking issue: "usage limit reached" and
+      # "turn-cap overrun" are the same `##[error]` in the log and opposite
+      # instructions to whoever reads the issue.
+      headline: ${{ needs.groom.outputs.headline }}
+      labels: bug,infra

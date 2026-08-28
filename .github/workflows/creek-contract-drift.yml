@@ -69,4 +69,52 @@ jobs:
 
       - name: Compare the vendored bundle against what Creek publishes today
         working-directory: backend
-        run: python -m scripts.creek_contract_drift compare
+        # The exit code carries three distinct answers and the run list shows
+        # one colour, so the summary is where the distinction has to survive.
+        # $? is inspected explicitly rather than left to `set -e`: exit 1 means
+        # the vendored bundle no longer describes what Creek serves, exit 2
+        # means the comparison could not be made at all, and collapsing them
+        # would turn "we could not look" into "we looked and it drifted". Both
+        # still fail the job -- exit 2 is not the softer outcome, it is the one
+        # that has proven nothing.
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/creek-drift.txt"
+          python -m scripts.creek_contract_drift compare 2>&1 | tee "$report"
+          status=${PIPESTATUS[0]}
+          case "$status" in
+            0) verdict="Ran clean: Creek still publishes the /v1 bytes this repo vendored." ;;
+            1) verdict="**Drift found.** The vendored bundle under backend/tests/fixtures/creek_v1/ no longer describes what Creek serves, so the conformance suite is asserting against a copy that has stopped being true. Re-vendor it." ;;
+            *) verdict="**Could not verify.** Creek was unreachable, or answered with something this check refused to parse. Nothing was proven about the pin either way -- do not read this as clean." ;;
+          esac
+          {
+            echo "## Creek contract drift"
+            echo
+            echo "$verdict"
+            echo
+            echo '```'
+            cat "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: compare-upstream
+    if: failure()
+    # Both substantive exits fail this job -- drift found, and could-not-verify
+    # -- and both must reach a human. A weekly check whose failures scroll away
+    # is the green checkmark meaning nobody looked that the header above
+    # refuses to become.
+    #
+    # Job-level, deliberately. A job `permissions:` block REPLACES the file's,
+    # so this grants the reporter exactly what it needs without widening any
+    # other job in this workflow.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: creek-contract-drift.yml
+      labels: bug,infra
