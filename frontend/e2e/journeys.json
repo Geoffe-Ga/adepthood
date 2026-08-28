@@ -168,15 +168,15 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. The wrapper spelled like it, course.stageProgress, addresses the course router's own /course/stages/{n}/progress instead. Still uncovered because no spec moves the anchor and reads yet.",
+    "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
       "routes": ["GET /stages", "GET /stages/program-calendar", "GET /stages/wheel"],
       "tables": ["stageprogress", "coursestage"]
     },
-    "status": "uncovered",
-    "issue": 2299
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map.e2e.test.ts"
   },
   {
     "id": "depth.choose-rings",
