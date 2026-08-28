@@ -330,3 +330,22 @@ jobs:
             fi
           fi
           echo "published ${#assets[@]} pan-graph asset(s) to release $GRAPH_TAG"
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: federate
+    if: failure()
+    # A federated pan-graph that quietly stops being published looks identical
+    # to one that had nothing to add. Only this job can tell the difference.
+    #
+    # Job-level, deliberately. A job `permissions:` block REPLACES the file's,
+    # so this grants the reporter exactly what it needs without widening any
+    # other job in this workflow.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: graph-federate.yml
+      labels: bug,infra

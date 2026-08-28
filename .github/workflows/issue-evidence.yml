@@ -90,3 +90,24 @@ jobs:
             echo "::warning::At least one issue's cited evidence no longer reproduces. See the run summary."
           fi
           exit 0
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: evidence
+    if: failure()
+    # This job is advisory and touches nothing, which makes its silence cheap
+    # and therefore likely: nobody would notice it stopping. The report is what
+    # distinguishes 'no premise expired this week' from 'it has not run since
+    # March'.
+    #
+    # Job-level, deliberately. A job `permissions:` block REPLACES the file's,
+    # so this grants the reporter exactly what it needs without widening any
+    # other job in this workflow.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: issue-evidence.yml
+      labels: bug,infra

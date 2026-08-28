@@ -330,3 +330,24 @@ jobs:
             --title "Knowledge graph semantic layer is stale" \
             --label graph-staleness \
             --body "$body"
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: build
+    if: failure()
+    # This workflow rebuilds the graph every agent in this repo is told to
+    # prefer over grep. A silent failure means every one of them reaches for a
+    # tool that was never rebuilt, which is exactly how the semantic pass went
+    # unnoticed for a month.
+    #
+    # Job-level, deliberately. A job `permissions:` block REPLACES the file's,
+    # so this grants the reporter exactly what it needs without widening any
+    # other job in this workflow.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: graph-build.yml
+      labels: bug,infra

@@ -146,16 +146,24 @@ fi
 #   .github/workflows/graph-semantic.yml
 #                          test_anthropic_preflight.sh and
 #                          test_report_workflow_failure.sh, which pin that the
-#                          workflow actually INVOKES the preflight and the
-#                          failure reporter. Both couplings are exactly the kind
-#                          that fails silently: a diagnostic nothing calls is the
-#                          same silent gap as the failures it exists to explain.
+#                          workflow actually INVOKES the preflight and calls the
+#                          shared failure reporter. Both couplings are exactly
+#                          the kind that fails silently: a diagnostic nothing
+#                          calls is the same silent gap as the failures it exists
+#                          to explain.
+#   .github/workflows/_report-failure.yml
+#                          the other end of that same chain, where the reporter
+#                          is actually invoked now that all six scheduled
+#                          workflows share one failure path. Breaking the call
+#                          here silences every one of them at once, so it must be
+#                          able to fire this workflow.
 REQUIRED_PATHS=(
   "prompts/scans/**"
   ".claude/**"
   "scripts/ralph/PROMPT.md"
   ".github/workflows/weekly-playbook.yml"
   ".github/workflows/graph-semantic.yml"
+  ".github/workflows/_report-failure.yml"
 )
 paths_under() { # paths_under <push|pull_request>
   awk -v key="  $1:" '

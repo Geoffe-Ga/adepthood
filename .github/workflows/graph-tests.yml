@@ -25,6 +25,7 @@ on:
       - "scripts/ralph/PROMPT.md"
       - ".github/workflows/weekly-playbook.yml"
       - ".github/workflows/graph-semantic.yml"
+      - ".github/workflows/_report-failure.yml"
       - ".github/workflows/graph-tests.yml"
   pull_request:
     paths:
@@ -34,6 +35,7 @@ on:
       - "scripts/ralph/PROMPT.md"
       - ".github/workflows/weekly-playbook.yml"
       - ".github/workflows/graph-semantic.yml"
+      - ".github/workflows/_report-failure.yml"
       - ".github/workflows/graph-tests.yml"
 
 permissions:

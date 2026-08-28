@@ -1,0 +1,109 @@
+name: Report a workflow failure (reusable)
+
+# One failure path for every scheduled workflow in this repo.
+#
+# WHY THIS IS SHARED: a scheduled run reaches nobody. There is no PR to
+# annotate, no author waiting on a check, and nothing to click through from --
+# the whole audience is the Actions run list, which shows one word per run. The
+# graph-semantic workflow failed every week for over a month while CLAUDE.md was
+# telling every agent to prefer the knowledge graph over grep sweeps, and the
+# only thing that eventually noticed was a hand-rolled reporting job in that one
+# file. Of six actively scheduled workflows, exactly one could say it had
+# failed. This is that job, lifted out so the other five say it too, and so
+# there is ONE failure path to maintain rather than six that drift.
+#
+# It opens or UPDATES a single tracking issue per workflow, keyed on a marker in
+# the issue body. A bot that files weekly is noise, and noise is how the
+# original failures went unread.
+
+on:
+  workflow_call:
+    inputs:
+      workflow-file:
+        description: >-
+          The CALLER's bare workflow filename, e.g. "scan-groom.yml". It keys
+          the tracking issue's marker, so it must be stable and must not be
+          derived from github.workflow_ref -- that resolves to
+          owner/repo/.github/workflows/x.yml@ref, and a marker built from it
+          would change with the ref and file a fresh issue per branch.
+        required: true
+        type: string
+      headline:
+        description: >-
+          One line naming WHICH failure mode occurred, when the caller
+          classified it. Leads the issue body and the repeat-failure comment.
+        required: false
+        type: string
+        default: ""
+      labels:
+        description: "Comma-separated labels for the tracking issue, applied on creation only."
+        required: false
+        type: string
+        default: "bug,infra"
+
+# TOP LEVEL, not job level, and load-bearing: GitHub compares a called
+# workflow's declared permissions against the caller's before it schedules
+# anything, and rejects the pair outright when the caller grants less -- the run
+# ends as startup_failure with zero jobs and no log. backend/tests/
+# test_workflow_permissions.py reads exactly this block to catch that pairing
+# before it ships, so declaring these scopes anywhere else would validate
+# nothing.
+permissions:
+  contents: read   # checkout, for the reporter script itself
+  issues: write    # open or comment on the one tracking issue
+  actions: read    # `gh run view --log-failed` on the caller's run
+
+jobs:
+  report:
+    name: Open or update the tracking issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        # No step git-pushes here, so the token never needs to live in
+        # .git/config for the job.
+        with:
+          persist-credentials: false
+
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Every input arrives through the environment, never spliced into the
+          # script text. The headline in particular can originate in model
+          # output, and an inline expression is evaluated by Actions BEFORE bash
+          # sees the line -- which makes any interpolated model output a shell
+          # injection.
+          WORKFLOW_FILE: ${{ inputs.workflow-file }}
+          HEADLINE: ${{ inputs.headline }}
+          LABELS: ${{ inputs.labels }}
+        run: |
+          set -uo pipefail
+          # github.run_id inside a called reusable workflow is the CALLER's run,
+          # so this fetches the log of the thing that actually failed.
+          #
+          # An unreadable log must still produce a report: the run failed, and
+          # that fact reaching a human matters more than the detail attached to
+          # it. The reporter says so explicitly rather than filing a blank.
+          log="$RUNNER_TEMP/log-failed.txt"
+          gh run view "$GITHUB_RUN_ID" --log-failed > "$log" 2>/dev/null || : > "$log"
+
+          args=(--workflow "$WORKFLOW_FILE" --run-url "$RUN_URL" --log-file "$log")
+          if [ -n "$HEADLINE" ]; then
+            args+=(--headline "$HEADLINE")
+          fi
+          # Labels are applied on creation only; the reporter falls back to an
+          # unlabelled create if the repo lacks one, because the marker -- not
+          # the label -- is what makes the issue findable again.
+          IFS=',' read -r -a wanted <<< "$LABELS"
+          # The `[@]+` guard is not decoration: an empty labels input yields an
+          # empty array, and `"${wanted[@]}"` on one is an unbound-variable
+          # error under `set -u` on bash 3.2 -- which is what a maintainer
+          # hand-running this block on a Mac has.
+          for label in ${wanted[@]+"${wanted[@]}"}; do
+            if [ -n "$label" ]; then
+              args+=(--label "$label")
+            fi
+          done
+
+          bash scripts/graph/report_workflow_failure.sh "${args[@]}"

@@ -1,0 +1,97 @@
+name: Scheduled workflow health
+
+# Watch the other scheduled workflows from OUTSIDE.
+#
+# Every actively scheduled workflow here now reports its own failures. That
+# covers every failure except the quietest one: `startup_failure`, where GitHub
+# rejects the workflow file before creating a single job. No job means no
+# reporting job either, so a workflow in that state cannot tell anyone -- and it
+# looks, in the run list, exactly like a workflow with nothing to do. Twelve
+# scan workflows sat that way and never ran once.
+#
+# So this runs daily, reads the schedule out of the checked-out tree, and asks
+# the API what each actively scheduled workflow's recent runs concluded. It only
+# looks for `startup_failure`; see scripts/ci/check_scheduled_runs.sh for why it
+# deliberately does not also try to detect "has not run in its window".
+#
+# THE RECURSION STOPS HERE, BY DESIGN. This workflow's own `startup_failure`
+# would be unwatched -- nothing outside it is looking. Adding a second watcher
+# would only move the same gap one level out. What makes that acceptable is that
+# this file is small, calls exactly one local reusable workflow, and its
+# permission pairing with that callee is checked offline on every PR by
+# backend/tests/test_workflow_permissions.py, which is the failure mode that
+# produces startup_failure in the first place.
+
+on:
+  schedule:
+    # Daily 06:10 UTC -- after the 04:00 grooming and the 04:40 graph build, so
+    # the day's early runs are already concluded and in view.
+    - cron: "10 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-health
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check every scheduled workflow for startup failures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level: `actions: read` to list other workflows' runs, `issues: write`
+    # because a sick workflow gets the same single tracking issue every other
+    # failure here gets. The file's own header stays `contents: read`.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sweep the scheduled workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # The sweep writes the per-workflow table to the step summary itself.
+          # Its exit code carries three answers and all three are branched on:
+          # collapsing "could not complete the sweep" into either "clean" or
+          # "something is sick" is the same mistake as the one being fixed.
+          status=0
+          scripts/ci/check_scheduled_runs.sh || status=$?
+          case "$status" in
+            0)
+              note="Every actively scheduled workflow has started normally in its recent runs." ;;
+            1)
+              note="At least one scheduled workflow is being rejected before any job is created. Each now has its own tracking issue. Failing this run so it is not just a line in a summary." ;;
+            2)
+              note="The sweep could not be completed, so the health of some workflow is UNKNOWN. This is not a clean bill -- failing the run rather than reporting a health check that did not happen." ;;
+            *)
+              note="The sweep exited $status, which it is not documented to do. Failing closed." ;;
+          esac
+          printf '\n%s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 0 ]; then
+            echo "::notice::$note"
+            exit 0
+          fi
+          echo "::error::$note"
+          exit 1
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: check
+    if: failure()
+    # A watcher whose own failures are silent is the thing it exists to find.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: scheduled-health.yml
+      labels: bug,infra
