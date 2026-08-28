@@ -190,6 +190,40 @@ describe('MissedDaysModal guards against a missing habit id', () => {
   });
 });
 
+describe('MissedDaysModal keeps local actions open to a client-minted habit', () => {
+  // Only the manager decides what goes on the wire; the modal's actions are local.
+  const clientMinted: Habit = { ...baseHabit, hasClientMintedIds: true };
+
+  it('still backfills every missed day', () => {
+    const { getByText, onBackfill, onClose } = renderMissedDaysModal({ habit: clientMinted });
+    fireEvent.press(getByText('Yes, I did it!'));
+    expect(onBackfill).toHaveBeenCalledWith(7, missedDays);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('still backfills a pre-sync row whose id is a negative placeholder', () => {
+    const preSync: Habit = { ...baseHabit, id: -1_756_000_000_000, hasClientMintedIds: true };
+    const { getByText, onBackfill, onClose } = renderMissedDaysModal({ habit: preSync });
+    fireEvent.press(getByText('Yes, I did it!'));
+    expect(onBackfill).toHaveBeenCalledWith(preSync.id, missedDays);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('still resets the start date on confirmation', () => {
+    const { getByText, getByTestId, onNewStartDate, onClose } = renderMissedDaysModal({
+      habit: clientMinted,
+    });
+    fireEvent.press(getByText('Set new start date'));
+    fireEvent.press(getByTestId('calendar-mock-day'));
+    fireEvent.press(getByTestId('reset-confirm-yes'));
+
+    expect(onNewStartDate).toHaveBeenCalledTimes(1);
+    const [habitId] = onNewStartDate.mock.calls[0] as [number, Date];
+    expect(habitId).toBe(7);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('MissedDaysModal reset-start-date flow', () => {
   it('shows the calendar after choosing to set a new start date', () => {
     const { getByText, getByTestId } = renderMissedDaysModal();

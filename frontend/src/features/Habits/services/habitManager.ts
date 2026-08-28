@@ -57,6 +57,7 @@ import {
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
 import {
+  ClientMintedIdError,
   isNotDemoSeed,
   isServerBackedGoal,
   isServerBackedHabit,
@@ -275,6 +276,13 @@ const buildTierGoals = (habitName: string, idFor: (tierIndex: number) => number)
     target: t.target,
   }));
 
+/**
+ * Scaffold the onboarding picks into store rows so the tiles are interactive
+ * immediately, before the POSTs and the trailing reload land. The ids minted
+ * here are positive integers inside the server's own range, so nothing about
+ * their shape distinguishes them from real ones — `hasClientMintedIds` is the
+ * only thing that keeps them off the wire during that window.
+ */
 const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
   newHabits.map((habit, index) => ({
     ...habit,
@@ -283,13 +291,18 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
     revealed: false,
     completions: [] as Habit['completions'],
     goals: buildTierGoals(habit.name, (ti) => index * 3 + ti + 1),
+    hasClientMintedIds: true,
   }));
 
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
  * STAGE_ORDER so habits added after the original ten still pick up an
- * aptitude color; ids are negative placeholders that get replaced when the
- * server round-trip succeeds and `loadHabits` rehydrates from the API.
+ * aptitude color; the ids are placeholders replaced when the server round-trip
+ * succeeds and `loadHabits` rehydrates from the API.
+ *
+ * `hasClientMintedIds` — not the negative sign — is what keeps those ids off
+ * the wire; the timestamp-derived sign convention survives as belt-and-braces
+ * and as a readable "this is not a real id" cue in a debugger.
  *
  * The new row's slot comes from its own partition of ``prev``: a program add
  * takes the next non-carryover index, while a carryover add takes the next
@@ -315,6 +328,7 @@ const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boole
     goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
+    hasClientMintedIds: true,
     // Partition-scoped ordinal, not a global one: carryover and program slots
     // each restart at 0, so read sort_order only after splitting by is_carryover.
     sort_order: slotIndex,
@@ -418,6 +432,8 @@ export interface LogUnitContext {
   completedOn?: string;
   /** Demo-seed tile: its goal id is client-fabricated, so a queued check-in could never post. */
   isDemoSeed?: boolean;
+  /** The current goal's id when the server issued it; null when this device minted it. */
+  serverGoalId: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,8 +1174,11 @@ export const habitManager = {
    * Compute the next habit list for a logUnit operation without mutating
    * the store. Returns null when no habit matches `habitId`. The
    * resulting context is the input to `useOptimisticMutation` — `apply`
-   * writes `next`, `commit` POSTs `currentGoal.id`, and `rollback`
-   * restores `prev`. Splitting the computation out of the side-effecting
+   * writes `next`, `commit` POSTs `serverGoalId`, and `rollback`
+   * restores `prev`. `serverGoalId` is `currentGoal.id` only when the goal
+   * is server-backed, and `null` otherwise, so a client-minted id never
+   * reaches the wire: `commit` resyncs instead of posting.
+   * Splitting the computation out of the side-effecting
    * apply step is what keeps the rollback closure correct: the snapshot
    * is captured by value before the optimistic write, so a later
    * concurrent mutate cannot clobber it.
@@ -1176,10 +1195,14 @@ export const habitManager = {
     let newProgress = 0;
     let habitName = '';
     let isDemoSeed = false;
+    // The matched row is the only place the goal's provenance is recorded, so
+    // keep a handle on it for the ``isServerBackedGoal`` check below.
+    let parent: Habit | null = null;
     const next = prev.map((h) => {
       if (h.id !== habitId) return h;
       habitName = h.name;
       isDemoSeed = h.isDemoSeed === true;
+      parent = h;
       const result = applyLogUnit(h, amount, tz, date);
       oldProgress = result.oldProgress;
       newProgress = result.newProgress;
@@ -1204,6 +1227,7 @@ export const habitManager = {
       nextGoal,
       completedOn,
       isDemoSeed,
+      serverGoalId: isServerBackedGoal(currentGoal, parent) ? currentGoal.id : null,
     };
   },
 
@@ -1217,22 +1241,29 @@ export const habitManager = {
   },
 
   /**
-   * Network step. POSTs the goal completion. Returns null when the tile is a
-   * demo placeholder, or when the habit has no current goal (rare; the
-   * store-side `prepareLogUnit` has already validated `updated` exists, but we
-   * still guard here so the API isn't hit with `goal_id: undefined`).
+   * Network step. POSTs the goal completion. Returns null for a demo
+   * placeholder, and rejects with `ClientMintedIdError` when this device minted
+   * the goal id — the caller turns that into a resync.
    */
   commitLogUnitContext: async (ctx: LogUnitContext): Promise<CheckInResult | null> => {
     if (ctx.isDemoSeed === true) return null;
-    // Deliberately NOT ``isServerIssuedId``: a negative pre-sync goal id is
-    // still posted, because the 404 ``goal_not_found`` it draws is what triggers
-    // the stale-scaffold resync that swaps those ids for real ones. Suppressing
-    // it would turn a recoverable failure into a silent local-only success.
-    // ``backfillMissedDays`` does demand a positive id, because its failure path
-    // is a full rollback that would throw the user's backfill away.
-    if (!ctx.currentGoal.id) return null;
+    // A non-server goal id used to be posted on purpose, to draw the 404
+    // ``goal_not_found`` that triggers the stale-scaffold resync. That trade
+    // cannot hold: an onboarding scaffold's goal id is a positive integer in
+    // the server's own range, so the POST does not reliably 404 — when the id
+    // happens to name a goal the caller owns, it SUCCEEDS and records a
+    // completion against the wrong habit, celebration and all. The marker tells
+    // us locally what the 404 told us remotely, so we resync without the
+    // round-trip. The 404 path stays in the hook regardless: a row cached by a
+    // build predating the marker, or a real server id whose goal was deleted
+    // server-side, is visible only in the server's answer.
+    if (ctx.serverGoalId === null) {
+      throw new ClientMintedIdError(
+        'This habit has not finished saving to your account, so its goal id names no server row.',
+      );
+    }
     return goalCompletionsApi.create({
-      goal_id: ctx.currentGoal.id,
+      goal_id: ctx.serverGoalId,
       did_complete: true,
       completed_on: ctx.completedOn,
     });

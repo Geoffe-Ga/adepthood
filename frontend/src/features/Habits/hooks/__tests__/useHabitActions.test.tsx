@@ -136,6 +136,10 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+/** An onboarding scaffold row: positive, plausible ids that only this device knows. */
+const makeScaffoldHabit = (overrides: Partial<Habit> = {}): Habit =>
+  makeHabit({ hasClientMintedIds: true, ...overrides });
+
 const renderActions = () => {
   const showToast = jest.fn();
   const { result } = renderHook(() => {
@@ -454,6 +458,80 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
       message: expect.stringMatching(/Low Goal achieved/i) as unknown,
     });
+  });
+});
+
+describe('useHabitActions.logUnit on a client-minted scaffold tile', () => {
+  const toastMessages = (showToast: jest.Mock): string[] =>
+    showToast.mock.calls.map((c) => (c[0] as { message: string }).message);
+
+  it('resyncs in the background instead of posting an id the server never issued', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).toHaveBeenCalledTimes(1);
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
+    expect(toastMessages(showToast).some((m) => /sync when you reconnect/i.test(m))).toBe(false);
+  });
+
+  it('says the habit has not finished saving and to try again', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const message = toastMessages(showToast).at(-1)!;
+    expect(message).toMatch(/finish(ed)? saving/i);
+    expect(message).toMatch(/again/i);
+  });
+
+  it('never queues the check-in and never promises it will sync later', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new TypeError('fetch failed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(toastMessages(showToast).some((m) => /sync when you reconnect/i.test(m))).toBe(false);
+  });
+
+  it('does not queue even when a raw network error reaches the failure handler', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const commitSpy = jest
+      .spyOn(habitManager, 'commitLogUnitContext')
+      .mockRejectedValue(new TypeError('fetch failed'));
+    try {
+      const { result } = renderActions();
+
+      await act(async () => {
+        result.current.actions.logUnit(1, 1);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(savePendingCheckIn).not.toHaveBeenCalled();
+    } finally {
+      commitSpy.mockRestore();
+    }
   });
 });
 
