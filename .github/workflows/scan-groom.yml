@@ -108,9 +108,30 @@ jobs:
           # `success`; wiring `conclusion` here would feed the classifier
           # `success` for every failure and silently disable all of this.
           STEP_OUTCOME: ${{ steps.groom.outcome }}
+          # True only when the ref can be POSITIVELY established as something
+          # other than the default branch. The failure direction of a wrong
+          # answer here is calling a real empty transcript benign, so every
+          # uncertain case has to land on false.
+          #
+          # An absent `default_branch` lands there by GitHub's own coercion:
+          # comparing different types casts both to numbers, null and the empty
+          # string both become 0, so the first operand is false and `&&`
+          # short-circuits to it.
+          SKIP_PERMITTED: ${{ github.event.repository.default_branch != '' && github.ref_name != github.event.repository.default_branch }}
           EXECUTION_FILE: ${{ steps.groom.outputs.execution_file }}
         run: |
           set -uo pipefail
+          # Belt and braces on top of that coercion, not a correction to it.
+          # The classifier accepts only the literals `true` and `false`, and
+          # the value above is produced by a documented casting rule rather
+          # than written out here -- so pin the invariant locally instead of
+          # resting on a rule read from someone else's documentation. Anything
+          # that is not exactly `true` means the ref could not be established
+          # as different, and that is the strict reading.
+          if [ "$SKIP_PERMITTED" != "true" ]; then
+            SKIP_PERMITTED=false
+          fi
+
           # The action writes the transcript BEFORE it throws for a turn-cap
           # overrun, and its catch path sets `execution_file` -- but whether a
           # composite action's outputs survive an inner step failure is not
@@ -126,6 +147,7 @@ jobs:
           outcome="$(scripts/ci/classify_claude_outcome.sh \
             --execution-file "$file" \
             --step-outcome "$STEP_OUTCOME" \
+            --skip-permitted "$SKIP_PERMITTED" \
             --max-turns "$MAX_TURNS")" || status=$?
           if [ "$status" -ne 0 ]; then
             echo "::error::the outcome classifier could not run, so this run is unclassified -- treat it as failed and fix the wiring."
@@ -138,6 +160,9 @@ jobs:
           # unrecognised fails closed: a verdict this block has not been taught
           # must never fall through to green.
           case "$outcome" in
+            skipped)
+              note="Nothing ran: the action declined because this workflow file differs from the copy on the default branch. That is its anti-tamper check doing its job, not a failure -- but it does mean this run proves only that the job was created. The job passes."
+              fail=0 ;;
             completed)
               note="Grooming completed. The job passes."
               fail=0 ;;

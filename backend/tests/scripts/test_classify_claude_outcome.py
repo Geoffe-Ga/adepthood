@@ -67,11 +67,20 @@ USAGE_LIMIT = "usage-limit"
 AUTH_FAILURE = "auth-failure"
 AGENT_ERROR = "agent-error"
 NO_RESULT = "no-result"
+SKIPPED = "skipped"
 
 # Every verdict the classifier may reach. A usage fault must produce none of
 # these on stdout, which is what keeps "the tool broke" separable from "the run
 # broke".
-TOKENS = (COMPLETED, TURN_CAP_OVERRUN, USAGE_LIMIT, AUTH_FAILURE, AGENT_ERROR, NO_RESULT)
+TOKENS = (
+    COMPLETED,
+    TURN_CAP_OVERRUN,
+    USAGE_LIMIT,
+    AUTH_FAILURE,
+    AGENT_ERROR,
+    NO_RESULT,
+    SKIPPED,
+)
 
 # The same exit code the other repo-owned gate scripts use for a usage fault.
 EXIT_USAGE = 2
@@ -84,23 +93,53 @@ LIVE_MAX_TURNS = 40
 # result message in and calling it a headline.
 HEADLINE_CHARACTER_CEILING = 400
 
+# Not a filename. The skip family is defined by the transcript being ABSENT,
+# so the table names the absence rather than pointing at a file that would
+# have to exist to say "this one does not exist".
+MISSING_TRANSCRIPT = None
+
 TURN_CAP_44 = "turn-cap-overrun-44-turns.json"
 TURN_CAP_41 = "turn-cap-overrun-41-turns.json"
 USAGE_LIMIT_RUN = "usage-limit-weekly.json"
 AUTH_FAILURE_RUN = "synthesized-auth-failure-401.json"
 NO_RESULT_RUN = "synthesized-no-result-message.json"
 
+
 # (fixture, step outcome, cap, expected token). Between them these seven rows
 # reach all six tokens; `test_every_token_is_reachable_from_a_fixture` holds
 # that true as rows are edited.
+@dataclass(frozen=True)
+class Scenario:
+    """One (input, expected verdict) row of the table below.
+
+    A record rather than a tuple because the inputs outgrew what a positional
+    signature can carry legibly -- five loose parameters per test read as noise
+    at the call site and say nothing about which is which.
+    """
+
+    fixture: str | None
+    step_outcome: str
+    max_turns: int
+    skip_permitted: str
+    expected: str
+
+    @property
+    def label(self) -> str:
+        """A pytest id that says what the row is, not merely that it exists."""
+        transcript = "no-transcript" if self.fixture is MISSING_TRANSCRIPT else self.fixture
+        skip = "-skippable" if self.skip_permitted == "true" else ""
+        return f"{transcript}-{self.step_outcome}-cap{self.max_turns}{skip}"
+
+
 SCENARIOS = [
-    (TURN_CAP_44, "success", LIVE_MAX_TURNS, COMPLETED),
-    (TURN_CAP_44, "failure", LIVE_MAX_TURNS, TURN_CAP_OVERRUN),
-    (TURN_CAP_41, "failure", LIVE_MAX_TURNS, TURN_CAP_OVERRUN),
-    (TURN_CAP_41, "failure", 60, AGENT_ERROR),
-    (USAGE_LIMIT_RUN, "failure", LIVE_MAX_TURNS, USAGE_LIMIT),
-    (AUTH_FAILURE_RUN, "failure", LIVE_MAX_TURNS, AUTH_FAILURE),
-    (NO_RESULT_RUN, "failure", LIVE_MAX_TURNS, NO_RESULT),
+    Scenario(TURN_CAP_44, "success", LIVE_MAX_TURNS, "false", COMPLETED),
+    Scenario(TURN_CAP_44, "failure", LIVE_MAX_TURNS, "false", TURN_CAP_OVERRUN),
+    Scenario(TURN_CAP_41, "failure", LIVE_MAX_TURNS, "false", TURN_CAP_OVERRUN),
+    Scenario(TURN_CAP_41, "failure", 60, "false", AGENT_ERROR),
+    Scenario(USAGE_LIMIT_RUN, "failure", LIVE_MAX_TURNS, "false", USAGE_LIMIT),
+    Scenario(AUTH_FAILURE_RUN, "failure", LIVE_MAX_TURNS, "false", AUTH_FAILURE),
+    Scenario(NO_RESULT_RUN, "failure", LIVE_MAX_TURNS, "false", NO_RESULT),
+    Scenario(MISSING_TRANSCRIPT, "success", LIVE_MAX_TURNS, "true", SKIPPED),
 ]
 
 
@@ -153,6 +192,7 @@ def _classify(
     *,
     step_outcome: str,
     max_turns: int = LIVE_MAX_TURNS,
+    skip_permitted: str = "false",
 ) -> Classification:
     """Classify one execution file, insisting the script exited 0 as a query must."""
     result = _run(
@@ -163,12 +203,32 @@ def _classify(
         step_outcome,
         "--max-turns",
         str(max_turns),
+        "--skip-permitted",
+        skip_permitted,
     )
     assert result.exit_code == 0, (
         "a verdict is carried by the token, not the exit code; a non-zero exit here "
         f"means the script treated a classifiable run as a usage fault: {result.stderr}"
     )
     return result
+
+
+def _transcript(tmp_path: Path, fixture: str | None) -> Path:
+    """Resolve a scenario's fixture name, or a path that deliberately does not exist."""
+    if fixture is MISSING_TRANSCRIPT:
+        return tmp_path / "no-transcript-was-written.json"
+    return _RUNS / fixture
+
+
+def _classify_scenario(tmp_path: Path, scenario: Scenario) -> Classification:
+    """Run one table row, resolving its transcript and carrying its skip flag."""
+    return _classify(
+        tmp_path,
+        _transcript(tmp_path, scenario.fixture),
+        step_outcome=scenario.step_outcome,
+        max_turns=scenario.max_turns,
+        skip_permitted=scenario.skip_permitted,
+    )
 
 
 def _token(
@@ -406,32 +466,30 @@ def test_a_transcript_that_never_reached_a_result_is_no_result(tmp_path: Path) -
 
 def test_every_token_is_reachable_from_a_fixture() -> None:
     """A token nothing exercises is a branch nobody has ever run."""
-    assert {expected for *_, expected in SCENARIOS} == set(TOKENS)
+    assert {scenario.expected for scenario in SCENARIOS} == set(TOKENS)
 
 
 # --- What the run list and the next step actually see ----------------------
 
 
-@pytest.mark.parametrize(("fixture", "step_outcome", "max_turns", "expected"), SCENARIOS)
-def test_the_token_is_published_as_a_step_output(
-    tmp_path: Path, fixture: str, step_outcome: str, max_turns: int, expected: str
-) -> None:
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.label)
+def test_the_token_is_published_as_a_step_output(tmp_path: Path, scenario: Scenario) -> None:
     """Whatever branches on the verdict reads it here, not from stdout."""
-    result = _classify(tmp_path, _RUNS / fixture, step_outcome=step_outcome, max_turns=max_turns)
+    result = _classify_scenario(tmp_path, scenario)
 
-    assert result.token == expected
-    assert _output_value(result.output, "outcome") == expected
+    assert result.token == scenario.expected
+    assert _output_value(result.output, "outcome") == scenario.expected
 
 
-@pytest.mark.parametrize(("fixture", "step_outcome", "max_turns", "expected"), SCENARIOS)
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.label)
 def test_every_outcome_writes_one_headline_to_both_places(
-    tmp_path: Path, fixture: str, step_outcome: str, max_turns: int, expected: str
+    tmp_path: Path, scenario: Scenario
 ) -> None:
     """A verdict nobody can see from the run list is the condition being fixed."""
-    result = _classify(tmp_path, _RUNS / fixture, step_outcome=step_outcome, max_turns=max_turns)
+    result = _classify_scenario(tmp_path, scenario)
     headline = _output_value(result.output, "headline")
 
-    assert headline.strip(), f"{expected} produced an empty headline"
+    assert headline.strip(), f"{scenario.expected} produced an empty headline"
     assert "\n" not in headline
     assert len(headline) <= HEADLINE_CHARACTER_CEILING
     assert headline in result.summary, "the step summary must show the operator the same line"
@@ -527,3 +585,143 @@ def test_a_usage_fault_still_leaves_the_step_outputs_defined(tmp_path: Path) -> 
 def test_the_classifier_is_executable() -> None:
     """The workflow invokes it directly; mode 100644 would exit 126 and look like a crash."""
     assert os.access(_CLASSIFY, os.X_OK)
+
+
+# --- The action declining to run at all ------------------------------------
+#
+# Found by dispatching the real workflow from a branch. The Claude action
+# refuses to run when the workflow file differs from the copy on the default
+# branch, an anti-tamper check, and it declines by exiting SUCCESS having
+# written no transcript at all. That is byte-for-byte the shape of a mis-wired
+# classifier: step succeeded, nothing to read.
+#
+# The two need opposite answers. A self-skip is expected and benign on any
+# branch that edits the workflow, and failing it manufactures exactly the false
+# red this change exists to remove. A missing transcript on the default branch,
+# where the file matches by definition, is a real fault.
+#
+# Nothing in the transcript separates them, because there is no transcript. The
+# caller knows which case it is, since it knows its own ref, so the caller says
+# so -- and the default is the strict reading: silence about the ref leaves a
+# missing transcript a failure.
+
+
+def test_a_missing_transcript_is_still_a_failure_by_default(tmp_path: Path) -> None:
+    """The strict reading is the default; a skip has to be asked for."""
+    assert _classify(tmp_path, tmp_path / "absent.json", step_outcome="success").token == NO_RESULT
+
+
+def test_a_permitted_skip_is_named_rather_than_called_a_failure(tmp_path: Path) -> None:
+    """The action declined to run, which is not the run having gone wrong."""
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(tmp_path / "absent.json"),
+        "--step-outcome",
+        "success",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        "true",
+    )
+
+    assert result.token == SKIPPED
+    assert result.exit_code == 0
+
+
+def test_a_permitted_skip_still_reports_no_result_when_the_step_failed(tmp_path: Path) -> None:
+    """A self-skip exits clean, so a failed step with no transcript is something else."""
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(tmp_path / "absent.json"),
+        "--step-outcome",
+        "failure",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        "true",
+    )
+
+    assert result.token == NO_RESULT
+
+
+def test_permitting_a_skip_does_not_reinterpret_a_transcript_that_exists(tmp_path: Path) -> None:
+    """The flag licenses reading silence differently, never rewriting evidence."""
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(_RUNS / USAGE_LIMIT_RUN),
+        "--step-outcome",
+        "failure",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        "true",
+    )
+
+    assert result.token == USAGE_LIMIT
+
+
+def test_a_skip_flag_that_is_neither_true_nor_false_is_a_usage_fault(tmp_path: Path) -> None:
+    """Guessing at an unrecognised value is how a strict default gets lost."""
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(tmp_path / "absent.json"),
+        "--step-outcome",
+        "success",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        "maybe",
+    )
+
+    assert result.exit_code == EXIT_USAGE
+    assert result.token == ""
+
+
+def test_the_skip_headline_says_that_nothing_ran(tmp_path: Path) -> None:
+    """An operator reading only the summary must not conclude the work happened."""
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(tmp_path / "absent.json"),
+        "--step-outcome",
+        "success",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        "true",
+    )
+
+    assert "skip" in result.summary.lower()
+    assert f"outcome={SKIPPED}" in result.output
+
+
+@pytest.mark.parametrize("value", ["", " ", "maybe", "TRUE", "1", "yes"])
+def test_only_the_two_literal_skip_values_are_accepted(tmp_path: Path, value: str) -> None:
+    """Empty is included on purpose: it is what an absent default branch produces.
+
+    The caller builds this from a workflow expression whose value comes out of
+    GitHub's type-casting rules rather than being written out literally, and the
+    caller normalises anything that is not exactly ``true`` before calling.
+    Accepting a loose value here as "false" would be convenient and wrong:
+    it would put the decision in this script, where the ref is not known, and
+    silently paper over a caller that never wired the value at all. Rejecting it
+    forces the caller to normalise, which is where the ref actually is.
+    """
+    result = _run(
+        tmp_path,
+        "--execution-file",
+        str(tmp_path / "absent.json"),
+        "--step-outcome",
+        "success",
+        "--max-turns",
+        str(LIVE_MAX_TURNS),
+        "--skip-permitted",
+        value,
+    )
+
+    assert result.exit_code == EXIT_USAGE
+    assert result.token == ""
