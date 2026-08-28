@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import socket
 import time
 
 from services.creek_vault_url_user import (
@@ -102,8 +103,15 @@ def cached_host_count() -> int:
     return len(_resolution_cache)
 
 
-async def _resolve(host: str) -> tuple[str, ...]:
+async def resolve_host_addresses(host: str) -> tuple[str, ...]:
     """Return every textual address ``host`` resolves to, raising if it resolves to none.
+
+    Public, and the single implementation both halves of the guard share: the
+    cached verdict this module computes on the write and dial paths, and the
+    uncached connect-time pin in
+    :mod:`services.creek_vault_pinned_transport`. Two lookups written twice would
+    be two chances to disagree about what a name points at, which is the whole
+    subject of this guard.
 
     A module-level function rather than a method or an injected collaborator
     because it is the seam the whole guard is tested through: a test that
@@ -114,14 +122,34 @@ async def _resolve(host: str) -> tuple[str, ...]:
     ``loop.getaddrinfo`` rather than the blocking call it wraps. The synchronous
     one holds the event loop for the duration of a DNS round trip, which on this
     path means every other request in the process waits on one writer's vault.
+
+    ``SOCK_STREAM`` is asked for, and the answer is deduplicated, because the
+    same address arriving twice is not free. With no socktype hint the resolver
+    answers once per socktype -- two rows an address here, three under glibc --
+    and the connect-time pin walks its answers in order, so a duplicate spends a
+    whole connect budget re-dialling the address that has just failed. Against a
+    family that blackholes rather than refusing, that is enough to exhaust the
+    walk inside the whole-request deadline before it ever crosses to the other
+    family, which is the one thing the walk exists to do. The hint alone would
+    settle it on this platform; the dedup is what makes the property true of the
+    function rather than of the machine it runs on. A stream socket is also the
+    only kind this answer is ever used to open.
     """
     loop = asyncio.get_running_loop()
-    answers = await loop.getaddrinfo(host, None)
-    return tuple(str(sockaddr[_ADDRESS_INDEX]) for *_, sockaddr in answers)
+    answers = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    return tuple(dict.fromkeys(str(sockaddr[_ADDRESS_INDEX]) for *_, sockaddr in answers))
 
 
-def _is_address_literal(host: str) -> bool:
-    """Report whether ``host`` is already an address and so owes no lookup."""
+def host_is_address_literal(host: str) -> bool:
+    """Report whether ``host`` is already an address and so owes no lookup.
+
+    Public for the same reason its neighbour above is: it is the single
+    implementation both halves of the guard share, the cached verdict here and
+    the uncached connect-time pin in
+    :mod:`services.creek_vault_pinned_transport`. A second spelling of "this is
+    already an address" is a second place for the two to disagree about which
+    hosts get looked up at all.
+    """
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -182,7 +210,7 @@ async def _judge(host: str) -> UserVaultUrlFinding | None:
     submitted value.
     """
     try:
-        addresses = await _resolve(host)
+        addresses = await resolve_host_addresses(host)
     except (OSError, UnicodeError):
         return _UNRESOLVABLE_FINDING
     if not addresses:
@@ -204,7 +232,7 @@ async def classify_resolved_user_vault_url(host: str) -> UserVaultUrlFinding | N
     because ``getaddrinfo("")`` answers with this machine's own loopback and a
     guard that dialled it would have found the hole by walking into it.
     """
-    if _is_address_literal(host):
+    if host_is_address_literal(host):
         return None
     if not host:
         return _UNRESOLVABLE_FINDING
