@@ -10,6 +10,7 @@ import { STAGE_COLORS, spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
+import DroppedCheckInNotice from './components/DroppedCheckInNotice';
 import GoalModal from './components/GoalModal';
 import HabitEmojiPicker from './components/HabitEmojiPicker';
 import HabitsDrawer from './components/HabitsDrawer';
@@ -640,6 +641,8 @@ export const HabitsContent = ({
   return (
     <>
       {error && <ErrorBanner error={error} onRetry={onRetry} />}
+      {/* Self-suppressing: renders nothing unless a queued check-in was lost. */}
+      <DroppedCheckInNotice />
       {loading && <LoadingSpinner />}
       {!loading && (
         <HabitsBody

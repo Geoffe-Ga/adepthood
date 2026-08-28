@@ -3,7 +3,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Habit } from '../../features/Habits/Habits.types';
+import type { DroppedCheckIn } from '../habitStorage';
 import {
+  MAX_DROPPED_CHECK_INS,
   saveHabits,
   loadHabits,
   clearHabits,
@@ -11,6 +13,9 @@ import {
   loadPendingCheckIns,
   replacePendingCheckIns,
   clearPendingCheckIns,
+  recordDroppedCheckIn,
+  loadDroppedCheckIns,
+  clearDroppedCheckIns,
 } from '../habitStorage';
 import { _resetSerializedWriteForTests } from '../serializedWrite';
 
@@ -316,6 +321,133 @@ describe('habitStorage', () => {
       );
 
       warnSpy.mockRestore();
+    });
+  });
+  describe('dropped check-in quarantine', () => {
+    const DROPPED_KEY = '@adepthood/dropped_checkins';
+
+    const dropped = (goalId: number, overrides: Partial<DroppedCheckIn> = {}): DroppedCheckIn => ({
+      goal_id: goalId,
+      did_complete: true,
+      timestamp: '2025-05-01T00:00:00Z',
+      status: 404,
+      dropped_at: '2025-05-02T09:00:00Z',
+      ...overrides,
+    });
+
+    const lastWritten = (): DroppedCheckIn[] => {
+      const calls = mockAsyncStorage.setItem.mock.calls.filter((c) => c[0] === DROPPED_KEY);
+      expect(calls.length).toBeGreaterThan(0);
+      return JSON.parse(calls.at(-1)![1] as string) as DroppedCheckIn[];
+    };
+
+    beforeEach(() => {
+      // A sibling test installs a stateful AsyncStorage double; restore the
+      // file-level defaults so each case here starts from an empty store.
+      mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(null));
+      mockAsyncStorage.setItem.mockImplementation(() => Promise.resolve());
+      mockAsyncStorage.removeItem.mockImplementation(() => Promise.resolve());
+    });
+
+    test('appends the first dropped check-in under the quarantine key', async () => {
+      const entry = dropped(11);
+
+      await recordDroppedCheckIn(entry);
+
+      expect(mockAsyncStorage.setItem).toHaveBeenCalledTimes(1);
+      expect(mockAsyncStorage.setItem.mock.calls[0]![0]).toBe(DROPPED_KEY);
+      const written = lastWritten();
+      expect(written).toHaveLength(1);
+      expect(written[0]).toEqual(entry);
+    });
+
+    test('appends behind the entries already quarantined without losing them', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify([dropped(1), dropped(2)]));
+
+      await recordDroppedCheckIn(dropped(3));
+
+      const written = lastWritten();
+      expect(written).toHaveLength(3);
+      expect(written.map((d) => d.goal_id)).toEqual([1, 2, 3]);
+    });
+
+    test('bounds the quarantine at MAX_DROPPED_CHECK_INS, evicting the oldest', async () => {
+      const seeded = Array.from({ length: MAX_DROPPED_CHECK_INS }, (_, i) => dropped(i + 1));
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify(seeded));
+      const newest = dropped(999);
+
+      await recordDroppedCheckIn(newest);
+
+      const written = lastWritten();
+      expect(written).toHaveLength(MAX_DROPPED_CHECK_INS);
+      expect(written[0]).toEqual(seeded[1]);
+      expect(written.at(-1)).toEqual(newest);
+    });
+
+    test('aborts the write on a transient read rather than clobbering the quarantine', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('transient read'));
+
+      await expect(recordDroppedCheckIn(dropped(5))).resolves.toBeUndefined();
+
+      expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+      expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+    });
+
+    test('resolves rather than rejecting when the quarantine write itself fails', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      mockAsyncStorage.setItem.mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(recordDroppedCheckIn(dropped(6))).resolves.toBeUndefined();
+
+      warnSpy.mockRestore();
+    });
+
+    test('serializes concurrent appends so neither drop record is lost', async () => {
+      // Same read-modify-write race BUG-FE-STORAGE-002 covers for the pending
+      // queue: without a serialized lane both appenders read the same stale
+      // value and the slower write clobbers the faster one.
+      let storedRaw: string | null = null;
+      const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+      mockAsyncStorage.getItem.mockImplementation(async (_key: string) => {
+        await sleep(5);
+        return storedRaw;
+      });
+      mockAsyncStorage.setItem.mockImplementation(async (_key: string, value: string) => {
+        await sleep(5);
+        storedRaw = value;
+      });
+
+      const first = recordDroppedCheckIn(dropped(41));
+      const second = recordDroppedCheckIn(dropped(42));
+      await Promise.all([first, second]);
+
+      const quarantined = await loadDroppedCheckIns();
+      expect(quarantined).toHaveLength(2);
+      expect(quarantined.map((d) => d.goal_id).sort((a, b) => a - b)).toEqual([41, 42]);
+    });
+
+    test('loadDroppedCheckIns returns an empty list when nothing is quarantined', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(null);
+
+      await expect(loadDroppedCheckIns()).resolves.toEqual([]);
+    });
+
+    test('loadDroppedCheckIns returns the stored quarantine entries', async () => {
+      mockAsyncStorage.getItem.mockResolvedValueOnce(JSON.stringify([dropped(71), dropped(72)]));
+
+      const result = await loadDroppedCheckIns();
+
+      expect(result).toHaveLength(2);
+      expect(result.map((d) => d.goal_id)).toEqual([71, 72]);
+    });
+
+    test('clearDroppedCheckIns removes the quarantine key', async () => {
+      await clearDroppedCheckIns();
+
+      expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(DROPPED_KEY);
     });
   });
 });

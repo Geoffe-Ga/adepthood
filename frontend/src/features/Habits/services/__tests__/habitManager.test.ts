@@ -32,6 +32,9 @@ jest.mock('../../../../storage/habitStorage', () => ({
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('../../hooks/useHabitNotifications', () => ({
@@ -61,10 +64,14 @@ import {
 import {
   saveHabits,
   loadHabits,
+  clearDroppedCheckIns,
+  loadDroppedCheckIns,
   loadPendingCheckIns,
   clearPendingCheckIns,
+  recordDroppedCheckIn,
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
+import type { DroppedCheckInState } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
@@ -155,6 +162,18 @@ const postedGoalIds = (): number[] =>
   (goalCompletionsApi.create as jest.Mock).mock.calls.map(
     (call) => (call[0] as { goal_id: number }).goal_id,
   );
+
+interface DroppedStore {
+  getState: () => DroppedCheckInState;
+}
+
+// Required lazily so a missing store module fails only the tests that read it.
+const droppedStore = (): DroppedStore =>
+  (
+    require('../../../../store/useDroppedCheckInStore') as {
+      useDroppedCheckInStore: DroppedStore;
+    }
+  ).useDroppedCheckInStore;
 
 // Fixed so the program-clock assertions never drift with the calendar.
 const FIXED_TODAY = new Date(2026, 5, 1);
@@ -3205,6 +3224,175 @@ describe('habitManager', () => {
       expect(replacePendingCheckIns).not.toHaveBeenCalled();
     });
 
+    const requeuedSuffix = (): QueuedCheckIn[] => {
+      const calls = (replacePendingCheckIns as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(1);
+      return calls[0]![0] as QueuedCheckIn[];
+    };
+
+    it('quarantines a dropped entry with its goal id and status', async () => {
+      (goalCompletionsApi.create as jest.Mock)
+        .mockRejectedValueOnce(new ApiError(404, 'goal_not_found') as never)
+        .mockResolvedValueOnce({} as never)
+        .mockResolvedValueOnce({} as never);
+
+      await replay([queued(77, '2025-04-01'), queued(88, '2025-04-02'), queued(99, '2025-04-03')]);
+
+      expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+      expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal_id: 77,
+          status: 404,
+          did_complete: true,
+          timestamp: '2025-04-01T00:00:00Z',
+        }),
+      );
+      expect(postedGoalIds()).toEqual([77, 88, 99]);
+    });
+
+    it('does not quarantine a 503 outage and re-queues the entry instead', async () => {
+      const pending = [queued(101, '2025-04-01'), queued(102, '2025-04-02')];
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(503, 'unavailable') as never,
+      );
+
+      await replay(pending);
+
+      expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+      const requeued = requeuedSuffix();
+      expect(requeued).toHaveLength(2);
+      expect(requeued.map((c) => c.goal_id)).toEqual([101, 102]);
+    });
+
+    it('does not quarantine an expired token and re-queues the entry instead', async () => {
+      const pending = [queued(111, '2025-04-01'), queued(112, '2025-04-02')];
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(401, 'Not authenticated') as never,
+      );
+
+      await replay(pending);
+
+      expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+      const requeued = requeuedSuffix();
+      expect(requeued).toHaveLength(2);
+      expect(requeued.map((c) => c.goal_id)).toEqual([111, 112]);
+    });
+
+    it('quarantines an ApiValidationError drop with the status the response carried', async () => {
+      (goalCompletionsApi.create as jest.Mock)
+        .mockRejectedValueOnce(new ApiValidationError('/goal_completions/', 201, []) as never)
+        .mockResolvedValueOnce({} as never);
+
+      await replay([queued(31, '2025-04-01'), queued(32, '2025-04-02')]);
+
+      expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+      expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+        expect.objectContaining({ goal_id: 31, status: 201 }),
+      );
+    });
+
+    it('both announces and quarantines the same dropped check-in', async () => {
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(422, 'unprocessable') as never,
+      );
+
+      await replay([queued(4242, '2025-04-01')]);
+
+      const warnMock = console.warn as unknown as jest.Mock;
+      expect(warnMock).toHaveBeenCalledTimes(1);
+      const logged = (warnMock.mock.calls[0] as unknown[]).map((arg) => String(arg)).join(' ');
+      expect(logged).toContain('4242');
+      expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+      expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+        expect.objectContaining({ goal_id: 4242, status: 422 }),
+      );
+    });
+
+    it('preserves an explicit completed_on on the quarantined entry', async () => {
+      const backdated = {
+        goal_id: 55,
+        did_complete: true,
+        timestamp: '2025-04-05T00:00:00Z',
+        completed_on: '2025-03-30',
+      };
+      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+        new ApiError(409, 'conflict') as never,
+      );
+
+      await replay([backdated]);
+
+      expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+        expect.objectContaining({ goal_id: 55, status: 409, completed_on: '2025-03-30' }),
+      );
+    });
+
+    // The quarantine is only real to the user once it reaches the store the
+    // notice subscribes to, so every replay pass republishes it.
+    describe('quarantine hydration', () => {
+      const droppedEntry = (goalId: number) => ({
+        goal_id: goalId,
+        did_complete: true,
+        timestamp: '2025-04-01T00:00:00Z',
+        status: 404,
+        dropped_at: '2025-04-02T09:00:00Z',
+      });
+
+      beforeEach(() => {
+        (loadDroppedCheckIns as jest.Mock).mockReset();
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValue([] as never);
+        droppedStore().getState().reset();
+      });
+
+      it('publishes a check-in dropped in an earlier session when the queue is now empty', async () => {
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValue([droppedEntry(77)] as never);
+
+        await replay([]);
+
+        const { entries } = droppedStore().getState();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.goal_id).toBe(77);
+      });
+
+      it('publishes a check-in dropped during this same replay pass', async () => {
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValue([droppedEntry(88)] as never);
+        (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+          new ApiError(404, 'goal_not_found') as never,
+        );
+
+        await replay([queued(88, '2025-04-01')]);
+
+        const { entries } = droppedStore().getState();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.goal_id).toBe(88);
+      });
+
+      it('retracts a stale notice by publishing an empty list when nothing is quarantined', async () => {
+        droppedStore()
+          .getState()
+          .setEntries([droppedEntry(99)]);
+        expect(droppedStore().getState().entries).toHaveLength(1);
+
+        await replay([queued(12, '2025-04-01')]);
+
+        expect(droppedStore().getState().entries).toHaveLength(0);
+      });
+
+      it('still refreshes the quarantine when a transient failure aborted the drain', async () => {
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValue([droppedEntry(64)] as never);
+        (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
+          new ApiError(503, 'unavailable') as never,
+        );
+        const pending = [queued(64, '2025-04-01')];
+
+        await replay(pending);
+
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[0]!]);
+        const { entries } = droppedStore().getState();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.goal_id).toBe(64);
+      });
+    });
+
     it('re-queues only the transiently failed suffix when a drop came before it', async () => {
       const pending = [
         queued(61, '2025-04-01'),
@@ -3221,5 +3409,46 @@ describe('habitManager', () => {
       expect(clearPendingCheckIns).not.toHaveBeenCalled();
       expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[2]!]);
     });
+  });
+});
+
+describe('dismissDroppedCheckIns', () => {
+  const quarantined = {
+    goal_id: 31,
+    did_complete: true,
+    timestamp: '2025-04-01T00:00:00Z',
+    status: 404,
+    dropped_at: '2025-04-02T09:00:00Z',
+  };
+
+  beforeEach(() => {
+    (clearDroppedCheckIns as jest.Mock).mockReset();
+    (clearDroppedCheckIns as jest.Mock).mockResolvedValue(undefined as never);
+    droppedStore().getState().reset();
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('erases the on-device quarantine and retracts the notice', async () => {
+    droppedStore().getState().setEntries([quarantined]);
+
+    await habitManager.dismissDroppedCheckIns();
+
+    expect(clearDroppedCheckIns).toHaveBeenCalledTimes(1);
+    expect(droppedStore().getState().entries).toHaveLength(0);
+  });
+
+  it('leaves the notice standing when the quarantine could not be erased', async () => {
+    (clearDroppedCheckIns as jest.Mock).mockRejectedValueOnce(new Error('disk full') as never);
+    droppedStore().getState().setEntries([quarantined]);
+
+    await expect(habitManager.dismissDroppedCheckIns()).resolves.toBeUndefined();
+
+    const { entries } = droppedStore().getState();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.goal_id).toBe(31);
   });
 });
