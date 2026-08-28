@@ -27,8 +27,9 @@ label "P1" "D93F0B" "Bugs + Geoff feature issues"
 label "P2" "FBCA04" "Quality: refactor, coverage, perf, a11y"
 label "P3" "0E8A16" "Hygiene: dead code, types, docs, TODOs"
 
-echo "Consumption gate…"
+echo "Consumption gates (pick-next.sh honours both)…"
 label "agent-ready" "1D76DB" "Fully specified; Ralph may pick up"
+label "needs-spec" "FEF2C0" "Incomplete: a human or grooming pass must finish it before Ralph may pick it up"
 
 echo "Human-hold label (honoured by pick-next.sh and pr-ready.sh)…"
 label "do-not-auto-merge" "5319E7" "Human hold: Ralph will not adopt, fix, or merge this PR/issue"
