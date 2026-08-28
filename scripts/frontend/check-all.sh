@@ -23,11 +23,13 @@ Run all quality checks in sequence.
 
 Runs:
   1. Security audit (npm audit, high+, via audit-gate.mjs)
-  2. Linting (ESLint)
-  3. Formatting (Prettier)
-  4. Type checking (TypeScript)
-  5. Web bundle (expo export -- the only stage that runs the bundler)
-  6. Tests (Jest)
+  2. SDK alignment (expo install --check -- the only stage that reads the
+     pinned Expo SDK's compatibility table)
+  3. Linting (ESLint)
+  4. Formatting (Prettier)
+  5. Type checking (TypeScript)
+  6. Web bundle (expo export -- the only stage that runs the bundler)
+  7. Tests (Jest)
 
 OPTIONS:
     --verbose   Show detailed output
@@ -81,6 +83,11 @@ run_check() {
 # while CI's audit gate failed on the same commit — which is exactly what
 # happened on the Gumroad onboarding PR.
 run_check "Security audit" "audit-gate.mjs"
+# Cheap and early: the only stage that compares the installed tree against the
+# pinned Expo SDK's compatibility table. Every gate below reads a file, a type,
+# or a module graph, and none of them can see a package sitting a minor away
+# from what the SDK expects. Mirrors CI's own step so local Gate 2 predicts it.
+run_check "SDK alignment" "sdk-align.sh"
 run_check "Linting" "lint.sh" --check
 run_check "Formatting" "format.sh" --check
 run_check "Type checking" "typecheck.sh"

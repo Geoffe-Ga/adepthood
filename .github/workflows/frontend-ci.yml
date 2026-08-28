@@ -82,6 +82,16 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # The only step in this job that reads the pinned Expo SDK's
+      # compatibility table. Everything below reads a file, a type, a module
+      # graph, or a bundle, and all of them stay green while a dependency sits
+      # a full minor away from the version the SDK expects -- which is how the
+      # same realignment has had to be done more than once. `--check` exits 1
+      # on a drifted tree, so this fails the job rather than reporting.
+      - name: Dependencies match the pinned Expo SDK
+        working-directory: frontend
+        run: npx expo install --check
+
       # Regression gate (audit-ci-07): fail if any high/critical advisory is
       # reintroduced. The moderate advisories (Expo SDK 52 toolchain) are below
       # this threshold and tracked for the SDK upgrade.
@@ -124,9 +134,20 @@ jobs:
       # that local Gate 2 predicts this job.
       #
       # Not a native build: there is no frontend/ios or frontend/android
-      # directory, so newArchEnabled has still never been compiled. And
-      # expo-doctor is deliberately not gated -- it fails on SDK-pinned version
-      # drift, which is Dependabot's cadence, not this job's question.
+      # directory, so newArchEnabled has still never been compiled.
+      #
+      # SDK version drift is no longer this stage's blind spot either -- the
+      # `expo install --check` step above gates it. The broader `expo-doctor`
+      # is still not gated, and the reason has narrowed to a real one: it runs
+      # 21 network-dependent checks, and the last run here (`npx expo-doctor`,
+      # measured 2026-08-28) reported 20 passing
+      # and exactly 1 failing -- the SDK version match, which is precisely what
+      # `expo install --check` probes and what the realignment fixed. Gating
+      # the whole tool would mean adopting 20 unrelated checks whose future
+      # failures are outside this job's control, i.e. shipping it suppressed.
+      # The narrow probe is enforceable instead of aspirational because the
+      # Dependabot floors on react-native-screens and react-native-svg stop the
+      # two drifts it caught from being re-proposed by a bot bump nobody chose.
       - name: Web bundle builds
         working-directory: frontend
         run: npx expo export --platform web
