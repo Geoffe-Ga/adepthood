@@ -55,6 +55,7 @@ from domain.creek_vault import (
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from main import app, lifespan
 from scripts.creek_contract_drift import BUNDLE_ROOT
+from services import creek_vault_url_resolution
 from services.creek_vault_client import (
     _CONTRACT_MINOR_COMPONENTS,
     _CONTRACT_VERSION_HEADER,
@@ -68,11 +69,13 @@ from services.creek_vault_client import (
     HandshakeDegradeReason,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
+    _build_pinned_vault_client,
     _build_pooled_vault_client,
     _contract_version_compatible,
     _entry_path_segment,
     _parse_wheel,
     _VaultHttpPool,
+    build_connected_vault_client,
     build_creek_vault_client,
     close_creek_vault_http_pool,
 )
@@ -82,6 +85,7 @@ from services.creek_vault_payload import (
     _MAX_REFLECT_NOTES,
     _bounded_text,
 )
+from services.creek_vault_pinned_transport import PinnedDestinationTransport
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -175,6 +179,26 @@ _LONGEST_USABLE_FRAGMENT_ID = "f" * _MAX_FRAGMENT_ID_LENGTH
 _UNPARSEABLE_VAULT_URL = "https://vault.example.test:not-a-port"
 
 _POOL_ATTR = "services.creek_vault_client._VAULT_HTTP_POOL"
+
+# The pinned pool's own attribute. Two pools, because the operator's
+# deployment-wide URL is deliberately allowed to name loopback and a user's is
+# not, and one shared connection pool cannot hold both policies.
+_PINNED_POOL_ATTR = "services.creek_vault_client._PINNED_VAULT_HTTP_POOL"
+
+# Where the pinned client reaches its transport builder, so a test can hand it
+# an in-memory transport rather than one that opens sockets.
+_PINNED_TRANSPORT_ATTR = "services.creek_vault_client.build_pinned_destination_transport"
+
+# The vault's host as httpx parses it, derived rather than written out a second
+# time so a change to the URL above cannot leave a stale copy behind.
+_VAULT_HOST = httpx.URL(_VAULT_URL).host
+
+# A globally-routable address for a stubbed lookup to answer with. Documentation
+# ranges are not globally routable, so a correct destination guard blocks them.
+_GLOBAL_ADDRESS = "8.8.8.8"
+
+# An egress proxy of the kind a container platform exports into every process.
+_AMBIENT_PROXY_URL = "http://proxy.example.test:3128"
 
 _DEADLINE_ATTR = "services.creek_vault_client._VAULT_TOTAL_DEADLINE_SECONDS"
 
@@ -3970,3 +3994,200 @@ def test_the_contract_minor_is_the_first_two_components_of_the_pin() -> None:
     """The header value is derived from the pin, never written out twice."""
     assert ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS]) == CONTRACT_MINOR
     assert CONTRACT_VERSION.startswith(CONTRACT_MINOR)
+
+
+class _CountingVaultResolver:
+    """Resolver stub answering every name publicly and counting the asking.
+
+    The count is what a proxy test can assert on. Whether the pin ran is not
+    visible from a response, and it is exactly what an ambient proxy would take
+    away.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded lookups."""
+        self.calls: list[str] = []
+
+    async def __call__(self, host: str) -> tuple[str, ...]:
+        """Record the name asked about and answer with a globally-routable address."""
+        self.calls.append(host)
+        return (_GLOBAL_ADDRESS,)
+
+
+@pytest.mark.asyncio
+async def test_a_user_connected_vault_borrows_the_pinned_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vault somebody connected for themselves is dialled through the pinning pool.
+
+    Which pool an adapter borrows *is* the destination policy applied to it, so
+    it is asserted from both sides: the pinned pool built a client and the plain
+    one was never touched. Asserting only the first would be satisfied by an
+    adapter that reached for both.
+    """
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned = _VaultHttpPool(build=pinned_build)
+    plain = _VaultHttpPool(build=plain_build)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+
+    client = build_connected_vault_client(_VAULT_URL, _API_KEY)
+    assert (await client.handshake()).available is True
+
+    assert len(pinned_build.built) == 1
+    assert len(plain_build.built) == 0
+    await pinned.aclose()
+    await plain.aclose()
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_pool_in_this_process_is_the_one_that_pins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The line that wires the pinning builder into the module-level pool is load-bearing.
+
+    Its neighbour above substitutes both pool objects, which is what that case
+    needs -- it is about which pool an adapter reaches for -- and it is also why
+    nothing else in either suite can see this. Every pool test replaces the pool,
+    and every builder test calls the builder directly, so the one statement that
+    joins them is asserted from neither side: drop the builder argument from the
+    module-level pinned pool and every connected vault in production dials
+    unpinned, with both suites still green.
+
+    So this case substitutes nothing but the transport factory and lets the real
+    pool build a real client through the real builder. The assertion is that the
+    resolver was consulted, because being consulted is the one thing a pool built
+    without the pinning builder cannot fake: a healthy handshake through a mock
+    transport proves nothing, since an unpinned client reaches the same handler.
+    """
+    resolver = _CountingVaultResolver()
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", resolver)
+    recorder = _RecordingHandler(_handshake_payload([CreekCapability.JOURNAL.value]))
+    monkeypatch.setattr(
+        _PINNED_TRANSPORT_ATTR,
+        lambda: PinnedDestinationTransport(httpx.MockTransport(recorder)),
+    )
+
+    client = build_connected_vault_client(_VAULT_URL, _API_KEY)
+    try:
+        result = await client.handshake()
+    finally:
+        # The pool this drove is the process-wide one, so a client left open here
+        # would outlive the test and be handed to whatever ran next.
+        await close_creek_vault_http_pool()
+
+    # The resolver first, because it is the assertion that names the defect: a
+    # pool built without the pinning builder leaves this empty, and the
+    # handshake below merely fails afterwards for a reason further away.
+    assert resolver.calls == [_VAULT_HOST]
+    assert result.available is True
+
+
+@pytest.mark.asyncio
+async def test_the_operator_vault_borrows_the_unpinned_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CREEK_VAULT_URL`` is dialled through the pool that applies no user policy.
+
+    The deployment-wide variable is set by whoever runs the process, and
+    ``http://localhost:8000`` is the documented local-vault setup -- a *name*,
+    which resolves to loopback, which the user-destination rules refuse. Routing
+    this factory through the pinning pool would therefore break every developer's
+    vault, silently, since replication would simply stop.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "http")
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _API_KEY)
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned = _VaultHttpPool(build=pinned_build)
+    plain = _VaultHttpPool(build=plain_build)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+
+    client = build_creek_vault_client()
+    assert (await client.handshake()).available is True
+
+    assert len(plain_build.built) == 1
+    assert len(pinned_build.built) == 0
+    await pinned.aclose()
+    await plain.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_both_vault_pools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shutdown hook releases the pinned pool as well as the plain one.
+
+    A second pool is a second httpx client with its own connections, and one the
+    lifespan hook forgot would outlive the process as an unclosed-client warning
+    nobody attributes to this seam.
+    """
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain = _VaultHttpPool(build=plain_build)
+    pinned = _VaultHttpPool(build=pinned_build)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    plain_client = plain.get()
+    pinned_client = pinned.get()
+
+    await close_creek_vault_http_pool()
+
+    assert plain_client.is_closed is True
+    assert pinned_client.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_pool_client_also_refuses_to_follow_redirects() -> None:
+    """The second builder carries the same security settings as the first.
+
+    Two builders are two places for a setting to be forgotten. httpx preserves an
+    explicitly set ``Authorization`` header across a same-scheme cross-host
+    redirect, so a pinned client that followed redirects would hand the bearer to
+    whatever host a hijacked vault named -- and the pin would have been bypassed
+    by the vault's own answer rather than by DNS.
+    """
+    client = _build_pinned_vault_client()
+    try:
+        assert client.follow_redirects is False
+        assert client.timeout == _VAULT_HTTP_TIMEOUT
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_an_ambient_egress_proxy_cannot_route_around_the_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proxy in the environment must not become the thing that resolves the host.
+
+    httpx reads ``HTTP_PROXY``, ``HTTPS_PROXY``, and ``ALL_PROXY`` only when a
+    client is built with no explicit transport; passing one is what leaves the
+    proxy mounts empty. That is load-bearing and invisible from the builder's
+    source, because the failure mode is not an error: the request would go to the
+    proxy, the proxy would resolve the hostname itself, and the pin would never
+    run at all while every response still looked healthy.
+
+    So the assertion is that the resolver was *asked*, not that the call
+    succeeded. A refusal or a 200 can both be arrived at without the pin; being
+    consulted cannot.
+    """
+    monkeypatch.setenv("ALL_PROXY", _AMBIENT_PROXY_URL)
+    monkeypatch.setenv("HTTPS_PROXY", _AMBIENT_PROXY_URL)
+    resolver = _CountingVaultResolver()
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", resolver)
+    recorder = _RecordingHandler(_handshake_payload([CreekCapability.JOURNAL.value]))
+    monkeypatch.setattr(
+        _PINNED_TRANSPORT_ATTR,
+        lambda: PinnedDestinationTransport(httpx.MockTransport(recorder)),
+    )
+
+    client = _build_pinned_vault_client()
+    try:
+        response = await client.get(_CAPABILITIES_URL)
+    finally:
+        await client.aclose()
+
+    assert response.status_code == HTTPStatus.OK
+    assert resolver.calls == [_VAULT_HOST]

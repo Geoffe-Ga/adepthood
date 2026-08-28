@@ -155,7 +155,7 @@ def _resolvable_hosts(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     surface as a failure in whichever test happened to run next.
     """
     creek_vault_url_resolution.reset_resolution_cache()
-    monkeypatch.setattr(creek_vault_url_resolution, "_resolve", _resolves_publicly)
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", _resolves_publicly)
     yield
     creek_vault_url_resolution.reset_resolution_cache()
 

@@ -65,6 +65,24 @@ _BLOCKED_HOST_SUFFIXES = (".internal", ".local")
 # dot must not launder it.
 _ROOT_LABEL = "."
 
+# The four IPv6 prefixes that carry an IPv4 address in their low 32 bits and say
+# unambiguously where those bits begin: the deprecated IPv4-compatible block, the
+# IPv4-mapped block, RFC 2765's IPv4-translated block, and the RFC 6052
+# well-known prefix a DNS64 resolver synthesizes answers with. All four reach the
+# IPv4 host they carry, and three of the four report ``is_global`` on the outer
+# form, because the reserved-range tables describe the address as written rather
+# than the address it translates to.
+_IPV4_EMBEDDING_PREFIXES = (
+    ipaddress.IPv6Network("::/96"),
+    ipaddress.IPv6Network("::ffff:0:0/96"),
+    ipaddress.IPv6Network("::ffff:0:0:0/96"),
+    ipaddress.IPv6Network("64:ff9b::/96"),
+)
+
+# Where the embedded address sits in all four: the low 32 bits, which is what
+# makes the list above the list it is rather than every prefix ever standardised.
+_EMBEDDED_IPV4_MASK = 0xFFFFFFFF
+
 
 class UserVaultUrlDefect(enum.StrEnum):
     """Why a user-supplied vault URL names a destination this server may not dial.
@@ -118,8 +136,44 @@ _LITERAL_ADDRESS_FINDING = UserVaultUrlFinding(
 _LOCAL_ZONE_FINDING = UserVaultUrlFinding(UserVaultUrlDefect.PRIVATE_ADDRESS, _LOCAL_ZONE_DETAIL)
 
 
+def _embedded_ipv4(address: IpAddress) -> ipaddress.IPv4Address | None:
+    """Return the IPv4 address ``address`` translates to, or ``None`` for none.
+
+    Split out of :func:`_effective_address` because the membership test and the
+    mask are one idea and the caller has another; folded together they also cost
+    more branches than the complexity gate allows a single block.
+
+    **The well-known NAT64 prefix is unwrapped, not banned.** A ban is the
+    shorter rule and would take the feature away from every IPv6-only deployment
+    at once: with DNS64 in front of it, ``64:ff9b::<the A record>`` is not an
+    exotic answer for a vault name, it is the only answer any name ever has.
+    Unwrapping decides by the destination instead, so a public vault stays
+    dialable and a synthesis of the metadata endpoint does not.
+
+    **RFC 8215's local-use** ``64:ff9b:1::/48`` **is deliberately absent, and
+    completing the table with it would be a regression.** ``ipaddress`` already
+    reports that block non-global, so every address in it is refused as it
+    stands; adding it here would *un*-refuse the ones carrying a public IPv4 in
+    their low 32 bits. It could not be read safely anyway, since RFC 6052 permits
+    six embedding lengths inside it and nothing in the address says which was
+    used -- a low-32-bit reading there is a guess, and a guess that reads a
+    public address out of an address translating to the metadata endpoint.
+
+    **Loopback and the unspecified address survive this**, which is worth stating
+    because ``::/96`` contains both and unwrapping it is the obvious way to blow
+    a hole in loopback while fixing NAT64. Under the low-32-bit reading ``::1``
+    becomes ``0.0.0.1`` and ``::`` becomes ``0.0.0.0``; neither is globally
+    routable, so both stay blocked by the same predicate as before.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return None
+    if not any(address in prefix for prefix in _IPV4_EMBEDDING_PREFIXES):
+        return None
+    return ipaddress.IPv4Address(int(address) & _EMBEDDED_IPV4_MASK)
+
+
 def _effective_address(value: str | IpAddress) -> IpAddress:
-    """Return the address ``value`` actually reaches, unwrapping an IPv4-mapped form.
+    """Return the address ``value`` actually reaches, unwrapping any embedded IPv4.
 
     ``::ffff:169.254.169.254`` and ``169.254.169.254`` are one destination
     wearing two spellings, and the socket layer will happily connect the first to
@@ -128,14 +182,19 @@ def _effective_address(value: str | IpAddress) -> IpAddress:
     interpreter versions, which have not always agreed on how a mapped address
     should classify -- so it is done here rather than left to the property.
 
+    The mapped form is only the spelling everyone knows. Three more prefixes
+    carry an IPv4 address the same way and are *not* unwrapped by the
+    interpreter, so each of them names an internal host while reporting
+    ``is_global``; :func:`_embedded_ipv4` holds the list and the argument for its
+    exact membership.
+
     Both spellings of the input are accepted because both arrive: a URL literal
     parses to a string and so does every answer a resolver hands back, while a
     caller that already parsed one has no reason to re-render it.
     """
     address = ipaddress.ip_address(value) if isinstance(value, str) else value
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return address.ipv4_mapped
-    return address
+    embedded = _embedded_ipv4(address)
+    return address if embedded is None else embedded
 
 
 def address_is_blocked(value: str | IpAddress) -> bool:

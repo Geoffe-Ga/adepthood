@@ -142,6 +142,7 @@ from services.creek_vault_payload import (
     _reflection_request_body,
     _upload_document_body,
 )
+from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -178,9 +179,12 @@ _VAULT_HTTP_TIMEOUT = httpx.Timeout(
 )
 
 # How many per-phase budgets one whole capability fetch may span. Three is the
-# count of phases a single GET actually traverses -- pool acquisition, connect,
-# read -- so a request that is legitimately slow at every one of them still
-# finishes inside the deadline, while a vault that never finishes does not.
+# count a single GET traverses when the first address answers -- pool
+# acquisition, connect, and read, its write phase carrying only headers. A dial
+# falling over to another approved address spends one more connect budget each
+# time, so this bounds the deadline and the deadline bounds the walk: a vault
+# whose every address blackholes ends in a timeout degrade rather than in a
+# request nobody bounded.
 _VAULT_DEADLINE_PHASE_BUDGETS = 3
 
 # Wall-clock ceiling (seconds) on one whole capability fetch. Necessary because
@@ -1083,8 +1087,10 @@ _WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapab
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 
 
-def _build_pooled_vault_client() -> httpx.AsyncClient:
-    """Build the process-wide vault HTTP client: bare, credential-free, budget-bound.
+def _build_pooled_vault_client(
+    *, transport: httpx.AsyncBaseTransport | None = None
+) -> httpx.AsyncClient:
+    """Build a vault HTTP client: bare, credential-free, budget-bound.
 
     Deliberately carries no ``base_url`` and no authorization header. The pooled
     connection is shared by every :class:`HttpCreekVaultClient` in the process,
@@ -1093,6 +1099,11 @@ def _build_pooled_vault_client() -> httpx.AsyncClient:
     reconfigured. Each adapter supplies its own absolute URL and builds its own
     header per request; the pool contributes only the reused connection and the
     timeout budget.
+
+    ``transport`` separates the two pools this seam keeps. ``None`` reproduces
+    the operator path byte for byte (httpx: ``allow_env_proxies = trust_env and
+    transport is None``); passing one empties httpx's proxy mounts, so an ambient
+    ``HTTPS_PROXY`` cannot resolve the host itself and route around the pin.
     """
     # ``follow_redirects`` is pinned rather than inherited from httpx's default:
     # not following redirects is a security property here, not a preference.
@@ -1100,7 +1111,22 @@ def _build_pooled_vault_client() -> httpx.AsyncClient:
     # same-scheme cross-host redirect, so a hijacked or compromised vault could
     # 302 our bearer straight to an attacker's host. Refusing to follow turns
     # that into a non-2xx status, which degrades the handshake to unreachable.
-    return httpx.AsyncClient(timeout=_VAULT_HTTP_TIMEOUT, follow_redirects=False)
+    #
+    # No ``limits=``: httpx ignores it beside a transport, so one added here
+    # would bound this pool alone and never ``PINNED_CONNECTION_LIMITS``.
+    return httpx.AsyncClient(
+        timeout=_VAULT_HTTP_TIMEOUT, follow_redirects=False, transport=transport
+    )
+
+
+def _build_pinned_vault_client() -> httpx.AsyncClient:
+    """Build the vault HTTP client that dials only checked addresses.
+
+    Delegates its client-level settings -- not the pool's limits, which ride on
+    the transport -- since two builders are two places to forget
+    ``follow_redirects=False`` and let a hijacked vault redirect the bearer.
+    """
+    return _build_pooled_vault_client(transport=build_pinned_destination_transport())
 
 
 class _VaultHttpPool:
@@ -1137,13 +1163,18 @@ class _VaultHttpPool:
             await client.aclose()
 
 
-# The process-wide pool every HTTP vault adapter borrows its connection from.
+# The process-wide pool the deployment-wide vault borrows its connection from.
 _VAULT_HTTP_POOL = _VaultHttpPool()
+
+# Its twin for vaults users connected for themselves. Two pools because there
+# are two rule sets: an operator's URL may name loopback, a user's may not.
+_PINNED_VAULT_HTTP_POOL = _VaultHttpPool(build=_build_pinned_vault_client)
 
 
 async def close_creek_vault_http_pool() -> None:
-    """Release the shared vault HTTP connection pool (call at app shutdown)."""
+    """Release both pools at shutdown; one forgotten outlives the process."""
     await _VAULT_HTTP_POOL.aclose()
+    await _PINNED_VAULT_HTTP_POOL.aclose()
 
 
 def _refuse_unratified(capability: CreekCapability) -> NoReturn:
@@ -1512,7 +1543,12 @@ class HttpCreekVaultClient:
     """
 
     def __init__(
-        self, url: str, api_key: str, *, http_client: httpx.AsyncClient | None = None
+        self,
+        url: str,
+        api_key: str,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        pin_destination: bool = True,
     ) -> None:
         """Validate the URL, then bind the credential, the client, and a safe cache.
 
@@ -1522,6 +1558,10 @@ class HttpCreekVaultClient:
         production leaves it ``None`` and borrows the shared pool per call. The
         handshake cache is seeded unavailable so a client that never handshook
         supports nothing.
+
+        ``pin_destination`` chooses which pool that is, and defaults to the strict
+        one deliberately: a caller nobody thought about gets the guarded pool, and
+        the operator path opts out by name. Inert when ``http_client`` is given.
         """
         _require_secure_vault_url(url)
         self._api_key = api_key
@@ -1529,6 +1569,7 @@ class HttpCreekVaultClient:
         # yields the same capability URL rather than a double-slashed path.
         self._url = url.rstrip("/")
         self._http_client = http_client
+        self._pin_destination = pin_destination
         self._last_handshake = HandshakeResult.unavailable()
         self._degrade_reason: HandshakeDegradeReason | None = None
 
@@ -1546,9 +1587,9 @@ class HttpCreekVaultClient:
     def _active_client(self) -> httpx.AsyncClient:
         """Return the injected client, or borrow the shared pool's (built on demand).
 
-        Resolved per call rather than in ``__init__`` so merely constructing an
-        adapter never forces the pool into existence, and so a pool closed and
-        later reopened is picked up without rebuilding the adapter.
+        Which pool, and the client inside it, are resolved per call rather than
+        in ``__init__``, so constructing an adapter forces neither pool into
+        existence and a pool closed at shutdown and reopened needs no rebuild.
 
         One narrow window remains, by choice: a request that has already taken
         the pooled client when :func:`close_creek_vault_http_pool` runs at
@@ -1561,6 +1602,8 @@ class HttpCreekVaultClient:
         """
         if self._http_client is not None:
             return self._http_client
+        if self._pin_destination:
+            return _PINNED_VAULT_HTTP_POOL.get()
         return _VAULT_HTTP_POOL.get()
 
     async def _authorized_request(
@@ -2263,7 +2306,11 @@ def build_creek_vault_client() -> CreekVaultClient:
     # constructor's own refusal is unreachable from here rather than caught: a
     # ``try`` around it would swallow a genuine bug in it as if it were a
     # misconfiguration.
-    return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""))
+    #
+    # ``pin_destination=False`` is this seam's one opt-out, named where its reason
+    # is true: ``http://localhost:8000`` is the documented local-vault setup, and
+    # it is a *name* resolving to loopback, which the user rules refuse.
+    return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""), pin_destination=False)
 
 
 def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
@@ -2318,6 +2365,10 @@ def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
     :class:`~services.creek_vault_url.VaultUrlDefect` states against a member no
     rule can produce. What distinguishes this degrade from a user who simply
     connected nothing is the WARNING, which the other path does not emit.
+
+    What cannot run here is the pin: httpx resolves the name again between this
+    judgement and the socket, so this adapter keeps the strict default and
+    borrows the pinning pool (:mod:`services.creek_vault_pinned_transport`).
     """
     finding = classify_vault_url(url)
     if finding is not None:
