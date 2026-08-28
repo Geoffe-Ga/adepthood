@@ -128,8 +128,9 @@ repos:
   #      tree that has no deps fails as `eslint: command not found`, which names the
   #      wrong problem.
   #   2. `cd frontend &&` — pre-commit appends the matched filenames to the argv of
-  #      `bash -c`, where they land in $0/$1 and are ignored. That is what lets the
-  #      hooks below that do NOT set `pass_filenames: false` run a whole-project
+  #      `bash -c`, where they land in $0/$1. Every entry below ignores them except
+  #      commitlint, which reads $0 for the message path. Ignoring them is what lets
+  #      the hooks below that do NOT set `pass_filenames: false` run a whole-project
   #      command safely; passing repo-root-relative paths to a tool running with
   #      cwd=frontend would not resolve.
   #   3. `./node_modules/.bin/<tool>` — never `npx <tool>`. npx answers a missing
@@ -220,17 +221,25 @@ repos:
       - id: commitlint
         name: commitlint (conventional commits)
         language: system
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/commitlint --extends @commitlint/config-conventional --edit "$1"'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh && case "$0" in /*) message="$0" ;; *) message="$PWD/$0" ;; esac && cd frontend && ./node_modules/.bin/commitlint --extends @commitlint/config-conventional --edit "$message"'
         stages: [commit-msg]
         # IMPORTANT: leave pass_filenames alone here -- a commit-msg hook needs the
         # message path handed to it. Two measured facts about how it arrives, so the
         # next reader does not have to re-derive them:
         #   * pre-commit appends filenames to `bash -c <script>`'s argv, where the
-        #     FIRST one binds to $0, not $1. `"$1"` below is therefore empty.
-        #   * `--edit ""` makes commitlint fall back to the git dir's COMMIT_EDITMSG,
-        #     resolved through git rather than the cwd -- which survives the
-        #     `cd frontend`, and which is exactly the file `git commit` writes before
-        #     invoking this hook. So real commits are gated; it is `pre-commit run
-        #     --commit-msg-filename <other>` that silently lints COMMIT_EDITMSG
-        #     instead of the file named. Fixing that means passing $0 through as an
-        #     absolute path, which is a separate change from the npx removal.
+        #     FIRST one binds to $0, not $1. The entry reads $0 for that reason; a
+        #     `"$1"` here would expand to the empty string every time.
+        #   * $0 arrives relative to the git toplevel, because pre-commit chdirs
+        #     there and only then relativises the commit-msg filename -- a `../..`
+        #     chain for a message file outside the repo. So the `case` above resolves
+        #     it against $PWD -- still the toplevel, the very directory it is relative
+        #     to -- and only then does the `cd frontend` happen. The `/*)` arm is
+        #     there so an already-absolute path is left alone, rather than assuming
+        #     pre-commit's relativising will never change.
+        # The entry used to hand `--edit "$1"`, and `--edit ""` makes commitlint fall
+        # back to the git dir's COMMIT_EDITMSG, resolved through git rather than the
+        # cwd -- so it survived the `cd frontend` and happened to be exactly the file
+        # `git commit` writes before invoking this hook. Real commits stayed gated,
+        # which is why it went unnoticed; what silently linted the wrong file was
+        # `pre-commit run --hook-stage commit-msg --commit-msg-filename <other>`,
+        # whose verdict described COMMIT_EDITMSG rather than the file it was named.
