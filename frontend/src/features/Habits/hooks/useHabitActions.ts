@@ -7,6 +7,7 @@ import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { savePendingCheckIn } from '../../../storage/habitStorage';
 import type { HabitsActions, OnboardingHabit } from '../Habits.types';
 import { habitManager, type LogUnitContext, type ShowToast } from '../services/habitManager';
+import { ClientMintedIdError } from '../services/serverIds';
 
 import type { useHabitUI } from './useHabitUI';
 
@@ -34,6 +35,23 @@ const showDemoSeedNotice = (showToast: ShowToast): void => {
     message:
       "These are sample habits to explore — this one isn't saved to your account. Add your own to start tracking.",
     icon: DEMO_TILE_ICON,
+    color: colors.secondary,
+    duration: SYNC_ERROR_TOAST_DURATION_MS,
+  });
+};
+
+/**
+ * A tap on a row whose ids this device minted. Its goal id names no server row,
+ * so the check-in cannot be posted OR queued; the honest move is to say the
+ * save is still in flight and resync in the background so the next tap lands.
+ * Transient state rather than the user's mistake, so it wears the secondary
+ * colour, not the danger one.
+ */
+const showClientMintedNotice = (showToast: ShowToast): void => {
+  showToast({
+    message:
+      'This habit has not finished saving to your account yet, so your check-in was not recorded. Try again in a moment.',
+    icon: SYNC_ERROR_ICON,
     color: colors.secondary,
     duration: SYNC_ERROR_TOAST_DURATION_MS,
   });
@@ -100,9 +118,22 @@ const handleLogUnitFailure = (
     showDemoSeedNotice(showToast);
     return;
   }
-  if (!isServerResponse(err) && ctx.currentGoal.id != null) {
-    // Offline: keep the optimistic state instead of throwing the tap away.
-    keepOfflineCheckIn(ctx, ctx.currentGoal.id, showToast);
+  if (err instanceof ClientMintedIdError) {
+    // Two independent things keep a device-minted check-in out of the queue:
+    // this branch sits above the offline one, and the offline branch separately
+    // demands a server-issued id. Either alone would do — they are kept together
+    // because the error carries no HTTP response, so a single lapse would let
+    // the offline branch claim it and promise a sync no server row can answer.
+    habitManager.rollbackLogUnitContext(ctx);
+    void habitManager.loadHabits(tz);
+    showClientMintedNotice(showToast);
+    return;
+  }
+  if (!isServerResponse(err) && ctx.serverGoalId !== null) {
+    // Offline: keep the optimistic state instead of throwing the tap away. The
+    // id check is defence in depth at the queue boundary, mirroring the
+    // wire-side guard, for a failure that reached here around the manager.
+    keepOfflineCheckIn(ctx, ctx.serverGoalId, showToast);
     return;
   }
   habitManager.rollbackLogUnitContext(ctx);

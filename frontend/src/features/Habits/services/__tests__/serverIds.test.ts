@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import type { Goal, Habit } from '../../Habits.types';
 import {
   isNotDemoSeed,
+  namesStoreRow,
   isServerBackedGoal,
   isServerBackedHabit,
   isServerIssuedId,
@@ -59,6 +60,27 @@ describe('isServerIssuedId', () => {
   });
 });
 
+describe('namesStoreRow', () => {
+  it('accepts the negative placeholder a pre-sync row carries', () => {
+    // The wire rejects this id; the store still finds the row it names.
+    expect(namesStoreRow(SYNTHETIC_ID)).toBe(true);
+  });
+
+  it('accepts a server-issued id', () => {
+    expect(namesStoreRow(42)).toBe(true);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['a fractional id', 1.5],
+    ['NaN', Number.NaN],
+    ['undefined', undefined],
+    ['null', null],
+  ])('rejects %s, which names no row', (_label, id) => {
+    expect(namesStoreRow(id as number | null | undefined)).toBe(false);
+  });
+});
+
 describe('isNotDemoSeed', () => {
   it('accepts a row with no demo marker', () => {
     expect(isNotDemoSeed({})).toBe(true);
@@ -80,6 +102,18 @@ describe('isServerBackedHabit', () => {
 
   it('rejects a demo tile even though its id is a positive integer', () => {
     expect(isServerBackedHabit(makeHabit({ id: 3, isDemoSeed: true }))).toBe(false);
+  });
+
+  it('rejects a row whose ids this device minted, positive though they are', () => {
+    expect(isServerBackedHabit(makeHabit({ id: 3, hasClientMintedIds: true }))).toBe(false);
+  });
+
+  it('accepts a plain positive row carrying no client-minted marker', () => {
+    expect(isServerBackedHabit(makeHabit({ id: 3 }))).toBe(true);
+  });
+
+  it('accepts a row whose client-minted marker is explicitly false', () => {
+    expect(isServerBackedHabit(makeHabit({ id: 3, hasClientMintedIds: false }))).toBe(true);
   });
 
   it('rejects a negative synthetic id', () => {
@@ -113,6 +147,17 @@ describe('isServerBackedGoal', () => {
     expect(isServerBackedGoal(makeGoal({ id: 7 }), makeHabit({ id: 3, isDemoSeed: true }))).toBe(
       false,
     );
+  });
+
+  it('rejects a positive goal id under a parent whose ids this device minted', () => {
+    // Only the parent's provenance can reject this goal: 7 is a plausible server id.
+    expect(
+      isServerBackedGoal(makeGoal({ id: 7 }), makeHabit({ id: 3, hasClientMintedIds: true })),
+    ).toBe(false);
+  });
+
+  it('accepts a positive goal id under a parent carrying no client-minted marker', () => {
+    expect(isServerBackedGoal(makeGoal({ id: 7 }), makeHabit({ id: 3 }))).toBe(true);
   });
 
   it('rejects a positive goal id under a negative-id parent', () => {
