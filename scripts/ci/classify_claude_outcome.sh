@@ -40,6 +40,13 @@
 #      mis-wire that reports green is exactly the "green checkmark meaning nobody
 #      looked" that this change exists to remove.
 #
+#      ONE carve-out, and it is deliberately narrow: `--skip-permitted`, below.
+#      A transcript that is MISSING beside a SUCCESSFUL step, on a ref the caller
+#      has positively established is not the default branch, is `skipped` rather
+#      than `no-result` -- the action declined to run, which is not the run
+#      having gone wrong. A transcript that is present but unreadable is never a
+#      skip, because a skip writes nothing at all.
+#
 # NO VERDICT IS EVER KEYED ON TIME OR MONEY. A usage-limit failure and an expired
 # credential have the same timing shape -- one turn, under a second, zero dollars
 # -- and need opposite advice ("wait for the reset, retrying is wasted" versus
@@ -64,17 +71,28 @@
 #   auth-failure       the credential was rejected; rotating it is the fix
 #   agent-error        it failed, and the cause is not one of the known ones
 #   no-result          nothing to read; the run cannot be judged at all
+#   skipped            the action declined to run; nothing was attempted, and
+#                      nothing is wrong (see `--skip-permitted`)
 #
 # A usage fault still writes `outcome=classifier-fault` and a headline to
 # $GITHUB_OUTPUT, because an unset output reads downstream as the empty string
 # and every `if:` comparing against it takes the "not that outcome" branch -- the
 # workflow then proceeds as though it had been told something. `classifier-fault`
-# is deliberately not one of the six verdicts.
+# is deliberately not one of the seven verdicts.
 #
 # Usage:
 #   classify_claude_outcome.sh --execution-file <path> \
 #                              --step-outcome <success|failure> \
-#                              --max-turns <N>
+#                              --max-turns <N> \
+#                              [--skip-permitted <true|false>]
+#
+# `--step-outcome` is `steps.<id>.outcome`, never `.conclusion` (see above).
+# `--skip-permitted` says whether the action could legitimately have declined to
+# run: true ONLY when the caller has positively established that its ref is
+# something other than the default branch. It defaults to false, and anything
+# other than the two literals is a usage fault rather than a guess -- so a
+# caller that cannot establish the ref, or never wired the value at all, keeps
+# the strict reading in which a missing transcript is a failure.
 #
 # Tested at backend/tests/scripts/test_classify_claude_outcome.py.
 set -uo pipefail

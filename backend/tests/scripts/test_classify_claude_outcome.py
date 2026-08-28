@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -725,3 +726,72 @@ def test_only_the_two_literal_skip_values_are_accepted(tmp_path: Path, value: st
 
     assert result.exit_code == EXIT_USAGE
     assert result.token == ""
+
+
+# --- The header is the contract, so it has to be true --------------------------
+#
+# That script states its own design principle: the top-of-file comment IS the
+# contract. Which makes a stale one worse than none, because the next reader
+# trusts it and stops reading the code. Adding the skip verdict left the header
+# claiming six tokens, calling the fault sentinel "not one of the six", and
+# omitting the new flag from its synopsis -- three assertions that had quietly
+# become false while every test still passed.
+#
+# Prose cannot be type-checked, but it can be diffed against the thing it
+# describes, and these two checks are that diff.
+
+
+def _header() -> str:
+    """The comment block above the first line of executable shell."""
+    return _CLASSIFY.read_text(encoding="utf-8").split("set -uo pipefail")[0]
+
+
+def _tokens_named_in_header() -> set[str]:
+    """The verdicts the header's contract table lists, by their table shape."""
+    return set(re.findall(r"^#   ([a-z][a-z-]+) {2,}\S", _header(), re.MULTILINE))
+
+
+def _flags_the_script_parses() -> set[str]:
+    """Every long option the argument loop actually accepts."""
+    body = _CLASSIFY.read_text(encoding="utf-8")
+    return set(re.findall(r"^    (--[a-z-]+)\)", body, re.MULTILINE))
+
+
+def test_the_header_lists_exactly_the_verdicts_the_script_emits() -> None:
+    """A token table that has drifted from the code teaches the next reader wrong."""
+    emitted = set(re.findall(r'verdict "([a-z-]+)"', _CLASSIFY.read_text(encoding="utf-8")))
+
+    assert _tokens_named_in_header() == emitted, (
+        f"header lists {sorted(_tokens_named_in_header())} but the script emits {sorted(emitted)}"
+    )
+    assert _tokens_named_in_header() == set(TOKENS), (
+        "the header, the script and this module's TOKENS must all agree"
+    )
+
+
+def _usage_synopsis() -> str:
+    """Just the ``# Usage:`` invocation lines, not the prose that follows them.
+
+    Scoped deliberately. An earlier version of this check searched the whole
+    header, which passed while the synopsis itself was missing the flag, because
+    the prose underneath happened to mention it. A check that a word appears
+    somewhere is not a check that the invocation is complete.
+    """
+    lines = _header().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("# Usage:"))
+    synopsis = []
+    for line in lines[start + 1 :]:
+        if line.strip() in {"#", ""}:
+            break
+        synopsis.append(line)
+    return "\n".join(synopsis)
+
+
+def test_the_header_synopsis_names_every_flag_the_script_accepts() -> None:
+    """A flag absent from the invocation block is a flag nobody discovers."""
+    synopsis = _usage_synopsis()
+    undocumented = [flag for flag in _flags_the_script_parses() if flag not in synopsis]
+
+    assert not undocumented, (
+        f"parsed but missing from the usage synopsis: {undocumented}\n{synopsis}"
+    )
