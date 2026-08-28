@@ -950,6 +950,49 @@ and `vision_models` (and `default_model` if it was the default), and update
 `backend/src/services/llm_pricing.py` — a priced-but-unallowlisted model fails
 its own guard.
 
+### Vault egress ignores proxy environment variables
+
+A vault a user connects for themselves is dialled at the IP address its
+URL was checked at: the hostname is resolved once, every answer is
+judged, and the approved address is written into the URL the socket
+actually opens to, so no second lookup sits between the verdict and the
+connect for a rebound DNS record to win. Holding that shut costs one
+more thing, and it is the surprising one. The connection pool those
+vaults use is built around an explicit transport, and httpx only reads
+`HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` for a client built with no
+transport at all — passing one leaves the proxy mounts empty. **Ambient
+proxy variables are ignored on this path by design**, because a proxy
+would resolve the hostname itself, which is exactly the bypass the pin
+exists to close.
+
+On a deployment where an egress proxy is the *only* route out, that has
+a consequence worth knowing before you spend an hour on it: user-connected
+vaults cannot be reached at all, and every vault capability degrades to
+the local pipeline. Nobody loses any writing — degrading rather than
+failing is the designed behavior — but the vault sits silently unused.
+
+The symptom arrives in one of two shapes, and they are not
+interchangeable. A refused or reset connection is attributed
+`unreachable`; a SYN the network drops runs the deadline out first and
+is attributed `timed_out`. Those two are the attribution vocabulary, not
+what reaches a log aggregator. The string to grep is the one static
+record this seam emits per attempt, `creek vault outcome`, whose
+`outcome` field carries `vault_unavailable` for the first case and
+`vault_timeout` for the second, with `capability` set to
+`creek.handshake`. Looking for only one of the two sends you hunting a
+network that is behaving exactly as reported.
+
+The remedy is to allow the backend direct egress to the vault's host
+and port, or to accept the local fallback. It is **not** to move the
+deployment onto `CREEK_VAULT_URL`. That path is unpinned — built with no
+transport, so it does still honor ambient proxy variables, and that,
+rather than any special case for `localhost`, is why a developer running
+a vault at `http://localhost:8000` sees none of this — but it
+configures one deployment-wide vault bound to a single user and it is
+**deprecated** (`backend/.env.example`, ADR 0004). Reaching for it to
+get around this trades a security control for a road that is being
+removed.
+
 ### Error monitoring
 
 Both sides report unhandled errors to **Sentry** when a DSN is configured
@@ -1013,6 +1056,7 @@ Railway dashboard → Service → **"Restart"** button. Or push a new commit.
 | `alembic upgrade head` fails on deploy | Migration files missing or DB schema mismatch | Run `railway logs` to see the error. You may need to create an initial migration |
 | Slow cold starts | Free tier or single worker | Upgrade Railway plan and/or increase `WEB_CONCURRENCY` |
 | Rate limit errors (429) | Too many requests from one IP | Rate limits reset on container restart. In-memory by design — not persistent across deploys |
+| Vault features silently fall back to local; `creek vault outcome` logs show `vault_unavailable` or `vault_timeout` | Network mandates an egress proxy — user-connected vaults ignore proxy env vars by design (the destination is IP-pinned) | Allow direct egress from the backend to the vault host and port, or accept the local fallback. See [Vault egress ignores proxy environment variables](#vault-egress-ignores-proxy-environment-variables) |
 
 ---
 
