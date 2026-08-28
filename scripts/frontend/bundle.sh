@@ -21,11 +21,21 @@
 # actually have today, which is an import or bundler-config change that breaks
 # the bundle. A gate that overstates its coverage is worse than none.
 #
-# `expo-doctor` is deliberately not run here. It still fails, now on twelve
-# packages sitting behind the versions SDK 57 pins rather than the nine that
-# once sat ahead of SDK 52. Gating on it would mean shipping it suppressed, and
-# dependency-version drift is a Dependabot concern with its own cadence, not a
-# build-integrity one. This stage answers one question: does the app bundle.
+# `expo-doctor` is still not run here, but the reason has narrowed, because the
+# old one is no longer true. Dependency drift from the pinned SDK is now gated
+# -- by scripts/frontend/sdk-align.sh, which runs `expo install --check`, the
+# one probe that reads the SDK's compatibility table. That was the single
+# failing check in the last expo-doctor run (`npx expo-doctor`, measured
+# 2026-08-28: 21 checks, 20 passed, 1 failed -- the SDK version match), and it
+# passes now that the tree is realigned; the
+# Dependabot floors on react-native-screens and react-native-svg keep a bot
+# bump from knocking it red again, which is what makes it enforceable rather
+# than aspirational. What stays ungated is the other 20 checks: a broad,
+# network-dependent probe whose future failures are outside this repo's control
+# would have to ship suppressed to be adopted at all. And neither probe is a
+# native build -- there is still no frontend/ios or frontend/android, so
+# newArchEnabled remains uncompiled either way. This stage answers one
+# question: does the app bundle.
 #
 # Output goes to frontend/dist, gitignored at the repo root and in
 # frontend/.gitignore.

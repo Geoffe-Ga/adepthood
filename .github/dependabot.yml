@@ -125,6 +125,48 @@ updates:
       # with the SDK. Unpin when an Expo SDK expects the 3.x line.
       - dependency-name: "@react-native-async-storage/async-storage"
         versions: [">=3.0.0"]
+      # react-native-screens moves with the SDK, not on its own: Expo SDK 57
+      # expects the RANGE "~4.26.0" and the tree had drifted a whole minor ahead
+      # to 4.27.x, which `expo install --check` reports and nothing else does.
+      # The floor therefore sits at the next MINOR rather than the next patch --
+      # ">=4.27.0" keeps every 4.26.x patch proposable while holding the entire
+      # 4.27 line, which is what "expects a range" requires.
+      #
+      # Nothing is being held back for safety and nothing skipped carries a
+      # security fix. Read from the upstream release notes on 2026-08-28
+      # (github.com/software-mansion/react-native-screens/releases, tag 4.27.0)
+      # and cross-checked against `npm audit`, which does not list this package:
+      # 4.27.0's headline content is React Native 0.87 support
+      # plus Android crash guards, and this repo does not run RN 0.87 --
+      # react-native is on the 0.86 line, which is why
+      # @react-native/jest-preset is floored at ">=0.87.0" above for exactly the
+      # same reason. What is NOT verified here: there is no frontend/ios or
+      # frontend/android directory, so the native behaviour of the step-back is
+      # uncompiled and untested in this repo. Raise the floor in step with
+      # whatever the next Expo SDK expects.
+      - dependency-name: "react-native-screens"
+        versions: [">=4.27.0"]
+      # react-native-svg is pinned by Expo SDK 57 EXACTLY -- "15.15.4", no
+      # tilde -- so like react-native-worklets above the floor sits one patch
+      # above the expected version, because a floor at the next minor would let
+      # a grouped patch bump ratchet the pin past the compatibility table with
+      # nothing objecting. The tree had drifted to 15.15.5; the realignment
+      # stepped it back.
+      #
+      # Nothing skipped carries a security fix. Read from the upstream release
+      # notes on 2026-08-28 (github.com/software-mansion/react-native-svg/
+      # releases, tags v15.15.3 through v15.15.5) and cross-checked against
+      # `npm audit`, which does not list this package: 15.15.5 is cross-platform
+      # minor fixes plus CI and publishing changes, and the use-after-free fix
+      # this package is remembered for landed in 15.15.3 -- below the
+      # step-back, so it is retained. What is NOT verified here: there is no frontend/ios or
+      # frontend/android directory, so the native behaviour of the step-back is
+      # uncompiled and untested in this repo. Jest renders this package for
+      # real rather than through a mock, which covers its JS surface and
+      # nothing below it. Raise the floor in step with whatever the next Expo
+      # SDK expects.
+      - dependency-name: "react-native-svg"
+        versions: [">=15.15.5"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
