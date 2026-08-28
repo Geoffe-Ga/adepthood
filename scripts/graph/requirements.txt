@@ -5,4 +5,4 @@ graphifyy==0.9.47
 # required for this backend". Kept on its own line (not the [anthropic]
 # extra) because the workflows parse the graphifyy pin with
 # `sed -n 's/^graphifyy==//p'`. Version matches backend/requirements.txt.
-anthropic==0.123.0
+anthropic==1.0.0
