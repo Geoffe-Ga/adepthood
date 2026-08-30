@@ -49,7 +49,14 @@ jobs:
       # ONE cap, read twice: the action enforces it and the classifier compares
       # against it. Written in two places these drift, and a classifier holding
       # a stale cap calls a genuine overrun an agent error, or the reverse.
-      MAX_TURNS: "40"
+      #
+      # WHY 80 AND NOT 40: the four captured runs used 41, 44, 45 and 47 turns
+      # -- every one of them over the cap -- so 40 was cutting the work off on
+      # most nights and the summary was never written. 80 clears the observed peak of 47 with room
+      # for a night that runs long, while still bounding a prompt that fails to
+      # converge -- at roughly three dollars for 47 turns, "no cap" is not an
+      # option and the 30-minute job timeout is not a cost control.
+      MAX_TURNS: "80"
     outputs:
       # Carried to the reporting job so the tracking issue names the failure
       # mode instead of a generic `##[error]` line from the log.
@@ -169,6 +176,9 @@ jobs:
             turn-cap-overrun)
               note="Grooming finished its work and then exceeded the ${MAX_TURNS}-turn cap. Benign: the grooming summary above is the real outcome and there is nothing to re-run, so the job passes."
               fail=0 ;;
+            turn-cap-truncated)
+              note="Grooming was cut off at the ${MAX_TURNS}-turn cap while it was still working, so no grooming summary was written and the backlog is only part-groomed. Raise the cap or shorten the prompt before re-running. Failing the job."
+              fail=1 ;;
             usage-limit)
               note="No grooming happened: the account allowance is exhausted. Re-running before the reset cannot succeed. Failing the job."
               fail=1 ;;
