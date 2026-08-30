@@ -51,7 +51,7 @@ on:
 permissions:
   contents: read   # checkout, for the reporter script itself
   issues: write    # open or comment on the one tracking issue
-  actions: read    # `gh run view --log-failed` on the caller's run
+  actions: read    # read the caller's run: its log archive, and its jobs
 
 jobs:
   report:
@@ -84,9 +84,90 @@ jobs:
           #
           # An unreadable log must still produce a report: the run failed, and
           # that fact reaching a human matters more than the detail attached to
-          # it. The reporter says so explicitly rather than filing a blank.
+          # it. So every fetch below is LOUD, never fatal -- and never silent
+          # either. The previous line ended `2>/dev/null || : > "$log"`, which
+          # discarded stderr, the exit code, and the difference between "the log
+          # was read and held nothing" and "the log was never fetched at all".
+          #
+          # That mattered on EVERY invocation rather than rarely: this job runs
+          # inside the still-in-progress run it is reporting on, and the
+          # run-level log archive is not published until the whole run finishes.
+          # So the archive fetch 404s every time, and every tracking issue this
+          # reporter has ever filed said "(no failure log was readable for this
+          # run)" about a log that was perfectly readable a minute later.
+          #
+          # `-e` is inherited from GitHub's `bash -e {0}` -- `set -uo pipefail`
+          # adds options rather than replacing them -- and is cleared here so
+          # that a failing fetch reaches the branch that handles it instead of
+          # killing the step.
           log="$RUNNER_TEMP/log-failed.txt"
-          gh run view "$GITHUB_RUN_ID" --log-failed > "$log" 2>/dev/null || : > "$log"
+          fetch_error="$RUNNER_TEMP/log-fetch-error.txt"
+          # The prefix the runner puts on a failure line. Filtering the per-job
+          # log to these is what keeps the fallback's excerpt on the failure
+          # rather than on the setup steps that scroll above it.
+          error_marker='##[error]'
+
+          set +e
+          gh run view "$GITHUB_RUN_ID" --log-failed > "$log" 2> "$fetch_error"
+          fetch_status=$?
+
+          if [ "$fetch_status" -ne 0 ]; then
+            : > "$log"
+            # A JOB's log is published as soon as that job ends, which is before
+            # this one starts -- so the log the archive cannot yet serve is
+            # reachable one endpoint over. `GITHUB_REPOSITORY` is always set by
+            # Actions; the guard is what lets a test drive both halves of this
+            # branch, and what keeps a hand-run of the block off the API.
+            repo="${GITHUB_REPOSITORY:-}"
+            if [ -n "$repo" ]; then
+              failed_jobs="$RUNNER_TEMP/failed-jobs.tsv"
+              # --paginate, because this endpoint serves 30 jobs a page by
+              # default and a matrix run has more than that -- an unpaginated
+              # read would drop the failing job on exactly the biggest runs.
+              gh api --paginate \
+                "repos/$repo/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+                --jq '.jobs[] | select(.conclusion == "failure")
+                      | [.id, .name,
+                         ([.steps[]? | select(.conclusion == "failure") | .name]
+                          | first // "(failing step not reported)")]
+                      | @tsv' > "$failed_jobs" 2>> "$fetch_error"
+              jobs_status=$?
+              if [ "$jobs_status" -eq 0 ]; then
+                # Rebuilt in the TAB-separated `<job>\t<step>\t<message>` shape
+                # `gh run view --log-failed` emits, because that is what
+                # report_workflow_failure.sh parses.
+                while IFS=$'\t' read -r job_id job_name step_name; do
+                  [ -n "$job_id" ] || continue
+                  gh api "repos/$repo/actions/jobs/$job_id/logs" 2>> "$fetch_error" \
+                    | grep -F "$error_marker" \
+                    | awk -v job="$job_name" -v step="$step_name" \
+                        '{ printf "%s\t%s\t%s\n", job, step, $0 }' >> "$log"
+                done < "$failed_jobs"
+              fi
+            fi
+
+            # One line, because the reporter reads this file as one record per
+            # line and a raw multi-line gh error would arrive as several
+            # unparseable ones.
+            reason="$(tr '\n\t' '  ' < "$fetch_error" | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//')"
+            # WHICH ANNOTATION depends on what the fallback came back with, not
+            # on whether the archive fetch failed -- the archive fetch fails on
+            # every single invocation, so a warning keyed on that alone would
+            # say "the log could not be fetched" directly beside a log that was.
+            # An annotation that is wrong on the ordinary path is one nobody
+            # reads on the extraordinary one.
+            if [ -s "$log" ]; then
+              echo "::notice::the run-level log archive is not published until the run ends (gh exited $fetch_status: $reason), so the failure log below was read from the per-job API instead"
+            else
+              echo "::warning::the failure log could not be fetched (gh exited $fetch_status): $reason"
+              printf '%s\t%s\t%s\n' \
+                "$WORKFLOW_FILE" \
+                "(unavailable: the log could not be fetched)" \
+                "The failure log was not yet available while the run was in progress, and the per-job fallback could not read it either. gh exited $fetch_status: $reason. The log itself is very likely readable now at the run URL above -- this says nothing about what the run printed." \
+                > "$log"
+            fi
+          fi
+          set -e
 
           args=(--workflow "$WORKFLOW_FILE" --run-url "$RUN_URL" --log-file "$log")
           if [ -n "$HEADLINE" ]; then
