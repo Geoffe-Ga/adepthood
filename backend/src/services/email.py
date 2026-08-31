@@ -65,11 +65,18 @@ BACKEND_RESEND = "resend"
 
 @dataclass(frozen=True, slots=True)
 class EmailMessagePayload:
-    """An outbound email -- plain-text only for now (HTML is a future epic)."""
+    """An outbound email: a plain-text body and an optional HTML alternative.
+
+    ``body`` is the contract -- every client can render it, the dev console
+    prints it, and a screen reader falls back to it.  ``html`` is strictly an
+    alternative representation of the same content, never additional content,
+    because a recipient whose client refuses HTML must lose nothing.
+    """
 
     to: str
     subject: str
     body: str
+    html: str | None = None
 
 
 class EmailDeliveryError(Exception):
@@ -371,6 +378,12 @@ class SmtpEmailSender:
         envelope["To"] = message.to
         envelope["Subject"] = message.subject
         envelope.set_content(message.body)
+        if message.html is not None:
+            # RFC 2046 §5.1.4: alternatives are ordered least- to
+            # most-faithful, so the text part must already be set before this
+            # call appends the HTML one.  ``add_alternative`` promotes the
+            # envelope to ``multipart/alternative`` in place.
+            envelope.add_alternative(message.html, subtype="html")
         with self._connect() as client:
             client.send_message(envelope)
 
@@ -506,13 +519,22 @@ class ResendEmailSender:
             raise EmailDeliveryError(msg)
 
     def _wire_payload(self, message: EmailMessagePayload) -> dict[str, object]:
-        """Render ``message`` as the provider's send-request JSON."""
-        return {
+        """Render ``message`` as the provider's send-request JSON.
+
+        ``html`` is omitted rather than sent empty when the message has no
+        alternative: the provider treats a present-but-blank field as a
+        request to deliver a blank HTML part, which renders as an empty
+        email in any client that prefers HTML.
+        """
+        payload: dict[str, object] = {
             "from": self.from_address,
             "to": [message.to],
             "subject": message.subject,
             "text": message.body,
         }
+        if message.html is not None:
+            payload["html"] = message.html
+        return payload
 
 
 # Process-wide singleton so tests that override the dependency do not

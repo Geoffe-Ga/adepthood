@@ -203,7 +203,16 @@ async def test_provider_failure_logs_no_image_or_text_content(
 _SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 _UPLOAD_FILE_PATTERN = re.compile(r"\bUploadFile\b")
 _FILE_CALL_PATTERN = re.compile(r"\bFile\(")
-_MULTIPART_PATTERN = re.compile(r"multipart", re.IGNORECASE)
+# The upload sense of "multipart", not every occurrence of the word.  The
+# guard exists to keep Starlette's disk-spooling form parser out of ``src/``;
+# the signals for that are the form content type and the parser package.
+# Matching the bare word also flagged ``multipart/alternative`` -- an OUTBOUND
+# email envelope built by ``email.message``, which never parses a request and
+# never touches disk.  A guard that fires on unrelated code teaches people to
+# work around it by renaming the comment, which is how the real regression
+# eventually walks back in.  ``UploadFile`` and ``File(`` above remain the
+# checks that actually catch a disk-backed upload surface.
+_MULTIPART_PATTERN = re.compile(r"multipart/form-data|python[-_]multipart", re.IGNORECASE)
 
 
 def test_no_multipart_upload_surface_in_source_tree() -> None:
@@ -219,6 +228,23 @@ def test_no_multipart_upload_surface_in_source_tree() -> None:
         assert not _UPLOAD_FILE_PATTERN.search(text), path
         assert not _FILE_CALL_PATTERN.search(text), path
         assert not _MULTIPART_PATTERN.search(text), path
+
+
+def test_upload_guard_still_catches_a_real_violation() -> None:
+    """The narrowed pattern must still fail on a genuine upload surface.
+
+    Playbook: a gate is only worth its green when it has been shown to go red.
+    These are the three shapes that actually reintroduce disk-spooled uploads;
+    the last case pins the false positive that motivated the narrowing, so a
+    future widening back to the bare word fails here rather than in someone's
+    unrelated PR.
+    """
+    assert _UPLOAD_FILE_PATTERN.search("async def f(x: UploadFile) -> None: ...")
+    assert _FILE_CALL_PATTERN.search("x: bytes = File(...)")
+    assert _MULTIPART_PATTERN.search('content_type = "multipart/form-data"')
+    assert _MULTIPART_PATTERN.search("# installed via python-multipart")
+    assert not _MULTIPART_PATTERN.search('envelope.add_alternative(html, subtype="html")')
+    assert not _MULTIPART_PATTERN.search("# promotes the envelope to multipart/alternative")
 
 
 def test_no_python_multipart_dependency() -> None:
