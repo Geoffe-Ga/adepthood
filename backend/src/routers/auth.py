@@ -58,6 +58,7 @@ from services.email import (
     EmailSender,
     get_email_sender,
 )
+from services.email_templates import reset_email_html
 from services.oauth_apple import verify_apple_id_token
 from services.oauth_google import verify_google_id_token
 from services.oidc import OIDCIdentity, OIDCTokenError
@@ -1190,6 +1191,7 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
     )
     return EmailMessagePayload(
         to=to_address,
+        html=reset_email_html(origin, plaintext_token),
         subject="Reset your Adepthood password",
         body=body,
     )
