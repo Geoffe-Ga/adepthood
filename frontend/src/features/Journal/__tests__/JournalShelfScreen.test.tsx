@@ -4,13 +4,16 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import type { JournalListResponse, JournalMessage, PromptDetail, PromptListResponse } from '@/api';
 import { accent, surface } from '@/design/tokens';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
+const mockPromptHistory = jest.fn() as jest.MockedFunction<
+  (_p?: { limit?: number; offset?: number }) => Promise<PromptListResponse>
+>;
 const mockNavigate = jest.fn();
 // Present so a display-only excerpt() regression that starts writing back to the
 // server (instead of only truncating the rendered preview) has something to trip.
@@ -24,6 +27,8 @@ jest.mock('@/api', () => ({
   prompts: {
     current: (...a: unknown[]) =>
       (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
+    history: (...a: unknown[]) =>
+      (mockPromptHistory as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -144,7 +149,9 @@ beforeEach(() => {
   mockList.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
+  mockPromptHistory.mockReset();
   mockUpdate.mockReset();
+  mockPromptHistory.mockResolvedValue({ items: [], total: 0, has_more: false });
   mockList.mockResolvedValue(page([]));
   // Default: the weekly prompt is already answered, so no card surfaces.
   mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
@@ -576,5 +583,31 @@ describe('JournalShelfScreen', () => {
     expect(headerIndex).toBeGreaterThan(invitationIndex);
     // The morning-pages tip sits in the shelf's top matter, below the action row.
     expect(tipIndex).toBeGreaterThan(headerIndex);
+  });
+
+  it('opens the past-prompt history from the shelf and reads it from the server', async () => {
+    mockPromptHistory.mockResolvedValue({
+      items: [
+        {
+          week_number: 2,
+          question: 'What did you carry in?',
+          has_responded: true,
+          response: 'A short answer.',
+          timestamp: '2026-05-01T00:00:00Z',
+        },
+      ],
+      total: 1,
+      has_more: false,
+    });
+    const { findByTestId, getByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-past-prompts');
+    // Closed by default: opening it is what reaches the route.
+    expect(mockPromptHistory).not.toHaveBeenCalled();
+    expect(queryByTestId('prompt-history-card')).toBeNull();
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-past-prompts'));
+    });
+    await waitFor(() => expect(mockPromptHistory).toHaveBeenCalled());
+    expect(await findByTestId('prompt-history-row-2')).toBeTruthy();
   });
 });

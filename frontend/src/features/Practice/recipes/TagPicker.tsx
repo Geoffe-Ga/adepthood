@@ -8,6 +8,7 @@ import SearchableDropdown, {
   dropdownCreateStyles,
 } from '../components/SearchableDropdown';
 
+import PersonalTagRow from './PersonalTagRow';
 import { nameToSlug } from './types';
 
 import type { PracticeTag, PracticeTagCreate } from '@/api';
@@ -15,11 +16,20 @@ import type { PracticeTag, PracticeTagCreate } from '@/api';
 export interface TagPickerProps {
   stepIndex: number;
   selectedSlug: string;
+  /** The label the step itself carries, shown when the chosen slug is no
+   *  longer in the library — deleting a personal tag leaves the step holding
+   *  the wording it will still save, and the trigger should keep saying it
+   *  rather than dropping to the machine slug. */
+  selectedLabel?: string;
   tagLibrary: PracticeTag[];
   onSelect: (tag: PracticeTag) => void;
   /** Resolves once the tag is persisted; the caller usually patches
    *  the step's tag_slug + tag_label inside this callback. */
   onCreateTag: (payload: PracticeTagCreate) => Promise<void>;
+  /** Rename one of the caller's own tags; resolves once persisted. */
+  onRenameTag: (tag: PracticeTag, label: string) => Promise<void>;
+  /** Delete one of the caller's own tags; resolves once persisted. */
+  onDeleteTag: (tag: PracticeTag) => Promise<void>;
 }
 
 const LABEL_MAX = 255;
@@ -70,6 +80,8 @@ const TagPicker = (props: TagPickerProps): React.JSX.Element => {
         groups={dd.groups}
         selectedSlug={props.selectedSlug}
         onSelect={dd.select}
+        onRenameTag={props.onRenameTag}
+        onDeleteTag={props.onDeleteTag}
       />
     </SearchableDropdown>
   );
@@ -111,7 +123,7 @@ function useTagDropdown(props: TagPickerProps): TagDropdownController {
     query,
     creating,
     groups,
-    triggerLabel: triggerLabelFor(selected, props.selectedSlug),
+    triggerLabel: triggerLabelFor(selected, props.selectedLabel, props.selectedSlug),
     badge:
       selected === undefined
         ? undefined
@@ -133,8 +145,19 @@ function useTagDropdown(props: TagPickerProps): TagDropdownController {
   };
 }
 
-function triggerLabelFor(selected: PracticeTag | undefined, selectedSlug: string): string {
+/**
+ * What the collapsed trigger reads, in the order the wording can be trusted:
+ * the library entry (which a rename keeps current), then the step's own stored
+ * label (right when the tag has been deleted out from under the step), then
+ * the bare slug as the last thing left to show.
+ */
+function triggerLabelFor(
+  selected: PracticeTag | undefined,
+  selectedLabel: string | undefined,
+  selectedSlug: string,
+): string {
   if (selected !== undefined) return selected.label;
+  if (selectedLabel !== undefined && selectedLabel.length > 0) return selectedLabel;
   if (selectedSlug.length > 0) return selectedSlug;
   return 'Choose a tag';
 }
@@ -160,37 +183,66 @@ interface TagOptionsProps {
   groups: TagGroup[];
   selectedSlug: string;
   onSelect: (tag: PracticeTag) => void;
+  onRenameTag: (tag: PracticeTag, label: string) => Promise<void>;
+  onDeleteTag: (tag: PracticeTag) => Promise<void>;
 }
 
-const TagOptions = ({
-  base,
-  groups,
-  selectedSlug,
-  onSelect,
-}: TagOptionsProps): React.JSX.Element => {
-  if (groups.length === 0) {
+const TagOptions = (props: TagOptionsProps): React.JSX.Element => {
+  if (props.groups.length === 0) {
     return (
-      <DropdownEmptyState label="No tags match — create one below." testID={`${base}-empty`} />
+      <DropdownEmptyState
+        label="No tags match — create one below."
+        testID={`${props.base}-empty`}
+      />
     );
   }
   return (
     <>
-      {groups.map((group) => (
-        <View key={group.key} testID={`${base}-group-${group.key}`}>
+      {props.groups.map((group) => (
+        <View key={group.key} testID={`${props.base}-group-${group.key}`}>
           <DropdownGroupHeader label={group.label} />
           {group.tags.map((tag) => (
-            <DropdownOptionRow
-              key={`${tag.owner_user_id ?? 'sys'}-${tag.id}`}
-              label={tag.label}
-              onPress={() => onSelect(tag)}
-              selected={tag.slug === selectedSlug}
-              testID={`${base}-option-${tag.slug}`}
-              accessibilityLabel={tag.label}
-            />
+            <TagRow key={`${tag.owner_user_id ?? 'sys'}-${tag.id}`} tag={tag} options={props} />
           ))}
         </View>
       ))}
     </>
+  );
+};
+
+/**
+ * One library row. A shared tag is selectable and nothing more; a tag the
+ * caller owns also carries rename and delete, which is the only place in the
+ * app those two routes are reachable from.
+ */
+const TagRow = ({
+  tag,
+  options,
+}: {
+  tag: PracticeTag;
+  options: TagOptionsProps;
+}): React.JSX.Element => {
+  const selected = tag.slug === options.selectedSlug;
+  if (tag.owner_user_id === null) {
+    return (
+      <DropdownOptionRow
+        label={tag.label}
+        onPress={() => options.onSelect(tag)}
+        selected={selected}
+        testID={`${options.base}-option-${tag.slug}`}
+        accessibilityLabel={tag.label}
+      />
+    );
+  }
+  return (
+    <PersonalTagRow
+      base={options.base}
+      tag={tag}
+      selected={selected}
+      onSelect={() => options.onSelect(tag)}
+      onRename={(label) => options.onRenameTag(tag, label)}
+      onDelete={() => options.onDeleteTag(tag)}
+    />
   );
 };
 
