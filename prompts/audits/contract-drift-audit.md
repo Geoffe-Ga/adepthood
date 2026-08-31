@@ -81,6 +81,17 @@ Trust these over any issue body, in this order:
    0.10.0, and what a vault advertises is keyed on the caller's declared minor.
    Read the vendored schema rather than this sentence. Several response schemas
    are likewise `additionalProperties: false`. **Never edit this directory.**
+
+   One trap inside it: that directory's own `README.md` is hand-written upstream
+   and excluded from upstream's round-trip generation, so it is **stale prose
+   vendored verbatim**. It still describes the 0.7 bundle — five capabilities, a
+   5 x 7 matrix, 16 schemas, four `NotApplicableExample` cells — beside a bundle
+   holding seven, 7 x 7, 27 and six. Trust `manifest.json`, the `schemas/`
+   directory and the `examples/` subdirectory names; treat the README's counts
+   as evidence of a past version, never of this one. The divergence is pinned by
+   `test_the_vendored_readme_prose_is_stale_in_exactly_the_known_places` in
+   `backend/tests/test_creek_contract_conformance.py`, which fails once upstream
+   regenerates the prose — retire this paragraph when it does.
 2. **`docs/adr/`** — especially ADR 0004: HTTP/JSON is the sole application
    boundary, adepthood's MCP client is retired, and Decision 6 governs intimate
    transit (amended 2026-08-08 for uploads).

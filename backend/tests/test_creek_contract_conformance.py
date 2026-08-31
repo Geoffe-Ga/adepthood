@@ -104,6 +104,7 @@ from tests.creek_bundle_facts import (
     PINNED_PATH,
     PINNED_REPO,
     REACHABLE_CELLS,
+    SCHEMA_FILES,
     STATE_COUNT,
     UNREACHABLE_CELLS,
     VENDORED_FILES,
@@ -207,6 +208,41 @@ _ERROR_STATES = frozenset(
 # Creek's published names. Both are fixed, so the fixture is served verbatim and
 # this alias exists only so the guard below asserts against the SHIPPED table.
 _CAPABILITY_BY_CREEK_NAME = _CAPABILITY_BY_WIRE_NAME
+
+# The directory every published JSON Schema lives under.
+_SCHEMA_DIR = "schemas/"
+
+# The vendored README is hand-written upstream and excluded from Creek's own
+# round-trip test, so its prose was never regenerated as the matrix grew: it
+# still describes the 0.7 bundle. It is vendored byte-for-byte and cannot be
+# corrected here -- editing it would turn the digest gate red -- and the contract
+# audit playbook names this directory its first source of truth, ahead of every
+# ADR and issue body. So the divergence is pinned rather than left as a trap for
+# the next reader. Each entry is a phrase quoted from the vendored bytes, the
+# count that phrase states, and the count the bundle beside it actually holds.
+_README_STALE_SCHEMA_FILES = 16
+_README_STALE_EXAMPLE_CELLS = 35
+_README_STALE_CAPABILITY_COUNT = 5
+_README_STALE_UNREACHABLE_CELLS = 4
+_README_STALE_PROSE: Mapping[str, tuple[int, int]] = {
+    "one JSON Schema per CONTRACT_MODELS entry (16 files)": (
+        _README_STALE_SCHEMA_FILES,
+        SCHEMA_FILES,
+    ),
+    "one fixture per (capability, state) cell (5 \u00d7 7 = 35 files)": (
+        _README_STALE_EXAMPLE_CELLS,
+        EXAMPLE_CELLS,
+    ),
+    "**Capabilities** (five)": (
+        _README_STALE_CAPABILITY_COUNT,
+        CAPABILITY_COUNT,
+    ),
+    "Why four cells are `NotApplicableExample`": (
+        _README_STALE_UNREACHABLE_CELLS,
+        UNREACHABLE_CELLS,
+    ),
+}
+
 
 Handler = Callable[[httpx.Request], httpx.Response]
 ClientFactory = Callable[[Handler], HttpCreekVaultClient]
@@ -515,6 +551,28 @@ def test_the_two_manifests_jointly_cover_every_vendored_path_once() -> None:
     assert not creek & uncovered
     assert creek | uncovered == _vendored_paths()
     assert len(creek) + len(uncovered) == VENDORED_FILES
+
+
+def test_the_vendored_readme_prose_is_stale_in_exactly_the_known_places() -> None:
+    """Upstream's hand-written prose still describes the 0.7 bundle it ships beside.
+
+    The audit playbook sends a reader to this directory before any ADR or issue
+    body, and the first file there is the README -- which states five
+    capabilities, a 5 by 7 matrix, 16 schemas and four sentinel cells. Every one
+    of those was true at 0.7 and none is true now. The bytes are upstream's and
+    must stay byte-identical, so the divergence is pinned here instead of
+    corrected: each phrase must still be present, and each count it states must
+    still disagree with what the bundle holds. When upstream regenerates the
+    prose this fails, and the warning it justifies in
+    ``prompts/audits/contract-drift-audit.md`` can be retired alongside it.
+    """
+    readme = _read_bytes(README_NAME).decode()
+    schemas = [path for path in _digests(MANIFEST_NAME) if path.startswith(_SCHEMA_DIR)]
+
+    assert len(schemas) == SCHEMA_FILES
+    for phrase, (stated, published) in _README_STALE_PROSE.items():
+        assert phrase in readme, phrase
+        assert stated != published, phrase
 
 
 # --------------------------------------------------------------------------

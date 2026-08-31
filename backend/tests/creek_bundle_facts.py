@@ -50,6 +50,10 @@ CREEK_MANIFEST_ENTRIES = 77
 #: it is the record, not the record's subject.
 VENDORED_FILES = 79
 
+#: JSON Schemas the bundle publishes -- one per entry in Creek's own
+#: ``CONTRACT_MODELS``. It grew with the capability axis: 0.7 published 16.
+SCHEMA_FILES = 27
+
 #: Capabilities on the example matrix's first axis, at contract 0.10.0:
 #: ``capabilities``, ``journal-upsert``, ``reflections``, ``wheel``, ``upload``,
 #: ``drive-connector`` and ``pipeline``.
