@@ -2158,10 +2158,18 @@ export const prompts = {
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return request<PromptListResponse>(`/prompts/history${qs ? `?${qs}` : ''}`, {
+    const options = {
       token,
       schema: promptListResponseSchema as unknown as z.ZodType<PromptListResponse>,
-    });
+    };
+    // Two literal call sites rather than one path with the query interpolated
+    // into it. The journey ledger reads this file's call sites to decide which
+    // routes the app can actually reach, and a `${...}` glued onto the final
+    // path segment reads as part of that segment -- which makes a route the
+    // app does reach look unreachable, and a journey naming it fail.
+    return qs.length > 0
+      ? request<PromptListResponse>(`/prompts/history?${qs}`, options)
+      : request<PromptListResponse>('/prompts/history', options);
   },
 };
 
@@ -2861,10 +2869,14 @@ export const frequency = {
     const query = new URLSearchParams();
     if (stageNumber != null) query.set('stage_number', String(stageNumber));
     const qs = query.toString();
-    return request<FrequencyResponse>(`/user-practices/current/frequency${qs ? `?${qs}` : ''}`, {
+    const options = {
       token,
       schema: frequencyResponseSchema as unknown as z.ZodType<FrequencyResponse>,
-    });
+    };
+    // Literal call sites, for the reason spelled out on ``prompts.history``.
+    return qs.length > 0
+      ? request<FrequencyResponse>(`/user-practices/current/frequency?${qs}`, options)
+      : request<FrequencyResponse>('/user-practices/current/frequency', options);
   },
 };
 

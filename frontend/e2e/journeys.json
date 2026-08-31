@@ -341,5 +341,38 @@
     },
     "status": "uncovered",
     "issue": 2543
+  },
+  {
+    "id": "practice.rename-and-delete-a-tag",
+    "description": "Someone who made their own practice tag renames it, and later deletes it, from the recipe editor's tag library. The library could list and create and stopped there, so both routes were served, typed, and unreachable from any screen. The journey is the seam: that a rename reaches the row the client named and survives the next list rather than living in local state, that the slug a recipe step copied by value is untouched by it, that a shared tag refuses both mutations from the server rather than from what the client chose to render, and that deleting a personal tag leaves the shared library whole.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/recipes/RecipeEditorModal.tsx",
+      "client": ["practiceTags"],
+      "routes": [
+        "GET /practice-tags/",
+        "POST /practice-tags/",
+        "PATCH /practice-tags/{tag_id}",
+        "DELETE /practice-tags/{tag_id}"
+      ],
+      "tables": ["practicetag"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-tags.e2e.test.ts"
+  },
+  {
+    "id": "journal.read-past-prompts",
+    "description": "Someone opens Past prompts from the journal shelf and reads the weekly questions they have already answered with what they wrote under each. Answering a prompt mirrors the response into the journal as an ordinary page, which keeps the writing and loses the question that drew it, so this route is the only one that returns the pair -- and nothing asked for it until this surface existed. What the seam has to prove is that a submitted response comes back joined to its own question, and that the limit and offset the modal sends actually slice the set rather than being ignored.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PromptHistoryModal.tsx",
+      "client": ["prompts"],
+      "routes": [
+        "GET /prompts/current",
+        "POST /prompts/{week_number}/respond",
+        "GET /prompts/history"
+      ],
+      "tables": ["promptresponse", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/prompt-history.e2e.test.ts"
   }
 ]

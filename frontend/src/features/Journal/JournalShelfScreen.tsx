@@ -22,6 +22,7 @@ import JournalHero from './JournalHero';
 import styles from './JournalShelf.styles';
 import MorningPagesTip from './MorningPagesTip';
 import { usePressScale } from './motion';
+import PromptHistoryModal from './PromptHistoryModal';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
 import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
@@ -434,6 +435,7 @@ function StagePromptSection({
 interface TopMatterProps {
   stagePrompts: StagePromptsState;
   onPrompt: (_prompt: StagePromptDetail) => void;
+  onPastPrompts: () => void;
   onNew: () => void;
   onSearch: (_query: string) => void;
   query: string;
@@ -449,6 +451,7 @@ interface TopMatterProps {
 function ShelfTopMatter({
   stagePrompts,
   onPrompt,
+  onPastPrompts,
   onNew,
   onSearch,
   query,
@@ -461,6 +464,13 @@ function ShelfTopMatter({
       <ReturnStack />
       <InvitationStack />
       <View style={styles.actionRow}>
+        <Button
+          label="Past prompts"
+          variant="tertiary"
+          onPress={onPastPrompts}
+          accessibilityLabel="Read the weekly prompts you have already answered"
+          testID="journal-past-prompts"
+        />
         <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
       </View>
       <StagePromptSection state={stagePrompts} onOpen={onPrompt} />
@@ -546,24 +556,38 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
   return { drawer, onSelectEntry, onNewEntry, onPhotograph };
 }
 
+/** A shelf row's renderer, bound to the callbacks and clock the screen holds. */
+function makeRenderItem(
+  nav: ShelfNav,
+  shelf: ShelfState,
+  now: number,
+): (_info: SectionListRenderItemInfo<JournalMessage, ShelfSection>) => React.JSX.Element {
+  return ({ item }) => (
+    <PageCard entry={item} onOpen={nav.openEntry} onDelete={shelf.deletion.request} now={now} />
+  );
+}
+
 interface ShelfBodyProps {
   shelf: ShelfState;
   nav: ShelfNav;
   stagePrompts: StagePromptsState;
   now: number;
+  onPastPrompts: () => void;
 }
 
 /** The shelf's scrolling list surface (top matter, recency sections, paging) —
  *  split out so the screen component stays under the line cap. */
-function ShelfBody({ shelf, nav, stagePrompts, now }: ShelfBodyProps): React.JSX.Element {
+function ShelfBody({
+  shelf,
+  nav,
+  stagePrompts,
+  now,
+  onPastPrompts,
+}: ShelfBodyProps): React.JSX.Element {
   const { items, total, loading, error, query, hasMore, onSearch, loadMore } = shelf;
   const sections = groupByRecency(items, now);
   const searching = query.length >= SEARCH_MIN_LENGTH;
   const resultCount = searching ? total : undefined;
-
-  const renderItem = ({ item }: SectionListRenderItemInfo<JournalMessage, ShelfSection>) => (
-    <PageCard entry={item} onOpen={nav.openEntry} onDelete={shelf.deletion.request} now={now} />
-  );
 
   return (
     <SectionList
@@ -571,13 +595,14 @@ function ShelfBody({ shelf, nav, stagePrompts, now }: ShelfBodyProps): React.JSX
       testID="journal-shelf-list"
       sections={sections}
       keyExtractor={(item) => String(item.id)}
-      renderItem={renderItem}
+      renderItem={makeRenderItem(nav, shelf, now)}
       renderSectionHeader={renderSectionHeader}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
         <ShelfTopMatter
           stagePrompts={stagePrompts}
           onPrompt={nav.openPrompt}
+          onPastPrompts={onPastPrompts}
           onNew={nav.newEntry}
           onSearch={onSearch}
           query={query}
@@ -626,11 +651,21 @@ function JournalShelfScreen(): React.JSX.Element {
   const shelfDrawer = useShelfDrawer(nav);
   const { deletion } = shelf;
   const now = Date.now();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
   return (
     <ScreenScaffold testID="journal-shelf">
       <DeleteFailureNotice message={deletion.error} />
-      <ShelfBody shelf={shelf} nav={nav} stagePrompts={stagePrompts} now={now} />
+      <ShelfBody
+        shelf={shelf}
+        nav={nav}
+        stagePrompts={stagePrompts}
+        now={now}
+        onPastPrompts={openHistory}
+      />
+      <PromptHistoryModal visible={historyOpen} onDismiss={closeHistory} />
       <BottomFade />
       <JournalScreenDrawer
         drawer={shelfDrawer.drawer}

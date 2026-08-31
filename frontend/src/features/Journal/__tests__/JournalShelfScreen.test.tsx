@@ -20,7 +20,9 @@ const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptD
 const mockPromptStage = jest.fn() as jest.MockedFunction<
   (_stage: number) => Promise<StagePromptsResponse>
 >;
-const mockPromptHistory = jest.fn() as jest.MockedFunction<() => Promise<PromptListResponse>>;
+const mockPromptHistory = jest.fn() as jest.MockedFunction<
+  (_p?: { limit?: number; offset?: number }) => Promise<PromptListResponse>
+>;
 const mockNavigate = jest.fn();
 // Present so a display-only excerpt() regression that starts writing back to the
 // server (instead of only truncating the rendered preview) has something to trip.
@@ -609,5 +611,33 @@ describe('JournalShelfScreen', () => {
     expect(headerIndex).toBeGreaterThan(invitationIndex);
     // The morning-pages tip sits in the shelf's top matter, below the action row.
     expect(tipIndex).toBeGreaterThan(headerIndex);
+  });
+
+  it('opens the past-prompt history from the shelf and reads it from the server', async () => {
+    mockPromptHistory.mockResolvedValue({
+      items: [
+        {
+          week_number: 2,
+          question: 'What did you carry in?',
+          has_responded: true,
+          response: 'A short answer.',
+          timestamp: '2026-05-01T00:00:00Z',
+        },
+      ],
+      total: 1,
+      has_more: false,
+    });
+    const { findByTestId, getByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-past-prompts');
+    // Closed by default. The shelf reads the same history to mark its stage
+    // prompts as answered, so what proves the press reached the route is a
+    // further read on top of that one — not a first read.
+    const beforeOpen = mockPromptHistory.mock.calls.length;
+    expect(queryByTestId('prompt-history-card')).toBeNull();
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-past-prompts'));
+    });
+    await waitFor(() => expect(mockPromptHistory.mock.calls.length).toBeGreaterThan(beforeOpen));
+    expect(await findByTestId('prompt-history-row-2')).toBeTruthy();
   });
 });
