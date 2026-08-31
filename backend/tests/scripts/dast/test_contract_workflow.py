@@ -13,11 +13,12 @@ commented-out one. So the command moved into
 ``backend/scripts/dast/contract_fuzz.sh``, where it can be executed, and the
 exclusion list moved with it. Everything about the fuzzer's arguments is now
 asserted by running it under a recording stub, in
-``test_contract_fuzz_script.py``. What is left here reads the workflow, and the
-three mechanisms it reads it with -- comment-stripping, per-step extraction and
-trigger-block extraction -- are themselves tested against deliberately violating
-fixtures at the bottom of this file, because a guard nobody has watched fail is
-not known to work.
+``test_contract_fuzz_script.py``. What is left here reads the workflow, with the
+three mechanisms in ``tests/workflow_text`` -- comment-stripping, per-step
+extraction and trigger-block extraction. Those readers are shared with the other
+workflow guards rather than copied into each of them, and they are tested here
+against deliberately violating fixtures at the bottom of this file, because a
+guard nobody has watched fail is not known to work.
 
 The workflow is parsed as plain text rather than with PyYAML on purpose. PyYAML
 is absent from ``requirements.txt``, ``requirements-lock.txt`` and
@@ -28,13 +29,19 @@ collection error on the ``backend-compat`` job instead of a passing check.
 from __future__ import annotations
 
 import re
-import textwrap
 from pathlib import Path
 
 import pytest
 
 from rate_limit import RATE_LIMIT_OVERRIDE_ENV_VAR
 from tests.scripts.dast.test_contract_fuzz_catches_a_planted_bug import REQUIRE_ENV_VAR
+from tests.workflow_text import (
+    comment_lines,
+    step_body,
+    step_run_command,
+    trigger_block,
+    without_comment_lines,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "dast-contract.yml"
@@ -69,10 +76,6 @@ _ARTIFACT_NAME = "dast-contract-report"
 _USES = re.compile(r"^\s*(?:- )?uses:\s*(?P<action>\S+)\s*(?P<comment>#.*)?$", re.MULTILINE)
 _SHA_PINNED = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 _EXACT_PIN = re.compile(r"^[A-Za-z0-9._-]+==[^\s;#]+$")
-_RUN_KEY = re.compile(r"^(?P<indent>\s*)run:\s*(?P<inline>.*?)\s*$")
-
-# YAML block scalar introducers; anything else after ``run:`` is the command.
-_BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+")
 
 # The whole trigger block, as it reads once comment lines are stripped. Held as
 # one string rather than as a list of fragments because equality over the block
@@ -99,205 +102,6 @@ def workflow() -> str:
     """Return the contract-fuzz workflow as text."""
     assert _WORKFLOW.is_file(), f"{_WORKFLOW} does not exist"
     return _WORKFLOW.read_text(encoding="utf-8")
-
-
-def without_comment_lines(workflow_text: str) -> str:
-    """Return the workflow with whole-line comments removed.
-
-    The header explains at length why this job does not run on
-    ``pull_request_target`` and why ``continue-on-error`` would be worse than no
-    job at all; a substring search over the raw file would read those
-    explanations as the very things they forbid.
-
-    Args:
-        workflow_text: The workflow file's contents.
-
-    Returns:
-        The same text with every comment-only line dropped.
-    """
-    return "\n".join(
-        line for line in workflow_text.splitlines() if not line.strip().startswith("#")
-    )
-
-
-def comment_lines(workflow_text: str) -> str:
-    """Return only the workflow's whole-line comments.
-
-    The exact inverse of ``without_comment_lines``. What that reader throws away
-    so prose cannot satisfy a search, this one keeps, so a claim the header makes
-    about the job can itself be asserted about.
-
-    Args:
-        workflow_text: The workflow file's contents.
-
-    Returns:
-        Every comment-only line, newline-joined.
-    """
-    return "\n".join(line for line in workflow_text.splitlines() if line.strip().startswith("#"))
-
-
-def trigger_block(workflow_text: str) -> str:
-    """Return the body of the workflow's top-level ``on:`` block.
-
-    Comments are stripped first, and that is the whole point: the header
-    discusses ``pull_request`` at length in prose, so a raw search over the file
-    would be answered by an explanation of the trigger rather than by the
-    trigger.
-
-    Args:
-        workflow_text: The workflow file's contents.
-
-    Returns:
-        Every line indented under the column-0 ``on:`` key, up to the next
-        non-blank column-0 line, with leading and trailing blank lines removed.
-
-    Raises:
-        AssertionError: If the workflow declares no trigger block at all.
-    """
-    lines = without_comment_lines(workflow_text).splitlines()
-    start = _line_index(lines, "on:")
-    run: list[str] = [] if start is None else _indented_run(lines, start + 1)
-    body = _without_edge_blanks(run)
-    assert body, "the workflow has no trigger block"
-    return "\n".join(body)
-
-
-def _line_index(lines: list[str], key: str) -> int | None:
-    """Return the index of the first line equal to a key, ignoring trailing space.
-
-    Args:
-        lines: The workflow's lines.
-        key: The exact line to look for, indentation included.
-
-    Returns:
-        That line's index, or ``None`` when no line matches.
-    """
-    for index, line in enumerate(lines):
-        if line.rstrip() == key:
-            return index
-    return None
-
-
-def _indented_run(lines: list[str], start: int) -> list[str]:
-    """Return the run of indented lines beginning at an index.
-
-    Blank lines belong to the run: a blank line inside a YAML block does not end
-    it, and trimming them is the caller's job.
-
-    Args:
-        lines: The workflow's lines.
-        start: Index of the first line to consider.
-
-    Returns:
-        Lines from ``start`` up to the first non-blank line at column 0.
-    """
-    body: list[str] = []
-    for line in lines[start:]:
-        if line.strip() and not line.startswith((" ", "\t")):
-            break
-        body.append(line)
-    return body
-
-
-def _without_edge_blanks(lines: list[str]) -> list[str]:
-    """Return the lines trimmed of leading and trailing blank ones.
-
-    Args:
-        lines: Lines that may begin or end with blank ones.
-
-    Returns:
-        The span from the first non-blank line to the last, or nothing when
-        every line is blank.
-    """
-    filled = [index for index, line in enumerate(lines) if line.strip()]
-    if not filled:
-        return []
-    return lines[filled[0] : filled[-1] + 1]
-
-
-def step_body(workflow_text: str, step_name: str) -> list[str]:
-    """Return the lines belonging to one named step.
-
-    Args:
-        workflow_text: The workflow file's contents.
-        step_name: The step's ``name:`` value.
-
-    Returns:
-        Every line after the step's own ``- name:`` line, up to the next item in
-        the same sequence.
-    """
-    lines = workflow_text.splitlines()
-    marker = re.compile(rf"^(?P<indent>\s*)- name: {re.escape(step_name)}\s*$")
-    start, indent = None, ""
-    for index, line in enumerate(lines):
-        found = marker.match(line)
-        if found:
-            start, indent = index, found.group("indent")
-            break
-    assert start is not None, f"the workflow declares no step named {step_name!r}"
-    body: list[str] = []
-    for line in lines[start + 1 :]:
-        if line.startswith(f"{indent}- "):
-            break
-        body.append(line)
-    return body
-
-
-def step_run_command(workflow_text: str, step_name: str) -> str:
-    """Return one step's shell command, with comment lines and blanks removed.
-
-    Comment-stripping is the point: the disarm this guard exists to catch is a
-    ``#`` in front of the command, and a raw-text search reads a commented-out
-    command as a live one.
-
-    Args:
-        workflow_text: The workflow file's contents.
-        step_name: The step's ``name:`` value.
-
-    Returns:
-        The command the step runs, dedented, or the empty string when the step
-        runs nothing at all.
-    """
-    body = step_body(workflow_text, step_name)
-    for index, line in enumerate(body):
-        key = _RUN_KEY.match(line)
-        if key is None:
-            continue
-        if key.group("inline") not in _BLOCK_SCALARS:
-            return key.group("inline")
-        return _block_scalar(body[index + 1 :], len(key.group("indent")))
-    return ""
-
-
-def _block_scalar(lines: list[str], key_indent: int) -> str:
-    """Return the body of a ``run: |`` block, without comments or blank lines.
-
-    Args:
-        lines: The lines following the ``run:`` key, within the same step.
-        key_indent: Indentation of the ``run:`` key itself; the block is
-            whatever is indented further than that.
-
-    Returns:
-        The block's live commands, dedented and newline-joined.
-    """
-    kept = [
-        line
-        for line in lines
-        if line.strip() and not line.strip().startswith("#") and _leading_spaces(line) > key_indent
-    ]
-    return textwrap.dedent("\n".join(kept)).strip()
-
-
-def _leading_spaces(line: str) -> int:
-    """Return how many spaces a line is indented by.
-
-    Args:
-        line: One line of the workflow.
-
-    Returns:
-        The count of leading spaces.
-    """
-    return len(line) - len(line.lstrip(" "))
 
 
 def test_the_job_never_runs_on_pull_request_target(workflow: str) -> None:

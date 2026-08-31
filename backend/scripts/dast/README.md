@@ -481,3 +481,78 @@ Instead the planted-bug suite asserts both halves — that the filtered marker i
 present, proving the header really was sent, and that the sentinel token appears
 nowhere in the report or the output — so a library upgrade that stopped
 filtering fails the build.
+
+## Deep API scan (OWASP ZAP)
+
+The third check in this family, and the only one that does not run on a pull
+request. `.github/workflows/dast-deep.yml` boots an ephemeral instance against
+Postgres at **04:00 UTC nightly** (and on `workflow_dispatch`), imports the
+document that instance publishes about itself into OWASP ZAP, and lets ZAP spend
+up to twenty minutes sending the payloads a schema-aware fuzzer never sends —
+traversal strings, injection probes, malformed encodings — at every published
+operation, while the passive rules read every response that comes back.
+
+**Where the results land.** Findings are converted to SARIF and published to the
+repository's **Security tab**, where they get history, deduplication and
+dismissal tracking. The raw JSON — the file the remediation loop reads — is
+uploaded as the `dast-deep-report` artifact with 30-day retention.
+
+**It reports; it does not block.** No branch waits on this job's colour, and
+ZAP's own findings never redden it (`fail_action: false`). A nightly gate that
+can fail for a reason nobody chose is a gate that gets muted, and a muted gate is
+worse than none. What *does* redden the run is the harness failing — the instance
+never becoming ready, the token not working, ZAP writing no report — because
+those are exactly the states in which a clean-looking result means nothing was
+scanned. Those open a tracking issue through the shared failure reporter.
+
+**API scan, not baseline.** A ZAP baseline run spiders for links and forms. This
+application serves JSON, has no HTML and nothing to crawl, so a spider would
+visit one URL, find no links, and report a clean sweep of nothing. The passive
+header rules still run and are still the point of the passive half: they turn
+`backend/src/middleware/security_headers.py` from a control this repository
+asserts into one an attacker's-eye view confirms.
+
+**Rule dispositions** live in `.zap/rules.tsv`, one named rule per line with the
+reason it cannot apply written beside it. ZAP's blanket `-I` — pass every
+warning at once — is forbidden, and `test_deep_scan_workflow.py` fails the build
+if it appears, if a suppression carries no reason, if the list grows past a
+handful, or if any of the five header rules that verify the middleware is ever
+silenced.
+
+**The target is always an instance the job started itself.** There is no staging
+deployment to point at, and aiming a nightly attack scan at one that appears
+later would be an unauthorized-scan incident rather than a CI change — so the
+target is the loopback instance, and a test fails the build if any other host is
+named in the workflow.
+
+### Running it locally
+
+```bash
+cd backend
+# 1. Start an instance the way the job does, with the limiter widened.
+ADEPTHOOD_DEFAULT_RATE_LIMIT=60000/minute PYTHONPATH=src \
+    python -m uvicorn main:app --host 127.0.0.1 --port 8000 &
+
+# 2. Mint a credential over the real auth stack.
+export DAST_TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
+    --base-url http://127.0.0.1:8000 --database-url "$DATABASE_URL")
+
+# 3. Run the same ZAP image the job runs.
+docker run --rm --network=host -v "$PWD/../:/zap/wrk/:rw" \
+    -e ZAP_AUTH_HEADER=Authorization \
+    -e ZAP_AUTH_HEADER_VALUE="Bearer $DAST_TOKEN" \
+    -e ZAP_AUTH_HEADER_SITE=127.0.0.1 \
+    -t ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
+    -t http://127.0.0.1:8000/openapi.json -f openapi \
+    -J report_json.json -c .zap/rules.tsv -O http://127.0.0.1:8000 -T 20
+
+# 4. Convert what it found, and read the summary it prints.
+PYTHONPATH=src python -m scripts.dast.zap_sarif \
+    --report ../report_json.json --sarif ../report_sarif.sarif
+```
+
+`scripts/dast/zap_sarif.py` exits `3` — the same "harness error" code the rest of
+this package uses — when the report is absent, truncated, or not a ZAP report,
+and writes no SARIF file in that case. That is deliberate: an empty SARIF run is
+valid, uploads without complaint, and renders as a clean Security tab, so a scan
+that did not happen must never be able to look like one that found nothing.

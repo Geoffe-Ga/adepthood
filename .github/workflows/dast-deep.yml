@@ -1,0 +1,271 @@
+name: DAST Deep API Scan
+
+# Boot an ephemeral instance and attack it.
+#
+# The two DAST jobs that run on every pull request ask narrow questions of the
+# application -- can identity B reach identity A's object (dast-authz.yml), and
+# can schema-aware input make an endpoint break its own contract
+# (dast-contract.yml). Both are budgeted to finish in a couple of minutes,
+# because a gate that makes every author wait is a gate that gets removed.
+#
+# This is the job that can afford to be slow. It imports the document the
+# running instance publishes about itself into OWASP ZAP and lets ZAP spend
+# twenty minutes sending the payloads a fuzzer never sends -- traversal strings,
+# injection probes, malformed encodings -- at all 128 published operations,
+# while the passive rules read every response that comes back.
+#
+# ADVISORY BY DESIGN. Nothing waits on this job's colour. A nightly gate that
+# can fail for a reason nobody chose gets muted, and a muted gate is worse than
+# no gate at all -- so ZAP's own findings never redden the run (`fail_action:
+# false`), and the verdict is published where a verdict survives: the Security
+# tab, with history and dismissal tracking, plus a raw artifact for the
+# remediation loop to read. What DOES redden the run is the harness failing --
+# the instance never becoming ready, the credential not working, ZAP writing no
+# report -- because those are the states in which a clean-looking result means
+# nothing was scanned. Those get a tracking issue via the shared reporter.
+#
+# WHY THE API SCAN AND NOT THE BASELINE SPIDER. A ZAP baseline scan crawls for
+# links and forms. This application serves JSON, has no HTML and nothing to
+# crawl, so a spider here would visit one URL, find no links, and report a clean
+# sweep of nothing. Importing the OpenAPI document instead is what puts ZAP in
+# front of the real router surface. The passive header rules still run and are
+# still worth having: they turn backend/src/middleware/security_headers.py from
+# a control this repository asserts into one an attacker's-eye view confirms.
+#
+# NEVER SCAN A HOST THIS JOB DID NOT START. There is no staging deployment to
+# point at, and pointing a nightly attack scan at one that appears later would
+# be an unauthorized-scan incident rather than a CI change -- so the target is
+# hardcoded to the loopback instance started below, and a test fails the build
+# if any other host is ever named here. If a staging environment does appear,
+# the way in is a `workflow_dispatch` input behind an environment approval, not
+# an edit to this line.
+#
+# Never `pull_request` and never `pull_request_target`: a scan reachable from a
+# fork would let anyone aim these payloads using code they wrote themselves.
+
+on:
+  schedule:
+    # 04:00 UTC nightly. Kept clear of 04:40 (graph-build) and 06:10
+    # (graph-federate, scheduled-health) so the runner queue is not shared, and
+    # early enough that a finding is in the Security tab before the day starts.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+# Least privilege, and both scopes are load-bearing: `contents: read` for the
+# checkout, `security-events: write` for the SARIF upload. Nothing else -- in
+# particular the ZAP action's own GitHub-issue writer is turned off below, which
+# is the only thing here that would otherwise want `issues: write`. The
+# reporting job at the bottom declares the wider set it needs on itself.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  # Two ZAP containers attacking one loopback instance would each report on the
+  # other's traffic. `cancel-in-progress: false` because a manual dispatch
+  # should queue behind a nightly run rather than kill it half-way.
+  group: dast-deep
+  cancel-in-progress: false
+
+jobs:
+  zap-api-scan:
+    name: Attack an ephemeral instance and publish what it finds
+    runs-on: ubuntu-latest
+    # ZAP's own budget is 20 minutes (`-T` below); this ceiling covers install,
+    # migration, boot and the image pull, and only exists so a wedged container
+    # cannot run for six hours on a nightly cron.
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+      BASE_URL: http://127.0.0.1:8000
+      UVICORN_LOG: /tmp/uvicorn.log
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # No step git-pushes here, so the token never needs to live in
+          # .git/config -- and the workspace is bind-mounted read-write into a
+          # container that is about to be handed attacker-shaped input.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+
+      - name: Migrate the throwaway database
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Start the target instance
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          # ZAP sends thousands of requests from one address in a few minutes,
+          # and the shipped limit is 60/minute -- so without this the scan would
+          # spend its whole budget collecting 429s, which is a uniform denial the
+          # passive rules cannot tell apart from a healthy API and the active
+          # rules cannot attack through. Read only by this job: no deployment
+          # sets this variable, and every deployment gets the shipped default.
+          ADEPTHOOD_DEFAULT_RATE_LIMIT: 60000/minute
+        run: |
+          # Started the way the Dockerfile does -- module ``main`` with
+          # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
+          # import layout production runs.
+          PYTHONPATH=src python -m uvicorn main:app \
+            --host 127.0.0.1 --port 8000 --log-level warning > "$UVICORN_LOG" 2>&1 &
+
+      - name: Wait for readiness
+        run: |
+          # The startup seeder runs deliberately: catalog routes answer
+          # differently once their rows exist, and an endpoint that 404s for want
+          # of data is an endpoint ZAP never really reaches.
+          for _ in $(seq 1 45); do
+            if curl -fsS "$BASE_URL/health/ready" > /dev/null; then
+              echo "instance is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the instance never became ready"
+          cat "$UVICORN_LOG"
+          exit 1
+
+      - name: Mint a bearer token and prove it works
+        working-directory: backend
+        run: |
+          # The helper exits non-zero unless the token it minted actually opens
+          # an authenticated route. Without that check this whole job could
+          # become a very expensive 401 test: every request answered the same
+          # way, no handler reached, no active rule able to find anything, and a
+          # clean report at the end of it. It prints the bare token and nothing
+          # else, so this capture is safe.
+          TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
+            --base-url "$BASE_URL" \
+            --database-url "$DATABASE_URL")
+          echo "::add-mask::$TOKEN"
+          echo "DAST_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # The action bind-mounts the workspace into the ZAP container and always
+      # writes `report_json.json` there; the conversion step below reads exactly
+      # that file. The three ZAP_AUTH_* variables are the documented way to hand
+      # the container a credential -- the action copies them through `docker run
+      # -e` -- and _SITE scopes the header to the host under test so it cannot
+      # follow a redirect out of the instance this job started.
+      - name: ZAP API scan
+        uses: zaproxy/action-api-scan@5158fe4d9d8fcc75ea204db81317cce7f9e5453d  # v0.10.0
+        env:
+          ZAP_AUTH_HEADER: Authorization
+          ZAP_AUTH_HEADER_VALUE: Bearer ${{ env.DAST_TOKEN }}
+          ZAP_AUTH_HEADER_SITE: 127.0.0.1
+        with:
+          target: ${{ env.BASE_URL }}/openapi.json
+          format: openapi
+          # Left at the action's own default rather than hidden inside it, so a
+          # reader can see which image is being run. It is not pinned by digest:
+          # ZAP ships rule updates continuously, a digest here would freeze the
+          # scan's knowledge on the day it was written, and the container has
+          # nothing to steal -- a throwaway database and a token minted for this
+          # run and useless after it.
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+          rules_file_name: ".zap/rules.tsv"
+          # -O overrides the server URL in the imported document: FastAPI
+          # publishes no `servers` block, and leaving ZAP to infer one is how a
+          # scan ends up attacking a hostname that does not resolve.
+          # -T bounds the whole scan; there is no -I here and there must not be
+          # one, because -I passes every warning at once, which is every
+          # suppression in .zap/rules.tsv at once and un-reviewed.
+          cmd_options: "-O http://127.0.0.1:8000 -T 20"
+          fail_action: false
+          # Findings belong in the Security tab, which dedupes them and tracks
+          # dismissals. The action's own issue writer would open a second,
+          # unmanaged stream of them -- and it is the only thing in this job
+          # that would need `issues: write`.
+          allow_issue_writing: false
+          artifact_name: zap-native-reports
+
+      # Runs unconditionally, and fails when the report cannot be read. That is
+      # the point: ZAP not writing a report is exactly the state in which an
+      # empty SARIF file would upload cleanly and render as a clean scan.
+      - name: Convert the ZAP report to SARIF
+        working-directory: backend
+        run: |
+          PYTHONPATH=src python -m scripts.dast.zap_sarif \
+            --report "$GITHUB_WORKSPACE/report_json.json" \
+            --sarif "$GITHUB_WORKSPACE/report_sarif.sarif" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the findings to code scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
+        with:
+          sarif_file: report_sarif.sarif
+          category: dast-deep
+
+      # `if: always()` because the run this artifact matters most for is the one
+      # where the conversion above failed and nobody can see why.
+      - name: Upload the raw report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dast-deep-report
+          path: |
+            report_json.json
+            report_md.md
+            report_sarif.sarif
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Stop the instance
+        if: always()
+        run: pkill -f "uvicorn main:app" || echo "no instance left to stop"
+
+      - name: Server log
+        if: always()
+        run: cat "$UVICORN_LOG"
+
+  report-failure:
+    name: Report the failure so it is not silent
+    needs: zap-api-scan
+    if: failure()
+    # Job-level, and wider than the file's header on purpose: the reusable
+    # reporter needs these three, GitHub refuses the pair outright if the caller
+    # grants less, and hoisting them to column zero would hand issue-write scope
+    # to the job that runs an attack container.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/_report-failure.yml
+    with:
+      workflow-file: dast-deep.yml
+      headline: >-
+        The nightly deep API scan did not complete. This is a harness failure,
+        not a finding: ZAP's own findings never fail this job.
+      labels: bug,infra
