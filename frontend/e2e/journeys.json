@@ -301,5 +301,17 @@
     },
     "status": "uncovered",
     "issue": 2406
+  },
+  {
+    "id": "errors.spent-provider-balance-is-not-a-blip",
+    "description": "A writer asks for resonance while the balance behind the key that pays for it is spent. What they got was \"the AI provider is having trouble connecting, give it a moment and tap retry\" -- a transient story for a permanent, billing-level refusal, so the retry button they were pointed at could never work and the real cause reached nobody. The journey now ends in copy that names the condition and the one action that clears it, split by whose key it was, with no retry affordance and the charge reversed; on the server's own key an operator gets the WARNING that is their first signal it happened at all. Each side is pinned separately: backend/tests/services/test_botmason_credit_exhausted.py drives both SDKs through a mock transport so each builds its own typed error from the provider's real body, backend/tests/test_resonance_endpoints.py asserts the 402/503 split and the operator record, and src/api/__tests__/errorMessages.test.ts asserts neither code inherits the transient copy. Uncovered in this lane for the same reason journal.ask-for-resonance is: making it happen needs a provider that refuses for billing, and the lane has no provider to call at all.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2479
   }
 ]

@@ -22,14 +22,16 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import anthropic
 import httpx
+import httpx2
 import openai
 
 from domain.care import MEDICATION_GUARDRAIL
-from errors import bad_request, payment_required
+from errors import bad_request, payment_required, service_unavailable
 from security import sanitize_user_text
 
 if TYPE_CHECKING:
     from anthropic.types import Message, MessageParam
+    from fastapi import HTTPException
     from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,12 @@ STUB_MODEL_NAME = "stub"
 # Identifier the stub provider reports as its ``provider`` in usage logs.  The
 # metering pipeline branches on it to skip stub traffic (zero real tokens).
 STUB_PROVIDER_NAME = "stub"
+
+# The two real providers, named once. They key :data:`PROVIDER_REGISTRY`, label
+# a usage row, and identify whose balance is spent in an operator's log line —
+# three places that must agree, so none of them spells the name by hand.
+OPENAI_PROVIDER_NAME = "openai"
+ANTHROPIC_PROVIDER_NAME = "anthropic"
 
 
 @dataclass(frozen=True)
@@ -137,7 +145,7 @@ class ProviderSpec:
 # prefix, so OpenAI disallows it to prevent provider cross-wiring; keep
 # the frontend mirror (``frontend/.../byokProviders.ts``) in sync.
 PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
-    "openai": ProviderSpec(
+    OPENAI_PROVIDER_NAME: ProviderSpec(
         key_prefix="sk-",
         disallowed_prefixes=("sk-ant-",),
         default_model="gpt-4o-mini",
@@ -147,7 +155,7 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         # ``allowed_models``): each of these OpenAI models accepts images.
         vision_models=frozenset({"gpt-4o-mini", "gpt-4o", "gpt-4-turbo"}),
     ),
-    "anthropic": ProviderSpec(
+    ANTHROPIC_PROVIDER_NAME: ProviderSpec(
         key_prefix="sk-ant-",
         disallowed_prefixes=(),
         default_model="claude-sonnet-5",
@@ -201,7 +209,44 @@ _LLM_TIMEOUT_SECONDS = 30.0
 # Retry constants for transient provider failures (BUG-JOURNAL-006).
 _MAX_RETRIES = 2
 _RETRY_BASE_DELAY = 1.0  # seconds; doubles on each attempt
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+# Statuses worth another attempt below the server-error floor: request timeout,
+# lock timeout, and rate limit. Everything at or above the floor is retryable as
+# a range rather than a set, because providers keep minting 5xx outside the RFC
+# -- Anthropic's 529 ``Overloaded`` is its most common transient failure and is
+# in no registry. Both SDKs retry exactly this shape internally, and this layer
+# has to match it because it is now the only layer retrying at all.
+_RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
+_SERVER_ERROR_FLOOR = 500
+
+# Connection and timeout failures, which arrive with no status at all. Neither
+# SDK's error derives from ``OSError``: ``openai.APIConnectionError`` is an
+# ``APIError``, and its ``APITimeoutError`` subclasses it, so an OSError-only
+# branch here matches nothing a real provider call can raise. That branch was
+# harmless while the SDKs did their own connection retry; with their budget set
+# to zero below it would have silently dropped every retry for a dropped socket
+# or a timed-out request. ``httpx2`` is a separate distribution from ``httpx``
+# and shares no base class with it, so openai's transport needs its own entry.
+_TRANSIENT_NETWORK_TYPES: tuple[type[BaseException], ...] = (
+    OSError,
+    anthropic.APIConnectionError,
+    openai.APIConnectionError,
+    httpx.TransportError,
+    httpx2.TransportError,
+)
+
+# Both SDKs retry internally by default (2 extra attempts each), nested inside
+# ``_retry_on_transient``'s own budget -- so every retryable failure cost 3 x 3
+# provider calls, not the 3 this module documents, and the carve-out above would
+# have been re-tried twice by the SDK before it was ever consulted. Retries are
+# owned by one layer, and this is the layer that can tell a spent balance from a
+# busy one. Owning them means covering what the SDKs covered, which is what
+# :data:`_TRANSIENT_NETWORK_TYPES` and the status rule above exist to do. One
+# deliberate difference remains: the SDKs honour ``Retry-After`` and
+# ``x-should-retry``, and this layer's fixed 1s/2s backoff ignores both. That is
+# strictly more conservative in wall-clock than an uncapped honour would be, and
+# the whole call is bounded by :data:`_LLM_TIMEOUT_SECONDS` regardless.
+_PROVIDER_SDK_MAX_RETRIES = 0
 
 # Heuristic patterns that indicate prompt-injection attempts (BUG-JOURNAL-017).
 # We only log, never block — the provider's instruction hierarchy is the real
@@ -243,12 +288,157 @@ class LLMVisionUnsupportedError(LLMProviderError):
     """
 
 
-# Genuine provider/transport failures normalized to LLMProviderError; OSError
-# covers ConnectionError/TimeoutError and mirrors what ``_is_retryable`` treats
-# as transient, while the two SDK base classes give an SDK-agnostic catch.
+class LLMCreditExhaustedError(LLMProviderError):
+    """The provider refused because the account behind the key has no balance.
+
+    A *permanent* refusal wearing a transient costume. Both SDKs express it in
+    a shape their transient failures also wear — OpenAI as a ``429`` (the same
+    status as a genuine rate limit), Anthropic as a ``400`` — so classifying on
+    the status alone flattens "your account is empty" into "the provider is
+    busy". The two need opposite handling: waiting clears congestion and can
+    never clear a spent balance.
+
+    Carries :attr:`provider` because the only person who can act on this is an
+    operator reading a log, and the first thing they need is which account.
+    Like :class:`LLMVisionUnsupportedError` it subclasses
+    :class:`LLMProviderError` (which is not in :data:`_PROVIDER_ERROR_TYPES`),
+    so it escapes :func:`generate_response` with its identity intact while
+    every existing caller that catches the base type keeps working.
+    """
+
+    def __init__(self, message: str, *, provider: str) -> None:
+        """Record the provider whose balance is spent alongside its own words."""
+        super().__init__(message)
+        self.provider = provider
+
+
+# OpenAI publishes machine-readable codes for a spent balance, so the carve-out
+# reads those rather than the prose. Its genuine rate limit is the same class and
+# the same status carrying ``rate_limit_exceeded``, which stays retryable.
+# ``billing_hard_limit_reached`` is the configured-cap sibling of a spent quota:
+# a different reason for the same permanent, caller-settleable refusal.
+_OPENAI_BILLING_REFUSAL_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached"})
+
+# Anthropic publishes no code for this: ``error.type`` is the generic
+# ``invalid_request_error`` that every malformed request also gets, so the
+# message is the only signal there is. Matching prose is fragile by nature --
+# an upstream rewording silently reverts this to the old behavior -- and it is
+# written here rather than hidden so the next reader knows what to re-check.
+_ANTHROPIC_CREDIT_EXHAUSTED_PHRASE = "credit balance is too low"
+
+# Anthropic returns the credit refusal as a ``400``. Narrowing on it keeps a
+# genuine ``429`` retryable even if its prose ever mentions a credit balance,
+# which is what makes the isinstance-plus-status pairing an actual safety
+# argument rather than a claimed one.
+_ANTHROPIC_CREDIT_EXHAUSTED_STATUS = 400
+
+# Detail codes the routers emit for a spent balance. Split by whose key it was,
+# because the remedy is a different person: a caller's own key is a bill they
+# can settle, the server's is one only an operator can. Mirrored in
+# ``frontend/src/api/errorMessages.ts``.
+CREDIT_EXHAUSTED_DETAIL = "llm_credit_exhausted"
+SERVICE_CREDIT_EXHAUSTED_DETAIL = "llm_service_credit_exhausted"
+
+
+def _provider_error_message(exc: BaseException) -> str:
+    """The provider's own words, preferring the parsed body over SDK formatting.
+
+    ``str(exc)`` is the SDK's ``f"Error code: {status} - {body}"`` rendering, so
+    matching prose against it couples a carve-out to an upstream formatting
+    decision as well as to the provider's wording. The parsed body carries the
+    same words without that second coupling; the rendering is the fallback for a
+    refusal that arrives without a parsed body at all.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        message = body.get("message")
+        if isinstance(message, str):
+            return message
+    return str(exc)
+
+
+def _is_openai_billing_refusal(exc: BaseException) -> bool:
+    """OpenAI names a permanently spent balance in a machine-readable ``code``."""
+    return isinstance(exc, openai.OpenAIError) and (
+        getattr(exc, "code", None) in _OPENAI_BILLING_REFUSAL_CODES
+    )
+
+
+def _is_anthropic_credit_refusal(exc: BaseException) -> bool:
+    """Anthropic names it only in the prose of a ``400``, so both are required."""
+    if not isinstance(exc, anthropic.AnthropicError):
+        return False
+    if getattr(exc, "status_code", None) != _ANTHROPIC_CREDIT_EXHAUSTED_STATUS:
+        return False
+    return _ANTHROPIC_CREDIT_EXHAUSTED_PHRASE in _provider_error_message(exc).lower()
+
+
+def _credit_exhausted_provider(exc: BaseException) -> str | None:
+    """Return the provider whose balance is spent, or ``None`` for anything else.
+
+    The single place either SDK's permanent billing refusal is recognised —
+    :func:`_is_retryable` asks so it can stop retrying, and
+    :func:`_classify_provider_error` asks so the caller gets a type it can map.
+    Deliberately narrow on both providers: an over-matching heuristic here would
+    tell every rate-limited or malformed-request caller to go top up an account
+    that is not empty, which is worse than the bug it replaces. Both carve-outs
+    are narrowed by ``isinstance`` to the owning SDK *and* by the shape that SDK
+    uses for this condition, so neither can reach the other's errors and neither
+    can reach a status its provider does not use for a billing refusal.
+    """
+    if _is_openai_billing_refusal(exc):
+        return OPENAI_PROVIDER_NAME
+    if _is_anthropic_credit_refusal(exc):
+        return ANTHROPIC_PROVIDER_NAME
+    return None
+
+
+def _classify_provider_error(exc: Exception) -> LLMProviderError:
+    """Normalize a raw SDK failure to the narrowest type that describes it.
+
+    ``str(exc)`` keeps the provider's own code or prose so an operator reading
+    the log still has the true cause; the SDK never puts the API key in that
+    message, and no caller interpolates one.
+    """
+    provider = _credit_exhausted_provider(exc)
+    if provider is not None:
+        return LLMCreditExhaustedError(str(exc), provider=provider)
+    return LLMProviderError(str(exc))
+
+
+def credit_exhausted_error(exc: LLMCreditExhaustedError, *, byok: bool) -> HTTPException:
+    """Map a spent balance onto the status whose remedy the caller actually owns.
+
+    A caller's own key is a bill they can settle, so they get ``402``
+    :data:`CREDIT_EXHAUSTED_DETAIL`. The server's key is nothing they hold, so
+    they get ``503`` :data:`SERVICE_CREDIT_EXHAUSTED_DETAIL`.
+
+    Both branches log, at the level that matches whose problem it is: a spent
+    server key is an outage an operator has to act on, a spent caller key is
+    ordinary traffic an operator only needs when someone reports it. Both are
+    ids and the provider's own words — never the key, never any part of what the
+    user wrote. Logging is deliberate rather than incidental here: making this
+    condition non-retryable removed the two WARNINGs the retry loop used to emit
+    on the way past, so without these lines a spent balance would produce no
+    server-side signal at all.
+    """
+    log = logger.info if byok else logger.warning
+    detail = CREDIT_EXHAUSTED_DETAIL if byok else SERVICE_CREDIT_EXHAUSTED_DETAIL
+    log(detail, extra={"provider": exc.provider, "byok": byok}, exc_info=exc)
+    if byok:
+        return payment_required(CREDIT_EXHAUSTED_DETAIL)
+    return service_unavailable(SERVICE_CREDIT_EXHAUSTED_DETAIL)
+
+
+# Genuine provider/transport failures normalized to LLMProviderError. The two
+# SDK base classes give an SDK-agnostic catch and subsume each SDK's own wrapped
+# transport failures; both raw transport stacks are listed too, because a client
+# constructed with an injected ``http_client`` can raise one before the SDK gets
+# a chance to wrap it, and ``httpx2`` shares no base class with ``httpx``.
 _PROVIDER_ERROR_TYPES: tuple[type[Exception], ...] = (
     anthropic.AnthropicError,
     httpx.HTTPError,
+    httpx2.HTTPError,
     openai.OpenAIError,
     OSError,
 )
@@ -786,12 +976,34 @@ def _dynamic_max_tokens(
     return max(1024, min(budget, 4096))
 
 
+def _has_retryable_status(exc: BaseException) -> bool:
+    """Whether the status the provider answered with could answer differently next time.
+
+    Both SDKs read ``status_code``; a few error shapes carry ``status`` instead,
+    so both are consulted before deciding there is no status at all.
+    """
+    raw_status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if raw_status is None:
+        return False
+    status = int(raw_status)
+    return status in _RETRYABLE_STATUS_CODES or status >= _SERVER_ERROR_FLOOR
+
+
 def _is_retryable(exc: Exception) -> bool:
-    """Return True when the exception looks like a transient provider failure."""
-    if isinstance(exc, OSError | ConnectionError | TimeoutError):
+    """Return True when the exception looks like a transient provider failure.
+
+    A spent balance is excluded before the status is ever consulted: OpenAI
+    answers an exhausted quota with a ``429``, which the status rule treats as
+    congestion, so retrying it buys three provider rejections and two sleeps for
+    a call that was doomed on the first. A genuine ``429`` still retries, which
+    is the common case, and so does everything else either SDK would have
+    retried on its own -- this is the only layer left doing so.
+    """
+    if _credit_exhausted_provider(exc) is not None:
+        return False
+    if isinstance(exc, _TRANSIENT_NETWORK_TYPES):
         return True
-    status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    return status_code is not None and int(status_code) in _RETRYABLE_STATUS_CODES
+    return _has_retryable_status(exc)
 
 
 async def _retry_on_transient(  # noqa: UP047
@@ -884,7 +1096,7 @@ async def generate_response(
             user_message, conversation_history, resolved_prompt, api_key, images
         )
     except _PROVIDER_ERROR_TYPES as exc:
-        raise LLMProviderError(str(exc)) from exc
+        raise _classify_provider_error(exc) from exc
     return result
 
 
@@ -986,9 +1198,11 @@ async def _call_openai(
     """Call the OpenAI chat completions API with timeout and retry."""
     # Model validation precedes key resolution and client construction so a
     # disallowed model fails fast with zero provider side effects (#404).
-    model = _get_model("openai")
+    model = _get_model(OPENAI_PROVIDER_NAME)
     key = _resolve_api_key(api_key)
-    client = openai.AsyncOpenAI(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    client = openai.AsyncOpenAI(
+        api_key=key, timeout=_LLM_TIMEOUT_SECONDS, max_retries=_PROVIDER_SDK_MAX_RETRIES
+    )
     messages = _build_messages(user_message, conversation_history, system_prompt, images)
     max_tokens = _dynamic_max_tokens(conversation_history)
 
@@ -1003,7 +1217,7 @@ async def _call_openai(
     usage = getattr(completion, "usage", None)
     return LLMResponse(
         text=str(completion.choices[0].message.content or ""),
-        provider="openai",
+        provider=OPENAI_PROVIDER_NAME,
         model=model,
         prompt_tokens=extract_token_count(usage, "prompt_tokens"),
         completion_tokens=extract_token_count(usage, "completion_tokens"),
@@ -1019,9 +1233,11 @@ async def _call_anthropic(
 ) -> LLMResponse:
     """Call the Anthropic messages API with timeout and retry."""
     # Model validation first — same zero-side-effect guarantee as OpenAI.
-    model = _get_model("anthropic")
+    model = _get_model(ANTHROPIC_PROVIDER_NAME)
     key = _resolve_api_key(api_key)
-    client = anthropic.AsyncAnthropic(api_key=key, timeout=_LLM_TIMEOUT_SECONDS)
+    client = anthropic.AsyncAnthropic(
+        api_key=key, timeout=_LLM_TIMEOUT_SECONDS, max_retries=_PROVIDER_SDK_MAX_RETRIES
+    )
     # Anthropic's API takes ``system`` as a separate kwarg from ``messages``,
     # so the builder returns a tuple — (wrapped messages, augmented system
     # prompt) — both threaded through the same per-request nonce.
@@ -1047,7 +1263,7 @@ async def _call_anthropic(
     usage = getattr(response, "usage", None)
     return LLMResponse(
         text=text,
-        provider="anthropic",
+        provider=ANTHROPIC_PROVIDER_NAME,
         model=model,
         prompt_tokens=extract_token_count(usage, "input_tokens", "prompt_tokens"),
         completion_tokens=extract_token_count(usage, "output_tokens", "completion_tokens"),
