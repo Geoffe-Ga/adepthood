@@ -29,12 +29,18 @@ const FIRST_ATTEMPT = 1;
 const BLOCK_SEPARATOR = '\n\n';
 
 /**
- * Failure kinds no per-page gesture can clear: the configured model simply cannot
- * read images at all, so a retry would only re-charge the wallet to fail again.
- * The screen offers a hand-typed offramp instead of a per-block retry for these.
+ * Failure kinds no per-page gesture can clear: the configured model cannot read
+ * images at all, or the balance behind the key is spent. Either way a retry only
+ * re-charges the wallet to fail again, so the screen offers a hand-typed offramp
+ * instead of a per-block retry. Offering one here would contradict the copy,
+ * which says in words that waiting cannot help.
  */
 export const TERMINAL_ERROR_KINDS: ReadonlySet<TranscriptionErrorKind> =
-  new Set<TranscriptionErrorKind>(['model_lacks_vision']);
+  new Set<TranscriptionErrorKind>([
+    'model_lacks_vision',
+    'credit_exhausted',
+    'service_credit_exhausted',
+  ]);
 
 /** One page's lifecycle within a run. */
 export type TranscriptionBlockStatus = 'pending' | 'inFlight' | 'done' | 'failed';
@@ -214,8 +220,16 @@ function inFlightCount(state: TranscriptionRunState): number {
  * The ids to start reading right now: `pending` pages in session order, capped so
  * the run never exceeds {@link TRANSCRIBE_CONCURRENCY} in flight. Because it only
  * ever returns `pending` ids, the loop can never recharge a `done` page.
+ *
+ * A terminal failure stops the fan-out as well as the retry button. The kinds in
+ * {@link TERMINAL_ERROR_KINDS} are properties of the key or the model, not of the
+ * page that happened to hit them first, so every page still queued behind one is
+ * already doomed — and each would cost its own charge and rollback to prove it.
+ * Closing only the per-page Retry would leave a five-page run firing four more
+ * calls the moment page one came back with a spent balance.
  */
 export function selectStartable(state: TranscriptionRunState): string[] {
+  if (hasTerminalError(state)) return [];
   const capacity = TRANSCRIBE_CONCURRENCY - inFlightCount(state);
   if (capacity <= 0) return [];
   const startable: string[] = [];

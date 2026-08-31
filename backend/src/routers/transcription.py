@@ -33,9 +33,11 @@ from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     ImagePayload,
+    LLMCreditExhaustedError,
     LLMProviderError,
     LLMResponse,
     LLMVisionUnsupportedError,
+    credit_exhausted_error,
     generate_response,
     resolve_chat_api_key,
 )
@@ -152,24 +154,29 @@ async def _run_transcription(
 ) -> LLMResponse:
     """Run the vision LLM for one page; roll the charge back on any provider error.
 
-    The wallet was already deducted, so a failure here must un-deduct it: both
-    branches roll the session back before mapping the error. ``LLMVisionUnsupportedError``
-    is checked first because it subclasses :class:`LLMProviderError` — a
-    text-only model is a well-formed request the model cannot serve (422
-    ``model_lacks_vision``), distinct from a genuine upstream failure (502
-    ``llm_provider_error``).
+    The wallet was already deducted, so a failure here must un-deduct it: every
+    branch rolls the session back before mapping the error. The two
+    :class:`LLMProviderError` subclasses are checked before their base, each
+    naming a condition a 502 would flatten — a text-only model is a well-formed
+    request the model cannot serve (422 ``model_lacks_vision``), and a spent
+    balance is permanent rather than the transient upstream failure a 502
+    ``llm_provider_error`` invites the reader to retry.
     """
+    byok_key = resolve_chat_api_key(api_key)
     try:
         return await generate_response(
             "",
             [],
             system_prompt=build_transcription_prompt(),
-            api_key=resolve_chat_api_key(api_key),
+            api_key=byok_key,
             images=[image],
         )
     except LLMVisionUnsupportedError as exc:
         await session.rollback()
         raise unprocessable("model_lacks_vision") from exc
+    except LLMCreditExhaustedError as exc:
+        await session.rollback()
+        raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
     except LLMProviderError as exc:
         await session.rollback()
         raise bad_gateway("llm_provider_error") from exc

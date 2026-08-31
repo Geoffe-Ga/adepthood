@@ -18,7 +18,11 @@ import type { TranscriptionBlock } from './transcriptionRun';
 
 import { TranscriptionError } from '@/api';
 import type { TranscriptionErrorKind } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
+import {
+  CREDIT_EXHAUSTED_COPY,
+  SERVICE_CREDIT_EXHAUSTED_COPY,
+  formatApiError,
+} from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { accent, writingField, writingFieldFocus } from '@/design/tokens';
 
@@ -51,6 +55,11 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
   wallet_exhausted: '',
   model_lacks_vision: MODEL_LACKS_VISION_COPY,
+  // Sourced from the shared code map rather than written again here: this
+  // surface's own copy is where the transient story survived last time, and a
+  // second wording is a second place for it to come back.
+  credit_exhausted: CREDIT_EXHAUSTED_COPY,
+  service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
   unknown: "Something didn't work while reading this page. Try again, or remove it.",
 };
 
