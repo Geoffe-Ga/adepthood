@@ -33,9 +33,13 @@ from domain.creek_vault import (
     VaultClassification,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -99,7 +103,11 @@ async def _create_entry(
     return int(resp.json()["id"])
 
 
-def _vault_reflection(*notes: VaultReflectionNote) -> VaultReflection:
+def _vault_reflection(
+    *notes: VaultReflectionNote,
+    related_praxis: tuple[VaultRelatedPraxis, ...] = (),
+    related_eddies: tuple[VaultRelatedEddy, ...] = (),
+) -> VaultReflection:
     """Build the structured reflection the vault's reflect() answers with.
 
     Zero notes is deliberately still an ``ok`` answer rather than an empty one:
@@ -112,7 +120,24 @@ def _vault_reflection(*notes: VaultReflectionNote) -> VaultReflection:
         essay=None,
         essay_grounded=False,
         routed_tier=VaultTierCeiling.PERSONAL,
+        related_praxis=related_praxis,
+        related_eddies=related_eddies,
     )
+
+
+# One compiled page of each kind, as a REFLECT-capable vault hands them back.
+_VAULT_PRAXIS = VaultRelatedPraxis(
+    title="Walking before the willow",
+    praxis_type=VaultPraxisKind.PRACTICE,
+    status=VaultPraxisStatus.ACTIVE,
+    excerpt="The page's own opening lines, as the writer wrote them.",
+)
+_VAULT_EDDY = VaultRelatedEddy(
+    title="Water and bending",
+    description="A cluster the writer keeps returning to.",
+    fragment_count=9,
+    formed="2026-03-04",
+)
 
 
 def _empty_reflection() -> VaultReflection:
@@ -590,3 +615,100 @@ async def test_vault_escalation_is_not_swallowed_as_a_provider_error(
     assert resp.status_code != HTTPStatus.BAD_GATEWAY
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["care"] is not None
+
+
+@pytest.mark.asyncio
+async def test_vault_related_pages_reach_the_resonance_response(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vault's own praxis and eddies ride the pass that surfaced them, out to the client.
+
+    They are the writer's own compiled pages, so they travel beside the vault's
+    note rather than inside it: nothing about the marginalia changes, and the two
+    collections arrive as their own published fields.
+    """
+    fake_vault = ReflectingVaultClient(
+        reflect_result=_vault_reflection(
+            VaultReflectionNote(kind="theme", quote=_VERBATIM_QUOTE, note=_VAULT_NOTE),
+            related_praxis=(_VAULT_PRAXIS,),
+            related_eddies=(_VAULT_EDDY,),
+        )
+    )
+    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "vault_read_related")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert [note["note"] for note in body["marginalia"]] == [_VAULT_NOTE]
+    assert body["related_praxis"] == [
+        {
+            "title": _VAULT_PRAXIS.title,
+            "praxis_type": _VAULT_PRAXIS.praxis_type.value,
+            "status": _VAULT_PRAXIS.status.value,
+            "excerpt": _VAULT_PRAXIS.excerpt,
+        }
+    ]
+    assert body["related_eddies"] == [
+        {
+            "title": _VAULT_EDDY.title,
+            "description": _VAULT_EDDY.description,
+            "fragment_count": _VAULT_EDDY.fragment_count,
+            "formed": _VAULT_EDDY.formed,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_cloud_reflection_carries_no_related_pages(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a vault knows about compiled pages, so a cloud pass publishes empty collections.
+
+    Empty rather than absent: the fields are always present on the response, so a
+    client never has to distinguish "this server does not send them" from "this
+    pass surfaced none".
+    """
+    fake_vault = ReflectingVaultClient(available=False, capabilities=frozenset())
+    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "vault_read_no_related")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert [note["note"] for note in body["marginalia"]] == [_CLOUD_NOTE]
+    assert body["related_praxis"] == []
+    assert body["related_eddies"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_entry_publishes_empty_related_collections(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The privacy floor returns before any vault call, so it surfaces no pages either."""
+    fake_vault = ReflectingVaultClient(
+        reflect_result=_vault_reflection(
+            VaultReflectionNote(kind="theme", quote=_VERBATIM_QUOTE, note=_VAULT_NOTE),
+            related_praxis=(_VAULT_PRAXIS,),
+            related_eddies=(_VAULT_EDDY,),
+        )
+    )
+    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "vault_read_intimate_related")
+    entry_id = await _create_entry(async_client, headers, classification="intimate")
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["private"] is True
+    assert body["related_praxis"] == []
+    assert body["related_eddies"] == []
+    assert fake_vault.reflect_calls == []

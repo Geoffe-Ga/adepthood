@@ -39,6 +39,14 @@ The vault's optional ``essay`` is free model prose rather than the user's own
 words, so it reaches no note, no JSON, and no log line -- the whole point of the
 Higher Self is that it speaks in words the user actually wrote.
 
+The related praxis and eddies a vault may surface alongside a reflection travel
+the other way for the opposite reason. They *are* the user's own material --
+pages their vault compiled from their own fragments -- but they are not quotes
+and anchor to nothing, so they have no place in the marginalia contract either.
+They ride on the adapter instead and are read back through
+:func:`related_surfaces`, which answers empty for every source that is not a
+vault, so the consumer asks one question rather than branching on a type.
+
 Intimate content is out of scope here by construction: the router's privacy floor
 returns for an intimate entry before this module is ever reached, so
 :func:`select_reflection_llm` is only ever called for non-intimate entries and
@@ -49,6 +57,7 @@ work).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from domain.creek_vault import (
     CreekCapability,
@@ -57,11 +66,34 @@ from domain.creek_vault import (
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     tier_ceiling_for,
 )
 from domain.resonance import ResonanceLLM
 from services.creek_vault_read import log_read_degraded
+
+
+@dataclass(frozen=True)
+class VaultRelatedSurfaces:
+    """The writer's own compiled pages a reflection surfaced, if any.
+
+    Read back off the seam rather than carried in the completion, because the
+    :class:`~domain.resonance.ResonanceLLM` contract is prompt-in/string-out and
+    that string is the marginalia contract -- a set of the writer's own quotes.
+    A praxis page is not a margin note and has nothing to anchor to, so smuggling
+    one into that JSON would either be dropped by the anchor check or rendered as
+    a note the vault never wrote.
+
+    Empty is the ordinary value: it is what every cloud pass reports, what an
+    absent or degraded vault reports, and what a vault answering with no pages
+    reports. Nothing downstream distinguishes those, because the writer sees the
+    same thing in all of them -- a reflection with no pages beside it.
+    """
+
+    praxis: tuple[VaultRelatedPraxis, ...] = ()
+    eddies: tuple[VaultRelatedEddy, ...] = ()
 
 
 def _marginalia_contract(notes: tuple[VaultReflectionNote, ...]) -> str:
@@ -114,6 +146,19 @@ class VaultResonanceLLM:
         self._body = body
         self._tier_ceiling = tier_ceiling
         self._fallback = fallback
+        self._related = VaultRelatedSurfaces()
+
+    @property
+    def related(self) -> VaultRelatedSurfaces:
+        """Return the compiled pages of the reflection this adapter actually answered with.
+
+        Empty until :meth:`complete` has run, and empty afterwards unless the
+        vault's own reflection is what the writer is reading: a pass that
+        deferred to the cloud shows the cloud's prose, and pages presented as
+        related to *that* would be relating the writer's corpus to words their
+        vault never wrote.
+        """
+        return self._related
 
     async def _reflection(self) -> VaultReflection | None:
         """Ask the vault, recording and swallowing a degrade as ``None``.
@@ -148,11 +193,30 @@ class VaultResonanceLLM:
         reflection carrying notes is serialized into the marginalia contract; a
         degrade (already recorded) or an answer with nothing to anchor falls back
         to the cloud; and a care escalation is not caught here at all.
+
+        The first outcome is also the only one that records related pages, so
+        what :attr:`related` reports always belongs to the reflection the writer
+        is about to read.
         """
         reflection = await self._reflection()
         if reflection is None or not _carries_notes(reflection):
             return await self._fallback.complete(prompt)
+        self._related = VaultRelatedSurfaces(
+            praxis=reflection.related_praxis, eddies=reflection.related_eddies
+        )
         return _marginalia_contract(reflection.notes)
+
+
+def related_surfaces(llm: ResonanceLLM) -> VaultRelatedSurfaces:
+    """Return the compiled pages the reflection source surfaced, if it was a vault at all.
+
+    The twin of :func:`select_reflection_llm`: that function decides which
+    backend answered, and this one asks the same value what it surfaced, so the
+    caller never has to know which it got. A cloud LLM has no vault behind it and
+    so surfaces nothing -- a fact of the seam rather than of the router, which is
+    why the type test lives here and not at the call site.
+    """
+    return llm.related if isinstance(llm, VaultResonanceLLM) else VaultRelatedSurfaces()
 
 
 async def select_reflection_llm(

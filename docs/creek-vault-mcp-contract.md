@@ -411,10 +411,26 @@ capability is still used for the others it supports:
   untrusted input: the number of notes adepthood will accept from one
   response is bounded, and each note's quote and note text are
   length-bounded, before anything is built from them. Additive fields
-  Creek may add later — its optional `essay`, and any future
-  related-praxis or related-eddies fields — are ignored rather than
-  erroring. Content already flagged by the care gate never calls the
-  vault for a reflection at all, regardless of vault availability.
+  Creek may add later are ignored rather than erroring, and its
+  optional `essay` is read but never rendered. Content already flagged
+  by the care gate never calls the vault for a reflection at all,
+  regardless of vault availability.
+- **The two related collections adepthood owns projections for.**
+  `related_praxis` and `related_eddies` are optional on
+  `ReflectionResponse` from contract 0.10.0. Adepthood reads them, but
+  the *projection* is adepthood's own and belongs here rather than in
+  Creek's contract: both are read item-wise fail-soft, so a page whose
+  title, praxis vocabulary, description, fragment tally, or
+  `YYYY-MM-DD` formation date does not survive is dropped alone rather
+  than costing the reflection; both are bounded at Creek's published
+  `maxItems`, in one place (`services.creek_vault_payload`), so the
+  margin stays a note rather than a dashboard; and an absent, null, or
+  wrong-typed collection reads as no pages rather than as a payload
+  fault. They surface to the client only on a pass whose reflection the
+  vault actually answered — a cloud fallback, a degraded vault, the
+  privacy floor and the care short-circuit all publish empty
+  collections, because pages presented beside cloud prose would relate
+  the writer's own corpus to words their vault never wrote.
 - **REFLECT over `/v1`** — the ratified request *body* carries no tier
   ceiling (`ReflectionRequest` is `additionalProperties: false` and
   publishes none), so the entry's own ceiling is declared in the

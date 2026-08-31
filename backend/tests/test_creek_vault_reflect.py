@@ -32,9 +32,13 @@ from domain.creek_vault import (
     VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -43,7 +47,12 @@ from domain.creek_vault import (
 from domain.resonance import ResonanceLLM, generate_marginalia
 from services.creek_vault_client import HttpCreekVaultClient
 from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
-from services.creek_vault_reflect import VaultResonanceLLM, select_reflection_llm
+from services.creek_vault_reflect import (
+    VaultRelatedSurfaces,
+    VaultResonanceLLM,
+    related_surfaces,
+    select_reflection_llm,
+)
 
 _BODY = "the body under reflection"
 
@@ -76,6 +85,8 @@ def _reflection(
     status: VaultReflectionStatus = VaultReflectionStatus.OK,
     essay: str | None = None,
     routed_tier: VaultTierCeiling = VaultTierCeiling.PERSONAL,
+    related_praxis: tuple[VaultRelatedPraxis, ...] = (),
+    related_eddies: tuple[VaultRelatedEddy, ...] = (),
 ) -> VaultReflection:
     """Build the structured reflection a wired vault hands back."""
     return VaultReflection(
@@ -84,7 +95,27 @@ def _reflection(
         essay=essay,
         essay_grounded=False,
         routed_tier=routed_tier,
+        related_praxis=related_praxis,
+        related_eddies=related_eddies,
     )
+
+
+# One compiled page of each kind, as the adapter hands them across the seam. Both
+# are sentinels rather than plausible prose: every assertion below is about
+# whether they travelled, so a value that could be mistaken for something the
+# fallback produced would weaken the test.
+_PRAXIS = VaultRelatedPraxis(
+    title="Rest before the collapse",
+    praxis_type=VaultPraxisKind.PRACTICE,
+    status=VaultPraxisStatus.ACTIVE,
+    excerpt="The page's own opening lines.",
+)
+_EDDY = VaultRelatedEddy(
+    title="Rest and Ruin",
+    description="A cluster the writer keeps returning to.",
+    fragment_count=12,
+    formed="2026-03-04",
+)
 
 
 class RecordingVaultClient:
@@ -577,3 +608,104 @@ async def test_select_reflection_llm_returns_vault_adapter_with_resolved_tier(
         "notes": [{"kind": "theme", "quote": _LOOP_STALL_QUOTE, "note": _STALL_NOTE}]
     }
     assert client.reflect_calls == [(_BODY, expected_ceiling)]
+
+
+@pytest.mark.asyncio
+async def test_related_pages_of_a_rendered_reflection_reach_the_consumer() -> None:
+    """The compiled pages of the reflection actually used are readable off the seam.
+
+    The ``ResonanceLLM`` contract is prompt-in/string-out, so the pages cannot
+    ride the completion: they are not the user's own words and have no place in
+    the marginalia contract. They are read back from the adapter instead, which
+    keeps one pass's answer with the pass that produced it.
+    """
+    client = RecordingVaultClient(
+        reflect_result=_reflection(
+            _note("theme", _LOOP_STALL_QUOTE, _STALL_NOTE),
+            related_praxis=(_PRAXIS,),
+            related_eddies=(_EDDY,),
+        )
+    )
+    adapter = VaultResonanceLLM(
+        client,
+        body=_LOOP_BODY,
+        tier_ceiling=VaultTierCeiling.PERSONAL,
+        fallback=RecordingFallbackLLM(),
+    )
+
+    completion = await adapter.complete("any prompt")
+
+    assert "Rest and Ruin" not in completion
+    assert related_surfaces(adapter) == VaultRelatedSurfaces(praxis=(_PRAXIS,), eddies=(_EDDY,))
+
+
+@pytest.mark.parametrize(
+    "reflection",
+    [
+        pytest.param(
+            _reflection(
+                status=VaultReflectionStatus.EMPTY,
+                related_praxis=(_PRAXIS,),
+                related_eddies=(_EDDY,),
+            ),
+            id="empty_status",
+        ),
+        pytest.param(
+            _reflection(related_praxis=(_PRAXIS,), related_eddies=(_EDDY,)),
+            id="ok_with_zero_notes",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_deferred_reflection_surfaces_no_related_pages(
+    reflection: VaultReflection,
+) -> None:
+    """Pages never surface beside a reflection the writer is not reading.
+
+    Both cases fall back to the cloud, so what lands in the margin is the cloud's
+    answer -- and pages presented as related to *it* would be relating the user's
+    own corpus to prose their vault never wrote.
+    """
+    client = RecordingVaultClient(reflect_result=reflection)
+    adapter = VaultResonanceLLM(
+        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=RecordingFallbackLLM()
+    )
+
+    await adapter.complete("any prompt")
+
+    assert related_surfaces(adapter) == VaultRelatedSurfaces()
+
+
+@pytest.mark.asyncio
+async def test_a_degraded_vault_surfaces_no_related_pages() -> None:
+    """A vault that failed mid-call surfaced nothing, so neither does the seam."""
+    client = RecordingVaultClient(reflect_error=CreekVaultUnavailableError("vault is down"))
+    adapter = VaultResonanceLLM(
+        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=RecordingFallbackLLM()
+    )
+
+    await adapter.complete("any prompt")
+
+    assert related_surfaces(adapter) == VaultRelatedSurfaces()
+
+
+def test_a_cloud_llm_surfaces_no_related_pages() -> None:
+    """Only a vault knows about compiled pages, so every other LLM surfaces none.
+
+    Asked of the seam rather than of the caller: the router holds whichever
+    ``ResonanceLLM`` ``select_reflection_llm`` chose, and making it branch on the
+    concrete type would put that knowledge in two places.
+    """
+    assert related_surfaces(RecordingFallbackLLM()) == VaultRelatedSurfaces()
+
+
+def test_nothing_surfaces_before_the_reflection_is_asked_for() -> None:
+    """A freshly bound adapter has no answer yet, so it reports none."""
+    adapter = VaultResonanceLLM(
+        RecordingVaultClient(),
+        body=_BODY,
+        tier_ceiling=VaultTierCeiling.PERSONAL,
+        fallback=RecordingFallbackLLM(),
+    )
+
+    assert related_surfaces(adapter) == VaultRelatedSurfaces()
