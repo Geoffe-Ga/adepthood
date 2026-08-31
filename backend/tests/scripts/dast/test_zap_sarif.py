@@ -228,6 +228,38 @@ def test_two_instances_of_one_alert_fingerprint_differently() -> None:
     assert all(fingerprint for fingerprint in prints)
 
 
+def test_one_path_reached_two_ways_fingerprints_differently() -> None:
+    """ZAP reports one rule on one path under several methods; those are separate findings.
+
+    Fold them together and dismissing the finding on ``GET`` silently dismisses
+    the un-triaged one on ``POST``.
+    """
+    alert = _alert(
+        instances=[
+            _instance(f"{_TARGET}/journal/", method="GET"),
+            _instance(f"{_TARGET}/journal/", method="POST"),
+        ]
+    )
+
+    prints = [result["partialFingerprints"] for result in _results(_report(alert))]
+
+    assert prints[0] != prints[1]
+
+
+def test_two_parameters_of_one_endpoint_fingerprint_differently() -> None:
+    """An injection rule fires per parameter; two parameters are two things to fix."""
+    alert = _alert(
+        instances=[
+            _instance(f"{_TARGET}/journal/", method="POST", param="title"),
+            _instance(f"{_TARGET}/journal/", method="POST", param="body"),
+        ]
+    )
+
+    prints = [result["partialFingerprints"] for result in _results(_report(alert))]
+
+    assert prints[0] != prints[1]
+
+
 def test_the_same_finding_fingerprints_the_same_way_on_every_run() -> None:
     """Dismissal tracking is the whole reason to publish SARIF rather than an artifact."""
     first = _results(_report(_alert()))[0]["partialFingerprints"]
@@ -253,14 +285,24 @@ def test_an_absent_cwe_is_not_invented(cweid: str) -> None:
 
 
 def test_the_summary_counts_what_was_found() -> None:
-    """A cron run's whole audience is the run summary; a colour is not a report."""
-    document = _report(_alert(riskcode="3"), _alert(alertRef="10096-1", riskcode="1"))
+    """A cron run's whole audience is the run summary; a colour is not a report.
+
+    The whole rendered row is asserted, not the digits loose in the page. Every
+    summary prints ``Scanned: http://127.0.0.1:8000``, so a containment check for
+    a small number is answered by the target string and would stay green with
+    every count in the table hard-zeroed.
+    """
+    document = _report(
+        _alert(riskcode="3", instances=[_instance(f"{_TARGET}/habits/")]),
+        _alert(alertRef="10096-1", riskcode="1", instances=[_instance(f"{_TARGET}/journal/")]),
+        _alert(alertRef="10096-2", riskcode="1", instances=[_instance(f"{_TARGET}/practices/")]),
+    )
 
     summary = summarise(document)
 
-    assert "High" in summary
-    assert "Low" in summary
-    assert "2" in summary
+    assert "| High | 1 | 1 |" in summary, summary
+    assert "| Low | 2 | 2 |" in summary, summary
+    assert "| Medium |" not in summary, summary
 
 
 def test_the_summary_says_so_when_nothing_was_found() -> None:

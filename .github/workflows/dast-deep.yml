@@ -71,9 +71,12 @@ jobs:
   zap-api-scan:
     name: Attack an ephemeral instance and publish what it finds
     runs-on: ubuntu-latest
-    # ZAP's own budget is 20 minutes (`-T` below); this ceiling covers install,
-    # migration, boot and the image pull, and only exists so a wedged container
-    # cannot run for six hours on a nightly cron.
+    # ZAP's own budgets are set in `cmd_options` below and sum to thirty minutes
+    # -- twenty for the attack phase, ten for startup and the passive queue. This
+    # ceiling covers install, migration, boot, the image pull and the conversion
+    # on top of those, and only exists so a wedged container cannot run for six
+    # hours on a nightly cron. It is deliberately not the thing that stops the
+    # scan: a job cancelled at its ceiling writes no SARIF and uploads nothing.
     timeout-minutes: 45
 
     services:
@@ -95,7 +98,10 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
       SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
       BASE_URL: http://127.0.0.1:8000
-      UVICORN_LOG: /tmp/uvicorn.log
+      # In the workspace rather than /tmp, so the artifact step below can take
+      # it: the evidence check reads this file, and a run where that check fails
+      # is exactly the run where somebody needs to see what the target answered.
+      UVICORN_LOG: ${{ github.workspace }}/uvicorn.log
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -140,8 +146,13 @@ jobs:
           # Started the way the Dockerfile does -- module ``main`` with
           # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
           # import layout production runs.
+          #
+          # `info`, not `warning`: uvicorn's access logger emits at INFO, and
+          # those request lines are the only record anywhere in this job of what
+          # the scanner actually got back. At `warning` the evidence step below
+          # would read an empty file and every scan would look identical.
           PYTHONPATH=src python -m uvicorn main:app \
-            --host 127.0.0.1 --port 8000 --log-level warning > "$UVICORN_LOG" 2>&1 &
+            --host 127.0.0.1 --port 8000 --log-level info > "$UVICORN_LOG" 2>&1 &
 
       - name: Wait for readiness
         run: |
@@ -200,10 +211,20 @@ jobs:
           # -O overrides the server URL in the imported document: FastAPI
           # publishes no `servers` block, and leaving ZAP to infer one is how a
           # scan ends up attacking a hostname that does not resolve.
-          # -T bounds the whole scan; there is no -I here and there must not be
-          # one, because -I passes every warning at once, which is every
-          # suppression in .zap/rules.tsv at once and un-reviewed.
-          cmd_options: "-O http://127.0.0.1:8000 -T 20"
+          #
+          # -T does NOT bound the scan, whatever its name suggests. In ZAP's own
+          # zap-api-scan.py the value reaches exactly two calls -- the wait for
+          # ZAP to start, and the wait for the passive queue to drain -- and the
+          # attack phase runs in zap_active_scan, which polls ascan.status to 100
+          # with no deadline at all. So the attack phase is bounded where ZAP
+          # actually reads a bound: scanner.maxScanDurationInMins, passed through
+          # -z as a startup config. Without it the only ceiling is the job's own
+          # timeout, and a job cancelled at its ceiling writes no SARIF.
+          #
+          # There is no -I here and there must not be one, because -I passes
+          # every warning at once, which is every suppression in .zap/rules.tsv
+          # at once and un-reviewed.
+          cmd_options: '-O http://127.0.0.1:8000 -T 10 -z "-config scanner.maxScanDurationInMins=20"'
           fail_action: false
           # Findings belong in the Security tab, which dedupes them and tracks
           # dismissals. The action's own issue writer would open a second,
@@ -211,6 +232,24 @@ jobs:
           # that would need `issues: write`.
           allow_issue_writing: false
           artifact_name: zap-native-reports
+
+      # The step above proves a credential works. It cannot prove that ZAP
+      # attached it to ZAP's own traffic, and those two worlds are
+      # indistinguishable in every other artifact this job produces: the report
+      # still names a site, the passive rules still fire on the 401 responses
+      # themselves, the SARIF still validates and uploads, and `fail_action:
+      # false` keeps ZAP quiet either way. A scan answered at the door reaches no
+      # handler, so no active rule can find anything, and the run is green with a
+      # Security tab that has nothing to say. The target's own request log is the
+      # only place the difference is written down, so it is read here -- before
+      # anything is published, because publishing a near-empty SARIF from a scan
+      # that reached nothing is the exact silent-green this job is built against.
+      - name: Prove the scan reached authenticated code
+        working-directory: backend
+        run: |
+          PYTHONPATH=src python -m scripts.dast.scan_evidence \
+            --log "$UVICORN_LOG" \
+            --probe-path /habits/ >> "$GITHUB_STEP_SUMMARY"
 
       # Runs unconditionally, and fails when the report cannot be read. That is
       # the point: ZAP not writing a report is exactly the state in which an
@@ -239,6 +278,7 @@ jobs:
             report_json.json
             report_md.md
             report_sarif.sarif
+            uvicorn.log
           retention-days: 30
           if-no-files-found: warn
 
@@ -246,9 +286,16 @@ jobs:
         if: always()
         run: pkill -f "uvicorn main:app" || echo "no instance left to stop"
 
+      # The tail, not the whole file: at `info` a twenty-minute attack run leaves
+      # tens of thousands of access lines, and a step that prints all of them is
+      # a step nobody scrolls through. The line count is printed with it so the
+      # difference between "quiet" and "truncated here" stays visible, and the
+      # full file goes to the artifact below for anyone who needs it.
       - name: Server log
         if: always()
-        run: cat "$UVICORN_LOG"
+        run: |
+          echo "$(wc -l < "$UVICORN_LOG") lines logged; last 300 follow"
+          tail -n 300 "$UVICORN_LOG"
 
   report-failure:
     name: Report the failure so it is not silent

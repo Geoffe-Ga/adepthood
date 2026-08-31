@@ -501,9 +501,33 @@ uploaded as the `dast-deep-report` artifact with 30-day retention.
 ZAP's own findings never redden it (`fail_action: false`). A nightly gate that
 can fail for a reason nobody chose is a gate that gets muted, and a muted gate is
 worse than none. What *does* redden the run is the harness failing — the instance
-never becoming ready, the token not working, ZAP writing no report — because
-those are exactly the states in which a clean-looking result means nothing was
-scanned. Those open a tracking issue through the shared failure reporter.
+never becoming ready, the token not working, the scan never getting past
+authentication, ZAP writing no report — because those are exactly the states in
+which a clean-looking result means nothing was scanned. Those open a tracking
+issue through the shared failure reporter.
+
+**Proving the scan got past the front door.** `scripts/dast/tokens.py` refuses to
+print a token that does not open `/habits/`, which proves the *credential*. It
+proves nothing about whether ZAP attached that credential to ZAP's own traffic,
+and a scan answered `401` everywhere produces artifacts identical to a clean one:
+a report naming the site, passive alerts raised on the denials themselves, a
+valid SARIF file, a green run. So `scripts/dast/scan_evidence.py` reads the
+target's own request log after the scan and exits `3` unless at least one request
+to `/habits/` was answered with something other than a denial. Success on some
+other route is not accepted — `/openapi.json` and `/health/ready` answer `200` to
+anybody, and they are the two routes the scan is guaranteed to hit. This is why
+the job starts uvicorn at `--log-level info`: the access logger emits at `INFO`,
+and those request lines are the only record of what the scanner actually got
+back. The full log ships with the `dast-deep-report` artifact.
+
+**`-T` is not a scan budget**, whatever its name suggests. In ZAP's own
+`zap-api-scan.py` the value reaches exactly two calls — the wait for ZAP to start
+and the wait for the passive queue to drain — while the attack phase runs in
+`zap_active_scan`, which polls `ascan.status` until it reaches 100 with no
+deadline at all. The attack phase is therefore bounded where ZAP actually reads a
+bound: `-z "-config scanner.maxScanDurationInMins=20"`. Leave that out and the
+only ceiling is the job's own `timeout-minutes`, and a job cancelled at its
+ceiling writes no SARIF, uploads nothing, and is red every morning.
 
 **API scan, not baseline.** A ZAP baseline run spiders for links and forms. This
 application serves JSON, has no HTML and nothing to crawl, so a spider would
@@ -529,9 +553,11 @@ named in the workflow.
 
 ```bash
 cd backend
-# 1. Start an instance the way the job does, with the limiter widened.
+# 1. Start an instance the way the job does, with the limiter widened and the
+#    access log on -- step 4 has nothing to read without it.
 ADEPTHOOD_DEFAULT_RATE_LIMIT=60000/minute PYTHONPATH=src \
-    python -m uvicorn main:app --host 127.0.0.1 --port 8000 &
+    python -m uvicorn main:app --host 127.0.0.1 --port 8000 \
+    --log-level info > /tmp/uvicorn.log 2>&1 &
 
 # 2. Mint a credential over the real auth stack.
 export DAST_TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
@@ -544,9 +570,15 @@ docker run --rm --network=host -v "$PWD/../:/zap/wrk/:rw" \
     -e ZAP_AUTH_HEADER_SITE=127.0.0.1 \
     -t ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
     -t http://127.0.0.1:8000/openapi.json -f openapi \
-    -J report_json.json -c .zap/rules.tsv -O http://127.0.0.1:8000 -T 20
+    -J report_json.json -c .zap/rules.tsv \
+    -O http://127.0.0.1:8000 -T 10 \
+    -z "-config scanner.maxScanDurationInMins=20"
 
-# 4. Convert what it found, and read the summary it prints.
+# 4. Check the scan actually got behind the credential. Exits 3 if it did not.
+PYTHONPATH=src python -m scripts.dast.scan_evidence \
+    --log /tmp/uvicorn.log --probe-path /habits/
+
+# 5. Convert what it found, and read the summary it prints.
 PYTHONPATH=src python -m scripts.dast.zap_sarif \
     --report ../report_json.json --sarif ../report_sarif.sarif
 ```

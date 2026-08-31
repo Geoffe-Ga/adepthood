@@ -45,10 +45,28 @@ _SARIF_STEP = "Convert the ZAP report to SARIF"
 _UPLOAD_SARIF_STEP = "Publish the findings to code scanning"
 _ARTIFACT_STEP = "Upload the raw report"
 _MINT_STEP = "Mint a bearer token and prove it works"
+_EVIDENCE_STEP = "Prove the scan reached authenticated code"
 
 _ARTIFACT_NAME = "dast-deep-report"
 _RETENTION_DAYS = "30"
 _RULES_FILE = ".zap/rules.tsv"
+
+# The one origin this job is allowed to name. Held as a set and compared by
+# containment of the *whole* origin rather than by substring: a lookalike host
+# such as ``localhost.example.invalid`` contains ``localhost``, and
+# ``127.0.0.1.example.invalid`` starts with the loopback address, so any check
+# phrased as "does it mention the loopback" waves both of them through.
+_TARGET_ORIGIN = "http://127.0.0.1:8000"
+_ALLOWED_ORIGINS = frozenset({_TARGET_ORIGIN})
+_ORIGIN = re.compile(r"https?://[\w.-]+(?::\d+)?")
+
+# ZAP's ``-T`` is "max time to wait for ZAP to start and the *passive* scan to
+# run"; it is consumed by ``wait_for_zap_start`` and ``zap_wait_for_passive_scan``
+# and never by ``zap_active_scan``, which polls ``ascan.status`` to 100 with no
+# deadline. The only thing that bounds the attack phase is this config key.
+_ACTIVE_SCAN_DEADLINE = re.compile(r"-config\s+scanner\.maxScanDurationInMins=(?P<minutes>\d+)")
+_SERVER_OVERRIDE = re.compile(rf"-O\s+{re.escape(_TARGET_ORIGIN)}(?:\s|$)")
+_JOB_CEILING = re.compile(r"^\s*timeout-minutes:\s*(?P<minutes>\d+)\s*$", re.MULTILINE)
 
 # The scan runs nightly and on demand and on nothing else. Held as one block and
 # compared by equality, because every disarm here is a *narrowing* -- a dropped
@@ -61,8 +79,10 @@ _CANONICAL_TRIGGERS = """\
   workflow_dispatch:"""
 
 # Text that would leave the job structurally present while reporting a failed
-# run as a passing one.
-_DISARMING_FRAGMENTS = ("continue-on-error", "if: false", "if: ${{ false }}")
+# run as a passing one. ``|| true`` is here because it is the disarm this
+# repository's playbook names by name: a gate whose exit code is swallowed reads
+# in the run list exactly like a gate that passed.
+_DISARMING_FRAGMENTS = ("continue-on-error", "if: false", "if: ${{ false }}", "|| true")
 
 # The dispositions a ZAP rules file may express. ``IGNORE`` is the only one that
 # removes a finding, and it is the only one this file is expected to use.
@@ -144,9 +164,16 @@ def test_the_job_stands_up_its_own_instance_against_postgres(workflow: str) -> N
 
 
 def test_the_scan_target_is_the_instance_this_job_started(workflow: str) -> None:
-    """A hardcoded external host would make a nightly cron an unauthorized scan."""
-    hosts = re.findall(r"https?://(?!127\.0\.0\.1)[\w.-]+", without_comment_lines(workflow))
-    external = [host for host in hosts if "localhost" not in host]
+    """A hardcoded external host would make a nightly cron an unauthorized scan.
+
+    Every origin in the live text is compared whole against the one allowed
+    value. A containment test would not do: ``http://localhost.example.invalid``
+    contains ``localhost`` and ``http://127.0.0.1.example.invalid`` starts with
+    the loopback address, so both would read as the instance this job started
+    while pointing twenty minutes of attack payloads at somebody else.
+    """
+    origins = set(_ORIGIN.findall(without_comment_lines(workflow)))
+    external = sorted(origins - _ALLOWED_ORIGINS)
 
     assert not external, f"the workflow names a host it did not start: {external}"
 
@@ -215,6 +242,62 @@ def test_the_scan_never_blanket_ignores_warnings(workflow: str) -> None:
     options = step_inputs(workflow, _SCAN_STEP).get("cmd_options", "")
 
     assert not _BLANKET_IGNORE.search(options), options
+
+
+def test_the_scan_is_told_which_server_the_document_never_names(workflow: str) -> None:
+    """Without ``-O`` the scan attacks whatever host ZAP infers, which is nothing at all.
+
+    FastAPI publishes no ``servers`` block, so the imported document says nothing
+    about where the operations live. Drop this option and ZAP guesses, the guess
+    does not resolve, and the run produces a report with no alerts in it -- which
+    uploads cleanly and renders as a Security tab with nothing to say.
+    """
+    options = step_inputs(workflow, _SCAN_STEP).get("cmd_options", "")
+
+    assert _SERVER_OVERRIDE.search(options), options
+
+
+def test_the_active_scan_carries_a_deadline_that_actually_bounds_it(workflow: str) -> None:
+    """``-T`` bounds ZAP's startup and its passive queue, and nothing else.
+
+    In ZAP's own ``zap-api-scan.py`` the value of ``-T`` reaches exactly two
+    calls -- ``wait_for_zap_start`` and ``zap_wait_for_passive_scan``. The attack
+    phase runs in ``zap_active_scan``, which polls ``ascan.status`` until it
+    reaches 100 with no deadline of any kind. So the only budget on the part of
+    this job that takes the time is the config key asserted here, and it has to
+    leave room under the job ceiling for the image pull, the boot and the
+    conversion -- otherwise the job is cancelled mid-scan, no SARIF is ever
+    written, and the nightly is red for a reason nobody chose.
+    """
+    options = step_inputs(workflow, _SCAN_STEP).get("cmd_options", "")
+    deadline = _ACTIVE_SCAN_DEADLINE.search(options)
+    ceiling = _JOB_CEILING.search(without_comment_lines(workflow))
+
+    assert deadline is not None, options
+    assert ceiling is not None, "the job declares no timeout-minutes"
+    assert int(deadline["minutes"]) < int(ceiling["minutes"])
+
+
+def test_the_scan_proves_it_got_past_the_front_door(workflow: str) -> None:
+    """A scan answered 401 everywhere reaches no handler and reports perfectly clean.
+
+    Minting a working token proves the credential; it says nothing about whether
+    ZAP ever attached it to ZAP's own traffic. Those two states are
+    indistinguishable in every other artifact this job produces -- the report
+    still names a site, the SARIF still validates, ``fail_action: false`` still
+    keeps ZAP quiet -- so the evidence has to be read off the target instead.
+    """
+    command = step_run_command(workflow, _EVIDENCE_STEP)
+
+    assert "scripts.dast.scan_evidence" in command, command
+
+
+def test_the_instance_records_the_traffic_that_evidence_is_read_from(workflow: str) -> None:
+    """At ``warning`` uvicorn logs no request lines, and the evidence check reads nothing."""
+    live = without_comment_lines(workflow)
+
+    assert "--log-level info" in live, live
+    assert "--log-level warning" not in live, live
 
 
 def test_the_findings_are_converted_and_summarised_in_one_step(workflow: str) -> None:
