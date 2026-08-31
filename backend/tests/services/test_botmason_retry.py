@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import httpx2
 import openai
 import pytest
 
@@ -236,3 +237,77 @@ class TestCallOpenAIRetryWithImages:
         assert create_mock.await_count == _MAX_RETRIES + 1
         assert sleep_mock.await_count == _MAX_RETRIES
         assert constructed_kwargs["timeout"] == _LLM_TIMEOUT_SECONDS
+
+
+# --- Quota exhaustion: a 429 that no amount of waiting can clear ------------
+
+#: OpenAI's real body for an account whose quota is spent. Built as a genuine
+#: ``openai.RateLimitError`` rather than a ``_FakeStatusCodeError`` on purpose:
+#: the synthetic fake above carries no body and no ``code``, so every existing
+#: 429 case in ``TestIsRetryable`` passes without ever exercising the one
+#: attribute that separates an empty account from a busy one. That blind spot
+#: is how this shipped.
+_OPENAI_QUOTA_ERROR_BODY: dict[str, object] = {
+    "message": "You exceeded your current quota, please check your plan and billing details.",
+    "type": "insufficient_quota",
+    "param": None,
+    "code": "insufficient_quota",
+}
+
+#: The same status from the same SDK class for the common, genuinely transient
+#: case. Retrying this one is correct.
+_OPENAI_RATE_LIMIT_ERROR_BODY: dict[str, object] = {
+    "message": "Rate limit reached for gpt-4o-mini in organization on requests per min.",
+    "type": "requests",
+    "param": None,
+    "code": "rate_limit_exceeded",
+}
+
+_TOO_MANY_REQUESTS = 429
+_ONE_ATTEMPT = 1
+
+
+def _openai_429(body: dict[str, object]) -> openai.RateLimitError:
+    """Build the real SDK error OpenAI raises for a 429 carrying ``body``."""
+    # ``httpx2`` -- not ``httpx`` -- because openai 3.x is typed against it.
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx2.Response(_TOO_MANY_REQUESTS, request=request, json={"error": body})
+    return openai.RateLimitError("rate limited", response=response, body=body)
+
+
+class TestQuotaExhaustionIsNotTransient:
+    """A billing state and a congestion state share a status but not a remedy."""
+
+    def test_insufficient_quota_429_is_not_retryable(self) -> None:
+        """The machine-readable ``code``, not the status, decides this one."""
+        assert _is_retryable(_openai_429(_OPENAI_QUOTA_ERROR_BODY)) is False
+
+    def test_genuine_rate_limit_429_is_still_retryable(self) -> None:
+        """The common case is untouched -- a fix that breaks this is a regression."""
+        assert _is_retryable(_openai_429(_OPENAI_RATE_LIMIT_ERROR_BODY)) is True
+
+    @pytest.mark.asyncio
+    async def test_quota_error_is_attempted_once_with_no_backoff(
+        self, sleep_mock: AsyncMock
+    ) -> None:
+        """One call, zero sleeps: the account is empty and waiting cannot fill it."""
+        factory = _RaisingFactory(_openai_429(_OPENAI_QUOTA_ERROR_BODY))
+
+        with pytest.raises(openai.RateLimitError):
+            await _retry_on_transient(factory)
+
+        assert factory.call_count == _ONE_ATTEMPT
+        sleep_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_genuine_rate_limit_still_exhausts_the_retry_budget(
+        self, sleep_mock: AsyncMock
+    ) -> None:
+        """The regression guard, at the loop rather than the predicate."""
+        factory = _RaisingFactory(_openai_429(_OPENAI_RATE_LIMIT_ERROR_BODY))
+
+        with pytest.raises(openai.RateLimitError):
+            await _retry_on_transient(factory)
+
+        assert factory.call_count == _MAX_RETRIES + 1
+        assert sleep_mock.await_count == _MAX_RETRIES

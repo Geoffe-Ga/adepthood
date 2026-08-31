@@ -473,3 +473,40 @@ describe('hasTerminalError', () => {
     expect(hasTerminalError(state)).toBe(true);
   });
 });
+
+describe('selectStartable — a terminal failure stops the run, not just the button', () => {
+  // A five-page run is the shape that makes this cost real: without the
+  // short-circuit, page one coming back with a spent balance still lets pages
+  // two through five fan out, each a POST that charges the wallet, fails on the
+  // same permanent refusal, and rolls back.
+  const FIVE_PAGES = ['p1', 'p2', 'p3', 'p4', 'p5'];
+
+  function failFirstPageWith(error: TranscriptionErrorKind): TranscriptionRunState {
+    let state = initState(FIVE_PAGES);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    return transcriptionRunReducer(state, { type: 'reject', id: 'p1', attempt: 1, error });
+  }
+
+  it.each<TranscriptionErrorKind>(['credit_exhausted', 'service_credit_exhausted'])(
+    'dispatches nothing more once a page has failed with %s',
+    (error) => {
+      const state = failFirstPageWith(error);
+      expect(hasTerminalError(state)).toBe(true);
+      expect(selectStartable(state)).toEqual([]);
+    },
+  );
+
+  it('stops the fan-out for a model that cannot read images either', () => {
+    // Pre-existing terminal kind: the same argument always applied to it, and
+    // the run kept dispatching anyway.
+    expect(selectStartable(failFirstPageWith('model_lacks_vision'))).toEqual([]);
+  });
+
+  it('keeps dispatching after an ordinary transient failure', () => {
+    // The guard must be keyed on the kind, not on "something failed" — a
+    // timeout on one page says nothing about the next.
+    const state = failFirstPageWith('timeout');
+    expect(hasTerminalError(state)).toBe(false);
+    expect(selectStartable(state)).toEqual(['p2', 'p3']);
+  });
+});

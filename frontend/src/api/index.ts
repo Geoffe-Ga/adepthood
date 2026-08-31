@@ -182,6 +182,11 @@ export type TranscriptionErrorKind =
   | 'image_too_large'
   | 'model_lacks_vision'
   | 'wallet_exhausted'
+  // A spent *provider* balance, which `wallet_exhausted` (our own monthly
+  // metering) is not: its remedy is the API key, not the next monthly reset.
+  // Split by whose key it was, because that decides who can act.
+  | 'credit_exhausted'
+  | 'service_credit_exhausted'
   | 'rate_limited'
   | 'provider_error'
   | 'network'
@@ -1577,20 +1582,47 @@ const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
   return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
 };
 
+/** Statuses this endpoint answers with more than one distinct condition. */
+const TRANSCRIBE_PAYMENT_REQUIRED = 402;
+const TRANSCRIBE_UNPROCESSABLE = 422;
+const TRANSCRIBE_SERVICE_UNAVAILABLE = 503;
+
+/** One status's `detail` sub-map, paired with what an unlisted detail means. */
+interface TranscribeDetailRule {
+  kinds: Record<string, TranscriptionErrorKind>;
+  fallback: TranscriptionErrorKind;
+}
+
 /**
- * 422 sub-map: the transcription endpoint reuses the generic 422 for several
- * distinct validation failures, disambiguated by `detail`. Anything not listed
- * here (including a bare `invalid_image` and the Pydantic array-detail case
- * that `extractErrorDetail` collapses to `'Request failed'`) is a bad image.
+ * Per-status `detail` rules: the endpoint reuses one status for several distinct
+ * conditions, so the status alone cannot classify them. A 402 is a spent monthly
+ * wallet, a spent provider balance, or a missing key; a 422 is a bad image or a
+ * text-only model; a 503 is a spent server balance or a genuine outage. The 422
+ * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
+ * collapses to `'Request failed'`.
  */
-const TRANSCRIBE_422_KINDS: Record<string, TranscriptionErrorKind> = {
-  image_too_large: 'image_too_large',
-  model_lacks_vision: 'model_lacks_vision',
+const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
+  [TRANSCRIBE_PAYMENT_REQUIRED]: {
+    kinds: {
+      // Keyless BYOK is a client misconfiguration, NOT a spent wallet.
+      llm_key_required: 'unknown',
+      llm_credit_exhausted: 'credit_exhausted',
+    },
+    fallback: 'wallet_exhausted',
+  },
+  [TRANSCRIBE_UNPROCESSABLE]: {
+    kinds: { image_too_large: 'image_too_large', model_lacks_vision: 'model_lacks_vision' },
+    fallback: 'invalid_image',
+  },
+  [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
+    kinds: { llm_service_credit_exhausted: 'service_credit_exhausted' },
+    fallback: 'unknown',
+  },
 };
 
 /**
  * Flat status→kind table for the transcription endpoint's `ApiError`s. Statuses
- * needing detail-level disambiguation (402, 422) are handled before this lookup.
+ * needing detail-level disambiguation are handled before this lookup.
  */
 const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
   429: 'rate_limited',
@@ -1600,12 +1632,9 @@ const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
 
 /** Classify an `ApiError` from the transcription endpoint into a stable kind. */
 function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
-  // 402 keyless-BYOK is a client misconfiguration, NOT a spent wallet.
-  if (err.status === 402) {
-    return err.detail === 'llm_key_required' ? 'unknown' : 'wallet_exhausted';
-  }
-  if (err.status === 422) {
-    return TRANSCRIBE_422_KINDS[err.detail] ?? 'invalid_image';
+  const rule = TRANSCRIBE_DETAIL_RULES[err.status];
+  if (rule) {
+    return rule.kinds[err.detail] ?? rule.fallback;
   }
   return TRANSCRIBE_STATUS_KINDS[err.status] ?? 'unknown';
 }

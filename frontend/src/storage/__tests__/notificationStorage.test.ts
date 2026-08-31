@@ -11,6 +11,7 @@ import {
   savePushToken,
   loadPushToken,
 } from '../notificationStorage';
+import { setActiveUser } from '../userScope';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -28,6 +29,7 @@ const mockSecureStore = SecureStore as jest.Mocked<typeof SecureStore>;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  setActiveUser(null);
 });
 
 describe('notificationStorage', () => {
@@ -234,5 +236,33 @@ describe('notificationStorage', () => {
       const result = await loadPushToken();
       expect(result).toBeNull();
     });
+  });
+});
+
+/**
+ * BUG-FE-STATE-001, defence in depth: a habit id only means something inside
+ * one account, so a device that changes hands must not resolve the incoming
+ * user's habit ids against the previous owner's schedule.
+ */
+describe('notification bookkeeping is namespaced per account', () => {
+  test('two accounts key the same habit id differently', async () => {
+    setActiveUser(1);
+    await saveNotificationIds(42, ['n-1']);
+    const keyForUserOne = mockAsyncStorage.setItem.mock.calls[0]![0];
+
+    jest.clearAllMocks();
+    setActiveUser(2);
+    await saveNotificationIds(42, ['n-2']);
+    const keyForUserTwo = mockAsyncStorage.setItem.mock.calls[0]![0];
+
+    expect(keyForUserOne).not.toBe(keyForUserTwo);
+  });
+
+  test('a signed-in account never reads the unscoped legacy tracking list', async () => {
+    setActiveUser(1);
+
+    await clearAllNotificationData();
+
+    expect(mockAsyncStorage.getItem).not.toHaveBeenCalledWith('@adepthood/notification_habit_ids');
   });
 });

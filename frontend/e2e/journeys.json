@@ -292,7 +292,7 @@
   },
   {
     "id": "errors.server-fault-is-not-offline",
-    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 — every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
+    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 \u2014 every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
@@ -301,5 +301,29 @@
     },
     "status": "uncovered",
     "issue": 2406
+  },
+  {
+    "id": "auth.account-switch-purges-device-state",
+    "description": "A device that already holds one account's session is signed into by a second account without an explicit logout -- through the password-reset flow, or any path that reaches the login screen with a live cache on disk. The incoming user must see none of the previous user's habits, none of their check-in queue replayed under the new token, and none of their BYOK key on the resonance header. Uncovered because the leak is a row on the device rather than a row on the server: this lane drives HTTP against a live backend from Node, with no app process and therefore no AsyncStorage or SecureStore to seed, dirty, or read back, so a spec written against the wire could only assert that the backend scopes reads to its caller -- which it already did throughout, and which was never the failing half. Held meanwhile by src/context/__tests__/AccountSwitchWipe.integration.test.tsx, which drives the real AuthProvider and the real habitStorage against the in-memory AsyncStorage mock, plus the per-account namespacing tests in src/storage/__tests__/. The cold start behind that door is held by src/context/__tests__/ResumedSessionScope.integration.test.tsx, which pins the namespace a resumed session reads to the subject of the token it resumed rather than to a separately persisted stamp the two non-atomic sign-in writes can leave disagreeing.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/LoginScreen.tsx",
+      "client": ["auth", "setTokenGetter", "habits"],
+      "routes": ["POST /auth/login", "POST /auth/password-reset/confirm", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "uncovered",
+    "issue": 2547
+  },
+  {
+    "id": "errors.spent-provider-balance-is-not-a-blip",
+    "description": "A writer asks for resonance while the balance behind the key that pays for it is spent. What they got was \"the AI provider is having trouble connecting, give it a moment and tap retry\" -- a transient story for a permanent, billing-level refusal, so the retry button they were pointed at could never work and the real cause reached nobody. The journey now ends in copy that names the condition and the one action that clears it, split by whose key it was, with no retry affordance and the charge reversed; on the server's own key an operator gets the WARNING that is their first signal it happened at all. Each side is pinned separately: backend/tests/services/test_botmason_credit_exhausted.py drives both SDKs through a mock transport so each builds its own typed error from the provider's real body, backend/tests/test_resonance_endpoints.py asserts the 402/503 split and the operator record, and src/api/__tests__/errorMessages.test.ts asserts neither code inherits the transient copy. Uncovered in this lane for the same reason journal.ask-for-resonance is: making it happen needs a provider that refuses for billing, and the lane has no provider to call at all.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2543
   }
 ]

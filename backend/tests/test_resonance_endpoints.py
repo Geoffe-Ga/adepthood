@@ -21,6 +21,7 @@ from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
 from models.wallet_audit import REASON_REFUND_NO_NOTES, REASON_SPEND_MONTHLY, WalletAudit
+from services import botmason as botmason_service
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 from services.corpus_store import FragmentDraft, record_fragment
@@ -791,3 +792,129 @@ class TestZeroNotePassIsNeverSilent:
         await _run_resonance_capturing_logs(async_client, caplog, "retried")
 
         assert _records(caplog, _GENERATED)[0].__dict__["resonance_attempts"] == 2
+
+
+# --- A permanently exhausted balance is not a transient outage --------------
+
+_BYOK_HEADER = "X-LLM-API-Key"
+_BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+#: The provider's own words, which an operator needs and a reader must never see.
+_PROVIDER_PROSE = (
+    "Error code: 400 - Your credit balance is too low to access the Anthropic API. "
+    "Please go to Plans & Billing to upgrade or purchase credits."
+)
+_CREDIT_EXHAUSTED_DETAIL = "llm_credit_exhausted"
+_SERVICE_CREDIT_EXHAUSTED_DETAIL = "llm_service_credit_exhausted"
+
+
+def _raise_credit_exhausted(monkeypatch: pytest.MonkeyPatch, provider: str = "anthropic") -> None:
+    """Patch the resonance LLM seam to refuse the way an empty account does."""
+
+    async def _refuse(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> None:
+        del prompt, history, system_prompt, api_key
+        raise botmason_service.LLMCreditExhaustedError(_PROVIDER_PROSE, provider=provider)
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _refuse)
+
+
+async def _assert_nothing_was_charged(db_session: AsyncSession, email: str) -> None:
+    """No note landed and the monthly deduction was rolled back."""
+    rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
+    assert rows == 0
+    user = (await db_session.execute(select(User).where(col(User.email) == email))).scalar_one()
+    assert user.monthly_messages_used == 0
+
+
+@pytest.mark.asyncio
+async def test_byok_credit_exhausted_is_402_not_502(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller's own spent key is a bill they can settle -- 402, not a gateway blip.
+
+    The remedy differs by whose key failed, and 502 ``llm_provider_error`` says
+    "give it a moment and tap retry" -- advice that can never work here.
+    """
+    _raise_credit_exhausted(monkeypatch)
+    headers = await _signup(async_client, "byokdry")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(
+        f"/journal/{entry_id}/resonance",
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == _CREDIT_EXHAUSTED_DETAIL
+    await _assert_nothing_was_charged(db_session, "byokdry@example.com")
+
+
+@pytest.mark.asyncio
+async def test_server_key_credit_exhausted_is_503_not_502(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server's own spent key is nothing the reader owns -- its own code."""
+    _raise_credit_exhausted(monkeypatch)
+    headers = await _signup(async_client, "serverdry")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == _SERVICE_CREDIT_EXHAUSTED_DETAIL
+    await _assert_nothing_was_charged(db_session, "serverdry@example.com")
+
+
+@pytest.mark.asyncio
+async def test_credit_exhausted_response_carries_no_provider_internals(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wire says which condition; it never says whose account or in whose words."""
+    _raise_credit_exhausted(monkeypatch)
+    headers = await _signup(async_client, "noleak_credit")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(
+        f"/journal/{entry_id}/resonance",
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    # Assert the classification first: without it a sanitised 500 would satisfy
+    # every leak check below and the test would pass for the wrong reason.
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    body = resp.text
+    assert "credit balance" not in body
+    assert "Plans & Billing" not in body
+    assert "Anthropic" not in body
+    assert _BYOK_KEY not in body
+
+
+@pytest.mark.asyncio
+async def test_server_key_exhaustion_warns_an_operator_with_ids_only(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The operator is the only one who can fix this, and today gets no signal at all.
+
+    The record names the provider and whose key it was; it carries no key
+    material and no word of the entry, matching the ids-and-counts discipline
+    every other record on this path already keeps.
+    """
+    _raise_credit_exhausted(monkeypatch)
+    headers = await _signup(async_client, "opsignal")
+    entry_id = await _create_entry(async_client, headers)
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    exhausted = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "byok" in record.__dict__
+    ]
+    assert len(exhausted) == 1
+    fields = exhausted[0].__dict__
+    assert fields["provider"] == "anthropic"
+    assert fields["byok"] is False
+    assert _BODY not in str(fields)
