@@ -162,6 +162,16 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     reason:
       'ReflectionSourceItem types kind as a bare string; the client narrows it to entry/reflection so the sources panel can switch on it exhaustively.',
   },
+  relatedPraxisKindSchema: {
+    component: null,
+    reason:
+      'The praxis vocabulary is an inline enum inside RelatedPraxisResponse, not a named component; the client hoists it so the five kinds can be exhaustively handled.',
+  },
+  relatedPraxisStatusSchema: {
+    component: null,
+    reason:
+      'The lifecycle is an inline enum inside RelatedPraxisResponse for the same reason the kind is, and is hoisted so a released page can never render as an active one.',
+  },
   stageManifestationSchema: {
     component: null,
     reason:

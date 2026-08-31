@@ -861,6 +861,49 @@ export const contractionReflectionSchema = z.object({
 });
 
 /**
+ * The five kinds a vault praxis page may be, and the four lifecycle statuses a
+ * page may sit in. Both mirror Creek's own published vocabularies rather than
+ * anything adepthood names: a praxis page is the writer's own, so its words are
+ * their vault's. Narrowed to the closed sets so a drifted value fails at the
+ * boundary instead of rendering an unlabelled page — and so a released practice
+ * can never be shown as one the writer is still keeping.
+ */
+export const relatedPraxisKindSchema = z.enum([
+  'commitment',
+  'framework',
+  'habit',
+  'insight',
+  'practice',
+]);
+
+export const relatedPraxisStatusSchema = z.enum(['active', 'integrated', 'proposed', 'released']);
+
+/**
+ * One praxis page from the writer's own vault that an entry contributed to:
+ * the page's title, which kind it is, where it sits in its lifecycle, and its
+ * own opening prose. Never a model summary — the excerpt is the page as
+ * written.
+ */
+export const relatedPraxisSchema = z.object({
+  title: z.string(),
+  praxis_type: relatedPraxisKindSchema,
+  status: relatedPraxisStatusSchema,
+  excerpt: z.string(),
+});
+
+/**
+ * One eddy — a cluster of the writer's own fragments — an entry belongs to.
+ * ``description`` may legitimately be empty for a cluster that declares none,
+ * and ``formed`` is the ``YYYY-MM-DD`` the vault first detected it.
+ */
+export const relatedEddySchema = z.object({
+  title: z.string(),
+  description: z.string(),
+  fragment_count: z.number().int(),
+  formed: z.string(),
+});
+
+/**
  * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
  *
  * ``care`` is additive: it is ``None`` on every ordinary entry — absent on the
@@ -889,6 +932,11 @@ export const resonanceResponseSchema = z.object({
   // guessing at a cause it cannot see. Additive/nullish: a pass that kept notes
   // omits it, and older responses still validate and behave as before.
   no_notes_message: z.string().nullish(),
+  // The writer's own compiled vault pages this entry touched. The server sends
+  // both on every pass — empty whenever no vault answered the reflection — so
+  // these are optional only so responses predating them still validate.
+  related_praxis: z.array(relatedPraxisSchema).optional(),
+  related_eddies: z.array(relatedEddySchema).optional(),
 });
 
 export type CareKindT = z.infer<typeof careKindSchema>;
@@ -896,6 +944,10 @@ export type CareResourceT = z.infer<typeof careResourceSchema>;
 export type CareResponseT = z.infer<typeof careResponseSchema>;
 export type ContractionVariantT = z.infer<typeof contractionVariantSchema>;
 export type ContractionReflectionT = z.infer<typeof contractionReflectionSchema>;
+export type RelatedPraxisKindT = z.infer<typeof relatedPraxisKindSchema>;
+export type RelatedPraxisStatusT = z.infer<typeof relatedPraxisStatusSchema>;
+export type RelatedPraxisT = z.infer<typeof relatedPraxisSchema>;
+export type RelatedEddyT = z.infer<typeof relatedEddySchema>;
 
 // ---------------------------------------------------------------------------
 // Depth preferences (you-choose-your-depth ring toggles)
