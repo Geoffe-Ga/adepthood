@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from domain.care import CareKind
 from domain.contraction import ContractionVariant
+from domain.creek_vault import VaultPraxisKind, VaultPraxisStatus
 from models.marginalia import MarginaliaKind, MarginaliaStatus
 from schemas.completion_suggestion import CompletionSuggestionResponse
 
@@ -73,6 +74,37 @@ class ContractionReflectionResponse(BaseModel):
     message: str
 
 
+class RelatedPraxisResponse(BaseModel):
+    """One praxis page from the writer's own vault that this entry contributed to.
+
+    Mirrors :class:`domain.creek_vault.VaultRelatedPraxis`. It is the writer's
+    own compiled page — a title, which of the five kinds it is, where it sits in
+    its lifecycle, and the page's own opening prose — never a model summary and
+    never anything adepthood derived. Present only when a connected vault
+    surfaced it on this pass.
+    """
+
+    title: str
+    praxis_type: VaultPraxisKind
+    status: VaultPraxisStatus
+    excerpt: str
+
+
+class RelatedEddyResponse(BaseModel):
+    """One eddy — a cluster of the writer's own fragments — this entry belongs to.
+
+    Mirrors :class:`domain.creek_vault.VaultRelatedEddy`. ``description`` may be
+    the empty string for a cluster that declares none, ``fragment_count`` is how
+    many fragments it gathers, and ``formed`` is the ``YYYY-MM-DD`` the vault
+    first detected it.
+    """
+
+    title: str
+    description: str
+    fragment_count: int
+    formed: str
+
+
 class ResonanceResponse(BaseModel):
     """Result of a resonance pass: the new notes plus refreshed wallet balances.
 
@@ -102,6 +134,14 @@ class ResonanceResponse(BaseModel):
     flag the client interprets, because only the server knows *which* of the
     several ways to arrive at zero notes actually happened, and a client
     inventing a second explanation would be guessing at a cause it cannot see.
+
+    ``related_praxis`` and ``related_eddies`` are the writer's own compiled vault
+    pages this entry touched — surfaced only when a connected vault answered the
+    reflection, and empty on every other path (no vault, a vault that degraded or
+    deferred to the cloud, the private/intimate floor, the care short-circuit).
+    Empty rather than absent, so a client never has to tell "this server does not
+    send them" apart from "this pass surfaced none". Both are bounded at the
+    seam that reads them, so the margin stays a note rather than a dashboard.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -114,6 +154,8 @@ class ResonanceResponse(BaseModel):
     private_message: str | None = None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
+    related_praxis: list[RelatedPraxisResponse] = []
+    related_eddies: list[RelatedEddyResponse] = []
 
 
 class MarginaliaListResponse(BaseModel):
