@@ -459,7 +459,9 @@ describe('JournalEntryScreen -- weekly-prompt mode regression', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Week 3 Reflection');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+        title: 'Week 3 Reflection',
+      });
       expect(mockCreate).not.toHaveBeenCalled();
       const respondArgs = mockRespond.mock.calls[0];
       expect(respondArgs).toHaveLength(3);

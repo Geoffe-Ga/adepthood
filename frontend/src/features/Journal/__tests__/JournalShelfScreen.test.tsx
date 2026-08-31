@@ -4,13 +4,23 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import type {
+  JournalListResponse,
+  JournalMessage,
+  PromptDetail,
+  PromptListResponse,
+  StagePromptsResponse,
+} from '@/api';
 import { accent, surface } from '@/design/tokens';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
+const mockPromptStage = jest.fn() as jest.MockedFunction<
+  (_stage: number) => Promise<StagePromptsResponse>
+>;
+const mockPromptHistory = jest.fn() as jest.MockedFunction<() => Promise<PromptListResponse>>;
 const mockNavigate = jest.fn();
 // Present so a display-only excerpt() regression that starts writing back to the
 // server (instead of only truncating the rendered preview) has something to trip.
@@ -24,6 +34,9 @@ jest.mock('@/api', () => ({
   prompts: {
     current: (...a: unknown[]) =>
       (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
+    stage: (...a: unknown[]) => (mockPromptStage as unknown as (...x: unknown[]) => unknown)(...a),
+    history: (...a: unknown[]) =>
+      (mockPromptHistory as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -140,14 +153,34 @@ function prompt(overrides: Partial<PromptDetail> = {}): PromptDetail {
   };
 }
 
+// One stage's prompt set, in curriculum order — the shape the shelf's cards read.
+function stagePrompts(): StagePromptsResponse {
+  return {
+    stage: 1,
+    stage_name: 'Beige',
+    prompts: [
+      { ordinal: 1, title: 'Name What You Need', body: 'What do you need?', cadence: 'Daily' },
+      {
+        ordinal: 2,
+        title: 'Track the Body',
+        body: 'Where does it live?',
+        cadence: 'At least 4x per week',
+      },
+    ],
+  };
+}
+
 beforeEach(() => {
   mockList.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
+  mockPromptStage.mockReset();
+  mockPromptHistory.mockReset();
   mockUpdate.mockReset();
   mockList.mockResolvedValue(page([]));
-  // Default: the weekly prompt is already answered, so no card surfaces.
   mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
+  mockPromptStage.mockResolvedValue(stagePrompts());
+  mockPromptHistory.mockResolvedValue({ items: [], total: 0, has_more: false });
 });
 
 describe('JournalShelfScreen', () => {
@@ -182,11 +215,10 @@ describe('JournalShelfScreen', () => {
     expect(root.backgroundColor).toBe(surface.canvas);
   });
 
-  it('floats the weekly-prompt band with matching depth while keeping its accent bar', async () => {
+  it('floats each stage-prompt band with matching depth while keeping its accent bar', async () => {
     mockList.mockResolvedValue(page([entry(1)]));
-    mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
     const { findByTestId } = render(<JournalShelfScreen />);
-    const card = StyleSheet.flatten((await findByTestId('journal-weekly-prompt')).props.style);
+    const card = StyleSheet.flatten((await findByTestId('journal-stage-prompt-1')).props.style);
     // Lifted onto a raised sheet…
     expect(card.backgroundColor).toBe(surface.raised);
     expect(card.shadowRadius).toBeGreaterThan(0);
@@ -417,25 +449,26 @@ describe('JournalShelfScreen', () => {
     expect(getByTestId('shelf-result-count')).toHaveTextContent('57');
   });
 
-  it('surfaces an unanswered weekly prompt and opens it as a pre-titled page', async () => {
+  it("opens a stage prompt as a page pre-titled with the server's own headline", async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
     const { findByTestId } = render(<JournalShelfScreen />);
-    fireEvent.press(await findByTestId('journal-weekly-prompt'));
+    fireEvent.press(await findByTestId('journal-stage-prompt-2'));
     expect(mockNavigate).toHaveBeenCalledWith(
       'JournalEntry',
       expect.objectContaining({
         weekNumber: 3,
-        promptQuestion: 'What did you notice this week?',
-        prefillTitle: 'Beige week 3 Prompt #1',
+        promptOrdinal: 2,
+        promptQuestion: 'Where does it live?',
+        prefillTitle: 'Track the Body',
       }),
     );
   });
 
-  it('does not surface an already-answered weekly prompt', async () => {
+  it('keeps the stage prompts on the shelf even once the week\u2019s own is answered', async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
-    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-shelf-empty');
-    expect(queryByTestId('journal-weekly-prompt')).toBeNull();
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
   });
 
   // Warm first-prompt affordance — true-empty branch only.

@@ -182,12 +182,70 @@ describe('prompts client', () => {
     };
     mockFetch.mockReturnValueOnce(jsonResponse(prompt));
 
-    const result = await prompts.respond(3, 'Everything.', null, 'tok');
+    const result = await prompts.respond(3, 'Everything.', { title: null }, 'tok');
 
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/prompts/3/respond');
     expect(JSON.parse(init.body)).toEqual({ response: 'Everything.' });
     expect(result.has_responded).toBe(true);
+  });
+
+  test('respond carries the prompt ordinal so a stage prompt answers itself', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        week_number: 14,
+        question: 'What surprised you?',
+        has_responded: true,
+        response: 'Everything.',
+        timestamp: '2026-05-01T00:00:00Z',
+        prompt_ordinal: 3,
+      }),
+    );
+
+    await prompts.respond(14, 'Everything.', { title: 'Curiosities', promptOrdinal: 3 });
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      response: 'Everything.',
+      title: 'Curiosities',
+      prompt_ordinal: 3,
+    });
+  });
+
+  test('stage GETs one stage\u2019s whole prompt set, cadences included', async () => {
+    const payload = {
+      stage: 5,
+      stage_name: 'Orange',
+      prompts: [
+        {
+          ordinal: 1,
+          title: 'Make a List of 25 Curiosities',
+          body: 'What are you curious about?',
+          cadence: 'Build to 25 across four sittings',
+        },
+        { ordinal: 2, title: 'Fifteen Problems', body: 'What keeps you up?', cadence: null },
+      ],
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(payload));
+
+    const result = await prompts.stage(5, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/prompts/stage/5');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer tok' });
+    expect(result).toEqual(payload);
+  });
+
+  test('stage rejects a payload whose cadence is not display prose', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        stage: 5,
+        stage_name: 'Orange',
+        prompts: [{ ordinal: 1, title: 'A', body: 'B', cadence: 4 }],
+      }),
+    );
+
+    await expect(prompts.stage(5)).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('history omits query params when none are supplied', async () => {

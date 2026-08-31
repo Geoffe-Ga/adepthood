@@ -80,6 +80,7 @@ function renderScreen(
   params?: {
     entryId?: number;
     weekNumber?: number;
+    promptOrdinal?: number;
     promptQuestion?: string;
     prefillTitle?: string;
     practiceSessionId?: number;
@@ -151,7 +152,9 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Week 3 Reflection');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+        title: 'Week 3 Reflection',
+      });
       expect(mockCreate).not.toHaveBeenCalled(); // no double-create
       // Resonance can't run on a prompt-compose entry (no local id), so the
       // button must stay hidden even once idle with content.
@@ -159,6 +162,38 @@ describe('JournalEntryScreen', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('answers the prompt that was tapped, carrying its ordinal to respond', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        {
+          weekNumber: 14,
+          promptOrdinal: 3,
+          promptQuestion: 'Which curiosity serves which problem?',
+          prefillTitle: 'Combine Multiple Curiosities',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Wayfinding and loneliness.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledWith(14, 'Wayfinding and loneliness.', {
+        title: 'Combine Multiple Curiosities',
+        promptOrdinal: 3,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('opens a prompt page blank rather than under a title the client guessed', () => {
+    // A week number alone names no prompt: the title is curriculum text the
+    // server sends, so without one the page opens untitled.
+    const { getByTestId } = renderScreen({ weekNumber: 3, promptQuestion: 'What did you notice?' });
+    expect(getByTestId('journal-title-input').props.value).toBe('');
   });
 
   it('does not silently discard a typed title in weekly-prompt compose mode', async () => {
@@ -178,7 +213,9 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Reclaiming my anger');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+        title: 'Reclaiming my anger',
+      });
       expect(mockCreate).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();

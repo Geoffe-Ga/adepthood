@@ -106,7 +106,12 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalPhotograph.styles.ts::pageBadgeText',
   'features/Journal/JournalShelf.styles.ts::cardCaption',
   'features/Journal/JournalShelf.styles.ts::cardDate',
+  // Both sit inside the stage-prompt card, whose whole surface is the tap
+  // target: the note says the prompt has been answered and the label names the
+  // set, neither is itself pressable.
+  'features/Journal/JournalShelf.styles.ts::promptAnswered',
   'features/Journal/JournalShelf.styles.ts::promptLabel',
+  'features/Journal/JournalShelf.styles.ts::promptSectionLabel',
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
   'features/Journal/MarginNote.tsx::staleCaption',

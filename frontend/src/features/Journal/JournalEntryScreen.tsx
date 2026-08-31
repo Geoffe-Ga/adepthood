@@ -32,7 +32,6 @@ import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
-import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
@@ -119,6 +118,9 @@ function savedHintLabel(state: SaveState): string {
  */
 interface SaveContext {
   weekNumber?: number;
+  /** Which of the stage's prompts the response answers, 1-based; omitted means
+   *  the prompt the week itself draws. */
+  promptOrdinal?: number;
   practiceSessionId?: number;
   userPracticeId?: number;
   /** Reflection scope this page closes (7th-day reflection compose mode). */
@@ -194,7 +196,10 @@ async function writeEntry(
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
     if (respondedRef.current) return;
-    await prompts.respond(ctx.weekNumber, body, titleOrNull(title));
+    await prompts.respond(ctx.weekNumber, body, {
+      title: titleOrNull(title),
+      ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
+    });
     respondedRef.current = true;
     return;
   }
@@ -2010,7 +2015,10 @@ interface EntryEntrypoint {
 /** Translate the route params into the save context + pre-filled title/body/placeholder. */
 function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
   const p = params ?? {};
-  const title = p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
+  // No client-side fallback title: a prompt's name is curriculum text the server
+  // owns and sends, so an untitled arrival opens blank rather than under a label
+  // the client guessed from the week number.
+  const title = p.prefillTitle ?? '';
   // A folded-in quote seeds the body as a blockquote; otherwise the body opens blank.
   const body =
     p.prefillQuote != null
@@ -2019,6 +2027,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
   return {
     ctx: {
       weekNumber: p.weekNumber,
+      promptOrdinal: p.promptOrdinal,
       practiceSessionId: p.practiceSessionId,
       userPracticeId: p.userPracticeId,
       reflectionLevel: p.reflectionLevel,

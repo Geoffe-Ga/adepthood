@@ -264,6 +264,30 @@ export const promptDetailSchema = z.object({
   prompt_ordinal: z.number().int().nullish(),
 });
 
+/** One of a stage's prompts (mirrors backend ``StagePromptDetail``).
+ *
+ * ``cadence`` is display prose the course author writes ("Daily", "At least 4x
+ * per week", "Whenever they arise") and is carried verbatim — deliberately not
+ * an enum or a recurrence rule, because the curriculum states it as prose and
+ * varies it per prompt. ``null`` where the chapter states no cadence at all.
+ */
+export const stagePromptDetailSchema = z.object({
+  ordinal: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  cadence: z.string().nullish(),
+});
+
+/** Every prompt of one stage, in curriculum order (mirrors ``StagePromptsResponse``). */
+export const stagePromptsResponseSchema = z.object({
+  stage: z.number().int(),
+  stage_name: z.string(),
+  prompts: z.array(stagePromptDetailSchema),
+});
+
+export type StagePromptDetailT = z.infer<typeof stagePromptDetailSchema>;
+export type StagePromptsResponseT = z.infer<typeof stagePromptsResponseSchema>;
+
 /**
  * Paginated prompt history. ``total`` is ``int | None`` on the backend — it is
  * ``null`` when the count was not requested — so the schema (and the consumer

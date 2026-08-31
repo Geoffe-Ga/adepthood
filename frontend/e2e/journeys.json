@@ -119,6 +119,22 @@
     "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
   },
   {
+    "id": "journal.stage-prompts-and-cadences",
+    "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about both the ordinal check and the stage's unlock gate -- the two things only the server can refuse.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["prompts"],
+      "routes": [
+        "GET /prompts/stage/{stage_number}",
+        "GET /prompts/current",
+        "POST /prompts/{week_number}/respond"
+      ],
+      "tables": ["promptresponse", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2568
+  },
+  {
     "id": "journal.ask-for-resonance",
     "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Uncovered because the pass calls a real language model and the lane has no provider to call: covering it needs a deterministic, configuration-selected provider the lane can point the server at, not a spec alone. The same constraint keeps seed.upload-document uncovered.",
     "crosses": {
