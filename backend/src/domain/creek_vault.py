@@ -46,7 +46,7 @@ from typing import Protocol
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.8.0"
+CONTRACT_VERSION = "0.10.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -58,6 +58,21 @@ class CreekCapability(enum.StrEnum):
     with, and they stay that way because they are what adepthood's own telemetry
     and error messages are keyed by -- they are this app's name for each
     capability rather than a claim about how it is reached.
+
+    ``DRIVE_CONNECTOR`` and ``PIPELINE`` are Creek's 0.9 and 0.10 additions, and
+    they are members here for one reason only: adepthood must be able to *name*
+    every capability a conformant vault advertises, or an advertised capability
+    is silently dropped at the parse boundary and no telemetry ever says so.
+    Naming is not calling -- neither has a route, a client method, or a caller in
+    adepthood today, so :meth:`supports` reporting one of them true means the
+    vault offers it, not that adepthood can use it.
+
+    ``PIPELINE`` is deliberately *not* folded into ``CLASSIFY``. Creek's pipeline
+    is a whole-vault classify-and-link pass that names no fragment; ``CLASSIFY``
+    is adepthood's own per-entry concept with an unratified request shape that
+    :meth:`HttpCreekVaultClient.classify` still refuses. Mapping the wire name
+    onto it would make ``supports(CLASSIFY)`` answer true for a call that always
+    raises.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -67,6 +82,8 @@ class CreekCapability(enum.StrEnum):
     CLASSIFY = "creek.classify"
     REFLECT = "creek.reflect"
     WHEEL = "creek.wheel"
+    DRIVE_CONNECTOR = "creek.drive_connector"
+    PIPELINE = "creek.pipeline"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -623,6 +640,76 @@ class VaultReflectionNote:
     note: str
 
 
+class VaultPraxisKind(enum.StrEnum):
+    """The five kinds a praxis page may be, spelled Creek's way.
+
+    Creek's vocabulary rather than one adepthood invented, for the reason
+    :class:`VaultReflectionStatus` is: these are wire strings a payload is
+    matched against, and a member spelled our way would never match anything a
+    vault sent. Unlike a margin note's kind there is no projection onto an
+    adepthood word, because adepthood has no praxis vocabulary of its own to
+    project onto -- a praxis page is the writer's own, named by their vault.
+    """
+
+    COMMITMENT = "commitment"
+    FRAMEWORK = "framework"
+    HABIT = "habit"
+    INSIGHT = "insight"
+    PRACTICE = "practice"
+
+
+class VaultPraxisStatus(enum.StrEnum):
+    """Where a praxis page sits in its lifecycle, spelled Creek's way.
+
+    A closed set for the same reason :class:`VaultPraxisKind` is: a status
+    outside it describes a lifecycle this app cannot render, and rendering a
+    released practice as an active one would tell the writer they are still
+    keeping a promise they deliberately let go.
+    """
+
+    ACTIVE = "active"
+    INTEGRATED = "integrated"
+    PROPOSED = "proposed"
+    RELEASED = "released"
+
+
+@dataclass(frozen=True)
+class VaultRelatedPraxis:
+    """One praxis page the reflected entry contributed to.
+
+    Compiled from the writer's own fragments by their own vault, which is what
+    makes it renderable at all: adepthood neither derives nor stores these
+    pages, and carries no tier on them, because a page that reached the wire is
+    one whose whole provenance the vault already admitted at the declared
+    ceiling.
+
+    ``excerpt`` is the page as written -- its own opening prose -- rather than a
+    model summary, so it is the writer's words and may be shown as such.
+    """
+
+    title: str
+    praxis_type: VaultPraxisKind
+    status: VaultPraxisStatus
+    excerpt: str
+
+
+@dataclass(frozen=True)
+class VaultRelatedEddy:
+    """One eddy -- a cluster of the writer's own fragments -- the reflected entry belongs to.
+
+    ``description`` may legitimately be the empty string: an eddy page that
+    declares none says so with a blank rather than by omitting the field, and
+    inventing prose in its place would put words in the writer's corpus.
+    ``fragment_count`` is a tally of what the eddy clusters, so it is never
+    negative, and ``formed`` is the ``YYYY-MM-DD`` the vault first detected it.
+    """
+
+    title: str
+    description: str
+    fragment_count: int
+    formed: str
+
+
 @dataclass(frozen=True)
 class VaultReflection:
     """A vault's whole answer to one reflection request, structured rather than flattened.
@@ -647,6 +734,12 @@ class VaultReflection:
     ``routed_tier`` is the tier the vault says it actually keyed the call with,
     verified against the ceiling the caller was willing to accept before this
     value is ever built.
+
+    ``related_praxis`` and ``related_eddies`` are the writer's own compiled
+    pages the entry touched. Both are optional on the wire and default to empty
+    here, so a vault that publishes neither -- an older bundle, an entry that
+    touched nothing -- is an ordinary answer rather than a fault, and no consumer
+    has to distinguish "absent" from "none".
     """
 
     status: VaultReflectionStatus
@@ -654,6 +747,8 @@ class VaultReflection:
     essay: str | None
     essay_grounded: bool
     routed_tier: VaultTierCeiling
+    related_praxis: tuple[VaultRelatedPraxis, ...] = ()
+    related_eddies: tuple[VaultRelatedEddy, ...] = ()
 
 
 @dataclass(frozen=True)

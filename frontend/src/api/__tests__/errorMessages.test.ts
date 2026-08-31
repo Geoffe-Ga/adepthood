@@ -2,9 +2,11 @@
 /* global describe, it, expect */
 
 import {
+  CREDIT_EXHAUSTED_COPY,
   formatApiError,
   GENERIC_FALLBACK,
   messageForCode,
+  SERVICE_CREDIT_EXHAUSTED_COPY,
   USER_FACING_ERROR_MESSAGES,
 } from '../errorMessages';
 import { ApiError } from '../index';
@@ -58,6 +60,9 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'insufficient_offerings',
       'llm_key_required',
       'invalid_llm_api_key_format',
+      // permanently exhausted provider balance -- caller's key, then ours
+      'llm_credit_exhausted',
+      'llm_service_credit_exhausted',
       // streaming / rate limits / network
       'rate_limit_exceeded',
       'llm_provider_error',
@@ -335,5 +340,76 @@ describe('rate_limit_exceeded copy is surface-neutral', () => {
   it('still tells the user what happened and that waiting resolves it', () => {
     expect(copy).toBeTruthy();
     expect(copy).toMatch(/again|moment|minute|shortly/i);
+  });
+});
+
+describe('exhausted provider balance (permanent, not transient)', () => {
+  // The copy that must NOT be reused: a permanent billing refusal presented as
+  // a connectivity blip sends the reader back to a retry button forever.
+  const PROVIDER_TROUBLE_COPY =
+    "BotMason's AI provider is having trouble connecting. Give it a moment and tap retry.";
+  const TRANSIENT_503_COPY =
+    'The service is temporarily unavailable. Give it a moment, then try again.';
+  const MONTHLY_ALLOTMENT_COPY =
+    "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.";
+
+  // Anything a provider said, or anything that identifies the account or the
+  // key, is for the operator's log and never for the reader.
+  const PROVIDER_INTERNALS =
+    /insufficient_quota|credit balance is too low|Plans & Billing|exceeded your current quota|sk-|req_[0-9a-zA-Z]|\b(?:400|402|429|502|503)\b|api\.openai\.com|api\.anthropic\.com/i;
+
+  // "Try again", "retry", "give it a moment" are all promises this condition
+  // cannot keep. Waiting never refills an account.
+  const RETRY_AFFORDANCE = /try again|tap retry|give it a moment|in a moment|temporarily/i;
+
+  it("gives the caller's own spent key its own copy, not the connectivity blip", () => {
+    const message = formatApiError(new ApiError(402, 'llm_credit_exhausted'));
+    expect(message).not.toBe(PROVIDER_TROUBLE_COPY);
+    expect(message).not.toBe(MONTHLY_ALLOTMENT_COPY);
+    expect(message.length).toBeGreaterThan(0);
+  });
+
+  it('gives our own spent key its own copy, not the transient 503 fallback', () => {
+    const message = formatApiError(new ApiError(503, 'llm_service_credit_exhausted'));
+    expect(message).not.toBe(TRANSIENT_503_COPY);
+    expect(message).not.toBe(PROVIDER_TROUBLE_COPY);
+    expect(message.length).toBeGreaterThan(0);
+  });
+
+  // The three assertions below all read the RENDERED string, not the raw map.
+  // ``formatApiError`` is what a screen actually calls, and it has six fallback
+  // rungs beneath the map -- so a lookup that silently misses still returns
+  // plausible copy from one of them. Asserting on ``messageForCode`` would step
+  // over exactly the rungs that made the original bug invisible.
+  const rendered = {
+    caller: () => formatApiError(new ApiError(402, 'llm_credit_exhausted')),
+    ours: () => formatApiError(new ApiError(503, 'llm_service_credit_exhausted')),
+  };
+
+  it('renders the intended copy rather than falling through to a status default', () => {
+    expect(rendered.caller()).toBe(CREDIT_EXHAUSTED_COPY);
+    expect(rendered.ours()).toBe(SERVICE_CREDIT_EXHAUSTED_COPY);
+  });
+
+  it('tells the two apart, because the remedy is not the same person', () => {
+    expect(rendered.caller()).not.toBe(rendered.ours());
+  });
+
+  it('offers no retry affordance for either, since retrying can never work', () => {
+    expect(rendered.caller()).not.toMatch(RETRY_AFFORDANCE);
+    expect(rendered.ours()).not.toMatch(RETRY_AFFORDANCE);
+  });
+
+  it('leaks no provider internals, account reference, or key material', () => {
+    expect(rendered.caller()).not.toMatch(PROVIDER_INTERNALS);
+    expect(rendered.ours()).not.toMatch(PROVIDER_INTERNALS);
+  });
+
+  it('never tells a reader to settle a bill on an account they do not hold', () => {
+    // The server's key is nobody's but ours; pointing the reader at "Plans &
+    // Billing" would be an instruction they cannot carry out.
+    expect(rendered.ours()).not.toMatch(
+      /your (provider|openai|anthropic) account|top up|purchase credits|upgrade your plan/i,
+    );
   });
 });

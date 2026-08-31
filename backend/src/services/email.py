@@ -16,6 +16,15 @@ coroutine -- and two adapters:
   Each accessor raises ``RuntimeError`` on missing config so prod
   cannot boot a half-wired sender.
 
+* :class:`ResendEmailSender` (gated by ``EMAIL_BACKEND=resend``) hands
+  the message to Resend's HTTPS send API on port 443.  Mandatory env:
+  ``RESEND_API_KEY``, ``EMAIL_FROM``.  It exists because the hosting
+  platform blocks outbound SMTP below its paid tier, and it does so
+  invisibly: the relay adapter above then hangs for its connect timeout
+  and ``POST /auth/password-reset/request`` answers 202 anyway, so a
+  correctly configured relay and a delivered email look identical from
+  outside.  443 is a port the platform routes.
+
 The :func:`get_email_sender` factory is the FastAPI dependency.  Tests
 substitute :class:`RecordingEmailSender` so they can assert on every
 outbound message without snooping the logger.
@@ -33,6 +42,8 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Protocol
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 # Number of plaintext token characters surfaced in console / log output.
@@ -49,15 +60,23 @@ _TOKEN_LOG_PREFIX = 8
 EMAIL_BACKEND_ENV_VAR = "EMAIL_BACKEND"
 BACKEND_CONSOLE = "console"
 BACKEND_SMTP = "smtp"
+BACKEND_RESEND = "resend"
 
 
 @dataclass(frozen=True, slots=True)
 class EmailMessagePayload:
-    """An outbound email -- plain-text only for now (HTML is a future epic)."""
+    """An outbound email: a plain-text body and an optional HTML alternative.
+
+    ``body`` is the contract -- every client can render it, the dev console
+    prints it, and a screen reader falls back to it.  ``html`` is strictly an
+    alternative representation of the same content, never additional content,
+    because a recipient whose client refuses HTML must lose nothing.
+    """
 
     to: str
     subject: str
     body: str
+    html: str | None = None
 
 
 class EmailDeliveryError(Exception):
@@ -164,16 +183,22 @@ class RecordingEmailSender:
         self.sent.append(message)
 
 
-def _required_env(name: str) -> str:
+def _required_env(name: str, backend: str) -> str:
     """Return a non-empty ``name`` or raise -- prod cannot boot without it.
 
     Unset and empty are one case on purpose: a variable exported as ``""`` is
-    not a configured relay, and treating it as one only moves the failure to
+    not a configured sender, and treating it as one only moves the failure to
     the first send.
+
+    ``backend`` is the selector whose choice made ``name`` mandatory. It is a
+    parameter rather than a constant because two backends now read required
+    variables through here, and a refusal that told a ``resend`` operator to set
+    ``EMAIL_BACKEND=smtp`` would send them to configure the transport the
+    platform blocks.
     """
     value = os.getenv(name, "")
     if not value:
-        selector = f"{EMAIL_BACKEND_ENV_VAR}={BACKEND_SMTP}"
+        selector = f"{EMAIL_BACKEND_ENV_VAR}={backend}"
         msg = f"{name} environment variable must be set when {selector}"
         raise RuntimeError(msg)
     return value
@@ -247,7 +272,7 @@ def _required_port(name: str) -> int:
     socket time, on the first user to ask for a reset -- which is the deferred
     failure the boot-time build exists to eliminate.
     """
-    port = _parse_port(name, _required_env(name))
+    port = _parse_port(name, _required_env(name, BACKEND_SMTP))
     if not (MIN_SMTP_PORT <= port <= MAX_SMTP_PORT):
         msg = (
             f"{name}={port} is outside the connectable port range {MIN_SMTP_PORT}-"
@@ -302,7 +327,9 @@ class SmtpEmailSender:
         it always was.
         """
         values = {
-            name: _required_env(name) for name in SMTP_RELAY_ENV_VARS if name != SMTP_PORT_ENV_VAR
+            name: _required_env(name, BACKEND_SMTP)
+            for name in SMTP_RELAY_ENV_VARS
+            if name != SMTP_PORT_ENV_VAR
         }
         return cls(
             host=values[SMTP_HOST_ENV_VAR],
@@ -351,6 +378,12 @@ class SmtpEmailSender:
         envelope["To"] = message.to
         envelope["Subject"] = message.subject
         envelope.set_content(message.body)
+        if message.html is not None:
+            # RFC 2046 §5.1.4: alternatives are ordered least- to
+            # most-faithful, so the text part must already be set before this
+            # call appends the HTML one.  ``add_alternative`` promotes the
+            # envelope to ``multipart/alternative`` in place.
+            envelope.add_alternative(message.html, subtype="html")
         with self._connect() as client:
             client.send_message(envelope)
 
@@ -375,6 +408,133 @@ class SmtpEmailSender:
             yield client
         finally:
             client.quit()
+
+
+# Named once each so the tuple below and the lookups in ``from_env`` cannot
+# spell the same variable two ways. The credential one is named for the role it
+# fills rather than for the variable it points at, for the reason
+# ``SMTP_CREDENTIAL_ENV_VAR`` is.
+RESEND_CREDENTIAL_ENV_VAR = "RESEND_API_KEY"
+
+# Every variable :meth:`ResendEmailSender.from_env` reads, in the order it reads
+# them. Public for the same reason :data:`SMTP_RELAY_ENV_VARS` is: the startup
+# refusal in ``main`` quotes the list, so an operator told to set the backend
+# switch and nothing else has only been moved to the next failure.
+RESEND_ENV_VARS = (
+    RESEND_CREDENTIAL_ENV_VAR,
+    EMAIL_FROM_ENV_VAR,
+)
+
+# Resend's documented send endpoint. HTTPS on the default port is the whole
+# point of this adapter -- 443 is a port the hosting platform routes, and 587 is
+# not.
+RESEND_SEND_URL = "https://api.resend.com/emails"
+
+# Wall-clock budget for one send. The reset handler awaits this inline, so a
+# wedged provider must fail fast rather than hold the request open: the SMTP
+# adapter's 30-second connect timeout is what turned a blocked network into a
+# reset form that hangs on "Sending...".
+RESEND_TIMEOUT_SECONDS: float = 10.0
+
+
+@dataclass(slots=True)
+class ResendEmailSender:
+    """Production adapter that hands the message to Resend over HTTPS.
+
+    Speaks the provider's JSON send API rather than SMTP, because the hosting
+    platform blocks outbound SMTP below its paid tier and does so without any
+    signal an application can read: the relay adapter simply stalls until its
+    connect timeout, and the anti-enumeration contract answers 202 regardless.
+
+    Secrets discipline follows :mod:`integrations.gumroad`. The API key travels
+    in an ``Authorization`` header, never in the URL, because a query-string
+    credential is copied into every proxy log between here and the provider.
+    Every :class:`EmailDeliveryError` raised below carries a status code or an
+    exception type name and nothing else -- the provider echoes the submitted
+    ``text`` field back on a rejection, and that field is the reset link.
+    """
+
+    api_key: str = field(repr=False)
+    from_address: str
+
+    @classmethod
+    def from_env(cls) -> ResendEmailSender:
+        """Build an instance from :data:`RESEND_ENV_VARS`; raise on the first missing one.
+
+        Reads by name out of the shared tuple for the reason
+        :meth:`SmtpEmailSender.from_env` does: the list the startup refusal
+        quotes and the list the sender actually needs have to be one list, and
+        an unpack coupled to the tuple's length would land as ``too many values
+        to unpack`` on a production boot -- fail-closed, but unreadable at
+        exactly the moment someone is following the remedy.
+        """
+        values = {name: _required_env(name, BACKEND_RESEND) for name in RESEND_ENV_VARS}
+        return cls(
+            api_key=values[RESEND_CREDENTIAL_ENV_VAR],
+            from_address=values[EMAIL_FROM_ENV_VAR],
+        )
+
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,
+    ) -> None:
+        """POST ``message`` to Resend's send API and refuse anything but a 2xx.
+
+        Wire failures and non-2xx answers both arrive as
+        :class:`EmailDeliveryError` so the anti-enumeration callers keep
+        catching a single narrow type. The status check is not optional
+        bookkeeping: ``httpx`` returns a 4xx as an ordinary response, so an
+        adapter that never inspected it would report every rejection as a
+        delivery -- the console default's "reports success while failing" shape,
+        one layer down.
+
+        The test is "was it a 2xx", not "was it below 400". ``follow_redirects``
+        defaults to ``False``, so a 3xx is returned here as an ordinary response
+        and is never followed: the provider moving this endpoint behind a 308,
+        or an egress proxy answering 302, would otherwise be reported as
+        delivery while every reset email evaporated silently.
+        """
+        # Discard the redaction hint -- the recipient needs the full link, and
+        # the keyword exists only for Protocol conformance.
+        del redact_for_log
+        timeout = httpx.Timeout(RESEND_TIMEOUT_SECONDS)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    RESEND_SEND_URL,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=self._wire_payload(message),
+                )
+        except httpx.HTTPError as exc:
+            msg = f"Resend delivery failed: {type(exc).__name__}"
+            # ``from None`` severs the chain deliberately: the caught error
+            # carries a ``.request`` whose body holds the reset link and whose
+            # headers hold the API key, and any ``exc_info`` logger would
+            # surface both.
+            raise EmailDeliveryError(msg) from None
+        if not response.is_success:
+            msg = f"Resend rejected the message with HTTP {response.status_code}"
+            raise EmailDeliveryError(msg)
+
+    def _wire_payload(self, message: EmailMessagePayload) -> dict[str, object]:
+        """Render ``message`` as the provider's send-request JSON.
+
+        ``html`` is omitted rather than sent empty when the message has no
+        alternative: the provider treats a present-but-blank field as a
+        request to deliver a blank HTML part, which renders as an empty
+        email in any client that prefers HTML.
+        """
+        payload: dict[str, object] = {
+            "from": self.from_address,
+            "to": [message.to],
+            "subject": message.subject,
+            "text": message.body,
+        }
+        if message.html is not None:
+            payload["html"] = message.html
+        return payload
 
 
 # Process-wide singleton so tests that override the dependency do not
@@ -403,14 +563,17 @@ def configured_backend() -> str:
 def _build_default_sender() -> EmailSender:
     """Return the configured backend, defaulting to console.
 
-    ``console`` is the safe default for dev / test; ``smtp`` flips to the
-    production adapter and forces every required env var to be present
-    (raising on first use is much more debuggable than silently dropping the
-    email).  Every other value -- including a typo -- lands on console, which
-    is why production refuses to boot on anything but ``smtp``.
+    ``console`` is the safe default for dev / test; ``smtp`` and ``resend`` flip
+    to a delivering adapter and force every variable that adapter needs to be
+    present (raising on first use is much more debuggable than silently dropping
+    the email).  Every other value -- including a typo -- lands on console, which
+    is why production refuses to boot on anything but a delivering backend.
     """
-    if configured_backend() == BACKEND_SMTP:
+    backend = configured_backend()
+    if backend == BACKEND_SMTP:
         return SmtpEmailSender.from_env()
+    if backend == BACKEND_RESEND:
+        return ResendEmailSender.from_env()
     return ConsoleEmailSender()
 
 

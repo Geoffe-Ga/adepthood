@@ -4,7 +4,7 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.8.0
+- **Contract version:** 0.10.0
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
@@ -42,9 +42,12 @@ ADR 0004's Context section documents in detail. Instead:
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
   `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
-  repository: 16 JSON Schemas, a `retry-policy.json` disposition
-  table, a four-capability by seven-state example matrix, and a
-  `manifest.json` recording a sha256 per generated file. Creek's ADR
+  repository: at contract 0.10.0, 27 JSON Schemas, a
+  `retry-policy.json` disposition table, a seven-capability by
+  seven-state example matrix, and a `manifest.json` recording a sha256
+  per generated file. Those counts move — the matrix was four
+  capabilities wide through 0.7 and five at 0.8.0 — so read the
+  vendored bundle rather than this sentence. Creek's ADR
   `docs/decisions/2026-07-31-adepthood-http-application-api.md` is the
   decision behind it. That bundle — not this file, and no longer
   Creek's server code read by hand — is the authoritative source for
@@ -408,10 +411,26 @@ capability is still used for the others it supports:
   untrusted input: the number of notes adepthood will accept from one
   response is bounded, and each note's quote and note text are
   length-bounded, before anything is built from them. Additive fields
-  Creek may add later — its optional `essay`, and any future
-  related-praxis or related-eddies fields — are ignored rather than
-  erroring. Content already flagged by the care gate never calls the
-  vault for a reflection at all, regardless of vault availability.
+  Creek may add later are ignored rather than erroring, and its
+  optional `essay` is read but never rendered. Content already flagged
+  by the care gate never calls the vault for a reflection at all,
+  regardless of vault availability.
+- **The two related collections adepthood owns projections for.**
+  `related_praxis` and `related_eddies` are optional on
+  `ReflectionResponse` from contract 0.10.0. Adepthood reads them, but
+  the *projection* is adepthood's own and belongs here rather than in
+  Creek's contract: both are read item-wise fail-soft, so a page whose
+  title, praxis vocabulary, description, fragment tally, or
+  `YYYY-MM-DD` formation date does not survive is dropped alone rather
+  than costing the reflection; both are bounded at Creek's published
+  `maxItems`, in one place (`services.creek_vault_payload`), so the
+  margin stays a note rather than a dashboard; and an absent, null, or
+  wrong-typed collection reads as no pages rather than as a payload
+  fault. They surface to the client only on a pass whose reflection the
+  vault actually answered — a cloud fallback, a degraded vault, the
+  privacy floor and the care short-circuit all publish empty
+  collections, because pages presented beside cloud prose would relate
+  the writer's own corpus to words their vault never wrote.
 - **REFLECT over `/v1`** — the ratified request *body* carries no tier
   ceiling (`ReflectionRequest` is `additionalProperties: false` and
   publishes none), so the entry's own ceiling is declared in the

@@ -82,6 +82,8 @@ from schemas.marginalia import (
     ContractionReflectionResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
+    RelatedEddyResponse,
+    RelatedPraxisResponse,
     ResonanceResponse,
 )
 from schemas.pagination import count_query_total, page_has_more
@@ -89,14 +91,20 @@ from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
+    LLMCreditExhaustedError,
     LLMProviderError,
+    credit_exhausted_error,
     resolve_chat_api_key,
 )
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
-from services.creek_vault_reflect import select_reflection_llm
+from services.creek_vault_reflect import (
+    VaultRelatedSurfaces,
+    related_surfaces,
+    select_reflection_llm,
+)
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -746,19 +754,41 @@ def _log_resonance_outcome(
         logger.warning("journal_resonance_all_drafts_discarded", extra=extra)
 
 
-async def _generate_marginalia_or_502(
-    message: str, llm: ResonanceLLM, prior: list[str], session: AsyncSession
+@dataclass(frozen=True, slots=True)
+class _ResonancePassContext:
+    """What the charged literary pass needs beyond the prompt itself.
+
+    ``byok`` records whose key paid for the call, which is what decides how a
+    spent provider balance is reported — a bill the caller can settle, or one
+    only an operator can. ``care`` is the standby surface a distress-flagged
+    entry falls back to when the pass fails, so care never depends on the LLM.
+    """
+
+    session: AsyncSession
+    care: CareResponse | None
+    byok: bool
+
+
+async def _generate_marginalia_or_error(
+    message: str, llm: ResonanceLLM, prior: list[str], context: _ResonancePassContext
 ) -> MarginaliaOutcome:
-    """Run the literary pass; a provider error rolls back the charge and 502s.
+    """Run the literary pass; a provider error rolls back the charge and fails.
 
     This is the only charged LLM call — a failure here must un-deduct the wallet
     so a failed pass never charges (the detection pass that follows is best-effort
     and never triggers a rollback).
+
+    A spent balance is caught first because it subclasses the generic provider
+    error: it is permanent, so it earns the status whose remedy the caller can
+    actually act on rather than a 502 that invites a retry forever.
     """
     try:
         return await generate_marginalia(message, llm=llm, prior_entries=prior)
+    except LLMCreditExhaustedError as exc:
+        await context.session.rollback()
+        raise credit_exhausted_error(exc, byok=context.byok) from exc
     except LLMProviderError as exc:
-        await session.rollback()
+        await context.session.rollback()
         raise bad_gateway("llm_provider_error") from exc
 
 
@@ -902,23 +932,19 @@ async def _escalated_care_response(session: AsyncSession, user_id: int) -> Reson
 
 
 async def _resonance_pass_or_care(
-    message: str,
-    llm: ResonanceLLM,
-    prior: list[str],
-    session: AsyncSession,
-    care: CareResponse | None,
+    message: str, llm: ResonanceLLM, prior: list[str], context: _ResonancePassContext
 ) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
-    A flagged entry swallows the 502 (the charge was already rolled back) and
-    yields ``None`` so the caller can return a care-only response — care must
-    never depend on the LLM succeeding. An ordinary entry re-raises the 502,
+    A flagged entry swallows the provider failure (the charge was already rolled
+    back) and yields ``None`` so the caller can return a care-only response — care
+    must never depend on the LLM succeeding. An ordinary entry re-raises,
     preserving today's behavior exactly.
     """
     try:
-        return await _generate_marginalia_or_502(message, llm, prior, session)
+        return await _generate_marginalia_or_error(message, llm, prior, context)
     except HTTPException:
-        if care is not None:
+        if context.care is not None:
             return None
         raise
 
@@ -982,11 +1008,17 @@ class _ResonanceSurfaces:
     being re-derived in the builder because the same value decides whether the
     charge is reversed, and those two must never disagree — a writer told the
     pass was not charged while the charge stands is a worse bug than silence.
+
+    ``related`` is the writer's own compiled vault pages this pass surfaced, read
+    off the reflection source rather than re-derived: empty for every pass a
+    vault did not answer, which is what a cloud reflection, a degraded vault and
+    a vault with no pages all report.
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
+    related: VaultRelatedSurfaces = field(default_factory=VaultRelatedSurfaces)
 
 
 def _resonance_response(
@@ -1009,6 +1041,14 @@ def _resonance_response(
         care=surfaces.care,
         contraction=surfaces.contraction,
         no_notes_message=surfaces.no_notes_message,
+        related_praxis=[
+            RelatedPraxisResponse.model_validate(praxis, from_attributes=True)
+            for praxis in surfaces.related.praxis
+        ],
+        related_eddies=[
+            RelatedEddyResponse.model_validate(eddy, from_attributes=True)
+            for eddy in surfaces.related.eddies
+        ],
     )
 
 
@@ -1127,7 +1167,8 @@ async def run_resonance(
         return await _private_response(session, current_user, care)
     spent = await preflight_deduction(session, current_user)
     grounding = await _grounding_for(session, current_user, entry_id)
-    llm = BotmasonResonanceLLM(resolve_chat_api_key(clients.api_key))
+    byok_key = resolve_chat_api_key(clients.api_key)
+    llm = BotmasonResonanceLLM(byok_key)
     reflection_llm = await select_reflection_llm(
         clients.vault_client,
         body=entry.message,
@@ -1137,7 +1178,10 @@ async def run_resonance(
     )
     try:
         anchored = await _resonance_pass_or_care(
-            entry.message, reflection_llm, list(grounding.bodies), session, care
+            entry.message,
+            reflection_llm,
+            list(grounding.bodies),
+            _ResonancePassContext(session=session, care=care, byok=byok_key is not None),
         )
     except CreekVaultCareEscalationError:
         # The vault's care guard fired: answer with adepthood's own care surface
@@ -1160,7 +1204,10 @@ async def run_resonance(
     _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
-        care=care, contraction=contraction, no_notes_message=no_notes_message
+        care=care,
+        contraction=contraction,
+        no_notes_message=no_notes_message,
+        related=related_surfaces(reflection_llm),
     )
     return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
 
@@ -1460,11 +1507,14 @@ async def _cache_essay(
 ) -> Marginalia:
     """Generate the essay via the cloud LLM, cache it on the note, and persist.
 
-    A provider error maps to 502 with no write. Called only for non-intimate
-    entries — the intimate guard in :func:`expand_marginalia_essay` returns before
-    this seam, so the cloud is never reached for an intimate entry's essay.
+    A transient provider error maps to 502 with no write; a spent balance maps to
+    its own permanent status, checked first because it subclasses the generic
+    type. Called only for non-intimate entries — the intimate guard in
+    :func:`expand_marginalia_essay` returns before this seam, so the cloud is
+    never reached for an intimate entry's essay.
     """
-    llm = BotmasonResonanceLLM(resolve_chat_api_key(api_key))
+    byok_key = resolve_chat_api_key(api_key)
+    llm = BotmasonResonanceLLM(byok_key)
     try:
         essay = await generate_essay(
             llm=llm,
@@ -1473,6 +1523,8 @@ async def _cache_essay(
             kind=note.kind,
             note=note.note,
         )
+    except LLMCreditExhaustedError as exc:
+        raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
     except LLMProviderError as exc:
         raise bad_gateway("llm_provider_error") from exc
     note.essay = essay
