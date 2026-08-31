@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from routers import journal as journal_router
+from services import botmason as botmason_service
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 
@@ -129,3 +130,68 @@ async def test_essay_is_sanitized_and_length_capped(
 def test_essay_is_free_by_default() -> None:
     """The economy seam defaults essay generation to free."""
     assert journal_router.ESSAY_PRICE_UNITS == 0
+
+
+# --- A permanently exhausted balance is not a transient outage --------------
+
+_BYOK_HEADER = "X-LLM-API-Key"
+_BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+_PROVIDER_PROSE = (
+    "Error code: 429 - You exceeded your current quota, please check your plan and billing details."
+)
+
+
+def _refuse_for_credit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch the essay LLM seam to refuse the way an empty account does."""
+
+    async def _refuse(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> None:
+        del prompt, history, system_prompt, api_key
+        raise botmason_service.LLMCreditExhaustedError(_PROVIDER_PROSE, provider="openai")
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _refuse)
+
+
+async def _assert_no_essay_cached(session: AsyncSession, marg_id: int) -> None:
+    """A refused pass leaves the note exactly as it was."""
+    note = await session.get(Marginalia, marg_id)
+    assert note is not None
+    await session.refresh(note)
+    assert note.essay is None
+    assert note.essay_generated_at is None
+
+
+@pytest.mark.asyncio
+async def test_essay_byok_credit_exhausted_is_402(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The essay path is a second door onto the same provider -- and the same refusal."""
+    _refuse_for_credit(monkeypatch)
+    headers, user_id = await _signup(async_client, "essay_byok")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{marg_id}/essay",
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_credit_exhausted"
+    await _assert_no_essay_cached(db_session, marg_id)
+
+
+@pytest.mark.asyncio
+async def test_essay_server_key_credit_exhausted_is_503(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spent server key on the essay path gets the operator's code, not the reader's."""
+    _refuse_for_credit(monkeypatch)
+    headers, user_id = await _signup(async_client, "essay_server")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == "llm_service_credit_exhausted"
+    await _assert_no_essay_cached(db_session, marg_id)

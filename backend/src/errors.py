@@ -133,7 +133,13 @@ def service_unavailable(reason: str) -> HTTPException:
 
     Use this when a required upstream (e.g. Gumroad license verification)
     cannot answer and the endpoint must fail closed rather than guess, so
-    the caller sees a stable snake_case token and knows to retry later.
+    the caller sees a stable snake_case token rather than the raw failure.
+
+    "Temporarily" describes the dependency, not the caller's next move. The
+    condition may clear without them changing anything, but this status does not
+    promise that retrying is what clears it: a spent server-side provider
+    balance (:data:`services.botmason.SERVICE_CREDIT_EXHAUSTED_DETAIL`) answers
+    503 and takes an operator rather than a retry, and its copy offers none.
     """
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
 

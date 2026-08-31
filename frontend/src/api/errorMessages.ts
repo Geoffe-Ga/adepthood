@@ -34,6 +34,18 @@ const PASSWORD_TOO_LONG =
 const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
 
 /**
+ * A spent provider balance, told twice — because the person who can fix it is
+ * not the same person. Neither line offers a retry: waiting refills nothing, so
+ * "give it a moment and try again" is a promise this condition cannot keep. Both
+ * are exported so the transcription surface, which keeps its own closed error
+ * taxonomy, renders this story from the same words rather than a second copy.
+ */
+export const CREDIT_EXHAUSTED_COPY =
+  'The account behind your API key has run out of credit, so BotMason cannot run. Add credit with your provider, or paste a different key in Settings.';
+export const SERVICE_CREDIT_EXHAUSTED_COPY =
+  "BotMason's shared AI access has run out of credit. Restoring it is ours to do and we have been alerted. Add your own API key in Settings if you would rather not wait.";
+
+/**
  * Map of backend ``detail`` strings (see ``backend/src/errors.py`` and each
  * router) to the copy we show the user. Keep keys in sync with the backend
  * and grouped by domain for easy scanning.
@@ -134,6 +146,11 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
+  // A permanent, billing-level refusal — deliberately NOT inheriting the bare
+  // 402 fallback below, which tells the monthly free-allotment story and points
+  // the reader at the very key that just came back empty.
+  llm_credit_exhausted: CREDIT_EXHAUSTED_COPY,
+  llm_service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
 
   // --- Streaming / rate limits / network -------------------------------
   // Deliberately surface-neutral and number-free. The backend emits this one
