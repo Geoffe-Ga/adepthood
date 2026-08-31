@@ -120,6 +120,16 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
         'Optional for the same reason as mode, and read only through the mode discriminator, which is itself absent on pre-mode payloads.',
     },
   },
+  relatedPraxisKindSchema: {
+    component: 'VaultPraxisKind',
+    reason:
+      "The wire names Creek's vocabulary VaultPraxisKind and the client names it for the field that carries it, so no name-based candidate matches; mapping it pins the five hoisted members to the published set.",
+  },
+  relatedPraxisStatusSchema: {
+    component: 'VaultPraxisStatus',
+    reason:
+      'Named for the vault rather than the field for the same reason the kind is, and mapped so a lifecycle Creek adds or retires cannot pass unnoticed while a released page still renders as active.',
+  },
 
   // --- No counterpart on the wire -----------------------------------------
   careKindSchema: {
@@ -161,16 +171,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     component: null,
     reason:
       'ReflectionSourceItem types kind as a bare string; the client narrows it to entry/reflection so the sources panel can switch on it exhaustively.',
-  },
-  relatedPraxisKindSchema: {
-    component: null,
-    reason:
-      'The praxis vocabulary is an inline enum inside RelatedPraxisResponse, not a named component; the client hoists it so the five kinds can be exhaustively handled.',
-  },
-  relatedPraxisStatusSchema: {
-    component: null,
-    reason:
-      'The lifecycle is an inline enum inside RelatedPraxisResponse for the same reason the kind is, and is hoisted so a released page can never render as an active one.',
   },
   stageManifestationSchema: {
     component: null,
