@@ -155,6 +155,21 @@ describe('TagPicker', () => {
     expect(utils.queryByTestId('tag-picker-0-badge')).toBeNull();
   });
 
+  it('keeps the step’s own wording when its tag has left the library', () => {
+    // Deleting a personal tag drops it from the library but leaves the step
+    // holding the label it will still save. Showing the machine slug instead
+    // is the one moment the user sees snake_case in this screen.
+    const utils = renderPicker({ selectedSlug: 'mine', selectedLabel: 'Mine' });
+    expect(utils.getByText('Mine')).toBeTruthy();
+    expect(utils.queryByText('mine')).toBeNull();
+  });
+
+  it('prefers the library label over a stale one carried by the step', () => {
+    const utils = renderPicker({ selectedSlug: 'red', selectedLabel: 'Stale wording' });
+    expect(utils.getByText('Red')).toBeTruthy();
+    expect(utils.queryByText('Stale wording')).toBeNull();
+  });
+
   it('surfaces a create error without dismissing the form', async () => {
     const onCreateTag = jest.fn(async () => {
       throw new Error('Slug already exists');

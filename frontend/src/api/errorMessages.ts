@@ -113,6 +113,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "This week's prompt isn't ready yet. Check back in a few minutes, or pull down to refresh.",
   user_practice_not_found:
     "We couldn't find your practice selection. Pick a practice again to continue.",
+  practice_tag_not_found: `We couldn't find that tag — it may have been deleted. ${PULL_TO_REFRESH}`,
   user_not_found: "We couldn't find your account. Sign out and sign back in to reconnect.",
 
   // --- Permission / ownership ------------------------------------------
@@ -140,7 +141,6 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   active_practice_exists_for_stage:
     'Another change to this stage just went through. Pull down to refresh, then try switching again.',
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
-  practice_tag: `We couldn't find that tag — it may have been deleted. ${PULL_TO_REFRESH}`,
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
 

@@ -16,6 +16,11 @@ import type { PracticeTag, PracticeTagCreate } from '@/api';
 export interface TagPickerProps {
   stepIndex: number;
   selectedSlug: string;
+  /** The label the step itself carries, shown when the chosen slug is no
+   *  longer in the library — deleting a personal tag leaves the step holding
+   *  the wording it will still save, and the trigger should keep saying it
+   *  rather than dropping to the machine slug. */
+  selectedLabel?: string;
   tagLibrary: PracticeTag[];
   onSelect: (tag: PracticeTag) => void;
   /** Resolves once the tag is persisted; the caller usually patches
@@ -118,7 +123,7 @@ function useTagDropdown(props: TagPickerProps): TagDropdownController {
     query,
     creating,
     groups,
-    triggerLabel: triggerLabelFor(selected, props.selectedSlug),
+    triggerLabel: triggerLabelFor(selected, props.selectedLabel, props.selectedSlug),
     badge:
       selected === undefined
         ? undefined
@@ -140,8 +145,19 @@ function useTagDropdown(props: TagPickerProps): TagDropdownController {
   };
 }
 
-function triggerLabelFor(selected: PracticeTag | undefined, selectedSlug: string): string {
+/**
+ * What the collapsed trigger reads, in the order the wording can be trusted:
+ * the library entry (which a rename keeps current), then the step's own stored
+ * label (right when the tag has been deleted out from under the step), then
+ * the bare slug as the last thing left to show.
+ */
+function triggerLabelFor(
+  selected: PracticeTag | undefined,
+  selectedLabel: string | undefined,
+  selectedSlug: string,
+): string {
   if (selected !== undefined) return selected.label;
+  if (selectedLabel !== undefined && selectedLabel.length > 0) return selectedLabel;
   if (selectedSlug.length > 0) return selectedSlug;
   return 'Choose a tag';
 }

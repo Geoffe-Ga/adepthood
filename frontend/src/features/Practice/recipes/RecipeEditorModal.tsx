@@ -647,6 +647,7 @@ const StepCard = (props: StepCardProps): React.JSX.Element => (
     <TagPicker
       stepIndex={props.index}
       selectedSlug={props.step.tag_slug}
+      selectedLabel={props.step.tag_label}
       tagLibrary={props.tagLibrary}
       onSelect={(tag) => props.onChange({ tag_slug: tag.slug, tag_label: tag.label })}
       onCreateTag={async (payload) => {

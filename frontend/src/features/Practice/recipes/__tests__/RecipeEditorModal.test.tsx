@@ -321,4 +321,31 @@ describe('RecipeEditorModal tag library management', () => {
     await waitFor(() => expect(utils.removeTag).toHaveBeenCalledWith(9));
     await waitFor(() => expect(utils.queryByTestId('tag-picker-0-option-mine')).toBeNull());
   });
+
+  it('leaves the step reading as the user wrote it after its tag is deleted', async () => {
+    // The delete prompt promises "Recipes already using it keep their step".
+    // The step does keep it — ``tag_label`` is stored by value and is what
+    // saves — so the trigger must go on saying so rather than dropping to the
+    // machine slug the library no longer explains.
+    const utils = mountWithPersonalTag();
+    await waitFor(() => expect(utils.listPersonal).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    });
+    await waitFor(() => expect(utils.getByTestId('tag-picker-0-delete-mine')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-mine'));
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-delete-confirm-mine'));
+    });
+    await waitFor(() => expect(utils.removeTag).toHaveBeenCalledWith(9));
+    expect(utils.getByTestId('tag-picker-0-trigger')).toHaveTextContent(/Mine/);
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('recipe-editor-save'));
+    });
+    await waitFor(() => expect(utils.create).toHaveBeenCalled());
+    const firstCall = utils.create.mock.calls[0];
+    if (firstCall === undefined) throw new Error('create was not called');
+    const steps = (firstCall[0] as { steps: { tag_label: string }[] }).steps;
+    expect(steps[0]?.tag_label).toBe('Mine');
+  });
 });
