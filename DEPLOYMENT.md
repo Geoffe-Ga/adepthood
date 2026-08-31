@@ -694,12 +694,14 @@ journal_encryption_enabled=True
 | `APPLE_OAUTH_CLIENT_IDS` | For Apple sign-in | *(empty)* | Comma-separated audiences accepted on Apple identity tokens — for this app the iOS bundle identifier, since Apple sign-in is offered only on iOS. Empty means every Apple token is rejected. |
 | `IPV6_THROTTLE_PREFIX_LEN` | No | `64` | Bit length of the IPv6 prefix that throttle keys (the rate limiter and the invalid-license throttle) group on, so one subscriber's delegated address range can't mint one bucket per address. Audit rows always keep the full address regardless. Valid range `1`-`128`; anything else falls back to the default rather than being clamped. A smaller number covers a larger delegation: lower it to `56`/`48` if you see IPv6 abuse, raise it to `128` to restore per-address keying (which reopens the bypass). |
 | `BOTMASON_SYSTEM_PROMPT` | No | Built-in | Path to prompt file or inline text |
-| `EMAIL_BACKEND` | Yes in prod | `console` | `console` (logs the email locally) or `smtp` (delivers via SMTP). `ENV=production` refuses to boot on anything but `smtp`, because the console fallback writes every password-reset link to the application log while the endpoint still answers 202. |
-| `SMTP_HOST` | Yes in prod | — | SMTP relay hostname, e.g. `smtp.sendgrid.net` |
-| `SMTP_PORT` | Yes in prod | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. A value that is not a number, or one outside 1-65535, is refused at startup rather than defaulted. |
-| `SMTP_USERNAME` | Yes in prod | — | SMTP relay username |
-| `SMTP_PASSWORD` | Yes in prod | — | SMTP relay password / API key |
-| `EMAIL_FROM` | Yes in prod | — | RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
+| `EMAIL_BACKEND` | Yes in prod | `console` | `console` (logs the email locally), `resend` (delivers over the provider's HTTPS API on 443), or `smtp` (delivers via an SMTP relay on 587). `ENV=production` refuses to boot on anything else, because the console fallback writes every password-reset link to the application log while the endpoint still answers 202. **On Railway use `resend`** — Railway blocks outbound SMTP below the Pro plan, so `smtp` there hangs on every send instead of failing. |
+| `RESEND_API_KEY` | With `resend` | — | Resend API key (starts `re_`). Travels in an `Authorization` header, never in a URL. The only variable `resend` needs beyond `EMAIL_FROM`. |
+| `SMTP_HOST` | With `smtp` | — | SMTP relay hostname, e.g. `smtp.sendgrid.net`. Only reachable on a network that permits outbound SMTP — Railway below Pro does not. |
+| `SMTP_PORT` | With `smtp` | — | SMTP port. **Only STARTTLS-on-587 is supported** -- the adapter calls `starttls()` unconditionally. Implicit-TLS port 465 (SMTPS) will silently fail to deliver because the connection negotiation skips the STARTTLS step. Use port 587. A value that is not a number, or one outside 1-65535, is refused at startup rather than defaulted. |
+| `SMTP_USERNAME` | With `smtp` | — | SMTP relay username |
+| `SMTP_PASSWORD` | With `smtp` | — | SMTP relay password / API key |
+| `EMAIL_FROM` | Yes in prod | — | Shared by both delivering backends. RFC-5322 "From" address (e.g. `noreply@adepthood.example`). Must be a **monitored** mailbox -- the change-notification "this wasn't me" replies route here, and bounce-handling for invalid recipient addresses also lands here. |
+| `APP_BASE_URL` | Yes in prod | — | HTTPS origin the web app is served from, e.g. `https://app.aptitude.guru`. Password-reset emails build their browser-followable links from it, so `ENV=production` refuses to boot without it — or with a value that does not start `https://`, a bare hostname included: the web build is the only client that ships, and a body carrying only the `adepthood://` deep link is a link every recipient's browser refuses while the endpoint still answers 202. Scheme and host only, no trailing path (a trailing slash is stripped). It is deliberately never derived from the request's `Host` / `X-Forwarded-*` headers — those are attacker-chosen, and a reset link built from them points the victim's token at the attacker's server. Outside production it defaults to `http://localhost:8081`. |
 | `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
 | `SENTRY_DSN` | No (recommended in prod) | *(empty)* | Sentry DSN unhandled exceptions are reported to. Empty means no vendor: crashes are still caught, still answered with the sanitised 500 envelope, and still logged in full — only the operator inbox is lost. A value that will not parse degrades the same way with one boot warning; it never fails the deploy. See "Error monitoring" below for what a report does and does not contain. |
 | `SENTRY_RELEASE` | No | `RAILWAY_GIT_COMMIT_SHA`, else `unknown` | Version string every event is tagged with, so a regression can be pinned to a deploy. `ENV` is sent as the Sentry environment, which is what keeps a production alert distinguishable from a staging one. |
@@ -759,15 +761,70 @@ web — test these interactions.
 
 ## Password Recovery
 
-The forgotten-password flow needs an email path to ship reset links.
-The backend defaults to a console adapter that simply logs the rendered
-email -- safe in dev / test, useless in production. Set
-`EMAIL_BACKEND=smtp` plus the five `SMTP_*` / `EMAIL_FROM` variables
-above to switch on real delivery. All six are required in production:
-a production boot with any of them missing is refused at startup rather
-than left to answer 202 while the link goes to the log.
+The forgotten-password flow needs two things to work: a path that
+delivers the mail, and an origin the link inside it can point at.
+Neither has a safe default on a server.
 
-Recommended setup with SendGrid:
+### Set the variables before you deploy the code that reads them
+
+`ENV=production` refuses to boot without a delivering `EMAIL_BACKEND` and
+without `APP_BASE_URL`, and both refusals are raised from the startup
+lifespan — so they stop the whole API, not just password reset. Deploying
+this release onto a service that has never carried these variables is a
+restart loop and a 502 across every route while somebody edits settings.
+
+Two steps, in this order:
+
+1. Add `EMAIL_BACKEND`, `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL`
+   to the service's variables.
+2. Deploy.
+
+The refusal is deliberate and should not be softened: a boot that comes up
+without them answers 202 to every reset request while nobody can recover
+an account, which is the failure that reached production and stayed
+invisible.
+
+### Railway blocks outbound SMTP — read this before choosing a backend
+
+**Railway does not permit outbound SMTP below its Pro plan, and it does
+not permit it silently.** There is no connection refused, no error in the
+logs, and no signal an application can read: the relay adapter opens a
+socket that never completes, stalls for its 30-second connect timeout,
+and `POST /auth/password-reset/request` answers 202 anyway because the
+anti-enumeration contract requires it to. From the outside — and from the
+deploy logs — that is indistinguishable from delivery. The user sees the
+reset form hang on "Sending…", and then never receives anything.
+
+A relay configured exactly as an earlier version of this document
+recommended produced precisely that outage in production. Railway's own
+guidance is to use a transactional provider's HTTPS API instead:
+
+- <https://docs.railway.com/networking/outbound-networking>
+- <https://station.railway.com/questions/outbound-smtp-blocked-on-my-deployment-732c27ed>
+
+So on Railway, use `EMAIL_BACKEND=resend`. It POSTs to the provider's
+send API over HTTPS on port 443, which the platform routes. Keep
+`EMAIL_BACKEND=smtp` for hosts you know permit outbound 587.
+
+### Delivery
+
+The backend defaults to a console adapter that simply logs the rendered
+email -- safe in dev / test, useless in production. `ENV=production`
+refuses to boot on anything but a delivering backend, and builds the
+chosen sender eagerly so a missing variable stops the deploy rather than
+the first user to ask for a reset.
+
+Recommended setup on Railway, with Resend:
+
+```bash
+EMAIL_BACKEND=resend
+RESEND_API_KEY=<resend_api_key>     # starts "re_"
+EMAIL_FROM=noreply@yourdomain.example
+APP_BASE_URL=https://app.yourdomain.example
+SECURITY_CONTACT_ADDRESS=security@yourdomain.example
+```
+
+Alternative on a host that permits outbound SMTP, with SendGrid:
 
 ```bash
 EMAIL_BACKEND=smtp
@@ -776,8 +833,37 @@ SMTP_PORT=587
 SMTP_USERNAME=apikey                # literal string "apikey"
 SMTP_PASSWORD=<sendgrid_api_key>    # the API key itself
 EMAIL_FROM=noreply@yourdomain.example
+APP_BASE_URL=https://app.yourdomain.example
 SECURITY_CONTACT_ADDRESS=security@yourdomain.example
 ```
+
+### The links inside the email
+
+`APP_BASE_URL` is the https origin of the web app, and it is required in
+production for the same reason the backend switch is. The reset email
+offers each action twice: an `https://…/reset-password?token=…` link the
+browser can follow, and the `adepthood://reset-password?token=…` deep
+link an installed native build registers. Web is currently the only
+client that ships, so without this variable every delivered email carries
+only a scheme the recipient's browser refuses -- mail delivered, user
+still locked out, and nothing reporting a failure. A boot without it is
+refused.
+
+Set it to scheme and host only, with no trailing path; a trailing slash
+is tolerated and stripped. It must begin with `https://`, and production
+refuses any value that does not — including a bare hostname such as
+`app.aptitude.guru`. That is the likeliest wrong value in practice,
+because `PROD_DOMAIN` sits a few rows away in the same variable editor and
+is exactly that shape; it renders a link no mail client linkifies and no
+browser resolves, which is this same outage arriving behind a green boot.
+Plain `http://` is refused for a second reason: the link is a bearer token
+with a thirty-minute life, and plaintext puts it on the wire.
+
+It is deliberately read from configuration and
+never from the request's `Host` or `X-Forwarded-*` headers: those are
+chosen by whoever sent the request, so an attacker who requested a reset
+for someone else's address could otherwise decide where that person's
+reset link -- token included -- points.
 
 The `EMAIL_FROM` address must be:
 

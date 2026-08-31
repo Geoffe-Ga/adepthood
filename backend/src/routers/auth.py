@@ -51,6 +51,7 @@ from schemas.password_reset import (
     PasswordResetConfirm,
     PasswordResetRequest,
 )
+from services.app_links import web_base_url
 from services.email import (
     EmailDeliveryError,
     EmailMessagePayload,
@@ -1156,9 +1157,32 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
     invalidates the token without requiring a login -- possession of
     the token is enough, which is the same trust model as confirm
     (SPEC Example D).
+
+    Each action is offered twice, https first.  The web build is the
+    only client that ships, so a body carrying nothing but the
+    ``adepthood://`` scheme is a link every real recipient's browser
+    refuses -- delivery succeeds and the user stays locked out, which
+    looks identical to success from every side.  The custom-scheme
+    lines stay because an installed native build registers them, and
+    dropping them would fix web by silently breaking the platform this
+    flow was written for.
+
+    The https origin comes from :func:`web_base_url`, i.e. from
+    deployment configuration, and never from the request.  ``Host`` and
+    the ``X-Forwarded-*`` pair are chosen by whoever sent the request,
+    so an attacker who could reach them would choose where a victim's
+    reset link points, token and all.
+
+    One link per line with the token last, because the token is
+    recovered by reading to the end of the line -- both in the test
+    helpers and by any human copying it out of a dev log.
     """
+    origin = web_base_url()
     body = (
         "Someone requested a password reset for your Adepthood account.\n\n"
+        f"Reset your password:  {origin}/reset-password?token={plaintext_token}\n"
+        f"This wasn't me:       {origin}/cancel-reset?token={plaintext_token}\n\n"
+        "If you have the Adepthood app installed, these open it directly:\n\n"
         f"Reset your password:  adepthood://reset-password?token={plaintext_token}\n"
         f"This wasn't me:       adepthood://cancel-reset?token={plaintext_token}\n\n"
         "Links expire in 30 minutes.  If you did not request this, you can\n"
