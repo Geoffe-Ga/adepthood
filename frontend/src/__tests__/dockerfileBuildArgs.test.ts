@@ -14,11 +14,11 @@ import { describe, expect, it } from '@jest/globals';
  * failure the Google client ID and the Sentry DSN were each fixed for. This
  * test is the thing that notices the fourth time.
  *
- * Variables carrying a safe in-code default (the Gumroad links) are outside
- * this list by design. They ARE declared in the Dockerfile — an override has to
- * be able to reach the bundle — but their absence is survivable, so they belong
- * to the parity check above rather than to this list, whose members resolve to
- * nothing at all when undeclared.
+ * Variables carrying a safe in-code default (the Gumroad links) live in a
+ * second list, ``SAFE_DEFAULT_VARIABLES``. They must still be declared — an
+ * override has to be able to reach the bundle at all — but an undeclared one
+ * degrades to a working default rather than to nothing, so the two groups are
+ * kept apart by consequence rather than lumped together.
  *
  * "Safe default" is a claim about the value, not just its presence: the Gumroad
  * product URL sat here for months naming a storefront that did not exist, and
@@ -36,6 +36,25 @@ const NO_DEFAULT_VARIABLES: readonly string[] = [
   'EXPO_PUBLIC_SANGHA_INVITE_URL',
 ];
 
+/**
+ * Build-time values that carry a safe in-code default.
+ *
+ * Undeclared, these do not break the page -- ``resolveEnv`` falls through to
+ * the default -- but the override silently stops working, which is how a
+ * deploy-time variable comes to be believed in without ever taking effect.
+ * They were genuinely undeclared until the Gumroad storefront went live and
+ * the default turned out to name a 404.
+ */
+const SAFE_DEFAULT_VARIABLES: readonly string[] = [
+  'EXPO_PUBLIC_GUMROAD_PRODUCT_URL',
+  'EXPO_PUBLIC_GUMROAD_HELP_URL',
+];
+
+const ALL_DECLARED_VARIABLES: readonly string[] = [
+  ...NO_DEFAULT_VARIABLES,
+  ...SAFE_DEFAULT_VARIABLES,
+];
+
 describe('frontend Dockerfile build arguments', () => {
   it.each(NO_DEFAULT_VARIABLES)('declares ARG %s', (name) => {
     expect(DOCKERFILE).toContain(`ARG ${name}\n`);
@@ -46,13 +65,24 @@ describe('frontend Dockerfile build arguments', () => {
     expect(DOCKERFILE).toContain(`ENV ${name}=$${name}`);
   });
 
+  it.each(SAFE_DEFAULT_VARIABLES)('declares ARG %s', (name) => {
+    // Without this the Railway variable never reaches `expo export` and the
+    // override is inert -- the failure this file exists to prevent, in its
+    // quieter form: the page still works, but only ever on the default.
+    expect(DOCKERFILE).toContain(`ARG ${name}\n`);
+  });
+
+  it.each(SAFE_DEFAULT_VARIABLES)('forwards %s into the build environment', (name) => {
+    expect(DOCKERFILE).toContain(`ENV ${name}=$${name}`);
+  });
+
   it('declares every variable before the export that bakes them in', () => {
     // The `RUN` prefix matters: the prose above it names `expo export` too,
     // and matching the comment would compare against the wrong offset.
     const exportAt = DOCKERFILE.indexOf('RUN npx expo export');
 
     expect(exportAt).toBeGreaterThan(-1);
-    for (const name of NO_DEFAULT_VARIABLES) {
+    for (const name of ALL_DECLARED_VARIABLES) {
       expect(DOCKERFILE.indexOf(`ENV ${name}=`)).toBeLessThan(exportAt);
     }
   });
