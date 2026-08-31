@@ -28,12 +28,6 @@ const CALLER_ALLOWLIST: Record<string, string> = {
     'Deliberately retained beside listAll as the request-machinery test vehicle and bare-array wire-contract guard, per its own docstring in src/api/index.ts.',
   idempotencyKey:
     'Called inside the API layer to key suggestion-accept, invitation-dismiss and return-start; exported for unit coverage, and its caller-supplied seam on the habit check-in wrapper is still unadopted by any screen.',
-  'practiceTags.remove':
-    'Wraps the live DELETE /practice-tags/{tag_id} route; the tag library UI can list and create tags but not delete one, so this is tracked for adoption or removal.',
-  'practiceTags.update':
-    'Wraps the live PATCH /practice-tags/{tag_id} route; the tag library UI can list and create tags but not rename one, so this is tracked for adoption or removal.',
-  'prompts.history':
-    'Wraps the live GET /prompts/history route, for which no prompt screen offers an affordance yet; tracked for adoption or removal.',
 };
 
 const sourceCache = new Map<string, ts.SourceFile>();

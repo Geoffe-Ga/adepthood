@@ -44,6 +44,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'goal_group_not_found',
       'prompt_not_found',
       'user_practice_not_found',
+      'practice_tag_not_found',
       // forbidden / ownership
       'forbidden',
       'not_owner',
@@ -118,6 +119,19 @@ describe('practice-selection codes (BUG-PRACTICE-012)', () => {
   it('maps the transient replace conflict to a retry prompt', () => {
     const err = new ApiError(409, 'active_practice_exists_for_stage');
     expect(formatApiError(err)).toMatch(/try (switching )?again/i);
+  });
+});
+
+describe('practice tag codes', () => {
+  // ``errors.not_found`` builds every 404 detail as ``<resource>_not_found``,
+  // so the tag router's ``not_found("practice_tag")`` reaches the client as
+  // ``practice_tag_not_found``. Keying the copy on the bare resource name made
+  // it unreachable and dropped every missing-tag 404 into the generic
+  // fallback, which says nothing about tags.
+  it('names the tag on a 404 rather than falling through to the generic copy', () => {
+    const message = formatApiError(new ApiError(404, 'practice_tag_not_found'));
+    expect(message).toMatch(/that tag/i);
+    expect(message).not.toBe(formatApiError(new ApiError(404, 'no_such_code_exists')));
   });
 });
 
