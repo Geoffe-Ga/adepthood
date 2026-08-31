@@ -68,8 +68,8 @@ function PromptHistoryModal({
   );
 }
 
-/** Error, first load, empty, or the list — in that order of precedence. */
-const HistoryBody = ({ history }: { history: PromptHistoryState }): React.JSX.Element => {
+/** Nothing loaded yet: the failure, the spinner, or the empty line. */
+const EmptyBody = ({ history }: { history: PromptHistoryState }): React.JSX.Element => {
   if (history.error !== null) {
     return (
       <Text style={styles.error} testID="prompt-history-error">
@@ -77,23 +77,36 @@ const HistoryBody = ({ history }: { history: PromptHistoryState }): React.JSX.El
       </Text>
     );
   }
-  if (history.items.length === 0) {
-    return history.loading ? (
-      <ActivityIndicator
-        accessibilityLabel="Loading past prompts"
-        testID="prompt-history-loading"
-      />
-    ) : (
-      <Text style={styles.empty} testID="prompt-history-empty">
-        You have not answered a weekly prompt yet. The current one waits on the shelf.
-      </Text>
-    );
-  }
+  return history.loading ? (
+    <ActivityIndicator accessibilityLabel="Loading past prompts" testID="prompt-history-loading" />
+  ) : (
+    <Text style={styles.empty} testID="prompt-history-empty">
+      You have not answered a weekly prompt yet. The current one waits on the shelf.
+    </Text>
+  );
+};
+
+/**
+ * The empty states, or the list.
+ *
+ * A page that fails after the first one is reported *under* the rows rather
+ * than in place of them: the failure belongs to the page that was asked for,
+ * not to the ones already read, and "Earlier prompts" is the only control that
+ * can ask again — replacing the list with the error would take both the reading
+ * and the retry away, leaving dismissing the surface as the only way out.
+ */
+const HistoryBody = ({ history }: { history: PromptHistoryState }): React.JSX.Element => {
+  if (history.items.length === 0) return <EmptyBody history={history} />;
   return (
     <ScrollView style={styles.list} testID="prompt-history-list">
       {history.items.map((item) => (
         <HistoryRow key={item.week_number} item={item} />
       ))}
+      {history.error !== null && (
+        <Text style={styles.error} testID="prompt-history-error">
+          {history.error}
+        </Text>
+      )}
       {history.hasMore && (
         <TouchableOpacity
           style={styles.more}
@@ -103,7 +116,9 @@ const HistoryBody = ({ history }: { history: PromptHistoryState }): React.JSX.El
           accessibilityState={{ busy: history.loading }}
           testID="prompt-history-more"
         >
-          <Text style={styles.moreLabel}>Earlier prompts</Text>
+          <Text style={styles.moreLabel}>
+            {history.error === null ? 'Earlier prompts' : 'Try again'}
+          </Text>
         </TouchableOpacity>
       )}
     </ScrollView>

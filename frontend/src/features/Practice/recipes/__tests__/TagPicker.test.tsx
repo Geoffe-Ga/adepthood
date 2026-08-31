@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native';
 
 import TagPicker from '../TagPicker';
 
-import type { PracticeTag } from '@/api';
+import { ApiError, type PracticeTag } from '@/api';
 
 const library: PracticeTag[] = [
   { id: 1, slug: 'red', label: 'Red', owner_user_id: null, created_at: '2026-01-01T00:00:00Z' },
@@ -230,6 +230,27 @@ describe('TagPicker tag-library management', () => {
       ),
     );
     expect(utils.getByTestId('tag-picker-0-rename-input-mine')).toBeTruthy();
+  });
+
+  it('translates a rejected rename instead of showing the wire message', async () => {
+    const onRenameTag = jest.fn(async () => {
+      throw new ApiError(409, 'tag_slug_taken');
+    });
+    const utils = openWithPersonal({ onRenameTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-rename-input-mine'), 'Blue');
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-rename-confirm-mine'));
+    });
+    await waitFor(() =>
+      expect(utils.getByTestId('tag-picker-0-manage-error-mine')).toHaveTextContent(
+        'You already have a tag by that name. Pick a different one.',
+      ),
+    );
+    // The status line and the contract code are for the log, not the reader.
+    const shown = utils.getByTestId('tag-picker-0-manage-error-mine');
+    expect(shown).not.toHaveTextContent('409');
+    expect(shown).not.toHaveTextContent('tag_slug_taken');
   });
 
   it('asks before deleting and only then calls the API', async () => {

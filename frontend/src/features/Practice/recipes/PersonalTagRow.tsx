@@ -14,6 +14,7 @@ import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { DropdownOptionRow, dropdownCreateStyles } from '../components/SearchableDropdown';
 
 import type { PracticeTag } from '@/api';
+import { formatApiError } from '@/api/errorMessages';
 
 /** Mirrors the backend ``PracticeTagUpdate.label`` cap. */
 const LABEL_MAX = 255;
@@ -58,7 +59,10 @@ function useRowController(props: PersonalTagRowProps): RowController {
       await action();
       setMode('idle');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : fallback);
+      // Through the translator, not the wire: a rejected rename is a sentence
+      // the person can act on ("that name is taken"), never the status line and
+      // contract code the client builds its `Error` message from.
+      setError(formatApiError(err, { fallback }));
     } finally {
       setBusy(false);
     }

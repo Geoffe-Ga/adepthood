@@ -23,11 +23,14 @@ const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
 const LICENSE_KEY = 'e2e-license';
 const FIRST_WEEK = 1;
+const SECOND_WEEK = 2;
 
 const email = `e2e-prompt-history-${randomUUID()}${EMAIL_DOMAIN}`;
 // Non-ASCII on purpose: the answer has to survive sanitisation and the round
 // trip through two rows word for word.
 const answer = `Lo que traje conmigo 灯 — ${randomUUID()}`;
+// A second week's answer, so `limit` has a row to leave out of a page.
+const secondAnswer = `Lo que dejé atrás 灯 — ${randomUUID()}`;
 
 describe('prompt-history journey against a live server', () => {
   let sessionToken: string | null = null;
@@ -83,15 +86,34 @@ describe('prompt-history journey against a live server', () => {
   });
 
   it('pages the history with the limit and offset the modal sends', async () => {
-    const firstPage = await prompts.history({ limit: 1, offset: 0 });
-    expect(firstPage.items).toHaveLength(1);
-    expect(firstPage.total).toBe(1);
-    // One row, one page: the offset past it is genuinely the end.
-    expect(firstPage.has_more).toBe(false);
+    // Two answered weeks, so `limit: 1` has something to leave out. Against a
+    // one-row account a server that ignored `limit` entirely would return the
+    // same page as one that honoured it, and every assertion below would hold.
+    // Answering week 1 unlocked week 2 (`completed + 1`).
+    const second = await prompts.current();
+    expect(second.week_number).toBe(SECOND_WEEK);
+    await prompts.respond(SECOND_WEEK, secondAnswer);
 
-    const pastTheEnd = await prompts.history({ limit: 1, offset: 1 });
+    const firstPage = await prompts.history({ limit: 1, offset: 0 });
+    expect(firstPage.total).toBe(2);
+    // The slice, not the set: one of the two rows, newest week first.
+    expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.items[0]?.week_number).toBe(SECOND_WEEK);
+    expect(firstPage.items[0]?.response).toBe(secondAnswer);
+    expect(firstPage.has_more).toBe(true);
+
+    // The offset the modal computes from what it already holds picks up the
+    // row the first page left behind, and the set ends there.
+    const nextPage = await prompts.history({ limit: 1, offset: 1 });
+    expect(nextPage.items).toHaveLength(1);
+    expect(nextPage.items[0]?.week_number).toBe(FIRST_WEEK);
+    expect(nextPage.items[0]?.response).toBe(answer);
+    expect(nextPage.total).toBe(2);
+    expect(nextPage.has_more).toBe(false);
+
+    const pastTheEnd = await prompts.history({ limit: 1, offset: 2 });
     expect(pastTheEnd.items).toEqual([]);
-    expect(pastTheEnd.total).toBe(1);
+    expect(pastTheEnd.total).toBe(2);
     expect(pastTheEnd.has_more).toBe(false);
   });
 });

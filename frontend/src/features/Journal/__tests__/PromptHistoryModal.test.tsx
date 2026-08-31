@@ -91,6 +91,46 @@ describe('PromptHistoryModal', () => {
     expect(utils.queryByTestId('prompt-history-empty')).toBeNull();
   });
 
+  it('keeps what already loaded, and the retry, when a later page fails', async () => {
+    const fetchHistory = jest.fn(async (params?: { limit?: number; offset?: number }) => {
+      if ((params?.offset ?? 0) === 0) return page([answered(3)], true);
+      throw new Error('history down');
+    });
+    const utils = mount(fetchHistory as unknown as Fetch);
+    await waitFor(() => expect(utils.getByTestId('prompt-history-more')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('prompt-history-more'));
+    });
+    await waitFor(() => expect(utils.getByTestId('prompt-history-error')).toBeTruthy());
+    // A transient failure on page two must not throw away page one, nor the
+    // only control that can ask for page two again.
+    expect(utils.getByTestId('prompt-history-row-3')).toBeTruthy();
+    expect(utils.getByTestId('prompt-history-more')).toBeTruthy();
+  });
+
+  it('clears a page failure once a retry succeeds', async () => {
+    let failNext = true;
+    const fetchHistory = jest.fn(async (params?: { limit?: number; offset?: number }) => {
+      if ((params?.offset ?? 0) === 0) return page([answered(3)], true);
+      if (failNext) {
+        failNext = false;
+        throw new Error('history down');
+      }
+      return page([answered(2)], false);
+    });
+    const utils = mount(fetchHistory as unknown as Fetch);
+    await waitFor(() => expect(utils.getByTestId('prompt-history-more')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('prompt-history-more'));
+    });
+    await waitFor(() => expect(utils.getByTestId('prompt-history-error')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('prompt-history-more'));
+    });
+    await waitFor(() => expect(utils.getByTestId('prompt-history-row-2')).toBeTruthy());
+    expect(utils.queryByTestId('prompt-history-error')).toBeNull();
+  });
+
   it('renders a prompt whose stored response is missing without crashing', async () => {
     const fetchHistory = jest.fn(async () => page([answered(4, { response: null })]));
     const utils = mount(fetchHistory as unknown as Fetch);

@@ -118,6 +118,11 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // --- Permission / ownership ------------------------------------------
   forbidden: `${NO_ACCESS} If you think this is a mistake, sign out and back in.`,
   not_owner: "That item belongs to another account, so you can't change it from here.",
+  // Renaming or deleting a shared tag from the recipe editor's tag library.
+  // The picker only offers those controls on a tag you own, so this is the
+  // copy for a tag that turned shared underneath you — not a routine refusal.
+  cannot_modify_system_tag:
+    'That tag is shared with everyone, so it cannot be renamed or deleted. Make your own tag instead.',
 
   // --- State / validation ----------------------------------------------
   cannot_go_backwards:
@@ -134,6 +139,8 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     'This practice belongs to a different stage. Make a copy for your stage to use it there.',
   active_practice_exists_for_stage:
     'Another change to this stage just went through. Pull down to refresh, then try switching again.',
+  tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
+  practice_tag: `We couldn't find that tag — it may have been deleted. ${PULL_TO_REFRESH}`,
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
 
