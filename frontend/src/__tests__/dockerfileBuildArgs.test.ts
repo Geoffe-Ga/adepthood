@@ -15,7 +15,15 @@ import { describe, expect, it } from '@jest/globals';
  * test is the thing that notices the fourth time.
  *
  * Variables carrying a safe in-code default (the Gumroad links) are outside
- * this list by design: undeclared, they still resolve to something that works.
+ * this list by design. They ARE declared in the Dockerfile — an override has to
+ * be able to reach the bundle — but their absence is survivable, so they belong
+ * to the parity check above rather than to this list, whose members resolve to
+ * nothing at all when undeclared.
+ *
+ * "Safe default" is a claim about the value, not just its presence: the Gumroad
+ * product URL sat here for months naming a storefront that did not exist, and
+ * every visitor who pressed Get Started reached a 404. The default is pinned by
+ * exact value in ``config.test.ts`` for that reason.
  */
 
 const DOCKERFILE = readFileSync(join(__dirname, '..', '..', 'Dockerfile'), 'utf8');
