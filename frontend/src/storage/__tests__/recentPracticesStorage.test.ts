@@ -9,6 +9,7 @@ import {
   type RecentPractice,
 } from '../recentPracticesStorage';
 import { _resetSerializedWriteForTests } from '../serializedWrite';
+import { setActiveUser } from '../userScope';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -27,6 +28,7 @@ function makePractice(id: number): RecentPractice {
 beforeEach(() => {
   jest.clearAllMocks();
   _resetSerializedWriteForTests();
+  setActiveUser(null);
 });
 
 describe('loadRecentPractices', () => {
@@ -149,5 +151,34 @@ describe('recordRecentPractice', () => {
 
     mockAsyncStorage.getItem.mockImplementation(() => Promise.resolve(null));
     mockAsyncStorage.setItem.mockImplementation(() => Promise.resolve());
+  });
+});
+
+/**
+ * BUG-FE-STATE-001: "recently begun" is the person's activity, not the
+ * device's, so a shared device must not offer one account the other's
+ * shortcuts.
+ */
+describe('the recent-practice list is namespaced per account', () => {
+  test('two accounts record to different keys', async () => {
+    setActiveUser(1);
+    await recordRecentPractice(makePractice(1));
+    const keyForUserOne = mockAsyncStorage.setItem.mock.calls[0]![0];
+
+    jest.clearAllMocks();
+    _resetSerializedWriteForTests();
+    setActiveUser(2);
+    await recordRecentPractice(makePractice(1));
+    const keyForUserTwo = mockAsyncStorage.setItem.mock.calls[0]![0];
+
+    expect(keyForUserOne).not.toBe(keyForUserTwo);
+  });
+
+  test('a signed-in account never reads the unscoped legacy list', async () => {
+    setActiveUser(1);
+
+    await loadRecentPractices();
+
+    expect(mockAsyncStorage.getItem).not.toHaveBeenCalledWith(STORAGE_KEY);
   });
 });

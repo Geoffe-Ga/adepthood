@@ -21,6 +21,7 @@ import {
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
+import { loadDeviceOwner, saveDeviceOwner, setActiveUser } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
@@ -224,6 +225,46 @@ async function wipeUserState(): Promise<void> {
 }
 
 /**
+ * BUG-FE-STATE-001, the half that was never armed: the device changing hands
+ * WITHOUT an explicit logout.
+ *
+ * ``wipeUserState`` was reachable only from ``tearDownSession``, so a user who
+ * signed in over a live session — through the password-reset flow, or any path
+ * that reaches the login screen with a cache still on disk — inherited the
+ * previous user's habits, unsent check-in queue, quarantine, BYOK key and
+ * scheduled notifications. Every sign-in funnels through
+ * ``applyAuthResponse``, and ``AuthResponse`` already carries ``user_id``, so
+ * this is where the identity check belongs.
+ *
+ * The wipe keys off *identity*, not merely "a login happened". A same-user
+ * re-authentication must keep that user's pending check-in queue: it is unsent
+ * work, and discarding it would lose check-ins the user believes they logged.
+ * The comparison is therefore deliberately one-sided — we wipe unless the
+ * stored stamp *positively* names the incoming user, so an unstamped device or
+ * a failed read errs toward the wipe rather than toward the leak.
+ *
+ * The wipe runs against the OUTGOING owner's namespace (hence the
+ * ``setActiveUser(previousOwner)`` before it), then the scope moves to the
+ * incoming user. Both happen before the caller touches React state, so the
+ * new session's first render cannot see the old session's rows.
+ */
+async function adoptDeviceOwner(userId: number): Promise<void> {
+  const previousOwner = await loadDeviceOwner();
+  if (previousOwner !== userId) {
+    setActiveUser(previousOwner);
+    await wipeUserState();
+  }
+  setActiveUser(userId);
+  try {
+    await saveDeviceOwner(userId);
+  } catch (err: unknown) {
+    // A stamp that failed to persist costs the next sign-in a redundant wipe,
+    // which is the safe direction to fail in.
+    console.warn('[auth] failed to record the device owner', err);
+  }
+}
+
+/**
  * Best-effort ``clearToken`` shared by every teardown path. Returns ``true``
  * when the delete succeeded and ``false`` when it rejected (warned inside), so
  * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
@@ -379,6 +420,9 @@ async function bootstrapStoredToken(mutators: AuthMutators): Promise<void> {
   }
   const stored = await loadToken();
   if (stored && !isTokenExpired(stored)) {
+    // A cold start resumes an existing session, so point the device-local
+    // caches at the account that owns them before anything reads one.
+    setActiveUser(await loadDeviceOwner());
     mutators.setToken(stored);
     mutators.setAuthStatus('authenticated');
     return;
@@ -426,6 +470,10 @@ interface AuthActions extends SocialLogins {
  * device storage knows nothing about.
  */
 async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
+  // BUG-FE-STATE-001: before anything else, and before any state the navigator
+  // renders from — a device whose owner just changed must not carry the
+  // previous owner's rows into this session.
+  await adoptDeviceOwner(response.user_id);
   await saveToken(response.token);
   // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
   // a clear failure here must not break login / signup / password-reset.
@@ -594,6 +642,11 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
     await armLogoutPending(where);
   }
   await wipeUserState();
+  // Release the scope only after the wipe, so the clears above target the
+  // departing user's namespace. The persisted device-owner stamp deliberately
+  // survives: it is what lets the NEXT sign-in still recognise a change of
+  // owner and re-run the wipe if any clear here failed.
+  setActiveUser(null);
   mutators.setToken(null);
   mutators.setUserTimezone('UTC');
   mutators.setAuthStatus('anonymous');
