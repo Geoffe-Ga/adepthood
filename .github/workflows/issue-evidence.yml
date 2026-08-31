@@ -69,9 +69,17 @@ jobs:
           if [ "${{ github.event.inputs.comment }}" = "false" ]; then
             COMMENT_FLAG=""
           fi
-          # $? is inspected explicitly: exit 1 means "a premise expired", which
-          # is the report doing its job, while exit 2 is a transport failure and
-          # must fail the run. `set -e` would conflate the two.
+          # Exit 1 means "a premise expired", which is the report doing its
+          # job, while exit 2 is a transport failure and must fail the run.
+          #
+          # `set +e` IS LOAD-BEARING, not tidiness. GitHub runs a `run:` block
+          # under `bash -e {0}`, and `set -uo pipefail` ADDS options rather than
+          # replacing them, so `-e` is still in force. Without `set +e` the
+          # shell dies on the pipeline itself and everything below it here is
+          # unreachable -- including the branch that downgrades an expired
+          # premise to a warning, which is why this workflow went red exactly
+          # when it succeeded at its job.
+          set +e
           PYTHON=python3 scripts/ralph/issue-evidence.sh \
             --label "$LABEL" $COMMENT_FLAG | tee "$RUNNER_TEMP/report.txt"
           status=${PIPESTATUS[0]}

@@ -15,11 +15,25 @@
 #     result reading "You've hit your weekly limit". Re-running that before the
 #     reset spends wall clock and achieves nothing.
 #
-# Nothing outside this script can tell them apart, because a turn-cap overrun is
-# INVISIBLE in the transcript: its result message carries `subtype: "success"`
-# and `is_error: false`, exactly as a clean run does. The only thing that
-# separates them is that the action's step failed. So this takes three inputs
-# rather than one.
+# HITTING THE CAP HAS TWO SHAPES, and they are not the same event:
+#
+#   * The ACTION's post-hoc check, the false red above. The conversation ends
+#     normally and the action then compares the count against `--max-turns`.
+#     That overrun is INVISIBLE in the transcript: its result message carries
+#     `subtype: "success"` and `is_error: false`, exactly as a clean run does.
+#     The only thing that separates them is that the action's step failed --
+#     which is why this takes three inputs rather than one.
+#   * The SDK's OWN enforcement, which action 20260823.283.1 also emits. The
+#     conversation is CUT OFF mid-turn and says so: `is_error: true`, `subtype:
+#     "error_max_turns"`, `terminal_reason: "max_turns"`, `stop_reason:
+#     "tool_use"`, `errors: ["Reached maximum number of turns (N)"]` -- and NO
+#     `result` key at all, so there are no last words for the string fallback
+#     below to read. The work was truncated and its summary was never written.
+#
+# They get OPPOSITE verdicts: the first is benign with nothing to re-run, the
+# second is lost work that needs the cap raised. Enforcement is inconsistent
+# inside one action version -- a captured run reached 47 turns and passed -- so
+# both shapes stay handled rather than one replacing the other.
 #
 # PASS `steps.<id>.outcome`, NEVER `steps.<id>.conclusion`. Under
 # `continue-on-error: true` a failed step's `outcome` stays `failure` while its
@@ -65,20 +79,21 @@
 # never a verdict, so a broken invocation can never be read as an answer about
 # the run. The tokens:
 #
-#   completed          the run did its work and the step agrees
-#   turn-cap-overrun   clean result, step failed, the conversation hit the cap
-#   usage-limit        the account allowance is exhausted; waiting is the fix
-#   auth-failure       the credential was rejected; rotating it is the fix
-#   agent-error        it failed, and the cause is not one of the known ones
-#   no-result          nothing to read; the run cannot be judged at all
-#   skipped            the action declined to run; nothing was attempted, and
-#                      nothing is wrong (see `--skip-permitted`)
+#   completed            the run did its work and the step agrees
+#   turn-cap-overrun     clean result, step failed, the conversation hit the cap
+#   turn-cap-truncated   the SDK cut the conversation off AT the cap, mid-work
+#   usage-limit          the account allowance is exhausted; waiting is the fix
+#   auth-failure         the credential was rejected; rotating it is the fix
+#   agent-error          it failed, and the cause is not one of the known ones
+#   no-result            nothing to read; the run cannot be judged at all
+#   skipped              the action declined to run; nothing was attempted, and
+#                        nothing is wrong (see `--skip-permitted`)
 #
 # A usage fault still writes `outcome=classifier-fault` and a headline to
 # $GITHUB_OUTPUT, because an unset output reads downstream as the empty string
 # and every `if:` comparing against it takes the "not that outcome" branch -- the
 # workflow then proceeds as though it had been told something. `classifier-fault`
-# is deliberately not one of the seven verdicts.
+# is deliberately not one of the eight verdicts.
 #
 # Usage:
 #   classify_claude_outcome.sh --execution-file <path> \
@@ -101,7 +116,7 @@ readonly EXIT_OK=0
 readonly EXIT_USAGE=2
 
 # The sentinel written to the step outputs when this script itself broke. Not a
-# verdict, and deliberately not one of the six tokens.
+# verdict, and deliberately not one of the eight tokens.
 readonly FAULT_OUTCOME="classifier-fault"
 
 # One line an operator reads in the run list. The ceiling is what stops a
@@ -119,6 +134,17 @@ readonly QUOTE_MAX_CHARS=1000
 readonly STATUS_USAGE_LIMIT=429
 readonly STATUS_UNAUTHORIZED=401
 readonly STATUS_FORBIDDEN=403
+
+# The three independent ways the SDK says it stopped the conversation AT the
+# cap. All three are read because none of them is contractual: an action upgrade
+# that renames one still leaves the other two, and the alternative to a
+# redundant read here is the failure this exists to fix -- a shape that names
+# its own cause three times over being filed as "no cause recognised".
+readonly SDK_CAP_SUBTYPE="error_max_turns"
+readonly SDK_CAP_TERMINAL_REASON="max_turns"
+# Matched case-insensitively against the joined `errors` array. Full sentence:
+# "Reached maximum number of turns (40)".
+readonly SDK_CAP_ERROR_PHRASE="reached maximum number of turns"
 
 # The only non-zero exit in this script. It is never a verdict: it says the
 # classifier itself broke, in the outputs as well as on stderr, so a downstream
@@ -263,12 +289,12 @@ if [[ "$jq_status" -ne 0 || -z "$result_json" || "$result_json" == "null" ]]; th
     "no result: the execution file is not a message array ending in a result, so the run left nothing to judge. Truncated, overwritten, or never finished -- read the raw file before believing anything about this run."
 fi
 
-# ONE jq call for all four fields, not one per field. Four calls are four
-# processes that can each fail on their own, and a swallowed failure there would
-# hand the logic below an empty `is_error` and an empty `num_turns` -- which
-# reads as "clean transcript, stopped short of the cap" and reports a rejected
-# credential as a generic agent error. So the extraction either succeeds
-# completely or is a tooling fault, and never half-succeeds into a verdict.
+# ONE jq call for all the fields, not one per field. N calls are N processes that
+# can each fail on their own, and a swallowed failure there would hand the logic
+# below an empty `is_error` and an empty `num_turns` -- which reads as "clean
+# transcript, stopped short of the cap" and reports a rejected credential as a
+# generic agent error. So the extraction either succeeds completely or is a
+# tooling fault, and never half-succeeds into a verdict.
 #
 # The fields are joined on ASCII US (0x1f) rather than a tab, because a TAB in
 # IFS is whitespace to `read`, and IFS whitespace collapses runs of delimiters:
@@ -276,23 +302,40 @@ fi
 # the turn count would arrive holding the model's prose. US is not whitespace,
 # so an empty field stays an empty field.
 #
-# The result string is flattened INSIDE jq: it is the only field a model writes,
-# it is the one that can carry newlines, tabs and a US of its own, and the line
-# format cannot survive any of them.
+# New fields are appended at the END so that adding one cannot shift the
+# position of any field already being read.
+#
+# EVERY field is flattened INSIDE jq, not just the two a model writes. A control
+# character in any of them truncates the line at the `<<<` below and silently
+# empties every field to its right, and an SDK that today emits an enum for
+# `subtype` is not contracted to keep doing so.
+#
+# `errors` is likewise read WITHOUT assuming its type. `map` iterates, so a
+# release that emits the single sentence as a bare string rather than a
+# one-element array would abort the whole extraction and take down the other six
+# fields with it -- turning a run this script can classify perfectly into a
+# `classifier-fault`. Both shapes reduce to the same joined text instead.
 readonly FIELD_SEPARATOR=$'\037'
 fields=""
 extract_status=0
-fields="$(printf '%s' "$result_json" | jq -r --arg sep "$FIELD_SEPARATOR" '[
+fields="$(printf '%s' "$result_json" | jq -r --arg sep "$FIELD_SEPARATOR" '
+  def flatten: if type == "array" then map(tostring) | join(" ") else tostring end
+    | gsub("[[:cntrl:]]"; " ");
+  [
     (.is_error == true | tostring),
     (if (.api_error_status | type) == "number" then (.api_error_status | tostring) else "" end),
     (if (.num_turns | type) == "number" then (.num_turns | tostring) else "" end),
-    ((.result // "") | gsub("[[:cntrl:]]"; " "))
+    ((.result // "") | flatten),
+    ((.subtype // "") | flatten),
+    ((.terminal_reason // "") | flatten),
+    ((.errors // []) | flatten)
   ] | join($sep)')" || extract_status=$?
 if [[ "$extract_status" -ne 0 ]]; then
   fault "the result message parsed but its fields could not be read (jq exited $extract_status)"
 fi
 
-IFS="$FIELD_SEPARATOR" read -r is_error api_status turns result_text <<< "$fields"
+IFS="$FIELD_SEPARATOR" read -r is_error api_status turns result_text subtype terminal_reason \
+  errors_text <<< "$fields"
 [[ "$turns" =~ ^[0-9]+$ ]] || turns="unknown"
 
 quote=""
@@ -312,12 +355,36 @@ fi
 # succeed until the reset.
 if [[ "$is_error" == "true" ]]; then
   lowered="$(printf '%s' "$result_text" | LC_ALL=C tr 'A-Z' 'a-z')"
+  # Only a RECOGNISED status names a cause here. An unrecognised one is handled
+  # below, after the structural cap read, because `*) cause="agent-error"` at
+  # this point would set a non-empty cause and skip everything that follows --
+  # so a truncated run that happened to carry, say, a 500 alongside its three
+  # cap fields would be filed as "no cause this classifier recognises", which is
+  # verbatim the headline this shape exists to stop producing.
   case "$api_status" in
     "$STATUS_USAGE_LIMIT") cause="usage-limit" ;;
     "$STATUS_UNAUTHORIZED"|"$STATUS_FORBIDDEN") cause="auth-failure" ;;
-    "") cause="" ;;
-    *) cause="agent-error" ;;
+    *) cause="" ;;
   esac
+  # The SDK's own cap enforcement, read from the structural fields BEFORE the
+  # prose fallback below -- which cannot reach it, because this shape carries no
+  # `result` key at all. It sits after the status checks on purpose: a 429 or a
+  # 401 names a cause that outranks how the conversation happened to end.
+  if [[ -z "$cause" ]]; then
+    lowered_errors="$(printf '%s' "$errors_text" | LC_ALL=C tr 'A-Z' 'a-z')"
+    if [[ "$subtype" == "$SDK_CAP_SUBTYPE" ||
+          "$terminal_reason" == "$SDK_CAP_TERMINAL_REASON" ||
+          "$lowered_errors" == *"$SDK_CAP_ERROR_PHRASE"* ]]; then
+      cause="turn-cap-truncated"
+    fi
+  fi
+  # An unrecognised status is still a status: the API answered with a code, and
+  # the prose below must not be consulted after it. Reading the model's last
+  # words at this point is how a 500 whose summary mentions a limit gets filed
+  # as a usage limit and advised to wait for a reset that will never help.
+  if [[ -z "$cause" && -n "$api_status" ]]; then
+    cause="agent-error"
+  fi
   # No status at all is normal for a transport-level failure, so the result
   # string is the fallback -- and only the fallback, because it is the one field
   # a model writes.
@@ -338,6 +405,10 @@ if [[ "$is_error" == "true" ]]; then
     auth-failure)
       verdict "auth-failure" \
         "auth failure$status_note: the credential was rejected and no work was attempted. Rotate the OAuth token secret -- unlike a usage limit this will never clear on its own.$said" \
+        "$quote" ;;
+    turn-cap-truncated)
+      verdict "turn-cap-truncated" \
+        "turn-cap truncated$status_note: the SDK cut the conversation off at the cap of $max_turns after $turns turn(s), while it was still working -- so no summary was written and the work is incomplete. Raise the cap or shorten the prompt, then re-run.$said" \
         "$quote" ;;
     *)
       verdict "agent-error" \

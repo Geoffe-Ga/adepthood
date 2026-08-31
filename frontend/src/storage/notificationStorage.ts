@@ -2,15 +2,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 import { getJsonArray } from './jsonStore';
+import { scopedKey } from './userScope';
 
 const KEY_PREFIX = '@adepthood/notifications';
 // expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
 // so this one cannot share the `@adepthood/...` prefix with AsyncStorage keys.
 const PUSH_TOKEN_KEY = 'adepthood_push_token';
-const ALL_HABIT_IDS_KEY = '@adepthood/notification_habit_ids';
+const ALL_HABIT_IDS_KEY_BASE = '@adepthood/notification_habit_ids';
 
+/**
+ * Scheduled-notification bookkeeping is per-account (habit ids only mean
+ * something inside one account), so both keys resolve through ``scopedKey``.
+ * BUG-FE-STATE-001: the incoming user on a device that changed hands reads
+ * their own namespace, never the previous owner's schedule.
+ */
 function keyFor(habitId: number): string {
-  return `${KEY_PREFIX}/${habitId}`;
+  return scopedKey(`${KEY_PREFIX}/${habitId}`);
+}
+
+/** This account's list of habits that currently have notifications scheduled. */
+function allHabitIdsKey(): string {
+  return scopedKey(ALL_HABIT_IDS_KEY_BASE);
 }
 
 export async function saveNotificationIds(habitId: number, ids: string[]): Promise<void> {
@@ -38,7 +50,7 @@ export async function clearAllNotificationData(): Promise<void> {
   for (const habitId of habitIds) {
     await AsyncStorage.removeItem(keyFor(habitId));
   }
-  await AsyncStorage.removeItem(ALL_HABIT_IDS_KEY);
+  await AsyncStorage.removeItem(allHabitIdsKey());
 }
 
 export async function loadAllNotificationMappings(): Promise<Record<number, string[]>> {
@@ -67,19 +79,19 @@ export async function loadPushToken(): Promise<string | null> {
 }
 
 async function loadTrackedHabitIds(): Promise<number[]> {
-  return (await getJsonArray<number>(ALL_HABIT_IDS_KEY)) ?? [];
+  return (await getJsonArray<number>(allHabitIdsKey())) ?? [];
 }
 
 async function trackHabitId(habitId: number): Promise<void> {
   const ids = await loadTrackedHabitIds();
   if (!ids.includes(habitId)) {
     ids.push(habitId);
-    await AsyncStorage.setItem(ALL_HABIT_IDS_KEY, JSON.stringify(ids));
+    await AsyncStorage.setItem(allHabitIdsKey(), JSON.stringify(ids));
   }
 }
 
 async function untrackHabitId(habitId: number): Promise<void> {
   const ids = await loadTrackedHabitIds();
   const filtered = ids.filter((id) => id !== habitId);
-  await AsyncStorage.setItem(ALL_HABIT_IDS_KEY, JSON.stringify(filtered));
+  await AsyncStorage.setItem(allHabitIdsKey(), JSON.stringify(filtered));
 }

@@ -107,6 +107,17 @@ describe('config', () => {
       expect(config.GUMROAD_HELP_URL).toMatch(/gumroad/i);
     });
 
+    it('defaults the product URL to the storefront that actually exists', () => {
+      // The prior assertions were /^https:\/\// and /gumroad/i, which a dead
+      // URL satisfies -- and one did: the default pointed at
+      // adepthood.gumroad.com, a 404, so the pre-auth CTA sent every visitor
+      // to a missing page. Pinning the exact value is the only assertion that
+      // fails when the storefront moves.
+      const config = loadConfig();
+
+      expect(config.GUMROAD_PRODUCT_URL).toBe('https://creekmasons.gumroad.com/l/aptitude');
+    });
+
     it('points the two defaults at different pages', () => {
       const config = loadConfig();
 

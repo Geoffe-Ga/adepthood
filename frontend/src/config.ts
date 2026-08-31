@@ -39,7 +39,7 @@ export const API_BASE_URL = resolveApiBaseUrl();
 // Both are public marketing pages with safe defaults, so — unlike
 // ``API_BASE_URL`` — a missing override is not a misconfiguration and must
 // never contribute to ``CONFIG_ERROR``.
-const DEFAULT_GUMROAD_PRODUCT_URL = 'https://adepthood.gumroad.com/l/aptitude';
+const DEFAULT_GUMROAD_PRODUCT_URL = 'https://creekmasons.gumroad.com/l/aptitude';
 const DEFAULT_GUMROAD_HELP_URL = 'https://help.gumroad.com/article/76-license-keys';
 
 /**

@@ -4,9 +4,9 @@ import asyncio
 import ipaddress
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Final
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -74,7 +74,7 @@ from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
 from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
-from services import email, journal_encryption
+from services import app_links, email, journal_encryption
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -348,6 +348,58 @@ def validate_journal_encryption_config() -> None:
     raise RuntimeError(msg)
 
 
+# The backends a production deploy may run, each mapped to the eager build that
+# proves its own variables are present. One mapping decides both halves of the
+# check -- what is accepted, and what is then built -- so a backend cannot be
+# admitted here and left unverified, or verified for variables nothing reads.
+# Declaration order is the order the refusal offers them, so ``resend`` --
+# HTTPS on 443, which the hosting platform routes -- is named before ``smtp``,
+# which that platform blocks below its Pro plan.
+_PRODUCTION_EMAIL_SENDER_BUILDERS: Final[dict[str, Callable[[], email.EmailSender]]] = {
+    email.BACKEND_RESEND: email.ResendEmailSender.from_env,
+    email.BACKEND_SMTP: email.SmtpEmailSender.from_env,
+}
+
+# What each accepted backend costs an operator beyond the switch itself. Read
+# out of the sender modules rather than restated, so a variable added to a
+# sender cannot leave the refusal handing over a remedy shorter than the sender
+# needs.
+_PRODUCTION_EMAIL_BACKEND_VARIABLES: Final[dict[str, tuple[str, ...]]] = {
+    email.BACKEND_RESEND: email.RESEND_ENV_VARS,
+    email.BACKEND_SMTP: email.SMTP_RELAY_ENV_VARS,
+}
+
+
+def _email_backend_remedy(backend: str) -> str:
+    """Render one accepted backend as the settings that would satisfy the check."""
+    variables = ", ".join(_PRODUCTION_EMAIL_BACKEND_VARIABLES[backend])
+    return f"{email.EMAIL_BACKEND_ENV_VAR}={backend} together with {variables}"
+
+
+def _unconfigured_email_backend_message(backend: str) -> str:
+    """Render the production refusal for a ``backend`` that only logs.
+
+    Every accepted backend is offered, in the order an operator on the hosting
+    platform should try them: ``resend`` reaches the provider over HTTPS on 443,
+    which Railway routes, while ``smtp`` needs a network that permits outbound
+    SMTP -- and Railway blocks it below the Pro plan, silently, so a relay
+    configured there stalls until its connect timeout and the endpoint answers
+    202 anyway.
+    """
+    remedies = " or ".join(
+        _email_backend_remedy(name) for name in _PRODUCTION_EMAIL_SENDER_BUILDERS
+    )
+    return (
+        f"{email.EMAIL_BACKEND_ENV_VAR} resolves to {backend!r} in production, so every "
+        "password-reset email is written to the application log instead of being "
+        "delivered while POST /auth/password-reset/request still answers 202: account "
+        f"recovery is broken and nothing in the running system says so. Set {remedies}. "
+        f"Prefer {email.BACKEND_RESEND} on a host that blocks outbound SMTP -- Railway "
+        f"does below its Pro plan, so {email.BACKEND_SMTP} there hangs on every send "
+        "rather than failing. backend/.env.example and DEPLOYMENT.md document them."
+    )
+
+
 def validate_email_config() -> None:
     """Refuse a production boot that would write password-reset mail to the log.
 
@@ -371,11 +423,20 @@ def validate_email_config() -> None:
     ``validate_journal_encryption_config``, so it takes that check's remedy and
     raises.
 
-    The gate is "not smtp" rather than "unset or console" because that is the set
-    the factory routes to the console adapter. ``configured_backend`` is the one
-    read and the one normalization, so a casing difference or a stray space
-    cannot certify a boot whose mail then goes to the log anyway; a name this app
-    does not implement is refused for the same reason.
+    The gate is "not a delivering backend" rather than "unset or console"
+    because that is the set the factory routes to the console adapter.
+    ``configured_backend`` is the one read and the one normalization, so a
+    casing difference or a stray space cannot certify a boot whose mail then
+    goes to the log anyway; a name this app does not implement is refused for
+    the same reason.
+
+    Two backends satisfy it, and which one an operator should reach for is not
+    a free choice. Railway blocks outbound SMTP below its Pro plan, so a
+    correctly configured relay there never connects: the send stalls for the
+    adapter's connect timeout and the endpoint answers 202 regardless, which is
+    this check's own failure mode with the variable set exactly as the runbook
+    said. The refusal therefore offers both names -- a remedy naming only
+    ``smtp`` would point a Railway operator at the transport that cannot work.
 
     Staging is deliberately left with development, as it is for journal
     encryption: taking a staging deploy down over an unset variable only teaches
@@ -385,36 +446,97 @@ def validate_email_config() -> None:
     backend name is a mode selector, not a credential, and echoing ``sendgrid``
     back turns a typo from a bisect into a one-line fix.
 
-    The relay itself is built eagerly, and only here. ``from_env`` otherwise
+    The chosen sender is built eagerly, and only here. ``from_env`` otherwise
     raises on the first user to ask for a reset, which is the same "first user
     pays" cost that calling ``_get_secret_key`` at boot exists to convert into
     "deploy never goes live". Outside production the lazy raise is kept on
-    purpose, so a developer pointing at a half-configured relay still gets a
+    purpose, so a developer pointing at a half-configured sender still gets a
     server and finds out when they send.
     """
     if os.getenv("ENV", "development") != "production":
         return
     backend = email.configured_backend()
-    if backend != email.BACKEND_SMTP:
-        msg = (
-            f"{email.EMAIL_BACKEND_ENV_VAR} resolves to {backend!r} in production, so every "
-            "password-reset email is written to the application log instead of being "
-            "delivered while POST /auth/password-reset/request still answers 202: account "
-            "recovery is broken and nothing in the running system says so. Set "
-            f"{email.EMAIL_BACKEND_ENV_VAR}={email.BACKEND_SMTP} together with "
-            f"{', '.join(email.SMTP_RELAY_ENV_VARS)}. backend/.env.example and DEPLOYMENT.md "
-            "document them."
-        )
-        raise RuntimeError(msg)
+    builder = _PRODUCTION_EMAIL_SENDER_BUILDERS.get(backend)
+    if builder is None:
+        raise RuntimeError(_unconfigured_email_backend_message(backend))
     # Built and discarded: the value is not needed here, only the failure it
-    # raises when the switch is set and the relay behind it is not. What this
+    # raises when the switch is set and the sender behind it is not. What this
     # accepts is that boot and the first request each read ``os.environ``
     # afresh, so the object certified here is a twin of the one
     # ``get_email_sender`` later caches rather than that object itself --
     # priming the module singleton instead would outlive
     # ``reset_email_sender_for_tests`` and leak one test's sender into the next,
     # and nothing rewrites a running deploy's environment between the two reads.
-    email.SmtpEmailSender.from_env()
+    builder()
+
+
+def _unusable_web_origin_message(origin: str) -> str:
+    """Render the production refusal for an origin no mailed link can be followed to.
+
+    Unset and set-but-unusable share one sentence because they are one outage:
+    the mail is delivered, the endpoint answers 202, and the recipient has no
+    link they can open. What separates them is only what the operator has to
+    type next, so the observed state is stated and the remedy is the same.
+
+    The value is echoed back the way the backend name is. An origin is a mode
+    selector, not a credential, and quoting ``'app.aptitude.guru'`` back turns a
+    bisect into a one-line fix.
+    """
+    observed = f"is set to {origin!r}" if origin else "is unset"
+    return (
+        f"{app_links.APP_BASE_URL_ENV_VAR} {observed}, which is not an origin an "
+        "emailed link can be followed to. Password-reset emails carry an https link to "
+        "the web app alongside the native deep link, and the web build is the only "
+        "client that ships -- so every delivered reset email would offer nothing the "
+        "recipient's browser resolves, while POST /auth/password-reset/request still "
+        f"answers 202. Set {app_links.APP_BASE_URL_ENV_VAR} to the full origin the web "
+        f"app is served from, starting {app_links.REQUIRED_WEB_BASE_URL_SCHEME} and with "
+        "no trailing path: a bare hostname is not a link a mail client renders, and "
+        "http:// would put the reset token on the wire in plaintext. "
+        "backend/.env.example and DEPLOYMENT.md document it."
+    )
+
+
+def validate_app_base_url_config() -> None:
+    """Refuse a production boot with nowhere followable for its emailed links to point.
+
+    The reset email carries an ``https://`` link built from ``APP_BASE_URL``
+    because the web build is the only client that ships: a body offering nothing
+    but the ``adepthood://`` custom scheme is a link every real recipient's
+    browser refuses. Unset in production, that is the console default's exact
+    shape one step further along -- the send succeeds, the endpoint answers 202,
+    and the user is still locked out with nothing in the running system saying
+    so -- which is why it takes the same remedy and raises rather than warns.
+
+    It runs after :func:`validate_email_config` on purpose. A deploy with
+    neither variable set has an email problem before it has a link problem, and
+    the first refusal an operator reads should be the first thing they need to
+    fix.
+
+    Configuration rather than the request is the whole point. ``Host`` and the
+    ``X-Forwarded-*`` pair are chosen by whoever sent the request, so an origin
+    derived from them would let an attacker who POSTs a reset for someone else's
+    address decide where that person's reset link -- token included -- lands.
+
+    Presence is not the bar -- ``app_links.is_usable_web_base_url`` is. A value
+    the platform's variable editor accepts can still be one no mail client
+    linkifies (a bare hostname, which is exactly the shape of ``PROD_DOMAIN``
+    sitting a few rows above it) or one that carries a live bearer token in
+    plaintext (``http://``). Both reproduce this refusal's own outage behind a
+    green boot, so both are refused here rather than delivered.
+
+    Outside production the value is optional: ``app_links.web_base_url`` falls
+    back to the Expo web dev server, so a developer reading the link out of the
+    console adapter's log still gets something a browser can open. The scheme
+    rule is therefore not applied there -- the dev fallback is ``http://`` on
+    localhost, where there is no wire to put a token on.
+    """
+    if os.getenv("ENV", "development") != "production":
+        return
+    origin = app_links.configured_web_base_url()
+    if app_links.is_usable_web_base_url(origin):
+        return
+    raise RuntimeError(_unusable_web_origin_message(origin))
 
 
 def validate_trusted_proxy_config() -> None:
@@ -679,6 +801,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # whose password-reset mail goes to the log answers 202 to every reset
     # request while nobody can recover an account, so it must never go live.
     validate_email_config()
+
+    # An emailed link nobody can open is the same silent shape as an email
+    # nobody sends, so the origin those links point at is refused on the same
+    # terms -- after the backend check, because a deploy missing both has an
+    # email problem before it has a link problem.
+    validate_app_base_url_config()
 
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --

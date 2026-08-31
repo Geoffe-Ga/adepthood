@@ -48,10 +48,21 @@ ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
 # And the Digital Sangha's Discord invite, for the third time the same reason.
 # This one has no default at all -- undeclared here, `resolveEnv` returns '',
 # the resolver refuses to render a door, and the web build ships with the
-# Sangha silently missing. The Gumroad URLs are absent from this list on
-# purpose: they carry safe defaults, so an undeclared ARG costs nothing.
+# Sangha silently missing.
 ARG EXPO_PUBLIC_SANGHA_INVITE_URL
 ENV EXPO_PUBLIC_SANGHA_INVITE_URL=$EXPO_PUBLIC_SANGHA_INVITE_URL
+
+# The Gumroad URLs were previously left undeclared on the grounds that their
+# defaults were safe. That held only while no storefront existed: the default
+# named an account subdomain nobody owned, so the pre-auth CTA opened a 404 and
+# no Railway variable could correct it, because a Docker build sees only the
+# variables this file names. The default is now the real storefront AND the
+# override is wired, so moving the store is a variable change plus a rebuild
+# rather than a code change.
+ARG EXPO_PUBLIC_GUMROAD_PRODUCT_URL
+ENV EXPO_PUBLIC_GUMROAD_PRODUCT_URL=$EXPO_PUBLIC_GUMROAD_PRODUCT_URL
+ARG EXPO_PUBLIC_GUMROAD_HELP_URL
+ENV EXPO_PUBLIC_GUMROAD_HELP_URL=$EXPO_PUBLIC_GUMROAD_HELP_URL
 
 RUN npx expo export --platform web
 

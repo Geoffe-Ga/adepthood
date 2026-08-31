@@ -20,7 +20,9 @@ from sqlmodel import col
 
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
+from services import botmason as botmason_service
 from services.botmason import LLMProviderError, LLMVisionUnsupportedError
+from tests.provider_transport import OPENAI_KEY, use_openai
 from tests.transcription_helpers import JPEG_BYTES as _JPEG_BYTES
 from tests.transcription_helpers import PNG_BYTES as _PNG_BYTES
 from tests.transcription_helpers import SENTINEL_TEXT as _SENTINEL_TEXT
@@ -355,3 +357,105 @@ async def test_no_log_record_leaks_base64_or_transcription_text(
         dict_blob = str(record.__dict__)
         assert encoded not in dict_blob
         assert _SENTINEL_TEXT not in dict_blob
+
+
+# --- A permanently exhausted balance is not a transient outage --------------
+
+_BYOK_HEADER = "X-LLM-API-Key"
+_BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+_PROVIDER_PROSE = (
+    "Error code: 429 - You exceeded your current quota, please check your plan and billing details."
+)
+
+
+def _credit_exhausted(provider: str = "openai") -> Exception:
+    """The refusal a spent account raises, as the provider layer classifies it."""
+    return botmason_service.LLMCreditExhaustedError(_PROVIDER_PROSE, provider=provider)
+
+
+@pytest.mark.asyncio
+async def test_transcribe_byok_credit_exhausted_is_402_and_refunds(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading a page hits the same provider; a spent caller key is a 402, not a 502."""
+    _patch_generate_response_raises(monkeypatch, _credit_exhausted())
+    headers = await _signup(async_client, "scan_byok")
+    before = await _wallet_snapshot(db_session, "scan_byok@example.com")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json=_payload(_JPEG_BYTES),
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_credit_exhausted"
+    after = await _wallet_snapshot(db_session, "scan_byok@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_transcribe_server_key_credit_exhausted_is_503_and_refunds(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spent server key on the vision path gets its own code and still refunds."""
+    _patch_generate_response_raises(monkeypatch, _credit_exhausted(provider="anthropic"))
+    headers = await _signup(async_client, "scan_server")
+    before = await _wallet_snapshot(db_session, "scan_server@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == "llm_service_credit_exhausted"
+    after = await _wallet_snapshot(db_session, "scan_server@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+# --- The whole chain, with nothing in the middle mocked ----------------------
+
+#: OpenAI's real answer for a spent quota, captured verbatim. Served at the HTTP
+#: transport so the SDK builds its own ``RateLimitError`` from it.
+_OPENAI_QUOTA_BODY = {
+    "error": {
+        "message": "You exceeded your current quota, please check your plan and billing details.",
+        "type": "insufficient_quota",
+        "param": None,
+        "code": "insufficient_quota",
+    }
+}
+_HTTP_TOO_MANY_REQUESTS = 429
+_SINGLE_ATTEMPT = 1
+
+
+@pytest.mark.asyncio
+async def test_a_real_provider_quota_refusal_reaches_the_caller_as_402(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One test with no seam mocked: provider body -> SDK -> classifier -> route.
+
+    Every other case in this file injects a ready-made
+    ``LLMCreditExhaustedError``, which proves the routing but assumes the
+    classification. Perturbing the classifier leaves all of them green, so on
+    their own they cannot tell a working carve-out from a deleted one. Here the
+    OpenAI SDK builds its own error from the captured body and the real
+    ``generate_response`` runs, so the whole chain is under assertion -- and the
+    request count proves the doomed call was not retried on the way.
+    """
+    stub = use_openai(monkeypatch, _HTTP_TOO_MANY_REQUESTS, _OPENAI_QUOTA_BODY)
+    headers = await _signup(async_client, "scan_real")
+    before = await _wallet_snapshot(db_session, "scan_real@example.com")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json=_payload(_JPEG_BYTES),
+        headers={**headers, _BYOK_HEADER: OPENAI_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_credit_exhausted"
+    assert stub.request_count == _SINGLE_ATTEMPT
+    after = await _wallet_snapshot(db_session, "scan_real@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
