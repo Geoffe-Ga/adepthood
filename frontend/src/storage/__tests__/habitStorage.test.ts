@@ -18,6 +18,7 @@ import {
   clearDroppedCheckIns,
 } from '../habitStorage';
 import { _resetSerializedWriteForTests } from '../serializedWrite';
+import { setActiveUser } from '../userScope';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -62,6 +63,7 @@ const sampleHabit: Habit = {
 beforeEach(() => {
   jest.clearAllMocks();
   _resetSerializedWriteForTests();
+  setActiveUser(null);
 });
 
 describe('habitStorage', () => {
@@ -449,5 +451,46 @@ describe('habitStorage', () => {
 
       expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(DROPPED_KEY);
     });
+  });
+});
+
+/**
+ * BUG-FE-STATE-001, defence in depth. The account-switch wipe in
+ * ``AuthContext`` is the guarantee; this is the backstop for the day a future
+ * sign-in path forgets to run it. Each account's rows live under their own
+ * key, so the incoming session reads its own namespace rather than the
+ * previous owner's.
+ */
+describe('habit caches are namespaced per account', () => {
+  test('two accounts write their habits to different keys', async () => {
+    setActiveUser(1);
+    await saveHabits([sampleHabit]);
+    const keyForUserOne = mockAsyncStorage.setItem.mock.calls[0]![0];
+
+    setActiveUser(2);
+    await saveHabits([sampleHabit]);
+    const keyForUserTwo = mockAsyncStorage.setItem.mock.calls[1]![0];
+
+    expect(keyForUserOne).not.toBe(keyForUserTwo);
+  });
+
+  test('a signed-in account never reads the unscoped legacy rows', async () => {
+    setActiveUser(1);
+
+    await loadHabits();
+
+    expect(mockAsyncStorage.getItem).not.toHaveBeenCalledWith('@adepthood/habits');
+  });
+
+  test('the pending queue and its quarantine are namespaced too', async () => {
+    setActiveUser(3);
+
+    await clearPendingCheckIns();
+    await clearDroppedCheckIns();
+
+    const removed = mockAsyncStorage.removeItem.mock.calls.map(([key]) => key);
+    expect(removed).not.toContain('@adepthood/pending_checkins');
+    expect(removed).not.toContain('@adepthood/dropped_checkins');
+    expect(removed).toHaveLength(2);
   });
 });
