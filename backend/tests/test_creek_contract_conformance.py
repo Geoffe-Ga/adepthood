@@ -62,6 +62,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -80,8 +81,12 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -268,6 +273,16 @@ def _read_json(relative: str) -> dict[str, object]:
     decoded = json.loads(_read_bytes(relative))
     assert isinstance(decoded, dict), relative
     return decoded
+
+
+def _only_related(payload: dict[str, object], field_name: str) -> dict[str, object]:
+    """Return the single compiled page one related collection of a reflection cell carries."""
+    published = payload[field_name]
+    assert isinstance(published, list), field_name
+    assert len(published) == 1, field_name
+    page = published[0]
+    assert isinstance(page, dict), field_name
+    return page
 
 
 def _sha256(data: bytes) -> str:
@@ -1093,6 +1108,42 @@ async def test_reflections_success_cell_projects_to_a_domain_reflection(
         ),
     )
     assert reflection.essay_grounded is False
+
+
+@pytest.mark.asyncio
+async def test_reflections_success_cell_projects_its_related_pages(
+    vault_clients: ClientFactory,
+) -> None:
+    """The compiled pages Creek publishes beside the notes read back as their own values.
+
+    Read off the ratified cell rather than a synthetic body, so the two
+    collections are pinned to bytes upstream signed: a renamed field or a
+    restated praxis vocabulary fails here rather than quietly surfacing nothing.
+    """
+    published = _read_json("examples/reflections/success.json")
+    praxis = _only_related(published, "related_praxis")
+    eddy = _only_related(published, "related_eddies")
+    recorder = _Recorder(reflect_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    reflection = await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+    assert reflection.related_praxis == (
+        VaultRelatedPraxis(
+            title=str(praxis["title"]),
+            praxis_type=VaultPraxisKind(str(praxis["praxis_type"])),
+            status=VaultPraxisStatus(str(praxis["status"])),
+            excerpt=str(praxis["excerpt"]),
+        ),
+    )
+    assert reflection.related_eddies == (
+        VaultRelatedEddy(
+            title=str(eddy["title"]),
+            description=str(eddy["description"]),
+            fragment_count=cast("int", eddy["fragment_count"]),
+            formed=str(eddy["formed"]),
+        ),
+    )
 
 
 @pytest.mark.asyncio

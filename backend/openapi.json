@@ -4959,6 +4959,62 @@
         "title": "RefusalResponse",
         "type": "object"
       },
+      "RelatedEddyResponse": {
+        "description": "One eddy — a cluster of the writer's own fragments — this entry belongs to.\n\nMirrors :class:`domain.creek_vault.VaultRelatedEddy`. ``description`` may be\nthe empty string for a cluster that declares none, ``fragment_count`` is how\nmany fragments it gathers, and ``formed`` is the ``YYYY-MM-DD`` the vault\nfirst detected it.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "formed": {
+            "title": "Formed",
+            "type": "string"
+          },
+          "fragment_count": {
+            "title": "Fragment Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "fragment_count",
+          "formed"
+        ],
+        "title": "RelatedEddyResponse",
+        "type": "object"
+      },
+      "RelatedPraxisResponse": {
+        "description": "One praxis page from the writer's own vault that this entry contributed to.\n\nMirrors :class:`domain.creek_vault.VaultRelatedPraxis`. It is the writer's\nown compiled page — a title, which of the five kinds it is, where it sits in\nits lifecycle, and the page's own opening prose — never a model summary and\nnever anything adepthood derived. Present only when a connected vault\nsurfaced it on this pass.",
+        "properties": {
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "praxis_type": {
+            "$ref": "#/components/schemas/VaultPraxisKind"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VaultPraxisStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "praxis_type",
+          "status",
+          "excerpt"
+        ],
+        "title": "RelatedPraxisResponse",
+        "type": "object"
+      },
       "ReleaseHabitsRequest": {
         "description": "A request to release (or re-commit) a batch of the caller's habits.\n\n``habit_ids`` names the habits to act on; it must hold between one and\n:data:`MAX_RELEASE_BATCH` ids. An id the caller does not own, that does not\nexist, or that is not eligible for the action is silently skipped, so an\nunowned id and a nonexistent id are indistinguishable in the response.",
         "properties": {
@@ -5076,7 +5132,7 @@
         "type": "object"
       },
       "ResonanceResponse": {
-        "description": "Result of a resonance pass: the new notes plus refreshed wallet balances.\n\n``suggestions`` carries any completion suggestions detected on the same pass\n(additive, best-effort — empty when none are found or detection failed).\n\n``care`` is ``None`` for an ordinary entry (no behavior change); on an acute\n-distress signal it carries the human + professional support surface, which\naccompanies — never replaces — the reflection (NORTH-STAR §10). It is derived\nonly from the entry being processed, so it can never leak across users.\n\n``private`` is ``True`` only for an ``intimate`` entry (issue #895): such an\nentry is never sent to a cloud LLM, so no marginalia/suggestions are produced\nand ``private_message`` carries the non-shaming explanation. Both fields are\ndefaulted, so every existing (public/personal) response is byte-for-byte\nunchanged.\n\n``contraction`` is ``None`` for a healthy or new user; on a sustained thinning\nof the habit foundation it carries a warm, declinable reflection. It is\ncomputed locally (no LLM) and has zero side effects on progression, and — like\n``care`` / ``private`` — is defaulted so every existing response is unchanged.\n\n``no_notes_message`` is the sentence the writer reads when the pass produced\nno margin notes at all — set whenever ``marginalia`` is empty on a pass that\nactually ran, and ``None`` otherwise (including for the ``private`` path,\nwhich carries its own copy). It is the server's own wording rather than a\nflag the client interprets, because only the server knows *which* of the\nseveral ways to arrive at zero notes actually happened, and a client\ninventing a second explanation would be guessing at a cause it cannot see.",
+        "description": "Result of a resonance pass: the new notes plus refreshed wallet balances.\n\n``suggestions`` carries any completion suggestions detected on the same pass\n(additive, best-effort — empty when none are found or detection failed).\n\n``care`` is ``None`` for an ordinary entry (no behavior change); on an acute\n-distress signal it carries the human + professional support surface, which\naccompanies — never replaces — the reflection (NORTH-STAR §10). It is derived\nonly from the entry being processed, so it can never leak across users.\n\n``private`` is ``True`` only for an ``intimate`` entry (issue #895): such an\nentry is never sent to a cloud LLM, so no marginalia/suggestions are produced\nand ``private_message`` carries the non-shaming explanation. Both fields are\ndefaulted, so every existing (public/personal) response is byte-for-byte\nunchanged.\n\n``contraction`` is ``None`` for a healthy or new user; on a sustained thinning\nof the habit foundation it carries a warm, declinable reflection. It is\ncomputed locally (no LLM) and has zero side effects on progression, and — like\n``care`` / ``private`` — is defaulted so every existing response is unchanged.\n\n``no_notes_message`` is the sentence the writer reads when the pass produced\nno margin notes at all — set whenever ``marginalia`` is empty on a pass that\nactually ran, and ``None`` otherwise (including for the ``private`` path,\nwhich carries its own copy). It is the server's own wording rather than a\nflag the client interprets, because only the server knows *which* of the\nseveral ways to arrive at zero notes actually happened, and a client\ninventing a second explanation would be guessing at a cause it cannot see.\n\n``related_praxis`` and ``related_eddies`` are the writer's own compiled vault\npages this entry touched — surfaced only when a connected vault answered the\nreflection, and empty on every other path (no vault, a vault that degraded or\ndeferred to the cloud, the private/intimate floor, the care short-circuit).\nEmpty rather than absent, so a client never has to tell \"this server does not\nsend them\" apart from \"this pass surfaced none\". Both are bounded at the\nseam that reads them, so the margin stays a note rather than a dashboard.",
         "properties": {
           "care": {
             "anyOf": [
@@ -5136,6 +5192,22 @@
               }
             ],
             "title": "Private Message"
+          },
+          "related_eddies": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelatedEddyResponse"
+            },
+            "title": "Related Eddies",
+            "type": "array"
+          },
+          "related_praxis": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelatedPraxisResponse"
+            },
+            "title": "Related Praxis",
+            "type": "array"
           },
           "remaining_balance": {
             "title": "Remaining Balance",
@@ -6855,6 +6927,29 @@
         ],
         "title": "VaultDisposition",
         "type": "object"
+      },
+      "VaultPraxisKind": {
+        "description": "The five kinds a praxis page may be, spelled Creek's way.\n\nCreek's vocabulary rather than one adepthood invented, for the reason\n:class:`VaultReflectionStatus` is: these are wire strings a payload is\nmatched against, and a member spelled our way would never match anything a\nvault sent. Unlike a margin note's kind there is no projection onto an\nadepthood word, because adepthood has no praxis vocabulary of its own to\nproject onto -- a praxis page is the writer's own, named by their vault.",
+        "enum": [
+          "commitment",
+          "framework",
+          "habit",
+          "insight",
+          "practice"
+        ],
+        "title": "VaultPraxisKind",
+        "type": "string"
+      },
+      "VaultPraxisStatus": {
+        "description": "Where a praxis page sits in its lifecycle, spelled Creek's way.\n\nA closed set for the same reason :class:`VaultPraxisKind` is: a status\noutside it describes a lifecycle this app cannot render, and rendering a\nreleased practice as an active one would tell the writer they are still\nkeeping a promise they deliberately let go.",
+        "enum": [
+          "active",
+          "integrated",
+          "proposed",
+          "released"
+        ],
+        "title": "VaultPraxisStatus",
+        "type": "string"
       },
       "VaultUploadStatus": {
         "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"uploads do not\nwork between these two versions yet\", and ``DEGRADED`` is \"it broke, try\nagain\". Values are the wire strings the API answers with, so they are\ncontract and must not be reworded casually.\n\n``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is\nbehind. Either side can be: a vault too old to take files, or a vault\noffering an upload route this client recognises but cannot yet speak. What\nthe user needs from the status is the same in both -- that no retry helps --\nand splitting it would add a fourth wire value every consumer of this enum\nwould have to learn before it could render anything at all.",
