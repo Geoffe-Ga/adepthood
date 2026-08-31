@@ -121,6 +121,28 @@ webhook), set `GUMROAD_API_TOKEN`, `GUMROAD_WEBHOOK_SECRET`,
 `backend/.env.example` for what each does and the [Gumroad API docs](https://gumroad.com/api)
 for how to obtain a seller token.
 
+## 🔒 Security scanning
+
+Three DAST checks run against a *running* instance, all of them documented in
+`backend/scripts/dast/README.md`:
+
+| Check | When | Verdict |
+| --- | --- | --- |
+| Authorization matrix (`dast-authz.yml`) | every pull request touching `backend/` | blocks |
+| Contract fuzz (`dast-contract.yml`) | every pull request touching `backend/` | blocks |
+| Deep API scan, OWASP ZAP (`dast-deep.yml`) | nightly at 04:00 UTC, and on demand | advisory |
+
+The nightly ZAP scan boots an ephemeral instance against Postgres, imports its
+live `/openapi.json`, and attacks every published operation. Findings land in
+this repository's **Security tab** as code-scanning alerts, with the raw report
+kept for 30 days as the `dast-deep-report` build artifact. It never blocks a
+branch — but a *harness* failure opens a tracking issue, because that is the
+state in which a clean result would mean nothing was scanned. Three things count
+as one: the instance not starting, ZAP writing no report, and the scan being
+answered `401` everywhere — a scanner that never got past the front door reaches
+no handler, finds nothing, and is otherwise indistinguishable from a clean run.
+Run it locally with the recipe in `backend/scripts/dast/README.md`.
+
 ## 📖 Program Background
 
 APTITUDE is a 36-week **developmental** journey based on Ken Wilber's _Integral Theory_,

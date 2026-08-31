@@ -48,6 +48,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.workflow_text import jobs, without_comment_lines
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 
@@ -57,11 +59,6 @@ _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 # documented to be re-enabled -- by uncommenting. Matching the commented form
 # would make this guard demand reporting from workflows that never run.
 _ACTIVE_SCHEDULE = re.compile(r"^  schedule:\s*$", re.MULTILINE)
-
-# A job header inside `jobs:`: two spaces, a name, a colon, nothing after it.
-_JOB_HEADER = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
-_JOBS_KEY = re.compile(r"^jobs:\s*$")
-_TOP_LEVEL_KEY = re.compile(r"^\S")
 
 _CLAUDE_ACTION = "anthropics/claude-code-action"
 _REPORT_FAILURE_CALL = "./.github/workflows/_report-failure.yml"
@@ -83,47 +80,20 @@ _STEP_SUMMARY_WRITE = re.compile(
 def _code(workflow: Path) -> str:
     """Return the workflow with whole-line comments dropped.
 
-    YAML and the shell inside a ``run:`` block both comment with ``#``, so one
-    filter serves both. Reading code rather than raw text keeps a rationale that
-    quotes a forbidden shape from tripping the guard that forbids it -- and
-    keeps a paused cron, which lives entirely in comments, from counting.
+    Reading code rather than raw text keeps a rationale that quotes a forbidden
+    shape from tripping the guard that forbids it -- and keeps a paused cron,
+    which lives entirely in comments, from counting.
     """
-    return "\n".join(
-        line
-        for line in workflow.read_text(encoding="utf-8").splitlines()
-        if not line.lstrip().startswith("#")
-    )
+    return without_comment_lines(workflow.read_text(encoding="utf-8"))
 
 
 def _jobs(workflow: Path) -> dict[str, str]:
-    """Return each job's body, keyed by job id.
+    """Return each job's body, keyed by job id, with its comments already gone.
 
     ``if: failure()`` and the reporter call have to sit in the *same* job to
     mean anything, and a whole-file substring search cannot tell.
     """
-    jobs: dict[str, str] = {}
-    name: str | None = None
-    body: list[str] = []
-    inside = False
-    for line in _code(workflow).splitlines():
-        if _JOBS_KEY.match(line):
-            inside = True
-            continue
-        if not inside:
-            continue
-        if _TOP_LEVEL_KEY.match(line):
-            break
-        header = _JOB_HEADER.match(line)
-        if header is None:
-            body.append(line)
-            continue
-        if name is not None:
-            jobs[name] = "\n".join(body)
-        name = header.group(1)
-        body = []
-    if name is not None:
-        jobs[name] = "\n".join(body)
-    return jobs
+    return jobs(_code(workflow))
 
 
 def _actively_scheduled(workflows: Path) -> list[Path]:
