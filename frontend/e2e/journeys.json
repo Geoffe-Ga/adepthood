@@ -12,6 +12,22 @@
     "coveredBy": "frontend/e2e/auth.e2e.test.ts"
   },
   {
+    "id": "auth.password-recovery-request-to-reset",
+    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, opens the link in the email that arrives, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. Uncovered because the seam runs through an email: the plaintext token exists nowhere but the rendered body, and this lane talks to the server over HTTP, so it cannot reach the process-local RecordingEmailSender the backend suites override the dependency with, while the console adapter deliberately redacts the token to its first eight characters before it reaches any log the lane could read. Exposing the body to the lane is a design decision rather than a spec, which is why it is filed. This is the gap the outage came through: reset mail went to a production log for one reason and carried an adepthood:// link no browser could follow for another, and the endpoint answered 202 through both while every backend suite stayed green.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ForgotPasswordScreen.tsx",
+      "client": ["auth"],
+      "routes": [
+        "POST /auth/password-reset/request",
+        "POST /auth/password-reset/confirm",
+        "POST /auth/password-reset/cancel"
+      ],
+      "tables": ["user", "passwordresettoken"]
+    },
+    "status": "uncovered",
+    "issue": 2536
+  },
+  {
     "id": "welcome.first-run-walkthrough-to-journal",
     "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {

@@ -26,6 +26,21 @@ request a reset is not the one who discovers the gap. A variable that is present
 but unusable -- a port that is not a number, or a number no socket can be opened
 on -- belongs to that same promise, and has to arrive as the same kind of
 sentence rather than as whatever the conversion happened to throw.
+
+The accepted set is wider than ``smtp`` alone, and the widening is the delicate
+part. The deployment platform blocks outbound SMTP, so a relay configured there
+hangs for its connect timeout and the endpoint answers 202 regardless -- the
+original outage with the variable correctly set. An HTTPS backend is therefore
+also a production-viable choice, which means this check must accept it while
+refusing everything it still does not implement. Both directions are asserted,
+because a check widened by deleting the comparison would pass the first half.
+
+The web base URL belongs to the same boot. A delivered email whose only link
+uses a custom scheme is unopenable in the browser that is the only shipping
+platform, so the origin those links point at is production configuration on the
+same footing as the backend switch -- and it must come from configuration rather
+than from a request header, or an attacker who chooses the Host chooses where
+the reset link lands.
 """
 
 from __future__ import annotations
@@ -42,8 +57,9 @@ from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from conftest import test_engine
-from main import app, lifespan, validate_email_config
-from services import email, journal_encryption
+from main import app, lifespan, validate_app_base_url_config, validate_email_config
+from services import app_links, email, journal_encryption
+from tests.helpers.resend_env import RESEND_ENV_VALUES
 from tests.helpers.smtp_env import SMTP_ENV_VALUES
 
 ENV_VAR = "ENV"
@@ -92,9 +108,41 @@ CONSOLE_BACKEND_VALUES = ["console", "Console", " CONSOLE "]
 # boot rather than be refused on a casing difference.
 SMTP_BACKEND_VALUES = ["smtp", "SMTP", " Smtp "]
 
+# The mirror image again, for the HTTPS backend: the platform blocks outbound
+# SMTP, so this is the selector a production deploy actually ships with, and the
+# same normalization has to reach it.
+HTTPS_BACKEND_VALUES = ["resend", "RESEND", " Resend "]
+
 # A plausible operator error -- a real provider that is not a backend this app
 # implements. It must be named back to them rather than absorbed as "not smtp".
 UNRECOGNIZED_BACKEND = "sendgrid"
+
+# The origin the browser-followable reset links are built from. It is
+# deployment configuration for the same reason the backend switch is: nothing in
+# a running app can derive where its own web front end lives, and the one thing
+# that claims to -- the request's Host header -- is attacker-supplied.
+WEB_BASE_URL_ENV_VAR = "APP_BASE_URL"
+WEB_BASE_URL = "https://app.aptitude.guru"
+
+# Values a platform variable editor accepts and no emailed link can be followed
+# to. The bare hostname is the realistic one rather than the contrived one:
+# ``PROD_DOMAIN``, the CORS setting a few rows away in that same editor, is
+# exactly this shape, so it is the likeliest paste in the building -- and it
+# renders a string no mail client linkifies, which is this bug reproduced
+# through the check written to prevent it. ``http://`` is refused separately
+# because the link is a bearer token with a thirty-minute life.
+UNFOLLOWABLE_WEB_BASE_URLS = [
+    "",
+    "   ",
+    "app.aptitude.guru",
+    "http://app.aptitude.guru",
+    "javascript:alert(1)",
+]
+
+# The variables the HTTPS delivery path adds, which the same two documents owe
+# an operator following the same refusals. Literals rather than module
+# attributes so this list is readable before the code exists.
+HTTPS_DELIVERY_ENV_VARS = ["RESEND_API_KEY", WEB_BASE_URL_ENV_VAR]
 
 # Environments where logging the reset link is the point, not a leak.
 NON_PRODUCTION_ENVS = [None, "development", "staging"]
@@ -124,6 +172,13 @@ def _set_smtp_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Configure a complete relay so the smtp path reaches its own subject."""
     for name, value in SMTP_ENV_VALUES.items():
         monkeypatch.setenv(name, value)
+
+
+def _set_https_delivery_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure a complete HTTPS provider and a web origin for the links."""
+    for name, value in RESEND_ENV_VALUES.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, WEB_BASE_URL)
 
 
 @pytest.fixture
@@ -464,3 +519,266 @@ def test_one_function_is_the_only_reader_of_the_backend_variable() -> None:
         f"value through {READER_FUNCTION}() so one normalization decides both the "
         f"startup refusal and the sender the factory builds."
     )
+
+
+@pytest.mark.parametrize("backend", HTTPS_BACKEND_VALUES)
+def test_production_with_the_https_backend_boots_silently(
+    backend: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The backend a real deploy ships with has to be a backend this check accepts.
+
+    The platform blocks outbound SMTP below its paid tier, so ``smtp`` on the
+    deployed service hangs for its connect timeout and the endpoint answers 202
+    anyway -- the original outage with the variable correctly set. An HTTPS
+    sender is the production-viable choice, and a check that still admits only
+    ``smtp`` makes shipping it impossible. The casing variants ride along for
+    the reason they do for ``smtp``: the set this accepts and the set the
+    factory builds have to be one set.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, backend)
+    _set_https_delivery_env(monkeypatch)
+    caplog.set_level(logging.WARNING, logger=MAIN_LOGGER)
+
+    validate_email_config()
+
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("missing", sorted(RESEND_ENV_VALUES))
+def test_production_with_the_https_backend_and_a_missing_variable_refuses_to_boot(
+    missing: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The eager build is a promise about every backend, not only the relay.
+
+    ``EMAIL_BACKEND=resend`` with no credential defers the failure to whoever
+    first asks for a reset, and that request answers 202 on the way down. The
+    smtp path already pays this cost at boot; a second backend that did not
+    would reintroduce the deferred failure through the door that was just
+    opened for it.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_RESEND)
+    _set_https_delivery_env(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+
+    with pytest.raises(RuntimeError, match=missing):
+        validate_email_config()
+
+
+def test_the_refusal_offers_both_backends_and_names_the_routable_one_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A remedy naming one of two working answers sends operators at the broken one.
+
+    This is the direction a widening silently loses. The refusal's whole value
+    is the sentence it hands over, and on this deployment the ``smtp`` it
+    names is the choice that cannot work -- following it produces a green deploy
+    that hangs on every send. Both accepted names have to appear, which is also
+    what keeps the message honest about what the app implements.
+
+    Order is part of the remedy, not presentation. An operator under a broken
+    recovery flow tries the first thing offered, and the message's own docstring
+    promises them "in the order an operator on the hosting platform should try
+    them" -- a promise that is kept by a dict literal's declaration order and is
+    therefore one careless reorder away from sending them at the transport the
+    platform blocks.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, UNRECOGNIZED_BACKEND)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        validate_email_config()
+
+    message = str(excinfo.value)
+    assert email.BACKEND_RESEND in message
+    assert email.BACKEND_SMTP in message
+    assert message.index(email.BACKEND_RESEND) < message.index(email.BACKEND_SMTP), (
+        f"the refusal must offer {email.BACKEND_RESEND} before {email.BACKEND_SMTP}: "
+        "the platform blocks outbound SMTP, so an operator who follows the first "
+        "remedy offered would deploy the transport that cannot connect."
+    )
+
+
+@pytest.mark.parametrize("backend", [*ABSENT_BACKEND_VALUES, *CONSOLE_BACKEND_VALUES])
+def test_production_still_refuses_a_backend_that_only_logs(
+    backend: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening the accepted set must not be implemented by deleting the comparison.
+
+    The cheapest way to make an HTTPS backend pass this check is to soften the
+    refusal into a warning, and every symptom of that is invisible: the deploy
+    goes green, the endpoint answers 202, and the reset links accumulate in the
+    log exactly as before. Pinning the refusal alongside the widening is what
+    stops the fix from restoring the bug.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    _set_env(monkeypatch, email.EMAIL_BACKEND_ENV_VAR, backend)
+    _set_https_delivery_env(monkeypatch)
+
+    with pytest.raises(RuntimeError, match=email.EMAIL_BACKEND_ENV_VAR):
+        validate_email_config()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
+async def test_boot_completes_under_a_production_https_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven through the real ``lifespan``: the shipping configuration must start.
+
+    The refusal tests all prove what stops a deploy. This one proves the
+    configuration the deploy is being moved to is not itself refused somewhere
+    further along the startup path -- which is the failure a widening made in
+    only one of two places produces, and the one that would be discovered on the
+    platform rather than here.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_RESEND)
+    _set_https_delivery_env(monkeypatch)
+    monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
+    monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+
+    async with _isolated_factory_patch(), lifespan(app):
+        assert email.configured_backend() == email.BACKEND_RESEND
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
+async def test_boot_refuses_a_production_deploy_with_no_web_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delivered email whose links nobody can open is delivery that does not recover.
+
+    Web is the only platform shipping, so an unset origin means every reset
+    email carries only a custom-scheme link and every recipient is still locked
+    out -- delivery succeeds, the endpoint answers 202, and nothing reports a
+    failure. That is the same silent shape as the console default, so it takes
+    the same remedy. The delivery backend is fully configured here on purpose:
+    the refusal can then only have come from the missing origin.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_RESEND)
+    _set_https_delivery_env(monkeypatch)
+    monkeypatch.delenv(WEB_BASE_URL_ENV_VAR, raising=False)
+    monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
+    monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+
+    with pytest.raises(RuntimeError, match=WEB_BASE_URL_ENV_VAR):
+        async with _isolated_factory_patch(), lifespan(app):
+            pytest.fail("startup completed with no origin for the reset links")
+
+
+@pytest.mark.parametrize("document", REMEDY_DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("env_var", HTTPS_DELIVERY_ENV_VARS)
+def test_the_remedy_documents_name_the_https_delivery_variables(
+    env_var: str, document: Path
+) -> None:
+    """The widened refusal points at the same two files, so both owe the new answer.
+
+    An operator handed a backend name they cannot find in either document has
+    been given a name, not a remedy -- and the variables behind it are exactly
+    the ones the second refusal will stop them on.
+    """
+    assert env_var in document.read_text(encoding="utf-8"), (
+        f"{document} must document {env_var}: the production refusal points "
+        f"operators here for the configuration it is asking them to supply."
+    )
+
+
+def test_the_deployment_guide_records_that_the_platform_blocks_outbound_smtp() -> None:
+    """The documented recipe walked this deployment straight into the outage.
+
+    DEPLOYMENT.md presents an SMTP relay as the production-viable choice and
+    names a relay host to point it at. On this platform that configuration
+    cannot connect at all, so an operator following the guide gets a green
+    deploy, a hung send, and a 202 -- and no way to tell from anything written
+    down that the transport was never going to work. One sentence saying so is
+    the difference between a five-minute fix and rediscovering this bug.
+    """
+    text = DEPLOYMENT_DOC.read_text(encoding="utf-8").lower()
+    blocked = [line for line in text.splitlines() if "outbound" in line and "smtp" in line]
+
+    assert blocked, (
+        f"{DEPLOYMENT_DOC.name} must state that the platform blocks outbound SMTP: "
+        "its current recipe reads as a working production setup and is not one."
+    )
+
+
+@pytest.mark.parametrize("origin", UNFOLLOWABLE_WEB_BASE_URLS)
+def test_production_with_an_unfollowable_web_origin_refuses_to_boot(
+    origin: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Presence is not usability, and a check that confuses them ships this bug.
+
+    A validator that accepted any non-empty string would certify
+    ``APP_BASE_URL=app.aptitude.guru`` -- a value the platform's editor takes
+    happily, and the exact shape of the CORS variable a few rows above it. The
+    link it renders is a string no mail client linkifies and no browser
+    resolves: mail delivered, endpoint 202, user still locked out. That is the
+    outage this refusal exists for, arriving with a green boot.
+
+    ``http://`` is refused on its own terms. The link carries a bearer token
+    with a thirty-minute life, and plaintext puts it on the wire.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, origin)
+
+    with pytest.raises(RuntimeError, match=WEB_BASE_URL_ENV_VAR):
+        validate_app_base_url_config()
+
+
+def test_production_accepts_the_origin_the_deployment_will_actually_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusals above are worthless if the shipping value is refused too.
+
+    A scheme rule written one character wrong rejects everything, and every
+    refusal test still passes -- the failure would surface on the platform, as a
+    boot loop across the whole API rather than a password-reset bug.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, WEB_BASE_URL)
+
+    validate_app_base_url_config()
+
+
+@pytest.mark.parametrize("env_value", NON_PRODUCTION_ENVS)
+def test_a_developer_machine_is_not_held_to_the_origin_rule(
+    env_value: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rule is about what a stranger's mail client can open, which dev has none of.
+
+    Outside production the origin falls back to the Expo dev server over plain
+    ``http``, and a developer reading the link out of the console log is the
+    intended path. A scheme rule applied here would refuse every local boot.
+    """
+    _set_env(monkeypatch, ENV_VAR, env_value)
+    monkeypatch.delenv(WEB_BASE_URL_ENV_VAR, raising=False)
+
+    validate_app_base_url_config()
+
+
+def test_the_configured_origin_is_read_without_its_trailing_slashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pinned on its own, because the link tests would go red for other reasons.
+
+    ``https://host//reset-password`` is a different path from
+    ``https://host/reset-password``, and the servers that redirect between them
+    drop the query string on the way -- which lands on the user as a dead link
+    and on the operator as nothing at all. Asserting it here rather than only
+    through a rendered email body means a regression in the stripping is
+    attributable to the stripping.
+    """
+    monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, f"{WEB_BASE_URL}//")
+
+    assert app_links.configured_web_base_url() == WEB_BASE_URL
