@@ -70,15 +70,22 @@ jobs:
       - name: Compare the vendored bundle against what Creek publishes today
         working-directory: backend
         # The exit code carries three distinct answers and the run list shows
-        # one colour, so the summary is where the distinction has to survive.
-        # $? is inspected explicitly rather than left to `set -e`: exit 1 means
-        # the vendored bundle no longer describes what Creek serves, exit 2
-        # means the comparison could not be made at all, and collapsing them
-        # would turn "we could not look" into "we looked and it drifted". Both
-        # still fail the job -- exit 2 is not the softer outcome, it is the one
-        # that has proven nothing.
+        # one colour, so the summary is where the distinction has to survive:
+        # exit 1 means the vendored bundle no longer describes what Creek
+        # serves, exit 2 means the comparison could not be made at all, and
+        # collapsing them would turn "we could not look" into "we looked and it
+        # drifted". Both still fail the job -- exit 2 is not the softer outcome,
+        # it is the one that has proven nothing.
+        #
+        # `set +e` IS LOAD-BEARING, not tidiness. GitHub runs a `run:` block
+        # under `bash -e {0}`, and `set -uo pipefail` ADDS options rather than
+        # replacing them, so `-e` is still in force. Without `set +e` the shell
+        # dies on the pipeline itself and the capture, the whole `case` and the
+        # summary write below it are unreachable -- the step still goes red,
+        # which is exactly why that was invisible.
         run: |
           set -uo pipefail
+          set +e
           report="$RUNNER_TEMP/creek-drift.txt"
           python -m scripts.creek_contract_drift compare 2>&1 | tee "$report"
           status=${PIPESTATUS[0]}

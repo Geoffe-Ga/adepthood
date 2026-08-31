@@ -31,9 +31,13 @@ from models.stage_content import StageContent
 from observability import remove_app_log_handlers_for_tests
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
-from services import email, journal_encryption
+from services import app_links, email, journal_encryption
 from services.content_repository import reset_content_repository_for_tests
 from tests.helpers.smtp_env import SMTP_ENV_VALUES
+
+# Origin the production boot requires for the links inside a reset email.
+# Any https origin satisfies it; the value only has to be present.
+WEB_BASE_URL = "https://app.aptitude.guru"
 
 #: Total preset rows the practice seeder inserts — sourced from
 #: ``PRESET_PRACTICES`` so adding a catalog preset doesn't silently drift
@@ -64,18 +68,20 @@ def production_journal_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, N
 
 
 @pytest.fixture
-def production_email_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Satisfy the production email-backend precondition for a boot test.
+def production_email_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Satisfy every production password-recovery precondition for a boot test.
 
     A production boot that would route password-reset mail to the application
-    log now refuses, so a test about some *other* production startup rule has to
-    name a real relay to reach its own subject. Applied even where validator
-    ordering would spare the test, so it asserts the rule it is named for rather
-    than the order the checks happen to run in.
+    log refuses, and so does one with no origin for the links inside that mail,
+    so a test about some *other* production startup rule has to configure both
+    to reach its own subject. Applied even where validator ordering would spare
+    the test, so it asserts the rule it is named for rather than the order the
+    checks happen to run in.
     """
     monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_SMTP)
     for name, value in SMTP_ENV_VALUES.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv(app_links.APP_BASE_URL_ENV_VAR, WEB_BASE_URL)
 
 
 def _expected_content_count() -> int:
@@ -381,7 +387,7 @@ async def test_seed_complete_logs_carry_seeder_name_and_count(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("production_journal_key", "production_email_backend")
+@pytest.mark.usefixtures("production_journal_key", "production_email_config")
 async def test_lifespan_completes_in_production_without_gumroad_config(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -405,7 +411,7 @@ async def test_lifespan_completes_in_production_without_gumroad_config(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("production_journal_key", "production_email_backend")
+@pytest.mark.usefixtures("production_journal_key", "production_email_config")
 async def test_lifespan_still_fails_fast_on_partial_gumroad_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

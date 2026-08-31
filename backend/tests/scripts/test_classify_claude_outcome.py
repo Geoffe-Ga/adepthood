@@ -13,10 +13,28 @@ The second is a real red. One turn, nothing done, ``is_error`` true, HTTP 429,
 and a result reading "You've hit your weekly limit". Retrying that before the
 reset spends wall clock and achieves nothing.
 
-THE FACT THAT MAKES THIS HARD: a turn-cap overrun is not detectable from the
-transcript. Its result message carries ``subtype: "success"`` and ``is_error:
-false`` -- the same shape a perfectly clean run produces. The only thing that
-separates them is that the action's *step* failed. So the classifier takes three
+THE FACT THAT MAKES THIS HARD: hitting the turn cap has TWO transcript shapes,
+they mean opposite things, and only one of them is visible in the file.
+
+* The ACTION's post-hoc check. The conversation ends normally and the action
+  then compares the turn count against ``--max-turns`` and exits non-zero. Its
+  result message carries ``subtype: "success"`` and ``is_error: false`` -- the
+  same shape a perfectly clean run produces -- so nothing in the transcript
+  separates it from a clean run, and the only thing that does is that the
+  action's *step* failed. The work landed and its summary was written. Benign.
+* The SDK's OWN cap enforcement, which action 20260823.283.1 also emits. The
+  conversation is CUT OFF mid-turn: ``is_error: true``, ``subtype:
+  "error_max_turns"``, ``terminal_reason: "max_turns"``, ``stop_reason:
+  "tool_use"``, ``errors: ["Reached maximum number of turns (N)"]`` -- and no
+  ``result`` key at all, so there are no last words to fall back on. The work
+  was truncated and its summary was never written. NOT benign.
+
+The two need opposite verdicts and opposite operator advice: nothing to re-run
+against raise the cap and re-run. Enforcement is inconsistent within one action
+version -- a captured run reached 47 turns against a cap of 40 and passed -- so
+both shapes stay covered here rather than one replacing the other.
+
+Because the first shape is invisible in the file, the classifier takes three
 inputs rather than one, and the cases below exercise all three. Two of them
 below feed the identical transcript in with opposite step outcomes and demand
 opposite tokens; that pair is the specification.
@@ -37,9 +55,12 @@ answer about the run.
 
 Fixtures under ``tests/fixtures/claude_runs/`` named ``synthesized-*`` were
 hand-built to the documented shape; the rest were extracted verbatim from real
-Actions runs. No captured auth failure and no captured truncated transcript
-survive inside the 90-day log window, which is why those two are reconstructions
-and are labelled in their filenames as such.
+Actions runs. No captured auth failure survives inside the 90-day log window,
+which is why that one is a reconstruction and is labelled in its filename as
+such. ``turn-cap-truncated-41-turns.json`` is the SDK-enforcement shape, lifted
+byte-for-byte from the result message of run 33304651747 -- a reconstruction
+would have been guesswork about which fields the SDK emits, and the whole defect
+it pins is that the classifier reads fields that shape does not carry.
 
 Every case runs the real script in a subprocess. The unit under test is a shell
 script and has no in-process seam.
@@ -64,6 +85,7 @@ _RUNS = Path(__file__).resolve().parents[1] / "fixtures" / "claude_runs"
 
 COMPLETED = "completed"
 TURN_CAP_OVERRUN = "turn-cap-overrun"
+TURN_CAP_TRUNCATED = "turn-cap-truncated"
 USAGE_LIMIT = "usage-limit"
 AUTH_FAILURE = "auth-failure"
 AGENT_ERROR = "agent-error"
@@ -76,6 +98,7 @@ SKIPPED = "skipped"
 TOKENS = (
     COMPLETED,
     TURN_CAP_OVERRUN,
+    TURN_CAP_TRUNCATED,
     USAGE_LIMIT,
     AUTH_FAILURE,
     AGENT_ERROR,
@@ -86,7 +109,9 @@ TOKENS = (
 # The same exit code the other repo-owned gate scripts use for a usage fault.
 EXIT_USAGE = 2
 
-# The cap the grooming workflow actually passes to the action today.
+# The cap every fixture here was captured against. Deliberately NOT read from
+# the workflow: these files are historical records, and raising the live cap
+# must not silently re-interpret a run that happened under the old one.
 LIVE_MAX_TURNS = 40
 
 # A headline is one line an operator reads in the run list. This ceiling exists
@@ -101,14 +126,15 @@ MISSING_TRANSCRIPT = None
 
 TURN_CAP_44 = "turn-cap-overrun-44-turns.json"
 TURN_CAP_41 = "turn-cap-overrun-41-turns.json"
+TURN_CAP_TRUNCATED_RUN = "turn-cap-truncated-41-turns.json"
 USAGE_LIMIT_RUN = "usage-limit-weekly.json"
 AUTH_FAILURE_RUN = "synthesized-auth-failure-401.json"
 NO_RESULT_RUN = "synthesized-no-result-message.json"
 
 
-# (fixture, step outcome, cap, expected token). Between them these seven rows
-# reach all six tokens; `test_every_token_is_reachable_from_a_fixture` holds
-# that true as rows are edited.
+# (fixture, step outcome, cap, expected token). Between them these rows reach
+# every token; `test_every_token_is_reachable_from_a_fixture` holds that true as
+# rows are edited.
 @dataclass(frozen=True)
 class Scenario:
     """One (input, expected verdict) row of the table below.
@@ -137,6 +163,7 @@ SCENARIOS = [
     Scenario(TURN_CAP_44, "failure", LIVE_MAX_TURNS, "false", TURN_CAP_OVERRUN),
     Scenario(TURN_CAP_41, "failure", LIVE_MAX_TURNS, "false", TURN_CAP_OVERRUN),
     Scenario(TURN_CAP_41, "failure", 60, "false", AGENT_ERROR),
+    Scenario(TURN_CAP_TRUNCATED_RUN, "failure", LIVE_MAX_TURNS, "false", TURN_CAP_TRUNCATED),
     Scenario(USAGE_LIMIT_RUN, "failure", LIVE_MAX_TURNS, "false", USAGE_LIMIT),
     Scenario(AUTH_FAILURE_RUN, "failure", LIVE_MAX_TURNS, "false", AUTH_FAILURE),
     Scenario(NO_RESULT_RUN, "failure", LIVE_MAX_TURNS, "false", NO_RESULT),
@@ -307,6 +334,246 @@ def test_a_clean_result_below_the_cap_fails_closed_as_an_agent_error(tmp_path: P
     an error rather than to the comfortable answer.
     """
     assert _token(tmp_path, TURN_CAP_41, max_turns=60) == AGENT_ERROR
+
+
+# --- The SDK's own cap enforcement, which is a different event entirely -----
+#
+# The action's post-hoc check above says "you used more turns than allowed,
+# after finishing". The SDK's says "I stopped you mid-turn". Same cap, opposite
+# consequence, and the transcript is the only place that says which happened.
+
+
+def test_the_sdk_cap_shape_is_not_filed_as_an_unexplained_agent_error(tmp_path: Path) -> None:
+    """The captured verdict this whole change exists to replace.
+
+    Run 33304651747 was cut off at turn 41 of a 40-turn cap and reported as
+    "the run reported an error with no cause this classifier recognises" -- a
+    headline that names no mode, suggests no action, and is indistinguishable
+    from a crashed tool call. The cause is knowable and is stated three times
+    over in the message; nothing was reading it.
+    """
+    assert _token(tmp_path, TURN_CAP_TRUNCATED_RUN) == TURN_CAP_TRUNCATED
+
+
+def test_the_two_cap_shapes_are_given_opposite_verdicts(tmp_path: Path) -> None:
+    """Same cap, same turn count, same failed step -- and opposite advice.
+
+    Both fixtures ran 41 turns against a cap of 40. One finished its work and
+    was failed afterwards for the count; the other was cut off before it could
+    write anything. Collapsing them would either tell an operator to ignore a
+    night of lost grooming, or send them hunting for a failure that did not
+    happen.
+    """
+    assert (
+        _result_message(TURN_CAP_41)["num_turns"]
+        == _result_message(TURN_CAP_TRUNCATED_RUN)["num_turns"]
+    ), "the fixtures no longer share a turn count, so this proves nothing"
+
+    assert _token(tmp_path, TURN_CAP_41) != _token(tmp_path, TURN_CAP_TRUNCATED_RUN)
+
+
+def test_the_truncated_shape_is_an_error_and_so_is_never_completed(tmp_path: Path) -> None:
+    """``is_error`` outranks a green step here as everywhere else.
+
+    Cap enforcement is inconsistent inside one action version -- a captured run
+    reached 47 turns and the step passed -- so a truncated transcript beside a
+    successful step is a real pairing, not a hypothetical, and the transcript is
+    the half of it that is telling the truth.
+    """
+    assert _token(tmp_path, TURN_CAP_TRUNCATED_RUN, step_outcome="success") != COMPLETED
+
+
+def test_the_truncated_shape_carries_no_result_string_to_fall_back_on() -> None:
+    """States the fact that makes the string fallback useless here.
+
+    Every other error fixture ends with the model saying something, and the
+    classifier's cause fallback greps that sentence. This message has no
+    ``result`` key at all, so a fallback keyed on prose cannot reach any verdict
+    but the default one -- which is exactly how this shape became an
+    "agent error". The structural fields have to be read.
+    """
+    message = _result_message(TURN_CAP_TRUNCATED_RUN)
+
+    assert "result" not in message
+    assert message["is_error"] is True
+    assert message["subtype"] == "error_max_turns"
+    assert message["terminal_reason"] == "max_turns"
+    assert message["errors"] == ["Reached maximum number of turns (40)"]
+
+
+def test_the_truncated_headline_says_the_work_was_cut_off_not_that_it_landed(
+    tmp_path: Path,
+) -> None:
+    """The one sentence an operator reads must not invite them to ignore it.
+
+    "Benign" and "nothing to re-run" are the right words for the other cap
+    shape and the wrong words for this one; a headline that reuses them turns a
+    lost night of grooming into a run nobody looks at again.
+    """
+    result = _classify(tmp_path, _RUNS / TURN_CAP_TRUNCATED_RUN, step_outcome="failure")
+    headline = _output_value(result.output, "headline").lower()
+
+    assert "benign" not in headline
+    assert "nothing to re-run" not in headline
+    assert "truncated" in headline or "cut off" in headline
+
+
+# --- Each of the three cap fields, on its own ------------------------------
+#
+# The captured fixture carries all three, so any ONE of them satisfies it and a
+# classifier reading only `subtype` would pass the case above unchanged. The
+# whole point of reading three fields is that no single one is contractual, and
+# a redundancy nothing exercises is a redundancy that is not there.
+
+# The names the SDK gives the shape, as the classifier spells them. Kept here
+# rather than imported because a shell script has no importable surface: if the
+# script's constants are edited and these are not, the cases below go red, which
+# is the intended alarm.
+SDK_CAP_SUBTYPE = "error_max_turns"
+SDK_CAP_TERMINAL_REASON = "max_turns"
+SDK_CAP_SENTENCE = "Reached maximum number of turns (40)"
+
+# A status the classifier has no named meaning for. Real: an upstream 5xx can
+# accompany any transcript, including a truncated one.
+UNRECOGNISED_STATUS = 500
+
+_CAP_FIELD_ALONE = [
+    pytest.param({"subtype": SDK_CAP_SUBTYPE}, id="subtype-only"),
+    pytest.param({"terminal_reason": SDK_CAP_TERMINAL_REASON}, id="terminal-reason-only"),
+    pytest.param({"errors": [SDK_CAP_SENTENCE]}, id="errors-sentence-only"),
+]
+
+
+def _forge_truncated(tmp_path: Path, name: str, **overrides: object) -> Path:
+    """Write the captured truncated message with the cap fields replaced wholesale.
+
+    All three cap fields are dropped first, so a case that puts one back is
+    testing that one and nothing else.
+    """
+    result = {
+        key: value
+        for key, value in _result_message(TURN_CAP_TRUNCATED_RUN).items()
+        if key not in {"subtype", "terminal_reason", "errors"}
+    }
+    result.update(overrides)
+    path = tmp_path / name
+    path.write_text(json.dumps([result], indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("field", _CAP_FIELD_ALONE)
+def test_each_cap_field_names_the_shape_without_help_from_the_other_two(
+    tmp_path: Path, field: dict[str, object]
+) -> None:
+    """An action release that renames one field must leave the other two working.
+
+    That is the stated reason for reading three, and it is only true if each one
+    reaches the verdict alone.
+    """
+    forged = _forge_truncated(tmp_path, "one-cap-field.json", **field)
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == TURN_CAP_TRUNCATED
+
+
+def test_stripping_every_cap_field_leaves_nothing_to_recognise(tmp_path: Path) -> None:
+    """The other half: the cases above pass because of the field, not in spite of it.
+
+    With all three gone the same message has no statement of its own cause left,
+    and must fall back to the generic error rather than reaching this verdict by
+    some other route.
+    """
+    forged = _forge_truncated(tmp_path, "no-cap-fields.json")
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == AGENT_ERROR
+
+
+def test_an_unrecognised_status_does_not_hide_a_truncation(tmp_path: Path) -> None:
+    """A 500 beside the cap fields must not restore the headline being removed.
+
+    Setting a cause for every non-empty status -- rather than only for the ones
+    that name a meaning -- pre-empts the structural read and files a run that
+    states its cause three times over as "no cause this classifier recognises".
+    """
+    forged = _forge_truncated(
+        tmp_path,
+        "truncated-with-a-500.json",
+        subtype=SDK_CAP_SUBTYPE,
+        terminal_reason=SDK_CAP_TERMINAL_REASON,
+        errors=[SDK_CAP_SENTENCE],
+        api_error_status=UNRECOGNISED_STATUS,
+    )
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == TURN_CAP_TRUNCATED
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        pytest.param(429, USAGE_LIMIT, id="usage-limit-outranks"),
+        pytest.param(401, AUTH_FAILURE, id="auth-failure-outranks"),
+    ],
+)
+def test_a_named_status_still_outranks_the_cap_fields(
+    tmp_path: Path, status: int, expected: str
+) -> None:
+    """The ordering the fix must not have inverted.
+
+    A rejected credential or an exhausted allowance is what an operator has to
+    act on; that the conversation then ran out of turns is a consequence, not
+    the cause, and naming the consequence sends them to fix the wrong thing.
+    """
+    forged = _forge_truncated(
+        tmp_path,
+        "truncated-with-a-named-status.json",
+        subtype=SDK_CAP_SUBTYPE,
+        terminal_reason=SDK_CAP_TERMINAL_REASON,
+        errors=[SDK_CAP_SENTENCE],
+        api_error_status=status,
+    )
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == expected
+
+
+def test_an_unrecognised_status_is_not_second_guessed_from_the_model_s_prose(
+    tmp_path: Path,
+) -> None:
+    """The prose fallback is for a run with NO status, and must stay that way.
+
+    A 500 whose summary happens to mention a limit is not a usage limit, and
+    advising a wait for a reset that will never come is worse than saying
+    plainly that the cause is unrecognised.
+    """
+    forged = _forge_truncated(
+        tmp_path,
+        "unrecognised-status-with-limit-prose.json",
+        api_error_status=UNRECOGNISED_STATUS,
+        result="You've hit your weekly limit",
+    )
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == AGENT_ERROR
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [
+        pytest.param([SDK_CAP_SENTENCE], id="array-of-one"),
+        pytest.param(SDK_CAP_SENTENCE, id="bare-string"),
+        pytest.param([SDK_CAP_SENTENCE, "and something else"], id="array-of-several"),
+    ],
+)
+def test_the_errors_field_is_read_whatever_shape_the_sdk_gives_it(
+    tmp_path: Path, errors: object
+) -> None:
+    """A retyped field must not take down the extraction it is only one seventh of.
+
+    ``errors`` is read inside the single jq call that produces every field, so
+    an iteration that aborts on a bare string aborts all seven and turns a run
+    this script classifies perfectly into a classifier fault. The array shape is
+    what was captured; nothing contracts the SDK to keep it.
+    """
+    forged = _forge_truncated(tmp_path, "errors-of-some-shape.json", errors=errors)
+
+    assert _classify(tmp_path, forged, step_outcome="failure").token == TURN_CAP_TRUNCATED
 
 
 def test_an_errored_result_is_classified_before_the_turn_cap_is_consulted(
@@ -500,6 +767,7 @@ def test_every_outcome_writes_one_headline_to_both_places(
     ("fixture", "step_outcome", "max_turns", "must_mention"),
     [
         (TURN_CAP_44, "failure", LIVE_MAX_TURNS, ("turn", "44", "40")),
+        (TURN_CAP_TRUNCATED_RUN, "failure", LIVE_MAX_TURNS, ("turn", "41", "40")),
         (USAGE_LIMIT_RUN, "failure", LIVE_MAX_TURNS, ("usage", "limit")),
         (AUTH_FAILURE_RUN, "failure", LIVE_MAX_TURNS, ("auth",)),
     ],
