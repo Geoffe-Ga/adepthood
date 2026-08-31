@@ -69,23 +69,18 @@ from scripts.creek_contract_drift import (
     upstream_url,
     verify_local,
 )
+from tests.creek_bundle_facts import (
+    BUNDLE_NAME,
+    CREEK_MANIFEST_ENTRIES,
+    ONTOLOGY_VERSION,
+    PINNED_COMMIT,
+    PINNED_CONTRACT_VERSION,
+    VENDORED_FILES,
+)
 
 MANIFEST_NAME = "manifest.json"
 README_NAME = "README.md"
 VENDOR_NAME = "vendor.json"
-
-BUNDLE_NAME = "adepthood-v1"
-CONTRACT_VERSION = "0.8.0"
-ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
-
-# The upstream commit the vendored bundle was fetched at. It is the whole point
-# of the sidecar: a branch name would let the "pinned" copy move underneath us.
-PINNED_COMMIT = "349a56d6fd36ed18971c53f6d2c3d527b047074c"  # pragma: allowlist secret
-
-# 54 generated files are listed inside Creek's manifest; the manifest and the
-# hand-written README are the two it cannot cover, and our sidecar covers all 56.
-CREEK_MANIFEST_ENTRIES = 54
-VENDORED_FILES = 56
 
 # Two example paths whose drift must name two different capabilities in the
 # rendered report, so "a capability is named" cannot pass by naming a constant.
@@ -250,7 +245,7 @@ def _manifest_bytes(files: Sequence[Mapping[str, object]]) -> bytes:
     """Serialise an upstream-shaped manifest carrying ``files``."""
     payload = {
         "bundle": BUNDLE_NAME,
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": PINNED_CONTRACT_VERSION,
         "files": list(files),
         "ontology_version": ONTOLOGY_VERSION,
     }
@@ -569,7 +564,7 @@ def test_parse_manifest_reads_creeks_published_manifest() -> None:
     """The vendored manifest parses into its entries and its two version strings."""
     manifest = parse_manifest(_vendored_bytes(MANIFEST_NAME))
 
-    assert manifest.contract_version == CONTRACT_VERSION
+    assert manifest.contract_version == PINNED_CONTRACT_VERSION
     assert manifest.ontology_version == ONTOLOGY_VERSION
     assert manifest.source_commit is None
     assert len(manifest.files) == CREEK_MANIFEST_ENTRIES
@@ -661,7 +656,7 @@ def test_load_vendor_manifest_records_the_pinned_source_commit() -> None:
     manifest = load_vendor_manifest(BUNDLE_ROOT)
 
     assert manifest.source_commit == PINNED_COMMIT
-    assert manifest.contract_version == CONTRACT_VERSION
+    assert manifest.contract_version == PINNED_CONTRACT_VERSION
     assert manifest.ontology_version == ONTOLOGY_VERSION
     assert len(manifest.files) == VENDORED_FILES
 

@@ -73,10 +73,14 @@ Trust these over any issue body, in this order:
 
 1. **`backend/tests/fixtures/creek_v1/`** — Creek's published `/v1` contract,
    vendored byte-for-byte and digest-verified. `CapabilitiesResponse.schema.json`
-   publishes a **closed** four-name capability enum (`capabilities`,
-   `journal-upsert`, `reflections`, `wheel`) under `additionalProperties: false`,
-   identical across every supported minor. Several response schemas are likewise
-   `additionalProperties: false`. **Never edit this directory.**
+   publishes a **closed** seven-name capability enum (`capabilities`,
+   `journal-upsert`, `reflections`, `wheel`, `upload`, `drive-connector`,
+   `pipeline`) under `additionalProperties: false`. The enum is closed but not
+   frozen, and it is **no longer minor-independent**: it held four names through
+   0.7, gained `upload` at 0.8.0, `drive-connector` at 0.9.0 and `pipeline` at
+   0.10.0, and what a vault advertises is keyed on the caller's declared minor.
+   Read the vendored schema rather than this sentence. Several response schemas
+   are likewise `additionalProperties: false`. **Never edit this directory.**
 2. **`docs/adr/`** — especially ADR 0004: HTTP/JSON is the sole application
    boundary, adepthood's MCP client is retired, and Decision 6 governs intimate
    transit (amended 2026-08-08 for uploads).
