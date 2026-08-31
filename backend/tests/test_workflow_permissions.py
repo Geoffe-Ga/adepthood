@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.workflow_text import jobs
+
 _WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 
 # `uses: ./.github/workflows/<file>` -- a call to a reusable workflow in this
@@ -46,12 +48,6 @@ _JOB_PERMISSIONS = re.compile(r"^    permissions:\s*\n((?:[ \t]{5,}.*\n|\n)*)", 
 # that annotated its scopes: the block parsed to {} and "grants less than it
 # asks" became unreachable, which reads exactly like a passing check.
 _SCOPE = re.compile(r"^\s+([a-z-]+):\s*([a-z-]+)\s*(?:#.*)?$")
-
-# Structure of a workflow file, read as text: `jobs:` at column zero, then one
-# header per job two spaces in, until the next top-level key.
-_JOBS_KEY = re.compile(r"^jobs:\s*$")
-_JOB_HEADER = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
-_TOP_LEVEL_KEY = re.compile(r"^\S")
 
 # Ranked weakest to strongest: holding `write` satisfies a callee asking `read`,
 # but not the reverse, and `none` satisfies nothing.
@@ -81,30 +77,13 @@ def _jobs(workflow: Path) -> dict[str, str]:
 
     A permissions block only grants anything to the job it sits in, so the file
     has to be split before either half of the relationship is looked for.
+
+    Comments are deliberately left in, unlike every other caller of the shared
+    reader: a commented-out scope is not a grant, and a job whose permissions
+    block is entirely commented out must read as granting nothing rather than as
+    absent.
     """
-    jobs: dict[str, str] = {}
-    name: str | None = None
-    body: list[str] = []
-    inside = False
-    for line in workflow.read_text().splitlines():
-        if _JOBS_KEY.match(line):
-            inside = True
-            continue
-        if not inside:
-            continue
-        if _TOP_LEVEL_KEY.match(line):
-            break
-        header = _JOB_HEADER.match(line)
-        if header is None:
-            body.append(line)
-            continue
-        if name is not None:
-            jobs[name] = "\n".join(body)
-        name = header.group(1)
-        body = []
-    if name is not None:
-        jobs[name] = "\n".join(body)
-    return jobs
+    return jobs(workflow.read_text())
 
 
 def _effective_permissions(caller: Path, callee: Path) -> list[dict[str, str]]:
