@@ -229,7 +229,7 @@ In the frontend service's **Variables** tab, add:
 | Variable | Value | Notes |
 |----------|-------|-------|
 | `EXPO_PUBLIC_API_BASE_URL` | `https://your-backend.up.railway.app` | The backend service URL |
-| `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://adepthood.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
+| `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://creekmasons.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows no Sangha door |
