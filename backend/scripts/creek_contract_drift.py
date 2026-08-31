@@ -72,10 +72,12 @@ UPSTREAM_PATH = "docs/contracts/adepthood-v1"
 UPSTREAM_REF = "main"
 _RAW_CONTENT_HOST = "https://raw.githubusercontent.com"
 
-# Bounds on untrusted upstream input. Both are ten-times headroom over the
-# published bundle (47 files, largest ~11 KiB), which is wide enough that a
-# clean fetch never trips them and narrow enough that a hostile or broken
-# upstream cannot decide how much memory this gate spends.
+# Bounds on untrusted upstream input. Both keep a wide margin over the published
+# bundle -- 79 files, largest ~19 KiB at the pinned commit -- which is wide
+# enough that a clean fetch never trips them and narrow enough that a hostile or
+# broken upstream cannot decide how much memory this gate spends. The bundle has
+# grown twice in three weeks, so treat those two figures as a reading rather than
+# a ceiling, and re-check them against a fresh count when re-vendoring.
 MAX_BUNDLE_FILES = 512
 MAX_FILE_BYTES = 1024 * 1024
 
@@ -85,7 +87,7 @@ FETCH_TIMEOUT_SECONDS = 30.0
 
 # Creek's manifest covers neither itself nor the hand-written README, so those
 # two are the only files a comparison has to fetch by name; the manifest's own
-# entries cover the other 45.
+# entries cover every other vendored file.
 _DIRECTLY_FETCHED = (MANIFEST_NAME, README_NAME)
 
 # ``examples/<capability>/<state>.json`` is the only path shape that names a
@@ -465,7 +467,7 @@ def load_vendor_manifest(root: Path = BUNDLE_ROOT) -> BundleManifest:
         root: The vendored bundle directory.
 
     Returns:
-        The parsed sidecar, covering all 47 vendored files.
+        The parsed sidecar, covering every vendored file.
 
     Raises:
         ManifestError: When the sidecar is unreadable as a manifest. This one is
@@ -483,8 +485,9 @@ def load_upstream_manifest(root: Path = BUNDLE_ROOT) -> BundleManifest:
         root: The vendored bundle directory.
 
     Returns:
-        The parsed manifest, covering the 45 generated files it records -- it
-        covers neither itself nor the hand-written README.
+        The parsed manifest, covering the generated files it records -- it
+        covers neither itself nor the hand-written README, which is why it is
+        two entries short of the sidecar.
 
     Raises:
         ManifestError: When the vendored manifest is unreadable as a manifest.
@@ -691,7 +694,7 @@ def _observed_upstream(
 
     Returns:
         A digest per observed path: the two directly fetched files hashed from
-        their own bytes, plus the 45 digests the manifest records for everything
+        their own bytes, plus every digest the manifest records for everything
         else. Creek's manifest covers neither itself nor the README, which is
         exactly why those two have to be fetched and hashed here.
     """
@@ -709,11 +712,12 @@ def compare_upstream(root: Path = BUNDLE_ROOT, *, fetch: Fetcher) -> DriftReport
             whole comparison can be exercised over in-memory bodies.
 
     Returns:
-        A report over all 47 vendored files. When the upstream manifest itself
+        A report over every vendored file. When the upstream manifest itself
         cannot be obtained or parsed, the comparison is abandoned rather than
         run against a partial picture: the report then says nothing was compared
         instead of reporting the manifest's own mismatch as if it were the
-        finding, because an unreadable manifest leaves 45 files unexamined.
+        finding, because an unreadable manifest leaves all but two files
+        unexamined.
     """
     recorded = _recorded_digests(root)
     bodies = _fetch_directly(fetch)

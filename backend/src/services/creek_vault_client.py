@@ -613,19 +613,27 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
 # about the wire (see that enum's docstring). The translation therefore lives
 # here, at the parse boundary, and nowhere else.
 #
-# Five of the seven members have a published name. SAVE and CLASSIFY are
+# Seven of the nine members have a published name. SAVE and CLASSIFY are
 # adepthood-side concepts Creek does not advertise, so :meth:`supports` is
 # ``False`` for them and every capability-gated path degrades. That is the
 # contract reporting a capability that does not exist, not a hole in this table
 # -- do not invent wire names for them.
 #
-# ``upload`` is the fifth, published at contract 0.8.0, and it is the reason
+# ``upload`` was the fifth, published at contract 0.8.0, and it is the reason
 # this list must be read as a fact about a *negotiated* handshake rather than
 # about Creek in general. Every minor through 0.7 answered the same four names
 # to every caller; 0.8.0 keys the advertisement on the caller's declared minor,
 # so a vault's answer here now depends on what adepthood pinned. Recognising the
 # name is all this table does: whether the client can *call* the route is a
 # separate question, answered at that capability's own method.
+#
+# ``drive-connector`` (0.9.0) and ``pipeline`` (0.10.0) are the sixth and
+# seventh, and they are the clearest case of that separation: adepthood has no
+# route, no method and no caller for either. They are listed anyway because
+# :func:`_coerce_capability` drops what it cannot name, so leaving them out
+# would make a vault that advertises them indistinguishable from one that does
+# not -- and "the vault offers it, we have not wired it" is a fact worth being
+# able to read off a handshake.
 _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
@@ -633,6 +641,8 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "reflections": CreekCapability.REFLECT,
         "wheel": CreekCapability.WHEEL,
         "upload": CreekCapability.UPLOAD,
+        "drive-connector": CreekCapability.DRIVE_CONNECTOR,
+        "pipeline": CreekCapability.PIPELINE,
     }
 )
 
