@@ -82,6 +82,8 @@ from schemas.marginalia import (
     ContractionReflectionResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
+    RelatedEddyResponse,
+    RelatedPraxisResponse,
     ResonanceResponse,
 )
 from schemas.pagination import count_query_total, page_has_more
@@ -98,7 +100,11 @@ from services.checkin import CheckInContext, current_check_in, record_goal_compl
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
-from services.creek_vault_reflect import select_reflection_llm
+from services.creek_vault_reflect import (
+    VaultRelatedSurfaces,
+    related_surfaces,
+    select_reflection_llm,
+)
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -1002,11 +1008,17 @@ class _ResonanceSurfaces:
     being re-derived in the builder because the same value decides whether the
     charge is reversed, and those two must never disagree — a writer told the
     pass was not charged while the charge stands is a worse bug than silence.
+
+    ``related`` is the writer's own compiled vault pages this pass surfaced, read
+    off the reflection source rather than re-derived: empty for every pass a
+    vault did not answer, which is what a cloud reflection, a degraded vault and
+    a vault with no pages all report.
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
+    related: VaultRelatedSurfaces = field(default_factory=VaultRelatedSurfaces)
 
 
 def _resonance_response(
@@ -1029,6 +1041,14 @@ def _resonance_response(
         care=surfaces.care,
         contraction=surfaces.contraction,
         no_notes_message=surfaces.no_notes_message,
+        related_praxis=[
+            RelatedPraxisResponse.model_validate(praxis, from_attributes=True)
+            for praxis in surfaces.related.praxis
+        ],
+        related_eddies=[
+            RelatedEddyResponse.model_validate(eddy, from_attributes=True)
+            for eddy in surfaces.related.eddies
+        ],
     )
 
 
@@ -1184,7 +1204,10 @@ async def run_resonance(
     _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
-        care=care, contraction=contraction, no_notes_message=no_notes_message
+        care=care,
+        contraction=contraction,
+        no_notes_message=no_notes_message,
+        related=related_surfaces(reflection_llm),
     )
     return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
 
