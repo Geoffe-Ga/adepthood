@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getActiveUser,
   loadDeviceOwner,
+  parseUserId,
   saveDeviceOwner,
   scopedKey,
   setActiveUser,
@@ -85,5 +86,27 @@ describe('the device-owner stamp', () => {
     expect(await loadDeviceOwner()).toBeNull();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('parseUserId', () => {
+  // Two sources name the device's owner -- the persisted stamp and the JWT's
+  // ``sub`` claim -- and they share this parser so neither can accept an id
+  // the other rejects. The backend stringifies the id when it signs, but its
+  // own decoder takes ``str | int``, so both shapes have to land the same way.
+  test('accepts an account id as either a string or a number', () => {
+    expect(parseUserId('7')).toBe(7);
+    expect(parseUserId(7)).toBe(7);
+  });
+
+  test('rejects everything that does not positively name an account', () => {
+    expect(parseUserId('not-a-user')).toBeNull();
+    expect(parseUserId('0')).toBeNull();
+    expect(parseUserId(0)).toBeNull();
+    expect(parseUserId(-3)).toBeNull();
+    expect(parseUserId(1.5)).toBeNull();
+    expect(parseUserId(null)).toBeNull();
+    expect(parseUserId(undefined)).toBeNull();
+    expect(parseUserId({ id: 7 })).toBeNull();
   });
 });

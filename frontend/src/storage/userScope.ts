@@ -34,7 +34,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * change of owner and re-run the wipe, which is the safety net for a logout
  * whose storage clears partly failed.
  */
-const DEVICE_OWNER_KEY = '@adepthood/device_owner';
+export const DEVICE_OWNER_KEY = '@adepthood/device_owner';
 
 /**
  * Separator between a cache key and its owner. ``#`` cannot appear in the
@@ -74,6 +74,22 @@ export function scopedKey(base: string): string {
 }
 
 /**
+ * The single definition of "this value names an account".
+ *
+ * Two independent sources claim to name the device's owner — the persisted
+ * stamp and the ``sub`` claim of the session's own JWT — and they must agree
+ * on what counts as a usable id, or a value one accepts and the other rejects
+ * becomes a namespace mismatch. ``unknown`` in, because a decoded JWT claim is
+ * whatever the payload happened to hold.
+ */
+export function parseUserId(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isInteger(raw) && raw > 0 ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
  * Read the recorded owner of this device's caches.
  *
  * Returns ``null`` for "no owner positively established" — an unstamped
@@ -81,6 +97,11 @@ export function scopedKey(base: string): string {
  * treat ``null`` as *not* a match for the incoming user: a read blip that
  * reported the wrong owner would otherwise skip the wipe, which is the whole
  * failure this module exists to prevent.
+ *
+ * This is the input to the *wipe decision* only. It is deliberately not the
+ * input to the namespace decision for a session already in hand: the stamp is
+ * a second persisted value that can fall out of step with the token, and a
+ * session must take its namespace from the credential it is actually holding.
  */
 export async function loadDeviceOwner(): Promise<number | null> {
   let raw: string | null;
@@ -90,9 +111,7 @@ export async function loadDeviceOwner(): Promise<number | null> {
     console.warn('[userScope] could not read the device-owner stamp', err);
     return null;
   }
-  if (raw === null) return null;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return parseUserId(raw);
 }
 
 /** Record ``userId`` as the owner of this device's caches. */
