@@ -46,7 +46,7 @@ from typing import Protocol
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.8.0"
+CONTRACT_VERSION = "0.10.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -58,6 +58,21 @@ class CreekCapability(enum.StrEnum):
     with, and they stay that way because they are what adepthood's own telemetry
     and error messages are keyed by -- they are this app's name for each
     capability rather than a claim about how it is reached.
+
+    ``DRIVE_CONNECTOR`` and ``PIPELINE`` are Creek's 0.9 and 0.10 additions, and
+    they are members here for one reason only: adepthood must be able to *name*
+    every capability a conformant vault advertises, or an advertised capability
+    is silently dropped at the parse boundary and no telemetry ever says so.
+    Naming is not calling -- neither has a route, a client method, or a caller in
+    adepthood today, so :meth:`supports` reporting one of them true means the
+    vault offers it, not that adepthood can use it.
+
+    ``PIPELINE`` is deliberately *not* folded into ``CLASSIFY``. Creek's pipeline
+    is a whole-vault classify-and-link pass that names no fragment; ``CLASSIFY``
+    is adepthood's own per-entry concept with an unratified request shape that
+    :meth:`HttpCreekVaultClient.classify` still refuses. Mapping the wire name
+    onto it would make ``supports(CLASSIFY)`` answer true for a call that always
+    raises.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -67,6 +82,8 @@ class CreekCapability(enum.StrEnum):
     CLASSIFY = "creek.classify"
     REFLECT = "creek.reflect"
     WHEEL = "creek.wheel"
+    DRIVE_CONNECTOR = "creek.drive_connector"
+    PIPELINE = "creek.pipeline"
 
 
 class VaultTierCeiling(enum.StrEnum):

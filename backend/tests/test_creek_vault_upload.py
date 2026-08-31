@@ -83,7 +83,9 @@ _CAPABILITIES_SEGMENT = "/v1/capabilities"
 # through the adapter's translation table: a test that sourced its wire names
 # from the mapping under test would agree with that mapping no matter what it
 # said. ``upload`` joined the list at contract 0.8.0 and is the one name whose
-# advertisement depends on the caller's declared minor.
+# advertisement depends on the caller's declared minor; ``drive-connector``
+# (0.9.0) and ``pipeline`` (0.10.0) joined after it and are here so a scripted
+# vault answers the document a conformant 0.10 vault actually serves.
 _UPLOAD_WIRE_NAME = "upload"
 _ADVERTISED_WIRE_NAMES = (
     "capabilities",
@@ -91,6 +93,8 @@ _ADVERTISED_WIRE_NAMES = (
     "reflections",
     "wheel",
     _UPLOAD_WIRE_NAME,
+    "drive-connector",
+    "pipeline",
 )
 
 # Distinctive enough to spot anywhere it must not appear: a repr, a log record,
@@ -703,9 +707,13 @@ _UPLOAD_REQUEST_FIELDS = frozenset(
 _CEILING_HEADER = "X-Creek-Tier-Ceiling"
 _CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
 
-# The minor a 0.8.0-pinned caller declares. Creek keys the upload capability on
-# it from 0.8.0 onward, so sending the wrong one is refused at the route.
-_CONTRACT_MINOR = "0.8"
+# The minor a 0.10.0-pinned caller declares. Creek keys the upload capability on
+# it from 0.8.0 onward, so sending the wrong one is refused at the route. Note
+# the shape: this is ``major.minor`` of the pin, so a 0.10.0 pin declares
+# ``0.10`` -- which sorts *below* ``0.8`` as text and is above it as a version.
+# Every comparison in the client splits on the dot and matches components, so
+# nothing here ever orders these as strings.
+_CONTRACT_MINOR = "0.10"
 
 
 def _decoded_body(request: httpx.Request) -> dict[str, object]:
@@ -1036,7 +1044,7 @@ class TestHttpClientUpload:
 
 
 class TestStoreUploadAgainstAnAdvertisingVault:
-    """The whole path, end to end, for the population a 0.8 vault actually puts on it.
+    """The whole path, end to end, for the population a 0.10 vault actually puts on it.
 
     Every other test of this seam pins one layer: the adapter's ``supports``
     answer, or the service's reaction to a *scripted* client. Neither notices
@@ -1059,7 +1067,7 @@ class TestStoreUploadAgainstAnAdvertisingVault:
         upload_status: int = HTTPStatus.OK,
         upload_error: Exception | None = None,
     ) -> _UploadRoutes:
-        """Build routes for a vault advertising the full 0.8 name list."""
+        """Build routes for a vault advertising the full 0.10 name list."""
         return _UploadRoutes(
             _stored_payload() if upload_payload is None else upload_payload,
             capabilities=list(_ADVERTISED_WIRE_NAMES),

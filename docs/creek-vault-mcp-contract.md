@@ -4,7 +4,7 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.8.0
+- **Contract version:** 0.10.0
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
@@ -42,9 +42,12 @@ ADR 0004's Context section documents in detail. Instead:
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
   `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
-  repository: 16 JSON Schemas, a `retry-policy.json` disposition
-  table, a four-capability by seven-state example matrix, and a
-  `manifest.json` recording a sha256 per generated file. Creek's ADR
+  repository: at contract 0.10.0, 27 JSON Schemas, a
+  `retry-policy.json` disposition table, a seven-capability by
+  seven-state example matrix, and a `manifest.json` recording a sha256
+  per generated file. Those counts move — the matrix was four
+  capabilities wide through 0.7 and five at 0.8.0 — so read the
+  vendored bundle rather than this sentence. Creek's ADR
   `docs/decisions/2026-07-31-adepthood-http-application-api.md` is the
   decision behind it. That bundle — not this file, and no longer
   Creek's server code read by hand — is the authoritative source for

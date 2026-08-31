@@ -27,6 +27,7 @@ from domain.creek_vault import (
 )
 from models.journal_entry import JournalClassification
 from scripts.creek_contract_drift import BUNDLE_ROOT
+from tests.creek_bundle_facts import PINNED_CONTRACT_VERSION
 
 # Creek's error vocabulary, published as an enum in the vendored envelope
 # schema. Read at runtime rather than restated, so a code adepthood invents is
@@ -119,11 +120,18 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Seven wire-name capability members."""
+    """Nine capability members, seven of which Creek publishes a wire name for."""
 
-    def test_has_seven_members(self) -> None:
-        """Exactly seven capabilities are defined."""
-        assert len(CreekCapability) == 7
+    def test_has_nine_members(self) -> None:
+        """Exactly nine capabilities are defined.
+
+        Seven of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
+        are adepthood-side concepts Creek does not advertise. The count is easy
+        to misread: this enum held seven members while Creek published five, and
+        Creek now publishes seven, so a stale ``== 7`` here would still look
+        plausible against the current contract.
+        """
+        assert len(CreekCapability) == 9
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
@@ -366,4 +374,4 @@ def test_contract_version_constant() -> None:
 
     It tracks Creek's published contract constant, and the docs restate it.
     """
-    assert CONTRACT_VERSION == "0.8.0"
+    assert CONTRACT_VERSION == PINNED_CONTRACT_VERSION
