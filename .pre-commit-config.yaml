@@ -68,14 +68,34 @@ repos:
       - id: ruff-format
         files: ^backend/
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
+  # mypy runs from the *installed* environment rather than one pre-commit builds
+  # for it, so backend/requirements*.txt is the single source of truth for both
+  # the type checker and every library it describes.
+  #
+  # This used to be a cloned mirrors-mypy hook, which can only get its
+  # dependencies from an `additional_dependencies` list. That list hand-restated
+  # 22 pins the requirements files already held. Dependabot edits the
+  # requirements files and knows nothing about this one, so the two diverged on
+  # every backend dependency bump and mypy type-checked the app against versions
+  # the app does not install. There is now no second list to keep in step: the
+  # runtime libraries come from requirements.txt, mypy and the type stubs from
+  # requirements-dev.txt, and the transitives nobody names by hand (starlette,
+  # httpx2) arrive as transitives instead of as copied pins.
+  #
+  # scripts/backend/deps.sh gates the installed environment against those pins
+  # as check-all's fail-fast preflight, and
+  # backend/tests/scripts/test_precommit_mypy_deps.py locks this shape in.
+  - repo: local
     hooks:
       - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
         files: ^backend/
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
-        additional_dependencies: ["types-jsonschema==4.26.0.20260518", "types-cachetools==7.0.0.20260713", "types-requests==2.33.0.20260712", "openai==3.3.0", "anthropic==0.123.0", "pydantic==2.13.4", "sqlmodel==0.0.39", "fastapi==0.141.1", "starlette==1.6.0", "pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1", "httpx2==2.12.0", "aiosqlite==0.22.1", "PyJWT==2.13.0", "bcrypt==5.0.0", "cryptography==50.0.0", "slowapi==0.1.10", "limits==5.8.0", "alembic==1.19.1", "uvicorn==0.52.4", "sentry-sdk==2.68.0"]
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
