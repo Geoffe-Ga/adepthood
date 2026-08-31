@@ -189,6 +189,29 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('says the week is already answered rather than promising a retry that cannot succeed', async () => {
+    // One response per (user, week) server-side: a 409 here never clears by
+    // retrying, so the hint must name the condition and the way out instead of
+    // telling the writer to keep going.
+    jest.useFakeTimers();
+    try {
+      mockRespond.mockRejectedValue(Object.assign(new Error('conflict'), { status: 409 }));
+      const { getByTestId } = renderScreen(
+        { weekNumber: 14, promptOrdinal: 3, promptQuestion: 'Which curiosity?' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Wayfinding and loneliness.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      const hint = getByTestId('journal-save-hint').props.children as string;
+      expect(hint).toMatch(/already answered/i);
+      expect(hint).not.toMatch(/retry/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('opens a prompt page blank rather than under a title the client guessed', () => {
     // A week number alone names no prompt: the title is curriculum text the
     // server sends, so without one the page opens untitled.

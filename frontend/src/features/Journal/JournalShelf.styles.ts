@@ -136,6 +136,11 @@ const styles = StyleSheet.create({
     color: ink.muted,
     paddingBottom: spacing(0.5),
   },
+  promptSectionNote: {
+    ...editorialType.caption,
+    color: ink.muted,
+    paddingBottom: spacing(0.5),
+  },
   promptCard: {
     marginTop: SPACING.sm,
     padding: SPACING.lg,

@@ -90,7 +90,7 @@ const LOAD_ERROR_MESSAGE =
 const FINISH_ERROR_MESSAGE =
   "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
 
-type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
+type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
@@ -103,9 +103,18 @@ const SAVED_HINT = 'Saved';
 /** A blank hint line that reserves the row's height without showing any text. */
 const BLANK_HINT = ' ';
 
+/**
+ * Said when the week already holds its one prompt response. Distinct from the
+ * generic save error because retrying cannot clear it — the server keeps one
+ * response per week — so the hint names the condition and the way out instead
+ * of telling the writer to keep going.
+ */
+const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
+  if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -460,7 +469,10 @@ function trackedWrite(
       onSaved?.();
     } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
-      setSaveState('error');
+      // A 409 on the weekly-prompt path is not retryable — the week already holds
+      // its one response — so it gets its own state rather than the retry hint.
+      const weekTaken = ctx.weekNumber != null && isCreateConflict(error);
+      setSaveState(weekTaken ? 'weekTaken' : 'error');
       // Additive: a reflection-scope create can 409 because the reflection
       // already exists. Hand that case to the caller (which routes to the
       // existing entry); every other failure keeps the plain save-error hint.

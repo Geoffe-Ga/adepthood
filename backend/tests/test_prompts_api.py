@@ -182,6 +182,32 @@ async def test_submit_duplicate_response_returns_409(async_client: AsyncClient) 
 
 
 @pytest.mark.asyncio
+async def test_second_prompt_of_the_same_week_is_still_a_409(async_client: AsyncClient) -> None:
+    """A different ordinal does not buy a second response in one week.
+
+    ``prompt_ordinal`` names *which* of a stage's prompts a response answers;
+    it does not widen ``uq_promptresponse_user_week``. Clients that render a
+    whole stage's prompts must read this as the contract: one week holds one
+    response, whichever prompt it answers.
+    """
+    headers = await _signup(async_client)
+    first = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "The first prompt.", "prompt_ordinal": 1},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.CREATED
+
+    second = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "The second prompt.", "prompt_ordinal": 2},
+        headers=headers,
+    )
+    assert second.status_code == HTTPStatus.CONFLICT
+    assert second.json()["detail"] == "already_responded"
+
+
+@pytest.mark.asyncio
 async def test_submit_response_week_past_the_program_is_rejected(
     async_client: AsyncClient,
 ) -> None:

@@ -247,13 +247,62 @@ describe('the Journal shelf shows a whole stage of prompts, each with its cadenc
   });
 
   it('keeps the whole set on the shelf once every prompt has been answered', async () => {
-    mockPromptHistory.mockResolvedValue(
-      history([answered(13, 1), answered(14, 2), answered(15, 3), answered(15, 4)]),
-    );
+    // Beige's three prompts across its three weeks — the server stores one
+    // response per week, so a whole stage answered is exactly one per week.
+    mockPromptStage.mockResolvedValue(stageResponse(1, 'Beige', BEIGE_PROMPTS));
+    mockPromptCurrent.mockResolvedValue({
+      week_number: 3,
+      question: 'What did you notice this week?',
+      has_responded: true,
+      response: 'I wrote it.',
+      timestamp: '2026-06-01T00:00:00Z',
+      prompt_ordinal: 3,
+    });
+    mockPromptHistory.mockResolvedValue(history([answered(1, 1), answered(2, 2), answered(3, 3)]));
     const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-stage-prompts');
-    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(4);
-    expect(getAllByTestId(/^journal-stage-prompt-answered-\d+$/)).toHaveLength(4);
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(3);
+    expect(getAllByTestId(/^journal-stage-prompt-answered-\d+$/)).toHaveLength(3);
+  });
+
+  it('does not invite a second write in a week that already holds its one response', async () => {
+    // The server stores one response per (user, week): a second prompt tapped in
+    // the same week is a 409 that loses the writing, so the shelf must not offer
+    // the tap at all once this week's response is written.
+    mockPromptHistory.mockResolvedValue(history([answered(14, 2)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(await findByTestId('journal-stage-prompt-answered-2')).toBeTruthy();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-3'));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(queryByTestId('journal-stage-prompts-week-written')).not.toBeNull();
+  });
+
+  it('still opens a prompt in a week that holds no response yet', async () => {
+    // The guard is the week's own response, not any response in the stage: an
+    // earlier week being answered must not freeze the current one.
+    mockPromptHistory.mockResolvedValue(history([answered(13, 1)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompt-answered-1');
+    expect(queryByTestId('journal-stage-prompts-week-written')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-2'));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({ weekNumber: 14, promptOrdinal: 2 }),
+    );
+  });
+
+  it('shows no prompts at all rather than a stage it only guessed at', async () => {
+    // No local program anchor and a refused /prompts/current: the week is
+    // unknown, so falling back to week 1 would render another stage's prompts
+    // and compose the response against the wrong week.
+    mockPromptCurrent.mockRejectedValue(new Error('offline'));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-shelf')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts')).toBeNull();
+    expect(mockPromptStage).not.toHaveBeenCalled();
   });
 
   it('renders the shelf without the prompt section when the stage fetch fails', async () => {

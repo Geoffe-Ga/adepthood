@@ -48,9 +48,11 @@ jest.mock('@react-navigation/native', () => {
   };
   return {
     useNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
-    // Run the focus callback on mount (and its cleanup on unmount) — enough to
-    // exercise the prompt re-fetch in these render-once tests.
-    useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),
+    // Keyed on the callback, the way React Navigation's own hook keys on the
+    // effect it was handed: a read whose inputs only settle after mount (the
+    // stage band waits on the current week) has to re-run, and a stub pinned to
+    // [] would report that read as never happening.
+    useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, [cb]),
   };
 });
 

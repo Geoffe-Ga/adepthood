@@ -120,7 +120,7 @@
   },
   {
     "id": "journal.stage-prompts-and-cadences",
-    "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about both the ordinal check and the stage's unlock gate -- the two things only the server can refuse.",
+    "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. The second seam is the one-response-per-week rule: uq_promptresponse_user_week means a week holds a single response whichever prompt it answers, so the shelf stops offering a tap once this week's is written and the entry page says so if a save is refused anyway. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about the ordinal check, the stage's unlock gate, and the unique constraint -- the three things only the server can refuse.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["prompts"],

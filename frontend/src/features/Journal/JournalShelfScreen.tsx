@@ -42,8 +42,12 @@ import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
-import { useDerivedCurrentStage, useDerivedCurrentWeek } from '@/store/useProgramProgression';
-import { programStageForWeek } from '@/store/useProgramStore';
+import {
+  programStage,
+  programStageForWeek,
+  programWeek,
+  useProgramStore,
+} from '@/store/useProgramStore';
 import { MS_PER_DAY } from '@/utils/dateUtils';
 
 const SEARCH_MIN_LENGTH = 3;
@@ -57,6 +61,11 @@ const FIRST_PROMPT = 'What brought you here?';
 // Said of a prompt already written to. Deliberately a note, not a reward: the
 // prompt stays open because several of them are meant to be returned to.
 const ANSWERED_NOTE = 'Answered';
+
+// Said once the week holds its one response. The server keeps a single response
+// per week, so this names the rhythm rather than reporting a refusal — the whole
+// set stays readable, just not writable until the week turns over.
+const WEEK_WRITTEN_NOTE = "This week's prompt is written — the next one opens next week.";
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -314,9 +323,21 @@ function useCurrentPrompt(): PromptDetail | null {
 interface StagePromptsState {
   stage: StagePromptsResponse | null;
   answered: ReadonlySet<number>;
+  /** False once this week already holds its one response.
+   *
+   * The server stores at most one response per (reader, week), whichever of the
+   * stage's prompts it answers. Offering a second tap in the same week would
+   * send the reader to a page whose every save is refused and whose writing is
+   * therefore stored nowhere, so the band stops inviting one and says why.
+   */
+  writable: boolean;
 }
 
-const NO_STAGE_PROMPTS: StagePromptsState = { stage: null, answered: new Set<number>() };
+const NO_STAGE_PROMPTS: StagePromptsState = {
+  stage: null,
+  answered: new Set<number>(),
+  writable: true,
+};
 
 /** Ordinals of *this* stage's prompts the reader has already answered.
  *
@@ -340,13 +361,16 @@ function answeredOrdinals(items: readonly PromptDetail[], stage: number): Readon
  * A stage the reader has not reached is refused server-side, and any refusal
  * simply hides the section — the shelf never fails to render because prompts
  * did not load. The history read is allowed to fail on its own: the prompts
- * still appear, merely unmarked, rather than vanishing because one of two
- * reads failed.
+ * still appear, merely unmarked and still writable, rather than vanishing
+ * because one of two reads failed.
  */
-function useStagePrompts(stage: number): StagePromptsState {
+function useStagePrompts(stage: number | null, week: number | null): StagePromptsState {
   const [state, setState] = useState<StagePromptsState>(NO_STAGE_PROMPTS);
   useFocusEffect(
     useCallback(() => {
+      // Neither read fires until the reader's place is actually known: a guessed
+      // week would fetch — and offer — some other stage's prompts.
+      if (stage === null || week === null) return undefined;
       let active = true;
       const load = async (): Promise<void> => {
         // Read together, not in sequence: the history is only used to mark the
@@ -357,7 +381,12 @@ function useStagePrompts(stage: number): StagePromptsState {
           prompts.history().catch(() => null),
         ]);
         if (!active) return;
-        setState({ stage: stagePrompts, answered: answeredOrdinals(history?.items ?? [], stage) });
+        const items = history?.items ?? [];
+        setState({
+          stage: stagePrompts,
+          answered: answeredOrdinals(items, stage),
+          writable: !items.some((item) => item.week_number === week),
+        });
       };
       void load().catch(() => {
         // A prompt fetch failure shouldn't block the shelf; just hide the section.
@@ -365,30 +394,22 @@ function useStagePrompts(stage: number): StagePromptsState {
       return () => {
         active = false;
       };
-    }, [stage]),
+    }, [stage, week]),
   );
   return state;
 }
 
-/** One of the stage's prompts: what it asks, and how often it asks it. */
-function StagePromptCard({
+/** What a prompt card says: the prompt, its cadence, and whether it is answered. */
+function StagePromptFace({
   prompt,
   answered,
-  onOpen,
 }: {
   prompt: StagePromptDetail;
   answered: boolean;
-  onOpen: (_prompt: StagePromptDetail) => void;
 }): React.JSX.Element {
   const { ordinal, title, cadence } = prompt;
   return (
-    <TouchableOpacity
-      style={[styles.promptCard, answered ? styles.promptCardAnswered : null]}
-      onPress={() => onOpen(prompt)}
-      accessibilityRole="button"
-      accessibilityLabel={`${answered ? 'Write again to' : 'Write to'} the prompt: ${title}`}
-      testID={`journal-stage-prompt-${ordinal}`}
-    >
+    <>
       <Text style={styles.promptQuestion}>{title}</Text>
       {cadence == null ? null : (
         <Text style={styles.promptLabel} testID={`journal-stage-prompt-cadence-${ordinal}`}>
@@ -400,6 +421,46 @@ function StagePromptCard({
           {ANSWERED_NOTE}
         </Text>
       ) : null}
+    </>
+  );
+}
+
+/** One of the stage's prompts: what it asks, and how often it asks it.
+ *
+ * Pressable only while the week can still take a response. Once it holds one,
+ * the card is a plain reading surface rather than a button that leads to a page
+ * the server refuses to save — the section says why just above it.
+ */
+function StagePromptCard({
+  prompt,
+  answered,
+  writable,
+  onOpen,
+}: {
+  prompt: StagePromptDetail;
+  answered: boolean;
+  writable: boolean;
+  onOpen: (_prompt: StagePromptDetail) => void;
+}): React.JSX.Element {
+  const { ordinal, title } = prompt;
+  const cardStyle = [styles.promptCard, answered ? styles.promptCardAnswered : null];
+  const testID = `journal-stage-prompt-${ordinal}`;
+  if (!writable) {
+    return (
+      <View style={cardStyle} accessibilityLabel={`The prompt: ${title}`} testID={testID}>
+        <StagePromptFace prompt={prompt} answered={answered} />
+      </View>
+    );
+  }
+  return (
+    <TouchableOpacity
+      style={cardStyle}
+      onPress={() => onOpen(prompt)}
+      accessibilityRole="button"
+      accessibilityLabel={`${answered ? 'Write again to' : 'Write to'} the prompt: ${title}`}
+      testID={testID}
+    >
+      <StagePromptFace prompt={prompt} answered={answered} />
     </TouchableOpacity>
   );
 }
@@ -415,16 +476,22 @@ function StagePromptSection({
   state: StagePromptsState;
   onOpen: (_prompt: StagePromptDetail) => void;
 }): React.JSX.Element | null {
-  const { stage, answered } = state;
+  const { stage, answered, writable } = state;
   if (stage === null || stage.prompts.length === 0) return null;
   return (
     <View style={styles.promptSection} testID="journal-stage-prompts">
       <Text style={styles.promptSectionLabel}>{`${stage.stage_name} prompts`}</Text>
+      {writable ? null : (
+        <Text style={styles.promptSectionNote} testID="journal-stage-prompts-week-written">
+          {WEEK_WRITTEN_NOTE}
+        </Text>
+      )}
       {stage.prompts.map((prompt) => (
         <StagePromptCard
           key={prompt.ordinal}
           prompt={prompt}
           answered={answered.has(prompt.ordinal)}
+          writable={writable}
           onOpen={onOpen}
         />
       ))}
@@ -492,7 +559,7 @@ interface ShelfNav {
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
-function useShelfNavigation(navigation: ShelfNavigation, week: number): ShelfNav {
+function useShelfNavigation(navigation: ShelfNavigation, week: number | null): ShelfNav {
   const openEntry = useCallback(
     (entryId: number) => navigation.navigate('JournalEntry', { entryId }),
     [navigation],
@@ -505,15 +572,20 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number): ShelfNav
   );
   // Compose against *this* prompt: its ordinal is what tells the server which of
   // the stage's prompts the page answers, and its own curriculum headline is the
-  // title — the server owns both strings, so the client derives neither.
+  // title — the server owns both strings, so the client derives neither. A null
+  // week means the reader's place is unknown, in which case no prompt card is on
+  // screen to press; filing the page under a guessed week would be worse than
+  // doing nothing.
   const openPrompt = useCallback(
-    (prompt: StagePromptDetail) =>
+    (prompt: StagePromptDetail) => {
+      if (week === null) return;
       navigation.navigate('JournalEntry', {
         weekNumber: week,
         promptOrdinal: prompt.ordinal,
         promptQuestion: prompt.body,
         prefillTitle: prompt.title,
-      }),
+      });
+    },
     [navigation, week],
   );
   return { openEntry, newEntry, openPhotograph, openPrompt, openWithPrompt };
@@ -642,11 +714,15 @@ function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const shelf = useShelf();
   const prompt = useCurrentPrompt();
-  const week = useDerivedCurrentWeek(prompt?.week_number ?? 1);
-  // The local program anchor decides the stage when there is one; the server's
-  // current week stands in until (and if) that anchor is set.
-  const stage = useDerivedCurrentStage(programStageForWeek(week));
-  const stagePrompts = useStagePrompts(stage);
+  const anchor = useProgramStore((s) => s.programStartDate);
+  // The local program anchor decides the week and stage when there is one; the
+  // server's current week stands in until (and if) that anchor is set. With
+  // neither — no anchor, and a refused ``/prompts/current`` — the place stays
+  // null instead of falling back to week 1, because that guess would show
+  // another stage's prompts and file the response under a week nobody is in.
+  const week = programWeek(anchor) ?? prompt?.week_number ?? null;
+  const stage = week === null ? null : (programStage(anchor) ?? programStageForWeek(week));
+  const stagePrompts = useStagePrompts(stage, week);
   const nav = useShelfNavigation(navigation, week);
   const shelfDrawer = useShelfDrawer(nav);
   const { deletion } = shelf;
