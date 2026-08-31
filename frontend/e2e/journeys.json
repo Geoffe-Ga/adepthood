@@ -312,6 +312,6 @@
       "tables": ["walletaudit"]
     },
     "status": "uncovered",
-    "issue": 2479
+    "issue": 2543
   }
 ]
