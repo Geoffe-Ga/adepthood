@@ -51,6 +51,19 @@ export interface RecipeEditorModalProps {
   update?: typeof practiceRecipes.update;
   listTags?: typeof practiceTags.list;
   createTag?: typeof practiceTags.create;
+  updateTag?: typeof practiceTags.update;
+  removeTag?: typeof practiceTags.remove;
+}
+
+/**
+ * What a step's tag picker may do to the library it is reading from. Bundled
+ * because all three travel the same path down to {@link StepCard} and a
+ * three-prop convoy at every level buys nothing.
+ */
+export interface TagLibraryActions {
+  create: (payload: PracticeTagCreate) => Promise<PracticeTag>;
+  rename: (tag: PracticeTag, label: string) => Promise<void>;
+  remove: (tag: PracticeTag) => Promise<void>;
 }
 
 // Bounds that mirror the backend recipe schema are owned by ``engine/validation``;
@@ -88,14 +101,7 @@ const RecipeEditorModal = (props: RecipeEditorModalProps): React.JSX.Element => 
     if (saved !== null) props.onSaved(saved);
   }, [saveState, props, draftState.draft, deps]);
 
-  const onCreateTag = useCallback(
-    async (payload: PracticeTagCreate) => {
-      const created = await deps.createTag(payload);
-      tagLibrary.add(created);
-      return created;
-    },
-    [deps, tagLibrary],
-  );
+  const tagActions = useTagActions(deps, tagLibrary, draftState.relabelTag);
 
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
@@ -109,7 +115,7 @@ const RecipeEditorModal = (props: RecipeEditorModalProps): React.JSX.Element => 
         errors={errors}
         onSave={onSave}
         onCancel={props.onClose}
-        onCreateTag={onCreateTag}
+        tagActions={tagActions}
       />
     </Modal>
   );
@@ -120,6 +126,8 @@ interface ResolvedDeps {
   update: typeof practiceRecipes.update;
   listTags: typeof practiceTags.list;
   createTag: typeof practiceTags.create;
+  updateTag: typeof practiceTags.update;
+  removeTag: typeof practiceTags.remove;
 }
 
 function resolveDeps(props: RecipeEditorModalProps): ResolvedDeps {
@@ -128,7 +136,46 @@ function resolveDeps(props: RecipeEditorModalProps): ResolvedDeps {
     update: props.update ?? practiceRecipes.update,
     listTags: props.listTags ?? practiceTags.list,
     createTag: props.createTag ?? practiceTags.create,
+    updateTag: props.updateTag ?? practiceTags.update,
+    removeTag: props.removeTag ?? practiceTags.remove,
   };
+}
+
+/**
+ * The three library mutations, each keeping the in-memory library and the open
+ * draft in step with the server. A rename also relabels every step holding that
+ * slug: a step stores ``tag_label`` by value, so without this the draft would
+ * save the old wording back over the tag the user just renamed.
+ */
+function useTagActions(
+  deps: ResolvedDeps,
+  library: TagLibraryState,
+  relabelTag: (slug: string, label: string) => void,
+): TagLibraryActions {
+  const create = useCallback(
+    async (payload: PracticeTagCreate) => {
+      const created = await deps.createTag(payload);
+      library.add(created);
+      return created;
+    },
+    [deps, library],
+  );
+  const rename = useCallback(
+    async (tag: PracticeTag, label: string) => {
+      const renamed = await deps.updateTag(tag.id, { label });
+      library.replace(renamed);
+      relabelTag(renamed.slug, renamed.label);
+    },
+    [deps, library, relabelTag],
+  );
+  const remove = useCallback(
+    async (tag: PracticeTag) => {
+      await deps.removeTag(tag.id);
+      library.drop(tag.id);
+    },
+    [deps, library],
+  );
+  return useMemo(() => ({ create, rename, remove }), [create, rename, remove]);
 }
 
 interface EditorSheetContentProps {
@@ -141,7 +188,7 @@ interface EditorSheetContentProps {
   errors: string[];
   onSave: () => void;
   onCancel: () => void;
-  onCreateTag: (payload: PracticeTagCreate) => Promise<PracticeTag>;
+  tagActions: TagLibraryActions;
 }
 
 const EditorSheetContent = (props: EditorSheetContentProps): React.JSX.Element => (
@@ -171,7 +218,7 @@ const EditorSheetContent = (props: EditorSheetContentProps): React.JSX.Element =
           draftState={props.draftState}
           mode={props.mode}
           tagLibrary={props.tagLibrary}
-          onCreateTag={props.onCreateTag}
+          tagActions={props.tagActions}
         />
         {props.errors.length > 0 && <ValidationErrors errors={props.errors} />}
       </ScrollView>
@@ -183,7 +230,7 @@ interface EditorFieldsProps {
   draftState: DraftState;
   mode: RecipeMode;
   tagLibrary: PracticeTag[];
-  onCreateTag: (payload: PracticeTagCreate) => Promise<PracticeTag>;
+  tagActions: TagLibraryActions;
 }
 
 const EditorFields = (props: EditorFieldsProps): React.JSX.Element => (
@@ -206,7 +253,7 @@ const EditorFields = (props: EditorFieldsProps): React.JSX.Element => (
       steps={props.draftState.draft.steps}
       mode={props.mode}
       tagLibrary={props.tagLibrary}
-      onCreateTag={props.onCreateTag}
+      tagActions={props.tagActions}
       onChangeStep={props.draftState.updateStep}
       onMoveStep={props.draftState.moveStep}
       onRemoveStep={props.draftState.removeStep}
@@ -229,6 +276,8 @@ interface DraftState {
   draft: RecipeDraft;
   update: (patch: Partial<RecipeDraft>) => void;
   updateStep: (uid: string, patch: Partial<DraftStep>) => void;
+  /** Re-label every step carrying ``slug`` after its tag is renamed. */
+  relabelTag: (slug: string, label: string) => void;
   moveStep: (uid: string, direction: -1 | 1) => void;
   removeStep: (uid: string) => void;
   appendStep: () => void;
@@ -242,6 +291,13 @@ function applyStepPatch(prev: RecipeDraft, uid: string, patch: Partial<DraftStep
   return {
     ...prev,
     steps: prev.steps.map((s) => (s.uid === uid ? { ...s, ...patch } : s)),
+  };
+}
+
+function applyRelabel(prev: RecipeDraft, slug: string, label: string): RecipeDraft {
+  return {
+    ...prev,
+    steps: prev.steps.map((s) => (s.tag_slug === slug ? { ...s, tag_label: label } : s)),
   };
 }
 
@@ -296,12 +352,18 @@ function useDraftState(initial: RecipeDraft): DraftState {
     [],
   );
   const appendStep = useCallback(() => setDraft(applyStepAppend), []);
-  return { draft, update, updateStep, moveStep, removeStep, appendStep };
+  const relabelTag = useCallback(
+    (slug: string, label: string) => setDraft((prev) => applyRelabel(prev, slug, label)),
+    [],
+  );
+  return { draft, update, updateStep, moveStep, removeStep, appendStep, relabelTag };
 }
 
 interface TagLibraryState {
   tags: PracticeTag[];
   add: (tag: PracticeTag) => void;
+  replace: (tag: PracticeTag) => void;
+  drop: (tagId: number) => void;
 }
 
 function useTagLibrary(visible: boolean, list: typeof practiceTags.list): TagLibraryState {
@@ -323,7 +385,19 @@ function useTagLibrary(visible: boolean, list: typeof practiceTags.list): TagLib
     };
   }, [visible, list]);
   const add = useCallback((tag: PracticeTag) => setTags((prev) => [...prev, tag]), []);
-  return { tags, add };
+  const replace = useCallback((tag: PracticeTag) => setTags((prev) => withTag(prev, tag)), []);
+  const drop = useCallback((tagId: number) => setTags((prev) => withoutTag(prev, tagId)), []);
+  return { tags, add, replace, drop };
+}
+
+/** The library with ``tag``'s row swapped for the server's renamed copy. */
+function withTag(tags: PracticeTag[], tag: PracticeTag): PracticeTag[] {
+  return tags.map((existing) => (existing.id === tag.id ? tag : existing));
+}
+
+/** The library without the row the server just deleted. */
+function withoutTag(tags: PracticeTag[], tagId: number): PracticeTag[] {
+  return tags.filter((existing) => existing.id !== tagId);
 }
 
 interface SaveArgs {
@@ -520,7 +594,7 @@ interface StepEditorProps {
   steps: DraftStep[];
   mode: RecipeMode;
   tagLibrary: PracticeTag[];
-  onCreateTag: (payload: PracticeTagCreate) => Promise<PracticeTag>;
+  tagActions: TagLibraryActions;
   onChangeStep: (uid: string, patch: Partial<DraftStep>) => void;
   onMoveStep: (uid: string, direction: -1 | 1) => void;
   onRemoveStep: (uid: string) => void;
@@ -538,7 +612,7 @@ const StepEditor = (props: StepEditorProps): React.JSX.Element => (
         last={index === props.steps.length - 1}
         mode={props.mode}
         tagLibrary={props.tagLibrary}
-        onCreateTag={props.onCreateTag}
+        tagActions={props.tagActions}
         onChange={(patch) => props.onChangeStep(step.uid, patch)}
         onMove={(dir) => props.onMoveStep(step.uid, dir)}
         onRemove={() => props.onRemoveStep(step.uid)}
@@ -562,7 +636,7 @@ interface StepCardProps {
   last: boolean;
   mode: RecipeMode;
   tagLibrary: PracticeTag[];
-  onCreateTag: (payload: PracticeTagCreate) => Promise<PracticeTag>;
+  tagActions: TagLibraryActions;
   onChange: (patch: Partial<DraftStep>) => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
@@ -576,9 +650,11 @@ const StepCard = (props: StepCardProps): React.JSX.Element => (
       tagLibrary={props.tagLibrary}
       onSelect={(tag) => props.onChange({ tag_slug: tag.slug, tag_label: tag.label })}
       onCreateTag={async (payload) => {
-        const created = await props.onCreateTag(payload);
+        const created = await props.tagActions.create(payload);
         props.onChange({ tag_slug: created.slug, tag_label: created.label });
       }}
+      onRenameTag={props.tagActions.rename}
+      onDeleteTag={props.tagActions.remove}
     />
     <TextInput
       value={props.step.prompt_label}

@@ -56,6 +56,14 @@ function mountEditor(overrides: Partial<React.ComponentProps<typeof RecipeEditor
     owner_user_id: 7,
     created_at: '2026-05-23T00:00:00Z',
   }));
+  const updateTag = jest.fn(async (tagId: number, payload: { label: string }) => ({
+    id: tagId,
+    slug: 'mine',
+    label: payload.label,
+    owner_user_id: 7,
+    created_at: '2026-05-23T00:00:00Z',
+  }));
+  const removeTag = jest.fn(async (_tagId: number) => undefined);
   const onClose = jest.fn();
   const onSaved = jest.fn();
   const draft = makeDraft({
@@ -82,10 +90,22 @@ function mountEditor(overrides: Partial<React.ComponentProps<typeof RecipeEditor
       update={update as never}
       listTags={listTags as never}
       createTag={createTag as never}
+      updateTag={updateTag as never}
+      removeTag={removeTag as never}
       {...overrides}
     />,
   );
-  return { ...utils, create, update, listTags, createTag, onClose, onSaved };
+  return {
+    ...utils,
+    create,
+    update,
+    listTags,
+    createTag,
+    updateTag,
+    removeTag,
+    onClose,
+    onSaved,
+  };
 }
 
 describe('RecipeEditorModal', () => {
@@ -229,5 +249,76 @@ describe('RecipeEditorModal', () => {
     });
     await waitFor(() => expect(utils.getByTestId('tag-picker-0-empty')).toBeTruthy());
     expect(utils.queryByTestId('tag-picker-0-option-red')).toBeNull();
+  });
+});
+
+const personalTag: PracticeTag = {
+  id: 9,
+  slug: 'mine',
+  label: 'Mine',
+  owner_user_id: 7,
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+/** Editor over a draft whose only step already uses the caller's own tag. */
+function mountWithPersonalTag(): ReturnType<typeof mountEditor> & {
+  listPersonal: jest.Mock<() => Promise<PracticeTag[]>>;
+} {
+  const listPersonal = jest.fn(async () => [...tagLibrary, personalTag]);
+  const mounted = mountEditor({
+    listTags: listPersonal as never,
+    initialDraft: makeDraft({
+      name: 'My Recipe',
+      steps: [
+        {
+          uid: newStepUid(),
+          tag_slug: 'mine',
+          tag_label: 'Mine',
+          prompt_label: 'Notice mine',
+          target_count: 1,
+        },
+      ],
+    }),
+  });
+  return { ...mounted, listPersonal };
+}
+
+describe('RecipeEditorModal tag library management', () => {
+  it('renames a personal tag and relabels the steps that use it', async () => {
+    const utils = mountWithPersonalTag();
+    await waitFor(() => expect(utils.listPersonal).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    });
+    await waitFor(() => expect(utils.getByTestId('tag-picker-0-rename-mine')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-rename-input-mine'), 'Renamed');
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-rename-confirm-mine'));
+    });
+    await waitFor(() => expect(utils.updateTag).toHaveBeenCalledWith(9, { label: 'Renamed' }));
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('recipe-editor-save'));
+    });
+    await waitFor(() => expect(utils.create).toHaveBeenCalled());
+    const firstCall = utils.create.mock.calls[0];
+    if (firstCall === undefined) throw new Error('create was not called');
+    const steps = (firstCall[0] as { steps: { tag_label: string }[] }).steps;
+    expect(steps[0]?.tag_label).toBe('Renamed');
+  });
+
+  it('deletes a personal tag and drops it from the open library', async () => {
+    const utils = mountWithPersonalTag();
+    await waitFor(() => expect(utils.listPersonal).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    });
+    await waitFor(() => expect(utils.getByTestId('tag-picker-0-delete-mine')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-mine'));
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-delete-confirm-mine'));
+    });
+    await waitFor(() => expect(utils.removeTag).toHaveBeenCalledWith(9));
+    await waitFor(() => expect(utils.queryByTestId('tag-picker-0-option-mine')).toBeNull());
   });
 });

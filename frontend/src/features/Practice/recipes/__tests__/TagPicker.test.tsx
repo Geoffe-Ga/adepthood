@@ -22,9 +22,29 @@ function renderPicker(
       tagLibrary={library}
       onSelect={jest.fn()}
       onCreateTag={jest.fn(async () => undefined)}
+      onRenameTag={jest.fn(async () => undefined)}
+      onDeleteTag={jest.fn(async () => undefined)}
       {...overrides}
     />,
   );
+}
+
+const personal: PracticeTag = {
+  id: 9,
+  slug: 'mine',
+  label: 'Mine',
+  owner_user_id: 7,
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+const mixedLibrary: PracticeTag[] = [...library, personal];
+
+function openWithPersonal(
+  overrides: Partial<React.ComponentProps<typeof TagPicker>> = {},
+): ReturnType<typeof render> {
+  const utils = renderPicker({ tagLibrary: mixedLibrary, ...overrides });
+  fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+  return utils;
 }
 
 describe('TagPicker', () => {
@@ -149,6 +169,102 @@ describe('TagPicker', () => {
     await waitFor(() =>
       expect(utils.getByTestId('tag-picker-0-creator-error')).toHaveTextContent(
         'Slug already exists',
+      ),
+    );
+  });
+});
+
+describe('TagPicker tag-library management', () => {
+  it('offers rename and delete on a personal tag only', () => {
+    const utils = openWithPersonal();
+    expect(utils.getByTestId('tag-picker-0-rename-mine')).toBeTruthy();
+    expect(utils.getByTestId('tag-picker-0-delete-mine')).toBeTruthy();
+    // A system tag is not the caller's to edit — the backend refuses it.
+    expect(utils.queryByTestId('tag-picker-0-rename-red')).toBeNull();
+    expect(utils.queryByTestId('tag-picker-0-delete-red')).toBeNull();
+  });
+
+  it('renames a personal tag through the inline editor', async () => {
+    const onRenameTag = jest.fn(async (_tag: PracticeTag, _label: string) => undefined);
+    const utils = openWithPersonal({ onRenameTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-rename-input-mine'), '  Mine, renamed  ');
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-rename-confirm-mine'));
+    });
+    await waitFor(() => expect(onRenameTag).toHaveBeenCalledWith(personal, 'Mine, renamed'));
+    expect(utils.queryByTestId('tag-picker-0-rename-input-mine')).toBeNull();
+  });
+
+  it('refuses to submit a blank rename', () => {
+    const onRenameTag = jest.fn(async (_tag: PracticeTag, _label: string) => undefined);
+    const utils = openWithPersonal({ onRenameTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-rename-input-mine'), '   ');
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-confirm-mine'));
+    expect(onRenameTag).not.toHaveBeenCalled();
+  });
+
+  it('cancels a rename without calling the API', () => {
+    const onRenameTag = jest.fn(async (_tag: PracticeTag, _label: string) => undefined);
+    const utils = openWithPersonal({ onRenameTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-cancel-mine'));
+    expect(utils.queryByTestId('tag-picker-0-rename-input-mine')).toBeNull();
+    expect(onRenameTag).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a rename failure without dismissing the editor', async () => {
+    const onRenameTag = jest.fn(async () => {
+      throw new Error('Could not rename that tag.');
+    });
+    const utils = openWithPersonal({ onRenameTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-rename-mine'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-rename-input-mine'), 'Nope');
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-rename-confirm-mine'));
+    });
+    await waitFor(() =>
+      expect(utils.getByTestId('tag-picker-0-manage-error-mine')).toHaveTextContent(
+        'Could not rename that tag.',
+      ),
+    );
+    expect(utils.getByTestId('tag-picker-0-rename-input-mine')).toBeTruthy();
+  });
+
+  it('asks before deleting and only then calls the API', async () => {
+    const onDeleteTag = jest.fn(async (_tag: PracticeTag) => undefined);
+    const utils = openWithPersonal({ onDeleteTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-mine'));
+    expect(onDeleteTag).not.toHaveBeenCalled();
+    expect(utils.getByTestId('tag-picker-0-delete-prompt-mine')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-delete-confirm-mine'));
+    });
+    await waitFor(() => expect(onDeleteTag).toHaveBeenCalledWith(personal));
+  });
+
+  it('backs out of a delete confirmation', () => {
+    const onDeleteTag = jest.fn(async (_tag: PracticeTag) => undefined);
+    const utils = openWithPersonal({ onDeleteTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-mine'));
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-cancel-mine'));
+    expect(utils.queryByTestId('tag-picker-0-delete-prompt-mine')).toBeNull();
+    expect(onDeleteTag).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a delete failure in place', async () => {
+    const onDeleteTag = jest.fn(async () => {
+      throw new Error('Could not delete that tag.');
+    });
+    const utils = openWithPersonal({ onDeleteTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-delete-mine'));
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-delete-confirm-mine'));
+    });
+    await waitFor(() =>
+      expect(utils.getByTestId('tag-picker-0-manage-error-mine')).toHaveTextContent(
+        'Could not delete that tag.',
       ),
     );
   });

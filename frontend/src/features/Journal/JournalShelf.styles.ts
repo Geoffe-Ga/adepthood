@@ -91,6 +91,8 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: SPACING.sm,
     paddingVertical: rhythm.heroPaddingV,
   },
   searchRow: {
