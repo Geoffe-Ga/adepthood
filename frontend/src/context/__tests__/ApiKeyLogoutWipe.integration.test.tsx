@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, jest, beforeEach, afterEach */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
@@ -8,6 +9,7 @@ import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { clearDroppedCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
+import { setActiveUser } from '@/storage/userScope';
 
 // Reproduces the BYOK leak end-to-end: mount the real AuthProvider +
 // ApiKeyProvider trio wired exactly as App.tsx does, keep the real API-layer
@@ -80,8 +82,13 @@ function useHarness() {
 
 let fetchSpy: jest.SpyInstance;
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  // The device-owner stamp and the active scope are both module-level state
+  // that outlives a test; leaving either in place would make one test's
+  // sign-in look like a returning user to the next.
+  await AsyncStorage.clear();
+  setActiveUser(null);
   mockLlmStorage.loadLlmApiKey.mockResolvedValue(null);
   fetchSpy = jest
     .spyOn(globalThis, 'fetch')
@@ -181,6 +188,12 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     expect(lastLlmHeader()).toBe('sk-user-a');
   });
 
+  /**
+   * This test used to insert a ``logout()`` between the two sessions — the one
+   * step that made it pass — while claiming the general invariant in its name.
+   * The logout door has its own coverage above; this one drives the claim as
+   * written, with nothing between user A's key and user B's session.
+   */
   test('the next user on the device never inherits the prior key', async () => {
     mockAuthApi.login
       .mockResolvedValueOnce({ token: 'token-a', user_id: 1 })
@@ -194,9 +207,6 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     });
     await act(async () => {
       await result.current.apiKey.saveApiKey('sk-user-a');
-    });
-    await act(async () => {
-      await result.current.auth.logout();
     });
 
     await act(async () => {
@@ -228,6 +238,9 @@ describe('the dropped-check-in quarantine does not survive a logout on a shared 
     await act(async () => {
       await result.current.auth.login('a@test.com', 'password123');
     });
+    // Signing in on a device whose recorded owner is not this user wipes too;
+    // these tests are about the logout door, so discount the arrival.
+    (clearDroppedCheckIns as jest.Mock).mockClear();
     return result;
   }
 

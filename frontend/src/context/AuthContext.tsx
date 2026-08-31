@@ -21,6 +21,7 @@ import {
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
+import { loadDeviceOwner, parseUserId, saveDeviceOwner, setActiveUser } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
@@ -224,6 +225,67 @@ async function wipeUserState(): Promise<void> {
 }
 
 /**
+ * BUG-FE-STATE-001, the half that was never armed: the device changing hands
+ * WITHOUT an explicit logout.
+ *
+ * ``wipeUserState`` was reachable only from ``tearDownSession``, so a user who
+ * signed in over a live session — through the password-reset flow, or any path
+ * that reaches the login screen with a cache still on disk — inherited the
+ * previous user's habits, unsent check-in queue, quarantine, BYOK key and
+ * scheduled notifications. Every sign-in funnels through
+ * ``applyAuthResponse``, and ``AuthResponse`` already carries ``user_id``, so
+ * this is where the identity check belongs.
+ *
+ * The wipe keys off *identity*, not merely "a login happened". A same-user
+ * re-authentication must keep that user's pending check-in queue: it is unsent
+ * work, and discarding it would lose check-ins the user believes they logged.
+ * The comparison is therefore deliberately one-sided — we wipe unless the
+ * stored stamp *positively* names the incoming user, so an unstamped device or
+ * a failed read errs toward the wipe rather than toward the leak.
+ *
+ * The wipe runs against the OUTGOING owner's namespace (hence the
+ * ``setActiveUser(previousOwner)`` before it), then the scope moves to the
+ * incoming user. Both happen before the caller touches React state, so the
+ * new session's first render cannot see the old session's rows.
+ *
+ * Recording the stamp is deliberately NOT part of this function — see
+ * {@link commitDeviceOwner} for why the two writes must not be adjacent.
+ */
+async function adoptDeviceOwner(userId: number): Promise<void> {
+  const previousOwner = await loadDeviceOwner();
+  if (previousOwner !== userId) {
+    setActiveUser(previousOwner);
+    await wipeUserState();
+  }
+  setActiveUser(userId);
+}
+
+/**
+ * Record ``userId`` as the owner of this device's caches — and never before
+ * that user's token is on disk.
+ *
+ * A sign-in persists two things, and nothing makes the pair atomic. Stamping
+ * first meant a kill (or a rejected write) between them left the device
+ * holding one account's JWT under another account's stamp, and because the
+ * stamp is what the *next* sign-in compares against, that sign-in then took
+ * the "same owner, nothing to wipe" branch. The divergence cemented itself
+ * rather than healing. Ordering the token write first makes every torn
+ * interleaving safe: the stamp may lag the token, and a lagging stamp costs
+ * at worst a wipe aimed at an already-clean namespace.
+ *
+ * Failure is swallowed for the same reason: with the ordering right, a stamp
+ * that never lands cannot mis-scope anyone, because no session takes its
+ * namespace from the stamp.
+ */
+async function commitDeviceOwner(userId: number): Promise<void> {
+  try {
+    await saveDeviceOwner(userId);
+  } catch (err: unknown) {
+    console.warn('[auth] failed to record the device owner', err);
+  }
+}
+
+/**
  * Best-effort ``clearToken`` shared by every teardown path. Returns ``true``
  * when the delete succeeded and ``false`` when it rejected (warned inside), so
  * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
@@ -367,6 +429,34 @@ async function drainPendingLogout(mutators: AuthMutators): Promise<void> {
 }
 
 /**
+ * Point the device-local caches at the account a resumed session actually
+ * belongs to, and bring the device-owner stamp back into agreement with it.
+ *
+ * The namespace comes from the token, not from the stamp. Those are two
+ * separately persisted values written by two separate non-atomic writes, so
+ * they can disagree — and reading the stamp here meant an authenticated
+ * session could spend its whole life reading and writing another account's
+ * ``#u<id>`` rows. The JWT is the credential the server will honour, and its
+ * ``sub`` claim is that account's id, so it is the only value on the device
+ * that cannot be wrong about whose session this is.
+ *
+ * A token whose subject will not parse scopes to ``null``, the legacy
+ * unscoped namespace: no signed-in session reads it, so it isolates rather
+ * than leaks. Falling back to the stamp would reinstate the very hazard.
+ *
+ * Reconciling the stamp afterwards is what stops a divergence from persisting:
+ * left alone, a stamp naming the wrong account tells the next sign-in by that
+ * account that it already owns the device, and the wipe is skipped.
+ */
+async function scopeResumedSession(token: string): Promise<void> {
+  const owner = parseUserId(decodeJwtPayload(token)?.sub);
+  setActiveUser(owner);
+  if (owner === null) return;
+  if ((await loadDeviceOwner()) === owner) return;
+  await commitDeviceOwner(owner);
+}
+
+/**
  * Cold-start bootstrap: honor a pending logout before hydrating, then load the
  * stored token and discard it if expired. Terminates in ``'authenticated'`` or
  * ``'anonymous'`` — ``'loading'`` is one-shot, so later effects must not rewind
@@ -379,6 +469,9 @@ async function bootstrapStoredToken(mutators: AuthMutators): Promise<void> {
   }
   const stored = await loadToken();
   if (stored && !isTokenExpired(stored)) {
+    // A cold start resumes an existing session, so point the device-local
+    // caches at the account that owns them before anything reads one.
+    await scopeResumedSession(stored);
     mutators.setToken(stored);
     mutators.setAuthStatus('authenticated');
     return;
@@ -426,7 +519,13 @@ interface AuthActions extends SocialLogins {
  * device storage knows nothing about.
  */
 async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
+  // BUG-FE-STATE-001: before anything else, and before any state the navigator
+  // renders from — a device whose owner just changed must not carry the
+  // previous owner's rows into this session.
+  await adoptDeviceOwner(response.user_id);
   await saveToken(response.token);
+  // Only now: the stamp must never name an account whose token failed to land.
+  await commitDeviceOwner(response.user_id);
   // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
   // a clear failure here must not break login / signup / password-reset.
   try {
@@ -594,6 +693,11 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
     await armLogoutPending(where);
   }
   await wipeUserState();
+  // Release the scope only after the wipe, so the clears above target the
+  // departing user's namespace. The persisted device-owner stamp deliberately
+  // survives: it is what lets the NEXT sign-in still recognise a change of
+  // owner and re-run the wipe if any clear here failed.
+  setActiveUser(null);
   mutators.setToken(null);
   mutators.setUserTimezone('UTC');
   mutators.setAuthStatus('anonymous');
