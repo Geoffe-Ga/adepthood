@@ -305,6 +305,26 @@ def test_count_open_backlog_respects_env_override(monkeypatch: pytest.MonkeyPatc
     assert recap.count_open_backlog("owner/repo", token="t") == 2
 
 
+def test_count_open_backlog_is_a_superset_of_what_the_picker_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unspecced issue is counted here even though the picker will not pick it.
+
+    `pick-next.sh` requires `agent-ready`; this count deliberately does not, so
+    that work waiting to be specced stays visible instead of vanishing from the
+    ETA. A `blocked` issue is still excluded, because that is the picker's
+    exclude set, which the count does mirror.
+    """
+    monkeypatch.delenv("RALPH_EXCLUDE_LABELS", raising=False)
+    issues = [
+        _issue(1, labels=["agent-ready"]),  # counted: pickable
+        _issue(2, labels=["testing"]),  # counted: real work the picker cannot pick
+        _issue(3, labels=["blocked", "agent-ready"]),  # excluded: mirrored exclude set
+    ]
+    _patch_issues(monkeypatch, issues)
+    assert recap.count_open_backlog("owner/repo", token="t") == 2
+
+
 # ---------- count_merged_total ----------
 
 

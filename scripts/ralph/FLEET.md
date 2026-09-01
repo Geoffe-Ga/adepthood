@@ -171,9 +171,21 @@ for building, serialize only the merge.**
 
 ## Which issues run in parallel (the safety gate)
 
-`pick-next.sh` is parallel-aware. Beyond the existing require/exclude label
-filters and open-PR exclusion, it:
+`pick-next.sh` is parallel-aware. Beyond the require/exclude label filters and
+open-PR exclusion, it:
 
+- **Requires `agent-ready`** (`RALPH_REQUIRE_LABELS`, default `agent-ready`). An
+  issue nobody has specced is not build work, so it is invisible to the picker
+  no matter how high its priority — a lane handed one has nothing to build from.
+  The variable REPLACES the requirement rather than adding to it; set it to the
+  empty string (`RALPH_REQUIRE_LABELS=`) to require nothing and see the whole
+  backlog. Because the gate can hold back real work, an empty pick is never
+  silent: the picker says on stderr **why** it picked nothing, and the two
+  reasons call for opposite responses — *no open issue passed the require gate*
+  means groom the backlog, while *N candidates passed the filters but are all in
+  flight or conflicting* means eligible work exists and is already covered, so
+  nothing needs grooming and dropping the gate would reveal nothing. Silence
+  means the backlog really is drained.
 - **Excludes live worktree issues** (started, PR not yet opened) so the same
   issue is never handed to two workers.
 - Gives the **first** worker (empty fleet) the lowest eligible issue, exactly as

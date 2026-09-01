@@ -28,16 +28,18 @@ always apply one explicitly rather than relying on the default.
 
 - `agent-ready` — every template section (`references/report-template.md`)
   is filled with real content; the picker can hand this straight to a Ralph
-  worker.
+  worker. **This label is REQUIRED for pickup.** `pick-next.sh` requires it by
+  default (`RALPH_REQUIRE_LABELS`), so an issue without it is invisible to the
+  fleet however urgent it looks. Filing without it is filing for a human.
 - `needs-spec` — something is missing (reproduction failed, ambiguous scope,
-  unverifiable claim). Apply this, not `needs-triage`, when the issue must
-  not be auto-picked: `needs-spec` is the label `pick-next.sh`'s default
-  `RALPH_EXCLUDE_LABELS` actually excludes. A human or a grooming pass
-  finishes it, then relabels `agent-ready`.
-- `needs-triage` — informational only. It is NOT in the picker's default
-  exclude set, so an issue carrying `needs-triage` alone (without
-  `needs-spec`) remains pickable by default. Don't rely on it to keep an
-  incomplete issue out of the fleet.
+  unverifiable claim). Apply it, and leave `agent-ready` off. It is also in the
+  picker's default exclude set, so it stops pickup twice over. A human or a
+  grooming pass finishes it, then relabels `agent-ready`.
+- `needs-triage` — informational only. It neither admits nor excludes: an issue
+  is pickable if it carries `agent-ready` and no excluded label, whatever else
+  is on it. Don't rely on `needs-triage` to signal readiness in either
+  direction. `scripts/ralph/pick-next.sh`'s header is the canonical statement of
+  the rule; this file only summarizes it.
 
 ## Decomposition
 
