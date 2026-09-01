@@ -711,13 +711,22 @@ async def _detect_and_persist_suggestions(
 
     Empty candidates short-circuit with no LLM call (cost guard). A provider error
     is swallowed (returns ``[]``) so the literary pass, the wallet charge, and the
-    commit are never rolled back — detection is strictly additive.
+    commit are never rolled back — detection is strictly additive. A spent balance
+    is swallowed on the same terms but logged with its ``provider``: it is permanent
+    where a dropped socket is transient, and the account is the only thing an
+    operator can act on.
     """
     candidates = await gather_candidates(session, user_id, include_practices=True)
     if not candidates:
         return []
     try:
         hits = await detect_completions(message, candidates=candidates, llm=llm)
+    except LLMCreditExhaustedError as exc:
+        logger.warning(
+            "journal_detection_failed",
+            extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
+        )
+        return []
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
         return []
