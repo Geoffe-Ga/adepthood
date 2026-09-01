@@ -76,6 +76,12 @@ Decide, from the evidence gathered in Step 2:
   - `P1` — a core user flow is broken with no workaround.
   - `P2` — degraded behavior, workaround exists, or a well-scoped feature.
   - `P3` — cosmetic, minor, or nice-to-have.
+  - **Backlog inflow moratorium (2026-09-01, `CLAUDE.md` guardrails)**:
+    findings about the development loop itself — `scripts/ralph/**`,
+    `.github/workflows/**`, scan/lint/pre-commit tooling, dependency
+    hygiene — are filed ONLY when they break a required check on `main` or
+    block a merge (then use the tiers above as normal). Otherwise stop:
+    report the finding to the user instead of filing.
 - **Size**: Estimate rough LoC/complexity from what Step 2 found. If it looks
   like it exceeds ~300 LoC or spans more than one clearly separable concern
   (e.g. "backend model + API + two screens"), it needs decomposition — see

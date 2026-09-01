@@ -115,6 +115,13 @@ cd frontend && npx tsc --noEmit     # Type check
 - Install packages with `npm install` instead of `npm ci` in CI/session contexts
 - Introduce magic numbers without named constants
 - Leave TODOs for problems solvable now
+- File new issues about the development loop itself — `scripts/ralph/**`,
+  `.github/workflows/**`, scan/lint/pre-commit tooling, dependency hygiene —
+  while the backlog inflow moratorium (2026-09-01) holds. Record the finding
+  in the PR thread or report it to the user instead. Sole exception: a
+  finding that breaks a required check on `main` or blocks a merge may be
+  filed, at flare's normal severity mapping. Context:
+  `prompts/claude-comms/backlog-prioritization-audit-2026-09-01.md`
 
 ### Quality Thresholds
 - **Journey coverage:** every critical user journey is declared in
