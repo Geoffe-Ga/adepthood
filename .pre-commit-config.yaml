@@ -135,12 +135,24 @@ repos:
         files: ^backend/
         args: ["--settings-path=backend/pyproject.toml"]
 
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.6
+  # bandit, like ruff and mypy, runs from the installed environment. It was a
+  # cloned PyCQA/bandit at rev 1.8.6 while requirements-dev.txt pinned 1.9.4.
+  #
+  # The version was only half of that divergence. This hook ran
+  # `-c backend/.bandit -r backend`; scripts/backend/security.sh ran
+  # `bandit -r src/` with no `-c` at all, so it loaded none of .bandit's skips
+  # or exclusions and scanned a smaller tree. Delegating to the script is what
+  # makes the two one gate rather than two gates that happen to share a
+  # version -- the same reasoning as `backend-complexity` below, which
+  # delegates instead of restating its thresholds.
+  - repo: local
     hooks:
       - id: bandit
+        name: bandit
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/security.sh --bandit-only'
+        language: system
+        pass_filenames: false
         files: ^backend/
-        args: ["-c", "backend/.bandit", "-r", "backend"]
 
   - repo: https://github.com/trailofbits/pip-audit
     rev: v2.9.0
