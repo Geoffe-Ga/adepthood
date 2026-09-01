@@ -911,11 +911,14 @@ export const styles = StyleSheet.create({
   },
 
   // ===== Energy Scaffolding Button =====
+  // In flow, not floating: an absolute band contributes no height, so it paints
+  // over whatever the flow put beneath it -- here the in-body pagination row,
+  // whose Prev/Next buttons ended up buried. The margins keep the gutter the
+  // old bottom/left/right inset gave it.
   energyScaffoldingContainer: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.xl,
     flexDirection: 'row',
     alignItems: 'center',
   },
