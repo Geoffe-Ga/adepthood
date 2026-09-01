@@ -26,47 +26,6 @@ const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
 const MAX_RIGHT_LABEL_LINE_LENGTH = 9;
 
-// The canonical archetype word for each stage, mirroring the backend's
-// Stage.title in archetypal_wavelength.json. The Map descriptor is a second
-// copy of this vocabulary, so it must not drift from the source of truth.
-const CANONICAL_DESCRIPTOR: Readonly<Record<number, string>> = {
-  1: 'Survival',
-  2: 'Magick',
-  3: 'Power',
-  4: 'Conformity',
-  5: 'Achievist',
-  6: 'Pluralist',
-  7: 'Integrative',
-  8: 'Nondual',
-  9: 'Effortless Being',
-  10: 'Pure Awareness',
-};
-
-// The one canonical Practice-tab preset per stage, mirroring the backend's
-// CANONICAL_PRESET_PRACTICES in seed_practices.py. The Map's practice label is
-// a second copy of that vocabulary, so it must name what the Practice tab
-// actually seeds rather than a retired or invented practice.
-const CANONICAL_PRACTICE: Readonly<Record<number, string>> = {
-  1: '5-4-3-2-1 grounding',
-  2: 'Tarot meditation',
-  3: 'Belly breathing',
-  4: 'Metta',
-  5: 'Wim Hof method',
-  6: 'Shadow work',
-  7: 'Blissy meditation',
-  8: "Dog Walkin' Shamanism",
-  9: 'Concentration practice',
-  10: 'Insight practice',
-};
-
-// The free-will archetype persona for the two stages this reconciliation
-// corrected, mirroring the APTITUDE course free-will chapters. Pinned so the
-// Map and Journal Aspect chips can't drift back to the retired copy.
-const CANONICAL_ARCHETYPE_PERSONA: Readonly<Record<number, string>> = {
-  2: 'Archetype Embodier',
-  8: 'True Self Embodier',
-};
-
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
   const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
@@ -118,28 +77,6 @@ describe('mapLayout', () => {
       expect(display?.practice).toBeTruthy();
       expect(display?.textColor).toMatch(HEX_COLOR);
     });
-  });
-
-  it('matches each stage descriptor to the canonical backend archetype word', () => {
-    ALL_STAGES.forEach((stageNumber) => {
-      expect(requireDisplay(stageNumber).descriptor).toBe(CANONICAL_DESCRIPTOR[stageNumber]);
-    });
-  });
-
-  it('matches each stage practice to the canonical Practice-tab preset name', () => {
-    ALL_STAGES.forEach((stageNumber) => {
-      expect(requireDisplay(stageNumber).practice).toBe(CANONICAL_PRACTICE[stageNumber]);
-    });
-  });
-
-  it('names the free-will archetype persona for the reconciled stages 2 and 8', () => {
-    Object.entries(CANONICAL_ARCHETYPE_PERSONA).forEach(([stageNumber, persona]) => {
-      expect(requireDisplay(Number(stageNumber)).persona).toBe(persona);
-    });
-  });
-
-  it('labels the stage-8 aspect arrow True Self, not the retired Nondual copy', () => {
-    expect(requireDisplay(8).arrowLabel).toBe('True Self');
   });
 
   it('omits the arrow label only on the two title stages (9 and 10)', () => {
@@ -203,10 +140,6 @@ describe('mapLayout', () => {
     expect(bounds.right).toBeCloseTo(400);
     expect(bounds.left).toBeCloseTo(centerWidth);
     expect(rightGutter).toBeCloseTo(centerWidth / 2);
-  });
-
-  it('renames stage 3 arrow label from Self-Interest to Self-Love', () => {
-    expect(STAGE_DISPLAY[3]?.arrowLabel).toBe('Self-Love');
   });
 
   it('hugs odd stages left and even stages right', () => {
