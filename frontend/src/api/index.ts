@@ -37,6 +37,7 @@ import {
   stageIntroSchema,
   userPracticeSchema,
   stageProgressRecordSchema,
+  stagePromptsResponseSchema,
   stageSchema,
   timezoneReadSchema,
   transcribePageSchema,
@@ -66,6 +67,7 @@ import {
   type ReturnWeekT,
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
+  type StagePromptsResponseT,
   type PromotedQuoteT,
   type PromotedQuoteSummaryT,
   type ReflectionDueT,
@@ -2105,6 +2107,16 @@ export interface PromptListResponse {
   has_more: boolean;
 }
 
+/** What a response carries besides its prose: the compose title, and which of
+ *  the stage's prompts it answers. Grouped rather than trailing positionally so
+ *  a caller naming only the ordinal cannot silently bind it to ``token``. */
+export interface PromptResponseOptions {
+  title?: string | null;
+  /** 1-based position in the stage's prompt list; omitted means the prompt the
+   *  week itself draws, which is what a week-keyed caller has always sent. */
+  promptOrdinal?: number | null;
+}
+
 export const prompts = {
   current(token?: string): Promise<PromptDetail> {
     return request<PromptDetail>('/prompts/current', { token });
@@ -2112,13 +2124,30 @@ export const prompts = {
   respond(
     weekNumber: number,
     response: string,
-    title?: string | null,
+    options: PromptResponseOptions = {},
     token?: string,
   ): Promise<PromptDetail> {
+    const { title, promptOrdinal } = options;
     return request<PromptDetail>(`/prompts/${weekNumber}/respond`, {
       method: 'POST',
-      body: { response, ...(title ? { title } : {}) },
+      body: {
+        response,
+        ...(title ? { title } : {}),
+        ...(promptOrdinal != null && { prompt_ordinal: promptOrdinal }),
+      },
       token,
+    });
+  },
+  /** Every prompt of one stage, in curriculum order, each with its own cadence.
+   *
+   * Weeks and prompts are not 1:1 — a stage carries three to five prompts
+   * across three or six weeks — so this is the read the week-scoped endpoints
+   * cannot express. A stage the reader has not reached is refused server-side.
+   */
+  stage(stageNumber: number, token?: string): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(`/prompts/stage/${stageNumber}`, {
+      token,
+      schema: stagePromptsResponseSchema,
     });
   },
   history(
@@ -2229,6 +2258,12 @@ export const stages = {
     });
   },
 };
+
+/** Public aliases of the zod-inferred stage-prompt types so consumers avoid duplicate shapes. */
+export type {
+  StagePromptDetailT as StagePromptDetail,
+  StagePromptsResponseT as StagePromptsResponse,
+} from './schemas';
 
 /** Public alias of the zod-inferred stage-progress type so consumers avoid a duplicate shape. */
 export type { StageProgressRecordT as StageProgressRecord } from './schemas';

@@ -15,7 +15,10 @@ import {
   touchTarget,
 } from '@/design/tokens';
 
-const PROMPT_ACCENT_BAR = 3; // the weekly prompt's identifying left rule
+const PROMPT_ACCENT_BAR = 3; // a stage prompt's identifying left rule
+// An answered prompt stays legible and stays tappable — it recedes rather than
+// greys out, since several of a stage's prompts are meant to be returned to.
+const ANSWERED_OPACITY = 0.7;
 const HEADING_TRACKING = 1; // small-caps letter-spacing for recency headings
 
 const styles = StyleSheet.create({
@@ -125,8 +128,21 @@ const styles = StyleSheet.create({
     color: colors.danger,
     textAlign: 'center',
   },
-  promptCard: {
+  promptSection: {
     marginTop: SPACING.lg,
+  },
+  promptSectionLabel: {
+    ...editorialType.caption,
+    color: ink.muted,
+    paddingBottom: spacing(0.5),
+  },
+  promptSectionNote: {
+    ...editorialType.caption,
+    color: ink.muted,
+    paddingBottom: spacing(0.5),
+  },
+  promptCard: {
+    marginTop: SPACING.sm,
     padding: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
     // Lifted onto a raised sheet, but keeps an accent bar marking it the prompt.
@@ -135,9 +151,17 @@ const styles = StyleSheet.create({
     borderLeftColor: accent.primary,
     ...surfaceShadow.card,
   },
+  promptCardAnswered: {
+    opacity: ANSWERED_OPACITY,
+  },
   promptLabel: {
     ...editorialType.caption,
     color: ink.muted,
+  },
+  promptAnswered: {
+    ...editorialType.caption,
+    color: accent.primary,
+    paddingTop: spacing(0.5),
   },
   promptQuestion: {
     ...editorialType.heading,

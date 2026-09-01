@@ -2,11 +2,11 @@
  * ``PromptHistoryModal`` — every weekly prompt this person has answered, with
  * the question above what they wrote, newest week first.
  *
- * The shelf shows one prompt: the current, unanswered one. Answering it mirrors
- * the response into the journal stream as an ordinary page, which keeps the
- * writing but loses the question that drew it. This surface is where the pair
- * stays together, and it is the only place ``GET /prompts/history`` is reached
- * from.
+ * The shelf shows the current stage's prompts and marks which of them have been
+ * answered; it reads the same history to do that, but only for the ordinals.
+ * Answering a prompt mirrors the response into the journal stream as an ordinary
+ * page, which keeps the writing but loses the question that drew it. This
+ * surface is where the pair stays together.
  */
 import React from 'react';
 import {

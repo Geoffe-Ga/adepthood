@@ -32,7 +32,6 @@ import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
-import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
@@ -91,7 +90,7 @@ const LOAD_ERROR_MESSAGE =
 const FINISH_ERROR_MESSAGE =
   "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
 
-type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
+type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
@@ -104,9 +103,18 @@ const SAVED_HINT = 'Saved';
 /** A blank hint line that reserves the row's height without showing any text. */
 const BLANK_HINT = ' ';
 
+/**
+ * Said when the week already holds its one prompt response. Distinct from the
+ * generic save error because retrying cannot clear it — the server keeps one
+ * response per week — so the hint names the condition and the way out instead
+ * of telling the writer to keep going.
+ */
+const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
+  if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -119,6 +127,9 @@ function savedHintLabel(state: SaveState): string {
  */
 interface SaveContext {
   weekNumber?: number;
+  /** Which of the stage's prompts the response answers, 1-based; omitted means
+   *  the prompt the week itself draws. */
+  promptOrdinal?: number;
   practiceSessionId?: number;
   userPracticeId?: number;
   /** Reflection scope this page closes (7th-day reflection compose mode). */
@@ -194,7 +205,10 @@ async function writeEntry(
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
     if (respondedRef.current) return;
-    await prompts.respond(ctx.weekNumber, body, titleOrNull(title));
+    await prompts.respond(ctx.weekNumber, body, {
+      title: titleOrNull(title),
+      ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
+    });
     respondedRef.current = true;
     return;
   }
@@ -455,7 +469,10 @@ function trackedWrite(
       onSaved?.();
     } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
-      setSaveState('error');
+      // A 409 on the weekly-prompt path is not retryable — the week already holds
+      // its one response — so it gets its own state rather than the retry hint.
+      const weekTaken = ctx.weekNumber != null && isCreateConflict(error);
+      setSaveState(weekTaken ? 'weekTaken' : 'error');
       // Additive: a reflection-scope create can 409 because the reflection
       // already exists. Hand that case to the caller (which routes to the
       // existing entry); every other failure keeps the plain save-error hint.
@@ -2010,7 +2027,10 @@ interface EntryEntrypoint {
 /** Translate the route params into the save context + pre-filled title/body/placeholder. */
 function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
   const p = params ?? {};
-  const title = p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
+  // No client-side fallback title: a prompt's name is curriculum text the server
+  // owns and sends, so an untitled arrival opens blank rather than under a label
+  // the client guessed from the week number.
+  const title = p.prefillTitle ?? '';
   // A folded-in quote seeds the body as a blockquote; otherwise the body opens blank.
   const body =
     p.prefillQuote != null
@@ -2019,6 +2039,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
   return {
     ctx: {
       weekNumber: p.weekNumber,
+      promptOrdinal: p.promptOrdinal,
       practiceSessionId: p.practiceSessionId,
       userPracticeId: p.userPracticeId,
       reflectionLevel: p.reflectionLevel,

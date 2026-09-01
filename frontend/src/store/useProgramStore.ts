@@ -122,6 +122,20 @@ export const programStage = (anchor: Date | null, today: Date = new Date()): num
   return STAGE_COUNT;
 };
 
+// Stage (1-10) containing a 1-based program week, walking STAGE_DURATIONS_DAYS so the
+// three-week and six-week stages are both honoured — an even three-per-stage division
+// puts the second half of the program a stage early. Total (never throws): weeks below
+// the first and past the last clamp to stage 1 and the final stage.
+export const programStageForWeek = (week: number): number => {
+  let remaining = Math.max(1, Math.trunc(week)) - 1;
+  for (let i = 0; i < STAGE_COUNT; i += 1) {
+    const weeksInStage = STAGE_DURATIONS_DAYS[i]! / DAYS_PER_WEEK;
+    if (remaining < weeksInStage) return i + 1;
+    remaining -= weeksInStage;
+  }
+  return STAGE_COUNT;
+};
+
 // Hydrate the anchor from AsyncStorage on cold start so the first paint uses the real value, not the server fallback.
 export function useHydrateProgramStore(): void {
   const hydrate = useProgramStore((s) => s.hydrateProgramStartDate);
