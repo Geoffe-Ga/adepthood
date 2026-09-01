@@ -24,7 +24,7 @@ Auto-fix all auto-fixable issues in sequence.
 
 Fixes:
   1. Linting issues (Ruff)
-  2. Formatting (Black + isort)
+  2. Formatting (ruff-format)
 
 Note: Some issues may require manual intervention.
 Check the output and review changes before committing.

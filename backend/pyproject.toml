@@ -1,14 +1,6 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-known_first_party = ["src", "tests"]
-src_paths = ["src", "tests"]
-
 [tool.ruff]
 # Both spellings so first-party detection works from the repo root
 # (pre-commit) AND from backend/ (scripts/backend/*.sh); ruff ignores
@@ -79,9 +71,14 @@ fixable = ["ALL"]
 "backend/src/main.py" = ["F401", "PLC0415"]
 
 [tool.ruff.lint.isort]
+# ruff's ``I`` family is the only import sorter in this repository; the
+# standalone isort hook and its ``[tool.isort]`` block are gone, because
+# nothing but that hook ever ran isort and two sorters over one tree only
+# ever oscillate.
+#
 # ``conftest`` lives at backend/conftest.py (outside ``src/``) but is
-# project-local for import purposes; matching isort's auto-discovery
-# keeps the two import-sorters from oscillating on test files.
+# project-local for import purposes, so it is named here explicitly rather
+# than left to first-party auto-discovery.
 known-first-party = ["src", "tests", "conftest", "scripts"]
 
 [tool.ruff.lint.pydocstyle]
