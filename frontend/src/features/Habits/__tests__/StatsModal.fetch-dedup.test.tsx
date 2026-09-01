@@ -8,6 +8,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React, { useSyncExternalStore } from 'react';
 
 import type * as ApiModule from '../../../api';
+import { useHabitStore } from '../../../store/useHabitStore';
 import HabitsScreen from '../HabitsScreen';
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
@@ -28,6 +29,7 @@ const HabitsScreenWithHeader = (): React.JSX.Element => {
 };
 
 const mockGetStats = jest.fn();
+const mockListAll = jest.fn();
 
 // HabitsScreen installs its drawer toggle as the navigator's headerLeft via
 // useAppNavigation. Rendering the screen outside a navigator would strand that
@@ -73,35 +75,10 @@ jest.mock('../../../api', () => {
       ),
     },
     habits: {
-      // One unlocked habit (past start_date) so the tile renders and is pressable.
-      // Its id is deliberately distinct from FALLBACK_HABITS[0].id (1) so the
-      // getStats assertion fails if the screen ever falls back to the demo seed.
-      listAll: () =>
-        Promise.resolve([
-          {
-            id: 7,
-            name: 'Meditate',
-            icon: '🧘',
-            stage: 'Beige',
-            streak: 0,
-            energy_cost: 1,
-            energy_return: 1,
-            start_date: new Date(2020, 0, 1),
-            goals: [
-              {
-                title: 'Low',
-                tier: 'low',
-                target: 1,
-                target_unit: 'u',
-                frequency: 1,
-                frequency_unit: 'per_day',
-                is_additive: true,
-              },
-            ],
-            completions: [],
-            revealed: true,
-          },
-        ]),
+      // Routed through a mock so a test can serve the demo seed instead. The
+      // default row's id is deliberately distinct from FALLBACK_HABITS[0].id (1)
+      // so the getStats assertion fails if the screen falls back to the seed.
+      listAll: () => mockListAll(),
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
@@ -122,6 +99,18 @@ jest.mock('../../../api', () => {
     goalCompletions: { create: jest.fn() },
   };
 });
+
+jest.mock('../../../storage/habitStorage', () => ({
+  saveHabits: jest.fn(() => Promise.resolve(undefined)),
+  loadHabits: jest.fn(() => Promise.resolve(null)),
+  loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
+  clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
+}));
 
 jest.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
@@ -155,23 +144,75 @@ jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
 
+const SERVER_HABIT_ID = 7;
+
+const serverHabits = [
+  {
+    id: SERVER_HABIT_ID,
+    name: 'Meditate',
+    icon: '\u{1F9D8}',
+    stage: 'Beige',
+    streak: 0,
+    energy_cost: 1,
+    energy_return: 1,
+    start_date: new Date(2020, 0, 1),
+    goals: [
+      {
+        title: 'Low',
+        tier: 'low',
+        target: 1,
+        target_unit: 'u',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        is_additive: true,
+      },
+    ],
+    completions: [],
+    revealed: true,
+  },
+];
+
+const openStatsOnFirstTile = async (screen: ReturnType<typeof render>): Promise<void> => {
+  await waitFor(() => expect(screen.getAllByTestId('habit-tile').length).toBeGreaterThan(0));
+  fireEvent.press(screen.getByLabelText('Open Habits menu'));
+  fireEvent.press(screen.getByText('Stats'));
+  fireEvent.press(screen.getAllByTestId('habit-tile')[0]!);
+};
+
 beforeEach(() => {
   headerLeftStore.current = undefined;
   headerLeftStore.listeners.clear();
+  useHabitStore.setState({ habits: [], loading: false, error: null });
+  mockListAll.mockImplementation(() => Promise.resolve(serverHabits));
 });
 
 describe('Habits stats modal fetch dedup', () => {
   it('fires getStats exactly once when the stats modal opens', async () => {
-    const { getAllByTestId, getByText, getByLabelText } = render(<HabitsScreenWithHeader />);
+    const screen = render(<HabitsScreenWithHeader />);
 
-    // Wait for the habit list to load, then drive: header drawer -> Stats mode ->
-    // tap the tile (which opens the stats modal in stats mode).
-    await waitFor(() => expect(getAllByTestId('habit-tile').length).toBeGreaterThan(0));
-    fireEvent.press(getByLabelText('Open Habits menu'));
-    fireEvent.press(getByText('Stats'));
-    fireEvent.press(getAllByTestId('habit-tile')[0]!);
+    await openStatsOnFirstTile(screen);
 
     await waitFor(() => expect(mockGetStats).toHaveBeenCalledTimes(1));
-    expect(mockGetStats).toHaveBeenCalledWith(7, 'test-token');
+    expect(mockGetStats).toHaveBeenCalledWith(SERVER_HABIT_ID, 'test-token');
+  });
+});
+
+describe('Habits stats modal on a demo-seed tile', () => {
+  it('renders locally generated stats without asking the server for them', async () => {
+    // No cache and no server rows seeds the ten demo tiles, whose ids are fabricated.
+    mockListAll.mockImplementation(() => Promise.resolve([]));
+    const screen = render(<HabitsScreenWithHeader />);
+
+    await openStatsOnFirstTile(screen);
+
+    const seeded = useHabitStore.getState().habits;
+    expect(seeded).toHaveLength(10);
+    expect(seeded.filter((h) => h.isDemoSeed === true)).toHaveLength(10);
+    expect(mockGetStats).not.toHaveBeenCalled();
+    // Stats came from the local generator, so the modal never sits in its
+    // in-flight state waiting on a request that will never be made.
+    expect(screen.queryByText('Loading stats...')).toBeNull();
+    expect(screen.getByText('Longest Streak:')).toBeTruthy();
+    expect(screen.getByText('Total Completions:')).toBeTruthy();
   });
 });

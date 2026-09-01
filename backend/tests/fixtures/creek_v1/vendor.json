@@ -1,10 +1,10 @@
 {
   "bundle": "adepthood-v1",
-  "contract_version": "0.8.0",
+  "contract_version": "0.10.0",
   "files": [
     {
       "path": "README.md",
-      "sha256": "c4cfc4e54c90ba411b7b84b42215963e4c06cc002c4fe2de4b55f6bd628d1445"
+      "sha256": "c8d44983572ec148dc31cd99d65f2ec3b00cb03f931a0a73f5ae44e35882e3e9"
     },
     {
       "path": "examples/capabilities/care-escalation.json",
@@ -12,7 +12,7 @@
     },
     {
       "path": "examples/capabilities/empty.json",
-      "sha256": "a06b35198c4386b9e5722959fa59370d7224ae8841fd4fd3b77fbedfc5869ea2"
+      "sha256": "744a15964dd31c589c9cf58f01d6c517712e238b00eecd7db951a3e71be85506"
     },
     {
       "path": "examples/capabilities/incompatible-version.json",
@@ -28,11 +28,39 @@
     },
     {
       "path": "examples/capabilities/success.json",
-      "sha256": "128ce2b8b0fd4c5c4f1fde36189291d405a67f4c55770f3422ebead4490727dc"
+      "sha256": "69c509771e60440a19966ba3b9ba093bfa62346f7f65802c76c336fbc807906a"
     },
     {
       "path": "examples/capabilities/unavailable-service.json",
       "sha256": "89a0b5295b63a7c84f76da28bc556abf281afefa7993a3b5701ddd01baf9294d"
+    },
+    {
+      "path": "examples/drive-connector/care-escalation.json",
+      "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
+    },
+    {
+      "path": "examples/drive-connector/empty.json",
+      "sha256": "54f3f1431e62c7ea9f51cc54663149f80eb0f2acabb5eb3a7fca061d4860feb9"
+    },
+    {
+      "path": "examples/drive-connector/incompatible-version.json",
+      "sha256": "c30b8a6f89e5574f7393a9876aa65205ac52212da85eb3a45f886b8d0ed1b6f6"
+    },
+    {
+      "path": "examples/drive-connector/malformed-input.json",
+      "sha256": "4943689ec156ebd288dcb6e6f888e2284d43527de156a5b1b8e9f3649730aade"
+    },
+    {
+      "path": "examples/drive-connector/refusal.json",
+      "sha256": "3dbec5a3c1e03cb60cdc213a9786d9cea6918d8cb136244d19eb5995ee1c0631"
+    },
+    {
+      "path": "examples/drive-connector/success.json",
+      "sha256": "2029edc1fd756fb865226d72928915f463e75fcbe1bcd54645b1abc7829ad60c"
+    },
+    {
+      "path": "examples/drive-connector/unavailable-service.json",
+      "sha256": "bd64368c2cf504b3fc6c7619e4eb0f4c3eff52c31a839d3da4d24f8d00e9f68c"
     },
     {
       "path": "examples/journal-upsert/care-escalation.json",
@@ -63,6 +91,34 @@
       "sha256": "a29004223b68de26c66e2dfaa64ff3fde4495e0b3bee0c21c3aae8c56be6a6a6"
     },
     {
+      "path": "examples/pipeline/care-escalation.json",
+      "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
+    },
+    {
+      "path": "examples/pipeline/empty.json",
+      "sha256": "266e38b543f0d7405cb291edc0d70fdb3144de367f0173224993942dbfab5b21"
+    },
+    {
+      "path": "examples/pipeline/incompatible-version.json",
+      "sha256": "05ba769f3e7d662a92d8f020c31eb534822af1f2339b6e914301707f8ecd9578"
+    },
+    {
+      "path": "examples/pipeline/malformed-input.json",
+      "sha256": "2cf7207f484e341f224291c62368a2dbab6d5f5c5c7890a6a05acf4f49c70759"
+    },
+    {
+      "path": "examples/pipeline/refusal.json",
+      "sha256": "771885e64ce9809b0931d1990cebed94300f9817b6b9b4dbdb3e4dcd9b0007f1"
+    },
+    {
+      "path": "examples/pipeline/success.json",
+      "sha256": "fa983e80c2b2b6662b1a6169c11fcc0dff2d608a86cbb18c1d63a0b308d2a67a"
+    },
+    {
+      "path": "examples/pipeline/unavailable-service.json",
+      "sha256": "152f17b333cbd64be186f3b462eaa7f76cd5996937d7a04111b835785f4bb9ac"
+    },
+    {
       "path": "examples/reflections/care-escalation.json",
       "sha256": "8558c3fa48b4be421fed76e7116f48568ce9eb4fba9ebe9f274e1c5e385b9b91"
     },
@@ -84,7 +140,7 @@
     },
     {
       "path": "examples/reflections/success.json",
-      "sha256": "250fd9c41d702ffcae5e2e29ba38147785a1eb74b6d9ec96b38b834b44812deb"
+      "sha256": "ecb5b753260dcba1a5612b502e0ef3a6580cb0e9bbd856b9fc777d88396daca9"
     },
     {
       "path": "examples/reflections/unavailable-service.json",
@@ -148,7 +204,7 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "2bda415591b51e682383e31123fa2e970b70ff562738daa259e7188e2d860daa"
+      "sha256": "ddbfed82a539efe94a0d6997e3d1b37421dad70031ba88fa2448ff4bcf70b914"
     },
     {
       "path": "retry-policy.json",
@@ -156,7 +212,7 @@
     },
     {
       "path": "schemas/CapabilitiesResponse.schema.json",
-      "sha256": "380b2b009dc319887f6b3df650cb577b9dea62b9ba5785332839eac5fd6daa0b"
+      "sha256": "730f04f35cc9342817225bce8ef6ce53b3049b2b040569965385e8ce578c44d6"
     },
     {
       "path": "schemas/CareEscalationResponse.schema.json",
@@ -171,6 +227,26 @@
       "sha256": "fc09e8583eca62438b9a4b4074da5fcb1f31c694a059d11e7efca5db9b60ce90"
     },
     {
+      "path": "schemas/ClassificationRequest.schema.json",
+      "sha256": "340f63de211b904c7c87a5608ab72ddf1c14ed5386a0329b1bb396b1fed46e75"
+    },
+    {
+      "path": "schemas/ClassificationResponse.schema.json",
+      "sha256": "cb45a61852f41be211235c75766de08ad2825eeedc93a02f45d960eff00e18ba"
+    },
+    {
+      "path": "schemas/DriveConnectorStatusResponse.schema.json",
+      "sha256": "9878918c1f8a1091a155f20a69fae343b3229f03cce54b784525d51ae09d9c1f"
+    },
+    {
+      "path": "schemas/DriveDisconnectResponse.schema.json",
+      "sha256": "0809789ee2628bb14545eb4ed87cff172dbbbe502972dc1d8f0d32f18e181502"
+    },
+    {
+      "path": "schemas/DriveSyncResponse.schema.json",
+      "sha256": "8fa0ddc2b9143f3962ceede733fede60695e250e5ec728509123ea8d1c150ea8"
+    },
+    {
       "path": "schemas/ErrorEnvelope.schema.json",
       "sha256": "6f9d0a3288cdf9f207cd28da3742f90ae686e12da6b21f28f82743895e0a634e"
     },
@@ -181,6 +257,14 @@
     {
       "path": "schemas/JournalUpsertResponse.schema.json",
       "sha256": "3ee3856e89c4739327d96c5ea035150912891a4ec3e0be344aeb1eaf2bbd912c"
+    },
+    {
+      "path": "schemas/LinkRequest.schema.json",
+      "sha256": "ed451891ee2476c7f0747fef9038f066c102d5fe5a29619430c3832b78aed86c"
+    },
+    {
+      "path": "schemas/LinkResponse.schema.json",
+      "sha256": "201ba880113dbbb5dbfb343a3a2ca05d32e99b5b06956c9ad0b14b7ea0487c32"
     },
     {
       "path": "schemas/NotApplicableExample.schema.json",
@@ -196,7 +280,15 @@
     },
     {
       "path": "schemas/ReflectionResponse.schema.json",
-      "sha256": "678194d72f6384f60985eedbc92d71342ac1213ce2cd17dfc09edf00526ea1a1"
+      "sha256": "048a0db1587133ea96111d9293f0e08afcb15ac8cf29a9164dc063523a09ed9c"
+    },
+    {
+      "path": "schemas/RelatedEddy.schema.json",
+      "sha256": "d69d4fde0fea05a60333a9d4949a15488360f3600ca3da002a428d6b5c2d6c6d"
+    },
+    {
+      "path": "schemas/RelatedPraxis.schema.json",
+      "sha256": "0561d2a8538e894969c4ec062e8234b5150477b07f137c10c3a65cc80138f85d"
     },
     {
       "path": "schemas/TierModel.schema.json",
@@ -229,7 +321,7 @@
   ],
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "source": {
-    "commit": "349a56d6fd36ed18971c53f6d2c3d527b047074c",
+    "commit": "f9354bc289995c87578b944b63883794035011f7",
     "path": "docs/contracts/adepthood-v1",
     "repo": "Geoffe-Ga/creek-vault"
   }

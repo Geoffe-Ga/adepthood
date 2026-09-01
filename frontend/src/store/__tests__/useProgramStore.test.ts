@@ -167,3 +167,29 @@ describe('daysUntilStage', () => {
     expect(daysUntilStage(1, anchor, new Date(2026, 0, 11))).toBeLessThan(0);
   });
 });
+
+describe('programStageForWeek', () => {
+  const { programStageForWeek } = require('../useProgramStore');
+
+  it('maps the three-week stages one after another', () => {
+    expect(programStageForWeek(1)).toBe(1);
+    expect(programStageForWeek(3)).toBe(1);
+    expect(programStageForWeek(4)).toBe(2);
+    expect(programStageForWeek(24)).toBe(8);
+  });
+
+  it('honours the two six-week integration stages rather than dividing evenly', () => {
+    // Weeks 25-30 are stage 9 and weeks 31-36 are stage 10; a uniform
+    // three-weeks-per-stage guess would put week 30 in stage 10.
+    expect(programStageForWeek(25)).toBe(9);
+    expect(programStageForWeek(30)).toBe(9);
+    expect(programStageForWeek(31)).toBe(10);
+    expect(programStageForWeek(36)).toBe(10);
+  });
+
+  it('clamps out-of-range weeks to the first and last stages instead of throwing', () => {
+    expect(programStageForWeek(0)).toBe(1);
+    expect(programStageForWeek(-4)).toBe(1);
+    expect(programStageForWeek(999)).toBe(10);
+  });
+});

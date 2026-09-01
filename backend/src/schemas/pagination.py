@@ -20,6 +20,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
+from bounds import MAX_PAGE_OFFSET
+
 T = TypeVar("T")
 
 # Hard upper bounds on per-page results.  ``MAX_PAGE_SIZE`` matches the audit
@@ -56,7 +58,7 @@ class PaginationParams:
     """
 
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET)
     paginate: bool = Query(
         default=False,
         description=(

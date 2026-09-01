@@ -17,18 +17,21 @@ the same reason: evidence that a decision happened outlives the state the
 decision produced.
 
 **The row is content-free.** Account, source, decision, instant, and how many
-fragments the decision reached — removed by a revocation, added by a grant.
-Nothing from any fragment, and nothing that would let a reader reconstruct one.
-The counts are the same kind of evidence ``AccountDeletionAudit.row_counts``
-is: they prove the sweep reached the corpus and say nothing about what it
-swept.
+fragments the decision itself deleted. Nothing from any fragment, and nothing
+that would let a reader reconstruct one. The count is the same kind of evidence
+``AccountDeletionAudit.row_counts`` is: it proves the purge reached the corpus
+and says nothing about what it swept.
 
-**Two counts rather than one signed one.** A decision reaches the corpus in one
-direction only, and the two directions are different events with different
-consequences, so each has its own column and neither has to be read as the
-other. Widening ``fragments_removed`` to carry an added count would make the
-one number an operator most needs to trust — how much writing a withdrawal
-actually deleted — depend on knowing which decision the row records.
+**One count, because one direction is all a decision can act in alone.** A
+revocation's purge happens once, inside the decision, and is finished when the
+decision is — so it is a fact about the row and lives on it. A grant's reach is
+not: the sweep it authorises is bounded and stops with a remainder that a later
+repeat of the same standing answer continues, so what a grant eventually
+reached is a running total across sweeps rather than one number, and it lives in
+:mod:`models.corpus_sweep` where there is a row per sweep to hold the addends.
+Keeping a grant's count here would have recorded only the first of the sweeps
+that decision authorised, sitting beside a log of all of them — a second source
+of truth, and the less true one.
 
 **Consent is per source, and the source vocabulary is
 :class:`models.corpus_fragment.CorpusSource`.** One blanket agreement at signup
@@ -104,14 +107,6 @@ def _fragments_removed_check() -> CheckConstraint:
     )
 
 
-def _fragments_added_check() -> CheckConstraint:
-    """CHECK that a backfill count is a count."""
-    return CheckConstraint(
-        f"fragments_added >= {_MIN_FRAGMENTS_REACHED}",
-        name="ck_corpusconsentevent_fragments_added_range",
-    )
-
-
 class CorpusConsentEvent(SQLModel, table=True):
     """One decision an account made about one source, at one instant.
 
@@ -120,11 +115,12 @@ class CorpusConsentEvent(SQLModel, table=True):
     for.
 
     ``fragments_removed`` is zero for a grant, and for a revocation is how many
-    fragments that revocation deleted. ``fragments_added`` is its mirror: zero
-    for a revocation, and for a grant how many fragments the backfill that
-    grant authorised actually wrote. A grant that reached nothing records zero
-    and is not the same claim as a grant that was never asked to reach — the
-    decision's own log line carries what it did not reach.
+    fragments that revocation deleted — the whole of what a decision does to
+    the corpus by itself, at the instant it is made. What a *grant* reached is
+    not on this row at all: it is resumable, so it is one row per sweep in
+    :class:`models.corpus_sweep.CorpusSweep`, each naming the decision it ran
+    under. A grant that reached nothing logs no sweep, which is not the same
+    claim as a grant that was never asked to reach.
     """
 
     __tablename__ = "corpusconsentevent"
@@ -138,7 +134,6 @@ class CorpusConsentEvent(SQLModel, table=True):
         _source_check(),
         _decision_check(),
         _fragments_removed_check(),
-        _fragments_added_check(),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -146,7 +141,6 @@ class CorpusConsentEvent(SQLModel, table=True):
     source: str = Field(max_length=_SOURCE_WIDTH)
     decision: str = Field(max_length=_DECISION_WIDTH)
     fragments_removed: int = Field(default=0, nullable=False)
-    fragments_added: int = Field(default=0, nullable=False)
     recorded_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

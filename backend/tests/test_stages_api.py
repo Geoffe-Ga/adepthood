@@ -386,7 +386,7 @@ async def test_get_stage_progress_not_found(
     async_client: AsyncClient,
 ) -> None:
     headers, _user_id = await _signup(async_client)
-    resp = await async_client.get("/stages/99/progress", headers=headers)
+    resp = await async_client.get(f"/stages/{TOTAL_STAGES}/progress", headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 

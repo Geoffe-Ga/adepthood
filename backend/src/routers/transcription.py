@@ -20,20 +20,24 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from domain.transcription import build_transcription_prompt
+from error_responses import build_router
 from errors import bad_gateway, unprocessable
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
+    LLM_API_KEY_MAX_LENGTH,
     ImagePayload,
+    LLMCreditExhaustedError,
     LLMProviderError,
     LLMResponse,
     LLMVisionUnsupportedError,
+    credit_exhausted_error,
     generate_response,
     resolve_chat_api_key,
 )
@@ -42,7 +46,13 @@ from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/journal", tags=["journal"])
+router = build_router(
+    prefix="/journal",
+    tags=["journal"],
+    # 402 is the wallet's: ``preflight_deduction`` refuses a page when neither
+    # wallet has capacity, and ``resolve_chat_api_key`` when no key is available.
+    extra_statuses=(status.HTTP_402_PAYMENT_REQUIRED, status.HTTP_502_BAD_GATEWAY),
+)
 
 # Anthropic caps a single image at 5 MB of *decoded* bytes; larger attachments
 # are rejected by the provider after we would have already burned the request,
@@ -144,24 +154,29 @@ async def _run_transcription(
 ) -> LLMResponse:
     """Run the vision LLM for one page; roll the charge back on any provider error.
 
-    The wallet was already deducted, so a failure here must un-deduct it: both
-    branches roll the session back before mapping the error. ``LLMVisionUnsupportedError``
-    is checked first because it subclasses :class:`LLMProviderError` — a
-    text-only model is a well-formed request the model cannot serve (422
-    ``model_lacks_vision``), distinct from a genuine upstream failure (502
-    ``llm_provider_error``).
+    The wallet was already deducted, so a failure here must un-deduct it: every
+    branch rolls the session back before mapping the error. The two
+    :class:`LLMProviderError` subclasses are checked before their base, each
+    naming a condition a 502 would flatten — a text-only model is a well-formed
+    request the model cannot serve (422 ``model_lacks_vision``), and a spent
+    balance is permanent rather than the transient upstream failure a 502
+    ``llm_provider_error`` invites the reader to retry.
     """
+    byok_key = resolve_chat_api_key(api_key)
     try:
         return await generate_response(
             "",
             [],
             system_prompt=build_transcription_prompt(),
-            api_key=resolve_chat_api_key(api_key),
+            api_key=byok_key,
             images=[image],
         )
     except LLMVisionUnsupportedError as exc:
         await session.rollback()
         raise unprocessable("model_lacks_vision") from exc
+    except LLMCreditExhaustedError as exc:
+        await session.rollback()
+        raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
     except LLMProviderError as exc:
         await session.rollback()
         raise bad_gateway("llm_provider_error") from exc
@@ -174,7 +189,9 @@ async def transcribe_page(
     payload: TranscribePageRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
 ) -> TranscribePageResponse:
     """Transcribe one photographed handwritten page, charging one message.
 

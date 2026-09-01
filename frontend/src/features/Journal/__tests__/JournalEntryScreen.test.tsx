@@ -1,13 +1,14 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
-import { colors } from '@/design/tokens';
+import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -19,6 +20,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockRespond = jest.fn() as jest.MockedFunction<
   (_w: number, _b: string, _t?: string) => Promise<unknown>
 >;
+const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<unknown>>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -31,7 +33,7 @@ jest.mock('@/api', () => ({
   },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
-    generate: jest.fn(),
+    generate: (...a: unknown[]) => (mockGenerate as unknown as (...x: unknown[]) => unknown)(...a),
   },
   completionSuggestions: {
     list: jest.fn(() => Promise.resolve({ items: [] })),
@@ -78,6 +80,7 @@ function renderScreen(
   params?: {
     entryId?: number;
     weekNumber?: number;
+    promptOrdinal?: number;
     promptQuestion?: string;
     prefillTitle?: string;
     practiceSessionId?: number;
@@ -106,9 +109,33 @@ beforeEach(() => {
   mockList.mockResolvedValue({ items: [] });
   mockRespond.mockReset();
   mockRespond.mockResolvedValue({});
+  mockGenerate.mockReset();
+  mockGenerate.mockResolvedValue({ marginalia: [], suggestions: [] });
 });
 
+type StyledNode = {
+  type: unknown;
+  props: { style?: StyleProp<ViewStyle> };
+  parent: StyledNode | null;
+};
+
+/** Flatten the nearest host ancestor's style — where a wrapper's layout lives. */
+function hostWrapperStyle(element: { parent: unknown }): ViewStyle {
+  let node = element.parent as StyledNode | null;
+  while (node && typeof node.type !== 'string') node = node.parent;
+  return StyleSheet.flatten(node?.props.style) ?? {};
+}
+
 describe('JournalEntryScreen', () => {
+  /** A finished entry loaded into read mode, shared by the read-mode specs. */
+  async function renderFinished(message = 'I walked.') {
+    mockGet.mockResolvedValue(entry({ id: 7, message, status: 'finished' }));
+    mockList.mockResolvedValue({ items: [] });
+    const view = renderScreen({ entryId: 7 });
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+    return view;
+  }
+
   it('records a weekly-prompt page via respond, not a duplicate create', async () => {
     jest.useFakeTimers();
     try {
@@ -125,7 +152,9 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Week 3 Reflection');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+        title: 'Week 3 Reflection',
+      });
       expect(mockCreate).not.toHaveBeenCalled(); // no double-create
       // Resonance can't run on a prompt-compose entry (no local id), so the
       // button must stay hidden even once idle with content.
@@ -133,6 +162,61 @@ describe('JournalEntryScreen', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('answers the prompt that was tapped, carrying its ordinal to respond', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(
+        {
+          weekNumber: 14,
+          promptOrdinal: 3,
+          promptQuestion: 'Which curiosity serves which problem?',
+          prefillTitle: 'Combine Multiple Curiosities',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Wayfinding and loneliness.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockRespond).toHaveBeenCalledWith(14, 'Wayfinding and loneliness.', {
+        title: 'Combine Multiple Curiosities',
+        promptOrdinal: 3,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('says the week is already answered rather than promising a retry that cannot succeed', async () => {
+    // One response per (user, week) server-side: a 409 here never clears by
+    // retrying, so the hint must name the condition and the way out instead of
+    // telling the writer to keep going.
+    jest.useFakeTimers();
+    try {
+      mockRespond.mockRejectedValue(Object.assign(new Error('conflict'), { status: 409 }));
+      const { getByTestId } = renderScreen(
+        { weekNumber: 14, promptOrdinal: 3, promptQuestion: 'Which curiosity?' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Wayfinding and loneliness.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      const hint = getByTestId('journal-save-hint').props.children as string;
+      expect(hint).toMatch(/already answered/i);
+      expect(hint).not.toMatch(/retry/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('opens a prompt page blank rather than under a title the client guessed', () => {
+    // A week number alone names no prompt: the title is curriculum text the
+    // server sends, so without one the page opens untitled.
+    const { getByTestId } = renderScreen({ weekNumber: 3, promptQuestion: 'What did you notice?' });
+    expect(getByTestId('journal-title-input').props.value).toBe('');
   });
 
   it('does not silently discard a typed title in weekly-prompt compose mode', async () => {
@@ -152,7 +236,9 @@ describe('JournalEntryScreen', () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', 'Reclaiming my anger');
+      expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+        title: 'Reclaiming my anger',
+      });
       expect(mockCreate).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
@@ -266,10 +352,54 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance so the floating Get Resonance button never overlaps content', () => {
+  it('reserves bottom clearance in edit mode, where Get Resonance floats over the page', () => {
     const { getByTestId } = renderScreen();
     const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
     expect(page.paddingBottom).toBe(RESONANCE_BUTTON_CLEARANCE);
+  });
+
+  it('leaves no dead band below the entry in read mode, where nothing floats', async () => {
+    const { getByTestId } = await renderFinished();
+    const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
+    expect(page.paddingBottom).toBeUndefined();
+  });
+
+  it('gathers the read-mode actions into one row', async () => {
+    const { getByTestId } = await renderFinished();
+    const row = within(getByTestId('journal-read-actions'));
+    expect(row.getByTestId('get-resonance-button')).toBeTruthy();
+    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
+    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
+  });
+
+  it('does not float the resonance affordance over the entry in read mode', async () => {
+    const { getByTestId } = await renderFinished();
+    expect(hostWrapperStyle(getByTestId('get-resonance-button')).position).not.toBe('absolute');
+  });
+
+  it('leaves no phantom gap in the read row when an empty entry hides resonance', async () => {
+    const { getByTestId, queryByTestId } = await renderFinished('');
+    const row = within(getByTestId('journal-read-actions'));
+    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
+    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
+    expect(queryByTestId('get-resonance-button')).toBeNull();
+    const hidden = getByTestId('get-resonance-button', { includeHiddenElements: true });
+    expect(hostWrapperStyle(hidden).height).toBe(0);
+  });
+
+  it('runs a resonance pass exactly once from the inline read-mode action', async () => {
+    const { getByTestId } = await renderFinished();
+    const row = within(getByTestId('journal-read-actions'));
+    fireEvent.press(row.getByTestId('get-resonance-button'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
+    expect(mockGenerate).toHaveBeenCalledWith(7);
+  });
+
+  it('still enters edit mode from the Edit action in the read-mode row', async () => {
+    const { getByTestId, findByTestId } = await renderFinished();
+    fireEvent.press(within(getByTestId('journal-read-actions')).getByTestId('journal-edit-button'));
+    fireEvent.press(getByTestId('edit-confirm-edit'));
+    expect(await findByTestId('journal-body-input')).toBeTruthy();
   });
 
   it('floats the writing area as a lighter sheet above the deeper desk', () => {
@@ -524,14 +654,6 @@ describe('JournalEntryScreen', () => {
   });
 
   describe('edit gate (finished entries)', () => {
-    async function renderFinished() {
-      mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
-      mockList.mockResolvedValue({ items: [] });
-      const view = renderScreen({ entryId: 7 });
-      await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
-      return view;
-    }
-
     it('opens the confirm dialog when editing a finished entry', async () => {
       const { getByTestId, queryByTestId } = await renderFinished();
       fireEvent.press(getByTestId('journal-edit-button'));
@@ -690,5 +812,59 @@ describe('JournalEntryScreen', () => {
         jest.useRealTimers();
       }
     });
+  });
+});
+
+/**
+ * The writing page carries no field borders, so the browser's own focus ring
+ * (a blue box on the paper sheet) is dropped and the accent caret takes over as
+ * the focus signal. ``writingFieldFocus`` is empty off web — Jest renders as
+ * ``ios`` — so it is pinned here by identity; its web contents are asserted in
+ * ``design/__tests__/writingFieldFocus.test.ts``.
+ */
+describe('JournalEntryScreen writing-field focus', () => {
+  it.each([
+    ['title', 'journal-title-input'],
+    ['body', 'journal-body-input'],
+  ])('gives the %s field no focus ring and an accent caret', (_field, testID) => {
+    const input = renderScreen().getByTestId(testID);
+    const style = Array.isArray(input.props.style) ? input.props.style : [input.props.style];
+    expect(style).toContain(writingFieldFocus);
+    expect(input.props.selectionColor).toBe(writingField.caret);
+    expect(input.props.cursorColor).toBe(writingField.caret);
+  });
+});
+/**
+ * The live word count under the writing column. It counts the body only — the
+ * prose the writer is producing — and stays silent on a blank page.
+ */
+describe('JournalEntryScreen word count', () => {
+  it('says nothing before a word is written', () => {
+    expect(renderScreen().getByTestId('journal-word-count').props.children).toBe('');
+  });
+
+  it('counts up live as the body is typed', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'I walked to the river');
+    expect(getByTestId('journal-word-count').props.children).toBe('5 words');
+  });
+
+  it('uses the singular for a one-word page', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'willow');
+    expect(getByTestId('journal-word-count').props.children).toBe('1 word');
+  });
+
+  it('counts the prose, not the punctuation between it', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'time—space  ***  \n  well-being');
+    expect(getByTestId('journal-word-count').props.children).toBe('3 words');
+  });
+
+  it('leaves the title out of the count', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-title-input'), 'A long title about rivers');
+    fireEvent.changeText(getByTestId('journal-body-input'), 'willow');
+    expect(getByTestId('journal-word-count').props.children).toBe('1 word');
   });
 });

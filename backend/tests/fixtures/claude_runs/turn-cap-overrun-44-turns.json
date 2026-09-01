@@ -1,0 +1,70 @@
+[
+  {
+    "is_error": false,
+    "duration_api_ms": 411458,
+    "num_turns": 44,
+    "stop_reason": "end_turn",
+    "session_id": "c392624d-1afe-489a-9f72-46158db6ce76",
+    "total_cost_usd": 3.3794304999999993,
+    "usage": {
+      "input_tokens": 78,
+      "cache_creation_input_tokens": 102991,
+      "cache_read_input_tokens": 3204161,
+      "output_tokens": 29882,
+      "output_tokens_details": {
+        "thinking_tokens": 12136
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 102991,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 1064,
+          "cache_read_input_tokens": 117952,
+          "cache_creation_input_tokens": 2612,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 2612
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-opus-5": {
+        "inputTokens": 78,
+        "outputTokens": 29882,
+        "cacheReadInputTokens": 3204161,
+        "cacheCreationInputTokens": 102991,
+        "webSearchRequests": 0,
+        "costUSD": 3.3794304999999993,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "canonicalModel": "claude-opus-5",
+        "provider": "firstParty"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "Grooming run complete. Summary appended to `$GITHUB_STEP_SUMMARY`.\n\n## Result: net change 0 \u2014 nothing was closeable\n\n| Action | Count | Issues |\n|---|---|---|\n| Closed \u2014 resolved by merged PR | **0** | \u2014 |\n| Closed \u2014 stale at HEAD | **0** | \u2014 |\n| Closed \u2014 duplicate | **0** | \u2014 |\n| Promoted to `agent-ready` | **0** | \u2014 |\n| Commented | **5** | #1633, #2128, #2440, #2444, #2465 |\n\nReconciled 102 open issues against HEAD `a492c54`. A zero-close run is the honest outcome here, not a skipped one:\n\n**Nothing resolved-but-open.** All 120 recent merged PRs were scanned for closing keywords \u2014 every referenced issue is already closed. A second sweep for open issues merely *mentioned* by merged PRs returned 60 hits, all follow-ups the PR itself filed.\n\n**Nothing stale.** Twenty-one issues were re-verified by reading the code they cite. All still reproduce \u2014 #1960's duplicated drawer twins, #2461's missing `SMTP_PASSWORD` scrub entry, #1419's six 0-byte bell assets, #2503's `$0`/`$1` commitlint bug, #2493's unmarked onboarding ids, and the rest.\n\n**No duplicates.** A title-similarity sweep produced six candidate pairs; all six are epic/child or sibling structure. The near-misses (#2310/#2324, #2317/#2399) are blocker-and-blocked, already cross-linked.\n\n### Two structural findings, recorded on #2440\n\n**The promotion step cannot ever fire.** `groom.md:43-45` keys on the `needs-triage` label, but `scripts/setup-scan-labels.sh` never creates it and `gh label list` confirms it doesn't exist in this repo. Zero issues can carry it, so that branch is dead code.\n\n**There is nothing to consume.** PR #2481 (08-26) paused all sixteen producer scans, so no open issue carries any `scan:*` label. `scan-groom.yml` wasn't paused and still runs its 04:00 cron against an empty input set. I recorded both on #2440 with a remedy rather than filing new issues, since this scan is a net consumer.\n\n### Four partial resolutions \u2014 commented, not closed\n\n- **#1633** \u2014 3 of 4 sub-issues done and verified at HEAD (dataset `2.0.0`, Beige\u2192`Agency`, stage 8\u2192`Teal`); only #1637's content decision still gates it.\n- **#2128** \u2014 `journal.delete` was adopted and dropped from the allowlist; three wrappers remain.\n- **#2444** \u2014 the delivery half is closed by PR #2470's boot refusal, with the operator step now on #2482. Only the missing HTTPS fallback link remains.\n- **#2465** \u2014 PR #2495 answered the quick-log affordance with option (b); rename and goal-edit still discard silently.\n\nThe risk worth flagging isn't bloat but starvation \u2014 with every producer scan paused since 08-26, nothing refills `agent-ready`, and this workflow can only drain.",
+    "ttft_ms": 1848,
+    "ttft_stream_ms": 1132,
+    "time_to_request_ms": 48,
+    "type": "result",
+    "duration_ms": 444181,
+    "uuid": "94aba01a-20fb-4091-a384-49f493f3d1e3"
+  }
+]

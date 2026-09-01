@@ -55,6 +55,9 @@ jest.mock('../../../../storage/habitStorage', () => ({
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
   clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
+  loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
 jest.mock('../../hooks/useHabitNotifications', () => ({
@@ -79,6 +82,7 @@ import {
   goalCompletions as goalCompletionsApi,
   habits as habitsApi,
 } from '../../../../api';
+import { colors } from '../../../../design/tokens';
 import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
@@ -131,6 +135,10 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   revealed: true,
   ...overrides,
 });
+
+/** An onboarding scaffold row: positive, plausible ids that only this device knows. */
+const makeScaffoldHabit = (overrides: Partial<Habit> = {}): Habit =>
+  makeHabit({ hasClientMintedIds: true, ...overrides });
 
 const renderActions = () => {
   const showToast = jest.fn();
@@ -361,6 +369,169 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
 
     expect(savePendingCheckIn).not.toHaveBeenCalled();
     expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
+  });
+
+  it('never queues a demo-seed tile and never promises it will sync later', async () => {
+    // A demo tile's goal id is client-fabricated, so no POST leaves and nothing can be queued.
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.message.length).toBeGreaterThan(0);
+    expect(toast.message).not.toMatch(/sync when you reconnect/i);
+    expect(toast.color).toBe(colors.secondary);
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+  });
+});
+
+describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
+  it('explains the sample tile instead of blaming a sync problem', async () => {
+    // A demo tile is seeded on a fresh account WITH a connection too. Its
+    // fabricated goal id never reaches the wire, so nothing about the tap
+    // should read as a sync problem the user could act on.
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.color).toBe(colors.secondary);
+    expect(toast.message).not.toMatch(/out of sync/i);
+    // Nothing is queued, and no futile refresh fires.
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).not.toHaveBeenCalled();
+    // The optimistic increment stays: the sample tile remains explorable.
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);
+  });
+
+  it('shows the sample-tile notice and never an unearned celebration', async () => {
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true })] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
+    expect(toast.message).toMatch(/sample habits/i);
+    expect(toast.message).not.toMatch(/Goal achieved/i);
+    expect(toast.message).not.toMatch(/sync when you reconnect/i);
+    expect(toast.color).toBe(colors.secondary);
+  });
+
+  it('still POSTs once and celebrates for a server-backed tile beside the demo seed', async () => {
+    // Goal id 91 belongs only to the real row, so the assertion cannot pass by coincidence.
+    const real = makeHabit({ id: 42, name: 'Real' });
+    real.goals = real.goals.map((g, i) => ({ ...g, id: 91 + i }));
+    useHabitStore.setState({ habits: [makeHabit({ isDemoSeed: true, id: 3 }), real] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(42, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+    expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+      expect.objectContaining({ goal_id: 91, did_complete: true }),
+    );
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).toMatchObject({
+      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+    });
+  });
+});
+
+describe('useHabitActions.logUnit on a client-minted scaffold tile', () => {
+  const toastMessages = (showToast: jest.Mock): string[] =>
+    showToast.mock.calls.map((c) => (c[0] as { message: string }).message);
+
+  it('resyncs in the background instead of posting an id the server never issued', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(habitsApi.listAll).toHaveBeenCalledTimes(1);
+    expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(0);
+    expect(toastMessages(showToast).some((m) => /sync when you reconnect/i.test(m))).toBe(false);
+  });
+
+  it('says the habit has not finished saving and to try again', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const message = toastMessages(showToast).at(-1)!;
+    expect(message).toMatch(/finish(ed)? saving/i);
+    expect(message).toMatch(/again/i);
+  });
+
+  it('never queues the check-in and never promises it will sync later', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new TypeError('fetch failed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(goalCompletionsApi.create).not.toHaveBeenCalled();
+    expect(savePendingCheckIn).not.toHaveBeenCalled();
+    expect(toastMessages(showToast).some((m) => /sync when you reconnect/i.test(m))).toBe(false);
+  });
+
+  it('does not queue even when a raw network error reaches the failure handler', async () => {
+    useHabitStore.setState({ habits: [makeScaffoldHabit()] });
+    const commitSpy = jest
+      .spyOn(habitManager, 'commitLogUnitContext')
+      .mockRejectedValue(new TypeError('fetch failed'));
+    try {
+      const { result } = renderActions();
+
+      await act(async () => {
+        result.current.actions.logUnit(1, 1);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(savePendingCheckIn).not.toHaveBeenCalled();
+    } finally {
+      commitSpy.mockRestore();
+    }
   });
 });
 

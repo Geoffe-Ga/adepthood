@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from httpx import AsyncClient
@@ -15,6 +15,11 @@ from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from schemas import DEFAULT_PAGE_SIZE
+
+# Padding wide enough that the whole value overflows the varchar(32)
+# mode column, around a mode an unanchored pattern would still match.
+_MODE_AFFIX_LENGTH: Final = 40
+_PADDED_MODE: Final = ("X" * _MODE_AFFIX_LENGTH) + "sense_grounding" + ("Y" * _MODE_AFFIX_LENGTH)
 
 
 async def _signup(client: AsyncClient, username: str = "owner") -> tuple[dict[str, str], int]:
@@ -173,6 +178,20 @@ async def test_create_unknown_mode_422(async_client: AsyncClient) -> None:
     payload["mode"] = "meditation_timer"
     resp = await async_client.post("/practice-recipes/", json=payload, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_create_mode_padded_around_a_known_value_422(async_client: AsyncClient) -> None:
+    """A mode that merely contains a known value is a bad request, not a server fault.
+
+    At 95 characters it also overflows the varchar(32) mode column, so
+    anything the route accepts reaches the driver as a truncation error.
+    """
+    headers, _ = await _signup(async_client)
+    payload = _sense_recipe_body()
+    payload["mode"] = _PADDED_MODE
+    resp = await async_client.post("/practice-recipes/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
 
 
 # -- List + read ------------------------------------------------------------

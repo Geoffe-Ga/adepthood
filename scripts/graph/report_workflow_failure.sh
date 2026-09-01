@@ -25,10 +25,17 @@
 # with digit runs normalised, so `chunk 5/13 failed: Connection error.` and
 # `chunk 6/13 failed: Connection error.` count once between them.
 #
+# The optional --headline leads both bodies. The log excerpt says WHAT the
+# runner printed; a headline says WHICH failure mode it was, in the words of
+# whatever classified it -- "turn-cap overrun (benign)" and "usage limit
+# reached" are the same `##[error]` to this script and opposite instructions to
+# a human. It is caller-supplied text that may originate in model output, so it
+# is used as data (a body line) and never re-interpreted.
+#
 # Usage:
 #   report_workflow_failure.sh --workflow <file.yml> --run-url <url>
 #                              [--log-file <path>] [--repo <owner/repo>]
-#                              [--label <label>]...
+#                              [--headline <one line>] [--label <label>]...
 #
 # Reads GH_TOKEN/GITHUB_TOKEN via `gh` as usual. Exits 0 when the failure is
 # tracked, 1 when it could not be, 2 on a usage error.
@@ -51,6 +58,7 @@ die() { echo "report-workflow-failure: $1" >&2; exit "$EXIT_USAGE"; }
 workflow=""
 run_url=""
 log_file=""
+headline=""
 repo_args=()
 labels=()
 while [[ $# -gt 0 ]]; do
@@ -58,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --workflow) [[ $# -ge 2 ]] || die "--workflow needs a value"; workflow="$2"; shift 2 ;;
     --run-url)  [[ $# -ge 2 ]] || die "--run-url needs a value"; run_url="$2"; shift 2 ;;
     --log-file) [[ $# -ge 2 ]] || die "--log-file needs a value"; log_file="$2"; shift 2 ;;
+    --headline) [[ $# -ge 2 ]] || die "--headline needs a value"; headline="$2"; shift 2 ;;
     --repo)     [[ $# -ge 2 ]] || die "--repo needs a value"; repo_args+=(--repo "$2"); shift 2 ;;
     --label)    [[ $# -ge 2 ]] || die "--label needs a value"; labels+=("$2"); shift 2 ;;
     *)          die "unknown argument: $1" ;;
@@ -102,6 +111,12 @@ fi
 title="CI: ${workflow} is failing"
 detail="$(printf '**Workflow:** `%s`\n**Failing step:** `%s`\n**Run:** %s\n\nFirst distinct error lines:\n\n```\n%s\n```\n' \
   "$workflow" "$failing_step" "$run_url" "$error_lines")"
+# First line of the report, when the caller knows something the log does not.
+# Omitted entirely rather than defaulted, so an absent headline never reads as a
+# classification that was made and came back empty.
+if [[ -n "$headline" ]]; then
+  detail="$(printf '**%s**\n\n%s' "$headline" "$detail")"
+fi
 
 # --- is anything already tracking this? -------------------------------------
 # A failed search is NOT "no tracking issue". Exit rather than file a duplicate.

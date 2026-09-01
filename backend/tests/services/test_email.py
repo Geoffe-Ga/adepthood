@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from services import email
 from services.email import (
     ConsoleEmailSender,
     EmailDeliveryError,
@@ -18,6 +19,7 @@ from services.email import (
     redact_token_in_body,
     reset_email_sender_for_tests,
 )
+from tests.helpers.smtp_env import SMTP_ENV_VALUES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +32,41 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("EMAIL_BACKEND", raising=False)
     yield
     reset_email_sender_for_tests()
+
+
+# Port values int() cannot read at all. A typed-out word and a decimal are the
+# two shapes this arrives in -- a hand-edited env file, and a value pasted from
+# somewhere that formats numbers.
+UNPARSEABLE_PORTS = ["eighty", "58.7"]
+
+# A relay password no other test uses, long enough to be unmistakable if it
+# ever renders. Defined here so the repr assertion reads as one value.
+REPR_PASSWORD_SENTINEL = "relay-secret-do-not-log-4c81ba"  # pragma: allowlist secret
+
+# Port values that parse cleanly and still cannot be dialled. Zero and the
+# negative are what an unset-looking default and an off-by-one edit produce;
+# 70000 is a transposed digit.
+UNUSABLE_PORTS = ["0", "-1", "70000"]
+
+# The two files every configuration refusal here sends the operator to. Naming
+# the variable without them leaves them guessing where the value belongs.
+REMEDY_DOCUMENT_NAMES = [".env.example", "DEPLOYMENT.md"]
+
+# The TCP port space a relay can live in, restated once so the bounds the module
+# exposes can be checked against it rather than trusted.
+LOWEST_USABLE_PORT = 1
+HIGHEST_USABLE_PORT = 65535
+
+
+def _set_relay_env(monkeypatch: pytest.MonkeyPatch, port: str) -> None:
+    """Configure a complete relay whose only unusual setting is ``port``.
+
+    Everything else comes from the shared production-shaped mapping, so a
+    failure in these tests can only be the port.
+    """
+    for name, value in SMTP_ENV_VALUES.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(email.SMTP_PORT_ENV_VAR, port)
 
 
 @pytest.mark.asyncio
@@ -168,6 +205,73 @@ def test_smtp_sender_raises_when_required_env_missing(
     monkeypatch.setenv("EMAIL_FROM", "f@example.com")
     with pytest.raises(RuntimeError, match="SMTP_PORT"):
         SmtpEmailSender.from_env()
+
+
+@pytest.mark.parametrize("port", UNPARSEABLE_PORTS)
+def test_smtp_sender_refuses_a_port_that_is_not_a_number(
+    port: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare ValueError out of int() is the one failure this build cannot afford.
+
+    Building the relay at boot exists so a misconfigured deploy stops with a
+    sentence an operator can act on. An unguarded conversion stops it just as
+    hard and says only ``invalid literal for int() with base 10``: no variable,
+    no file, no remedy. That is the outage the eager build was written to
+    prevent, wearing the check's own traceback. The sibling refusal for a
+    missing variable already sets the register this has to match.
+    """
+    _set_relay_env(monkeypatch, port)
+
+    with pytest.raises(RuntimeError, match=email.SMTP_PORT_ENV_VAR) as excinfo:
+        SmtpEmailSender.from_env()
+
+    message = str(excinfo.value)
+    assert port in message, "the operator cannot fix a value the refusal will not show them"
+    for document in REMEDY_DOCUMENT_NAMES:
+        assert document in message
+
+
+@pytest.mark.parametrize("port", UNUSABLE_PORTS)
+def test_smtp_sender_refuses_a_port_outside_the_connectable_range(
+    port: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parsing is not the whole of being wrong: 0 and 70000 are numbers nobody answers.
+
+    A value in this set survives every conversion and builds a sender that looks
+    healthy, then fails at socket time on the first password-reset request --
+    the deferred failure the boot-time build was added to eliminate, restored
+    one layer further down. Refusing it here costs the deploy nothing it was not
+    already going to lose.
+    """
+    _set_relay_env(monkeypatch, port)
+
+    with pytest.raises(RuntimeError, match=email.SMTP_PORT_ENV_VAR) as excinfo:
+        SmtpEmailSender.from_env()
+
+    assert port in str(excinfo.value)
+
+
+def test_smtp_sender_accepts_the_extreme_ends_of_the_port_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A range check earns its keep only by not being one off at either end.
+
+    Refusing 65535 would take down a correctly configured deploy, which is a
+    worse failure than the one being fixed -- the guard would then be the
+    outage. Reading the bounds off the module rather than restating them also
+    pins that they are the TCP range and not an arbitrary pair chosen to make a
+    refusal fire.
+    """
+    assert (email.MIN_SMTP_PORT, email.MAX_SMTP_PORT) == (
+        LOWEST_USABLE_PORT,
+        HIGHEST_USABLE_PORT,
+    )
+
+    for bound in (email.MIN_SMTP_PORT, email.MAX_SMTP_PORT):
+        _set_relay_env(monkeypatch, str(bound))
+        assert SmtpEmailSender.from_env().port == bound
 
 
 def test_get_email_sender_caches_instance() -> None:
@@ -499,3 +603,26 @@ async def test_smtp_send_propagates_non_wire_errors_unchanged(
         await sender.send(
             EmailMessagePayload(to="x@y.z", subject="s", body="b"),
         )
+
+
+def test_smtp_sender_repr_hides_the_password_but_keeps_the_rest() -> None:
+    """The relay password never renders, while the rest of the repr stays useful.
+
+    A repr is what a traceback, a log line, and a debugger all print. The
+    password must be absent from it, and the host and username must still be
+    present -- blanking the whole repr would hide the password and the
+    diagnostic value with it.
+    """
+    sender = SmtpEmailSender(
+        host="smtp.example.com",
+        port=587,
+        username="relay-user",
+        password=REPR_PASSWORD_SENTINEL,
+        from_address="from@example.com",
+    )
+
+    rendered = repr(sender)
+
+    assert REPR_PASSWORD_SENTINEL not in rendered
+    assert "smtp.example.com" in rendered
+    assert "relay-user" in rendered

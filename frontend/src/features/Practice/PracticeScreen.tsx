@@ -1,13 +1,15 @@
 /**
  * `PracticeScreen` — the full-bleed dark "player".
  *
- * The whole screen is a single deep-umber card (`showcase.canvas`) with a
- * fixed, non-scrolling layout: a centered `Practice | Catalog` tab switcher
- * at the top, the session centered in the middle, and the weekly-progress
- * footer pinned at the foot. The Catalog tab embeds the shared catalog list
- * in place on its light paper ground — choosing a practice there flips straight
- * back to the player with the new practice live, no push navigation. The
- * switcher hides while a session is running or paused so nothing competes
+ * The whole screen is a single deep-umber card (`showcase.canvas`): a centered
+ * `Practice | Catalog` tab switcher at the top, the session centered in the
+ * middle, and the weekly-progress footer at the foot. The player body sits in
+ * a scroller whose content container owns a single grow, so a tall viewport
+ * renders exactly as a fixed layout would while a short one (laptop web) can
+ * reach the controls below the fold. The Catalog tab embeds the shared catalog
+ * list in place on its light paper ground — choosing a practice there flips
+ * straight back to the player with the new practice live, no push navigation.
+ * The switcher hides while a session is running or paused so nothing competes
  * with the ritual.
  *
  * Composition stays layered:
@@ -31,6 +33,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -77,7 +80,14 @@ import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
-import { selectCurrentStage, useStageStore } from '@/store/useStageStore';
+import {
+  selectCurrentStage,
+  selectStages,
+  selectStagesAttempted,
+  selectStagesError,
+  selectStagesLoading,
+  useStageStore,
+} from '@/store/useStageStore';
 
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
@@ -370,9 +380,15 @@ interface ActiveSessionViewProps {
   onStatusChange: (_next: RitualStatus) => void;
 }
 
-// The fixed player layout: no outer scroll. The identity header sits in the
-// top region, the session floats centered in the flexible middle, and the
-// weekly footer is pinned at the foot inside the safe area. The engine status
+// The player layout: the identity header sits in the top region, the session
+// floats centered in the flexible middle, and the weekly footer lands at the
+// foot inside the safe area. A scroller wraps that body so a viewport too
+// short for the ring (laptop web) can still reach Begin and the stage chip;
+// its content container owns the single grow, so on a tall viewport the body
+// still stretches and the layout is pixel-identical to the fixed one it
+// replaced. The weekly footer scrolls with the content rather than being
+// pinned — it is ambient information, not a control, and pinning it would
+// permanently spend the very pixels this screen is short of. The engine status
 // routes up through onStatusChange so the screen shell can gate its switcher;
 // the identity header collapses off the same status while a session holds
 // the screen (running or paused).
@@ -381,36 +397,42 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
   return (
     <View style={styles.leaf}>
       <ContentContainer fill>
-        <View
-          style={[styles.playerBody, { paddingBottom: insets.bottom }]}
-          testID="practice-screen"
+        <ScrollView
+          style={styles.playerScroll}
+          contentContainerStyle={styles.playerScrollContent}
+          testID="practice-player-scroll"
         >
-          <PracticeIdentityHeader
-            stageNumber={props.stageNumber}
-            practiceName={props.practiceName}
-            ritualName={props.effectiveName ?? props.practiceName}
-            collapsed={props.status === 'running' || props.status === 'paused'}
-            onCustomize={props.onCustomize}
-            onStageChange={props.onStageChange}
-          />
-          <View style={styles.sessionRegion}>
-            <ActiveRitualSession
-              key={`practice-${props.userPractice.id}`}
-              ref={props.sessionRef}
-              userPractice={props.userPractice}
-              effectiveName={props.effectiveName ?? props.practiceName}
-              effectiveConfig={props.effectiveConfig}
-              userTimezone={props.userTimezone}
-              onSessionApply={props.weekly.increment}
-              onSessionRollback={props.weekly.decrement}
-              onSessionCommitted={() => void props.weekly.refresh()}
-              onUserPracticeUpdated={props.onUserPracticeUpdated}
-              onWriteReflection={props.onWriteReflection}
-              onStatusChange={props.onStatusChange}
+          <View
+            style={[styles.playerBody, { paddingBottom: insets.bottom }]}
+            testID="practice-screen"
+          >
+            <PracticeIdentityHeader
+              stageNumber={props.stageNumber}
+              practiceName={props.practiceName}
+              ritualName={props.effectiveName ?? props.practiceName}
+              collapsed={props.status === 'running' || props.status === 'paused'}
+              onCustomize={props.onCustomize}
+              onStageChange={props.onStageChange}
             />
+            <View style={styles.sessionRegion} testID="practice-session-region">
+              <ActiveRitualSession
+                key={`practice-${props.userPractice.id}`}
+                ref={props.sessionRef}
+                userPractice={props.userPractice}
+                effectiveName={props.effectiveName ?? props.practiceName}
+                effectiveConfig={props.effectiveConfig}
+                userTimezone={props.userTimezone}
+                onSessionApply={props.weekly.increment}
+                onSessionRollback={props.weekly.decrement}
+                onSessionCommitted={() => void props.weekly.refresh()}
+                onUserPracticeUpdated={props.onUserPracticeUpdated}
+                onWriteReflection={props.onWriteReflection}
+                onStatusChange={props.onStatusChange}
+              />
+            </View>
+            <WeeklyProgress count={props.weekly.count} />
           </View>
-          <WeeklyProgress count={props.weekly.count} />
-        </View>
+        </ScrollView>
       </ContentContainer>
     </View>
   );
@@ -459,15 +481,24 @@ const EmptyStateView = ({ onBrowseCatalog }: EmptyStateViewProps): React.JSX.Ele
 function useResolvedStageNumber(): number {
   const route = useAppRoute<'Practice'>();
   const storeCurrentStage = useStageStore(selectCurrentStage);
-  const storeStages = useStageStore((s) => s.stages);
+  const storeStages = useStageStore(selectStages);
+  const loading = useStageStore(selectStagesLoading);
+  const error = useStageStore(selectStagesError);
+  const hasAttempted = useStageStore(selectStagesAttempted);
   // Master-date wiring: when the user has set a program start date, derive
   // the active stage from ``today - programStartDate`` so the screen tracks
   // real elapsed time rather than the server's count-based current stage.
   // Falls back to the store value when no anchor is set.
   const derivedCurrentStage = useDerivedCurrentStage(storeCurrentStage);
+  // One automatic attempt per session: a load that fails — or succeeds with an
+  // empty list — lands back on this guard's shape, so only the store's recorded
+  // attempt stops it re-firing. Every later attempt is user-initiated; the
+  // store's logout ``reset`` clears the flag and re-arms the cold start.
   useEffect(() => {
-    if (storeStages.length === 0) void stageService.loadStages();
-  }, [storeStages.length]);
+    if (storeStages.length === 0 && !loading && !error && !hasAttempted) {
+      void stageService.loadStages();
+    }
+  }, [storeStages.length, loading, error, hasAttempted]);
   return route.params?.stageNumber ?? derivedCurrentStage;
 }
 
@@ -541,10 +572,16 @@ const styles = StyleSheet.create({
   catalogRegion: { flex: 1, backgroundColor: surface.canvas },
   // Leaf wrappers fill the shell without repainting its ground.
   leaf: { flex: 1 },
-  playerBody: { flex: 1, padding: SPACING.md },
+  playerScroll: { flex: 1 },
+  // Invariant: growth chains down this body as `flexGrow`, never `flex`.
+  // Every level needs it -- each relays surplus height to the next, so the
+  // session still centers on a tall viewport -- and `flex` would zero the
+  // basis, collapsing contentSize to the viewport so nothing could scroll.
+  playerScrollContent: { flexGrow: 1 },
+  playerBody: { flexGrow: 1, padding: SPACING.md },
   // The flexible middle: the session settles centered between the identity
   // header's top region and the weekly footer.
-  sessionRegion: { flex: 1, justifyContent: 'center' },
+  sessionRegion: { flexGrow: 1, justifyContent: 'center' },
   centered: {
     flex: 1,
     justifyContent: 'center',

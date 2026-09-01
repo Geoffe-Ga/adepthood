@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import Depends, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -34,6 +34,7 @@ from domain.metta_return import (
     resumed_start,
 )
 from domain.stage_progress import get_user_progress
+from error_responses import build_router
 from errors import conflict, not_found
 from models.habit import Habit
 from models.metta_return_arc import MettaReturnArc
@@ -51,7 +52,9 @@ from schemas.metta_return import (
 if TYPE_CHECKING:
     from models.stage_progress import StageProgress
 
-router = APIRouter(prefix="/metta-return", tags=["metta-return"])
+router = build_router(
+    prefix="/metta-return", tags=["metta-return"], extra_statuses=(status.HTTP_409_CONFLICT,)
+)
 
 
 def _week_focus(week: int) -> str:

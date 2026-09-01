@@ -50,7 +50,9 @@ owns the wire shapes.
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Mapping
+from datetime import date
 
 from domain.creek_vault import (
     CreekCapability,
@@ -59,9 +61,13 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -108,6 +114,36 @@ _REQUESTED_NOTE_BUDGET = 10
 # :mod:`domain.resonance` applies to how many of these notes survive onto the
 # entry; neither one substitutes for the other.
 _MAX_REFLECT_NOTES = 12
+
+# How many of each kind of compiled page a reflection may surface. Both are
+# Creek's own published ``maxItems`` rather than a second opinion about them, and
+# ``test_http_reflect_bounds_related_pages_at_the_published_maximums`` pins them
+# equal to the vendored schema so they cannot drift from it silently. Bounded
+# *here* and nowhere else: the response builder carries whatever survives this
+# read, because a second cap applied downstream is how two readings of one
+# ceiling come to disagree. Small on purpose -- a reflection is a note in the
+# margin, not a dashboard.
+_MAX_RELATED_PRAXIS = 3
+_MAX_RELATED_EDDIES = 2
+
+# How long a compiled page's own title may be before adepthood stops reading it.
+# A title is a page's identity, so it is bounded like a note's quote rather than
+# like its prose: generous for a real heading, far short of what an unbounded
+# vault-chosen string could cost a client rendering it.
+_RELATED_TITLE_MAX = 200
+
+# The one bound on a compiled page's prose -- a praxis excerpt or an eddy's
+# description. Creek caps the excerpt on its own side; this is the bound that
+# does not depend on it doing so, and it is shared because the two fields are the
+# same kind of thing (a page describing itself in its own words) and a second
+# constant would only invite the two to drift.
+_RELATED_PROSE_MAX = 1_000
+
+# Length of the ``YYYY-MM-DD`` date an eddy publishes as its formation day.
+# Checked alongside the parse rather than instead of it: ``date.fromisoformat``
+# accepts several ISO spellings, and admitting one would hand a client a string
+# it must guess the shape of.
+_ISO_DATE_LENGTH = 10
 
 # How Creek's seven published note kinds render in adepthood's marginalia
 # vocabulary. ``pattern`` is the one that speaks across entries -- Creek grounds
@@ -189,6 +225,57 @@ def _bounded_text(raw: object, limit: int) -> str | None:
     return raw
 
 
+def _bounded_prose(raw: object, limit: int) -> str | None:
+    """Return vault-supplied prose within ``limit``, else ``None``.
+
+    The permissive twin of :func:`_bounded_text`, and the difference is the whole
+    reason it exists: a compiled page's description is published as the empty
+    string when the page declares none, so refusing a blank the way a note's
+    quote must be refused would drop every undescribed eddy. Blank prose renders
+    as nothing, which is the honest rendering of a page that says nothing about
+    itself; a blank *quote*, by contrast, anchors to nothing at all.
+    """
+    return raw if isinstance(raw, str) and len(raw) <= limit else None
+
+
+def _wire_value(members: type[enum.StrEnum], raw: object) -> str | None:
+    """Return one vault-supplied wire string when it names a member, else ``None``.
+
+    The single narrowing every closed vocabulary this module reads goes through.
+    The value is proved to be a string before it reaches the enum constructor --
+    a number or a nested object cannot -- and an unrecognized member answers
+    ``None`` rather than raising, leaving each caller to decide whether an
+    unreadable value costs its item or the whole document.
+
+    It answers with the wire string rather than the member, and each caller
+    constructs its own enum from it. That keeps the helper concrete: a version
+    generic over the member type would need a type parameter, and the parameter
+    syntax ruff asks for at this target version is a syntax error on the oldest
+    interpreter this backend is tested against.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        members(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _bounded_items(raw: object, limit: int) -> tuple[object, ...]:
+    """Return the leading ``limit`` items of a vault-supplied array, unread.
+
+    The one shape every optional collection in a reflection is read with, so the
+    three of them cannot each grow their own idea of it. Answers empty -- never
+    raises -- for anything that is not a list, since ``null``, an absent field
+    and a wrong-typed one all mean the same thing: nothing to surface. Only the
+    leading ``limit`` items are handed on, order preserved, so an over-eager or
+    hostile vault cannot grow this work without bound; each caller then projects
+    them one at a time, so one malformed item never costs its siblings.
+    """
+    return tuple(raw[:limit]) if isinstance(raw, list) else ()
+
+
 def _marginalia_kind(raw: object) -> str | None:
     """Map one Creek note kind onto adepthood's, or ``None`` when we do not know it.
 
@@ -226,18 +313,141 @@ def _reflection_note(item: object) -> dict[str, str] | None:
 def _reflection_notes(raw: object) -> list[dict[str, str]]:
     """Narrow a vault's note list to the ones adepthood can actually render.
 
-    Answers with an empty list -- never raises -- for anything that is not a
-    list, since a malformed reflection must defer to the cloud rather than break
-    the resonance pass. Only the leading :data:`_MAX_REFLECT_NOTES` items are
-    considered, order preserved, so an over-eager or hostile vault cannot grow
-    this work (or the JSON it feeds) without bound; inside that prefix each item
-    stands or falls alone, so one malformed note never costs its siblings.
+    A :func:`_bounded_items` read over :data:`_MAX_REFLECT_NOTES`, so a malformed
+    reflection defers to the cloud rather than breaking the resonance pass, and
+    an over-eager or hostile vault cannot grow this work (or the JSON it feeds)
+    without bound.
     """
-    if not isinstance(raw, list):
-        return []
     return [
-        note for item in raw[:_MAX_REFLECT_NOTES] if (note := _reflection_note(item)) is not None
+        note
+        for item in _bounded_items(raw, _MAX_REFLECT_NOTES)
+        if (note := _reflection_note(item)) is not None
     ]
+
+
+def _praxis_vocabulary(
+    item: Mapping[str, object],
+) -> tuple[VaultPraxisKind, VaultPraxisStatus] | None:
+    """Narrow a praxis page's two closed vocabularies together, or answer ``None``.
+
+    Read as one value because they fail as one: a page whose kind or whose
+    lifecycle is outside what Creek publishes is a page adepthood cannot label,
+    and either miss costs the whole page. Keeping the pair here also leaves
+    :func:`_related_praxis` reading the page's own words and nothing else.
+    """
+    kind = _wire_value(VaultPraxisKind, item.get("praxis_type"))
+    lifecycle = _wire_value(VaultPraxisStatus, item.get("status"))
+    if kind is None or lifecycle is None:
+        return None
+    return VaultPraxisKind(kind), VaultPraxisStatus(lifecycle)
+
+
+def _related_praxis(item: object) -> VaultRelatedPraxis | None:
+    """Project one compiled praxis page onto the seam's value, or drop it whole.
+
+    Every field has to survive on its own terms, exactly as a margin note's do: a
+    title that is real text, a kind and a status inside Creek's published
+    vocabularies, and an excerpt within :data:`_RELATED_PROSE_MAX`. A partial
+    page is dropped rather than completed with a default, which would show the
+    writer a practice their vault never named -- or, worse, show a released one
+    as active.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    title = _bounded_text(item.get("title"), _RELATED_TITLE_MAX)
+    excerpt = _bounded_prose(item.get("excerpt"), _RELATED_PROSE_MAX)
+    vocabulary = _praxis_vocabulary(item)
+    if title is None or excerpt is None or vocabulary is None:
+        return None
+    praxis_type, status = vocabulary
+    return VaultRelatedPraxis(title=title, praxis_type=praxis_type, status=status, excerpt=excerpt)
+
+
+def _fragment_count(raw: object) -> int | None:
+    """Return an eddy's tally of clustered fragments when it is one, else ``None``.
+
+    ``bool`` is excluded before anything else because Python's ``bool`` *is* an
+    ``int``: without that, a vault answering ``true`` would publish an eddy
+    clustering one fragment. The rest is the published constraint -- an integer,
+    never negative, because a tally of nothing is zero and a tally below that
+    describes no corpus.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+def _iso_date(raw: object) -> str | None:
+    """Return a vault-supplied ``YYYY-MM-DD`` date, verbatim, when it is one.
+
+    Both halves are load-bearing. The length pins the spelling, because
+    :meth:`datetime.date.fromisoformat` also accepts basic and week-date forms
+    and admitting one would hand a client a string whose shape it must guess.
+    The parse pins the value, because a well-shaped impossibility -- a thirteenth
+    month -- would otherwise render as a date nobody's corpus has.
+    """
+    if not isinstance(raw, str) or len(raw) != _ISO_DATE_LENGTH:
+        return None
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _eddy_formation(item: Mapping[str, object]) -> tuple[int, str] | None:
+    """Narrow the two facts a vault detected about an eddy, or answer ``None``.
+
+    The tally and the formation date are read as one value because neither is
+    the writer's own prose: both are things the vault observed about the cluster,
+    and a page that cannot say honestly how much it gathers or when it appeared
+    is one adepthood will not show at all.
+    """
+    fragment_count = _fragment_count(item.get("fragment_count"))
+    formed = _iso_date(item.get("formed"))
+    if fragment_count is None or formed is None:
+        return None
+    return fragment_count, formed
+
+
+def _related_eddy(item: object) -> VaultRelatedEddy | None:
+    """Project one eddy onto the seam's value, or drop it whole.
+
+    Item-wise fail-soft on the same terms as :func:`_related_praxis`. The one
+    asymmetry is ``description``, which is read with :func:`_bounded_prose`
+    rather than :func:`_bounded_text`: an eddy page declaring no description
+    publishes the empty string, and refusing that would drop every undescribed
+    cluster the writer has.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    title = _bounded_text(item.get("title"), _RELATED_TITLE_MAX)
+    description = _bounded_prose(item.get("description"), _RELATED_PROSE_MAX)
+    formation = _eddy_formation(item)
+    if title is None or description is None or formation is None:
+        return None
+    fragment_count, formed = formation
+    return VaultRelatedEddy(
+        title=title, description=description, fragment_count=fragment_count, formed=formed
+    )
+
+
+def _related_praxis_pages(raw: object) -> tuple[VaultRelatedPraxis, ...]:
+    """Project a reflection's praxis array, bounded at :data:`_MAX_RELATED_PRAXIS`."""
+    return tuple(
+        page
+        for item in _bounded_items(raw, _MAX_RELATED_PRAXIS)
+        if (page := _related_praxis(item)) is not None
+    )
+
+
+def _related_eddy_pages(raw: object) -> tuple[VaultRelatedEddy, ...]:
+    """Project a reflection's eddy array, bounded at :data:`_MAX_RELATED_EDDIES`."""
+    return tuple(
+        eddy
+        for item in _bounded_items(raw, _MAX_RELATED_EDDIES)
+        if (eddy := _related_eddy(item)) is not None
+    )
 
 
 def _admissible_ceiling(echoed: object, accepted: VaultTierCeiling) -> VaultTierCeiling | None:
@@ -308,18 +518,14 @@ def _reflection_request_body(body: str) -> Mapping[str, object]:
 def _reflection_status(raw: object) -> VaultReflectionStatus | None:
     """Narrow a reflection's wire status onto our enum, or ``None`` when unreadable.
 
-    Mirrors :func:`_coerce_capability` and :func:`_coerce_error_code`: the value
-    is proved to be a string before it is looked up, so a number or a nested
-    object cannot reach the enum constructor. Unlike those two, an unrecognized
-    status is *not* silently dropped by the caller -- a status outside the
-    published pair is an answer this client cannot read at all.
+    One use of :func:`_wire_value`, so the value is proved to be a string before
+    it reaches the enum constructor exactly as every other closed vocabulary here
+    is. What differs is what the caller does with a ``None``: an unrecognized
+    status is *not* silently dropped -- a status outside the published pair is an
+    answer this client cannot read at all.
     """
-    if not isinstance(raw, str):
-        return None
-    try:
-        return VaultReflectionStatus(raw)
-    except ValueError:
-        return None
+    value = _wire_value(VaultReflectionStatus, raw)
+    return None if value is None else VaultReflectionStatus(value)
 
 
 def _reflection_essay(raw: object) -> str | None:
@@ -397,6 +603,11 @@ def _readable_reflection(
     unreadable; a well-formed answer whose notes did not survive projection is
     not, because what the vault said and what adepthood can render are separate
     facts.
+
+    The two related collections are read the same permissive way the ``essay``
+    is, and for the same reason: both are optional in the published shape, so an
+    absent, null, or unreadable one is an ordinary answer carrying no pages
+    rather than a body this client must refuse.
     """
     status = _reflection_status(payload.get("status"))
     if status is None or not _complete_reflection(payload):
@@ -410,6 +621,8 @@ def _readable_reflection(
         essay=_reflection_essay(payload.get("essay")),
         essay_grounded=False,
         routed_tier=routed_tier,
+        related_praxis=_related_praxis_pages(payload.get("related_praxis")),
+        related_eddies=_related_eddy_pages(payload.get("related_eddies")),
     )
 
 
@@ -476,6 +689,22 @@ def _is_storable_ref(fragment_id: str) -> bool:
     already-saved entry), CR/LF (log injection, should the ref ever be
     rendered), and the zero-width and bidi-override codepoints the journal's own
     write boundary already sanitizes out of user text.
+
+    It also rejects an unpaired surrogate, and that is load-bearing rather than
+    incidental to the ones listed above. ``vault_ref`` is the only string a vault
+    chooses that reaches a *response body* with no database row in between --
+    ``POST /corpus/import`` returns it directly, and the vault branch of that
+    route writes nothing: :func:`services.corpus_import._to_vault` takes no
+    session at all, so the route's commit flushes an empty unit of work and the
+    guard in :mod:`security.pg_text_guard` -- which inspects only values bound
+    for mapped columns -- has nothing to look at. A lone surrogate has no UTF-8
+    encoding at all, so rendering one is a 500; ``str.isprintable`` is what stops
+    that, because U+D800-U+DFFF is Unicode category ``Cs`` and no ``Cs`` code
+    point is printable.
+
+    Narrowing this check to the specific code points named above -- an obvious
+    tidy-up, since the docstring reads like an inventory -- would reopen that
+    path. Pinned by ``test_storable_ref_bound_excludes_lone_surrogates``.
     """
     return (
         bool(fragment_id)

@@ -86,6 +86,18 @@ jobs:
     if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # ONE cap, read twice: the action enforces it and the classifier compares
+      # against it. Written in two places these drift, and a classifier holding
+      # a stale cap calls a genuine overrun an agent error, or the reverse.
+      #
+      # WHY 80 AND NOT 40: the four captured runs used 41, 44, 45 and 47 turns
+      # -- every one of them over the cap -- so 40 was cutting the work off on
+      # most nights and the summary was never written. 80 clears the observed peak of 47 with room
+      # for a night that runs long, while still bounding a prompt that fails to
+      # converge -- at roughly three dollars for 47 turns, "no cap" is not an
+      # option and the 30-minute job timeout is not a cost control.
+      MAX_TURNS: "80"
     steps:
       - name: Checkout repository (recent history for churn/bug analysis)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -144,6 +156,18 @@ jobs:
           cd frontend && npm ci
 
       - name: Run Claude scan
+        id: scan
+        # Failure is deferred to the classifier below, never swallowed. The
+        # grooming workflow -- which passes the same cap to the same action --
+        # reported failure on ten of its last twelve scheduled runs, and most of
+        # those were the benign mode: the scan finished its work and the action
+        # then exited non-zero for using more turns than the cap allowed. The
+        # raw exit code cannot tell that apart from an exhausted account, so the
+        # classifier decides and this step does not.
+        #
+        # Thirteen producer scans share this core and are currently paused. Doing
+        # this here rather than in each wrapper means they come back inoculated.
+        continue-on-error: true
         uses: anthropics/claude-code-action@e2a4b761cd77a1138a5b41410eda9b28581f9bcd  # v1.0.196
         env:
           # The scan-issue-writer skill files issues via gh; the action injects
@@ -161,11 +185,11 @@ jobs:
           # --model opus: issue authoring is judgment-heavy (severity ranking,
           #   dedupe decisions, 6-component prose). The action default (Sonnet)
           #   files vaguer issues.
-          # --max-turns 40: one scan, bounded analysis + a capped set of creates.
+          # --max-turns: one scan, bounded analysis + a capped set of creates.
           claude_args: >-
             --allowed-tools "Bash,Read,Grep,Glob,Write,Skill,Task"
             --model opus
-            --max-turns 40
+            --max-turns ${{ env.MAX_TURNS }}
 
           prompt: |
             Use the `scan-issue-writer` skill and follow its instructions exactly.
@@ -181,3 +205,101 @@ jobs:
             issue. A clean scan that files ZERO issues is a valid success — do
             not invent work. End with the run summary the skill specifies,
             appended to $GITHUB_STEP_SUMMARY.
+
+      - name: Classify how the scan run ended
+        id: classify
+        # `always()` so the classification happens on the failing runs too --
+        # which are the only ones anybody needs it for.
+        if: always()
+        env:
+          # `outcome`, NOT `conclusion`. Under `continue-on-error: true` a failed
+          # step's `outcome` stays `failure` while its `conclusion` becomes
+          # `success`; wiring `conclusion` here would feed the classifier
+          # `success` for every failure and silently disable all of this.
+          STEP_OUTCOME: ${{ steps.scan.outcome }}
+          # True only when the ref can be POSITIVELY established as something
+          # other than the default branch. The failure direction of a wrong
+          # answer here is calling a real empty transcript benign, so every
+          # uncertain case has to land on false.
+          #
+          # An absent `default_branch` lands there by GitHub's own coercion:
+          # comparing different types casts both to numbers, null and the empty
+          # string both become 0, so the first operand is false and `&&`
+          # short-circuits to it.
+          SKIP_PERMITTED: ${{ github.event.repository.default_branch != '' && github.ref_name != github.event.repository.default_branch }}
+          EXECUTION_FILE: ${{ steps.scan.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          # Belt and braces on top of that coercion, not a correction to it.
+          # The classifier accepts only the literals `true` and `false`, and
+          # the value above is produced by a documented casting rule rather
+          # than written out here -- so pin the invariant locally instead of
+          # resting on a rule read from someone else's documentation. Anything
+          # that is not exactly `true` means the ref could not be established
+          # as different, and that is the strict reading.
+          if [ "$SKIP_PERMITTED" != "true" ]; then
+            SKIP_PERMITTED=false
+          fi
+
+          # The action writes the transcript BEFORE it throws for a turn-cap
+          # overrun, and its catch path sets `execution_file` -- but whether a
+          # composite action's outputs survive an inner step failure is not
+          # something to bet the whole mechanism on, so the documented default
+          # path is the fallback. If neither exists the classifier says
+          # `no-result`, which is a failure and not a silence.
+          file="$EXECUTION_FILE"
+          if [ ! -s "$file" ]; then
+            file="$RUNNER_TEMP/claude-execution-output.json"
+          fi
+
+          status=0
+          outcome="$(scripts/ci/classify_claude_outcome.sh \
+            --execution-file "$file" \
+            --step-outcome "$STEP_OUTCOME" \
+            --skip-permitted "$SKIP_PERMITTED" \
+            --max-turns "$MAX_TURNS")" || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the outcome classifier could not run, so this run is unclassified -- treat it as failed and fix the wiring."
+            exit 1
+          fi
+
+          # Every token is named, and each branch says what the JOB did about
+          # it, which is a different fact from what the classifier said happened.
+          # Anything unrecognised fails closed: a verdict this block has not been
+          # taught must never fall through to green.
+          case "$outcome" in
+            skipped)
+              note="Nothing ran: the action declined because this workflow file differs from the copy on the default branch. That is its anti-tamper check doing its job, not a failure -- but it does mean this run proves only that the job was created. The job passes."
+              fail=0 ;;
+            completed)
+              note="The scan completed. The job passes."
+              fail=0 ;;
+            turn-cap-overrun)
+              note="The scan finished its work and then exceeded the ${MAX_TURNS}-turn cap. Benign: the scan summary above is the real outcome and there is nothing to re-run, so the job passes."
+              fail=0 ;;
+            turn-cap-truncated)
+              note="The scan was cut off at the ${MAX_TURNS}-turn cap while it was still working, so no scan summary was written and the scan is incomplete. Raise the cap or shorten the prompt before re-running. Failing the job."
+              fail=1 ;;
+            usage-limit)
+              note="No scanning happened: the account allowance is exhausted. Re-running before the reset cannot succeed. Failing the job."
+              fail=1 ;;
+            auth-failure)
+              note="No scanning happened: CLAUDE_CODE_OAUTH_TOKEN was rejected. Rotate it -- unlike a usage limit this will never clear on its own. Failing the job."
+              fail=1 ;;
+            agent-error)
+              note="The scan failed for a reason the classifier does not recognise. Read the transcript. Failing the job."
+              fail=1 ;;
+            no-result)
+              note="The scan left no readable transcript, so nothing can be said about this run. Either the step died before the SDK spoke or this classification is mis-wired -- both are failures. Failing the job."
+              fail=1 ;;
+            *)
+              note="Unrecognised classifier verdict: $outcome. Failing closed rather than guessing."
+              fail=1 ;;
+          esac
+
+          printf '\nWhat this run did about it: %s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" -eq 1 ]; then
+            echo "::error::$note"
+            exit 1
+          fi
+          echo "::notice::$note"

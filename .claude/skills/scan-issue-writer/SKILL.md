@@ -65,7 +65,7 @@ run concurrently, so re-run the dedupe search immediately before each create.
 Fill the canonical `prompts/templates/scan-issue-body.md` completely — all six
 components, no placeholders left. (It is the single source of truth;
 `references/issue-body-template.md` just points at it.) An issue missing any
-component gets `needs-triage` instead of `agent-ready`, and the grooming pass
+component gets `needs-spec` instead of `agent-ready`, and the grooming pass
 finishes it. Write the body to a file and create with:
 
 ```bash

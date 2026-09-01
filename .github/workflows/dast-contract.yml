@@ -1,0 +1,220 @@
+name: DAST Contract Fuzz
+
+# Boots an ephemeral instance against Postgres, reads the document that instance
+# publishes about itself, and answers one question of every operation in it: can
+# schema-aware but adversarial input make this endpoint break its own contract?
+#
+# The document is read from the running app, never from the checked-in export,
+# so the spec this gate judges against can never drift away from the code it is
+# judging.
+#
+# THIS IS A PULL-REQUEST GATE. It runs on every pull request, on every push to
+# main that touches ``backend/**`` or this file, and on demand. There is
+# deliberately no ``schedule:``, and re-adding one has to get past two facts.
+# Every input to a run is pinned -- the seed is fixed inside contract_fuzz.sh,
+# schemathesis is pinned by exact ``==``, every action is pinned to a SHA -- so
+# a cron re-run of unchanged code is a bit-identical repeat that can only report
+# what the previous run already reported; anything that could change the answer
+# changes a file under ``backend/**``, which now starts a run with an author and
+# a pull request attached to it. And the cron earned nothing while it existed:
+# across this workflow's whole history it fired exactly once, that run went red,
+# and nothing came of it -- no issue, no fix. A red run with no author and no
+# pull request waiting on it is a finding nobody reads, which disarms this job
+# as thoroughly as marking its verdict advisory would.
+#
+# Running on ``pull_request`` does not by itself make this a required check.
+# Blocking a merge on it takes a branch-protection ruleset that names this job,
+# and such a ruleset has to reckon with the path filter below: a check that is
+# required but filtered out never reports at all, so a pull request touching no
+# backend file would wait on it forever. Making it required therefore means
+# dropping the filter and having the job decide for itself when to stand down.
+#
+# Never ``pull_request_target``: whichever trigger this job runs on, it checks
+# out and executes application code, so it must not hold write-scoped
+# credentials.
+
+on:
+  # ``push`` is scoped to main deliberately. Left unscoped it also fires on
+  # every push to a PR branch, so one push starts TWO identical runs seconds
+  # apart -- one ``push``, one ``pull_request``. That is not hypothetical: this
+  # very workflow did it on 2026-08-25, producing two simultaneous runs on the
+  # same branch. backend-ci.yml records the same defect and the same fix.
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  # The path list is complete. Every input this gate consumes lives under
+  # backend/: src/, alembic.ini and the migrations, scripts/dast/, all four
+  # requirements files, and the tests this job runs. ``scripts/backend/**``,
+  # which backend-ci.yml must list, is deliberately absent -- it holds
+  # export_openapi.py, which writes the checked-in export, and this job reads
+  # the document from the running app and never from that export. This
+  # workflow's own path is listed so the gate cannot be edited, or narrowed,
+  # while nothing runs.
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/dast-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dast-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-fuzz:
+    runs-on: ubuntu-latest
+    # The fuzz step itself is budgeted to stay well inside five minutes (see the
+    # arithmetic in backend/scripts/dast/contract_fuzz.sh); this ceiling covers
+    # install, migration and boot as well, and only exists to stop a wedged
+    # server running forever.
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      SECRET_KEY: ci-only-secret-do-not-use-in-prod  # pragma: allowlist secret
+      BASE_URL: http://127.0.0.1:8000
+      UVICORN_LOG: /tmp/uvicorn.log
+      REPORT_DIR: /tmp/dast-contract-report
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend deps
+        run: |
+          uv pip install --system -r backend/requirements-lock.txt
+          uv pip install --system -r backend/requirements-dev.txt
+          # Schemathesis is pinned on its own; that file's header says why it is
+          # not in requirements-dev.txt.
+          uv pip install --system -r backend/requirements-dast.txt
+
+      # Prove the fuzzer catches a bug before trusting it to report on the real
+      # application. The pinned Schemathesis is run against a deliberately
+      # broken FastAPI app -- a handler that 500s and a handler that returns a
+      # body its own document forbids -- and must fail on both, then against the
+      # repaired twin, which must pass with every operation reached. A gate that
+      # has never been watched fail is not known to work.
+      #
+      # The flag turns a missing executable into a red job rather than a silent
+      # skip: this is the one environment that installs the tool, so absence
+      # here means the install step did nothing.
+      - name: Prove the fuzzer catches a planted bug
+        working-directory: backend
+        env:
+          DAST_LANE_REQUIRE_SCHEMATHESIS: "1"
+        run: python -m pytest tests/scripts/dast/test_contract_fuzz_catches_a_planted_bug.py
+
+      - name: Migrate the throwaway database
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Start the target instance
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          # The Schemathesis CLI sends one fixed header set for a whole run, so
+          # it cannot vary X-Forwarded-For per request the way the authorization
+          # matrix does. Without a wider default the fuzzer would spend its
+          # budget collecting 429s -- a uniform denial none of the response
+          # checks can tell apart from a healthy API. Read only by this job: no
+          # deployment sets this variable, and the shipped default (60/minute)
+          # is what every deployment gets.
+          ADEPTHOOD_DEFAULT_RATE_LIMIT: 6000/minute
+        run: |
+          # Started the way the Dockerfile does -- module ``main`` with
+          # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
+          # import layout production runs.
+          PYTHONPATH=src python -m uvicorn main:app \
+            --host 127.0.0.1 --port 8000 --log-level warning > "$UVICORN_LOG" 2>&1 &
+
+      - name: Wait for readiness
+        run: |
+          # The startup seeder runs deliberately: the fuzzer reaches catalog
+          # routes that answer differently once their rows exist.
+          for _ in $(seq 1 45); do
+            if curl -fsS "$BASE_URL/health/ready" > /dev/null; then
+              echo "instance is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the instance never became ready"
+          cat "$UVICORN_LOG"
+          exit 1
+
+      - name: Mint a bearer token and prove it works
+        working-directory: backend
+        run: |
+          # The helper exits non-zero unless the token it minted actually opens
+          # an authenticated route, which is the guard that stops this whole job
+          # from becoming a very expensive 401 test: a run holding a broken
+          # credential is denied uniformly and violates none of the checks the
+          # fuzz step enables. It prints the bare token and nothing else, so
+          # this capture is safe.
+          TOKEN=$(PYTHONPATH=src python -m scripts.dast.tokens \
+            --base-url "$BASE_URL" \
+            --database-url "$DATABASE_URL")
+          echo "::add-mask::$TOKEN"
+          echo "DAST_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # The command itself lives in a script so that a test can run it with a
+      # recording stub on PATH and assert on the argv it builds. Grepping this
+      # file for strings could not tell a live invocation from a commented-out
+      # one; backend/tests/scripts/dast/test_contract_fuzz_script.py can.
+      # Nothing may be appended here: a trailing command would become the step's
+      # exit code and swallow the fuzzer's verdict.
+      - name: Contract fuzz
+        working-directory: backend
+        run: scripts/dast/contract_fuzz.sh
+
+      # Checked against schemathesis 4.25.2: the reproduction `curl` it prints for
+      # every finding renders the header it was handed as `Authorization:
+      # [Filtered]`, so the bearer token does not reach this public artifact.
+      # Nothing here redacts anything -- that would be machinery for a leak that
+      # does not exist. The planted-bug suite asserts the filtering still happens,
+      # so an upgrade that stopped doing it fails the build.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dast-contract-report
+          path: ${{ env.REPORT_DIR }}
+          if-no-files-found: warn
+
+      - name: Stop the instance
+        if: always()
+        run: pkill -f "uvicorn main:app" || echo "no instance left to stop"
+
+      - name: Server log
+        if: always()
+        run: cat "$UVICORN_LOG"

@@ -124,6 +124,14 @@ POLICY: Mapping[str, TablePolicy] = {
         "separately, so erasing the journal while leaving this would keep a "
         "readable copy of exactly what the deletion was asked to remove.",
     ),
+    "corpussweep": _erase(
+        "user_id",
+        "The counts of how much of its own writing each of the account's "
+        "grants actually reached. The corpus goes with the account and so do "
+        "the decisions, so a log of how much of a thing that no longer exists "
+        "was reached is a record about nobody — and, like the consent log it "
+        "points at, it names the account directly.",
+    ),
     "coursestage": _retain("The shared 36-week curriculum. Identical for every account."),
     "energyplan": _erase("user_id", "The account's energy budget and its history."),
     "entitlement": _erase(

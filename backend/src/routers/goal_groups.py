@@ -5,16 +5,18 @@ from __future__ import annotations
 import logging
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.auth import get_current_user_model
 from dependencies.ownership import (
     require_manageable_goal_group,
     require_visible_goal_group,
 )
+from error_responses import build_router
 from errors import forbidden, not_found
 from load_options import GOAL_GROUP_WITH_GOALS
 from models.goal_group import GoalGroup
@@ -26,7 +28,7 @@ from schemas.pagination import paginate_query
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/goal-groups", tags=["goal-groups"])
+router = build_router(prefix="/goal-groups", tags=["goal-groups"])
 
 SEED_TEMPLATES: list[dict[str, object]] = [
     {
@@ -105,7 +107,7 @@ async def list_goal_groups(
 
 @router.get("/{group_id}", response_model=GoalGroupResponse)
 async def get_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     session: Annotated[AsyncSession, Depends(get_session)],
     _visible: Annotated[GoalGroup, Depends(require_visible_goal_group)],
 ) -> GoalGroup:
@@ -210,7 +212,7 @@ async def update_goal_group(
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_goal_group(
-    group_id: int,
+    group_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     _owned: Annotated[GoalGroup, Depends(require_manageable_goal_group)],

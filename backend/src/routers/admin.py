@@ -12,15 +12,17 @@ from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.auth import require_admin
 from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
+from error_responses import build_router
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
@@ -65,6 +67,14 @@ _GUMROAD_SALE_LIMIT = 10
 # admin token or a looping script without ever inconveniencing a human.
 _OVERRIDE_RATE_LIMIT = "10/minute"
 
+# A retention window is subtracted from the current time, so its usable
+# range ends far below what an ``integer`` column could hold: ``timedelta``
+# tops out at 999_999_999 days and the subtraction overflows before any
+# query is built.  A century of history is already more than this table will
+# ever hold, and anything past it is a typo rather than a sweep.
+_MIN_RETENTION_DAYS = 1
+_MAX_RETENTION_DAYS = 36_500
+
 
 def _to_decimal(value: object) -> Decimal:
     """Coerce a SUM result to ``Decimal``, treating ``None`` as zero.
@@ -85,7 +95,7 @@ def _to_decimal(value: object) -> Decimal:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = build_router(prefix="/admin", tags=["admin"])
 
 
 async def _fetch_per_user(
@@ -278,7 +288,7 @@ async def list_stage_progress_gaps(
 
 @router.post("/stage-progress/{user_id}/repair", response_model=StageProgressRepairResult)
 async def repair_stage_progress(
-    user_id: int,
+    user_id: RowIdPath,
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
 ) -> StageProgressRepairResult:
@@ -333,7 +343,9 @@ async def repair_stage_progress(
 async def cleanup_energy_plans(
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
-    older_than_days: int = ENERGY_PLAN_RETENTION_DAYS,
+    older_than_days: Annotated[
+        int, Query(ge=_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)
+    ] = ENERGY_PLAN_RETENTION_DAYS,
 ) -> EnergyPlanCleanupResult:
     """Delete persisted energy plans older than ``older_than_days``.
 
@@ -412,7 +424,7 @@ def _entitlement_summary(entitlement: Entitlement) -> EntitlementSummary:
 @limiter.limit(_OVERRIDE_RATE_LIMIT)
 async def grant_entitlement(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    user_id: int,
+    user_id: RowIdPath,
     payload: EntitlementGrantRequest,
     context: Annotated[_AdminContext, Depends(admin_context)],
 ) -> EntitlementSummary:
@@ -460,8 +472,8 @@ async def grant_entitlement(
 @limiter.limit(_OVERRIDE_RATE_LIMIT)
 async def revoke_entitlement(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    user_id: int,
-    entitlement_id: int,
+    user_id: RowIdPath,
+    entitlement_id: RowIdPath,
     payload: EntitlementRevokeRequest,
     context: Annotated[_AdminContext, Depends(admin_context)],
 ) -> EntitlementSummary:
@@ -498,7 +510,7 @@ async def revoke_entitlement(
 
 @router.get("/users/{user_id}/summary", response_model=AdminUserSummary)
 async def get_user_summary(
-    user_id: int,
+    user_id: RowIdPath,
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
 ) -> AdminUserSummary:

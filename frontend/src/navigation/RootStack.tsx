@@ -61,6 +61,9 @@ export type RootStackParamList = {
          *  offers resonance immediately, skipping the usual idle-after-typing wait. */
         justSaved?: boolean;
         weekNumber?: number;
+        /** Which of the stage's prompts this page answers, 1-based. Omitted means
+         *  the prompt the week itself draws, the long-standing week-keyed shape. */
+        promptOrdinal?: number;
         promptQuestion?: string;
         practiceSessionId?: number;
         userPracticeId?: number;

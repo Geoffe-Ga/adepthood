@@ -6,16 +6,18 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import Depends, Response, status
 from sqlalchemy import CursorResult, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
 from domain.habit_stats import compute_habit_stats
+from error_responses import build_router
 from errors import conflict, forbidden, not_found
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
 from models.goal import Goal
@@ -33,7 +35,7 @@ from services.streaks import SubtractiveContext, compute_habit_streak
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/habits", tags=["habits"])
+router = build_router(prefix="/habits", tags=["habits"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 # Per-user cap on habit rows; surfaces as 409 ``habit_quota_exceeded``.
 _MAX_HABITS_PER_USER = 100
@@ -267,7 +269,7 @@ async def list_habits(
 
 @router.get("/{habit_id}", response_model=HabitWithGoals)
 async def get_habit(
-    habit_id: int,
+    habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -438,7 +440,7 @@ async def update_goal_units(
 
 @router.get("/{habit_id}/stats", response_model=HabitStats)
 async def get_habit_stats(
-    habit_id: int,
+    habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],

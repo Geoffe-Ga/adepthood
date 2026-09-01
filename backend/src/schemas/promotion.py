@@ -12,6 +12,9 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from bounds import RowIdField
+from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
+
 
 class PromoteQuoteCreate(BaseModel):
     """Payload for promoting a span of a source entry into a pending quote.
@@ -21,8 +24,8 @@ class PromoteQuoteCreate(BaseModel):
     empty or inverted span is rejected before it reaches the database.
     """
 
-    anchor_start: int = Field(ge=0)
-    anchor_end: int = Field(ge=1)
+    anchor_start: int = Field(ge=0, le=JOURNAL_MESSAGE_MAX_LENGTH)
+    anchor_end: int = Field(ge=1, le=JOURNAL_MESSAGE_MAX_LENGTH)
 
     @model_validator(mode="after")
     def _validate_span(self) -> Self:
@@ -40,7 +43,7 @@ class PromotionUpdate(BaseModel):
     is a 422. A ``null`` value is valid and returns the quote to pending.
     """
 
-    included_in_entry_id: int | None
+    included_in_entry_id: RowIdField | None
 
 
 class PromotedQuoteResponse(BaseModel):

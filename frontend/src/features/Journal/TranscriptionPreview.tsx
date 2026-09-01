@@ -8,7 +8,7 @@
  * PRIVACY: a block renders status, text, and a failure's copy only — never the
  * page image — so no base64 reaches the tree, a testID, or the accessibility layer.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
 import type { CapturePage } from './captureSession';
@@ -18,9 +18,13 @@ import type { TranscriptionBlock } from './transcriptionRun';
 
 import { TranscriptionError } from '@/api';
 import type { TranscriptionErrorKind } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
+import {
+  CREDIT_EXHAUSTED_COPY,
+  SERVICE_CREDIT_EXHAUSTED_COPY,
+  formatApiError,
+} from '@/api/errorMessages';
 import { Button } from '@/components/Button';
-import { accent } from '@/design/tokens';
+import { accent, writingField, writingFieldFocus } from '@/design/tokens';
 
 // --- Copy (warm, declinable — NORTH-STAR) ---------------------------------
 
@@ -51,6 +55,11 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
   wallet_exhausted: '',
   model_lacks_vision: MODEL_LACKS_VISION_COPY,
+  // Sourced from the shared code map rather than written again here: this
+  // surface's own copy is where the transient story survived last time, and a
+  // second wording is a second place for it to come back.
+  credit_exhausted: CREDIT_EXHAUSTED_COPY,
+  service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
   unknown: "Something didn't work while reading this page. Try again, or remove it.",
 };
 
@@ -101,13 +110,21 @@ function DoneBlock({
   onRetry,
   onConfirmRedo,
 }: DoneBlockProps): React.JSX.Element {
+  // The browser's focus ring is dropped on web, and this field's own hairline
+  // box does not otherwise react to focus — so it warms its border instead,
+  // keeping a visual cue for anyone tabbing between blocks without typing.
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.blockBody}>
       <TextInput
         testID={`photograph-block-${position}-input`}
-        style={styles.blockInput}
+        style={[styles.blockInput, writingFieldFocus, focused && styles.blockInputFocused]}
         value={block.text}
         onChangeText={(text) => onEdit(block.id, text)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         multiline
         accessibilityLabel={BLOCK_INPUT_A11Y}
       />

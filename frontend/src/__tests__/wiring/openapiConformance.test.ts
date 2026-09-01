@@ -120,6 +120,16 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
         'Optional for the same reason as mode, and read only through the mode discriminator, which is itself absent on pre-mode payloads.',
     },
   },
+  relatedPraxisKindSchema: {
+    component: 'VaultPraxisKind',
+    reason:
+      "The wire names Creek's vocabulary VaultPraxisKind and the client names it for the field that carries it, so no name-based candidate matches; mapping it pins the five hoisted members to the published set.",
+  },
+  relatedPraxisStatusSchema: {
+    component: 'VaultPraxisStatus',
+    reason:
+      'Named for the vault rather than the field for the same reason the kind is, and mapped so a lifecycle Creek adds or retires cannot pass unnoticed while a released page still renders as active.',
+  },
 
   // --- No counterpart on the wire -----------------------------------------
   careKindSchema: {
@@ -130,7 +140,7 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
   dataExportArchiveSchema: {
     component: null,
     reason:
-      'GET /users/me/export declares no response_model, so the document types its body as an empty schema and there is nothing to compare the envelope against.',
+      'GET /users/me/export streams its archive instead of returning a response_model, so the document names the media type it sends and declares no schema under it; there is nothing to compare the envelope against.',
   },
   invitationKindSchema: {
     component: null,

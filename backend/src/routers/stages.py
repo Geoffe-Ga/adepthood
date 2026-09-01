@@ -6,10 +6,11 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import StageNumberPath
 from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
@@ -28,6 +29,7 @@ from domain.stage_progress import (
     is_stage_unlocked,
     stage_exists,
 )
+from error_responses import build_router
 from errors import conflict, forbidden, not_found
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
@@ -48,7 +50,7 @@ from services.creek_vault_wheel import select_wheel_balance
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/stages", tags=["stages"])
+router = build_router(prefix="/stages", tags=["stages"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 
 def _stage_manifestations(stage_number: int) -> list[StageManifestation]:
@@ -232,7 +234,7 @@ async def get_wheel_balance(
 
 @router.get("/{stage_number}/progress", response_model=StageProgressResponse)
 async def get_stage_progress(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StageProgressResponse:
@@ -246,7 +248,7 @@ async def get_stage_progress(
 
 @router.get("/{stage_number}/history", response_model=StageHistoryResponse)
 async def get_stage_history(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],

@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -47,6 +47,7 @@ from dependencies.creek_vault import get_creek_vault_client
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
 from domain.creek_vault import CreekVaultClient
+from error_responses import build_router
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -68,7 +69,12 @@ from services.corpus_import import (
 )
 from services.creek_vault_upload import UploadedDocument
 
-router = APIRouter(prefix="/corpus", tags=["corpus"])
+router = build_router(
+    prefix="/corpus",
+    tags=["corpus"],
+    # ``guard_document_payload`` refuses an oversized import before it is decoded.
+    extra_statuses=(status.HTTP_413_CONTENT_TOO_LARGE,),
+)
 
 
 def _to_response(state: ConsentState) -> CorpusConsentResponse:
@@ -117,9 +123,11 @@ async def put_corpus_consent(
     the sweep it authorises costs a provider call per entry it reaches, where
     an import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.
 
-    The response is still the *state*. What the decision reached is a fact
-    about the event, and it goes where events are kept -- the audit row and the
-    log -- rather than onto a shape that also answers ``GET``.
+    The response is still the *state*. What the grant's sweep reached is a fact
+    about the sweep rather than about the decision -- a bounded sweep resumes
+    under a decision already standing -- so it goes where sweeps are kept, the
+    append-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,
+    rather than onto a shape that also answers ``GET``.
     """
     change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
     await backfill_after_consent(session, user_id=user_id, change=change)

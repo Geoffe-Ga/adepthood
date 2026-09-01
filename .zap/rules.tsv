@@ -1,0 +1,24 @@
+# ZAP alert-rule dispositions for the nightly deep API scan
+# (.github/workflows/dast-deep.yml).
+#
+# Tab-separated, because that is what ZAP parses: <rule id><TAB><IGNORE |
+# WARN | FAIL><TAB>(reason). A line separated by spaces is read as one field
+# and silently does nothing, so backend/tests/scripts/dast/test_deep_scan_workflow.py
+# parses this file the way ZAP does and fails on a malformed line.
+#
+# EVERY LINE IS A NAMED RULE WITH A WRITTEN REASON, and the suite caps how many
+# there may be. The alternative -- ZAP's `-I`, which passes every warning at
+# once -- is forbidden: it is every suppression here, un-reviewed and unwritten,
+# and it would silently absorb the next rule that starts firing.
+#
+# NOTHING MAY BE SUPPRESSED HERE FOR BEING INCONVENIENT. The passive header
+# rules in particular stay armed on purpose: they are what turn
+# backend/src/middleware/security_headers.py from an asserted control into a
+# verified one, and they are the only thing that would notice the day a header
+# stops being emitted at the edge. A test names five of them and fails if any
+# appears below.
+10035	IGNORE	(Strict-Transport-Security Header Not Set - the scan target is a plain-http loopback instance; HSTS is emitted only when ENV is production or staging, see backend/src/middleware/security_headers.py, so over http this rule can only ever report the CI harness back to itself)
+10027	IGNORE	(Information Disclosure - Suspicious Comments - reads HTML and JavaScript comments for developer notes; this API serves neither, and the rule's matches here are ordinary English words inside JSON error strings)
+10202	IGNORE	(Absence of Anti-CSRF Tokens - an HTML-form control, and a meaningless one for this API: every route authenticates from an Authorization header that a cross-site form cannot set, and no route accepts a cookie credential)
+10109	IGNORE	(Modern Web Application - informational, and it reports that a response looks like a JavaScript-driven page rather than a document; there are no pages here at all)
+10096	IGNORE	(Timestamp Disclosure - matches any epoch-shaped integer in a response body, and this API returns them as ordinary data: streak counts, week numbers and millisecond durations all trip it)

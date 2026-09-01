@@ -10,16 +10,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from domain.ui_flags import ensure_ui_flags
+from error_responses import build_router
 from models.user_ui_flags import UserUiFlags
 from routers.auth import get_current_user
 from schemas.ui_flags import UiFlagsResponse, UiFlagsUpdate
 
-router = APIRouter(prefix="/ui-flags", tags=["ui-flags"])
+router = build_router(prefix="/ui-flags", tags=["ui-flags"])
 
 
 def _to_response(flags: UserUiFlags) -> UiFlagsResponse:

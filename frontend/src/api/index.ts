@@ -37,6 +37,7 @@ import {
   stageIntroSchema,
   userPracticeSchema,
   stageProgressRecordSchema,
+  stagePromptsResponseSchema,
   stageSchema,
   timezoneReadSchema,
   transcribePageSchema,
@@ -67,6 +68,7 @@ import {
   type ReturnWeekT,
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
+  type StagePromptsResponseT,
   type PromotedQuoteT,
   type PromotedQuoteSummaryT,
   type ReflectionDueT,
@@ -184,6 +186,11 @@ export type TranscriptionErrorKind =
   | 'image_too_large'
   | 'model_lacks_vision'
   | 'wallet_exhausted'
+  // A spent *provider* balance, which `wallet_exhausted` (our own monthly
+  // metering) is not: its remedy is the API key, not the next monthly reset.
+  // Split by whose key it was, because that decides who can act.
+  | 'credit_exhausted'
+  | 'service_credit_exhausted'
   | 'rate_limited'
   | 'provider_error'
   | 'network'
@@ -308,9 +315,14 @@ let llmApiKeyReset: (() => void) | null = null;
 export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
 
 /**
- * Canonical header name for client-supplied idempotency keys (BUG-API-008).
- * Matches the IETF draft (``draft-ietf-httpapi-idempotency-key-header``)
- * the backend already routes through its dedupe middleware.
+ * Canonical header name for client-supplied idempotency keys (BUG-API-008),
+ * matching the IETF draft (``draft-ietf-httpapi-idempotency-key-header``).
+ *
+ * There is no dedupe middleware behind it: the header is honoured per-route by
+ * the routes that opted in (``POST /practice-sessions``, and the energy
+ * router's ``X-Idempotency-Key``), so sending it elsewhere is inert
+ * server-side. Client-side its effect is universal — ``hasIdempotencyHeader``
+ * reads it to make a mutation retry-eligible.
  */
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 
@@ -1320,11 +1332,12 @@ export const goalCompletions = {
   //
   // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
   // screen) pass a deterministic key built via :func:`idempotencyKey`
-  // (e.g. ``log-unit:${goalId}:${dayISO}``).  Without it, a network blip
-  // mid-tap or the user mashing the button surfaces as duplicate
-  // completions; with it, the backend's dedupe layer reuses the prior
-  // result.  Optional for back-compat with screens that have not yet
-  // adopted the helper.
+  // (e.g. ``log-unit:${goalId}:${dayISO}``).  This route reads no such
+  // header — it is idempotent by natural key instead, on (user, goal, local
+  // day) — so the key's effect here is client-side: it marks the mutation
+  // retry-eligible so a network blip mid-tap is retried rather than
+  // surfaced as a failure.  Optional for back-compat with screens that have
+  // not yet adopted the helper.
   create(
     payload: GoalCompletionPayload,
     options: { token?: string; idempotencyKey?: string } = {},
@@ -1573,20 +1586,47 @@ const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
   return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
 };
 
+/** Statuses this endpoint answers with more than one distinct condition. */
+const TRANSCRIBE_PAYMENT_REQUIRED = 402;
+const TRANSCRIBE_UNPROCESSABLE = 422;
+const TRANSCRIBE_SERVICE_UNAVAILABLE = 503;
+
+/** One status's `detail` sub-map, paired with what an unlisted detail means. */
+interface TranscribeDetailRule {
+  kinds: Record<string, TranscriptionErrorKind>;
+  fallback: TranscriptionErrorKind;
+}
+
 /**
- * 422 sub-map: the transcription endpoint reuses the generic 422 for several
- * distinct validation failures, disambiguated by `detail`. Anything not listed
- * here (including a bare `invalid_image` and the Pydantic array-detail case
- * that `extractErrorDetail` collapses to `'Request failed'`) is a bad image.
+ * Per-status `detail` rules: the endpoint reuses one status for several distinct
+ * conditions, so the status alone cannot classify them. A 402 is a spent monthly
+ * wallet, a spent provider balance, or a missing key; a 422 is a bad image or a
+ * text-only model; a 503 is a spent server balance or a genuine outage. The 422
+ * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
+ * collapses to `'Request failed'`.
  */
-const TRANSCRIBE_422_KINDS: Record<string, TranscriptionErrorKind> = {
-  image_too_large: 'image_too_large',
-  model_lacks_vision: 'model_lacks_vision',
+const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
+  [TRANSCRIBE_PAYMENT_REQUIRED]: {
+    kinds: {
+      // Keyless BYOK is a client misconfiguration, NOT a spent wallet.
+      llm_key_required: 'unknown',
+      llm_credit_exhausted: 'credit_exhausted',
+    },
+    fallback: 'wallet_exhausted',
+  },
+  [TRANSCRIBE_UNPROCESSABLE]: {
+    kinds: { image_too_large: 'image_too_large', model_lacks_vision: 'model_lacks_vision' },
+    fallback: 'invalid_image',
+  },
+  [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
+    kinds: { llm_service_credit_exhausted: 'service_credit_exhausted' },
+    fallback: 'unknown',
+  },
 };
 
 /**
  * Flat status→kind table for the transcription endpoint's `ApiError`s. Statuses
- * needing detail-level disambiguation (402, 422) are handled before this lookup.
+ * needing detail-level disambiguation are handled before this lookup.
  */
 const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
   429: 'rate_limited',
@@ -1596,12 +1636,9 @@ const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
 
 /** Classify an `ApiError` from the transcription endpoint into a stable kind. */
 function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
-  // 402 keyless-BYOK is a client misconfiguration, NOT a spent wallet.
-  if (err.status === 402) {
-    return err.detail === 'llm_key_required' ? 'unknown' : 'wallet_exhausted';
-  }
-  if (err.status === 422) {
-    return TRANSCRIBE_422_KINDS[err.detail] ?? 'invalid_image';
+  const rule = TRANSCRIBE_DETAIL_RULES[err.status];
+  if (rule) {
+    return rule.kinds[err.detail] ?? rule.fallback;
   }
   return TRANSCRIBE_STATUS_KINDS[err.status] ?? 'unknown';
 }
@@ -2072,6 +2109,16 @@ export interface PromptListResponse {
   has_more: boolean;
 }
 
+/** What a response carries besides its prose: the compose title, and which of
+ *  the stage's prompts it answers. Grouped rather than trailing positionally so
+ *  a caller naming only the ordinal cannot silently bind it to ``token``. */
+export interface PromptResponseOptions {
+  title?: string | null;
+  /** 1-based position in the stage's prompt list; omitted means the prompt the
+   *  week itself draws, which is what a week-keyed caller has always sent. */
+  promptOrdinal?: number | null;
+}
+
 export const prompts = {
   current(token?: string): Promise<PromptDetail> {
     return request<PromptDetail>('/prompts/current', { token });
@@ -2079,13 +2126,30 @@ export const prompts = {
   respond(
     weekNumber: number,
     response: string,
-    title?: string | null,
+    options: PromptResponseOptions = {},
     token?: string,
   ): Promise<PromptDetail> {
+    const { title, promptOrdinal } = options;
     return request<PromptDetail>(`/prompts/${weekNumber}/respond`, {
       method: 'POST',
-      body: { response, ...(title ? { title } : {}) },
+      body: {
+        response,
+        ...(title ? { title } : {}),
+        ...(promptOrdinal != null && { prompt_ordinal: promptOrdinal }),
+      },
       token,
+    });
+  },
+  /** Every prompt of one stage, in curriculum order, each with its own cadence.
+   *
+   * Weeks and prompts are not 1:1 — a stage carries three to five prompts
+   * across three or six weeks — so this is the read the week-scoped endpoints
+   * cannot express. A stage the reader has not reached is refused server-side.
+   */
+  stage(stageNumber: number, token?: string): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(`/prompts/stage/${stageNumber}`, {
+      token,
+      schema: stagePromptsResponseSchema,
     });
   },
   history(
@@ -2096,10 +2160,18 @@ export const prompts = {
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return request<PromptListResponse>(`/prompts/history${qs ? `?${qs}` : ''}`, {
+    const options = {
       token,
       schema: promptListResponseSchema as unknown as z.ZodType<PromptListResponse>,
-    });
+    };
+    // Two literal call sites rather than one path with the query interpolated
+    // into it. The journey ledger reads this file's call sites to decide which
+    // routes the app can actually reach, and a `${...}` glued onto the final
+    // path segment reads as part of that segment -- which makes a route the
+    // app does reach look unreachable, and a journey naming it fail.
+    return qs.length > 0
+      ? request<PromptListResponse>(`/prompts/history?${qs}`, options)
+      : request<PromptListResponse>('/prompts/history', options);
   },
 };
 
@@ -2188,6 +2260,12 @@ export const stages = {
     });
   },
 };
+
+/** Public aliases of the zod-inferred stage-prompt types so consumers avoid duplicate shapes. */
+export type {
+  StagePromptDetailT as StagePromptDetail,
+  StagePromptsResponseT as StagePromptsResponse,
+} from './schemas';
 
 /** Public alias of the zod-inferred stage-progress type so consumers avoid a duplicate shape. */
 export type { StageProgressRecordT as StageProgressRecord } from './schemas';
@@ -2793,10 +2871,14 @@ export const frequency = {
     const query = new URLSearchParams();
     if (stageNumber != null) query.set('stage_number', String(stageNumber));
     const qs = query.toString();
-    return request<FrequencyResponse>(`/user-practices/current/frequency${qs ? `?${qs}` : ''}`, {
+    const options = {
       token,
       schema: frequencyResponseSchema as unknown as z.ZodType<FrequencyResponse>,
-    });
+    };
+    // Literal call sites, for the reason spelled out on ``prompts.history``.
+    return qs.length > 0
+      ? request<FrequencyResponse>(`/user-practices/current/frequency?${qs}`, options)
+      : request<FrequencyResponse>('/user-practices/current/frequency', options);
   },
 };
 

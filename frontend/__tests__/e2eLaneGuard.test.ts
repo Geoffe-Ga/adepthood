@@ -15,8 +15,11 @@ import { REPO_ROOT, backendPath } from '@/testing/backendSource';
  * no database), reads the lane's files as plain text, and asserts both that the
  * wiring is present and that none of the known ways to disarm it are.
  *
- * One of those files is Python: the launcher lives in the backend tree, so a
- * backend-only commit can add the stub this file forbids. The path comes from
+ * Some of those files are Python: the launcher and the lane's arrange helpers
+ * live in the backend tree, so a backend-only commit can add the stub this file
+ * forbids. Every module under `backend/tests/e2e/` is read, not just the one
+ * named `server.py` -- a check scoped to a single filename leaves the next file
+ * on that path as the one place it does not look. The directory comes from
  * `@/testing/backendSource` for that reason -- it is what makes backend CI run
  * this file on such a commit rather than months later.
  */
@@ -28,6 +31,7 @@ const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
 const E2E_CONFIG = join(FRONTEND_ROOT, 'jest.e2e.config.js');
 const E2E_DIR = join(FRONTEND_ROOT, 'e2e');
 const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
+const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 
 const E2E_SCRIPT = 'test:e2e';
 const LICENSE_STUB = 'verify_aptitude_license';
@@ -42,8 +46,11 @@ const EXPECTED_JOURNEYS = [
   'habits.e2e.test.ts',
   'journal-delete.e2e.test.ts',
   'journal.e2e.test.ts',
+  'map.e2e.test.ts',
   'practice-catalog.e2e.test.ts',
+  'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
+  'prompt-history.e2e.test.ts',
   'vault-connection.e2e.test.ts',
 ];
 const ONLY_MODULE_ALIAS = ['^@/(.*)$'];
@@ -85,8 +92,8 @@ const FORBIDDEN_SKIP_PATHS: Array<[string, RegExp]> = [
   ['bare early return', /^[ \t]*return;[ \t]*$/m],
 ];
 
-/** Mocking machinery that has no business on the e2e request path. */
-const FORBIDDEN_IN_LAUNCHER = [
+/** Mocking machinery that has no business anywhere in the lane's python. */
+const FORBIDDEN_IN_LANE_PYTHON = [
   'monkeypatch',
   'unittest.mock',
   'mock.patch',
@@ -169,21 +176,47 @@ function launcherText(): string {
 }
 
 /**
- * Attribute assignments in the launcher whose value is a callable.
+ * Every python module the lane ships, as `[path, text]` pairs.
+ *
+ * The launcher is not the only one any more: the helper that arranges a program
+ * anchor for the Map journey lives beside it, and both sit on the lane's path.
+ */
+function lanePythonModules(): Array<[string, string]> {
+  if (!existsSync(LANE_PYTHON_DIR)) {
+    throw new Error(`${LANE_PYTHON_DIR} does not exist; the e2e lane has no python at all.`);
+  }
+  const modules = readdirSync(LANE_PYTHON_DIR)
+    .filter((name) => name.endsWith('.py'))
+    .map((name): [string, string] => {
+      const path = join(LANE_PYTHON_DIR, name);
+      return [path, readFileSync(path, 'utf8')];
+    });
+  if (modules.length === 0) {
+    throw new Error(`${LANE_PYTHON_DIR} holds no python module, so the lane cannot boot.`);
+  }
+  return modules;
+}
+
+/**
+ * Attribute assignments in the lane's python whose value is a callable, as
+ * `[path, target]` pairs.
  *
  * Rebinding a module attribute to a function (or a lambda, or a Mock) is what
  * "stubbing" means here, and it is the only thing worth forbidding: the launcher
  * legitimately assigns scalars to configure alembic and uvicorn, so a blanket
- * ban on attribute assignment would flag ordinary setup as a fake.
+ * ban on attribute assignment would flag ordinary setup as a fake. The defined
+ * names are collected per module rather than across all of them, so a function
+ * declared in one file cannot excuse an assignment in another.
  */
-function launcherStubTargets(): string[] {
-  const text = launcherText();
-  const defined = new Set([...text.matchAll(PYTHON_DEF)].map((match) => match[1] ?? ''));
-  const targets: string[] = [];
-  for (const assignment of text.matchAll(PYTHON_ATTRIBUTE_ASSIGNMENT)) {
-    const value = (assignment[2] ?? '').replace(/\(.*$/, '');
-    if (defined.has(value) || value === 'lambda' || value.endsWith('Mock')) {
-      targets.push(assignment[1] ?? '');
+function laneStubTargets(): Array<[string, string]> {
+  const targets: Array<[string, string]> = [];
+  for (const [path, text] of lanePythonModules()) {
+    const defined = new Set([...text.matchAll(PYTHON_DEF)].map((match) => match[1] ?? ''));
+    for (const assignment of text.matchAll(PYTHON_ATTRIBUTE_ASSIGNMENT)) {
+      const value = (assignment[2] ?? '').replace(/\(.*$/, '');
+      if (defined.has(value) || value === 'lambda' || value.endsWith('Mock')) {
+        targets.push([path, assignment[1] ?? '']);
+      }
     }
   }
   return targets;
@@ -290,30 +323,44 @@ describe('e2e specs drive the unmocked production client', () => {
   });
 });
 
-describe('the server launcher stubs exactly one third-party call', () => {
-  it('exists', () => {
+describe('the lane python stubs exactly one third-party call', () => {
+  it('ships a launcher', () => {
     expect(launcherText().length).toBeGreaterThan(0);
   });
 
+  it('reads every module on the lane path, the launcher among them', () => {
+    // A reader that resolved the directory wrongly would match nothing and
+    // report every rule below as satisfied.
+    expect(lanePythonModules().map(([path]) => path)).toContain(SERVER_LAUNCHER);
+  });
+
   it(`stubs ${LICENSE_STUB} exactly once`, () => {
-    const stubs = launcherStubTargets().filter((lhs) => lhs.endsWith(LICENSE_STUB));
+    const stubs = laneStubTargets().filter(([, target]) => target.endsWith(LICENSE_STUB));
 
     expect(stubs).toHaveLength(1);
   });
 
   it('stubs nothing else on the request path', () => {
-    const others = launcherStubTargets().filter((lhs) => !lhs.endsWith(LICENSE_STUB));
+    const others = laneStubTargets().filter(([, target]) => !target.endsWith(LICENSE_STUB));
 
     if (others.length > 0) {
+      const named = others.map(([path, target]) => `${path} rebinds ${target}`).join('; ');
       throw new Error(
-        `${SERVER_LAUNCHER} rebinds ${others.join()} to a callable; the Gumroad license ` +
-          `check is the only stub the lane permits on the request path.`,
+        `${named} to a callable; the Gumroad license check is the only stub the lane ` +
+          `permits on the request path.`,
       );
     }
     expect(others).toEqual([]);
   });
 
-  it.each(FORBIDDEN_IN_LAUNCHER)('uses no "%s" mocking machinery', (fragment) => {
-    expect(launcherText()).not.toContain(fragment);
+  it.each(FORBIDDEN_IN_LANE_PYTHON)('uses no "%s" mocking machinery', (fragment) => {
+    const offenders = lanePythonModules()
+      .filter(([, text]) => text.includes(fragment))
+      .map(([path]) => path);
+
+    if (offenders.length > 0) {
+      throw new Error(`${offenders.join()} contains "${fragment}", which fakes the request path.`);
+    }
+    expect(offenders).toEqual([]);
   });
 });

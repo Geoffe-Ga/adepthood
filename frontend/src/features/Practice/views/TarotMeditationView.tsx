@@ -86,7 +86,7 @@ const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element
     <Text style={[styles.cardKeyword, { color: surface.textSoft }]} testID="tarot-card-keyword">
       {card.keyword}
     </Text>
-    <ScrollView style={styles.symbolismScroll}>
+    <ScrollView style={styles.symbolismScroll} nestedScrollEnabled>
       <Text
         style={[styles.cardSymbolism, { color: surface.textSoft }]}
         testID="tarot-card-symbolism"

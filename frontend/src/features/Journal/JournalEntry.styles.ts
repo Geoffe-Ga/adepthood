@@ -29,6 +29,10 @@ const PREVIEW_STRIPE_WIDTH = 3;
  * content (the save hint, Finish link, and the stacked margin column on narrow
  * screens) never renders underneath it. Mirrors the button's own offset
  * (``bottom: SPACING.xl``) plus its height plus a small breathing gap.
+ *
+ * Applies to the writing surface ONLY, via ``pageWithFloatingAction``: the
+ * reading view carries its resonance action in the page flow, so reserving the
+ * band there would leave a dead strip under the last line of the entry.
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
@@ -69,10 +73,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     width: '100%',
     paddingHorizontal: journalLayout.pageHorizontalPadding,
-    paddingBottom: RESONANCE_BUTTON_CLEARANCE,
   },
   pageNarrow: {
     flexDirection: 'column',
+  },
+  /** Only while something floats over the page: hold the band the button covers. */
+  pageWithFloatingAction: {
+    paddingBottom: RESONANCE_BUTTON_CLEARANCE,
   },
   writingColumn: {
     flex: 1,
@@ -121,6 +128,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper.hairline,
     marginVertical: spacing(1),
   },
+  /** The line under the body: save state on the left, live word count on the right. */
+  writingFooter: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing(2),
+  },
+  /**
+   * The page's quiet caption face, shared by every footer line that reports
+   * state rather than offering an action: the save hint, the live word count
+   * beside it, and the quote-inclusion hint. They sit at one weight on purpose
+   * — the count is reference the writer glances at, not a target that should
+   * out-shout the save state.
+   */
   savedHint: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,
@@ -164,6 +185,18 @@ const styles = StyleSheet.create({
   controlLink: {
     ...editorialType.action,
     color: accent.primary,
+    paddingTop: spacing(2),
+  },
+  /**
+   * The reading view's one action row, closing the reading column: the resonance
+   * request as the primary, with Promote and Edit beside it. Wraps rather than
+   * crowds so a narrow page keeps every control at its full touch target.
+   */
+  readActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: SPACING.md,
     paddingTop: spacing(2),
   },
   /**

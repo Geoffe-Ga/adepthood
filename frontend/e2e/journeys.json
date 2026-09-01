@@ -12,6 +12,22 @@
     "coveredBy": "frontend/e2e/auth.e2e.test.ts"
   },
   {
+    "id": "auth.password-recovery-request-to-reset",
+    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, opens the link in the email that arrives, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. Uncovered because the seam runs through an email: the plaintext token exists nowhere but the rendered body, and this lane talks to the server over HTTP, so it cannot reach the process-local RecordingEmailSender the backend suites override the dependency with, while the console adapter deliberately redacts the token to its first eight characters before it reaches any log the lane could read. Exposing the body to the lane is a design decision rather than a spec, which is why it is filed. This is the gap the outage came through: reset mail went to a production log for one reason and carried an adepthood:// link no browser could follow for another, and the endpoint answered 202 through both while every backend suite stayed green.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ForgotPasswordScreen.tsx",
+      "client": ["auth"],
+      "routes": [
+        "POST /auth/password-reset/request",
+        "POST /auth/password-reset/confirm",
+        "POST /auth/password-reset/cancel"
+      ],
+      "tables": ["user", "passwordresettoken"]
+    },
+    "status": "uncovered",
+    "issue": 2536
+  },
+  {
     "id": "welcome.first-run-walkthrough-to-journal",
     "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {
@@ -41,6 +57,39 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.offline-check-in-replay-drains",
+    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Uncovered because the real-wire lane cannot put the device offline and then make the server permanently reject a queued entry -- the constraint already recorded on errors.server-fault-is-not-offline, where no reachable failure can be manufactured without adding fault injection to the production app. Covering it needs a lane that can toggle connectivity and read the device queue. A dropped entry is also written to a bounded on-device quarantine (the most recent records only) and surfaced on the Habits screen as a count of the check-ins that could not be saved, dismissable by the user and wiped on logout, so the loss is no longer silent. The classification is pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx, and the notice by src/features/Habits/components/__tests__/DroppedCheckInNotice.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["GET /habits/", "POST /goal_completions/"],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2474
+  },
+  {
+    "id": "habits.demo-tile-stays-local",
+    "description": "With the habits fetch failing and no cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, resetting the start date, editing a goal or its shared units, logging a unit, opening stats, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. A mixed store still performs each of those operations against the one genuinely server-backed row. Uncovered because the real-wire lane cannot produce the state -- it needs the habits fetch to throw while the cache is empty, and the lane's premise is a backend it can reach, the same constraint already recorded on habits.offline-check-in-replay-drains and errors.server-fault-is-not-offline. The same local-only rule now covers every client-minted row, not just the demo family: the onboarding scaffold rows the app writes to the store before the POSTs and the trailing reload land carry positive ids in the server's own range, so nothing about their shape tells them apart from real ones, and the pre-sync added row carries a negative placeholder; both are marked hasClientMintedIds and neither may put an id on the wire. Two things distinguish them from a demo tile: a client-minted row is the user's real data, so it reaches the on-disk cache while a demo tile never does, and a unit log on one resyncs habits in the background and says the habit has not finished saving, instead of posting a completion that would land on the caller's own goal 7 and celebrate it. Nor is such a check-in queued as offline, which would promise a sync no server row can answer. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts (isServerBackedHabit / isServerBackedGoal reject a client-minted row), src/features/Habits/services/__tests__/habitManager.test.ts (the \"non-server ids never reach the wire\" and \"client-minted id provenance\" blocks), and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx (the \"logUnit on a client-minted scaffold tile\" block).",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goals", "goalCompletions"],
+      "routes": [
+        "GET /habits/",
+        "PUT /habits/{habit_id}",
+        "DELETE /habits/{habit_id}",
+        "DELETE /habits/{habit_id}/completions",
+        "PUT /habits/{habit_id}/goals/units",
+        "PUT /goals/{goal_id}",
+        "POST /goal_completions/",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2491
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
     "crosses": {
@@ -68,6 +117,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
+  },
+  {
+    "id": "journal.stage-prompts-and-cadences",
+    "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. The second seam is the one-response-per-week rule: uq_promptresponse_user_week means a week holds a single response whichever prompt it answers, so the shelf stops offering a tap once this week's is written and the entry page says so if a save is refused anyway. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about the ordinal check, the stage's unlock gate, and the unique constraint -- the three things only the server can refuse.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["prompts"],
+      "routes": [
+        "GET /prompts/stage/{stage_number}",
+        "GET /prompts/current",
+        "POST /prompts/{week_number}/respond"
+      ],
+      "tables": ["promptresponse", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2568
   },
   {
     "id": "journal.ask-for-resonance",
@@ -135,15 +200,15 @@
   },
   {
     "id": "map.advance-stage",
-    "description": "A traveller opens the wheel after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so a spec must move the anchor and then read, never post. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. The wrapper spelled like it, course.stageProgress, addresses the course router's own /course/stages/{n}/progress instead. Still uncovered because no spec moves the anchor and reads yet.",
+    "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages", "wheel"],
       "routes": ["GET /stages", "GET /stages/program-calendar", "GET /stages/wheel"],
       "tables": ["stageprogress", "coursestage"]
     },
-    "status": "uncovered",
-    "issue": 2299
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map.e2e.test.ts"
   },
   {
     "id": "depth.choose-rings",
@@ -243,7 +308,7 @@
   },
   {
     "id": "errors.server-fault-is-not-offline",
-    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 — every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
+    "description": "The server hits an unhandled exception while the journal shelf is loading; the app says something went wrong on our end and offers the server's request id as a reference, instead of telling the user to check their wifi. Each side is pinned separately: backend/tests/middleware/test_unhandled_exception_cors.py drives the real app and asserts the 500 leaves it carrying Access-Control-Allow-Origin, and src/api/__tests__/serverErrorIsNotOffline.test.ts asserts the client keeps the sanitised envelope's code and request id while a failure that produced no response at all still reads as offline. Uncovered here because the real-wire lane has no way to make the live server 500 \u2014 every reachable failure is a deliberate 4xx or 503, and adding a fault-injection route to the production app to manufacture one would be worse than the gap.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
@@ -264,5 +329,62 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/vault-connection.e2e.test.ts"
+  },
+  {
+    "id": "auth.account-switch-purges-device-state",
+    "description": "A device that already holds one account's session is signed into by a second account without an explicit logout -- through the password-reset flow, or any path that reaches the login screen with a live cache on disk. The incoming user must see none of the previous user's habits, none of their check-in queue replayed under the new token, and none of their BYOK key on the resonance header. Uncovered because the leak is a row on the device rather than a row on the server: this lane drives HTTP against a live backend from Node, with no app process and therefore no AsyncStorage or SecureStore to seed, dirty, or read back, so a spec written against the wire could only assert that the backend scopes reads to its caller -- which it already did throughout, and which was never the failing half. Held meanwhile by src/context/__tests__/AccountSwitchWipe.integration.test.tsx, which drives the real AuthProvider and the real habitStorage against the in-memory AsyncStorage mock, plus the per-account namespacing tests in src/storage/__tests__/. The cold start behind that door is held by src/context/__tests__/ResumedSessionScope.integration.test.tsx, which pins the namespace a resumed session reads to the subject of the token it resumed rather than to a separately persisted stamp the two non-atomic sign-in writes can leave disagreeing.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/LoginScreen.tsx",
+      "client": ["auth", "setTokenGetter", "habits"],
+      "routes": ["POST /auth/login", "POST /auth/password-reset/confirm", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "uncovered",
+    "issue": 2547
+  },
+  {
+    "id": "errors.spent-provider-balance-is-not-a-blip",
+    "description": "A writer asks for resonance while the balance behind the key that pays for it is spent. What they got was \"the AI provider is having trouble connecting, give it a moment and tap retry\" -- a transient story for a permanent, billing-level refusal, so the retry button they were pointed at could never work and the real cause reached nobody. The journey now ends in copy that names the condition and the one action that clears it, split by whose key it was, with no retry affordance and the charge reversed; on the server's own key an operator gets the WARNING that is their first signal it happened at all. Each side is pinned separately: backend/tests/services/test_botmason_credit_exhausted.py drives both SDKs through a mock transport so each builds its own typed error from the provider's real body, backend/tests/test_resonance_endpoints.py asserts the 402/503 split and the operator record, and src/api/__tests__/errorMessages.test.ts asserts neither code inherits the transient copy. Uncovered in this lane for the same reason journal.ask-for-resonance is: making it happen needs a provider that refuses for billing, and the lane has no provider to call at all.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2543
+  },
+  {
+    "id": "practice.rename-and-delete-a-tag",
+    "description": "Someone who made their own practice tag renames it, and later deletes it, from the recipe editor's tag library. The library could list and create and stopped there, so both routes were served, typed, and unreachable from any screen. The journey is the seam: that a rename reaches the row the client named and survives the next list rather than living in local state, that the slug a recipe step copied by value is untouched by it, that a shared tag refuses both mutations from the server rather than from what the client chose to render, and that deleting a personal tag leaves the shared library whole.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/recipes/RecipeEditorModal.tsx",
+      "client": ["practiceTags"],
+      "routes": [
+        "GET /practice-tags/",
+        "POST /practice-tags/",
+        "PATCH /practice-tags/{tag_id}",
+        "DELETE /practice-tags/{tag_id}"
+      ],
+      "tables": ["practicetag"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-tags.e2e.test.ts"
+  },
+  {
+    "id": "journal.read-past-prompts",
+    "description": "Someone opens Past prompts from the journal shelf and reads the weekly questions they have already answered with what they wrote under each. Answering a prompt mirrors the response into the journal as an ordinary page, which keeps the writing and loses the question that drew it, so this route is the only one that returns the pair -- and nothing asked for it until this surface existed. What the seam has to prove is that a submitted response comes back joined to its own question, and that the limit and offset the modal sends actually slice the set rather than being ignored.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PromptHistoryModal.tsx",
+      "client": ["prompts"],
+      "routes": [
+        "GET /prompts/current",
+        "POST /prompts/{week_number}/respond",
+        "GET /prompts/history"
+      ],
+      "tables": ["promptresponse", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/prompt-history.e2e.test.ts"
   }
 ]

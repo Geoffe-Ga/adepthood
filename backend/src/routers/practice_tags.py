@@ -22,17 +22,19 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import Depends, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import (
     require_personal_row,
     system_or_owned_clause,
     visible_to_user,
 )
+from error_responses import build_router
 from errors import conflict, not_found
 from models.practice_tag import PracticeTag
 from routers.auth import get_current_user
@@ -42,7 +44,9 @@ from schemas.practice_tag import PracticeTagCreate, PracticeTagOut, PracticeTagU
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/practice-tags", tags=["practice-tags"])
+router = build_router(
+    prefix="/practice-tags", tags=["practice-tags"], extra_statuses=(status.HTTP_409_CONFLICT,)
+)
 
 
 async def _load_visible_tag(tag_id: int, user_id: int, session: AsyncSession) -> PracticeTag:
@@ -118,7 +122,7 @@ async def create_practice_tag(
 
 @router.get("/{tag_id}", response_model=PracticeTagOut)
 async def get_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeTag:
@@ -128,7 +132,7 @@ async def get_practice_tag(
 
 @router.patch("/{tag_id}", response_model=PracticeTagOut)
 async def update_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     payload: PracticeTagUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -145,7 +149,7 @@ async def update_practice_tag(
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_practice_tag(
-    tag_id: int,
+    tag_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:

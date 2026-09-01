@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -32,14 +32,15 @@ import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
-import { promptTitleForWeek } from './promptTitle';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
+import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
+import { countWords, wordCountLabel } from './wordCount';
 
 import { journal, prompts, reflections } from '@/api';
 import type {
@@ -55,7 +56,7 @@ import type {
 } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
-import { colors } from '@/design/tokens';
+import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -89,7 +90,7 @@ const LOAD_ERROR_MESSAGE =
 const FINISH_ERROR_MESSAGE =
   "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
 
-type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error';
+type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
@@ -102,9 +103,18 @@ const SAVED_HINT = 'Saved';
 /** A blank hint line that reserves the row's height without showing any text. */
 const BLANK_HINT = ' ';
 
+/**
+ * Said when the week already holds its one prompt response. Distinct from the
+ * generic save error because retrying cannot clear it — the server keeps one
+ * response per week — so the hint names the condition and the way out instead
+ * of telling the writer to keep going.
+ */
+const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
+  if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -117,6 +127,9 @@ function savedHintLabel(state: SaveState): string {
  */
 interface SaveContext {
   weekNumber?: number;
+  /** Which of the stage's prompts the response answers, 1-based; omitted means
+   *  the prompt the week itself draws. */
+  promptOrdinal?: number;
   practiceSessionId?: number;
   userPracticeId?: number;
   /** Reflection scope this page closes (7th-day reflection compose mode). */
@@ -192,7 +205,10 @@ async function writeEntry(
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
     if (respondedRef.current) return;
-    await prompts.respond(ctx.weekNumber, body, titleOrNull(title));
+    await prompts.respond(ctx.weekNumber, body, {
+      title: titleOrNull(title),
+      ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
+    });
     respondedRef.current = true;
     return;
   }
@@ -453,7 +469,10 @@ function trackedWrite(
       onSaved?.();
     } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
-      setSaveState('error');
+      // A 409 on the weekly-prompt path is not retryable — the week already holds
+      // its one response — so it gets its own state rather than the retry hint.
+      const weekTaken = ctx.weekNumber != null && isCreateConflict(error);
+      setSaveState(weekTaken ? 'weekTaken' : 'error');
       // Additive: a reflection-scope create can 409 because the reflection
       // already exists. Hand that case to the caller (which routes to the
       // existing entry); every other failure keeps the plain save-error hint.
@@ -1101,22 +1120,26 @@ function WritingFields({
   return (
     <>
       <TextInput
-        style={styles.titleInput}
+        style={[styles.titleInput, writingFieldFocus]}
         value={title}
         onChangeText={onChangeTitle}
         placeholder="Title"
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         accessibilityLabel="Entry title"
         testID="journal-title-input"
       />
       <View style={styles.hairline} />
       <TextInput
-        style={styles.bodyInput}
+        style={[styles.bodyInput, writingFieldFocus]}
         value={body}
         onChangeText={onChangeBody}
         onSelectionChange={onBodySelectionChange}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
+        selectionColor={writingField.caret}
+        cursorColor={writingField.caret}
         multiline
         // The outer ScrollView owns scrolling so the field grows freely and long
         // entries stay reachable (iOS multiline TextInput won't scroll its own
@@ -1126,6 +1149,30 @@ function WritingFields({
         testID="journal-body-input"
       />
     </>
+  );
+}
+
+/**
+ * The line under the body: the save state on the left, the live word count on
+ * the right.
+ *
+ * The count follows the BODY only — the prose being produced, not the label on
+ * it — and is deliberately not a live region: announcing a new total on every
+ * keystroke would make the page unusable with a screen reader, and the count is
+ * reference, never a prompt. It stays silent at zero (see ``wordCountLabel``),
+ * so an untouched page still opens as a blank page rather than a scoreboard.
+ */
+function WritingFooter({ body, saveState }: { body: string; saveState: SaveState }) {
+  const words = useMemo(() => countWords(body), [body]);
+  return (
+    <View style={styles.writingFooter}>
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {savedHintLabel(saveState)}
+      </Text>
+      <Text style={styles.savedHint} testID="journal-word-count">
+        {wordCountLabel(words)}
+      </Text>
+    </View>
   );
 }
 
@@ -1168,9 +1215,7 @@ function WritingColumn({
         onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
-      <Text style={styles.savedHint} testID="journal-save-hint">
-        {savedHintLabel(saveState)}
-      </Text>
+      <WritingFooter body={body} saveState={saveState} />
       {onFinish ? (
         <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
       ) : null}
@@ -1301,10 +1346,40 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   return { quotes, hint, promoting, promoted, retryPromote, ...interaction };
 }
 
-/** Read-mode affordances: the Promote-a-quote action and the Edit link. */
-function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: () => void }) {
+/**
+ * The reading view's resonance affordance, threaded as one value so the row and
+ * the column that hosts it stay short-signatured.
+ */
+interface ReadResonanceAction {
+  visible: boolean;
+  disabled: boolean;
+  loading: boolean;
+  /** Why resonance is withheld, shown only while it is disabled. */
+  reason: string;
+  onPress: () => Promise<void>;
+}
+
+interface ReadControlsProps {
+  quote: QuotePromotion;
+  resonance: ReadResonanceAction;
+  onEdit: () => void;
+}
+
+/**
+ * The reading view's action row, closing the reading column. One layout system
+ * for all three controls: resonance as the primary, Promote and Edit beside it
+ * as quiet tertiaries.
+ */
+function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX.Element {
   return (
-    <>
+    <View style={styles.readActionsRow} testID="journal-read-actions">
+      <GetResonanceButton
+        layout="inline"
+        visible={resonance.visible}
+        loading={resonance.loading}
+        disabled={resonance.disabled}
+        onPress={resonance.onPress}
+      />
       <Button
         variant="tertiary"
         onPress={quote.startSelecting}
@@ -1313,14 +1388,32 @@ function ReadModeControls({ quote, onEdit }: { quote: QuotePromotion; onEdit: ()
         label="Promote a quote"
         busy={quote.promoting}
       />
-      <TouchableOpacity
+      <Button
+        variant="tertiary"
         onPress={onEdit}
-        accessibilityRole="button"
         accessibilityLabel="Edit this entry"
         testID="journal-edit-button"
-      >
-        <Text style={styles.controlLink}>Edit</Text>
-      </TouchableOpacity>
+        label="Edit"
+      />
+    </View>
+  );
+}
+
+/**
+ * Read-mode affordances: the privacy reason (when resonance is withheld) above
+ * the single action row. Unlike the writing surface's floating button, nothing
+ * here fades on idleness — a reader is not typing, so nothing needs to get out
+ * of the way.
+ */
+function ReadModeControls(props: ReadControlsProps): React.JSX.Element {
+  const { resonance } = props;
+  return (
+    <>
+      <PrivacyResonanceReason
+        visible={resonance.visible && resonance.disabled}
+        reason={resonance.reason}
+      />
+      <ReadActions {...props} />
     </>
   );
 }
@@ -1411,12 +1504,13 @@ function ReadBodyContent({
   );
 }
 
-/** Read-mode body: the title + the highlighted passage tree + an Edit affordance. */
+/** Read-mode body: the title + the highlighted passage tree + the action row. */
 function ReadColumn({
   title,
   body,
   notes,
   quote,
+  resonance,
   justSaved,
   onOpen,
   onEdit,
@@ -1425,6 +1519,7 @@ function ReadColumn({
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
+  resonance: ReadResonanceAction;
   /** True when this entry was just saved from photograph capture; shows "Saved". */
   justSaved: boolean;
   onOpen: (_note: Marginalia) => void;
@@ -1432,7 +1527,7 @@ function ReadColumn({
 }) {
   return (
     <ScrollView
-      style={styles.writingColumn}
+      style={[styles.writingColumn, readingScrollStyle]}
       contentContainerStyle={styles.writingColumnContent}
       keyboardShouldPersistTaps="handled"
     >
@@ -1451,7 +1546,9 @@ function ReadColumn({
       <Text style={styles.savedHint} testID="journal-save-hint">
         {justSaved ? SAVED_HINT : BLANK_HINT}
       </Text>
-      {quote.selecting ? null : <ReadModeControls quote={quote} onEdit={onEdit} />}
+      {quote.selecting ? null : (
+        <ReadModeControls quote={quote} resonance={resonance} onEdit={onEdit} />
+      )}
     </ScrollView>
   );
 }
@@ -1807,6 +1904,22 @@ function useJournalEntryController(
 
 type Controller = ReturnType<typeof useJournalEntryController>;
 
+/**
+ * The reading view's resonance action. Steady where the writing surface's is
+ * idle-gated: reading involves no keystrokes, so there is no pause to detect and
+ * nothing to tuck away. Only an empty page (nothing to read back) or the privacy
+ * gate takes it out of reach.
+ */
+function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
+  return {
+    visible: !ctl.isPromptCompose && ctl.autosave.body.trim().length > 0,
+    disabled: ctl.resonanceDisabled,
+    loading: ctl.resonance.loading,
+    reason: ctl.resonanceReason,
+    onPress: ctl.resonance.requestResonance,
+  };
+}
+
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
@@ -1844,6 +1957,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       body={body}
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
+      resonance={buildReadResonanceAction(ctl)}
       justSaved={ctl.justSaved}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
@@ -1878,7 +1992,15 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
         style={[styles.sheet, narrow && styles.sheetNarrow, settle]}
         testID="journal-sheet"
       >
-        <View style={[styles.page, narrow && styles.pageNarrow]} testID="journal-page">
+        <View
+          style={[
+            styles.page,
+            narrow && styles.pageNarrow,
+            // Only the writing surface has a button floating over it to clear.
+            ctl.editGate.editMode && styles.pageWithFloatingAction,
+          ]}
+          testID="journal-page"
+        >
           <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
           <View
             style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
@@ -1905,7 +2027,10 @@ interface EntryEntrypoint {
 /** Translate the route params into the save context + pre-filled title/body/placeholder. */
 function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntrypoint {
   const p = params ?? {};
-  const title = p.prefillTitle ?? (p.weekNumber != null ? promptTitleForWeek(p.weekNumber) : '');
+  // No client-side fallback title: a prompt's name is curriculum text the server
+  // owns and sends, so an untitled arrival opens blank rather than under a label
+  // the client guessed from the week number.
+  const title = p.prefillTitle ?? '';
   // A folded-in quote seeds the body as a blockquote; otherwise the body opens blank.
   const body =
     p.prefillQuote != null
@@ -1914,6 +2039,7 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
   return {
     ctx: {
       weekNumber: p.weekNumber,
+      promptOrdinal: p.promptOrdinal,
       practiceSessionId: p.practiceSessionId,
       userPracticeId: p.userPracticeId,
       reflectionLevel: p.reflectionLevel,
@@ -1927,7 +2053,9 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
 
 /**
  * The one-line reason shown when resonance is gated off for an intimate entry.
- * A sibling above the floating button so it reads as the button's own caption.
+ * Always a sibling directly above the affordance it explains — the floating
+ * button while writing, the action row while reading — so it reads as that
+ * control's own caption rather than as a stray notice.
  */
 function PrivacyResonanceReason({
   visible,
@@ -2161,7 +2289,12 @@ function EntryOverlays({
   );
 }
 
-/** The privacy-tier reason line paired with the floating resonance affordance. */
+/**
+ * The writing surface's floating resonance affordance and its privacy-tier reason
+ * line. Screen-level (not inside the page) so it can lift clear of the writing
+ * area, and rendered in edit mode only — the reading view carries its own inline
+ * action row instead.
+ */
 function ResonanceControls({
   visible,
   disabled,
@@ -2232,13 +2365,15 @@ function JournalEntryScreen({
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
-      <ResonanceControls
-        visible={ctl.visible}
-        disabled={ctl.resonanceDisabled}
-        loading={ctl.resonance.loading}
-        reason={ctl.resonanceReason}
-        onPress={ctl.resonance.requestResonance}
-      />
+      {ctl.editGate.editMode ? (
+        <ResonanceControls
+          visible={ctl.visible}
+          disabled={ctl.resonanceDisabled}
+          loading={ctl.resonance.loading}
+          reason={ctl.resonanceReason}
+          onPress={ctl.resonance.requestResonance}
+        />
+      ) : null}
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}

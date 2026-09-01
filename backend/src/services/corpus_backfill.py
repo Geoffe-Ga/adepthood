@@ -64,10 +64,14 @@ below is already the retry, and it is one that costs the caller nothing.
 entries it did not reach, logs it, and picks up somewhere new next time: a
 repeated ``PUT`` of an answer the account has already given appends no second
 decision but does re-run the sweep, so the reach is resumable through the
-surface that already exists rather than through a route nothing calls. What no
-surface does yet is *tell* somebody a remainder is waiting; that is a client
-change, and until it lands the remainder is visible to an operator in the log
-line and in the audit row rather than to the person.
+surface that already exists rather than through a route nothing calls. Because
+that repeat appends no decision, the reach of every sweep after the first would
+survive only in a log line, which nothing can join or query -- so each sweep
+appends its own row to :class:`models.corpus_sweep.CorpusSweep` instead, naming
+the standing decision it ran under. That is the shape the eventual "N entries
+still waiting" surface reads: what no surface does yet is *tell* somebody a
+remainder is waiting, and that is a client change, so until it lands the
+remainder is legible to an operator in the sweep log rather than to the person.
 
 **"Somewhere new" is the whole of it.** An entry the classifier places nowhere
 stays pending, deliberately, so the order the pending set is offered in is what
@@ -115,6 +119,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.corpus_fragment import RETRIEVABLE_TIERS, CorpusFragment
+from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalEntry
 from services.corpus_consent import ConsentChange
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
@@ -172,6 +177,16 @@ _RETRIEVABLE_TIER_VALUES = tuple(tier.value for tier in RETRIEVABLE_TIERS)
 class BackfillOutcome:
     """What one grant's reach into the past actually did.
 
+    ``entries_considered`` counts the entries actually offered to the writer,
+    which is neither the account's backlog nor the batch that was fetched: the
+    bounds stop the batch short of the backlog on purpose, and the deadline can
+    stop the loop short of the batch. Counting the batch instead would let a
+    degraded provider record forty entries considered when one was tried, and
+    this row is durable and goes into the account's own export. It is also the
+    number that decides whether the sweep is worth a row of its own: a sweep
+    that considered nothing reached nothing, and an append-only log of reaches
+    must not fill up with those.
+
     ``entries_remaining`` counts the candidates still without a fragment when
     the sweep stopped -- those past a bound, and those the classifier
     recognised nothing in. Both are genuinely still pending: an unclassified
@@ -182,13 +197,23 @@ class BackfillOutcome:
     being the batch every future grant gets.
     """
 
+    entries_considered: int
     fragments_added: int
     entries_remaining: int
 
 
 #: What a decision that swept nothing reports. Interned because it is
 #: value-identical every time and is the answer on the common path.
-_NOTHING_SWEPT: Final[BackfillOutcome] = BackfillOutcome(fragments_added=0, entries_remaining=0)
+_NOTHING_SWEPT: Final[BackfillOutcome] = BackfillOutcome(
+    entries_considered=0, fragments_added=0, entries_remaining=0
+)
+
+#: The number of entries a sweep must have offered before it has anything to
+#: record. A threshold on the log rather than an arithmetic zero, and the
+#: weaker of the log's two valves: it catches only the account whose backlog
+#: was already empty, where :func:`_says_nothing_new` catches the one whose
+#: backlog never empties.
+_NOTHING_CONSIDERED: Final[int] = 0
 
 
 def _pending_conditions(user_id: int) -> list[ColumnElement[bool]]:
@@ -279,18 +304,22 @@ async def _mark_attempted(session: AsyncSession, entry: JournalEntry) -> None:
     )
 
 
-def _log_sweep(user_id: int, considered: int, outcome: BackfillOutcome) -> None:
+def _log_sweep(user_id: int, outcome: BackfillOutcome) -> None:
     """Record what the sweep did, in ids and counts and never in content.
 
     The same discipline :func:`services.corpus_ingest._log_outcome` keeps: an
     operator has to be able to say whether a grant reached an account's history
     -- and how much of it is still waiting -- without reading a word of it.
+
+    Written before the caller commits, so a request that rolls back leaves a
+    line describing a sweep no row records. The line is the weaker record of the
+    two and always was; where they disagree, the row is what happened.
     """
     logger.info(
         "corpus_backfill",
         extra={
             "user_id": user_id,
-            "entries_considered": considered,
+            "entries_considered": outcome.entries_considered,
             "fragments_added": outcome.fragments_added,
             "entries_remaining": outcome.entries_remaining,
         },
@@ -312,14 +341,26 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
     what the writer actually stored: an entry the classifier recognised nothing
     in stays pending, which is true rather than convenient, since a fragment
     with no position on the ontology is not corpus material.
+
+    The remainder is counted again at the end rather than subtracted from the
+    count taken at the start. Those two counts are separate statements, so on a
+    database that gives each statement its own snapshot an entry committed by
+    another request in between is in the batch without being in the opening
+    count, and the subtraction goes negative -- which the remainder's own CHECK
+    would then refuse, failing the commit and losing the decision the caller
+    came to record. Counting again costs one indexed count and cannot be
+    negative, and it is the truer number besides: what is still waiting when the
+    sweep stopped, including anything that arrived while it ran.
     """
     pending = await _count_pending(session, user_id)
     if pending == 0:
         return _NOTHING_SWEPT
     candidates = await _pending_batch(session, user_id)
     deadline = time.monotonic() + BACKFILL_DEADLINE_SECONDS
+    considered = 0
     added = 0
     for entry in candidates:
+        considered += 1
         await _mark_attempted(session, entry)
         fragment = await ingest_journal_entry(
             session, entry, timeout_seconds=BACKFILL_ENTRY_SECONDS
@@ -328,27 +369,131 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
             added += 1
         if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
             break
-    outcome = BackfillOutcome(fragments_added=added, entries_remaining=pending - added)
-    _log_sweep(user_id, len(candidates), outcome)
+    outcome = BackfillOutcome(
+        entries_considered=considered,
+        fragments_added=added,
+        entries_remaining=await _count_pending(session, user_id),
+    )
+    _log_sweep(user_id, outcome)
     return outcome
+
+
+def _authorising_event_id(change: ConsentChange, user_id: int) -> int | None:
+    """The decision a sweep for ``change`` would run under, or ``None`` for no sweep.
+
+    Four refusals in one place, because they are one question -- is there a
+    permission *this account* holds over its own history for this reach to be
+    attributed to? A revocation and a refusal reach nothing; a source with no
+    history kept anywhere has nothing to reach; a granted state the consent log
+    cannot name a decision for is not a permission this module will act on; and
+    a decision belonging to somebody else is not this account's permission at
+    all.
+
+    The last two are not states :func:`services.corpus_consent.set_consent`
+    produces -- every grant it reports is a row it appended or a row it
+    re-affirmed, both flushed, and it selects only rows already filtered by the
+    account asking. They are refused rather than assumed because the schema
+    cannot say it: ``user_id`` and ``consent_event_id`` are independent columns,
+    so nothing below this function would stop a sweep of one account's writing
+    being filed under another account's permission.
+    """
+    if not change.state.granted or change.state.source is not INGEST_SOURCE:
+        return None
+    if change.event is None or change.event.user_id != user_id:
+        return None
+    return change.event.id
+
+
+async def _newest_sweep(session: AsyncSession, *, consent_event_id: int) -> CorpusSweep | None:
+    """The last sweep logged under one decision, if that decision has swept.
+
+    Ordered by ``id`` for the same reason the consent log is: two rows written
+    inside one clock tick are ordered by the sequence that issued their ids, and
+    this read decides whether the newest one is about to be repeated.
+    """
+    result = await session.execute(
+        select(CorpusSweep)
+        .where(col(CorpusSweep.consent_event_id) == consent_event_id)
+        .order_by(col(CorpusSweep.id).desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+def _says_nothing_new(previous: CorpusSweep | None, outcome: BackfillOutcome) -> bool:
+    """Whether this sweep's row would repeat the one already standing under it.
+
+    The first sweep under a decision always says something. After that, a sweep
+    is worth a row when some number moved, and only then. This is what keeps the
+    table a log of reaches rather than of requests, and it is load-bearing in a
+    way a "was anything pending?" test is not: an entry the classifier places
+    nowhere stays pending *on purpose*, forever, so an account holding one is
+    never exhausted, and a valve that only closed on an empty backlog would
+    never close for exactly the accounts this sweep was written for. Every
+    repeated yes would then mint another row saying what the last one said.
+
+    Comparing all three counts rather than only what was added is what keeps the
+    remainder honest. Writing more entries changes what is waiting even when the
+    classifier again recognises nothing, and the surface that tells somebody how
+    much is still waiting reads the newest row.
+
+    Best-effort, deliberately. Two grants racing each other both read the same
+    standing row and both append, which for an append-only log of counts is a
+    duplicate rather than a corruption -- and cheaper than the lock that would
+    prevent it, on a path already holding a transaction open across provider
+    calls.
+    """
+    if previous is None:
+        return False
+    return (
+        previous.entries_considered == outcome.entries_considered
+        and previous.fragments_added == outcome.fragments_added
+        and previous.entries_remaining == outcome.entries_remaining
+    )
 
 
 async def backfill_after_consent(
     session: AsyncSession, *, user_id: int, change: ConsentChange
 ) -> BackfillOutcome:
-    """Run whatever ``change`` reaches backwards over, and record that it ran.
+    """Run whatever ``change`` reaches backwards over, and log the reach.
 
-    Nothing happens unless the resulting state is a grant, so a revocation and
-    a refusal both reach a provider for nothing. Nothing is committed: the
-    caller owns the transaction, so the decision, the fragments it authorised
-    and the count on its receipt all land together or none of them does.
+    Nothing happens unless the resulting state is a grant with this account's
+    own decision behind it, so a revocation and a refusal both reach a provider
+    for nothing. A sweep that reached for something and moved a number appends
+    its own row, naming that decision: the reach is resumable, and a repeat of a
+    standing yes appends no second decision to hang a count on, so a row per
+    sweep is the only shape that can hold what the *later* sweeps got to.
+
+    A sweep that offered nothing, or that came back saying exactly what the last
+    sweep under the same decision said, appends nothing. Both are the same rule
+    -- the log holds reaches, not requests -- and the second is the one that
+    binds: an entry the classifier places nowhere stays pending deliberately, so
+    an account holding one has a backlog that is never exhausted, and every
+    repeated yes would otherwise mint another row repeating the last.
+
+    One indexed read of the newest row under the decision is what that costs, on
+    a request that has already spent up to
+    :data:`BACKFILL_ENTRY_CEILING` provider calls.
+
+    Nothing is committed: the caller owns the transaction, so the decision, the
+    fragments it authorised and the record of what its sweep reached all land
+    together or none of them does.
     """
-    if not change.state.granted or change.state.source is not INGEST_SOURCE:
+    consent_event_id = _authorising_event_id(change, user_id)
+    if consent_event_id is None:
         return _NOTHING_SWEPT
     outcome = await _sweep_journal(session, user_id=user_id)
-    if change.event is not None:
-        # Attributed to the decision that authorised it, on the row appended
-        # moments ago in this same open transaction -- not an edit to an audit
-        # record that has landed, which this log does not permit.
-        change.event.fragments_added = outcome.fragments_added
+    if outcome.entries_considered <= _NOTHING_CONSIDERED:
+        return outcome
+    previous = await _newest_sweep(session, consent_event_id=consent_event_id)
+    if not _says_nothing_new(previous, outcome):
+        session.add(
+            CorpusSweep(
+                user_id=user_id,
+                consent_event_id=consent_event_id,
+                entries_considered=outcome.entries_considered,
+                fragments_added=outcome.fragments_added,
+                entries_remaining=outcome.entries_remaining,
+            )
+        )
     return outcome

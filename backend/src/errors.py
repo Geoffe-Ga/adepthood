@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
+from security.pg_text_guard import UnstorableTextError
 from sentry import capture_exception
 from services.journal_encryption import JournalEncryptionError
 
@@ -39,12 +41,33 @@ DECRYPTION_FAILURE = "decryption_failure"
 # validation -- and ``ctx``, which restates the violated bound and on some error
 # types embeds the offending value a second time. What stays is what a client
 # actually parses: which error, which field, and what to say about it.
+#
+# Because ``msg`` stays, it is a client-visible channel, and a validator that
+# builds one by interpolating the submitted value must quote it with ``!r``.
+# ``repr()`` of an unpaired surrogate is pure ASCII, so ``{value!r}`` renders;
+# bare ``{value}`` raises ``UnicodeEncodeError`` inside ``validate_python`` --
+# before any renderer is reached, so nothing downstream can catch it -- and the
+# caller who typed an odd character is told the server broke. Pinned by
+# ``tests/security/test_validator_message_escaping.py``, which sweeps every
+# request-body model rather than a list of known sites.
 _VALIDATION_ENTRY_KEYS = ("type", "loc", "msg")
 
 # The envelope key FastAPI's own validation response uses. Kept, deliberately:
 # the fix is a redaction, not a contract change, and a client mapping ``loc``
 # onto a form field must go on working across it.
 _DETAIL_KEY = "detail"
+
+# The ``type`` code a caller matches on to learn that a value they sent held a
+# code point no text column can store, and the ``loc`` prefix that says the value
+# came out of the request body -- the same prefix FastAPI's own body rejections
+# use, because to the client this is one.
+UNSTORABLE_TEXT = "unstorable_text"
+_BODY_LOC = "body"
+
+# Says which rule fired and nothing about what tripped it. The value is a
+# person's text; naming it here would hand it back out through the very response
+# a client is most likely to log verbatim.
+_UNSTORABLE_TEXT_MESSAGE = "value contains a character that cannot be stored"
 
 
 def not_found(resource: str) -> HTTPException:
@@ -110,7 +133,13 @@ def service_unavailable(reason: str) -> HTTPException:
 
     Use this when a required upstream (e.g. Gumroad license verification)
     cannot answer and the endpoint must fail closed rather than guess, so
-    the caller sees a stable snake_case token and knows to retry later.
+    the caller sees a stable snake_case token rather than the raw failure.
+
+    "Temporarily" describes the dependency, not the caller's next move. The
+    condition may clear without them changing anything, but this status does not
+    promise that retrying is what clears it: a spent server-side provider
+    balance (:data:`services.botmason.SERVICE_CREDIT_EXHAUSTED_DETAIL`) answers
+    503 and takes an operator rather than a retry, and its copy offers none.
     """
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
 
@@ -232,6 +261,43 @@ def _sanitized_validation_entry(entry: Mapping[str, object]) -> dict[str, object
     return {key: entry[key] for key in _VALIDATION_ENTRY_KEYS}
 
 
+def sanitized_validation_entries(
+    entries: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Rebuild every entry in ``entries`` with only the keys a client needs.
+
+    The plural form exists so a caller never has to reach for the per-entry
+    worker, and therefore never has to remember that mapping it is the whole
+    redaction.
+    """
+    return [_sanitized_validation_entry(entry) for entry in entries]
+
+
+def unprocessable_validation(exc: ValidationError) -> HTTPException:
+    """Return a 422 carrying ``exc``'s per-field errors with the input redacted.
+
+    The one legal way for a router to answer a :class:`ValidationError` it
+    caught itself.  Such an error never reaches the global handler -- that is
+    bound to ``RequestValidationError``, and an ``HTTPException`` a router
+    raises is not one -- so a router spelling the response out by hand reopens
+    exactly the disclosure the handler closes, one endpoint at a time.
+
+    Taking the exception rather than its entries is deliberate: it keeps
+    ``.errors()`` called in this module alone, which is what makes that
+    property checkable by reading one file instead of every router.
+
+    The structured entries are kept rather than collapsed into a single token
+    because clients map ``loc`` onto the form field that was rejected.  What
+    leaks is ``input``, not the structure -- and ``ctx``, which an
+    after-validator populates with the ``ValueError`` object itself, something
+    the response encoder cannot serialise at all.
+    """
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=jsonable_encoder(sanitized_validation_entries(exc.errors())),
+    )
+
+
 async def _validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Answer a schema rejection without handing the submitted material back.
 
@@ -264,7 +330,48 @@ async def _validation_error_handler(_request: Request, exc: Exception) -> JSONRe
     entries = exc.errors() if isinstance(exc, RequestValidationError) else ()
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content={_DETAIL_KEY: jsonable_encoder([_sanitized_validation_entry(e) for e in entries])},
+        content={_DETAIL_KEY: jsonable_encoder(sanitized_validation_entries(entries))},
+    )
+
+
+def _unstorable_text_entries(exc: Exception) -> list[dict[str, object]]:
+    """Build the one-entry ``detail`` list for an unstorable-text refusal.
+
+    A ``list`` of ``{type, loc, msg}`` rather than a bare string because that is
+    what a 422 means on this API everywhere else, and a route that answered one
+    with a string would break its own published response schema -- a live
+    failure mode here, not a hypothetical one. Routed through
+    :func:`sanitized_validation_entries` so the shape has exactly one author.
+
+    ``exc`` is typed as the base exception because Starlette hands every handler
+    the same signature; the narrowing is what makes the attribute reads safe,
+    and its false branch is unreachable through registration.
+    """
+    attribute = exc.attribute if isinstance(exc, UnstorableTextError) else ""
+    return sanitized_validation_entries(
+        [
+            {
+                "type": UNSTORABLE_TEXT,
+                "loc": [_BODY_LOC, attribute],
+                "msg": _UNSTORABLE_TEXT_MESSAGE,
+            }
+        ]
+    )
+
+
+async def _unstorable_text_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Answer a write refused by the text guard as the 422 the caller earned.
+
+    :class:`security.pg_text_guard.UnstorableTextError` is raised from
+    ``before_flush``, which is to say from inside the handler that was writing,
+    so without this it would reach the catch-all and become a 500 -- telling a
+    caller who sent an unstorable code point that the server broke. The
+    ``loc`` names the attribute the value was bound for, which is the request
+    field it arrived in for every write surface in this application.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={_DETAIL_KEY: jsonable_encoder(_unstorable_text_entries(exc))},
     )
 
 
@@ -285,8 +392,10 @@ def install_exception_handlers(app: FastAPI) -> None:
     to close an echo the framework opens by default.
     """
     # Specific handlers first so a journal decrypt/encrypt failure logs its own
-    # event, and a schema rejection keeps its 422, instead of disappearing into
-    # the catch-all.
+    # event, and both kinds of schema rejection -- the one FastAPI raises and the
+    # one the flush-time text guard raises -- keep their 422, instead of
+    # disappearing into the catch-all.
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(UnstorableTextError, _unstorable_text_handler)
     app.add_exception_handler(JournalEncryptionError, _journal_encryption_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

@@ -1,0 +1,70 @@
+[
+  {
+    "is_error": false,
+    "duration_api_ms": 411339,
+    "num_turns": 41,
+    "stop_reason": "end_turn",
+    "session_id": "86d350a8-ba73-439e-85fe-cdf09a31e723",
+    "total_cost_usd": 3.3710615000000006,
+    "usage": {
+      "input_tokens": 76,
+      "cache_creation_input_tokens": 107102,
+      "cache_read_input_tokens": 3066973,
+      "output_tokens": 30647,
+      "output_tokens_details": {
+        "thinking_tokens": 13275
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 107102,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 1268,
+          "cache_read_input_tokens": 121159,
+          "cache_creation_input_tokens": 3516,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 3516
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-opus-5": {
+        "inputTokens": 76,
+        "outputTokens": 30647,
+        "cacheReadInputTokens": 3066973,
+        "cacheCreationInputTokens": 107102,
+        "webSearchRequests": 0,
+        "costUSD": 3.3710615000000006,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "canonicalModel": "claude-opus-5",
+        "provider": "firstParty"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "Grooming run complete against `58dc74e`. Summary appended to `$GITHUB_STEP_SUMMARY`.\n\n## Result: 89 open before, 89 after \u2014 net change 0\n\n**Nothing closed, and that's the finding.** Not a shallow pass \u2014 14 issues were re-verified line-by-line at HEAD to establish it:\n\n- **Resolved-by-PR: zero.** I intersected every `Closes|Fixes|Resolves #N` across 150 merged PRs (#2059\u2013#2457) against the 89 open issues. Empty intersection.\n- **Stale: zero.** Thirteen of fourteen greppable-evidence issues reproduce exactly (#1917, #1918, #1960, #1961, #1989, #2013, #2336, #2407, #2420, #2421, #2428, #2431, #2436, #2437, #2441, #2435). All six `uncovered` journey-ledger entries still point at live blockers.\n- **Duplicates: zero.** Pairwise slug comparison surfaced one candidate \u2014 #1633 vs #2269 \u2014 but reading both, they share only the stage-8 Turquoise\u2192Teal thread and are distinct epics.\n- **Promoted: zero**, with reasons per issue (below).\n\n## Three comments posted\n\n**#2383 \u2014 the premise appears false.** Course already renders `<CourseErrorState onRetry={retry} />` (`CourseScreen.tsx:732-738`) with `retry: init` re-fetching the calendar, and line-blame puts that render in #2333 on 2026-08-21 \u2014 *before* the issue was filed on 08-23. But the Map asymmetry is real in a different place: Map has `MAP_LOADING_TIMEOUT_MS = 12_000`, Course has no bounded wait, so a never-settling `programCalendar()` spins forever. I asked whether to narrow it to the bounded wait or close it rather than closing \u2014 it's Geoff-authored and not provably resolved by a merged PR, which the scan's constraints bar me from closing.\n\n**#2128** \u2014 1/4 done: `journal.delete` adopted via PR #2357, allowlist entry gone; three wrappers remain.\n\n**#2244** \u2014 half closed: `react-native-worklets` realigned *and* pinned with a dependabot floor; `screens`/`svg` still ahead with no floors. Caveat recorded in-thread: `node_modules` is absent and the scan is read-only, so I did **not** re-run `npx expo install --check` \u2014 that table is read from `package.json`, not a fresh SDK query.\n\n## Two things worth your decision\n\n**The label vocabulary in `groom.md` doesn't match the repo.** It specifies `scan:*` provenance labels and a `needs-triage` \u2192 `agent-ready` promotion. Neither label exists here \u2014 `gh label list` has no `scan:*` and no `needs-triage`. I mapped promotion onto `needs-spec` instead. Worth reconciling the scan definition with reality, since its \"never touch a Geoff-authored issue carrying no `scan:*` label\" constraint currently applies to *every* issue in the repo, which is what made this run comment-only rather than close-anything.\n\n**#2444 is the one close call on promotion.** Its body *is* six-component complete, so by the letter of the rule it qualifies. I held it because its own stated blocker still stands: an operator step (`EMAIL_BACKEND=smtp` in prod) plus an undecided HTTPS reset-URL scheme. Promoting it would hand an agent a P1 it cannot finish. The agent-doable guard half is already `agent-ready` as #2453. The other seven `needs-spec` issues are clear holds \u2014 four are `[HUMAN ACTION]` console tickets, and #1637/#1987/#2452 each say in their own bodies that a decision is unmade.",
+    "ttft_ms": 1785,
+    "ttft_stream_ms": 1031,
+    "time_to_request_ms": 37,
+    "type": "result",
+    "duration_ms": 439505,
+    "uuid": "a6f1f9f6-ce75-421b-b685-023433340bad"
+  }
+]

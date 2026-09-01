@@ -46,8 +46,12 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultWheelAspect,
     VaultWheelBalance,
@@ -55,6 +59,7 @@ from domain.creek_vault import (
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
 from main import app, lifespan
 from scripts.creek_contract_drift import BUNDLE_ROOT
+from services import creek_vault_url_resolution
 from services.creek_vault_client import (
     _CONTRACT_MINOR_COMPONENTS,
     _CONTRACT_VERSION_HEADER,
@@ -68,11 +73,13 @@ from services.creek_vault_client import (
     HandshakeDegradeReason,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
+    _build_pinned_vault_client,
     _build_pooled_vault_client,
     _contract_version_compatible,
     _entry_path_segment,
     _parse_wheel,
     _VaultHttpPool,
+    build_connected_vault_client,
     build_creek_vault_client,
     close_creek_vault_http_pool,
 )
@@ -80,8 +87,13 @@ from services.creek_vault_payload import (
     _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
     _MAX_REFLECT_NOTES,
+    _MAX_RELATED_EDDIES,
+    _MAX_RELATED_PRAXIS,
+    _RELATED_PROSE_MAX,
+    _RELATED_TITLE_MAX,
     _bounded_text,
 )
+from services.creek_vault_pinned_transport import PinnedDestinationTransport
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -175,6 +187,26 @@ _LONGEST_USABLE_FRAGMENT_ID = "f" * _MAX_FRAGMENT_ID_LENGTH
 _UNPARSEABLE_VAULT_URL = "https://vault.example.test:not-a-port"
 
 _POOL_ATTR = "services.creek_vault_client._VAULT_HTTP_POOL"
+
+# The pinned pool's own attribute. Two pools, because the operator's
+# deployment-wide URL is deliberately allowed to name loopback and a user's is
+# not, and one shared connection pool cannot hold both policies.
+_PINNED_POOL_ATTR = "services.creek_vault_client._PINNED_VAULT_HTTP_POOL"
+
+# Where the pinned client reaches its transport builder, so a test can hand it
+# an in-memory transport rather than one that opens sockets.
+_PINNED_TRANSPORT_ATTR = "services.creek_vault_client.build_pinned_destination_transport"
+
+# The vault's host as httpx parses it, derived rather than written out a second
+# time so a change to the URL above cannot leave a stale copy behind.
+_VAULT_HOST = httpx.URL(_VAULT_URL).host
+
+# A globally-routable address for a stubbed lookup to answer with. Documentation
+# ranges are not globally routable, so a correct destination guard blocks them.
+_GLOBAL_ADDRESS = "8.8.8.8"
+
+# An egress proxy of the kind a container platform exports into every process.
+_AMBIENT_PROXY_URL = "http://proxy.example.test:3128"
 
 _DEADLINE_ATTR = "services.creek_vault_client._VAULT_TOTAL_DEADLINE_SECONDS"
 
@@ -685,6 +717,60 @@ def _reflection_without(field: str) -> dict[str, object]:
     """Return the success example with one published required field removed."""
     body = _reflection_example("success")
     del body[field]
+    return body
+
+
+# The two optional collections of compiled pages a reflection may carry, keyed by
+# the field each arrives under. Named rather than repeated so a test naming one
+# of them is naming the wire field, not a string that happens to match it.
+_RELATED_FIELDS = ("related_praxis", "related_eddies")
+
+# The value a test uses for the collection it is not exercising. An empty list
+# rather than ``None`` so the body still carries the published field: absence is
+# its own case, asserted separately.
+_NO_RELATED_PAGES: list[object] = []
+
+
+def _published_related(field: str) -> dict[str, object]:
+    """Return the single compiled page one related collection of the success example carries."""
+    assert field in _RELATED_FIELDS, field
+    published = _reflection_example("success")[field]
+    assert isinstance(published, list), field
+    page = published[0]
+    assert isinstance(page, dict), field
+    return page
+
+
+def _published_max_items(field: str) -> int:
+    """Return the ``maxItems`` Creek's schema publishes for one related collection.
+
+    The field is nullable, so the array branch is the one carrying the bound;
+    it is found by looking for the branch that has one rather than by index, so
+    a reordered ``anyOf`` does not quietly read the null branch as unbounded.
+    """
+    declared = _schema_properties("ReflectionResponse")[field]
+    assert isinstance(declared, dict), field
+    branches = declared["anyOf"]
+    assert isinstance(branches, list), field
+    bounds = [branch["maxItems"] for branch in branches if "maxItems" in branch]
+    assert len(bounds) == 1, field
+    assert isinstance(bounds[0], int), field
+    return bounds[0]
+
+
+def _reflection_with_related(praxis: object, eddies: object) -> dict[str, object]:
+    """Return the success example with both related collections replaced."""
+    body = _reflection_example("success")
+    body["related_praxis"] = praxis
+    body["related_eddies"] = eddies
+    return body
+
+
+def _reflection_without_related() -> dict[str, object]:
+    """Return the success example with both optional related collections removed."""
+    body = _reflection_example("success")
+    for field in _RELATED_FIELDS:
+        del body[field]
     return body
 
 
@@ -2736,6 +2822,191 @@ async def test_http_reflect_accepts_an_echo_at_the_ceiling_the_caller_allowed(
     assert reflection.routed_tier is VaultTierCeiling.OPEN
 
 
+@pytest.mark.asyncio
+async def test_http_reflect_projects_the_published_related_pages(
+    http_clients: ClientFactory,
+) -> None:
+    """The compiled pages Creek publishes alongside the notes read back as their own values.
+
+    Both collections come off the vendored success example rather than being
+    written out here, so the projection is pinned to the ratified bytes: a field
+    Creek renames is a failing test rather than a silently empty surface.
+    """
+    published_praxis = _published_related("related_praxis")
+    published_eddy = _published_related("related_eddies")
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert reflection.related_praxis == (
+        VaultRelatedPraxis(
+            title=str(published_praxis["title"]),
+            praxis_type=VaultPraxisKind(str(published_praxis["praxis_type"])),
+            status=VaultPraxisStatus(str(published_praxis["status"])),
+            excerpt=str(published_praxis["excerpt"]),
+        ),
+    )
+    assert reflection.related_eddies == (
+        VaultRelatedEddy(
+            title=str(published_eddy["title"]),
+            description=str(published_eddy["description"]),
+            fragment_count=cast("int", published_eddy["fragment_count"]),
+            formed=str(published_eddy["formed"]),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_reflection_without_related(), id="absent"),
+        pytest.param(_reflection_with_related(None, None), id="null"),
+        pytest.param(_reflection_with_related([], []), id="empty_arrays"),
+        pytest.param(_reflection_with_related("praxis", 7), id="not_arrays"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_reads_an_unusable_related_collection_as_empty(
+    body: dict[str, object],
+    http_clients: ClientFactory,
+) -> None:
+    """Both collections are optional, so their absence is an answer rather than a fault.
+
+    A vault that publishes neither -- an older bundle, or simply an entry that
+    touched no compiled page -- still hands back a whole reflection: the notes
+    land exactly as they do when the collections are present, and the surfaces
+    are empty rather than the payload being refused.
+    """
+    handler = _ReflectRouteHandler(body)
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert reflection.related_praxis == ()
+    assert reflection.related_eddies == ()
+    assert len(reflection.notes) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("praxis_type", "not-a-published-kind", id="unknown_kind"),
+        pytest.param("status", "not-a-published-status", id="unknown_status"),
+        pytest.param("title", "   ", id="blank_title"),
+        pytest.param("title", 7, id="unstringy_title"),
+        pytest.param("excerpt", None, id="unstringy_excerpt"),
+        pytest.param("excerpt", "x" * (_RELATED_PROSE_MAX + 1), id="oversized_excerpt"),
+        pytest.param("title", "x" * (_RELATED_TITLE_MAX + 1), id="oversized_title"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_drops_a_praxis_it_cannot_read_whole(
+    field: str,
+    value: object,
+    http_clients: ClientFactory,
+) -> None:
+    """One unreadable praxis page costs itself and nothing else.
+
+    Item-wise fail-soft, exactly as the note projection is: a partial page is
+    dropped rather than completed with a default, because a title or excerpt the
+    vault never sent would render a page the user's corpus does not contain --
+    and dropping the whole reflection over one would lose the notes too.
+    """
+    defective = {**_published_related("related_praxis"), field: value}
+    handler = _ReflectRouteHandler(
+        _reflection_with_related(
+            [defective, _published_related("related_praxis")], _NO_RELATED_PAGES
+        )
+    )
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert len(reflection.related_praxis) == 1
+    assert reflection.related_praxis[0].title == str(_published_related("related_praxis")["title"])
+    assert len(reflection.notes) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("title", "", id="blank_title"),
+        pytest.param("description", 7, id="unstringy_description"),
+        pytest.param("fragment_count", -1, id="negative_count"),
+        pytest.param("fragment_count", "12", id="unnumeric_count"),
+        pytest.param("fragment_count", True, id="boolean_count"),
+        pytest.param("formed", "not-a-date", id="unparsable_formed"),
+        pytest.param("formed", "2026-3-4", id="unpadded_formed"),
+        pytest.param("formed", "2026-03-04T00:00:00", id="overlong_formed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_reflect_drops_an_eddy_it_cannot_read_whole(
+    field: str,
+    value: object,
+    http_clients: ClientFactory,
+) -> None:
+    """One unreadable eddy costs itself and nothing else.
+
+    ``fragment_count`` is checked against ``bool`` as well as against sign
+    because Python's ``bool`` *is* an ``int``: without that, ``true`` would read
+    back as an eddy clustering one fragment. ``formed`` is required to be the
+    published ``YYYY-MM-DD`` spelling rather than merely date-ish, so a client
+    rendering it never has to guess which of several ISO shapes arrived.
+    """
+    defective = {**_published_related("related_eddies"), field: value}
+    handler = _ReflectRouteHandler(
+        _reflection_with_related(
+            _NO_RELATED_PAGES, [defective, _published_related("related_eddies")]
+        )
+    )
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert len(reflection.related_eddies) == 1
+    assert reflection.related_eddies[0].title == str(_published_related("related_eddies")["title"])
+    assert len(reflection.notes) == 1
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_bounds_related_pages_at_the_published_maximums(
+    http_clients: ClientFactory,
+) -> None:
+    """A vault answering with more pages than it published room for is read to the bound.
+
+    The two caps are asserted equal to the ``maxItems`` Creek's own schema
+    declares, so the margin stays a note rather than a dashboard *and* the bound
+    cannot silently drift from the contract it mirrors. Leading items are the
+    ones kept, so ordering is the vault's to choose.
+    """
+    assert _published_max_items("related_praxis") == _MAX_RELATED_PRAXIS
+    assert _published_max_items("related_eddies") == _MAX_RELATED_EDDIES
+    handler = _ReflectRouteHandler(
+        _reflection_with_related(
+            [
+                {**_published_related("related_praxis"), "title": f"praxis {index}"}
+                for index in range(_MAX_RELATED_PRAXIS + 2)
+            ],
+            [
+                {**_published_related("related_eddies"), "title": f"eddy {index}"}
+                for index in range(_MAX_RELATED_EDDIES + 2)
+            ],
+        )
+    )
+    client = await _handshaken_client(handler, http_clients)
+
+    reflection = await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    assert [page.title for page in reflection.related_praxis] == [
+        f"praxis {index}" for index in range(_MAX_RELATED_PRAXIS)
+    ]
+    assert [eddy.title for eddy in reflection.related_eddies] == [
+        f"eddy {index}" for index in range(_MAX_RELATED_EDDIES)
+    ]
+
+
 @pytest.mark.parametrize(
     "handler",
     [
@@ -3970,3 +4241,200 @@ def test_the_contract_minor_is_the_first_two_components_of_the_pin() -> None:
     """The header value is derived from the pin, never written out twice."""
     assert ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS]) == CONTRACT_MINOR
     assert CONTRACT_VERSION.startswith(CONTRACT_MINOR)
+
+
+class _CountingVaultResolver:
+    """Resolver stub answering every name publicly and counting the asking.
+
+    The count is what a proxy test can assert on. Whether the pin ran is not
+    visible from a response, and it is exactly what an ambient proxy would take
+    away.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded lookups."""
+        self.calls: list[str] = []
+
+    async def __call__(self, host: str) -> tuple[str, ...]:
+        """Record the name asked about and answer with a globally-routable address."""
+        self.calls.append(host)
+        return (_GLOBAL_ADDRESS,)
+
+
+@pytest.mark.asyncio
+async def test_a_user_connected_vault_borrows_the_pinned_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vault somebody connected for themselves is dialled through the pinning pool.
+
+    Which pool an adapter borrows *is* the destination policy applied to it, so
+    it is asserted from both sides: the pinned pool built a client and the plain
+    one was never touched. Asserting only the first would be satisfied by an
+    adapter that reached for both.
+    """
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned = _VaultHttpPool(build=pinned_build)
+    plain = _VaultHttpPool(build=plain_build)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+
+    client = build_connected_vault_client(_VAULT_URL, _API_KEY)
+    assert (await client.handshake()).available is True
+
+    assert len(pinned_build.built) == 1
+    assert len(plain_build.built) == 0
+    await pinned.aclose()
+    await plain.aclose()
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_pool_in_this_process_is_the_one_that_pins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The line that wires the pinning builder into the module-level pool is load-bearing.
+
+    Its neighbour above substitutes both pool objects, which is what that case
+    needs -- it is about which pool an adapter reaches for -- and it is also why
+    nothing else in either suite can see this. Every pool test replaces the pool,
+    and every builder test calls the builder directly, so the one statement that
+    joins them is asserted from neither side: drop the builder argument from the
+    module-level pinned pool and every connected vault in production dials
+    unpinned, with both suites still green.
+
+    So this case substitutes nothing but the transport factory and lets the real
+    pool build a real client through the real builder. The assertion is that the
+    resolver was consulted, because being consulted is the one thing a pool built
+    without the pinning builder cannot fake: a healthy handshake through a mock
+    transport proves nothing, since an unpinned client reaches the same handler.
+    """
+    resolver = _CountingVaultResolver()
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", resolver)
+    recorder = _RecordingHandler(_handshake_payload([CreekCapability.JOURNAL.value]))
+    monkeypatch.setattr(
+        _PINNED_TRANSPORT_ATTR,
+        lambda: PinnedDestinationTransport(httpx.MockTransport(recorder)),
+    )
+
+    client = build_connected_vault_client(_VAULT_URL, _API_KEY)
+    try:
+        result = await client.handshake()
+    finally:
+        # The pool this drove is the process-wide one, so a client left open here
+        # would outlive the test and be handed to whatever ran next.
+        await close_creek_vault_http_pool()
+
+    # The resolver first, because it is the assertion that names the defect: a
+    # pool built without the pinning builder leaves this empty, and the
+    # handshake below merely fails afterwards for a reason further away.
+    assert resolver.calls == [_VAULT_HOST]
+    assert result.available is True
+
+
+@pytest.mark.asyncio
+async def test_the_operator_vault_borrows_the_unpinned_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``CREEK_VAULT_URL`` is dialled through the pool that applies no user policy.
+
+    The deployment-wide variable is set by whoever runs the process, and
+    ``http://localhost:8000`` is the documented local-vault setup -- a *name*,
+    which resolves to loopback, which the user-destination rules refuse. Routing
+    this factory through the pinning pool would therefore break every developer's
+    vault, silently, since replication would simply stop.
+    """
+    monkeypatch.setenv("CREEK_VAULT_URL", _VAULT_URL)
+    monkeypatch.setenv("CREEK_VAULT_PROTOCOL", "http")
+    monkeypatch.setenv("CREEK_VAULT_API_KEY", _API_KEY)
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned = _VaultHttpPool(build=pinned_build)
+    plain = _VaultHttpPool(build=plain_build)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+
+    client = build_creek_vault_client()
+    assert (await client.handshake()).available is True
+
+    assert len(plain_build.built) == 1
+    assert len(pinned_build.built) == 0
+    await pinned.aclose()
+    await plain.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_both_vault_pools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shutdown hook releases the pinned pool as well as the plain one.
+
+    A second pool is a second httpx client with its own connections, and one the
+    lifespan hook forgot would outlive the process as an unclosed-client warning
+    nobody attributes to this seam.
+    """
+    plain_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    pinned_build = _CountingClientBuild(_healthy_handler([CreekCapability.JOURNAL.value]))
+    plain = _VaultHttpPool(build=plain_build)
+    pinned = _VaultHttpPool(build=pinned_build)
+    monkeypatch.setattr(_POOL_ATTR, plain)
+    monkeypatch.setattr(_PINNED_POOL_ATTR, pinned)
+    plain_client = plain.get()
+    pinned_client = pinned.get()
+
+    await close_creek_vault_http_pool()
+
+    assert plain_client.is_closed is True
+    assert pinned_client.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_pool_client_also_refuses_to_follow_redirects() -> None:
+    """The second builder carries the same security settings as the first.
+
+    Two builders are two places for a setting to be forgotten. httpx preserves an
+    explicitly set ``Authorization`` header across a same-scheme cross-host
+    redirect, so a pinned client that followed redirects would hand the bearer to
+    whatever host a hijacked vault named -- and the pin would have been bypassed
+    by the vault's own answer rather than by DNS.
+    """
+    client = _build_pinned_vault_client()
+    try:
+        assert client.follow_redirects is False
+        assert client.timeout == _VAULT_HTTP_TIMEOUT
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_an_ambient_egress_proxy_cannot_route_around_the_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proxy in the environment must not become the thing that resolves the host.
+
+    httpx reads ``HTTP_PROXY``, ``HTTPS_PROXY``, and ``ALL_PROXY`` only when a
+    client is built with no explicit transport; passing one is what leaves the
+    proxy mounts empty. That is load-bearing and invisible from the builder's
+    source, because the failure mode is not an error: the request would go to the
+    proxy, the proxy would resolve the hostname itself, and the pin would never
+    run at all while every response still looked healthy.
+
+    So the assertion is that the resolver was *asked*, not that the call
+    succeeded. A refusal or a 200 can both be arrived at without the pin; being
+    consulted cannot.
+    """
+    monkeypatch.setenv("ALL_PROXY", _AMBIENT_PROXY_URL)
+    monkeypatch.setenv("HTTPS_PROXY", _AMBIENT_PROXY_URL)
+    resolver = _CountingVaultResolver()
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", resolver)
+    recorder = _RecordingHandler(_handshake_payload([CreekCapability.JOURNAL.value]))
+    monkeypatch.setattr(
+        _PINNED_TRANSPORT_ATTR,
+        lambda: PinnedDestinationTransport(httpx.MockTransport(recorder)),
+    )
+
+    client = _build_pinned_vault_client()
+    try:
+        response = await client.get(_CAPABILITIES_URL)
+    finally:
+        await client.aclose()
+
+    assert response.status_code == HTTPStatus.OK
+    assert resolver.calls == [_VAULT_HOST]

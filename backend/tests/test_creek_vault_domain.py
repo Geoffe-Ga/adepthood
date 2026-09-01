@@ -19,14 +19,19 @@ from domain.creek_vault import (
     VaultErrorCode,
     VaultIngestAction,
     VaultIngestRequest,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     tier_ceiling_for,
 )
 from models.journal_entry import JournalClassification
 from scripts.creek_contract_drift import BUNDLE_ROOT
+from tests.creek_bundle_facts import PINNED_CONTRACT_VERSION
 
 # Creek's error vocabulary, published as an enum in the vendored envelope
 # schema. Read at runtime rather than restated, so a code adepthood invents is
@@ -42,10 +47,28 @@ _PUBLISHED_ERROR_CODE_COUNT = 10
 # status, so it is deliberately not a member of this enum.
 _REFLECTION_RESPONSE_SCHEMA = "schemas/ReflectionResponse.schema.json"
 
-# The published fields the domain value object carries across the seam. Both the
-# vault's own answer and the routing it applied: five, and never a sixth built
-# from Creek's own prose.
-_REFLECTION_FIELDS = ("status", "notes", "essay", "essay_grounded", "routed_tier")
+# The published fields the domain value object carries across the seam: the
+# vault's own answer, the routing it applied, and the two collections of the
+# writer's own compiled pages the entry touched. Never one built from Creek's
+# own prose.
+_REFLECTION_FIELDS = (
+    "status",
+    "notes",
+    "essay",
+    "essay_grounded",
+    "routed_tier",
+    "related_praxis",
+    "related_eddies",
+)
+
+# The ``$defs`` of that same schema which the two related-page value objects and
+# the praxis vocabularies mirror. Named rather than inlined so a test asserting
+# against one is naming the published definition, not a string that happens to
+# match it.
+_RELATED_PRAXIS_DEF = "RelatedPraxis"
+_RELATED_EDDY_DEF = "RelatedEddy"
+_PRAXIS_KIND_DEF = "PraxisKind"
+_PRAXIS_LIFECYCLE_DEF = "PraxisLifecycle"
 
 
 def _published_error_codes() -> frozenset[str]:
@@ -64,6 +87,29 @@ def _published_reflection_statuses() -> frozenset[str]:
     published = schema["properties"]["status"]["enum"]
     assert isinstance(published, list)
     return frozenset(str(status) for status in published)
+
+
+def _published_def(name: str) -> dict[str, object]:
+    """Return one ``$defs`` entry of Creek's reflection response, read from the schema."""
+    schema = json.loads((BUNDLE_ROOT / _REFLECTION_RESPONSE_SCHEMA).read_bytes())
+    assert isinstance(schema, dict)
+    published = schema["$defs"][name]
+    assert isinstance(published, dict)
+    return published
+
+
+def _published_field_names(name: str) -> frozenset[str]:
+    """Return the property names one published ``$defs`` entry declares."""
+    published = _published_def(name)["properties"]
+    assert isinstance(published, dict)
+    return frozenset(published)
+
+
+def _published_enum(name: str) -> frozenset[str]:
+    """Return the members one published ``$defs`` enum declares."""
+    published = _published_def(name)["enum"]
+    assert isinstance(published, list)
+    return frozenset(str(member) for member in published)
 
 
 class TestTierCeilingMapping:
@@ -119,11 +165,18 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Seven wire-name capability members."""
+    """Nine capability members, seven of which Creek publishes a wire name for."""
 
-    def test_has_seven_members(self) -> None:
-        """Exactly seven capabilities are defined."""
-        assert len(CreekCapability) == 7
+    def test_has_nine_members(self) -> None:
+        """Exactly nine capabilities are defined.
+
+        Seven of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
+        are adepthood-side concepts Creek does not advertise. The count is easy
+        to misread: this enum held seven members while Creek published five, and
+        Creek now publishes seven, so a stale ``== 7`` here would still look
+        plausible against the current contract.
+        """
+        assert len(CreekCapability) == 9
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
@@ -321,6 +374,79 @@ def test_vault_reflection_is_a_frozen_value_with_the_published_fields() -> None:
         note.quote = "a quote the user never wrote"  # type: ignore[misc]
 
 
+def test_related_page_values_mirror_the_published_definitions() -> None:
+    """The two compiled-page values carry exactly the fields Creek's own ``$defs`` declare.
+
+    Read out of the vendored schema rather than restated here, for the reason
+    the status enum is: a field adepthood named itself would never be populated
+    from a wire payload, so it would publish an always-absent surface, and a
+    published field adepthood omitted would silently drop what the vault sent.
+    """
+    assert set(VaultRelatedPraxis.__dataclass_fields__) == _published_field_names(
+        _RELATED_PRAXIS_DEF
+    )
+    assert set(VaultRelatedEddy.__dataclass_fields__) == _published_field_names(_RELATED_EDDY_DEF)
+
+
+def test_praxis_vocabularies_are_creeks_own() -> None:
+    """Both closed praxis vocabularies are spelled the vault's way, member for member.
+
+    A page is the writer's own, named by their vault, so adepthood has nothing
+    to project these onto -- which makes an exact match the only correct
+    relationship. A member spelled our way would match no payload; a missing one
+    would drop every page that named it, and dropping a lifecycle is how a
+    released practice comes to render as one still being kept.
+    """
+    assert {kind.value for kind in VaultPraxisKind} == _published_enum(_PRAXIS_KIND_DEF)
+    assert {status.value for status in VaultPraxisStatus} == _published_enum(_PRAXIS_LIFECYCLE_DEF)
+
+
+def test_related_page_values_are_frozen() -> None:
+    """Neither compiled page can be edited after the seam read it.
+
+    Immutable for the reason every other value crossing this seam is: what the
+    vault said is a fact about one answer, and a caller that could rewrite a
+    page's title or its lifecycle could show the writer something their own
+    corpus does not contain.
+    """
+    praxis = VaultRelatedPraxis(
+        title="Rest before the collapse",
+        praxis_type=VaultPraxisKind.PRACTICE,
+        status=VaultPraxisStatus.ACTIVE,
+        excerpt="The page's own opening lines.",
+    )
+    eddy = VaultRelatedEddy(
+        title="Rest and Ruin",
+        description="A cluster the writer keeps returning to.",
+        fragment_count=12,
+        formed="2026-03-04",
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        praxis.status = VaultPraxisStatus.RELEASED  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        eddy.fragment_count = 0  # type: ignore[misc]
+
+
+def test_a_reflection_carrying_no_pages_defaults_to_empty_collections() -> None:
+    """Both collections are optional on the wire, so absent reads as none rather than as a fault.
+
+    The default is what lets an older vault, and an entry that touched no
+    compiled page, be an ordinary answer: no consumer has to distinguish
+    "this vault does not publish them" from "this pass surfaced none".
+    """
+    reflection = VaultReflection(
+        status=VaultReflectionStatus.OK,
+        notes=(),
+        essay=None,
+        essay_grounded=False,
+        routed_tier=VaultTierCeiling.PERSONAL,
+    )
+
+    assert reflection.related_praxis == ()
+    assert reflection.related_eddies == ()
+
+
 def test_vault_error_code_covers_the_published_codes_we_classify() -> None:
     """The codes the read path classifies on are Creek's own, spelled Creek's way.
 
@@ -366,4 +492,4 @@ def test_contract_version_constant() -> None:
 
     It tracks Creek's published contract constant, and the docs restate it.
     """
-    assert CONTRACT_VERSION == "0.8.0"
+    assert CONTRACT_VERSION == PINNED_CONTRACT_VERSION

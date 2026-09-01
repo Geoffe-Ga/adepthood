@@ -26,13 +26,14 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import Depends, Query, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import (
     require_owned_user_practice,
@@ -41,6 +42,7 @@ from dependencies.ownership import (
     visible_to_user,
 )
 from domain.practice_resolution import effective_config, effective_name
+from error_responses import build_router
 from errors import bad_request, conflict, not_found
 from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -65,7 +67,11 @@ from schemas.practice_recipe import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/practice-recipes", tags=["practice-recipes"])
+router = build_router(
+    prefix="/practice-recipes",
+    tags=["practice-recipes"],
+    extra_statuses=(status.HTTP_409_CONFLICT,),
+)
 
 
 async def _load_steps(recipe_id: int, session: AsyncSession) -> list[PracticeRecipeStep]:
@@ -250,7 +256,7 @@ async def create_practice_recipe(
 
 @router.get("/{recipe_id}", response_model=PracticeRecipeOut)
 async def get_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PracticeRecipeOut:
@@ -262,7 +268,7 @@ async def get_practice_recipe(
 
 @router.patch("/{recipe_id}", response_model=PracticeRecipeOut)
 async def update_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     payload: PracticeRecipeUpdate,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -318,7 +324,7 @@ async def update_practice_recipe(
 
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_practice_recipe(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
@@ -340,7 +346,7 @@ async def delete_practice_recipe(
     response_model=UserPracticeDetail,
 )
 async def apply_recipe_to_user_practice(
-    recipe_id: int,
+    recipe_id: RowIdPath,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],

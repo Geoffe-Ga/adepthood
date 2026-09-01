@@ -6,6 +6,7 @@ import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { MissedDaysModalProps } from '../Habits.types';
+import { namesStoreRow } from '../services/serverIds';
 
 interface MissedDaysActionsProps {
   onBackfill: () => void;
@@ -59,7 +60,7 @@ const MissedDaysText = ({ habitName, missedCount }: { habitName: string; missedC
  * confirm step makes the data-loss explicit.
  */
 const useResetFlow = (
-  habit: { id?: number },
+  habit: { id: number },
   onNewStartDate: MissedDaysModalProps['onNewStartDate'],
   onClose: () => void,
 ) => {
@@ -72,7 +73,7 @@ const useResetFlow = (
     setPendingDate(picked);
   };
   const onConfirm = () => {
-    if (pendingDate && habit.id) {
+    if (pendingDate && namesStoreRow(habit.id)) {
       onNewStartDate(habit.id, pendingDate);
       setPendingDate(null);
       setShowCalendar(false);
@@ -100,7 +101,7 @@ const MissedDaysBody = ({
   const reset = useResetFlow(habit, onNewStartDate, onClose);
 
   const handleBackfill = () => {
-    if (habit.id) {
+    if (namesStoreRow(habit.id)) {
       onBackfill(habit.id, missedDays);
       onClose();
     }

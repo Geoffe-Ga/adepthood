@@ -35,6 +35,15 @@ export interface Habit {
   notificationIds?: string[];
   last_completion_date?: Date;
   revealed?: boolean;
+  /** Marks the offline/demo placeholder tiles, whose hard-coded start dates are not a real program start. */
+  isDemoSeed?: boolean;
+  /**
+   * This row's habit and goal ids were minted on this device; no server row
+   * answers to them yet. Distinct from `isDemoSeed`: a demo tile must never
+   * reach the on-disk cache, while a client-minted row is the user's real
+   * data and must.
+   */
+  hasClientMintedIds?: boolean;
 }
 
 export interface Goal {

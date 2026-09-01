@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from bounds import INT32_MAX, MIN_ROW_ID
 from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH
 
 PROMPT_RESPONSE_MAX_LENGTH = 10_000
@@ -72,7 +73,7 @@ class PromptSubmit(BaseModel):
     # means the prompt the week itself draws, so clients written against the
     # one-prompt-per-week contract keep working unchanged. An ordinal the
     # stage does not carry is a 404 from the router, not a wrap-around.
-    prompt_ordinal: int | None = Field(default=None, ge=1)
+    prompt_ordinal: int | None = Field(default=None, ge=MIN_ROW_ID, le=INT32_MAX)
 
     @field_validator("response")
     @classmethod

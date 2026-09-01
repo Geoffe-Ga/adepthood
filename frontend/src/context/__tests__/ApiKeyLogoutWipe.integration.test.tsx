@@ -1,12 +1,15 @@
 /* eslint-env jest */
 /* global describe, test, expect, jest, beforeEach, afterEach */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { clearDroppedCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
+import { setActiveUser } from '@/storage/userScope';
 
 // Reproduces the BYOK leak end-to-end: mount the real AuthProvider +
 // ApiKeyProvider trio wired exactly as App.tsx does, keep the real API-layer
@@ -44,6 +47,7 @@ jest.mock('@/storage/llmKeyStorage', () => ({
 jest.mock('@/storage/habitStorage', () => ({
   clearHabits: jest.fn(() => Promise.resolve()),
   clearPendingCheckIns: jest.fn(() => Promise.resolve()),
+  clearDroppedCheckIns: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('@/storage/notificationStorage', () => ({
@@ -78,8 +82,13 @@ function useHarness() {
 
 let fetchSpy: jest.SpyInstance;
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  // The device-owner stamp and the active scope are both module-level state
+  // that outlives a test; leaving either in place would make one test's
+  // sign-in look like a returning user to the next.
+  await AsyncStorage.clear();
+  setActiveUser(null);
   mockLlmStorage.loadLlmApiKey.mockResolvedValue(null);
   fetchSpy = jest
     .spyOn(globalThis, 'fetch')
@@ -179,6 +188,12 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     expect(lastLlmHeader()).toBe('sk-user-a');
   });
 
+  /**
+   * This test used to insert a ``logout()`` between the two sessions — the one
+   * step that made it pass — while claiming the general invariant in its name.
+   * The logout door has its own coverage above; this one drives the claim as
+   * written, with nothing between user A's key and user B's session.
+   */
   test('the next user on the device never inherits the prior key', async () => {
     mockAuthApi.login
       .mockResolvedValueOnce({ token: 'token-a', user_id: 1 })
@@ -192,9 +207,6 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     });
     await act(async () => {
       await result.current.apiKey.saveApiKey('sk-user-a');
-    });
-    await act(async () => {
-      await result.current.auth.logout();
     });
 
     await act(async () => {
@@ -214,5 +226,57 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     });
     expect(lastLlmHeader()).toBe('sk-user-b');
     expect(lastLlmHeader()).not.toBe('sk-user-a');
+  });
+});
+
+describe('the dropped-check-in quarantine does not survive a logout on a shared device', () => {
+  async function signIn() {
+    mockAuthApi.login.mockResolvedValueOnce({ token: 'token-a', user_id: 1 });
+    const { result } = renderHook(useHarness, { wrapper });
+    await waitFor(() => expect(result.current.auth.authStatus).not.toBe('loading'));
+    await waitFor(() => expect(result.current.apiKey.isLoading).toBe(false));
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    // Signing in on a device whose recorded owner is not this user wipes too;
+    // these tests are about the logout door, so discount the arrival.
+    (clearDroppedCheckIns as jest.Mock).mockClear();
+    return result;
+  }
+
+  test('logout clears the quarantine', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      await result.current.auth.logout();
+    });
+
+    expect(clearDroppedCheckIns).toHaveBeenCalledTimes(1);
+  });
+
+  test('dismissing the re-auth sheet clears the quarantine', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+
+    await act(async () => {
+      await result.current.auth.dismissReauth();
+    });
+
+    expect(clearDroppedCheckIns).toHaveBeenCalledTimes(1);
+  });
+
+  test('a forced reauth alone leaves the quarantine intact', async () => {
+    const result = await signIn();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+
+    expect(clearDroppedCheckIns).not.toHaveBeenCalled();
   });
 });

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import bcrypt
 import jwt
 from cachetools import TTLCache
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +36,7 @@ from domain.entitlements import (
     verify_aptitude_license,
 )
 from domain.timezone import normalize_timezone
+from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.gumroad_sale import GumroadSale
@@ -50,12 +51,14 @@ from schemas.password_reset import (
     PasswordResetConfirm,
     PasswordResetRequest,
 )
+from services.app_links import web_base_url
 from services.email import (
     EmailDeliveryError,
     EmailMessagePayload,
     EmailSender,
     get_email_sender,
 )
+from services.email_templates import reset_email_html
 from services.oauth_apple import verify_apple_id_token
 from services.oauth_google import verify_google_id_token
 from services.oidc import OIDCIdentity, OIDCTokenError
@@ -67,7 +70,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = build_router(
+    prefix="/auth",
+    tags=["auth"],
+    extra_statuses=(status.HTTP_409_CONFLICT, status.HTTP_503_SERVICE_UNAVAILABLE),
+)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 _JWT_ALGORITHM = "HS256"
@@ -1151,9 +1158,32 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
     invalidates the token without requiring a login -- possession of
     the token is enough, which is the same trust model as confirm
     (SPEC Example D).
+
+    Each action is offered twice, https first.  The web build is the
+    only client that ships, so a body carrying nothing but the
+    ``adepthood://`` scheme is a link every real recipient's browser
+    refuses -- delivery succeeds and the user stays locked out, which
+    looks identical to success from every side.  The custom-scheme
+    lines stay because an installed native build registers them, and
+    dropping them would fix web by silently breaking the platform this
+    flow was written for.
+
+    The https origin comes from :func:`web_base_url`, i.e. from
+    deployment configuration, and never from the request.  ``Host`` and
+    the ``X-Forwarded-*`` pair are chosen by whoever sent the request,
+    so an attacker who could reach them would choose where a victim's
+    reset link points, token and all.
+
+    One link per line with the token last, because the token is
+    recovered by reading to the end of the line -- both in the test
+    helpers and by any human copying it out of a dev log.
     """
+    origin = web_base_url()
     body = (
         "Someone requested a password reset for your Adepthood account.\n\n"
+        f"Reset your password:  {origin}/reset-password?token={plaintext_token}\n"
+        f"This wasn't me:       {origin}/cancel-reset?token={plaintext_token}\n\n"
+        "If you have the Adepthood app installed, these open it directly:\n\n"
         f"Reset your password:  adepthood://reset-password?token={plaintext_token}\n"
         f"This wasn't me:       adepthood://cancel-reset?token={plaintext_token}\n\n"
         "Links expire in 30 minutes.  If you did not request this, you can\n"
@@ -1161,6 +1191,7 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
     )
     return EmailMessagePayload(
         to=to_address,
+        html=reset_email_html(origin, plaintext_token),
         subject="Reset your Adepthood password",
         body=body,
     )

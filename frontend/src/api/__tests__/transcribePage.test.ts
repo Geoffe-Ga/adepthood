@@ -270,3 +270,52 @@ describe('journal.transcribePage privacy', () => {
     expect((err as TranscriptionErrorInstance).message).not.toContain(SENTINEL_PAYLOAD);
   });
 });
+
+describe('journal.transcribePage exhausted-balance classification', () => {
+  // The page-reading surface keeps its own closed taxonomy (TranscriptionErrorKind)
+  // and its own copy map, so fixing errorMessages.ts alone leaves this door open:
+  // a 402 here collapses into `wallet_exhausted` -- the monthly free-allotment
+  // story, whose remedy ("add your own API key in Settings") is exactly the key
+  // that just came back empty -- and a 503 falls through to `unknown`.
+  test("a caller's spent key is not the monthly free allotment", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_credit_exhausted' }, 402));
+    const err = (await captureError(
+      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok', 'sk-byok'),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).not.toBe('wallet_exhausted');
+    expect(err.kind).toBe('credit_exhausted');
+  });
+
+  test('our own spent key gets its own kind, not the catch-all', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_service_credit_exhausted' }, 503));
+    const err = (await captureError(
+      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).not.toBe('unknown');
+    expect(err.kind).toBe('service_credit_exhausted');
+  });
+
+  test('a genuine spent wallet still classifies as wallet_exhausted', async () => {
+    // The regression guard for the 402 sub-map: the app's own metering is the
+    // common 402 and its copy must not be repointed at the provider story.
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'insufficient_offerings' }, 402));
+    const err = (await captureError(
+      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+    )) as TranscriptionErrorInstance;
+
+    expect(err.kind).toBe('wallet_exhausted');
+  });
+
+  test('a keyless BYOK 402 still classifies as unknown', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_key_required' }, 402));
+    const err = (await captureError(
+      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+    )) as TranscriptionErrorInstance;
+
+    expect(err.kind).toBe('unknown');
+  });
+});

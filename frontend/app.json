@@ -33,7 +33,8 @@
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "scheme": "adepthood",
     "slug": "adepthood",

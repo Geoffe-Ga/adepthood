@@ -365,6 +365,101 @@ check "the shadowed lane checked out the branch tip" \
   "$(cd "$REPO" && git rev-parse "refs/heads/$SHADOW_BRANCH")" "$SHEAD"
 run release 304 >/dev/null 2>&1
 
+# --- a new lane is provisioned with the main checkout's frontend deps -------
+# A worktree is a fresh checkout: `git worktree add` copies tracked files only,
+# and node_modules is git-ignored, so every lane started life without it. The
+# four frontend pre-commit hooks then could not gate the lane's diff at all --
+# and worse, `npx` answered the missing binaries by fetching same-named packages
+# off the public registry and running them. The lane therefore has to be handed
+# the main checkout's node_modules, by symlink (a per-lane `npm ci` is ~700
+# packages and the fleet runs four lanes).
+NM_MARKER="ADEPTHOOD_FLEET_NODE_MODULES_MARKER"
+
+# The backend-only case first, while $REPO still has no frontend deps to share:
+# a lane must still be created, with a warning rather than a failure.
+WARN="$( (run assign 401 'backend only lane' 2>&1 >/dev/null) || true )"
+if run path 401 >/dev/null 2>&1; then
+  ok "assign succeeds when the checkout has no frontend deps to share"
+else
+  bad "assign succeeds when the checkout has no frontend deps to share"
+fi
+if printf '%s' "$WARN" | grep -q 'node_modules'; then
+  ok "assign warns about the missing frontend deps"
+else
+  bad "assign warns about the missing frontend deps"
+fi
+run release 401 >/dev/null 2>&1
+
+# Now give the source checkout frontend deps and re-run the same path.
+mkdir -p "$REPO/frontend/node_modules/.bin"
+echo shared > "$REPO/frontend/node_modules/$NM_MARKER"
+
+ADIR402="$(run assign 402 'provisioned lane' 2>/dev/null)"
+ADIR402="${ADIR402:-$WORK/assign-402-missing}"
+LINK402="$ADIR402/frontend/node_modules"
+[[ -L "$LINK402" ]] && ok "assign symlinks node_modules into the lane" \
+  || bad "assign symlinks node_modules into the lane"
+[[ -f "$LINK402/$NM_MARKER" ]] && ok "the lane's node_modules resolves to the shared one" \
+  || bad "the lane's node_modules resolves to the shared one"
+[[ -d "$LINK402/.bin" ]] && ok "the lane can reach node_modules/.bin" \
+  || bad "the lane can reach node_modules/.bin"
+
+# A symlink, not a copy: a real directory here would be ~700 packages per lane.
+if [[ -L "$LINK402" ]]; then
+  ok "the lane shares rather than copies the dependency tree"
+else
+  bad "the lane shares rather than copies the dependency tree"
+fi
+run release 402 >/dev/null 2>&1
+
+# Re-assign is re-entrant, so provisioning must never clobber what is already
+# there -- a lane that ran its own `npm ci` keeps that real directory.
+ADIR403="$(run assign 403 'reentrant lane' 2>/dev/null)"
+ADIR403="${ADIR403:-$WORK/assign-403-missing}"
+rm -f "$ADIR403/frontend/node_modules"
+mkdir -p "$ADIR403/frontend/node_modules"
+echo local > "$ADIR403/frontend/node_modules/LANE_OWNED"
+run assign 403 'reentrant lane' >/dev/null 2>&1
+[[ -f "$ADIR403/frontend/node_modules/LANE_OWNED" ]] \
+  && ok "re-assign leaves an existing node_modules untouched" \
+  || bad "re-assign leaves an existing node_modules untouched"
+[[ -L "$ADIR403/frontend/node_modules" ]] \
+  && bad "re-assign replaced a real node_modules with a symlink" \
+  || ok "re-assign did not replace a real node_modules with a symlink"
+run release 403 >/dev/null 2>&1
+
+# adopt creates a worktree the same way assign does, so it needs the same
+# provisioning -- a bot-PR lane runs the identical hooks.
+ADIR404="$(HEAD_REF="$BOT_BRANCH" run_gh adopt 404 915 2>/dev/null || true)"
+ADIR404="${ADIR404:-$WORK/adopt-404-missing}"
+[[ -L "$ADIR404/frontend/node_modules" ]] && ok "adopt symlinks node_modules into the lane" \
+  || bad "adopt symlinks node_modules into the lane"
+[[ -f "$ADIR404/frontend/node_modules/$NM_MARKER" ]] \
+  && ok "the adopted lane's node_modules resolves to the shared one" \
+  || bad "the adopted lane's node_modules resolves to the shared one"
+run release 404 >/dev/null 2>&1
+
+# --- provisioning can never fail the lane it is provisioning ----------------
+# provision_frontend_deps runs under `set -e`, AFTER `git worktree add` has
+# succeeded and BEFORE cmd_assign prints "$dir". A non-zero return there aborts
+# assign with a real worktree and branch already on disk and no path handed
+# back, so count_active keeps counting that lane against max_workers and the
+# orchestrator never learns it exists -- a fleet slot leaked silently. A lane
+# without node_modules is not a silent hazard by comparison: every frontend gate
+# fails it loudly through require-node-modules.sh. So the helper is best-effort
+# by contract, and this pins that contract against a future edit.
+PROVISION_BODY="$(awk '/^provision_frontend_deps\(\)/,/^}/' "$(dirname "$FLEET")/fleet.sh")"
+if [[ -n "$PROVISION_BODY" ]]; then
+  ok "provision_frontend_deps is present to inspect"
+else
+  bad "provision_frontend_deps is present to inspect"
+fi
+if printf '%s' "$PROVISION_BODY" | grep -qE '^[[:space:]]*(return[[:space:]]+[1-9]|exit[[:space:]]+[1-9]|die[[:space:]])'; then
+  bad "provision_frontend_deps cannot fail the caller (found a non-zero exit path)"
+else
+  ok "provision_frontend_deps cannot fail the caller"
+fi
+
 # --- summary ----------------------------------------------------------------
 echo
 echo "fleet tests: $PASS passed, $FAIL failed"

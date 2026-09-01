@@ -80,11 +80,18 @@ async def test_cleanup_deletes_expired_rows(
 async def test_cleanup_rejects_non_positive_window(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A non-positive window is a 400, not a delete-everything footgun."""
+    """A non-positive window is refused, not a delete-everything footgun.
+
+    The refusal moved from the service to the declared query bound, so it now
+    happens while the parameter is solved -- before the admin route runs at
+    all. The service keeps its own guard for callers that do not arrive over
+    HTTP.
+    """
     _admin_id, headers = await _signup_admin(async_client, db_session)
     resp = await async_client.post(
         "/admin/maintenance/energy-plans",
         params={"older_than_days": 0},
         headers=headers,
     )
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["query", "older_than_days"]

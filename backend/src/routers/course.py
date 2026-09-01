@@ -6,12 +6,13 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Request, status
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath, StageNumberPath
 from content_config import CONTENT_REF_SCHEME, content_ref
 from database import get_session
 from dependencies.timezone import current_user_timezone
@@ -26,6 +27,7 @@ from domain.course import (
 from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
+from error_responses import build_router
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
@@ -55,7 +57,9 @@ _CMS_PROXY_RATE_LIMIT = "30/minute"
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/course", tags=["course"])
+router = build_router(
+    prefix="/course", tags=["course"], extra_statuses=(status.HTTP_502_BAD_GATEWAY,)
+)
 
 
 def _stage_duration_days(stage_number: int) -> int:
@@ -249,7 +253,7 @@ async def _listing_unlocked_count(
 
 @router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -300,7 +304,7 @@ async def list_stage_content(
 
 @router.get("/content/{content_id}", response_model=ContentItemResponse)
 async def get_content_item(
-    content_id: int,
+    content_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -409,7 +413,7 @@ async def _insert_or_resolve_completion(
 
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
 async def mark_content_read(
-    content_id: int,
+    content_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -447,7 +451,7 @@ def _content_ids_from_items(items: list[StageContent]) -> list[int]:
 
 @router.get("/stages/{stage_number}/progress", response_model=CourseProgressResponse)
 async def get_course_progress(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -566,7 +570,7 @@ async def _resolve_released_content_ref(
 @limiter.limit(_CMS_PROXY_RATE_LIMIT)
 async def get_content_body(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    content_id: int,
+    content_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -646,7 +650,7 @@ async def _require_unlocked_stage(
 
 @router.get("/stages/{stage_number}/intro", response_model=StageIntroResponse)
 async def get_stage_introduction(
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
@@ -674,7 +678,7 @@ async def get_stage_introduction(
 @limiter.limit(_CMS_PROXY_RATE_LIMIT)
 async def get_stage_intro_body(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    stage_number: int,
+    stage_number: StageNumberPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],

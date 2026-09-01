@@ -30,7 +30,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import or_ as sa_or
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import CursorResult
@@ -38,7 +38,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import RowIdPath
 from database import get_session
+from error_responses import build_router
 from errors import bad_request, forbidden, not_found
 from models.practice import Practice
 from models.practice_share_link import PracticeShareLink
@@ -81,7 +83,14 @@ _MINT_RATE_LIMIT = "10/hour"
 _REDEEM_RATE_LIMIT = "30/hour"
 
 
-router = APIRouter(prefix="/practices", tags=["practice-share"])
+router = build_router(
+    prefix="/practices",
+    tags=["practice-share"],
+    # ``_gone`` answers a link that resolved but is spent or withdrawn. Reaching
+    # it needs a token that was once real, which no generated input can build --
+    # so this declaration comes from reading the raise, not from a fuzz finding.
+    extra_statuses=(status.HTTP_410_GONE,),
+)
 
 
 def _gone(detail: str) -> HTTPException:
@@ -251,7 +260,7 @@ def _clone_practice_for_recipient(source: Practice, recipient_user_id: int) -> P
 @limiter.limit(_MINT_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def create_share_link(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
-    practice_id: int,
+    practice_id: RowIdPath,
     payload: ShareLinkCreateRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -438,7 +447,7 @@ async def import_share_link(
 
 @router.delete("/share-links/{share_link_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_share_link(
-    share_link_id: int,
+    share_link_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
@@ -470,7 +479,7 @@ _LIST_LIMIT_MAX = 200
 
 @router.get("/{practice_id}/share-links", response_model=list[ShareLinkResponse])
 async def list_share_links(
-    practice_id: int,
+    practice_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[

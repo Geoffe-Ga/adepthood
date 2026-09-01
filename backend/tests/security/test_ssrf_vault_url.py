@@ -149,7 +149,7 @@ def _repoint_resolver(
     this call would answer from the previous stub for the next minute and the
     test would be asserting against an answer it thinks it replaced.
     """
-    monkeypatch.setattr(creek_vault_url_resolution, "_resolve", resolver)
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", resolver)
     creek_vault_url_resolution.reset_resolution_cache()
 
 
@@ -164,7 +164,9 @@ def _stubbed_resolution(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     whose cause is somewhere other than the test that failed.
     """
     creek_vault_url_resolution.reset_resolution_cache()
-    monkeypatch.setattr(creek_vault_url_resolution, "_resolve", _resolving_to(_GLOBAL_ADDRESS))
+    monkeypatch.setattr(
+        creek_vault_url_resolution, "resolve_host_addresses", _resolving_to(_GLOBAL_ADDRESS)
+    )
     yield
     creek_vault_url_resolution.reset_resolution_cache()
 

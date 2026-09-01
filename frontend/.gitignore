@@ -1,7 +1,12 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
 # dependencies
-node_modules/
+# No trailing slash on purpose: a gitignore pattern ending in '/' matches
+# DIRECTORIES ONLY, and a Ralph fleet lane gets its node_modules as a symlink
+# to the main checkout (see provision_frontend_deps in scripts/ralph/fleet.sh).
+# A symlink is not a directory, so 'node_modules/' left it untracked-and-visible
+# and a lane's `git add -A` would have committed the link.
+node_modules
 
 # Expo
 .expo/

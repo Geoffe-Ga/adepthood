@@ -35,9 +35,21 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.8** caller receives, not a document every caller receives, and
-the counts below (five capabilities, thirty-five cells, four unreachable
-care-escalation sentinels) are the 0.8 shape rather than a permanent one.
+document a **0.10** caller receives, not a document every caller receives, and
+the counts in :mod:`tests.creek_bundle_facts` (seven capabilities, forty-nine
+cells, six unreachable care-escalation sentinels) are the 0.10 shape rather than
+a permanent one. 0.9.0 added ``drive-connector`` and 0.10.0 added ``pipeline``,
+so the axis has grown twice in three weeks; treat every count here as a fact
+about one pinned commit.
+
+Naming a capability is not calling it
+-------------------------------------
+
+Adepthood has no route, client method or caller for ``drive-connector`` or
+``pipeline``. They are in :data:`_CAPABILITY_BY_WIRE_NAME` because the client
+drops advertised names it cannot map, so omitting them would make a vault that
+offers them indistinguishable from one that does not. The tests below therefore
+assert that both names *translate* and that neither becomes callable.
 """
 
 from __future__ import annotations
@@ -50,6 +62,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -68,8 +81,12 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultPraxisKind,
+    VaultPraxisStatus,
     VaultReflectionNote,
     VaultReflectionStatus,
+    VaultRelatedEddy,
+    VaultRelatedPraxis,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -81,24 +98,27 @@ from services.creek_vault_client import (
     HandshakeDegradeReason,
     HttpCreekVaultClient,
 )
+from tests.creek_bundle_facts import (
+    BUNDLE_NAME,
+    CAPABILITY_COUNT,
+    CREEK_MANIFEST_ENTRIES,
+    EXAMPLE_CELLS,
+    ONTOLOGY_VERSION,
+    PINNED_COMMIT,
+    PINNED_CONTRACT_VERSION,
+    PINNED_PATH,
+    PINNED_REPO,
+    REACHABLE_CELLS,
+    SCHEMA_FILES,
+    STATE_COUNT,
+    UNREACHABLE_CELLS,
+    VENDORED_FILES,
+)
 
 MANIFEST_NAME = "manifest.json"
 README_NAME = "README.md"
 VENDOR_NAME = "vendor.json"
 RETRY_POLICY_NAME = "retry-policy.json"
-
-PINNED_REPO = "Geoffe-Ga/creek-vault"
-PINNED_COMMIT = "349a56d6fd36ed18971c53f6d2c3d527b047074c"  # pragma: allowlist secret
-PINNED_PATH = "docs/contracts/adepthood-v1"
-ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
-
-CREEK_MANIFEST_ENTRIES = 54
-VENDORED_FILES = 56
-EXAMPLE_CELLS = 35
-CAPABILITY_COUNT = 5
-STATE_COUNT = 7
-UNREACHABLE_CELLS = 4
-REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
 
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "creek-vault-conformance-key"  # pragma: allowlist secret
@@ -194,6 +214,41 @@ _ERROR_STATES = frozenset(
 # this alias exists only so the guard below asserts against the SHIPPED table.
 _CAPABILITY_BY_CREEK_NAME = _CAPABILITY_BY_WIRE_NAME
 
+# The directory every published JSON Schema lives under.
+_SCHEMA_DIR = "schemas/"
+
+# The vendored README is hand-written upstream and excluded from Creek's own
+# round-trip test, so its prose was never regenerated as the matrix grew: it
+# still describes the 0.7 bundle. It is vendored byte-for-byte and cannot be
+# corrected here -- editing it would turn the digest gate red -- and the contract
+# audit playbook names this directory its first source of truth, ahead of every
+# ADR and issue body. So the divergence is pinned rather than left as a trap for
+# the next reader. Each entry is a phrase quoted from the vendored bytes, the
+# count that phrase states, and the count the bundle beside it actually holds.
+_README_STALE_SCHEMA_FILES = 16
+_README_STALE_EXAMPLE_CELLS = 35
+_README_STALE_CAPABILITY_COUNT = 5
+_README_STALE_UNREACHABLE_CELLS = 4
+_README_STALE_PROSE: Mapping[str, tuple[int, int]] = {
+    "one JSON Schema per CONTRACT_MODELS entry (16 files)": (
+        _README_STALE_SCHEMA_FILES,
+        SCHEMA_FILES,
+    ),
+    "one fixture per (capability, state) cell (5 \u00d7 7 = 35 files)": (
+        _README_STALE_EXAMPLE_CELLS,
+        EXAMPLE_CELLS,
+    ),
+    "**Capabilities** (five)": (
+        _README_STALE_CAPABILITY_COUNT,
+        CAPABILITY_COUNT,
+    ),
+    "Why four cells are `NotApplicableExample`": (
+        _README_STALE_UNREACHABLE_CELLS,
+        UNREACHABLE_CELLS,
+    ),
+}
+
+
 Handler = Callable[[httpx.Request], httpx.Response]
 ClientFactory = Callable[[Handler], HttpCreekVaultClient]
 
@@ -218,6 +273,16 @@ def _read_json(relative: str) -> dict[str, object]:
     decoded = json.loads(_read_bytes(relative))
     assert isinstance(decoded, dict), relative
     return decoded
+
+
+def _only_related(payload: dict[str, object], field_name: str) -> dict[str, object]:
+    """Return the single compiled page one related collection of a reflection cell carries."""
+    published = payload[field_name]
+    assert isinstance(published, list), field_name
+    assert len(published) == 1, field_name
+    page = published[0]
+    assert isinstance(page, dict), field_name
+    return page
 
 
 def _sha256(data: bytes) -> str:
@@ -254,9 +319,10 @@ def _example_cells(entries: tuple[Mapping[str, object], ...]) -> tuple[_Cell, ..
 def _is_unreachable(cell: _Cell) -> bool:
     """Return whether a cell holds Creek's "this branch does not exist" sentinel.
 
-    Read from the payload's own ``unreachable`` marker, so the three sentinel
-    cells drop out of every client-driving parametrisation as data rather than as
-    a skip.
+    Read from the payload's own ``unreachable`` marker, so the sentinel cells
+    drop out of every client-driving parametrisation as data rather than as a
+    skip. There is one per capability whose care guard does not run, which is
+    every capability except ``reflections``.
     """
     return _read_json(cell.path).get("unreachable") is True
 
@@ -459,7 +525,7 @@ def test_vendor_sidecar_records_the_pinned_provenance() -> None:
     source = sidecar["source"]
     assert isinstance(source, dict)
 
-    assert sidecar["bundle"] == "adepthood-v1"
+    assert sidecar["bundle"] == BUNDLE_NAME
     assert sidecar["contract_version"] == CONTRACT_VERSION
     assert sidecar["ontology_version"] == ONTOLOGY_VERSION
     assert source["repo"] == PINNED_REPO
@@ -502,6 +568,28 @@ def test_the_two_manifests_jointly_cover_every_vendored_path_once() -> None:
     assert len(creek) + len(uncovered) == VENDORED_FILES
 
 
+def test_the_vendored_readme_prose_is_stale_in_exactly_the_known_places() -> None:
+    """Upstream's hand-written prose still describes the 0.7 bundle it ships beside.
+
+    The audit playbook sends a reader to this directory before any ADR or issue
+    body, and the first file there is the README -- which states five
+    capabilities, a 5 by 7 matrix, 16 schemas and four sentinel cells. Every one
+    of those was true at 0.7 and none is true now. The bytes are upstream's and
+    must stay byte-identical, so the divergence is pinned here instead of
+    corrected: each phrase must still be present, and each count it states must
+    still disagree with what the bundle holds. When upstream regenerates the
+    prose this fails, and the warning it justifies in
+    ``prompts/audits/contract-drift-audit.md`` can be retired alongside it.
+    """
+    readme = _read_bytes(README_NAME).decode()
+    schemas = [path for path in _digests(MANIFEST_NAME) if path.startswith(_SCHEMA_DIR)]
+
+    assert len(schemas) == SCHEMA_FILES
+    for phrase, (stated, published) in _README_STALE_PROSE.items():
+        assert phrase in readme, phrase
+        assert stated != published, phrase
+
+
 # --------------------------------------------------------------------------
 # (b) Version agreement
 # --------------------------------------------------------------------------
@@ -511,7 +599,7 @@ def test_contract_version_agrees_across_both_manifests_and_the_domain_pin() -> N
     """One version string in three places; any two of them disagreeing is the bug."""
     assert _read_json(VENDOR_NAME)["contract_version"] == CONTRACT_VERSION
     assert _read_json(MANIFEST_NAME)["contract_version"] == CONTRACT_VERSION
-    assert CONTRACT_VERSION == "0.8.0"
+    assert CONTRACT_VERSION == PINNED_CONTRACT_VERSION
 
 
 def test_ontology_version_agrees_across_both_manifests() -> None:
@@ -525,7 +613,7 @@ def test_ontology_version_agrees_across_both_manifests() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_example_matrix_is_the_published_five_by_seven_grid() -> None:
+def test_the_example_matrix_is_the_published_seven_by_seven_grid() -> None:
     """Non-vacuity first: an emptied bundle fails here rather than passing silently."""
     assert len(_CELLS) == EXAMPLE_CELLS
     assert len(_CAPABILITIES) == CAPABILITY_COUNT
@@ -545,12 +633,7 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 def test_only_reflections_publishes_a_reachable_care_escalation() -> None:
     """The care guard runs in one capability, so every other cell is a sentinel."""
-    assert {cell.capability for cell in _UNREACHABLE} == {
-        "capabilities",
-        "journal-upsert",
-        "wheel",
-        "upload",
-    }
+    assert {cell.capability for cell in _UNREACHABLE} == _CAPABILITIES - {"reflections"}
     assert {cell.state for cell in _UNREACHABLE} == {"care-escalation"}
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
 
@@ -563,12 +646,97 @@ def test_state_status_table_matches_the_manifest() -> None:
 def test_capability_translation_table_matches_the_manifest() -> None:
     """The client's wire-name table must name exactly Creek's published capabilities.
 
-    Not four of them, and not four plus whatever the client invented: the set is
+    Not some of them, and not some plus whatever the client invented: the set is
     read off the manifest, so a capability Creek publishes and the client cannot
-    name fails here rather than silently degrading every call that needs it.
+    name fails here rather than silently degrading every call that needs it. The
+    injectivity half matters just as much -- two wire names collapsing onto one
+    member would make ``supports`` answer for a capability nobody advertised.
     """
     assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
     assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
+
+
+def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
+    """What a 0.10 caller is told and what the matrix documents are one list.
+
+    The advertised list and the example directory names are generated from the
+    same upstream enum, so a bundle where they disagree is a bundle that was
+    assembled wrong -- and asserting it here is what stops the matrix-driven
+    tests below from silently exercising a capability no vault ever offers.
+    """
+    advertised = _read_json("examples/capabilities/success.json")["capabilities"]
+    assert isinstance(advertised, list)
+
+    assert frozenset(advertised) == _CAPABILITIES
+    assert len(advertised) == CAPABILITY_COUNT
+
+
+@pytest.mark.asyncio
+async def test_no_advertised_capability_is_dropped_at_the_parse_boundary(
+    vault_clients: ClientFactory,
+) -> None:
+    """An advertised name the client cannot map is discarded without a sound.
+
+    That silence is the whole hazard: a vault offering ``drive-connector`` and
+    one that does not would hand back identical handshake results, and no log
+    line, metric or error would distinguish them. Counting what survives the
+    parse is the only way to notice, so this compares the *sizes* rather than
+    re-deriving the expected set through the table under test.
+    """
+    published = _read_json("examples/capabilities/success.json")
+    advertised = published["capabilities"]
+    assert isinstance(advertised, list)
+    client = vault_clients(_static_handler(published, HTTPStatus.OK))
+
+    result = await client.handshake()
+
+    assert len(result.capabilities) == len(advertised)
+    assert client.supports(CreekCapability.DRIVE_CONNECTOR) is True
+    assert client.supports(CreekCapability.PIPELINE) is True
+
+
+@pytest.mark.asyncio
+async def test_an_advertised_pipeline_leaves_adepthoods_classify_refusing(
+    vault_clients: ClientFactory,
+) -> None:
+    """Creek's ``pipeline`` is not adepthood's ``CLASSIFY``, and must not become it.
+
+    Both words describe classification, which is exactly why the two are pinned
+    apart here. Creek's pipeline is a whole-vault classify-and-link pass that
+    names no fragment; ``CreekCapability.CLASSIFY`` is adepthood's per-entry
+    concept whose request shape is still unratified, so :meth:`classify` refuses.
+    Had the wire name been mapped onto that member to keep the table injective,
+    ``supports`` would answer true for a call that always raises -- a degrade
+    turned into a lie. Asserted through the table rather than as an identity
+    between two enum members, because the latter is a comparison a type checker
+    can settle without running anything: it is the *mapping* that could have
+    been written the wrong way, not the enum.
+    """
+    published = _read_json("examples/capabilities/success.json")
+    client = vault_clients(_static_handler(published, HTTPStatus.OK))
+    await client.handshake()
+
+    assert _CAPABILITY_BY_CREEK_NAME["pipeline"] is not CreekCapability.CLASSIFY
+    assert client.supports(CreekCapability.CLASSIFY) is False
+    with pytest.raises(CreekCapabilityUnsupportedError):
+        await client.classify(_ENTRY_BODY, _REFLECT_CEILING)
+
+
+def test_the_capabilities_added_since_0_8_are_named_and_carry_a_full_example_column() -> None:
+    """Creek's 0.9 and 0.10 additions are translatable and fully documented.
+
+    Named, because an untranslatable capability is dropped in silence; fully
+    documented, because a capability that arrived with a partial example column
+    would leave the matrix-driven privacy and prose tests below covering less
+    than they appear to.
+    """
+    added = frozenset({"drive-connector", "pipeline"})
+
+    assert added <= frozenset(_CAPABILITY_BY_CREEK_NAME)
+    assert added <= _CAPABILITIES
+    for capability in sorted(added):
+        column = frozenset(cell.state for cell in _CELLS if cell.capability == capability)
+        assert column == _STATES, capability
 
 
 def test_every_published_error_code_has_a_status_and_a_retry_disposition() -> None:
@@ -940,6 +1108,42 @@ async def test_reflections_success_cell_projects_to_a_domain_reflection(
         ),
     )
     assert reflection.essay_grounded is False
+
+
+@pytest.mark.asyncio
+async def test_reflections_success_cell_projects_its_related_pages(
+    vault_clients: ClientFactory,
+) -> None:
+    """The compiled pages Creek publishes beside the notes read back as their own values.
+
+    Read off the ratified cell rather than a synthetic body, so the two
+    collections are pinned to bytes upstream signed: a renamed field or a
+    restated praxis vocabulary fails here rather than quietly surfacing nothing.
+    """
+    published = _read_json("examples/reflections/success.json")
+    praxis = _only_related(published, "related_praxis")
+    eddy = _only_related(published, "related_eddies")
+    recorder = _Recorder(reflect_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    reflection = await client.reflect(_ENTRY_BODY, _REFLECT_CEILING)
+
+    assert reflection.related_praxis == (
+        VaultRelatedPraxis(
+            title=str(praxis["title"]),
+            praxis_type=VaultPraxisKind(str(praxis["praxis_type"])),
+            status=VaultPraxisStatus(str(praxis["status"])),
+            excerpt=str(praxis["excerpt"]),
+        ),
+    )
+    assert reflection.related_eddies == (
+        VaultRelatedEddy(
+            title=str(eddy["title"]),
+            description=str(eddy["description"]),
+            fragment_count=cast("int", eddy["fragment_count"]),
+            formed=str(eddy["formed"]),
+        ),
+    )
 
 
 @pytest.mark.asyncio
