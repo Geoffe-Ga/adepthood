@@ -245,7 +245,7 @@ ij_add_raw 10 "P0"; ij_add_raw 11 ""; ij_finalize
 check "default gate yields no pick when nothing is specced" "" \
   "$(run_pick 2>"$STUBDIR/err")"
 check "the empty pick names the require gate" "1" \
-  "$(grep -c 'require gate is active' "$STUBDIR/err")"
+  "$(grep -c 'require gate' "$STUBDIR/err")"
 
 # 15d) The escape hatch: an EXPLICITLY EMPTY override re-admits everything. This
 #      is green before the flip too; its job is to fail the `${VAR:-default}`
@@ -254,6 +254,21 @@ new_scenario require_escape_hatch
 ij_add_raw 10 "P0"; ij_add 11 "P3"; ij_finalize
 check "explicit empty RALPH_REQUIRE_LABELS re-admits unspecced issues" "10" \
   "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_REQUIRE_LABELS='' "$PICK")"
+
+# 15e) Candidates DID pass the require gate; the in-flight / fleet-conflict
+#      guards then skipped every one. The gate is NOT why nothing was picked,
+#      and blaming it sends the orchestrator to groom a backlog that needs
+#      nothing — `pick-next.sh` scans every open PR regardless of author, so a
+#      third-party PR closing the one eligible issue lands exactly here.
+new_scenario require_gate_not_the_cause
+ij_add 10 "P1"; ij_finalize
+pr_closes 10
+check "no pick when every candidate is already in flight" "" \
+  "$(run_pick 2>"$STUBDIR/err")"
+check "an all-in-flight empty pick does NOT blame the require gate" "0" \
+  "$(grep -c 'require gate' "$STUBDIR/err")"
+check "an all-in-flight empty pick names the real cause" "1" \
+  "$(grep -c 'conflicts with the active fleet' "$STUBDIR/err")"
 
 # --- repo's native priority-* vocabulary maps onto the same tiers -------------
 

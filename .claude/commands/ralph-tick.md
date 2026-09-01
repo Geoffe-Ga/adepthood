@@ -108,17 +108,27 @@ is a lane still building (its worker is running in the background). Together the
 are the pool.
 
 **Mode A — nothing to pick.** If the pool is empty (no worktrees, no in-flight
-PRs) AND `pick-next.sh` prints nothing, an empty pick has **three** causes and
+PRs) AND `pick-next.sh` prints nothing, an empty pick has **four** causes and
 they are not interchangeable. Branch on the picker's exit code and stderr; never
 swallow either.
 
 - **Exit 2** — `gh` is missing or unauthenticated. This is a broken tool, not a
   drained backlog. Report it and stop; do not announce completion.
-- **Exit 0, and stderr names the require gate** — the backlog is not drained, it
-  is label-gated: open issues remain but none carries `agent-ready`. Report how
-  many by re-running `RALPH_REQUIRE_LABELS= ./scripts/ralph/pick-next.sh`, say
-  that they need grooming (a human or `flare` must spec and label them), and
-  stop. Announcing "Ralph is done" here would be false.
+- **Exit 0, stderr says `no open issue passed the require gate`** — the backlog
+  is not drained, it is label-gated: open issues remain but none carries
+  `agent-ready`. Report how many by re-running
+  `RALPH_REQUIRE_LABELS= ./scripts/ralph/pick-next.sh`, say that they need
+  grooming (a human or `flare` must spec and label them), and stop. Announcing
+  "Ralph is done" here would be false.
+- **Exit 0, stderr says `N candidate(s) passed the filters but every one is
+  already in flight or conflicts`** — eligible work exists and is already
+  covered. **Nothing needs grooming, and re-running without the gate reveals
+  nothing**, because those candidates already passed it. Note this pool and the
+  picker's disagree by construction: this pool is author-scoped to `@me` and
+  `app/dependabot`, while `pick-next.sh` builds its active set from **all** open
+  PRs regardless of author. So an outside PR closing the one eligible issue puts
+  you here with an empty pool. Report that the fleet is idle pending those PRs
+  and stop — do not groom, and do not announce completion.
 - **Exit 0, stderr silent** — genuinely nothing left. Announce "Backlog drained.
   Ralph is done." and call `/loop` to **stop**.
 

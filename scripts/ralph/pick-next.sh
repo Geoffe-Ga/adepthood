@@ -16,8 +16,11 @@
 #                         to the EMPTY string to require nothing and see the
 #                         whole unlabelled backlog again; that is the escape
 #                         hatch, and it is the only way to turn the gate off.
-#                         When the gate holds everything back, the picker says
-#                         so on stderr — an empty pick is never silent.
+#                         When nothing is picked the picker says WHY on stderr,
+#                         distinguishing "nothing passed the gate" (groom the
+#                         backlog) from "candidates passed but are all in flight
+#                         or conflicting" (nothing to groom) — see
+#                         explain_empty_pick below.
 #   RALPH_EXCLUDE_LABELS  Space-separated labels that DISQUALIFY an issue.
 #                         REPLACES the default list below — it does not add to
 #                         it. Setting it to one label silently re-admits `epic`,
@@ -156,20 +159,40 @@ labels_of() {
   gh issue view "$n" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true
 }
 
-# The picker's silence is ambiguous: a genuinely drained backlog and one held
-# back entirely by the require gate both print nothing, and the orchestrator's
-# scripted response to nothing is to announce the fleet is done. Name the cause
-# on stderr so the two are distinguishable. stdout stays byte-identical to the
-# contract above and the exit code is untouched, so a gh/jq transport failure
+# The picker's silence is ambiguous, and the orchestrator's scripted response to
+# nothing is to announce the fleet is done. Name the cause on stderr — but the
+# two causes are NOT interchangeable and must not share a message:
+#
+#   gate      Nothing survived the require/exclude filter. If the require gate
+#             is on, that is the likely reason, and grooming (specifying and
+#             labelling work) is the fix.
+#   conflict  Candidates DID survive the filter; the in-flight and fleet-conflict
+#             guards then skipped every one. The gate is irrelevant here — those
+#             issues already passed it — so re-running without it reveals
+#             nothing and nothing needs grooming. Note the picker's active set is
+#             built from ALL open PRs regardless of author, so a PR nobody in the
+#             fleet opened can land a candidate here.
+#
+# Only the `gate` branch is conditional on the gate being on; `conflict` is a
+# fact about the walk and is always worth saying. stdout stays byte-identical to
+# the contract above and exit codes are untouched, so a gh/jq transport failure
 # stays distinguishable from a substantive empty pick.
 explain_empty_pick() {
-  [[ -n "$REQUIRE_LABELS" ]] || return 0
-  printf 'pick-next: nothing picked; the require gate is active (%s), so any open issue lacking it was never a candidate. Re-run with RALPH_REQUIRE_LABELS= to see them.\n' \
-    "$REQUIRE_LABELS" >&2
+  case "$1" in
+    gate)
+      [[ -n "$REQUIRE_LABELS" ]] || return 0
+      printf 'pick-next: nothing picked; no open issue passed the require gate (%s). Re-run with RALPH_REQUIRE_LABELS= to see what it holds back.\n' \
+        "$REQUIRE_LABELS" >&2
+      ;;
+    conflict)
+      printf 'pick-next: nothing picked; %s candidate(s) passed the filters but every one is already in flight or conflicts with the active fleet. Nothing needs grooming.\n' \
+        "$2" >&2
+      ;;
+  esac
 }
 
 if [[ -z "$open_tsv" ]]; then
-  explain_empty_pick
+  explain_empty_pick gate
   exit 0
 fi
 
@@ -325,6 +348,11 @@ while IFS=$'\t' read -r n cand_labels _bridge; do
   exit 0
 done <<<"$open_tsv"
 
-# Backlog drained, or nothing compatible with the current fleet remains.
-explain_empty_pick
+# Candidates existed but none was compatible with the current fleet. The require
+# gate is not the cause here — every one of these already passed it.
+# Counted with mapfile rather than `grep -c`, which exits 1 on zero matches and
+# would need its status swallowed to be used inline — the exact shape this
+# change is meant to avoid.
+mapfile -t _candidate_lines <<<"$open_tsv"
+explain_empty_pick conflict "${#_candidate_lines[@]}"
 exit 0
