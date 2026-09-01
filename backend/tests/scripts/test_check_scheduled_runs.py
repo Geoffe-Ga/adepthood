@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -39,8 +40,16 @@ from pathlib import Path
 
 import pytest
 
+from tests.workflow_text import workflow_name
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SWEEP = _REPO_ROOT / "scripts" / "ci" / "check_scheduled_runs.sh"
+_WATCHER = _REPO_ROOT / ".github" / "workflows" / "scheduled-health.yml"
+
+# Where the script spells the one conclusion it matches.
+_SICK_CONCLUSION_DECLARATION = re.compile(
+    r'^readonly SICK_CONCLUSION="(?P<conclusion>[^"]+)"\s*$', re.MULTILINE
+)
 
 EXIT_OK = 0
 EXIT_SICK = 1
@@ -66,8 +75,21 @@ jobs:
       - run: "true"
 """
 
+# A workflow with no display name of its own, carrying only a job name. This is
+# what tells a column-zero reader apart from one that accepts any `name:`; a
+# fixture that merely puts the file's name first cannot, because first-match
+# alone then returns the right string by accident.
+UNNAMED_WORKFLOW = """on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Inner startup thing
+"""
+
 # A parked one. The cron is commented out, so it cannot run and cannot be sick;
-# demanding health from it would file issues against workflows that are off.
+# demanding a startup record from it would file issues against workflows that
+# are off.
 PAUSED_WORKFLOW = """name: Paused
 on:
   # schedule:
@@ -94,6 +116,23 @@ def _runs(*conclusions: str | None) -> str:
             for index, conclusion in enumerate(conclusions)
         ]
     )
+
+
+def _declared_sick_conclusion() -> str:
+    """Return the one conclusion the sweep matches, read from its own declaration.
+
+    A deliberate read of the script's source, and the only one here: it is what
+    lets the claim tests below ask "does the advertised name mention the thing
+    that is actually checked" without hard-coding the answer twice.
+    """
+    found = _SICK_CONCLUSION_DECLARATION.search(_SWEEP.read_text(encoding="utf-8"))
+    assert found is not None, "the sweep no longer declares SICK_CONCLUSION once, on its own line"
+    return found.group("conclusion")
+
+
+def _summary_headings(summary: str) -> list[str]:
+    """Return the ``## `` heading lines the sweep wrote to the step summary."""
+    return [line for line in summary.splitlines() if line.startswith("## ")]
 
 
 @dataclass(frozen=True)
@@ -381,3 +420,103 @@ def test_the_sweep_actually_asks_gh_for_the_runs(tmp_path: Path) -> None:
 def test_the_sweep_script_is_executable() -> None:
     """The workflow invokes it directly; mode 100644 would exit 126 and look like a crash."""
     assert os.access(_SWEEP, os.X_OK)
+
+
+# --- The advertised claim must not outrun the checked one ------------------
+
+
+def test_the_advertised_claim_names_the_conclusion_actually_checked(tmp_path: Path) -> None:
+    """A run's name and its heading are its whole claim; both must name the one conclusion checked.
+
+    The sweep matches exactly one conclusion. A run advertised as a health check
+    reads, to anyone scanning the run list, as "every scheduled workflow is
+    fine", when what it verified is "none was rejected before its jobs were
+    created" -- and a workflow whose jobs all ran and failed is green here and
+    reports that itself.
+
+    Both copies of the claim are asserted, because the run list shows one and the
+    step summary shows the other, and fixing either alone leaves the false
+    reading intact wherever the reader happened to look.
+    """
+    conclusion = _declared_sick_conclusion()
+    token = conclusion.split("_")[0]
+
+    sweep = _sweep(tmp_path, {ACTIVE_NAME: ACTIVE_WORKFLOW}, gh_stdout=_runs("success"))
+    headings = _summary_headings(sweep.summary)
+    assert len(headings) == 1, f"expected exactly one H2 heading, got {headings}"
+    heading = headings[0]
+
+    advertised = workflow_name(_WATCHER.read_text(encoding="utf-8"))
+    assert advertised is not None, "the watcher declares no display name"
+
+    assert token in heading.lower(), f"summary heading {heading!r} does not name {conclusion!r}"
+    assert token in advertised.lower(), f"run-list name {advertised!r} does not name {conclusion!r}"
+    assert "health" not in heading.lower(), f"summary heading {heading!r} still claims health"
+    assert "health" not in advertised.lower(), f"run-list name {advertised!r} still claims health"
+
+
+def test_the_workflow_name_reader_ignores_a_job_name() -> None:
+    """The reader above must read the file's name, not a job's, or it proves nothing here.
+
+    This watcher's job name already named startup failures precisely while the
+    file's own name did not. A reader that accepted any ``name:`` would let the
+    precise job name answer a question asked about the advertised one, and the
+    claim test above would pass against the very defect it exists to catch.
+
+    A fixture that merely puts the file's name first cannot tell the two readers
+    apart, because first-match alone then returns the right string by accident.
+    So the discriminating case is a workflow with NO name of its own: an
+    unanchored reader hands back the job's name, an anchored one says there is
+    none.
+    """
+    assert workflow_name(UNNAMED_WORKFLOW) is None
+
+    assert workflow_name(f"name: Outer\n\n{UNNAMED_WORKFLOW}") == "Outer"
+
+
+def test_the_run_list_name_and_the_summary_heading_state_the_same_claim(tmp_path: Path) -> None:
+    """One claim, printed in two places, must not drift apart in a later edit of one file.
+
+    The run list shows the workflow's name and the step summary shows the
+    heading. They are the same sentence to a reader, and nothing but this pins
+    them to each other.
+    """
+    sweep = _sweep(tmp_path, {ACTIVE_NAME: ACTIVE_WORKFLOW}, gh_stdout=_runs("success"))
+    headings = _summary_headings(sweep.summary)
+    assert len(headings) == 1, f"expected exactly one H2 heading, got {headings}"
+
+    advertised = workflow_name(_WATCHER.read_text(encoding="utf-8"))
+    assert headings[0] == f"## {advertised}"
+
+
+@pytest.mark.parametrize(
+    ("gh_stdout", "gh_exit", "expected_code"),
+    [
+        pytest.param(_runs("success"), 0, EXIT_OK, id="clean-bill"),
+        pytest.param(_runs(SICK), 0, EXIT_SICK, id="sick"),
+        pytest.param("", 1, EXIT_TRANSPORT, id="transport"),
+    ],
+)
+def test_every_swept_verdict_reports_how_many_workflows_were_swept(
+    tmp_path: Path, gh_stdout: str, gh_exit: int, expected_code: int
+) -> None:
+    """A green run must read as "N swept for X", never as a bare checkmark.
+
+    Narrowing what the run claims is only honest if it still says how much was
+    looked at. Every terminal branch carries the count, so pin all three: a
+    rename that quietly reduced the clean bill to a tick would restore exactly
+    the unreadable green this watcher exists to replace.
+
+    The fourth exit-2 branch -- a sweep that found no actively scheduled
+    workflow -- is deliberately absent: it reports that it swept nothing, in
+    wording that is meant to be distinct from a count.
+    """
+    sweep = _sweep(
+        tmp_path,
+        {ACTIVE_NAME: ACTIVE_WORKFLOW},
+        gh_stdout=gh_stdout,
+        gh_exit=gh_exit,
+    )
+
+    assert sweep.returncode == expected_code
+    assert "Swept 1 scheduled workflow" in sweep.summary

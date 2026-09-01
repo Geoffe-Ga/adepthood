@@ -44,6 +44,10 @@ _WITH_KEY = re.compile(r"^(?P<indent>\s*)with:\s*$")
 # One ``key: value`` entry inside such a mapping.
 _MAPPING_ENTRY = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w.-]*):\s*(?P<value>.*?)\s*$")
 
+# The workflow's own display name: ``name:`` at column zero. A job's ``name:``
+# is indented, and conflating the two is the whole hazard this anchor avoids.
+_WORKFLOW_NAME = re.compile(r"^name:\s*(?P<name>.+?)\s*$")
+
 # Structure of a workflow file: ``jobs:`` at column zero, one job header two
 # spaces in, and the next column-zero key ends the section.
 _JOBS_KEY = re.compile(r"^jobs:\s*$")
@@ -82,6 +86,28 @@ def comment_lines(workflow_text: str) -> str:
         Every comment-only line, newline-joined.
     """
     return "\n".join(line for line in workflow_text.splitlines() if line.strip().startswith("#"))
+
+
+def workflow_name(workflow_text: str) -> str | None:
+    """Return the workflow's display name -- the string the Actions run list shows.
+
+    Anchored at column zero, and that is load-bearing. A job also carries a
+    ``name:``, indented under ``jobs:``, and a job name may be perfectly precise
+    while the file's own name overclaims. A reader that accepted either would let
+    the precise one answer a question asked about the advertised one.
+
+    Args:
+        workflow_text: The workflow file's contents.
+
+    Returns:
+        The first column-zero ``name:`` value, stripped of surrounding quotes, or
+        ``None`` when the workflow declares no display name.
+    """
+    for line in workflow_text.splitlines():
+        found = _WORKFLOW_NAME.match(line)
+        if found is not None:
+            return found.group("name").strip("\"'")
+    return None
 
 
 def trigger_block(workflow_text: str) -> str:

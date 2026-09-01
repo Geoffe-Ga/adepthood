@@ -1,6 +1,14 @@
-name: Scheduled workflow health
+name: Scheduled workflow startup check
 
-# Watch the other scheduled workflows from OUTSIDE.
+# Check whether the other scheduled workflows STARTED, from OUTSIDE.
+#
+# The name is deliberately narrower than "health", and matches the one thing
+# below that is verified. A workflow whose jobs all ran and then failed is green
+# here: that failure is loud, and the workflow reports it itself. What this run
+# being green means is only that nothing was rejected before its jobs existed.
+# The file is still named `scheduled-health.yml`, and stays so on purpose --
+# renaming it would orphan the `<!-- workflow-failure:scheduled-health.yml -->`
+# marker that keys any existing tracking issue for this workflow.
 #
 # Every actively scheduled workflow here now reports its own failures. That
 # covers every failure except the quietest one: `startup_failure`, where GitHub
@@ -70,7 +78,7 @@ jobs:
             1)
               note="At least one scheduled workflow is being rejected before any job is created. Each now has its own tracking issue. Failing this run so it is not just a line in a summary." ;;
             2)
-              note="The sweep could not be completed, so the health of some workflow is UNKNOWN. This is not a clean bill -- failing the run rather than reporting a health check that did not happen." ;;
+              note="The sweep could not be completed, so the startup state of some workflow is UNKNOWN. This is not a clean bill -- failing the run rather than reporting a startup check that did not happen." ;;
             *)
               note="The sweep exited $status, which it is not documented to do. Failing closed." ;;
           esac
