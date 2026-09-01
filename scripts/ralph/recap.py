@@ -92,7 +92,10 @@ SEMANTIC_META_ASSET = "semantic-meta.json"
 
 # Issues carrying any of these labels are not part of Ralph's real backlog, so
 # they are excluded from the open-issue count behind the ETA. Kept in sync with
-# the default exclude set in `scripts/ralph/pick-next.sh`.
+# the default EXCLUDE set in `scripts/ralph/pick-next.sh`. The picker's separate
+# require gate (`agent-ready` by default) is deliberately NOT mirrored here: the
+# count is meant to be a superset that still shows work waiting to be specced,
+# which shrinking it to the dispatchable set would hide.
 DEFAULT_EXCLUDE_LABELS = (
     "epic",
     "wontfix",
@@ -335,8 +338,10 @@ def count_open_backlog(repo: str, *, token: str, max_items: int = 1000) -> int:
     """Count open issues that are real, unblocked Ralph work — the backlog.
 
     Excludes pull requests (which the issues endpoint returns too) and any issue
-    bearing an excluded label, so the ETA reflects what the picker would
-    actually pick up rather than every open card.
+    bearing an excluded label. This is deliberately a SUPERSET of what the picker
+    dispatches: `scripts/ralph/pick-next.sh` additionally requires `agent-ready`,
+    so an open, unblocked, unspecced issue is counted here but not pickable. The
+    count answers "how much work is outstanding", not "how much can start now".
     """
     issues = _gh_get_paged(
         f"/repos/{repo}/issues",

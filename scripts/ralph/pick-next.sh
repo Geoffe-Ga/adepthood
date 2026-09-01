@@ -9,8 +9,15 @@
 # The picker is label-configurable. Tune via env vars:
 #
 #   RALPH_REQUIRE_LABELS  Space-separated labels an issue MUST have (ALL of
-#                         them). Empty (default) = no required label; any open
-#                         issue is a candidate.
+#                         them). Default: `agent-ready` — an issue nobody has
+#                         specced is not build work, so the picker never hands
+#                         one to a lane. REPLACES the default, it does not add
+#                         to it, exactly like RALPH_EXCLUDE_LABELS below. Set it
+#                         to the EMPTY string to require nothing and see the
+#                         whole unlabelled backlog again; that is the escape
+#                         hatch, and it is the only way to turn the gate off.
+#                         When the gate holds everything back, the picker says
+#                         so on stderr — an empty pick is never silent.
 #   RALPH_EXCLUDE_LABELS  Space-separated labels that DISQUALIFY an issue.
 #                         REPLACES the default list below — it does not add to
 #                         it. Setting it to one label silently re-admits `epic`,
@@ -65,7 +72,7 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 2
 fi
 
-REQUIRE_LABELS="${RALPH_REQUIRE_LABELS:-}"
+REQUIRE_LABELS="${RALPH_REQUIRE_LABELS-agent-ready}"
 EXCLUDE_LABELS="${RALPH_EXCLUDE_LABELS:-epic wontfix duplicate invalid question blocked needs-spec future-work do-not-auto-merge in-progress}"
 # Appended, never substituted. The override above replaces the whole default
 # list, so a caller who set it to add `dependencies` silently re-admitted every
@@ -97,10 +104,6 @@ RESPECT_EPICS="${RALPH_RESPECT_EPICS:-1}"
 #                                anywhere, every issue ranks equal and ordering
 #                                collapses to the previous oldest-first behavior
 #                                — this change is backward compatible.
-#
-# To enforce the pipeline's stricter "agent-ready required" gate (so ONLY fully
-# specified scan/feature issues are picked), set RALPH_REQUIRE_LABELS=agent-ready.
-# It is left empty by default to avoid starving an existing unlabeled backlog.
 DEFAULT_RANK="${RALPH_DEFAULT_PRIORITY_RANK:-1}"
 if ! printf '%s' "$DEFAULT_RANK" | grep -qE '^[0-9]+$'; then
   DEFAULT_RANK=1
@@ -153,7 +156,20 @@ labels_of() {
   gh issue view "$n" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true
 }
 
+# The picker's silence is ambiguous: a genuinely drained backlog and one held
+# back entirely by the require gate both print nothing, and the orchestrator's
+# scripted response to nothing is to announce the fleet is done. Name the cause
+# on stderr so the two are distinguishable. stdout stays byte-identical to the
+# contract above and the exit code is untouched, so a gh/jq transport failure
+# stays distinguishable from a substantive empty pick.
+explain_empty_pick() {
+  [[ -n "$REQUIRE_LABELS" ]] || return 0
+  printf 'pick-next: nothing picked; the require gate is active (%s), so any open issue lacking it was never a candidate. Re-run with RALPH_REQUIRE_LABELS= to see them.\n' \
+    "$REQUIRE_LABELS" >&2
+}
+
 if [[ -z "$open_tsv" ]]; then
+  explain_empty_pick
   exit 0
 fi
 
@@ -310,4 +326,5 @@ while IFS=$'\t' read -r n cand_labels _bridge; do
 done <<<"$open_tsv"
 
 # Backlog drained, or nothing compatible with the current fleet remains.
+explain_empty_pick
 exit 0

@@ -98,12 +98,17 @@ run_pick()   { (cd "$REPO" && PATH="$BIN:$PATH" "$PICK"); }
 # JSON-mode helpers: build the fixture the stub feeds to pick-next's REAL --jq
 # filter (mirrors `gh issue list --json number,labels`), so require/exclude
 # filtering AND the priority-tier sort are exercised, not bypassed.
-ij_add()      { # <num> <labels-csv> [body]  — append one issue object
+ij_add_raw()  { # <num> <labels-csv> [body]  — append one issue, labels exactly as given
   local names
   names=$(jq -cn --arg s "$2" '$s | split(",") | map(select(length>0) | {name: .})')
   jq -cn --argjson n "$1" --argjson l "$names" --arg b "${3:-}" \
     '{number:$n, labels:$l, body:$b}' >> "$STUBDIR/issue_json.lines"
 }
+# The default-carrying helper: every fixture built with ij_add gains the label the
+# picker now requires by default, so a scenario about tiering, bridges or excludes
+# stays about that and does not silently become a require-gate test. A scenario
+# whose SUBJECT is a missing label calls ij_add_raw and says so.
+ij_add()      { ij_add_raw "$1" "${2:+$2,}agent-ready" "${3:-}"; }
 ij_finalize() { jq -s . "$STUBDIR/issue_json.lines" > "$STUBDIR/issue_json"; }
 
 # 1) First worker (empty fleet) gets the lowest candidate.
@@ -192,7 +197,7 @@ check "path segment matching issue-<n> above worktrees dir is ignored" "11" \
 
 # 11) P0 preempts a lower, older issue: #99 (P0) beats #10 (P3).
 new_scenario prio_p0_preempts
-ij_add 10 "P3,agent-ready"; ij_add 99 "P0,agent-ready"; ij_finalize
+ij_add 10 "P3"; ij_add 99 "P0"; ij_finalize
 check "P0 preempts older P3" "99" "$(run_pick)"
 
 # 12) Full tier order P0<P1<P2<P3, and oldest-first WITHIN a tier.
@@ -221,10 +226,34 @@ check "default-rank override sends unlabeled behind P2" "5" \
   "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_DEFAULT_PRIORITY_RANK=3 "$PICK")"
 
 # 15) require/exclude filtering still applies in JSON mode: agent-ready gate.
+#     #10 is built raw BECAUSE the missing label is this scenario's whole subject.
 new_scenario prio_require_gate
-ij_add 10 "P0"; ij_add 11 "P3,agent-ready"; ij_finalize
+ij_add_raw 10 "P0"; ij_add 11 "P3"; ij_finalize
 check "require agent-ready filters out ungated P0" "11" \
   "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_REQUIRE_LABELS=agent-ready "$PICK")"
+
+# 15b) The DEFAULT require gate — no env var set anywhere. An issue nobody has
+#      specced is not a candidate even at P0; the specced P3 is picked instead.
+new_scenario require_default_gate
+ij_add_raw 10 "P0"; ij_add 11 "P3"; ij_finalize
+check "default require gate skips an unspecced P0" "11" "$(run_pick)"
+
+# 15c) Nothing carries the label: no pick, and the silence names its own cause,
+#      so a label-gated backlog cannot be mistaken for a drained one.
+new_scenario require_default_all_held
+ij_add_raw 10 "P0"; ij_add_raw 11 ""; ij_finalize
+check "default gate yields no pick when nothing is specced" "" \
+  "$(run_pick 2>"$STUBDIR/err")"
+check "the empty pick names the require gate" "1" \
+  "$(grep -c 'require gate is active' "$STUBDIR/err")"
+
+# 15d) The escape hatch: an EXPLICITLY EMPTY override re-admits everything. This
+#      is green before the flip too; its job is to fail the `${VAR:-default}`
+#      colon footgun, which would swallow an intentional empty override.
+new_scenario require_escape_hatch
+ij_add_raw 10 "P0"; ij_add 11 "P3"; ij_finalize
+check "explicit empty RALPH_REQUIRE_LABELS re-admits unspecced issues" "10" \
+  "$(cd "$REPO" && PATH="$BIN:$PATH" RALPH_REQUIRE_LABELS='' "$PICK")"
 
 # --- repo's native priority-* vocabulary maps onto the same tiers -------------
 

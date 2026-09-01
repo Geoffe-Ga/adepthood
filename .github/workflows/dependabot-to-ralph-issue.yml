@@ -185,8 +185,12 @@ jobs:
               "$marker" "$contract_body" "$pr")"
 
             # Title mirrors the Dependabot PR so the dep/from/to is legible.
-            # Labels: `dependencies` only — none of pick-next.sh's exclude set,
-            # so the picker treats it as a normal candidate.
+            # Labels: `dependencies` only. That carries no `agent-ready`, which
+            # pick-next.sh now requires by default, so a bridge issue is
+            # picker-invisible BY DESIGN. It is meant to be ADOPTED via its
+            # `<!-- dependabot-pr:N -->` marker — the orchestrator drives the
+            # existing Dependabot branch — never assigned to a build lane, which
+            # would open a second PR for a bump that already has one.
             issue_num="$(gh issue create --repo "$REPO" \
               --title "chore(deps): adopt Dependabot PR #$pr — $title" \
               --label dependencies \

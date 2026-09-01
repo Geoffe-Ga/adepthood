@@ -16,10 +16,12 @@ two frontend screens). This mirrors the sizing convention already used across
    the overall Goal and Context (why this matters, what the finished feature
    looks like end-to-end), plus a checklist linking each sub-issue once
    created. No `agent-ready` label — an epic isn't a directly implementable
-   unit of work, it's a tracking/coordination issue. It must also carry the
-   bare `epic` label (not just `epic:<slug>` — see step 5): that's the
-   literal token `pick-next.sh`'s default exclude list matches, and its
-   label filtering is exact-match, not prefix-match.
+   unit of work, it's a tracking/coordination issue, and the picker requires
+   `agent-ready` by default, so withholding it already keeps the epic out. It
+   must ALSO carry the bare `epic` label (not just `epic:<slug>` — see step 5):
+   that's the literal token `pick-next.sh`'s default exclude list matches, its
+   label filtering is exact-match rather than prefix-match, and it keeps the
+   epic out even for a caller who has disabled the require gate.
 
 3. **Write each sub-issue** using the full `report-template.md` (Role /
    Goal / Context / Output Format / Examples / Constraints), scoped to one

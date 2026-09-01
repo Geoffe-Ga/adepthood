@@ -186,8 +186,9 @@ gh search issues --repo Geoffe-Ga/adepthood "<keywords>" --state open
 ### Step 7 — File the work (Ralph-ready)
 
 Follow `references/issue-templates.md` exactly. The labels matter — Ralph's
-picker (`scripts/ralph/pick-next.sh`) skips `epic`/`blocked`/`needs-spec` and
-works everything else lowest-number-first.
+picker (`scripts/ralph/pick-next.sh`) requires `agent-ready`, skips
+`epic`/`blocked`/`needs-spec`, and works what remains by priority tier then
+lowest-number-first. A finding filed without `agent-ready` is filed for a human.
 
 - **Standalone finding** → Template A, normal labels (no excluded label), sized
   ≤ ~300 net LoC / ≤ 5 files. Paste the corroborating evidence into the body.
@@ -311,6 +312,10 @@ Bundle Low-severity findings per file/area into single tidy-up issues, raise the
 corroboration bar, and prefer a few ironclad high-value issues over many maybes.
 
 ### Ralph isn't picking up a filed issue
-Check labels against `scripts/ralph/pick-next.sh`: an excluded label
-(`epic`/`blocked`/`needs-spec`/etc.) or an open PR already referencing it will
-make the picker skip it. Epics are skipped by design; their sub-issues are not.
+Check `agent-ready` FIRST — `scripts/ralph/pick-next.sh` requires it by default,
+and its absence is the most common cause by far because it is an omission rather
+than a visible label. Then check for an excluded label
+(`epic`/`blocked`/`needs-spec`/etc.) or an open PR already referencing it, either
+of which makes the picker skip it. Epics are skipped by design; their sub-issues
+are not. Confirm by hand: `RALPH_REQUIRE_LABELS= ./scripts/ralph/pick-next.sh`
+shows what the require gate is holding back.

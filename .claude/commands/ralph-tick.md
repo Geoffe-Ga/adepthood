@@ -107,9 +107,20 @@ Each in-flight PR is a lane in Gate 3/4; each occupied worktree without a PR yet
 is a lane still building (its worker is running in the background). Together they
 are the pool.
 
-**Mode A — all done.** If the pool is empty (no worktrees, no in-flight PRs) AND
-`pick-next.sh` prints nothing: announce "Backlog drained. Ralph is done." and
-call `/loop` to **stop**.
+**Mode A — nothing to pick.** If the pool is empty (no worktrees, no in-flight
+PRs) AND `pick-next.sh` prints nothing, an empty pick has **three** causes and
+they are not interchangeable. Branch on the picker's exit code and stderr; never
+swallow either.
+
+- **Exit 2** — `gh` is missing or unauthenticated. This is a broken tool, not a
+  drained backlog. Report it and stop; do not announce completion.
+- **Exit 0, and stderr names the require gate** — the backlog is not drained, it
+  is label-gated: open issues remain but none carries `agent-ready`. Report how
+  many by re-running `RALPH_REQUIRE_LABELS= ./scripts/ralph/pick-next.sh`, say
+  that they need grooming (a human or `flare` must spec and label them), and
+  stop. Announcing "Ralph is done" here would be false.
+- **Exit 0, stderr silent** — genuinely nothing left. Announce "Backlog drained.
+  Ralph is done." and call `/loop` to **stop**.
 
 ### Step 1 — Merge every ready lane (serialized, up-to-date only)
 
