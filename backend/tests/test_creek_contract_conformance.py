@@ -204,6 +204,15 @@ _CLASSIFICATION_REQUEST_PROPERTIES = frozenset({"method", "retier"})
 #: honest signal that adepthood's per-entry deferral needs revisiting.
 _NO_FRAGMENT_SELECTOR_PROMISE = "There is no fragment selector, and there will not be one."
 
+#: What a reader of this failure needs and cannot get from the assertion alone:
+#: adepthood defers per-entry CLASSIFY *because* the published pass names no
+#: fragment, so this going red is an event to act on, not a stale pin to bump.
+_REOPENS_THE_DEFERRAL = (
+    "Creek's classification request changed shape. Adepthood's per-entry CLASSIFY "
+    "deferral rests on this request naming no fragment, so re-pinning this without "
+    "revisiting that deferral would hide the event the guard exists to catch."
+)
+
 # The two keys a journal body would travel under if one had been published.
 _BODY_KEYS = ("content", "body")
 
@@ -1373,16 +1382,19 @@ def test_the_classification_request_still_names_no_fragment() -> None:
     properties = schema["properties"]
     assert isinstance(properties, dict)
     assert properties, _CLASSIFICATION_REQUEST_SCHEMA
-    assert len(properties) == len(_CLASSIFICATION_REQUEST_PROPERTIES), sorted(properties)
-    assert frozenset(properties) == _CLASSIFICATION_REQUEST_PROPERTIES
+    published = sorted(properties)
+    assert len(properties) == len(_CLASSIFICATION_REQUEST_PROPERTIES), (
+        f"{_REOPENS_THE_DEFERRAL} Published: {published}"
+    )
+    assert frozenset(properties) == _CLASSIFICATION_REQUEST_PROPERTIES, _REOPENS_THE_DEFERRAL
 
     # Without this the set above pins only what a *documented* caller may send:
     # an open schema would admit a selector nobody had to publish first.
-    assert schema["additionalProperties"] is False
+    assert schema["additionalProperties"] is False, _REOPENS_THE_DEFERRAL
 
     description = schema["description"]
     assert isinstance(description, str)
-    assert _NO_FRAGMENT_SELECTOR_PROMISE in description
+    assert _NO_FRAGMENT_SELECTOR_PROMISE in description, _REOPENS_THE_DEFERRAL
 
 
 # --------------------------------------------------------------------------
