@@ -59,13 +59,44 @@ repos:
   # ruff-format is the single source of truth for Python formatting;
   # ruff --fix handles lint auto-fixes. Black was removed to eliminate
   # redundant/conflicting formatters.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.9
+  #
+  # ruff runs from the *installed* environment, like mypy below, so
+  # backend/requirements-dev.txt is the one place its version is stated. This
+  # used to be a cloned astral-sh/ruff-pre-commit hook pinned by `rev: v0.12.9`
+  # while requirements-dev.txt pinned ruff 0.16.4, which meant two linters both
+  # presenting themselves as "the lint gate": CI lints by running pre-commit,
+  # which ignored the requirements files and cloned its own ruff, while
+  # scripts/backend/lint.sh ran the installed one. Neither verdict predicted
+  # the other and no message said which tool had spoken. Nothing reconciled
+  # them either -- there is no `package-ecosystem: "pre-commit"` entry in
+  # .github/dependabot.yml and no `autoupdate` anywhere, so Dependabot ratchets
+  # the pin forward while `rev:` stays frozen at whatever it was committed
+  # with. backend/tests/scripts/test_precommit_tool_versions.py locks this
+  # shape in for every hook, not just this one.
+  #
+  # `entry`, `types_or` and `require_serial` are restated verbatim from
+  # ruff-pre-commit's own .pre-commit-hooks.yaml, because a local hook supplies
+  # its own definition. `--force-exclude` is the load-bearing one: pre-commit
+  # passes filenames explicitly, and ruff honours [tool.ruff] extend-exclude
+  # for explicitly-passed paths only when it is present. Dropping it makes ruff
+  # lint backend/migrations for the first time -- measured at 253 findings and
+  # 13 files it would reformat.
+  - repo: local
     hooks:
       - id: ruff
+        name: ruff
+        entry: ruff check --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         files: ^backend/
         args: ["--config=backend/pyproject.toml", "--fix"]
       - id: ruff-format
+        name: ruff format
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         files: ^backend/
 
   # mypy runs from the *installed* environment rather than one pre-commit builds
