@@ -88,7 +88,7 @@ cd "$PROJECT_ROOT"
 # this stage does need the network to reach a verdict. An offline run fails
 # rather than reporting a false clean, which is the right direction to fail,
 # but it means a failure here is worth reading before it is believed.
-"$SCRIPT_DIR/require-node-modules.sh"
+"$SCRIPT_DIR/require-node-modules.sh" --verify-lockfile
 
 if $VERBOSE; then
     set -x
@@ -96,10 +96,29 @@ fi
 
 echo "=== Expo SDK alignment (expo install --check) ==="
 
-# The remedy is spelled with the local bin for the same reason the check is.
-FIX_COMMAND="cd frontend && ./node_modules/.bin/expo install --fix"
+# The remedy is deliberately NOT the Expo installer's realignment mode, which
+# this line used to offer unconditionally. Two reasons, both measured here.
+#
+# First, it is usually the wrong diagnosis. This stage reads the *installed*
+# tree, so a stale install fails it while the committed pins are perfectly
+# correct -- and that is the common case, not the rare one. It cost a full
+# false-bug cycle: an issue was filed reporting ten SDK packages behind on
+# `main` with this exact line as its evidence, when package.json and
+# package-lock.json already declared the expected versions and only the install
+# was old. `npm ci` fixed it with zero tracked-file changes. So the reader is
+# sent to check installed-vs-lockfile first.
+#
+# Second, when a pin realignment genuinely IS needed, it is not safe to run from
+# wherever this gate happened to fail. It runs an installer, and inside a Ralph
+# fleet lane frontend/node_modules is a symlink into the main checkout -- so that
+# write goes THROUGH the link and mutates the installed tree of every concurrent
+# lane. Its npm-install semantics have also left `npm ci` dead on an ERESOLVE
+# here before, over react-native's exact-version peerOptional
+# @react-native/jest-preset. It belongs in its own PR, run in the main checkout
+# against a real node_modules, with the resulting lockfile reviewed.
+REMEDY_HINT="./scripts/frontend/require-node-modules.sh --verify-lockfile"
 
-./node_modules/.bin/expo install --check || { echo "✗ Dependencies drifted from the pinned Expo SDK; realign with: $FIX_COMMAND" >&2; exit 1; }
+./node_modules/.bin/expo install --check || { echo "✗ Dependencies drifted from the pinned Expo SDK. Check whether the INSTALL is stale before touching any pin: $REMEDY_HINT -- if that reports drift, reinstall from the lockfile rather than editing package.json. If the install is clean, the pins genuinely need realigning to the SDK table; do that in its own PR from the main checkout." >&2; exit 1; }
 
 echo "✓ Dependencies match the pinned Expo SDK"
 exit 0

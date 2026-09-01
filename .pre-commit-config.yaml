@@ -200,6 +200,15 @@ repos:
   #      the repo root as cwd, so this path resolves before the `cd`. Without it a
   #      tree that has no deps fails as `eslint: command not found`, which names the
   #      wrong problem.
+  #
+  #      Every entry that reads the installed tree passes `--verify-lockfile`,
+  #      which also proves the install was BUILT from the committed lockfile.
+  #      Presence is not freshness: a tree installed weeks ago satisfies the bare
+  #      guard, and the staleness then surfaces as an Expo SDK alignment failure
+  #      that blames the committed pins. `commitlint` below is the deliberate
+  #      exception — it carries no `files:` filter, so it fires on EVERY commit in
+  #      the repo, and a stale frontend install must not block a backend-only or
+  #      docs-only commit. It stays on the presence-only path.
   #   2. `cd frontend &&` — pre-commit appends the matched filenames to the argv of
   #      `bash -c`, where they land in $0/$1. Every entry below ignores them except
   #      commitlint, which reads $0 for the message path. Ignoring them is what lets
@@ -218,21 +227,21 @@ repos:
       - id: frontend-eslint
         name: frontend eslint
         language: system
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && npm run lint'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && npm run lint'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
       - id: frontend-prettier
         name: frontend prettier (write)
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/prettier --write .'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/prettier --write .'
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/|^frontend/(?:tsconfig\.json|package-lock\.json)$
 
       - id: frontend-typecheck
         name: frontend typecheck
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/tsc -p tsconfig.json --noEmit'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
         files: ^frontend/.*\.(ts|tsx)$
@@ -240,7 +249,7 @@ repos:
 
       - id: frontend-tests
         name: frontend tests
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/jest --passWithNoTests'
         language: system
         pass_filenames: false
         files: ^frontend/
@@ -285,7 +294,7 @@ repos:
       - id: frontend-tests-coverage
         name: frontend tests (coverage required)
         language: system
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --coverage --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/jest --coverage --passWithNoTests'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
