@@ -16,6 +16,7 @@ import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
+import VaultSettingsScreen from '../features/Settings/VaultSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
@@ -43,6 +44,7 @@ export type RootStackParamList = {
   DeleteAccount: undefined;
   ExportData: undefined;
   SupportCare: undefined;
+  VaultSettings: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
@@ -166,6 +168,11 @@ const RootStack = (): React.JSX.Element => (
   <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
     {SettingsScreens()}
+    <Stack.Screen
+      name="VaultSettings"
+      component={VaultSettingsScreen}
+      options={{ title: 'Private vault' }}
+    />
     <Stack.Screen
       name="SharePreview"
       component={SharePreviewScreen}

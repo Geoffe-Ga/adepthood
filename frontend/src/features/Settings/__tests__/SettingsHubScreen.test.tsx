@@ -226,6 +226,55 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Private vault row inside the Privacy group
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — private vault row', () => {
+  // Literals mirror the deck pinned verbatim in vaultCopy.test.ts. Kept literal
+  // so a break in the copy module cannot take this file's other suites with it.
+  const VAULT_ROW_LABEL = 'Private vault';
+  const VAULT_ROW_DESCRIPTION =
+    'An optional copy of what you write, in a space you run yourself. Adepthood is complete without one.';
+
+  test('renders the vault row inside the Privacy group', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const group = getByTestId('settings-group-privacy');
+
+    expect(within(group).getByTestId('settings-row-vault')).toBeTruthy();
+  });
+
+  test('labels the row with the vault copy', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const row = getByTestId('settings-row-vault');
+
+    expect(row.props.accessibilityLabel).toBe(VAULT_ROW_LABEL);
+    expect(row.props.accessibilityHint).toBe(VAULT_ROW_DESCRIPTION);
+  });
+
+  test('tapping the vault row navigates to VaultSettings', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-vault'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+  });
+
+  test('regression: the privacy promise and every existing row still render', () => {
+    const { getByTestId, getByText } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-privacy-statement')).toBeTruthy();
+    expect(
+      getByText('You choose the privacy of every entry — Public, Personal, or Intimate.'),
+    ).toBeTruthy();
+    expect(getByText('Entries you mark Intimate are never sent to any AI.')).toBeTruthy();
+    expect(getByTestId('settings-row-api-key')).toBeTruthy();
+    expect(getByTestId('settings-row-timezone')).toBeTruthy();
+    expect(getByTestId('settings-row-logout')).toBeTruthy();
+    expect(getByTestId('settings-row-support')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // "Choose your depths" section in the hub (RED — fails until impl exists)
 // ---------------------------------------------------------------------------
 

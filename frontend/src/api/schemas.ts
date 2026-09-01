@@ -1041,6 +1041,31 @@ export type CorpusConsentT = z.infer<typeof corpusConsentSchema>;
 export type CorpusConsentListT = z.infer<typeof corpusConsentListSchema>;
 
 // ---------------------------------------------------------------------------
+// Private vault (whether an account has connected a space of its own)
+// ---------------------------------------------------------------------------
+
+/**
+ * One account's vault connection (mirrors the backend ``VaultConnectionResponse``).
+ *
+ * ``vault_url`` is nullable because an account that has connected nothing is a
+ * state, not a malformed response: the route answers every account, never a
+ * 404, so a schema that refused the null would turn "you have no vault yet"
+ * into an error screen on a perfectly good reply.
+ *
+ * There is deliberately no request-side counterpart. Requests are not
+ * Zod-validated in this client, and a ``*Schema`` export carrying the vault
+ * credential would put that field in every table this module's schemas feed --
+ * conformance reports, generated docs, error dumps. The credential travels on
+ * one body and is described by an interface in ``index.ts`` instead.
+ */
+export const vaultConnectionResponseSchema = z.object({
+  connected: z.boolean(),
+  vault_url: z.string().nullable(),
+});
+
+export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
 // ---------------------------------------------------------------------------
 
