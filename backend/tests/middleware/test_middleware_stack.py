@@ -20,6 +20,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from main import app
 from middleware import (
+    CanonicalHostMiddleware,
     CorrelationIdMiddleware,
     ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
@@ -37,6 +38,7 @@ client = TestClient(app)
 # a class, so the entries and these classes have no comparable static type.
 _OUTER_TO_INNER = [
     ForwardedProtoMiddleware.__name__,
+    CanonicalHostMiddleware.__name__,
     RequestLoggingMiddleware.__name__,
     CorrelationIdMiddleware.__name__,
     SecurityHeadersMiddleware.__name__,
