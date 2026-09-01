@@ -102,6 +102,7 @@ from tests.creek_bundle_facts import (
     BUNDLE_NAME,
     CAPABILITY_COUNT,
     CREEK_MANIFEST_ENTRIES,
+    CREEK_NOTE_KINDS,
     EXAMPLE_CELLS,
     ONTOLOGY_VERSION,
     PINNED_COMMIT,
@@ -180,6 +181,28 @@ _TIER_FIELD = "tier"
 _WIRE_TIER_CEILING_DEF = "WireTierCeiling"
 _WIRE_TIER_CEILING_REF = f"#/$defs/{_WIRE_TIER_CEILING_DEF}"
 _PUBLISHED_WIRE_CEILINGS = ("open", "personal")
+
+_REFLECTION_NOTE_SCHEMA = "schemas/ReflectionNote.schema.json"
+_NOTE_KIND_DEF = "NoteKind"
+_NOTE_KIND_REF = f"#/$defs/{_NOTE_KIND_DEF}"
+_KIND_FIELD = "kind"
+
+_CLASSIFICATION_REQUEST_SCHEMA = "schemas/ClassificationRequest.schema.json"
+
+#: Every property Creek's whole-vault classification request publishes, measured
+#: from the bundle and then written down. Pinned as the WHOLE set rather than as
+#: the absence of one named key, because a fragment selector has no fixed
+#: spelling -- ``fragment_ids``, ``entry_ids``, ``since``, a filter object --
+#: and an absence guard naming a spelling Creek never chose would pass forever.
+#: A set equality cannot be dodged by spelling: any eighth key reddens it.
+_CLASSIFICATION_REQUEST_PROPERTIES = frozenset({"method", "retier"})
+
+#: The promise the request schema's own description makes, quoted from the
+#: vendored bytes. The property set catches a selector that has *arrived*; this
+#: catches the promise being *softened* -- a re-vendor that says a selector may
+#: come later leaves the properties untouched, and that erosion is the earliest
+#: honest signal that adepthood's per-entry deferral needs revisiting.
+_NO_FRAGMENT_SELECTOR_PROMISE = "There is no fragment selector, and there will not be one."
 
 # The two keys a journal body would travel under if one had been published.
 _BODY_KEYS = ("content", "body")
@@ -1297,6 +1320,69 @@ def test_reflections_care_escalation_is_a_distinct_escalation_shape() -> None:
     assert resources != []
     assert "code" not in escalation
     assert _STATUS_BY_STATE["care-escalation"] != _STATUS_BY_STATE["refusal"]
+
+
+def test_the_bundle_publishes_exactly_the_pinned_note_kinds() -> None:
+    """The vendored ``NoteKind`` enum is the vocabulary the pin names, entire.
+
+    ``services.creek_vault_payload`` drops a margin note whose kind is missing
+    from its table -- right, because a kind nobody has decided how to render must
+    not be coerced onto a neighbour -- but it drops it in silence. Only one kind,
+    ``pattern``, was compared against the bundle anywhere, so a re-vendor that
+    grew the vocabulary reddened nothing that describes it: the digests go red
+    once and are regenerated as a step of the re-vendor, and the schema-file
+    count is unmoved because a new enum member adds no file.
+
+    Two independent claims, neither derived from the other: the client suite
+    asserts the mapping against the pin, and this asserts the pin against the
+    bundle. Deriving the pin from the bundle instead would let a truncated
+    schema quietly redefine what "correct" means.
+    """
+    schema = _read_json(_REFLECTION_NOTE_SCHEMA)
+
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties[_KIND_FIELD]["$ref"] == _NOTE_KIND_REF
+
+    defs = schema["$defs"]
+    assert isinstance(defs, dict)
+    published = defs[_NOTE_KIND_DEF]["enum"]
+    assert isinstance(published, list), _REFLECTION_NOTE_SCHEMA
+    assert published, _REFLECTION_NOTE_SCHEMA
+    assert len(published) == len(CREEK_NOTE_KINDS), published
+    assert set(published) == CREEK_NOTE_KINDS
+
+
+def test_the_classification_request_still_names_no_fragment() -> None:
+    """Creek's classification pass stays whole-vault, so the deferral stands.
+
+    Creek publishes a classification capability -- ``pipeline`` -- and adepthood
+    still refuses :attr:`~domain.creek_vault.CreekCapability.CLASSIFY`. The two
+    are not the same request: adepthood's is per-entry, and the published one
+    names no fragment at all, which is why declining to wire them together is a
+    reading of the contract rather than a gap in it.
+
+    A fragment selector arriving upstream is precisely the event that would
+    reopen that deferral, and today it would land in silence: the vendored
+    classification schemas are read by nothing else in this repo, so digest
+    drift would report that a file changed without anyone learning that the one
+    property the deferral rests on had appeared.
+    """
+    schema = _read_json(_CLASSIFICATION_REQUEST_SCHEMA)
+
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties, _CLASSIFICATION_REQUEST_SCHEMA
+    assert len(properties) == len(_CLASSIFICATION_REQUEST_PROPERTIES), sorted(properties)
+    assert frozenset(properties) == _CLASSIFICATION_REQUEST_PROPERTIES
+
+    # Without this the set above pins only what a *documented* caller may send:
+    # an open schema would admit a selector nobody had to publish first.
+    assert schema["additionalProperties"] is False
+
+    description = schema["description"]
+    assert isinstance(description, str)
+    assert _NO_FRAGMENT_SELECTOR_PROMISE in description
 
 
 # --------------------------------------------------------------------------

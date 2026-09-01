@@ -102,6 +102,7 @@ from services.creek_vault_telemetry import (
     vault_outcome_counts,
 )
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
+from tests.creek_bundle_facts import CREEK_NOTE_KINDS
 
 _VAULT_URL = "https://vault.example.test"
 
@@ -3470,12 +3471,6 @@ def test_local_fallback_synchronous_reads_record_nothing() -> None:
 # were reached. The rules belong to the shared parser rather than to a transport,
 # so they are driven here through the one adapter that still exists.
 
-# Creek's seven published note kinds, restated here on purpose: this literal is
-# the pin against the vocabulary drifting out from under the mapping table.
-_CREEK_NOTE_KINDS = frozenset(
-    {"reframe", "fear", "longing", "value", "pattern", "tension", "gift"},
-)
-
 # One well-formed margin note's quote and note text, reused so the hygiene matrix
 # below can pair exactly one malformed item against a known-good sibling.
 _MARGIN_QUOTE = "the river kept moving"
@@ -3749,8 +3744,13 @@ def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:
 
 
 def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
-    """The mapping's keys are exactly Creek's seven published note kinds."""
-    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
+    """The mapping's keys are exactly Creek's seven published note kinds.
+
+    Asserted against the shared pin rather than a literal restated here, so this
+    and the conformance suite's bundle check cannot drift apart: that suite
+    holds the pin to the vendored enum, and this holds the mapping to the pin.
+    """
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == CREEK_NOTE_KINDS
 
 
 def _strip_spy_text(value: str) -> tuple[str, list[str | None]]:

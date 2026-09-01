@@ -1963,14 +1963,14 @@ class HttpCreekVaultClient:
         return result
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
-        """Refuse classification: its ``/v1`` request/response shape is unratified.
+        """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
-        Guarded by :class:`_CountingOutcome` like every other capability
-        rather than counted inline, so the refusal is labelled from the error it
-        actually raises. A refusal is worth counting precisely because it is
-        invisible: the caller degrades onto its local pipeline and nothing
-        surfaces, so this tally is where a deployment repeatedly asking for an
-        unwired capability becomes legible.
+        Creek does publish classification at the pinned contract 0.10.0, as
+        ``pipeline``: a whole-vault pass whose schema says it carries no
+        fragment selector and never will, so it cannot answer one entry's
+        question. What is absent is a shape, not a capability. Counted through
+        :class:`_CountingOutcome` because a refusal is otherwise invisible --
+        the caller degrades onto its local classifier and nothing surfaces.
         """
         with _CountingOutcome(CreekCapability.CLASSIFY):
             return await self._classify()
