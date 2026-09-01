@@ -60,6 +60,20 @@ allowed to cut a retry ladder short rather than waiting one out: an entry that
 fails is left pending and offered again by the next grant, so the resumability
 below is already the retry, and it is one that costs the caller nothing.
 
+**A refusal to bill is not a reach.** Everything above assumes an entry the
+sweep stopped on was at least *offered* -- that is what its mark records, and
+the mark is what sends it behind the never-offered set. One condition breaks
+that assumption: a provider that refuses because the balance behind the key is
+spent never sees the entry at all, and refuses the next forty just as fast. So
+that entry is left unmarked, the sweep stops there, and what it genuinely
+reached before the refusal is recorded honestly. The stamp is written *after*
+the offer for this reason, which makes the property general -- anything that
+stops an offer leaves the entry where it was, not one step further back. Note
+whose problem it is: this path classifies under the deployment's key rather
+than the account's, so nobody the writer is can settle that bill, and the
+signal it produces is a WARNING an operator reads rather than anything on a
+response.
+
 **Past the bound nothing is silently dropped.** The sweep reports how many
 entries it did not reach, logs it, and picks up somewhere new next time: a
 repeated ``PUT`` of an answer the account has already given appends no second
@@ -121,6 +135,7 @@ from sqlmodel import col, select
 from models.corpus_fragment import RETRIEVABLE_TIERS, CorpusFragment
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalEntry
+from services.botmason import LLMCreditExhaustedError
 from services.corpus_consent import ConsentChange
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
 
@@ -326,6 +341,50 @@ def _log_sweep(user_id: int, outcome: BackfillOutcome) -> None:
     )
 
 
+async def _offer_batch(
+    session: AsyncSession, *, candidates: list[JournalEntry], deadline: float
+) -> tuple[int, int]:
+    """Offer each candidate to the corpus writer; return what was reached and stored.
+
+    **The mark is downstream of the offer.** Marking an entry is how the sweep
+    remembers having reached it, and :func:`_pending_batch` spends that memory
+    by putting a marked entry behind every entry no sweep has tried. That trade
+    is right for writing a provider saw and could not place, and wrong for
+    writing a provider never saw: it moves the entry to the back of the queue
+    having cost nothing and answered nothing. So the stamp is written after
+    :func:`services.corpus_ingest.ingest_journal_entry` returns, which makes the
+    invariant general rather than special to one error -- *anything* that stops
+    the offer leaves the entry exactly where it was.
+
+    **A provider that refused to bill ends the sweep.** It is the one condition
+    the writer raises rather than reports, because it is a fact about the
+    deployment: it will refuse the next entry too, and the next forty. Carrying
+    on would mark and burn the whole batch against a refusal already given.
+    Breaking here rather than raising is what keeps the decision that authorised
+    this sweep -- :func:`services.corpus_consent.set_consent` shares the
+    caller's one transaction with this -- from being rolled back over a bill.
+    Nothing is logged here: the account and the provider were already named by
+    the WARNING :mod:`services.corpus_ingest` wrote on the way past, and a
+    second line from the sweep would say less about more.
+    """
+    considered = 0
+    added = 0
+    for entry in candidates:
+        try:
+            fragment = await ingest_journal_entry(
+                session, entry, timeout_seconds=BACKFILL_ENTRY_SECONDS
+            )
+        except LLMCreditExhaustedError:
+            break
+        considered += 1
+        await _mark_attempted(session, entry)
+        if fragment is not None:
+            added += 1
+        if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
+            break
+    return considered, added
+
+
 async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutcome:
     """Offer this account's un-ontologized writing to the ordinary corpus writer.
 
@@ -336,8 +395,10 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
     after the entry rather than before is what keeps the first one always
     attempted -- it is bounded by the per-entry cap alone, which is smaller.
 
-    Every entry offered is marked as offered, whatever came of it, because that
-    mark is the sweep's place in the queue. The count that comes back is still
+    Every entry *offered* is marked as offered, whatever came of it, because
+    that mark is the sweep's place in the queue -- and the mark is written after
+    the offer rather than before it, so an entry no provider was ever asked
+    about is not recorded as one that was. The count that comes back is still
     what the writer actually stored: an entry the classifier recognised nothing
     in stays pending, which is true rather than convenient, since a fragment
     with no position on the ontology is not corpus material.
@@ -356,19 +417,9 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
     if pending == 0:
         return _NOTHING_SWEPT
     candidates = await _pending_batch(session, user_id)
-    deadline = time.monotonic() + BACKFILL_DEADLINE_SECONDS
-    considered = 0
-    added = 0
-    for entry in candidates:
-        considered += 1
-        await _mark_attempted(session, entry)
-        fragment = await ingest_journal_entry(
-            session, entry, timeout_seconds=BACKFILL_ENTRY_SECONDS
-        )
-        if fragment is not None:
-            added += 1
-        if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
-            break
+    considered, added = await _offer_batch(
+        session, candidates=candidates, deadline=time.monotonic() + BACKFILL_DEADLINE_SECONDS
+    )
     outcome = BackfillOutcome(
         entries_considered=considered,
         fragments_added=added,

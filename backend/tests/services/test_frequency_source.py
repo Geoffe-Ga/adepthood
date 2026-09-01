@@ -48,6 +48,7 @@ from domain.frequencies import FREQUENCY_COLORS, FREQUENCY_NAMES, Frequency
 from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
 from services import frequency_source as fs
+from services.botmason import LLMCreditExhaustedError
 from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
 
 _ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
@@ -495,6 +496,33 @@ async def test_an_unreadable_vault_answer_and_a_failing_operator_still_never_rai
 
     assert result is fc.UNCLASSIFIED
     assert result.source is fc.ClassificationSource.NONE
+
+
+@pytest.mark.asyncio
+async def test_an_operator_side_balance_that_is_spent_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one operator-side condition that is not a degrade reaches the caller here.
+
+    Unlike every failure above, a spent balance says nothing about this content
+    and everything about the key: it will refuse the next call too. This seam
+    threads the caller's own key, so it is the one place a caller could be told
+    a bill is theirs to settle -- which is only possible if the condition still
+    has its identity by the time it arrives.
+    """
+    client = _vault(("F11",))
+
+    async def refusing(**_kwargs: object) -> SimpleNamespace:
+        raise LLMCreditExhaustedError("credit balance is too low", provider="anthropic")
+
+    monkeypatch.setattr(fc, "generate_response", refusing)
+
+    with pytest.raises(LLMCreditExhaustedError) as refused:
+        await fs.select_frequency_classification(
+            client, _BODY, classification=JournalClassification.PERSONAL
+        )
+
+    assert refused.value.provider == "anthropic"
 
 
 # --- the dependency runs one way ---------------------------------------------

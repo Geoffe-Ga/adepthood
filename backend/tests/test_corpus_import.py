@@ -27,6 +27,7 @@ import base64
 import json
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -66,6 +67,7 @@ from schemas.journal_upload import (
     decode_document,
 )
 from services import frequency_classification as fc
+from services.botmason import LLMCreditExhaustedError
 from services.corpus_import import (
     _INGEST_STATUS,
     _READ_FAILURE_STATUS,
@@ -446,6 +448,34 @@ class TestCorpusDestination:
         response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.json()["corpus_status"] == CorpusImportStatus.UNCLASSIFIED.value
         assert classifier.count == 1
+        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
+
+    @pytest.mark.asyncio
+    async def test_a_provider_that_refused_to_bill_answers_what_a_dead_one_answers(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One import is one call, so a spent balance changes nothing this caller sees.
+
+        The condition is raised rather than degraded so that a caller offering a
+        *batch* can stop paying for a refusal it has already been given. This
+        caller offers one document, so it is answered exactly as a dead provider
+        already is, stores nothing, and can be offered again.
+        """
+
+        async def refusing(**_kwargs: object) -> SimpleNamespace:
+            raise LLMCreditExhaustedError("credit balance is too low", provider="anthropic")
+
+        monkeypatch.setattr(fc, "generate_response", refusing)
+        headers = await _signup(async_client, "import-corpus-unbilled")
+        await _grant_consent(async_client, headers)
+
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+
+        assert response.status_code == HTTPStatus.ACCEPTED, response.text
+        assert response.json()["corpus_status"] == CorpusImportStatus.UNCLASSIFIED.value
         assert await _fragments(db_session, CorpusSource.UPLOAD) == []
 
     @pytest.mark.asyncio

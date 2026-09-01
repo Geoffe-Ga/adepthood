@@ -59,6 +59,7 @@ from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
+from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
 
@@ -481,6 +482,172 @@ async def test_an_outage_that_touched_everything_does_not_exclude_it_for_good(
 
     assert (outage.fragments_added, recovered.fragments_added) == (0, 2)
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])
+
+
+# --- a refusal to bill is not an offer ----------------------------------------
+
+# The provider whose balance is spent, and the words it refuses in. The name is
+# carried through to the operator's log because the operator is the only person
+# who can act on it: this path classifies under the server's key, never the
+# writer's.
+_REFUSING_PROVIDER = "anthropic"
+_NO_BALANCE = "credit balance is too low"
+
+# A transient failure, in the words a dropped socket arrives in. The control for
+# every assertion below: it must keep behaving exactly as it does today.
+_PROVIDER_DOWN = "the provider is unreachable"
+
+
+def _patch_spent_balance(
+    monkeypatch: pytest.MonkeyPatch, *, refuse_from: int = 1
+) -> list[dict[str, object]]:
+    """A provider whose account has no balance from the ``refuse_from``-th call on."""
+    calls: list[dict[str, object]] = []
+
+    async def spent(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        if len(calls) >= refuse_from:
+            raise LLMCreditExhaustedError(_NO_BALANCE, provider=_REFUSING_PROVIDER)
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", spent)
+    return calls
+
+
+async def _offered_at(session: AsyncSession, entry_id: int) -> datetime | None:
+    """When the sweep last recorded reaching this entry, read back off the row."""
+    session.expire_all()
+    entry = await session.get(JournalEntry, entry_id)
+    assert entry is not None
+    return entry.corpus_attempted_at
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_never_reached_a_provider_does_not_mark_the_entry_as_reached(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal to bill is not an offer, and must not spend the queue's memory.
+
+    Marking an entry offered is how the sweep advances past writing a provider
+    saw and could not place. A spent balance means the provider never saw it, so
+    stamping the batch sends that writing behind everything no sweep has tried
+    yet -- on a path where the only thing that runs a sweep is somebody granting
+    consent again.
+    """
+    calls = _patch_spent_balance(monkeypatch)
+    first = await _entry(db_session, body=_FIRST)
+    second = await _entry(db_session, body=_SECOND)
+    third = await _entry(db_session, body=_THIRD)
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert [await _offered_at(db_session, i) for i in (first, second, third)] == [None, None, None]
+    assert outcome.entries_considered == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_batch_a_refusal_stopped_is_the_batch_the_next_grant_gets(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing nobody was billed for keeps its place at the head of the queue.
+
+    The ordering is only load-bearing when there is more history than one grant
+    can reach, so the ceiling is set below the backlog here: had the refused
+    batch been marked, the never-offered older entry would have displaced it and
+    this account's most recent writing would wait for another two grants that
+    nothing in the deployment schedules.
+    """
+    monkeypatch.setattr(cb, "BACKFILL_ENTRY_CEILING", 2)
+    _patch_spent_balance(monkeypatch)
+    now = datetime.now(UTC)
+    await _entry(db_session, body=_FIRST, written_at=now - timedelta(days=14))
+    await _entry(db_session, body=_SECOND, written_at=now - timedelta(days=7))
+    await _entry(db_session, body=_THIRD, written_at=now)
+
+    refused = await _decide(db_session, granted=True)
+    _patch_provider(monkeypatch)
+    settled = await _decide(db_session, granted=True)
+
+    assert (refused.fragments_added, settled.fragments_added) == (0, 2)
+    assert await _stored(db_session) == [_THIRD, _SECOND]
+
+
+def _patch_failing_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider that is simply down: transient, and nothing to do with a bill."""
+
+    async def down(**_kwargs: object) -> SimpleNamespace:
+        raise LLMProviderError(_PROVIDER_DOWN)
+
+    monkeypatch.setattr(fc, "generate_response", down)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_merely_failed_still_marks_what_it_was_asked_about(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. A transient failure must keep behaving exactly as it did.
+
+    An entry a provider was asked about and could not answer for is marked and
+    sent to the back of the queue on purpose: that is what stops a batch nothing
+    can be made of from being re-selected forever ahead of the older history the
+    sweep exists to reach. Only the refusal that never reached a provider is
+    carved out, and the two must not be confused in either direction.
+    """
+    monkeypatch.setattr(cb, "BACKFILL_ENTRY_CEILING", 2)
+    _patch_failing_provider(monkeypatch)
+    now = datetime.now(UTC)
+    oldest = await _entry(db_session, body=_FIRST, written_at=now - timedelta(days=14))
+    middle = await _entry(db_session, body=_SECOND, written_at=now - timedelta(days=7))
+    newest = await _entry(db_session, body=_THIRD, written_at=now)
+
+    outage = await _decide(db_session, granted=True)
+
+    assert (outage.entries_considered, outage.fragments_added) == (2, 0)
+    assert await _offered_at(db_session, oldest) is None
+    assert [await _offered_at(db_session, i) for i in (middle, newest)] != [None, None]
+
+    _patch_provider(monkeypatch)
+    resumed = await _decide(db_session, granted=True)
+
+    assert resumed.fragments_added == 2
+    assert await _stored(db_session) == [_FIRST, _THIRD]
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_that_reached_nothing_records_no_reach(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal on the first entry leaves the sweep log with nothing to say."""
+    _patch_spent_balance(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+
+    await _decide(db_session, granted=True)
+
+    assert await _sweeps(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_balance_that_runs_out_mid_batch_still_records_what_it_reached(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entries genuinely reached before the refusal are a reach, and are logged.
+
+    Suppressing the row here would be the same defect facing the other way: a
+    sweep that ontologized two entries and then hit a spent balance did real
+    work, and an operator reading the log has to be able to see both that it
+    happened and where it stopped.
+    """
+    _patch_spent_balance(monkeypatch, refuse_from=3)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+    await _entry(db_session, body=_THIRD)
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert (outcome.entries_considered, outcome.fragments_added) == (2, 2)
+    assert await _reaches(db_session) == [(2, 2, 1)]
 
 
 async def _last_written_at(session: AsyncSession, entry_id: int) -> datetime:
