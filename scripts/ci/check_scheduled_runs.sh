@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # scripts/ci/check_scheduled_runs.sh
 #
-# Watch the scheduled workflows from OUTSIDE, because a workflow that never
-# starts cannot report anything from inside itself.
+# Check whether the scheduled workflows STARTED, from OUTSIDE, because a
+# workflow that never starts cannot report anything from inside itself.
+#
+# This is a startup check and not a health check, and the difference is the
+# whole reason it can be trusted. A workflow whose jobs all ran and then failed
+# passes here, and rightly: it reported that failure itself. What is checked is
+# narrower than "is everything fine" and is stated that way everywhere it is
+# announced, so a green run cannot be read as a promise nobody verified.
 #
 # WHY THIS EXISTS: `startup_failure` is a real conclusion GitHub returns, and it
 # is the quietest failure in the whole system. GitHub rejects the workflow file
@@ -24,7 +30,8 @@
 # the same column-anchored match the legibility guard uses: an active cron is
 # `schedule:` indented two spaces under `on:`, while the seventeen paused scans
 # are parked as `  # schedule:` with their cron lines commented beneath. Matching
-# the commented form would demand health from workflows that are switched off.
+# the commented form would demand a startup record from workflows that are
+# switched off.
 #
 # Each sick workflow is routed through the SAME reporter every other failure
 # uses (scripts/graph/report_workflow_failure.sh), under its own
@@ -94,9 +101,11 @@ summary() { # summary <line>
   printf '%s\n' "$1"
 }
 
-summary "## Scheduled workflow health"
+summary "## Scheduled workflow startup check"
 summary ""
 summary "Latest run of each actively scheduled workflow. Grouped by workflow and dated, not counted by conclusion: a workflow whose last ten runs are nine successes and one startup failure is a different animal depending on which one was last."
+summary ""
+summary "This checks one thing: whether GitHub rejected a workflow before creating any job. It is not a health check -- a workflow whose jobs ran and failed is green here, and reports that failure itself."
 summary ""
 
 checked=0
@@ -126,7 +135,7 @@ for workflow in "$workflows_dir"/*.yml; do
   runs="$(gh run list --repo "$repo" --workflow "$name" --limit "$limit" \
             --json conclusion,createdAt,databaseId)" || gh_status=$?
   if [[ "$gh_status" -ne 0 ]]; then
-    summary "- \`$name\`: **could not be asked** -- \`gh run list\` exited $gh_status. Health UNKNOWN; this is not a clean bill."
+    summary "- \`$name\`: **could not be asked** -- \`gh run list\` exited $gh_status. Startup state UNKNOWN; this is not a clean bill."
     transport=1
     continue
   fi
@@ -138,7 +147,7 @@ for workflow in "$workflows_dir"/*.yml; do
   # wearing the one answer that means "all clear". That substitution is the
   # whole defect this file exists to refuse, and it would have been made here.
   if ! printf '%s' "$runs" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    summary "- \`$name\`: **unreadable run list** -- \`gh\` exited 0 with something that is not a run array. Health UNKNOWN; this is not a clean bill."
+    summary "- \`$name\`: **unreadable run list** -- \`gh\` exited 0 with something that is not a run array. Startup state UNKNOWN; this is not a clean bill."
     transport=1
     continue
   fi
@@ -151,7 +160,7 @@ for workflow in "$workflows_dir"/*.yml; do
 
   sick_count="$(printf '%s' "$runs" | jq -r --arg bad "$SICK_CONCLUSION" '[.[] | select(.conclusion == $bad)] | length')"
   if [[ ! "$sick_count" =~ ^[0-9]+$ ]]; then
-    summary "- \`$name\`: **unreadable run list** -- \`gh\` exited 0 with something that is not a run array. Health UNKNOWN."
+    summary "- \`$name\`: **unreadable run list** -- \`gh\` exited 0 with something that is not a run array. Startup state UNKNOWN."
     transport=1
     continue
   fi
