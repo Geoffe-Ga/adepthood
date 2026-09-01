@@ -128,12 +128,22 @@ repos:
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
 
-  - repo: https://github.com/PyCQA/isort
-    rev: 6.0.1
-    hooks:
-      - id: isort
-        files: ^backend/
-        args: ["--settings-path=backend/pyproject.toml"]
+  # There was a cloned PyCQA/isort hook here, pinned at rev 6.0.1 while
+  # requirements-dev.txt pinned isort==8.0.1 -- two majors apart. It is gone
+  # rather than converted, because it was a second import-sorter with no
+  # second job.
+  #
+  # Nothing in this repository ever invoked isort except that hook: check-all.sh
+  # has no isort stage, and fix-all.sh runs lint.sh and format.sh only. So the
+  # 8.0.1 pin installed a tool no gate ran, and the hook's 6.0.1 was the only
+  # isort that executed anywhere.
+  #
+  # Meanwhile ruff's `I` family is already live under `select = ["ALL"]` and
+  # already gated by both the ruff hook above and check-all.sh -- verified by
+  # planting an out-of-order import block and watching I001 fail. The
+  # [tool.ruff.lint.isort] section below exists precisely to stop the two
+  # sorters fighting over the same files; with one sorter left there is nothing
+  # to reconcile.
 
   # bandit, like ruff and mypy, runs from the installed environment. It was a
   # cloned PyCQA/bandit at rev 1.8.6 while requirements-dev.txt pinned 1.9.4.

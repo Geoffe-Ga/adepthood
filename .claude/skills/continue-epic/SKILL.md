@@ -154,7 +154,6 @@ The project uses an extensive pre-commit configuration
 - `ruff` — linting with auto-fix (strict rule set)
 - `ruff-format` — additional formatting
 - `mypy` — strict type checking (with pydantic plugin)
-- `isort` — import sorting (black-compatible profile)
 - `bandit` — security scanning
 - `pip-audit` — dependency vulnerability scanning
 - `detect-secrets` — secret detection against baseline
@@ -287,7 +286,7 @@ Common gotchas and their real fixes:
 |------|---------------|----------|
 | `mypy` | Missing type annotations | Add proper types — never use `# type: ignore` unless the library genuinely lacks stubs |
 | `ruff` | Unused imports | Remove them; do not add `# noqa` for real issues |
-| `black` / `isort` | Formatting drift | Let the auto-formatter run; commit the result |
+| `ruff-format` | Formatting drift | Let the auto-formatter run; commit the result |
 | `bandit` | Hardcoded secrets in tests | Use fixtures or env vars, not string literals for real secrets |
 | `eslint` | React hooks dependency array | Fix the dependency array correctly; understand the hook's lifecycle |
 | `tsc` | Type mismatch | Fix the types; do not cast to `any` |
@@ -351,7 +350,7 @@ These are the files you will consult most often. Know where they are.
 | `prompts/github-issues/phase-*-*.md` | Individual issue specifications |
 | `AGENTS.md` | Development philosophy and operating principles |
 | `.pre-commit-config.yaml` | All quality gate definitions |
-| `backend/pyproject.toml` | Python tool configs (black, ruff, mypy, isort, pytest, coverage) |
+| `backend/pyproject.toml` | Python tool configs (ruff, mypy, pytest, coverage) |
 | `backend/requirements.txt` | Production Python dependencies |
 | `backend/requirements-dev.txt` | Dev Python dependencies (pre-commit tooling) |
 | `backend/conftest.py` | Pytest fixtures (db_session, async_client) |

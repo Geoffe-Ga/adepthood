@@ -45,7 +45,7 @@ For each failing hook, categorize the failure:
 
 | Category | Example | Action |
 |----------|---------|--------|
-| Auto-fixable | black, isort, prettier reformatted files | Stage the changes, re-run |
+| Auto-fixable | ruff-format, prettier reformatted files | Stage the changes, re-run |
 | Code error | ruff lint violation, mypy type error | Fix the code, re-run the hook |
 | Test failure | pytest assertion error, jest failure | Fix the test or the code under test |
 | Config issue | hook can't find a file, wrong Python version | Fix the config, re-run |
@@ -55,8 +55,8 @@ For each failing hook, categorize the failure:
 
 Fix failures in this order to avoid cascading issues:
 
-1. **Formatting** (black, isort, prettier) — auto-fixers may resolve other issues
-2. **Imports** (ruff, isort) — unused imports cause downstream lint noise
+1. **Formatting** (ruff-format, prettier) — auto-fixers may resolve other issues
+2. **Imports** (ruff `I`) — unused or unsorted imports cause downstream lint noise
 3. **Lint** (ruff, eslint) — fix code quality issues
 4. **Types** (mypy, tsc) — fix type errors after code changes are stable
 5. **Security** (bandit, pip-audit, detect-secrets) — address real findings
@@ -80,10 +80,9 @@ For targeted re-runs during iteration:
 
 ```bash
 # Python
-pre-commit run black --all-files
 pre-commit run ruff --all-files
+pre-commit run ruff-format --all-files
 pre-commit run mypy --all-files
-pre-commit run isort --all-files
 pre-commit run bandit --all-files
 
 # Frontend
@@ -115,7 +114,7 @@ user for guidance rather than applying a workaround.
 - **Never** modify `.pre-commit-config.yaml` to weaken or skip hooks
 - **Never** reduce coverage thresholds
 - **Never** comment out failing tests
-- Auto-formatter changes (black, prettier, isort) are always correct — stage
+- Auto-formatter changes (ruff-format, prettier) are always correct — stage
   them without question
 - If ruff `--fix` auto-fixes something, verify the fix is correct before
   staging
@@ -131,8 +130,7 @@ The project's `.pre-commit-config.yaml` runs these hooks:
 **General:** check-ast, check-yaml, check-toml, check-json, detect-private-key,
 end-of-file-fixer, mixed-line-ending, trailing-whitespace, check-added-large-files
 
-**Python:** black, ruff, ruff-format, mypy (strict), isort, bandit, pip-audit,
-detect-secrets
+**Python:** ruff, ruff-format, mypy (strict), bandit, pip-audit, detect-secrets
 
 **Frontend:** eslint, prettier (write), tsc --noEmit, jest
 
