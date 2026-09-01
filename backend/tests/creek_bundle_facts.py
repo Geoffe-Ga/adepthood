@@ -75,3 +75,21 @@ UNREACHABLE_CELLS = 6
 
 #: Cells a client can actually be driven with.
 REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS
+
+#: Creek's seven published margin-note kinds -- the vocabulary
+#: ``services.creek_vault_payload`` renders onto adepthood's own marginalia
+#: kinds, dropping any note whose kind it does not hold. Measured from
+#: ``schemas/ReflectionNote.schema.json`` and then written down, like everything
+#: else here: the mapping table is asserted against this set and this set
+#: against the bundle, two claims that can disagree, rather than one derivation
+#: under which a truncated schema would simply demand an empty mapping.
+#:
+#: A frozenset rather than a tuple because a JSON Schema ``enum`` is an
+#: unordered set of permitted values. The vendored file happens to list them
+#: alphabetically, but that is its emitter's habit rather than a published
+#: promise, and pinning the order would redden on a cosmetic upstream reorder
+#: whose only remedy is editing this pin -- the one edit that must stay
+#: deliberate.
+CREEK_NOTE_KINDS: frozenset[str] = frozenset(
+    {"fear", "gift", "longing", "pattern", "reframe", "tension", "value"},
+)
