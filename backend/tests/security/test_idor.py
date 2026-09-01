@@ -25,7 +25,7 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -36,7 +36,10 @@ from sqlmodel import col, select, update
 
 from models.course_stage import CourseStage
 from models.goal import Goal
+from models.habit import Habit
 from models.journal_entry import JournalEntry
+from models.metta_return_arc import MettaReturnArc
+from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_content import StageContent
@@ -976,3 +979,133 @@ async def test_no_user_id_in_owned_resource_responses(
     for label, body in probes:
         assert "user_id" not in body, f"{label} response leaked user_id"
         assert "submitted_by_user_id" not in body, f"{label} response leaked submitted_by_user_id"
+
+
+# ── Return arc: a body-carried habit id may never reach another user's habit ──
+
+
+_RETURN_RECOMMIT_URL = "/metta-return/arc/recommit"
+
+
+async def _seed_return_arc(db_session: AsyncSession, user_id: int) -> MettaReturnArc:
+    """Insert an active Return arc for a user, bypassing the eligibility gate."""
+    arc = MettaReturnArc(user_id=user_id, started_at=datetime.now(UTC))
+    db_session.add(arc)
+    await db_session.commit()
+    await db_session.refresh(arc)
+    return arc
+
+
+async def _seed_resting_habit(
+    db_session: AsyncSession,
+    client: AsyncClient,
+    headers: dict[str, str],
+    user_id: int,
+) -> int:
+    """Give the user an arc plus one habit released (resting) inside it; return its id."""
+    await _seed_return_arc(db_session, user_id)
+    habit = Habit(
+        name="Sit",
+        icon="🕯️",
+        start_date=date(2024, 1, 1),
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+        revealed=True,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    habit_id = habit.id
+    assert habit_id is not None
+    resp = await client.post(
+        "/metta-return/arc/release",
+        json={"habit_ids": [habit_id]},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    return habit_id
+
+
+async def _releases_for_user(
+    db_session: AsyncSession, user_id: int
+) -> list[MettaReturnHabitRelease]:
+    """Return every persisted release row owned by a user, read fresh from the DB."""
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(MettaReturnHabitRelease).where(col(MettaReturnHabitRelease.user_id) == user_id)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_idor_return_recommit_cannot_reach_another_users_habit(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob naming Alice's resting habit changes nothing and is audited.
+
+    ``habit_ids`` arrives in the request body, so ownership is authorized for
+    every id rather than assumed. The response stays enumeration-safe (an
+    unowned id reads exactly like a nonexistent one, per the release contract),
+    which is why the refusal is asserted on the data — Alice's habit stays
+    paused, her release row keeps its empty ``recommitted_at``, and Bob gains no
+    release row of his own — plus the ``resource_access_denied`` audit row.
+    """
+    alice_headers, alice_id = await _signup(async_client, "return_recommit_alice")
+    bob_headers, bob_id = await _signup(async_client, "return_recommit_bob")
+    alice_habit_id = await _seed_resting_habit(db_session, async_client, alice_headers, alice_id)
+    await _seed_return_arc(db_session, bob_id)
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(
+            _RETURN_RECOMMIT_URL,
+            json={"habit_ids": [alice_habit_id]},
+            headers=bob_headers,
+        )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+
+    db_session.expire_all()
+    alice_habit = await db_session.get(Habit, alice_habit_id)
+    assert alice_habit is not None
+    assert alice_habit.revealed is False
+    alice_rows = await _releases_for_user(db_session, alice_id)
+    assert len(alice_rows) == 1
+    assert alice_rows[0].recommitted_at is None
+    assert await _releases_for_user(db_session, bob_id) == []
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "habit"
+    assert getattr(denials[0], "resource_id", None) == alice_habit_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_return_recommit_missing_habit_is_unaudited_and_indistinguishable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A nonexistent habit id reads exactly like an unowned one and raises no audit row.
+
+    The audit row must not become the enumeration oracle the silent-skip
+    contract exists to deny, so only an id that resolves to a real row owned by
+    somebody else is recorded.
+    """
+    bob_headers, bob_id = await _signup(async_client, "return_recommit_ghost")
+    await _seed_return_arc(db_session, bob_id)
+
+    with caplog.at_level(logging.WARNING):
+        resp = await async_client.post(
+            _RETURN_RECOMMIT_URL,
+            json={"habit_ids": [_DEFINITELY_MISSING_ID]},
+            headers=bob_headers,
+        )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+    assert _denial_records(caplog) == []

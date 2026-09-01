@@ -83,8 +83,16 @@ class MettaReturnStateResponse(BaseModel):
     ``eligible`` gates whether the arc may be started, ``weeks`` is the whole
     five-week sequence in order, ``arc`` is the caller's active arc or ``None``
     when there is none, ``offer_dismissed`` is whether the caller has waved
-    away the offer for the current episode, and ``released_habits`` is the
-    active arc's released habits (empty when there is no active arc).
+    away the offer for the current episode, and ``released_habits`` is every
+    habit the caller has released, across all their arcs (empty when they have
+    released none).
+
+    ``released_habits`` deliberately outlives the arc that produced it. A
+    release is a soft pause on a habit rather than a fact about an arc, so a
+    habit released in an arc the caller has since left must stay visible for the
+    client to offer it back — scoping the list to the active arc made those
+    habits unrecoverable through the surface that paused them. Each entry's
+    ``recommitted`` flag says whether it is still resting.
     """
 
     eligible: bool
