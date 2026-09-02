@@ -87,6 +87,50 @@ export interface OnboardingHabit {
   goal_group_id?: number | null;
 }
 
+/**
+ * What a re-scaffolding pass decided about one habit.
+ *
+ * The onboarding modal hands back a fresh list of picks, and until now that
+ * list was the whole story: every row was created. It cannot be, once the user
+ * already has habits -- the server rejects a second habit under a name the
+ * caller already owns, so a re-entered name used to come back a swallowed 409
+ * with the user's new rating discarded and the stale row untouched. A pick has
+ * to say which existing row it means, and a row the picks do not name has to
+ * say what becomes of it.
+ *
+ * The kinds are deliberately five rather than three, because "kept" hides two
+ * different promises and "not picked" hides two different outcomes:
+ *
+ * - `new` is the only kind that mints ids on this device, and the only one that
+ *   POSTs. It carries no `habitId` because there is no row to carry.
+ * - `re-rated` adopts the pick's energy ratings, icon, stage and staggered
+ *   start date onto the existing row, keeping its id, goals, completions,
+ *   streak and unlock state.
+ * - `brought-along` is `re-rated` for a habit the user carries from before the
+ *   program: it takes the new ratings and icon but keeps its own start date and
+ *   stage, because that date is when the habit began in the user's life rather
+ *   than a program date, and the negative lap is where it renders.
+ * - `retained` is a row the picks never mentioned. It is left exactly as it is.
+ *   Omitting a habit is not asking to lose it: the DELETE cascades goals and
+ *   completions server-side and cannot be undone, so an omission must never
+ *   reach it.
+ * - `released` is the explicit, confirmed choice to let a habit go, with the
+ *   history that goes with it. Nothing derives this kind -- a caller has to
+ *   state it.
+ */
+export type HabitDisposition =
+  | { readonly kind: 'new'; readonly habit: OnboardingHabit }
+  | { readonly kind: 're-rated'; readonly habitId: number; readonly habit: OnboardingHabit }
+  | { readonly kind: 'brought-along'; readonly habitId: number; readonly habit: OnboardingHabit }
+  | { readonly kind: 'retained'; readonly habitId: number }
+  | { readonly kind: 'released'; readonly habitId: number };
+
+/**
+ * One decision per habit the pass touches, in the order the user revealed them.
+ * Order is load-bearing: it is the order the merged program lap is stamped in.
+ */
+export type HabitMergePlan = readonly HabitDisposition[];
+
 export interface GoalModalProps {
   visible: boolean;
   habit: Habit | null;

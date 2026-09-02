@@ -76,8 +76,8 @@ import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
-import type { Goal, Habit, OnboardingHabit } from '../../Habits.types';
-import { carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
+import type { Goal, Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
+import { buildPagedHabits, carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
 
@@ -2251,6 +2251,332 @@ describe('habitManager', () => {
       expect(stored).toHaveLength(1);
       expect(stored[0]!.id).toBe(47);
       expect(stored[0]!.goals.map((g) => g.id)).toEqual([101, 102, 103]);
+    });
+  });
+
+  describe('onboardingSave merge', () => {
+    const MEDITATE = 'Meditate';
+    const EVENING_READ = 'Evening Read';
+    const KEPT_HABIT_ID = 47;
+    const KEPT_GOAL_IDS = [101, 102, 103];
+    const CARRYOVER_ID = 51;
+    const CARRYOVER_START = new Date('2020-03-04');
+    const PICK_START = new Date('2026-01-01');
+
+    /** A pick as the onboarding modal emits it: a chip key, never a habit id. */
+    const pick = (overrides: Partial<OnboardingHabit> = {}): OnboardingHabit => ({
+      id: 'a',
+      name: MEDITATE,
+      icon: '\u{1F9D8}',
+      energy_cost: 1,
+      energy_return: 3,
+      stage: 'Purple',
+      start_date: PICK_START,
+      ...overrides,
+    });
+
+    /** A habit the server issued ids for, with history the merge must not wipe. */
+    const keptHabit = (overrides: Partial<Habit> = {}): Habit =>
+      makeServerHabit({
+        id: KEPT_HABIT_ID,
+        name: MEDITATE,
+        stage: 'Beige',
+        revealed: true,
+        streak: 9,
+        energy_cost: 1,
+        energy_return: 3,
+        completions: [{ timestamp: new Date('2025-02-01'), completed_units: 1 }],
+        goals: makeHabit().goals.map((g, i) => ({ ...g, id: KEPT_GOAL_IDS[i]! })),
+        ...overrides,
+      });
+
+    afterEach(() => {
+      // ``jest.clearAllMocks`` clears calls but keeps implementations, so a
+      // case that reprograms a boundary has to hand it back.
+      (habitsApi.create as jest.Mock).mockImplementation(() => Promise.resolve({}));
+      (habitsApi.delete as jest.Mock).mockImplementation(() => Promise.resolve({}));
+      useProgramStore.getState().hydrateProgramStartDate(null);
+    });
+
+    it('re-entering a habit the user already has PUTs the existing row instead of POSTing a name the server rejects', async () => {
+      useHabitStore.setState({ habits: [keptHabit()] });
+
+      const inFlight = habitManager.onboardingSave(
+        [pick({ energy_cost: 4, energy_return: 2 })],
+        jest.fn(),
+      );
+      // Read before awaiting: the scaffold used to replace the store for the
+      // whole window between the optimistic write and the trailing reload.
+      const beforeReload = useHabitStore.getState().habits[0]!;
+      await inFlight;
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        KEPT_HABIT_ID,
+        expect.objectContaining({
+          name: MEDITATE,
+          energy_cost: 4,
+          energy_return: 2,
+          stage: 'Purple',
+          start_date: '2026-01-01',
+          sort_order: 0,
+          revealed: true,
+        }),
+      );
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      expect(beforeReload.id).toBe(KEPT_HABIT_ID);
+      expect(beforeReload.streak).toBe(9);
+      expect(beforeReload.completions).toHaveLength(1);
+      expect(beforeReload.goals.map((g) => g.id)).toEqual(KEPT_GOAL_IDS);
+      expect(beforeReload.revealed).toBe(true);
+      expect(beforeReload.hasClientMintedIds).not.toBe(true);
+    });
+
+    it('re-entering a carryover keeps it on the negative lap with its own start date', async () => {
+      useHabitStore.setState({
+        habits: [
+          makeServerHabit({
+            id: CARRYOVER_ID,
+            name: EVENING_READ,
+            stage: 'Beige',
+            is_carryover: true,
+            start_date: CARRYOVER_START,
+          }),
+        ],
+      });
+
+      await habitManager.onboardingSave([pick({ name: EVENING_READ, energy_cost: 4 })], jest.fn());
+
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        CARRYOVER_ID,
+        expect.objectContaining({
+          is_carryover: true,
+          start_date: '2020-03-04',
+          stage: 'Beige',
+          energy_cost: 4,
+        }),
+      );
+      const negativeLap = buildPagedHabits(useHabitStore.getState().habits, -1, 10);
+      expect(negativeLap.habits.map((h) => h.id)).toEqual([CARRYOVER_ID]);
+    });
+
+    it('retains an existing habit the picks never name instead of releasing it', async () => {
+      useHabitStore.setState({
+        habits: [keptHabit(), makeServerHabit({ id: 48, name: 'Walk', sort_order: 1 })],
+      });
+
+      await habitManager.onboardingSave([pick({ energy_cost: 4 })], jest.fn());
+
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+      expect(cancelForHabit).not.toHaveBeenCalled();
+      expect(useHabitStore.getState().habits.map((h) => h.id)).toEqual([KEPT_HABIT_ID, 48]);
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        KEPT_HABIT_ID,
+        expect.objectContaining({ energy_cost: 4 }),
+      );
+    });
+
+    it('issues no wire call at all when the picks change nothing', async () => {
+      useHabitStore.setState({
+        habits: [keptHabit({ sort_order: 0, stage: 'Purple', start_date: PICK_START })],
+      });
+
+      await habitManager.onboardingSave([pick({ energy_cost: 1, energy_return: 3 })], jest.fn());
+
+      expect(habitsApi.update).not.toHaveBeenCalled();
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+    });
+
+    it('mints new ids above the rows it kept and never addresses a demo tile', async () => {
+      useHabitStore.setState({
+        habits: [makeDemoHabit({ id: 3, name: 'Sample' }), keptHabit()],
+      });
+
+      await habitManager.onboardingSave(
+        [pick({ energy_cost: 4 }), pick({ id: 'b', name: 'Sample' })],
+        jest.fn(),
+      );
+
+      // The demo tile shares its fabricated id with nobody's real row here, but
+      // it is the id the guard exists for: it must reach neither PUT nor DELETE.
+      expect(habitsApi.update).not.toHaveBeenCalledWith(3, expect.anything());
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+      expect(habitsApi.create).toHaveBeenCalledTimes(1);
+      const minted = useHabitStore.getState().habits.find((h) => h.name === 'Sample')!;
+      expect(minted.id).toBeGreaterThan(KEPT_HABIT_ID);
+      expect(minted.goals.every((g) => g.id! > KEPT_GOAL_IDS[2]!)).toBe(true);
+      expect(minted.hasClientMintedIds).toBe(true);
+    });
+
+    it('awaits the DELETE of a released name before POSTing a new habit that reuses it', async () => {
+      let deleteResolved = false;
+      let createSawDeleteResolved: boolean | null = null;
+      (habitsApi.delete as jest.Mock).mockImplementation(() =>
+        Promise.resolve().then(() => {
+          deleteResolved = true;
+        }),
+      );
+      (habitsApi.create as jest.Mock).mockImplementation(() => {
+        createSawDeleteResolved = deleteResolved;
+        return Promise.resolve({});
+      });
+      useHabitStore.setState({ habits: [keptHabit()] });
+
+      const plan: HabitMergePlan = [
+        { kind: 'released', habitId: KEPT_HABIT_ID },
+        { kind: 'new', habit: pick() },
+      ];
+      await habitManager.onboardingSave(plan, jest.fn());
+
+      expect(habitsApi.delete).toHaveBeenCalledWith(KEPT_HABIT_ID);
+      expect(createSawDeleteResolved).toBe(true);
+      expect(cancelForHabit).toHaveBeenCalledWith(KEPT_HABIT_ID);
+    });
+
+    it('releasing a demo tile cancels its reminders locally and sends no DELETE', async () => {
+      useHabitStore.setState({ habits: [makeDemoHabit({ id: 3, name: 'Sample' })] });
+
+      await habitManager.onboardingSave([{ kind: 'released', habitId: 3 }], jest.fn());
+
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+      expect(cancelForHabit).toHaveBeenCalledWith(3);
+    });
+
+    it('a failed release puts back only that habit and leaves the rest of the merge standing', async () => {
+      (habitsApi.delete as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+      useHabitStore.setState({
+        habits: [
+          keptHabit(),
+          makeServerHabit({ id: 48, name: 'Walk' }),
+          makeServerHabit({ id: 49, name: 'Stretch' }),
+        ],
+      });
+
+      const plan: HabitMergePlan = [
+        { kind: 'released', habitId: KEPT_HABIT_ID },
+        { kind: 'released', habitId: 48 },
+        { kind: 're-rated', habitId: 49, habit: pick({ name: 'Stretch', energy_cost: 4 }) },
+      ];
+      await habitManager.onboardingSave(plan, jest.fn());
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.id).sort((a, b) => a - b)).toEqual([KEPT_HABIT_ID, 49]);
+      expect(stored.find((h) => h.id === 49)!.energy_cost).toBe(4);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      expect(Alert.alert).toHaveBeenCalledTimes(1);
+    });
+
+    it('anchors the program to the picks, never to a carryover the pass brought along', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      useHabitStore.setState({
+        habits: [
+          makeServerHabit({
+            id: CARRYOVER_ID,
+            name: EVENING_READ,
+            is_carryover: true,
+            start_date: CARRYOVER_START,
+          }),
+        ],
+      });
+
+      await habitManager.onboardingSave(
+        [
+          pick({ name: EVENING_READ, start_date: new Date('2026-01-01') }),
+          pick({ id: 'b', name: MEDITATE, start_date: new Date('2026-01-22') }),
+        ],
+        jest.fn(),
+      );
+
+      const anchor = useProgramStore.getState().programStartDate!;
+      expect(anchor).not.toBeNull();
+      expect(anchor.getFullYear()).toBe(2026);
+      expect(anchor.getMonth()).toBe(0);
+      expect(anchor.getDate()).toBe(1);
+    });
+
+    it('walks a mixed pass through delete, update and create with exact call counts', async () => {
+      useHabitStore.setState({
+        habits: [
+          keptHabit(),
+          makeServerHabit({ id: 48, name: 'Walk' }),
+          makeServerHabit({
+            id: 49,
+            name: EVENING_READ,
+            is_carryover: true,
+            start_date: CARRYOVER_START,
+          }),
+          makeServerHabit({ id: 50, name: 'Stretch' }),
+        ],
+      });
+
+      const plan: HabitMergePlan = [
+        { kind: 're-rated', habitId: KEPT_HABIT_ID, habit: pick({ energy_cost: 4 }) },
+        { kind: 'brought-along', habitId: 49, habit: pick({ id: 'c', name: EVENING_READ }) },
+        { kind: 'new', habit: pick({ id: 'd', name: 'Breathe' }) },
+        { kind: 'released', habitId: 48 },
+        { kind: 'retained', habitId: 50 },
+      ];
+      await habitManager.onboardingSave(plan, jest.fn());
+
+      expect(habitsApi.delete).toHaveBeenCalledTimes(1);
+      expect(habitsApi.delete).toHaveBeenCalledWith(48);
+      expect(habitsApi.create).toHaveBeenCalledTimes(1);
+      const updated = (habitsApi.update as jest.Mock).mock.calls.map((c) => c[0] as number);
+      expect(updated.sort((a, b) => a - b)).toEqual([KEPT_HABIT_ID, 49, 50]);
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([
+        MEDITATE,
+        EVENING_READ,
+        'Breathe',
+        'Stretch',
+      ]);
+    });
+
+    describe('the cache the trailing reload reads back', () => {
+      /** The on-disk cache, echoed: what the merge persists is what the reload reads. */
+      let cache: Habit[] | null = null;
+
+      beforeEach(() => {
+        cache = null;
+        (loadHabits as jest.Mock).mockImplementation(() => Promise.resolve(cache));
+        (saveHabits as jest.Mock).mockImplementation((...args: unknown[]) => {
+          cache = args[0] as Habit[];
+          return Promise.resolve(undefined);
+        });
+      });
+
+      afterEach(() => {
+        (loadHabits as jest.Mock).mockImplementation(() => Promise.resolve(null));
+        (saveHabits as jest.Mock).mockImplementation(() => Promise.resolve(undefined));
+      });
+
+      it('a release-everything pass stays released across the reload', async () => {
+        // The cache the previous session wrote. Without a persist of the merged
+        // list, loadHabits' stuck-user recovery reads this back and re-POSTs
+        // every habit the user just released.
+        cache = [keptHabit()];
+        useHabitStore.setState({ habits: [keptHabit()] });
+
+        await habitManager.onboardingSave(
+          [{ kind: 'released', habitId: KEPT_HABIT_ID }],
+          jest.fn(),
+        );
+
+        expect(habitsApi.create).not.toHaveBeenCalled();
+        expect(cache).toEqual([]);
+        expect(useHabitStore.getState().habits.every((h) => h.isDemoSeed === true)).toBe(true);
+      });
+
+      it('a first run whose creates all failed retries them through the stuck-user recovery', async () => {
+        (habitsApi.create as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await habitManager.onboardingSave([pick()], jest.fn());
+
+        expect(habitsApi.create).toHaveBeenCalledTimes(2);
+        errorSpy.mockRestore();
+      });
     });
   });
 
