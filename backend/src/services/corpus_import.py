@@ -53,6 +53,7 @@ from domain.creek_vault import CreekVaultClient, VaultUploadStatus
 from domain.document_text import DocumentReadFailure, read_document
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification
+from services.botmason import LLMCreditExhaustedError
 from services.corpus_ingest import IngestOutcome, IngestRequest, ingest_content
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import UploadedDocument, store_upload
@@ -165,19 +166,29 @@ async def _to_corpus(
     that are not text, an empty file and a file too long for one fragment are
     all decided without contacting anybody, so none of them costs a provider
     call or reaches the consent gate with nothing to gate.
+
+    One import is one provider call, so a spent balance here says nothing this
+    caller can act on differently: it is answered as
+    :attr:`domain.corpus_import.CorpusImportStatus.UNCLASSIFIED`, exactly as a
+    transient failure already is, and the document is stored nowhere and can be
+    offered again. The account was already named in the log the ingest spine
+    wrote on the way past.
     """
     text = read_document(document.filename, raw)
     if isinstance(text, DocumentReadFailure):
         return CorpusImportResult(_READ_FAILURE_STATUS[text])
-    result = await ingest_content(
-        session,
-        user_id=document.owner_user_id,
-        request=IngestRequest(
-            content=text,
-            tier=JournalClassification(document.classification),
-            source=IMPORT_SOURCE,
-        ),
-    )
+    try:
+        result = await ingest_content(
+            session,
+            user_id=document.owner_user_id,
+            request=IngestRequest(
+                content=text,
+                tier=JournalClassification(document.classification),
+                source=IMPORT_SOURCE,
+            ),
+        )
+    except LLMCreditExhaustedError:
+        return CorpusImportResult(_INGEST_STATUS[IngestOutcome.UNCLASSIFIED])
     fragment = result.fragment
     return CorpusImportResult(
         _INGEST_STATUS[result.outcome], None if fragment is None else fragment.id

@@ -192,6 +192,16 @@ async def select_frequency_classification(
     for INTIMATE content, before the handshake and before the operator-side call
     -- the refusal precedes both paths rather than sitting inside one of them.
 
+    A spent balance on the operator-side call propagates as
+    :class:`services.botmason.LLMCreditExhaustedError` rather than degrading,
+    because it is a fact about the key rather than about this content and a
+    caller working through a batch has to be able to stop. It reaches here only
+    from the operator side: a vault that answers is preferred outright and is
+    reached with the deployment's own vault credential, which has no balance to
+    spend. Whichever key it was -- and unlike the corpus path this one does
+    thread the caller's own -- is what decides whether the remedy is theirs or
+    an operator's; see :func:`services.botmason.credit_exhausted_error`.
+
     ``api_key`` is the caller's own key (BYOK) and is threaded to the
     operator-side classifier only; a vault is reached with the deployment's own
     vault credential and has no use for it.

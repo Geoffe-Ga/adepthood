@@ -13,8 +13,16 @@ from leaking.
 with a provider — absent key, timeout, malformed reply, a frequency code
 outside the ontology — degrades to :data:`UNCLASSIFIED`. Classification
 enriches a corpus; it must never be why someone's journal entry fails to save.
-The only exception raised from here is :class:`IntimateContentRefusedError`, which
-is a defect at the call site rather than a runtime condition.
+Two conditions are raised rather than degraded, and neither is a way of failing
+to recognise something. :class:`IntimateContentRefusedError` is a defect at the
+call site rather than a runtime condition. :class:`services.botmason.\
+LLMCreditExhaustedError` is a fact about the *deployment* rather than about this
+call or this content: every degrade named above is true of one attempt and says
+nothing about the next, whereas a spent balance is true of every call that
+follows it until somebody settles a bill. A caller classifying one piece of
+writing may treat that as :data:`UNCLASSIFIED` and lose nothing; a caller
+classifying in bulk has to be able to stop, which it cannot do if the condition
+arrives wearing the same face as a dropped socket.
 
 **A caller with a deadline can impose one.** ``timeout_seconds`` bounds the
 whole provider interaction rather than one attempt of it: ``services.botmason``
@@ -55,9 +63,25 @@ from types import MappingProxyType
 
 from domain.frequencies import Frequency, frequency_table
 from models.journal_entry import JournalClassification
-from services.botmason import LLMProviderError, LLMResponse, generate_response
+from services.botmason import (
+    LLMCreditExhaustedError,
+    LLMProviderError,
+    LLMResponse,
+    generate_response,
+)
 
 logger = logging.getLogger(__name__)
+
+# What the log calls a spent balance seen from here.
+#
+# A distinct event name rather than another `_degraded` reason, because it is a
+# distinct kind of fact: `frequency_classification_degraded` records that one
+# piece of writing was not placed, and this records that nothing will be until
+# an operator acts. It is WARNING for the same reason
+# ``botmason.credit_exhausted_error`` logs the server-key branch at WARNING --
+# this path never threads a caller's own key, so the only person who can settle
+# the bill is reading server logs.
+CREDIT_EXHAUSTED_EVENT = "frequency_classification_credit_exhausted"
 
 # The per-fragment cost ceiling, in characters of input.
 #
@@ -271,6 +295,19 @@ async def _reply_within(
     return await asyncio.wait_for(call, timeout_seconds)
 
 
+def _classification_of(response: LLMResponse) -> FrequencyClassification:
+    """The position this reply names, or the degraded one if it names none usably.
+
+    Separated from :func:`classify_frequencies` so that reading it is reading
+    the four ways a provider interaction ends, one per handler, with the
+    reply-shaped failure kept where the other shape-shaped failures already are.
+    """
+    parsed = _parse_reply(response.text)
+    if parsed is None:
+        return _degraded("unparsable_reply")
+    return parsed
+
+
 async def classify_frequencies(
     content: str,
     *,
@@ -281,9 +318,18 @@ async def classify_frequencies(
     """Classify ``content`` into the frequency ontology.
 
     Raises :class:`IntimateContentRefusedError` for INTIMATE content, before any
-    provider call is constructed. Every other failure -- no key, a timeout, a
-    malformed reply, a code outside the ontology -- returns
-    :data:`UNCLASSIFIED`.
+    provider call is constructed, and re-raises
+    :class:`services.botmason.LLMCreditExhaustedError` after logging which
+    provider refused. Every other failure -- no key, a transient provider
+    failure, a timeout, a malformed reply, a code outside the ontology --
+    returns :data:`UNCLASSIFIED`.
+
+    The carve-out is narrow on purpose. A spent balance is the one provider
+    condition that says something about every call after this one rather than
+    about this one, so a caller working through a batch has to be able to stop
+    paying for a refusal it has already been given. Callers that classify a
+    single piece of writing may treat it as :data:`UNCLASSIFIED` and lose
+    nothing by doing so.
 
     ``api_key`` is the caller's own key (BYOK), threaded to
     :func:`services.botmason.generate_response` exactly as the chat path does;
@@ -299,11 +345,14 @@ async def classify_frequencies(
         raise IntimateContentRefusedError
     try:
         response = await _reply_within(content, api_key=api_key, timeout_seconds=timeout_seconds)
+    except LLMCreditExhaustedError as exc:
+        # Ordered ahead of the base type or it would never be reached: the
+        # subclass exists precisely so this condition keeps its identity past a
+        # handler written for a dropped socket.
+        logger.warning(CREDIT_EXHAUSTED_EVENT, extra={"provider": exc.provider})
+        raise
     except LLMProviderError:
         return _degraded("provider_error")
     except TimeoutError:
         return _degraded("timed_out")
-    parsed = _parse_reply(response.text)
-    if parsed is None:
-        return _degraded("unparsable_reply")
-    return parsed
+    return _classification_of(response)

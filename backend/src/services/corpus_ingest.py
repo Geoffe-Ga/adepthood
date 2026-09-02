@@ -87,6 +87,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
+from services.botmason import LLMCreditExhaustedError
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
 from services.frequency_classification import (
@@ -225,11 +226,18 @@ async def ingest_content(
     Nothing is committed: a fragment is almost always written alongside the
     thing it was derived from, and the caller owns that transaction.
 
-    Never raises. The tier refusals raised by the classifier and by the store
-    are caught here and reported, because a tier that cannot be ontologized is
-    an ordinary answer to give a person rather than a fault to propagate at
-    them -- and catching *both* is what keeps this module from stating a tier
-    rule of its own.
+    Raises for exactly one condition, and it is not a tier rule. The tier
+    refusals raised by the classifier and by the store are caught here and
+    reported, because a tier that cannot be ontologized is an ordinary answer to
+    give a person rather than a fault to propagate at them -- and catching
+    *both* is what keeps this module from stating a tier rule of its own.
+    :class:`services.botmason.LLMCreditExhaustedError` is logged here, where the
+    account is known, and re-raised, because it is a fact about the deployment
+    rather than about this writing: reporting it as
+    :attr:`IngestOutcome.UNCLASSIFIED` would tell a caller offering a hundred
+    entries that the provider recognised nothing in any of them, and it would go
+    on paying for that answer. Callers that offer one piece of writing catch it
+    and carry on; the one that offers a batch stops.
 
     ``timeout_seconds`` is passed straight to the classifier and bounds only
     the provider call. It is stated at the call rather than carried on
@@ -248,6 +256,9 @@ async def ingest_content(
         )
     except IntimateContentRefusedError:
         return _TIER_REFUSED_RESULT
+    except LLMCreditExhaustedError as exc:
+        _log_credit_exhausted(user_id, provider=exc.provider, source=request.source)
+        raise
 
 
 async def ingest_journal_entry(
@@ -260,6 +271,12 @@ async def ingest_journal_entry(
     or a reply that recognised no frequency. Every one of those is an ordinary
     outcome; none of them raises, because classification enriches a corpus and
     is never why a journal write fails.
+
+    The single carve-out is :func:`ingest_content`'s:
+    :class:`services.botmason.LLMCreditExhaustedError` propagates, because it is
+    not a fact about *this* entry and a caller offering many of them has to be
+    able to stop. Callers offering one entry catch it and carry on, so a journal
+    write still cannot fail on it.
 
     Consent is read here as well as inside :func:`ingest_content`, and the
     duplication is deliberate: it is what keeps the purge below from running
@@ -316,6 +333,23 @@ async def withdraw_journal_entry(session: AsyncSession, *, user_id: int, entry_i
     removed = await delete_fragments_for_entry(session, user_id=user_id, entry_id=entry_id)
     _log_outcome(user_id, entry_id, "withdrawn", removed)
     return removed
+
+
+def _log_credit_exhausted(user_id: int, *, provider: str, source: CorpusSource) -> None:
+    """Record that a provider refused to bill, in ids and a provider name only.
+
+    The one line that names the account, and it sits on the shared spine rather
+    than at each caller so that adding a third source cannot forget it.
+    WARNING because nobody the writer is can act on it: this path never threads
+    a caller's own key, so the balance that ran out is the deployment's and the
+    remedy is an operator's. The same discipline :func:`_log_outcome` keeps --
+    an operator has to be able to say which account stopped being ontologized,
+    and by which provider, without reading a word of what was in it.
+    """
+    logger.warning(
+        "corpus_ingest_credit_exhausted",
+        extra={"user_id": user_id, "provider": provider, "source": source.value},
+    )
 
 
 def _log_outcome(user_id: int, entry_id: int, outcome: str, removed: int) -> None:

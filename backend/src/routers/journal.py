@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Annotated, cast
@@ -335,17 +336,24 @@ async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) ->
     time this runs, so a classification that is slow, refused or unavailable
     can cost latency but can never cost somebody their writing —
     :func:`services.corpus_ingest.ingest_journal_entry` returns ``None`` for
-    every one of those outcomes rather than raising.
+    every one of those outcomes rather than raising, and the one outcome it does
+    raise, a provider that refused to bill, is suppressed here for the same
+    reason. This is one entry, so there is no batch to stop; the account was
+    already named in the WARNING the ingest spine wrote on the way past, and
+    turning it into a failed journal write would cost somebody their writing
+    over a bill only an operator can settle.
 
     An account that has not consented never reaches a provider at all, which is
     why the ordinary path here is one indexed read and no network call. The
     commit is unconditional because that read opens a transaction either way,
     and ending it here returns the pooled connection rather than holding it for
-    the remainder of the request.
+    the remainder of the request — and it is outside the suppression so that a
+    refusal still returns the connection.
     """
     if entry.id is None:
         return
-    await ingest_journal_entry(session, entry)
+    with suppress(LLMCreditExhaustedError):
+        await ingest_journal_entry(session, entry)
     await session.commit()
 
 

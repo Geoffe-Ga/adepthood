@@ -28,6 +28,7 @@ writing and cannot quote back a sentence the account has since deleted.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -39,7 +40,7 @@ from domain.frequencies import Frequency
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from services import frequency_classification as fc
-from services.botmason import LLMProviderError
+from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_consent import set_consent
 from services.corpus_ingest import (
     CLASSIFICATION_CALLS_PER_INGEST,
@@ -267,6 +268,38 @@ async def test_a_provider_outage_leaves_the_entry_saved_and_the_corpus_empty(
 
     assert fragment is None
     assert list(saved.scalars().all()) == [_BODY]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_to_bill_names_the_account_and_the_provider_and_nothing_else(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The one line an operator can act on, on the spine every source runs through.
+
+    This path classifies under the deployment's key rather than the account's,
+    so the person whose writing stopped being ontologized cannot settle the
+    bill and is never told; an operator can, and needs to know which account
+    and which provider. Ids and a provider name only -- the same discipline
+    every other line here keeps, so a spent balance can be diagnosed without
+    reading a word of what somebody wrote.
+    """
+
+    async def refusing(**_kwargs: object) -> SimpleNamespace:
+        raise LLMCreditExhaustedError("credit balance is too low", provider="anthropic")
+
+    monkeypatch.setattr(fc, "generate_response", refusing)
+    await _consent(db_session)
+    entry = await _entry(db_session)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(LLMCreditExhaustedError):
+        await ingest_journal_entry(db_session, entry)
+
+    refusals = [r for r in caplog.records if r.message == "corpus_ingest_credit_exhausted"]
+    assert [
+        (r.levelno, getattr(r, "user_id", None), getattr(r, "provider", None)) for r in refusals
+    ] == [(logging.WARNING, _OWNER, "anthropic")]
+    assert getattr(refusals[0], "source", None) == CorpusSource.JOURNAL.value
+    assert not any(_BODY in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio

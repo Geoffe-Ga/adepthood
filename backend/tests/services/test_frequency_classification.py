@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import pathlib
 import time
 from types import SimpleNamespace
@@ -30,7 +31,7 @@ from domain.frequencies import (
 )
 from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
-from services.botmason import LLMProviderError
+from services.botmason import LLMCreditExhaustedError, LLMProviderError
 
 _EXPECTED_FREQUENCY_COUNT = 10
 
@@ -269,6 +270,33 @@ async def test_a_provider_failure_degrades(monkeypatch: pytest.MonkeyPatch) -> N
     result = await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
 
     assert result is fc.UNCLASSIFIED
+
+
+@pytest.mark.asyncio
+async def test_a_spent_balance_is_raised_rather_than_degraded(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A refusal to bill is a fact about the deployment, not about this writing.
+
+    Every other degrade here is true of one attempt and says nothing about the
+    next. A spent balance is true of every call that follows, so a caller
+    working through a batch has to be able to tell it apart and stop. The log
+    carries the provider because the only person who can act on it is an
+    operator, and that is the first thing they need.
+    """
+
+    async def refusing(**_kwargs: object) -> SimpleNamespace:
+        raise LLMCreditExhaustedError("credit balance is too low", provider="anthropic")
+
+    monkeypatch.setattr(fc, "generate_response", refusing)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(LLMCreditExhaustedError):
+        await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+
+    refusals = [r for r in caplog.records if r.message == fc.CREDIT_EXHAUSTED_EVENT]
+    assert [(r.levelno, getattr(r, "provider", None)) for r in refusals] == [
+        (logging.WARNING, "anthropic")
+    ]
 
 
 # --- cost ---------------------------------------------------------------------

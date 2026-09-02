@@ -38,7 +38,7 @@ from models.corpus_fragment import CorpusSource
 from schemas.corpus import CONSENT_RATE_LIMIT
 from schemas.journal_upload import UPLOAD_RATE_LIMIT
 from services import frequency_classification as fc
-from services.botmason import LLMProviderError
+from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_backfill import BACKFILL_ENTRY_CEILING
 from services.corpus_ingest import CLASSIFICATION_CALLS_PER_INGEST
 from services.higher_self_grounding import GroundingSource, gather_grounding
@@ -55,6 +55,11 @@ _EDITED_BODY = "On reflection it was not easier at all."
 
 # A reply the classifier's parser accepts, naming one position on the ontology.
 _CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9})
+
+# The provider whose balance is spent, and the words it refuses in. Nobody
+# calling this API holds that key, so the remedy is an operator's.
+_REFUSING_PROVIDER = "anthropic"
+_NO_BALANCE = "credit balance is too low"
 
 # An entry id no account in these tests owns, used where the grounding call
 # needs an exclusion that excludes nothing.
@@ -91,6 +96,20 @@ def _classifier_down(monkeypatch: pytest.MonkeyPatch) -> None:
         raise LLMProviderError
 
     monkeypatch.setattr(fc, "generate_response", down)
+
+
+@pytest.fixture
+def _classifier_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every classification attempt fail the way a spent balance does.
+
+    Distinct from ``_classifier_down`` on purpose: the deployment's own key has
+    run out, which no caller of this API holds and none of them can settle.
+    """
+
+    async def refusing(**_kwargs: object) -> SimpleNamespace:
+        raise LLMCreditExhaustedError(_NO_BALANCE, provider=_REFUSING_PROVIDER)
+
+    monkeypatch.setattr(fc, "generate_response", refusing)
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
@@ -215,6 +234,53 @@ async def test_a_classifier_outage_does_not_cost_anybody_their_writing(
 
     assert stored.status_code == HTTPStatus.OK, stored.text
     assert stored.json()["message"] == _FIRST_BODY
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_classifier_refuses")
+async def test_a_spent_balance_does_not_cost_anybody_the_permission_they_just_gave(
+    async_client: AsyncClient,
+) -> None:
+    """The grant and the sweep it authorises share one transaction, so the grant wins.
+
+    The sweep runs inline on this request and commits with it. Letting a
+    provider's refusal to bill escape the route would skip that commit and
+    throw away the decision the person just made -- losing a permission over a
+    backlog that is merely still waiting. The reach is resumable; the decision
+    would not have been.
+    """
+    headers, _ = await _signup(async_client, "unbilled")
+    await _write(async_client, headers, _FIRST_BODY)
+
+    granted = await async_client.put(
+        f"{_CONSENT_PATH}/{_JOURNAL_SOURCE}", json={"granted": True}, headers=headers
+    )
+    standing = await async_client.get(_CONSENT_PATH, headers=headers)
+
+    assert granted.status_code == HTTPStatus.OK, granted.text
+    assert granted.json()["granted"] is True
+    listed = standing.json()["sources"]
+    assert [entry["granted"] for entry in listed if entry["source"] == _JOURNAL_SOURCE] == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_classifier_refuses")
+async def test_a_spent_balance_does_not_cost_anybody_their_writing_either(
+    async_client: AsyncClient,
+) -> None:
+    """An ordinary journal write still saves when the provider refuses to bill.
+
+    The condition propagates out of the corpus writer now, and this is the path
+    that proves the propagation stops before it can reach somebody's entry.
+    """
+    headers, _ = await _signup(async_client, "unbilled-writer")
+    await _grant(async_client, headers)
+
+    entry_id = await _write(async_client, headers, _SECOND_BODY)
+    stored = await async_client.get(f"/journal/{entry_id}", headers=headers)
+
+    assert stored.status_code == HTTPStatus.OK, stored.text
+    assert stored.json()["message"] == _SECOND_BODY
 
 
 @pytest.mark.asyncio
