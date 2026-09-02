@@ -36,6 +36,18 @@ const PREVIEW_STRIPE_WIDTH = 3;
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
+/**
+ * Bottom inset for the writing surface, reserving BOTH floating affordances:
+ * the resonance button in the lower band and the writing timer stacked a full
+ * touch target above it.
+ *
+ * One inset covering the taller of the two, not a second one added beside it —
+ * the timer sits at ``RESONANCE_BUTTON_CLEARANCE``, so the page has to clear
+ * that plus the timer's own height plus the same breathing gap.
+ */
+export const WRITING_TIMER_CLEARANCE =
+  RESONANCE_BUTTON_CLEARANCE + touchTarget.minimum + SPACING.md;
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -77,9 +89,13 @@ const styles = StyleSheet.create({
   pageNarrow: {
     flexDirection: 'column',
   },
-  /** Only while something floats over the page: hold the band the button covers. */
+  /**
+   * Only while something floats over the page: hold the band the floating
+   * affordances cover. Sized to the topmost of them (the writing timer), so the
+   * save hint, the Finish link and the stacked margin column clear both.
+   */
   pageWithFloatingAction: {
-    paddingBottom: RESONANCE_BUTTON_CLEARANCE,
+    paddingBottom: WRITING_TIMER_CLEARANCE,
   },
   writingColumn: {
     flex: 1,

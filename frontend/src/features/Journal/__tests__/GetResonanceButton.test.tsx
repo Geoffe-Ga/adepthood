@@ -118,4 +118,23 @@ describe('GetResonanceButton', () => {
     expect(style.height).not.toBe(0);
     expect(style.overflow).not.toBe('hidden');
   });
+  /**
+   * The floating wrapper spans the page edge to edge (``left: 0; right: 0``), so
+   * whatever it declares for pointer events it declares for the whole band, not
+   * just for the button centred in it. ``box-none`` lets the wrapper stay
+   * untouchable while its button stays pressable, which is what keeps the band
+   * from swallowing taps meant for anything else sitting in it.
+   */
+  it('lets touches pass through the floating band it spans while staying pressable itself', () => {
+    const onPress = jest.fn();
+    const view = render(<GetResonanceButton visible onPress={onPress} />);
+    expect(view.root.props.pointerEvents).toBe('box-none');
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the whole band inert while hidden, so nothing is pressable through it', () => {
+    const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
+    expect(view.root.props.pointerEvents).toBe('none');
+  });
 });

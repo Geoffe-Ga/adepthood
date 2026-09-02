@@ -41,6 +41,7 @@ import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
 import { countWords, wordCountLabel } from './wordCount';
+import WritingSessionSurface from './WritingSessionSurface';
 
 import { journal, prompts, reflections } from '@/api';
 import type {
@@ -2322,6 +2323,32 @@ function ResonanceControls({
 }
 
 /**
+ * The writing surface's own screen-level siblings, in edit mode only.
+ *
+ * Both lift clear of the writing area rather than sitting in it, and for the
+ * timer that is not only a layout choice: its engine ticks ten times a second,
+ * so whatever subtree hosts it repaints ten times a second — and the subtree
+ * that must not is the page holding the writer's text fields and live word
+ * count. The reading view carries its own inline resonance action instead, and
+ * has nothing to time.
+ */
+function EntryWritingSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element | null {
+  if (!ctl.editGate.editMode) return null;
+  return (
+    <>
+      <WritingSessionSurface />
+      <ResonanceControls
+        visible={ctl.visible}
+        disabled={ctl.resonanceDisabled}
+        loading={ctl.resonance.loading}
+        reason={ctl.resonanceReason}
+        onPress={ctl.resonance.requestResonance}
+      />
+    </>
+  );
+}
+
+/**
  * The two screen-level care siblings rendered ABOVE the page (NORTH-STAR §10):
  * the acute-distress support surface first, then the warmer foundation reflection,
  * so a distress signal always reads before the gentler nudge. Both are siblings of
@@ -2365,15 +2392,7 @@ function JournalEntryScreen({
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
-      {ctl.editGate.editMode ? (
-        <ResonanceControls
-          visible={ctl.visible}
-          disabled={ctl.resonanceDisabled}
-          loading={ctl.resonance.loading}
-          reason={ctl.resonanceReason}
-          onPress={ctl.resonance.requestResonance}
-        />
-      ) : null}
+      <EntryWritingSurfaces ctl={ctl} />
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}

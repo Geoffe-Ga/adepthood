@@ -5,7 +5,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
+import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
 import { colors, writingField, writingFieldFocus } from '@/design/tokens';
@@ -352,10 +352,14 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance in edit mode, where Get Resonance floats over the page', () => {
+  it('reserves bottom clearance in edit mode, where two affordances float over the page', () => {
     const { getByTestId } = renderScreen();
     const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
-    expect(page.paddingBottom).toBe(RESONANCE_BUTTON_CLEARANCE);
+    // Sized to the topmost floating affordance, the writing timer, which is
+    // stacked a full touch target above the resonance button's own band. One
+    // inset covering both rather than a second added beside the first.
+    expect(page.paddingBottom).toBe(WRITING_TIMER_CLEARANCE);
+    expect(page.paddingBottom).toBeGreaterThan(RESONANCE_BUTTON_CLEARANCE);
   });
 
   it('leaves no dead band below the entry in read mode, where nothing floats', async () => {
