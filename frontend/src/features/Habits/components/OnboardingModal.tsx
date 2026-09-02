@@ -373,7 +373,7 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderPro
         : 'Habits are ordered by energy efficiency. You can drag to reorder if needed.'}
     </Text>
     <View style={styles.startDateContainer}>
-      <Text style={styles.startDateLabel}>First habit starts on:</Text>
+      <Text style={styles.startDateLabel}>Beige begins on:</Text>
       <DatePicker
         value={toISODate(startDate)}
         minDate={toISODate(new Date())}

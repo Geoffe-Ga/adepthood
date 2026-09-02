@@ -94,6 +94,17 @@ describe('OnboardingModal reorder step', () => {
     return found?.borderLeftColor as string | undefined;
   };
 
+  it('names the start-date picker for the stage it actually begins', () => {
+    // The picked date is habit index 0's start date verbatim, and index 0 is
+    // Beige -- so the label names the stage rather than a list position the
+    // user cannot see, and the date they choose is the one the whole program
+    // calendar is anchored to.
+    const { getByText, queryByText } = setupToReorder();
+
+    expect(getByText('Beige begins on:')).toBeTruthy();
+    expect(queryByText('First habit starts on:')).toBeNull();
+  });
+
   it('maps stage colors by index and updates after reorder', () => {
     const { getByTestId } = setupToReorder();
     const list = getByTestId('reorder-list');

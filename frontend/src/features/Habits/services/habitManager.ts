@@ -51,6 +51,7 @@ import {
   calculateTodaysProgress,
   carryoverSlot,
   countCarryover,
+  isNotCarryoverHabit,
   logHabitUnits,
   stageAtIndex,
 } from '../HabitUtils';
@@ -310,9 +311,7 @@ const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
  * never inflate either side's slot with the other's count.
  */
 const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit => {
-  const slotIndex = isCarryover
-    ? countCarryover(prev)
-    : prev.filter((h) => h.is_carryover !== true).length;
+  const slotIndex = isCarryover ? countCarryover(prev) : prev.filter(isNotCarryoverHabit).length;
   const stage = stageAtIndex(isCarryover ? carryoverSlot(slotIndex) : slotIndex);
   const tempId = -Date.now();
   const name = input.name.trim();
@@ -337,16 +336,25 @@ const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boole
 };
 
 /**
- * Earliest habit start date (the program start); takes the min, not index 0, in
- * case the list is unsorted. Demo-seed tiles are excluded because their
- * hard-coded placeholder dates would otherwise anchor a day-one user's calendar
- * years into the program.
+ * The universal program anchor, derived from the habits the program actually
+ * governs. It takes the min rather than index 0 in case the list is unsorted,
+ * but the min is over an excluded set, which is why this is not named for the
+ * minimum it computes: two whole categories of row carry a ``start_date`` that
+ * is not a program date at all.
+ *
+ * Demo-seed tiles are excluded because their hard-coded placeholder dates would
+ * otherwise anchor a day-one user's calendar years into the program. Carryover
+ * habits are excluded because their date is when the user began that habit in
+ * their own life, before the program; letting one win would move every screen's
+ * stage and week back to a day the program had not started. A store holding
+ * nothing but those two kinds yields no anchor at all, which is the correct
+ * answer -- there is no program date in it to find.
  */
-const earliestStartDate = (
-  habits: ReadonlyArray<{ start_date: Date; isDemoSeed?: boolean }>,
+const deriveProgramAnchor = (
+  habits: ReadonlyArray<{ start_date: Date; isDemoSeed?: boolean; is_carryover?: boolean }>,
 ): Date | null => {
   let earliest: number | null = null;
-  for (const habit of habits.filter(isNotDemoSeed)) {
+  for (const habit of habits.filter(isNotDemoSeed).filter(isNotCarryoverHabit)) {
     const time = new Date(habit.start_date).getTime();
     if (Number.isNaN(time)) continue;
     if (earliest === null || time < earliest) earliest = time;
@@ -368,12 +376,18 @@ const sameCalendarDay = (a: Date, b: Date): boolean =>
  * — whose persisted anchor was wiped on logout, or who onboarded before the
  * anchor existed — keeps a calendar-correct Habits screen while every other
  * screen falls back to a divergent server value. Recomputing on load keeps all
- * screens in lockstep and self-heals a missing anchor. The demo FALLBACK seed
- * is filtered out inside ``earliestStartDate``, so a store holding only demo
- * tiles yields no anchor and this leaves the existing one untouched.
+ * screens in lockstep and self-heals a missing anchor. Demo FALLBACK seeds and
+ * carryover habits are both filtered out inside ``deriveProgramAnchor``, so a
+ * store holding only those yields no anchor and this leaves the existing one
+ * untouched.
+ *
+ * This is the client's anchor only. The server keeps its own, stamped when the
+ * progress row is created, and the two are not reconciled here: a user who
+ * picks a future start date will have a client anchor on that date and a server
+ * anchor on the day they first arrived. Reconciling them is a separate change.
  */
 const syncProgramAnchorFromHabits = (): void => {
-  const anchor = earliestStartDate(getHabits());
+  const anchor = deriveProgramAnchor(getHabits());
   if (anchor === null) return;
   const current = useProgramStore.getState().programStartDate;
   if (current !== null && sameCalendarDay(current, anchor)) return;
@@ -1391,7 +1405,7 @@ export const habitManager = {
     // same stage/week from one source. Without this a freshly-onboarded user
     // has a null anchor and every screen silently falls back to divergent
     // server/position values.
-    const anchor = earliestStartDate(newHabits);
+    const anchor = deriveProgramAnchor(newHabits);
     if (anchor) useProgramStore.getState().setProgramStartDate(anchor);
     showToast?.({
       message: 'Tap a habit tile to edit its goals.',

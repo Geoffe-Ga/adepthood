@@ -58,13 +58,33 @@ export const stageRangeForPage = (
 /** Signed display slot for the nth carryover habit: index 0 → slot -1, the sign-mirror of positive slot 1. */
 export const carryoverSlot = (carryoverIndex: number): number => -(carryoverIndex + 1);
 
+/**
+ * Whether the user brought this habit along from before the program rather than
+ * taking it on as part of one. The distinction is dated, not cosmetic: a
+ * carryover habit's ``start_date`` is when the user actually started it, so it
+ * records their own history, while a program habit's is a position on the
+ * program cadence. Anything deriving the program's own calendar must read only
+ * the latter, or one brought-along habit drags every stage and week backwards.
+ */
+export const isCarryoverHabit = (habit: { is_carryover?: boolean }): boolean =>
+  habit.is_carryover === true;
+
+/**
+ * The complement, named negatively to match ``isNotDemoSeed`` and because it is
+ * honest: a row that is not carryover may still be a demo placeholder, so this
+ * says only what it knows. Absent means not carryover -- the inbound mapper
+ * passes the flag through undefined, so every row written before carryover
+ * existed must keep counting as an ordinary one.
+ */
+export const isNotCarryoverHabit = (habit: { is_carryover?: boolean }): boolean =>
+  !isCarryoverHabit(habit);
+
 /** Range label text: negative carryover ranges read "-10 to -1"; positive program ranges keep the en-dash. */
 export const formatStageRange = (start: number, end: number): string =>
   start < 0 || end < 0 ? `${start} to ${end}` : `${start}–${end}`;
 
 /** Number of habits flagged as carryover — sizes the negative lap span. */
-export const countCarryover = (habits: Habit[]): number =>
-  habits.filter((h) => h.is_carryover === true).length;
+export const countCarryover = (habits: Habit[]): number => habits.filter(isCarryoverHabit).length;
 
 /** A habit paired with its original position in the flat habits list. */
 interface IndexedHabit {
@@ -78,7 +98,7 @@ const partitionByCarryover = (
   const program: IndexedHabit[] = [];
   const carryover: IndexedHabit[] = [];
   allHabits.forEach((habit, flatIndex) => {
-    (habit.is_carryover === true ? carryover : program).push({ habit, flatIndex });
+    (isCarryoverHabit(habit) ? carryover : program).push({ habit, flatIndex });
   });
   return { program, carryover };
 };

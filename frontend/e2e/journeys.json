@@ -90,6 +90,18 @@
     "issue": 2491
   },
   {
+    "id": "habits.scaffolding-start-date-anchors-the-program",
+    "description": "The date the user picks in Energy Scaffolding is the day their program begins, and it stays that day. They choose it in the reorder step, the scaffold rows POST with dates laid out from it, and the reload that follows re-derives the universal anchor that Map, Practice, Course and Journal all read for the current stage and week. A habit the user brought along from before the program carries the date they actually started it, which is usually earlier than the date they picked, and it must not become the program's beginning -- otherwise bringing one habit along on day one moves every other screen back to a day the program had not started. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal: driving this journey means opening the scaffolding modal, operating its date picker, and adding a habit from the carryover lap, none of which a lane that cannot render can do. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"program anchor ignores carryover habits\" block, which covers the live load, the offline cache, and the reload that follows onboardingSave) and by the picker's own label in src/features/Habits/components/__tests__/OnboardingModal.step4.test.tsx. Two anchors exist and this journey watches only the client's: the server stamps its own when the progress row is created, so a user who picks a future date has one of each and they disagree until they are reconciled.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/", "GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2399
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
     "crosses": {

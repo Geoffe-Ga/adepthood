@@ -2614,6 +2614,206 @@ describe('habitManager', () => {
     });
   });
 
+  describe('program anchor ignores carryover habits', () => {
+    // A carryover habit is one the user brought along from before the program:
+    // it is dated when they actually started it, so it records their own
+    // history rather than the program's beginning. The universal anchor drives
+    // Map, Practice, Course and Journal, so letting the oldest brought-along
+    // row win drags every one of those screens backwards.
+    const BEIGE = '2026-06-01';
+    const BEFORE_BEIGE = '2026-01-15';
+    const AFTER_BEIGE = '2026-09-01';
+
+    /** A raw API row in the shape ``mapApiHabits`` consumes. */
+    const apiRow = (id: number, name: string, startDate: string, carryover?: boolean) => ({
+      id,
+      name,
+      icon: '\u{1F9D8}',
+      start_date: startDate,
+      energy_cost: 1,
+      energy_return: 2,
+      stage: 'Beige',
+      streak: 0,
+      milestone_notifications: false,
+      goals: [],
+      ...(carryover === undefined ? {} : { is_carryover: carryover }),
+    });
+
+    /** A cached row in the shape ``loadCachedHabits`` hands back. */
+    const cachedRow = (id: number, startDate: string, carryover?: boolean): Habit =>
+      makeHabit({
+        id,
+        start_date: new Date(startDate),
+        ...(carryover === undefined ? {} : { is_carryover: carryover }),
+      });
+
+    const expectAnchorOn = (isoDate: string): void => {
+      const anchor = useProgramStore.getState().programStartDate;
+      const expected = new Date(isoDate);
+      expect(anchor).not.toBeNull();
+      expect(anchor!.getFullYear()).toBe(expected.getUTCFullYear());
+      expect(anchor!.getMonth()).toBe(expected.getUTCMonth());
+      expect(anchor!.getDate()).toBe(expected.getUTCDate());
+    };
+
+    const loadFromApi = async (rows: ReturnType<typeof apiRow>[]): Promise<void> => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce(rows as never);
+      await habitManager.loadHabits();
+    };
+
+    it('keeps the anchor on a future Beige date when a carryover habit dated earlier loads', async () => {
+      // The reachable bug: the picker's minimum is today, so a user who chose a
+      // future Beige date and then brought a habit along today gets a row dated
+      // before the anchor, and the next load re-anchors the whole program to it.
+      useProgramStore.getState().hydrateProgramStartDate(new Date(BEIGE));
+
+      await loadFromApi([
+        apiRow(1, 'Survive', BEIGE),
+        apiRow(2, 'Morning pages', BEFORE_BEIGE, true),
+      ]);
+
+      expectAnchorOn(BEIGE);
+    });
+
+    it('derives the anchor from the earliest program habit, not an earlier carryover habit', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+
+      await loadFromApi([
+        apiRow(1, 'Survive', BEIGE),
+        apiRow(2, 'Morning pages', BEFORE_BEIGE, true),
+      ]);
+
+      expectAnchorOn(BEIGE);
+    });
+
+    it('leaves an existing anchor untouched when every real habit is a carryover habit', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(new Date(BEIGE));
+
+      await loadFromApi([
+        apiRow(1, 'Morning pages', BEFORE_BEIGE, true),
+        apiRow(2, 'Evening walk', BEFORE_BEIGE, true),
+      ]);
+
+      expectAnchorOn(BEIGE);
+    });
+
+    it('ignores a cached carryover habit when the habits fetch fails', async () => {
+      // The offline entry point: the anchor is re-derived from whatever the
+      // store holds, and on a failed fetch that is the on-disk cache, which
+      // carries the carryover flag through untouched.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (loadHabits as jest.Mock).mockResolvedValueOnce([
+        cachedRow(1, BEIGE),
+        cachedRow(2, BEFORE_BEIGE, true),
+      ] as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      await habitManager.loadHabits();
+
+      expectAnchorOn(BEIGE);
+    });
+
+    it('does not re-set the anchor when the only older habits are carryover habits', async () => {
+      // Spied on the action the sync actually reaches for, not on the store's
+      // ``setState``: the store closes over its own setter at creation, so a
+      // spy installed on the store object is never the function an action calls.
+      useProgramStore.getState().hydrateProgramStartDate(new Date(BEIGE));
+      const setAnchorSpy = jest.spyOn(useProgramStore.getState(), 'setProgramStartDate');
+
+      await loadFromApi([
+        apiRow(1, 'Survive', BEIGE),
+        apiRow(2, 'Morning pages', BEFORE_BEIGE, true),
+      ]);
+
+      expect(setAnchorSpy).not.toHaveBeenCalled();
+      setAnchorSpy.mockRestore();
+    });
+
+    it('keeps a re-scaffolded Beige date through the reload that follows onboardingSave', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(new Date('2020-01-01'));
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'a',
+          name: 'Survive',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date(BEIGE),
+        },
+      ];
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        apiRow(1, 'Survive', BEIGE),
+        apiRow(2, 'Morning pages', BEFORE_BEIGE, true),
+      ] as never);
+
+      await habitManager.onboardingSave(newHabits);
+
+      expectAnchorOn(BEIGE);
+    });
+
+    // Characterisation only: this passes without the exclusion, because a min
+    // over both rows already returns the program one. It pins the ordering so a
+    // later filter cannot start preferring the carryover row.
+    it('is unperturbed by a carryover habit dated after the program habit', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+
+      await loadFromApi([
+        apiRow(1, 'Survive', BEIGE),
+        apiRow(2, 'Morning pages', AFTER_BEIGE, true),
+      ]);
+
+      expectAnchorOn(BEIGE);
+    });
+
+    // Characterisation only. The inbound mapper passes the flag through with no
+    // default, so every row written before carryover existed arrives with it
+    // absent. Absent must keep anchoring, or the majority of real rows would
+    // silently fall outside the anchor.
+    it('still anchors to a habit whose carryover flag is absent rather than false', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+
+      await loadFromApi([apiRow(1, 'Survive', BEIGE)]);
+
+      expect(useHabitStore.getState().habits[0]!.is_carryover).toBeUndefined();
+      expectAnchorOn(BEIGE);
+    });
+
+    // Characterisation only: pins the call shape the re-scaffold rewrite will
+    // inherit. A chosen date wins even over an anchor that is already set --
+    // there is no monotonic or already-set guard, and adding one would break
+    // re-scaffolding to an earlier date.
+    it('anchors onboardingSave to the chosen Beige date even when an anchor already exists', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(new Date('2020-01-01'));
+      const newHabits: OnboardingHabit[] = [
+        {
+          id: 'b',
+          name: 'Belong',
+          icon: '\u{1F49C}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Purple',
+          start_date: new Date('2026-06-22'),
+        },
+        {
+          id: 'a',
+          name: 'Survive',
+          icon: '\u{1F9D8}',
+          energy_cost: 1,
+          energy_return: 3,
+          stage: 'Beige',
+          start_date: new Date(BEIGE),
+        },
+      ];
+
+      await habitManager.onboardingSave(newHabits);
+
+      expectAnchorOn(BEIGE);
+    });
+  });
+
   describe('demo-seed tiles never persist and never recover', () => {
     // The demo seed is an in-memory placeholder for a user with no server
     // habits. Once it reaches the AsyncStorage cache, the next launch reads it
