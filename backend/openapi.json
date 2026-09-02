@@ -6962,6 +6962,72 @@
         "title": "VaultUploadStatus",
         "type": "string"
       },
+      "VoiceDraftListResponse": {
+        "description": "One page of the Voice Drafts shelf, with its total and a next-page flag.",
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VoiceDraftResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "has_more"
+        ],
+        "title": "VoiceDraftListResponse",
+        "type": "object"
+      },
+      "VoiceDraftResponse": {
+        "description": "One expanded essay on the Voice Drafts shelf.\n\n``essay`` and ``essay_generated_at`` are non-optional here because the\nlisting selects only rows where the essay is set, and the\n``ck_marginalia_essay_timestamp_paired`` CHECK keeps the two columns set\ntogether — so the type restates the WHERE clause and a leaked unexpanded\nrow fails loudly as a response-validation error rather than silently.\n\nThe note's surrogate key is named ``marginalia_id`` rather than ``id`` so a\nclient holding a draft can address the note it came from.  ``user_id`` is\nexcluded for the reason given on :class:`MarginaliaResponse`.",
+        "properties": {
+          "anchor_text": {
+            "title": "Anchor Text",
+            "type": "string"
+          },
+          "essay": {
+            "title": "Essay",
+            "type": "string"
+          },
+          "essay_generated_at": {
+            "format": "date-time",
+            "title": "Essay Generated At",
+            "type": "string"
+          },
+          "journal_entry_id": {
+            "title": "Journal Entry Id",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MarginaliaKind"
+          },
+          "marginalia_id": {
+            "title": "Marginalia Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "marginalia_id",
+          "journal_entry_id",
+          "kind",
+          "anchor_text",
+          "essay",
+          "essay_generated_at"
+        ],
+        "title": "VoiceDraftResponse",
+        "type": "object"
+      },
       "WalletAuditEntry": {
         "description": "One wallet ledger row, newest-first in the summary.",
         "properties": {
@@ -13589,6 +13655,160 @@
           }
         },
         "summary": "Transcribe Page",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
+    "/journal/voice-drafts": {
+      "get": {
+        "description": "List the caller's expanded marginalia essays, newest letter first.\n\nA read-only shelf.  Nothing is generated on read — no regeneration path,\nno invitation and no nudge; NORTH-STAR §3 (\"you choose your depth\") and §6\ngovern invitations, and this is retrieval, not an invitation.\n\nSoft-deleted parent entries are excluded (BUG-JOURNAL-007), as\n``delete_journal_entry`` promises of every read path.\n\nDrafts whose parent entry is INTIMATE are *included*.  This is retrieval\nto the owner, not egress: an intimate entry never has an essay generated\n(the essay path returns before the LLM), so the pair exists only where the\nentry was reclassified after generation, and ``GET /{entry_id}/marginalia``\nalready returns that same essay to its owner today.  Withholding it here\nwould hide the writer's own letter from the writer while leaving it\nreachable one route over.  The egress filter belongs to a future vault\nmirror, never as a flag on this predicate.\n\nOrdering is ``essay_generated_at DESC`` with ``id DESC`` as the tiebreak,\nmirroring ``list_journal_entries``.  The paired-nullability CHECK makes\n``essay_generated_at`` non-null on every returned row, so the ordering is\ntotal with no NULLS-placement hazard.\n\nThis route is declared before ``GET /{entry_id}``: Starlette matches in\nregistration order on the raw path, so a later declaration would be\nshadowed by the ``RowIdPath`` converter and answer 422.",
+        "operationId": "list_voice_drafts_journal_voice_drafts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceDraftListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The account has no credit left for this operation."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "List Voice Drafts",
         "tags": [
           "journal"
         ]
