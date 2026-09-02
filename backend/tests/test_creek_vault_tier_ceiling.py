@@ -47,8 +47,10 @@ from domain.creek_vault import (
 from models.journal_entry import JournalClassification
 from services.creek_vault_client import (
     _CEILING_HEADER,
-    _WHEEL_TIER_CEILING,
     HttpCreekVaultClient,
+)
+from services.creek_vault_payload import (
+    _WHEEL_TIER_CEILING,
 )
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 

@@ -264,7 +264,14 @@ async def store_and_classify(
        :attr:`VaultWriteStatus.DEGRADED`.
     5. On a durable ingest the call returns :attr:`VaultWriteStatus.INGESTED`
        with the ref and an empty tag tuple -- per-entry vault classification is
-       deferred, so no classify capability is ever called here.
+       deferred, so no classify capability is ever called here. Creek does
+       publish classification, at the pinned contract version 0.10.0, under the
+       wire name ``pipeline``; that is a different request, not this one
+       withheld. The published pass is whole-vault and names no fragment, so it
+       cannot answer "what is *this* entry about" at the moment this function
+       has an entry in hand. The deferral is therefore a reading of the
+       published request shape rather than a gap in it, and what would reopen
+       it is a fragment selector appearing there.
 
     The entry's own tier and the write ceiling are both set to the resolved
     tier, so the vault stores at exactly the tier the writer chose. Never

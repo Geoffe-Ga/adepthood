@@ -51,6 +51,8 @@ from services.creek_vault_client import (
     CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
+)
+from services.creek_vault_payload import (
     _wheel_aspects,
 )
 from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
@@ -62,6 +64,7 @@ from services.creek_vault_wheel import (
     fetch_vault_wheel,
     select_wheel_balance,
 )
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _CANONICAL_ASPECTS = [
     "Body",
@@ -95,7 +98,7 @@ _STANDARD_RECORD_FIELDS = frozenset(
 ) | {"message", "asctime", trace_id_var.name}
 
 
-class RecordingWheelVaultClient:
+class RecordingWheelVaultClient(NoPipelineVaultDouble):
     """A scriptable, call-recording fake CreekVaultClient (wheel path only)."""
 
     def __init__(

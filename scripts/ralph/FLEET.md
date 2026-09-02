@@ -102,6 +102,22 @@ global `~/.npm/_npx` cache and still queries the registry before refusing.
 symlink with a real install** (`rm frontend/node_modules && cd frontend &&
 npm ci`), or it is linting its own change against `main`'s installed tree.
 
+That guard also answers a second question, on request. Run with
+`--verify-lockfile` — as every `scripts/frontend/*.sh` runner and the five
+`files: ^frontend/` hooks now do — it proves the install was *built from* the
+committed lockfile, by comparing npm's own install receipt
+(`node_modules/.package-lock.json`) against `frontend/package-lock.json`. It
+exits 0 when they match, 1 when the install has drifted, and 2 when it could not
+reach a verdict; it is hermetic, and it never installs anything.
+
+Inside a lane it resolves the symlink and compares against the **owning**
+checkout's lockfile, not the lane's — otherwise a lane that legitimately bumps a
+dependency would read as stale on every frontend gate, because the shared
+install matches `main`. When the lane's own lockfile differs from the owner's it
+prints the `rm`-first remedy above as a *warning* and still exits 0. `commitlint`
+is deliberately left on the presence-only path: it carries no `files:` filter, so
+a stale frontend install would otherwise block every backend-only commit.
+
 ### A conflict-resolution commit is gated narrowly, by design
 
 `fleet.sh sync` integrates `main` by merge. When that merge conflicts, the commit
@@ -171,9 +187,21 @@ for building, serialize only the merge.**
 
 ## Which issues run in parallel (the safety gate)
 
-`pick-next.sh` is parallel-aware. Beyond the existing require/exclude label
-filters and open-PR exclusion, it:
+`pick-next.sh` is parallel-aware. Beyond the require/exclude label filters and
+open-PR exclusion, it:
 
+- **Requires `agent-ready`** (`RALPH_REQUIRE_LABELS`, default `agent-ready`). An
+  issue nobody has specced is not build work, so it is invisible to the picker
+  no matter how high its priority — a lane handed one has nothing to build from.
+  The variable REPLACES the requirement rather than adding to it; set it to the
+  empty string (`RALPH_REQUIRE_LABELS=`) to require nothing and see the whole
+  backlog. Because the gate can hold back real work, an empty pick is never
+  silent: the picker says on stderr **why** it picked nothing, and the two
+  reasons call for opposite responses — *no open issue passed the require gate*
+  means groom the backlog, while *N candidates passed the filters but are all in
+  flight or conflicting* means eligible work exists and is already covered, so
+  nothing needs grooming and dropping the gate would reveal nothing. Silence
+  means the backlog really is drained.
 - **Excludes live worktree issues** (started, PR not yet opened) so the same
   issue is never handed to two workers.
 - Gives the **first** worker (empty fleet) the lowest eligible issue, exactly as

@@ -73,6 +73,7 @@ from services.corpus_import import (
 )
 from services.corpus_ingest import IngestOutcome
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -138,7 +139,7 @@ def _empty_reflection() -> VaultReflection:
     )
 
 
-class ScriptedVault:
+class ScriptedVault(NoPipelineVaultDouble):
     """A reachable, upload-capable vault that records what it was handed."""
 
     def __init__(self) -> None:

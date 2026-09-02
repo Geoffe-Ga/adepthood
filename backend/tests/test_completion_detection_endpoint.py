@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from http import HTTPStatus
 from typing import Any
@@ -19,7 +20,12 @@ from models.habit import Habit
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
-from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
+from services.botmason import (
+    STUB_MODEL_NAME,
+    LLMCreditExhaustedError,
+    LLMProviderError,
+    LLMResponse,
+)
 
 _BODY = "I meditated by the river and the willow bent without breaking."
 _NOTE = {"kind": "theme", "quote": "the willow bent without breaking", "note": "It holds."}
@@ -83,7 +89,7 @@ def _fake(
     *,
     hits: list[dict[str, Any]],
     detection_calls: list[str] | None = None,
-    detection_raises: bool = False,
+    detection_error: LLMProviderError | None = None,
 ) -> None:
     """Patch the shared LLM seam: marginalia JSON for the literary prompt, hits for detection."""
     notes_payload = json.dumps({"notes": [_NOTE]})
@@ -109,8 +115,8 @@ def _fake(
         if '"hits"' in prompt or "COMPLETED" in prompt:  # the detection prompt
             if detection_calls is not None:
                 detection_calls.append(prompt)
-            if detection_raises:
-                raise LLMProviderError("detector down")
+            if detection_error is not None:
+                raise detection_error
             return _stub(hits_payload)
         return _stub(notes_payload)
 
@@ -160,16 +166,27 @@ async def test_no_candidates_skips_detection_llm(
     assert calls == []  # the detection LLM was never called (cost guard)
 
 
+def _detection_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return the records the detection-failure handler emitted, newest last."""
+    return [
+        record for record in caplog.records if record.getMessage() == "journal_detection_failed"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_detection_failure_is_best_effort(
-    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _fake(monkeypatch, hits=[], detection_raises=True)
+    _fake(monkeypatch, hits=[], detection_error=LLMProviderError("detector down"))
     headers = await _signup(async_client, "detfail")
     await _seed_habit(db_session, await _user_id(db_session, "detfail"))
     entry_id = await _create_entry(async_client, headers)
 
-    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    with caplog.at_level(logging.WARNING, logger="routers.journal"):
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
     assert resp.status_code == HTTPStatus.OK  # NOT 502 — detection is additive
     body = resp.json()
     assert body["suggestions"] == []
@@ -177,6 +194,44 @@ async def test_detection_failure_is_best_effort(
     assert body["remaining_messages"] == 49  # charged; no rollback
     marg = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert marg == 1  # the resonance pass was not rolled back
+    records = _detection_warnings(caplog)
+    assert len(records) == 1
+    # A transient failure names no account: the ABSENCE of ``provider`` is what
+    # separates a dropped socket from a balance that will never refill on its own.
+    assert getattr(records[0], "provider", None) is None
+
+
+@pytest.mark.asyncio
+async def test_detection_credit_exhaustion_names_the_provider(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A billing refusal stays additive but records the account an operator can settle."""
+    _fake(
+        monkeypatch,
+        hits=[],
+        detection_error=LLMCreditExhaustedError("no credit", provider="anthropic"),
+    )
+    headers = await _signup(async_client, "detcredit")
+    await _seed_habit(db_session, await _user_id(db_session, "detcredit"))
+    entry_id = await _create_entry(async_client, headers)
+
+    with caplog.at_level(logging.WARNING, logger="routers.journal"):
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK  # NOT 402/503 — detection is additive
+    body = resp.json()
+    assert body["suggestions"] == []
+    assert len(body["marginalia"]) == 1  # literary notes intact
+    assert body["remaining_messages"] == 49  # charged; no rollback
+    marg = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
+    assert marg == 1  # the resonance pass was not rolled back
+    records = _detection_warnings(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert getattr(records[0], "provider", None) == "anthropic"
+    assert _BODY not in "".join(str(record.__dict__) for record in caplog.records)
 
 
 @pytest.mark.asyncio

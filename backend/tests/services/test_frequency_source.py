@@ -49,6 +49,7 @@ from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
 from services import frequency_source as fs
 from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 _BODY = "A day I finally said the thing out loud."
@@ -61,7 +62,7 @@ _OPERATOR_ONLY_CODE = Frequency.F7
 _OPERATOR_WEIGHT = 0.5
 
 
-class RecordingClassifyVaultClient:
+class RecordingClassifyVaultClient(NoPipelineVaultDouble):
     """A scriptable, call-recording fake CreekVaultClient (classify path only)."""
 
     def __init__(

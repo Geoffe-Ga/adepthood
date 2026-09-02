@@ -272,6 +272,14 @@ POLICY: Mapping[str, TablePolicy] = {
         "the account controls, so leaving the row behind would keep a working "
         "key to somebody else's system after they asked to be forgotten.",
     ),
+    "vaultpipelinerun": _erase(
+        "user_id",
+        "When each stage of the account's vault ontologization last ran, and "
+        "how many fragments it reached. The vault it describes belongs to the "
+        "account, so a record of how far its classification got is a record "
+        "about nobody once the account is gone -- and it names the account "
+        "directly, which is what the counts alone would not.",
+    ),
     "walletaudit": _erase(
         "user_id",
         "The account's own wallet ledger goes with the wallet. Rows recording "

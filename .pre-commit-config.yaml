@@ -59,13 +59,44 @@ repos:
   # ruff-format is the single source of truth for Python formatting;
   # ruff --fix handles lint auto-fixes. Black was removed to eliminate
   # redundant/conflicting formatters.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.9
+  #
+  # ruff runs from the *installed* environment, like mypy below, so
+  # backend/requirements-dev.txt is the one place its version is stated. This
+  # used to be a cloned astral-sh/ruff-pre-commit hook pinned by `rev: v0.12.9`
+  # while requirements-dev.txt pinned ruff 0.16.4, which meant two linters both
+  # presenting themselves as "the lint gate": CI lints by running pre-commit,
+  # which ignored the requirements files and cloned its own ruff, while
+  # scripts/backend/lint.sh ran the installed one. Neither verdict predicted
+  # the other and no message said which tool had spoken. Nothing reconciled
+  # them either -- there is no `package-ecosystem: "pre-commit"` entry in
+  # .github/dependabot.yml and no `autoupdate` anywhere, so Dependabot ratchets
+  # the pin forward while `rev:` stays frozen at whatever it was committed
+  # with. backend/tests/scripts/test_precommit_tool_versions.py locks this
+  # shape in for every hook, not just this one.
+  #
+  # `entry`, `types_or` and `require_serial` are restated verbatim from
+  # ruff-pre-commit's own .pre-commit-hooks.yaml, because a local hook supplies
+  # its own definition. `--force-exclude` is the load-bearing one: pre-commit
+  # passes filenames explicitly, and ruff honours [tool.ruff] extend-exclude
+  # for explicitly-passed paths only when it is present. Dropping it makes ruff
+  # lint backend/migrations for the first time -- measured at 253 findings and
+  # 13 files it would reformat.
+  - repo: local
     hooks:
       - id: ruff
+        name: ruff
+        entry: ruff check --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         files: ^backend/
         args: ["--config=backend/pyproject.toml", "--fix"]
       - id: ruff-format
+        name: ruff format
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         files: ^backend/
 
   # mypy runs from the *installed* environment rather than one pre-commit builds
@@ -97,19 +128,41 @@ repos:
         exclude: ^backend/migrations/
         args: ["--config-file=backend/pyproject.toml"]
 
-  - repo: https://github.com/PyCQA/isort
-    rev: 6.0.1
-    hooks:
-      - id: isort
-        files: ^backend/
-        args: ["--settings-path=backend/pyproject.toml"]
+  # There was a cloned PyCQA/isort hook here, pinned at rev 6.0.1 while
+  # requirements-dev.txt pinned isort==8.0.1 -- two majors apart. It is gone
+  # rather than converted, because it was a second import-sorter with no
+  # second job.
+  #
+  # Nothing in this repository ever invoked isort except that hook: check-all.sh
+  # has no isort stage, and fix-all.sh runs lint.sh and format.sh only. So the
+  # 8.0.1 pin installed a tool no gate ran, and the hook's 6.0.1 was the only
+  # isort that executed anywhere.
+  #
+  # Meanwhile ruff's `I` family is already live under `select = ["ALL"]` and
+  # already gated by both the ruff hook above and check-all.sh -- verified by
+  # planting an out-of-order import block and watching I001 fail. The
+  # [tool.ruff.lint.isort] section below exists precisely to stop the two
+  # sorters fighting over the same files; with one sorter left there is nothing
+  # to reconcile.
 
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.6
+  # bandit, like ruff and mypy, runs from the installed environment. It was a
+  # cloned PyCQA/bandit at rev 1.8.6 while requirements-dev.txt pinned 1.9.4.
+  #
+  # The version was only half of that divergence. This hook ran
+  # `-c backend/.bandit -r backend`; scripts/backend/security.sh ran
+  # `bandit -r src/` with no `-c` at all, so it loaded none of .bandit's skips
+  # or exclusions and scanned a smaller tree. Delegating to the script is what
+  # makes the two one gate rather than two gates that happen to share a
+  # version -- the same reasoning as `backend-complexity` below, which
+  # delegates instead of restating its thresholds.
+  - repo: local
     hooks:
       - id: bandit
+        name: bandit
+        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/security.sh --bandit-only'
+        language: system
+        pass_filenames: false
         files: ^backend/
-        args: ["-c", "backend/.bandit", "-r", "backend"]
 
   - repo: https://github.com/trailofbits/pip-audit
     rev: v2.9.0
@@ -147,6 +200,15 @@ repos:
   #      the repo root as cwd, so this path resolves before the `cd`. Without it a
   #      tree that has no deps fails as `eslint: command not found`, which names the
   #      wrong problem.
+  #
+  #      Every entry that reads the installed tree passes `--verify-lockfile`,
+  #      which also proves the install was BUILT from the committed lockfile.
+  #      Presence is not freshness: a tree installed weeks ago satisfies the bare
+  #      guard, and the staleness then surfaces as an Expo SDK alignment failure
+  #      that blames the committed pins. `commitlint` below is the deliberate
+  #      exception — it carries no `files:` filter, so it fires on EVERY commit in
+  #      the repo, and a stale frontend install must not block a backend-only or
+  #      docs-only commit. It stays on the presence-only path.
   #   2. `cd frontend &&` — pre-commit appends the matched filenames to the argv of
   #      `bash -c`, where they land in $0/$1. Every entry below ignores them except
   #      commitlint, which reads $0 for the message path. Ignoring them is what lets
@@ -165,21 +227,21 @@ repos:
       - id: frontend-eslint
         name: frontend eslint
         language: system
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && npm run lint'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && npm run lint'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/
 
       - id: frontend-prettier
         name: frontend prettier (write)
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/prettier --write .'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/prettier --write .'
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx|json|css|md|ya?ml)$
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/|^frontend/(?:tsconfig\.json|package-lock\.json)$
 
       - id: frontend-typecheck
         name: frontend typecheck
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/tsc -p tsconfig.json --noEmit'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/tsc -p tsconfig.json --noEmit'
         language: system
         pass_filenames: false
         files: ^frontend/.*\.(ts|tsx)$
@@ -187,7 +249,7 @@ repos:
 
       - id: frontend-tests
         name: frontend tests
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/jest --passWithNoTests'
         language: system
         pass_filenames: false
         files: ^frontend/
@@ -232,7 +294,7 @@ repos:
       - id: frontend-tests-coverage
         name: frontend tests (coverage required)
         language: system
-        entry: bash -c 'scripts/frontend/require-node-modules.sh && cd frontend && ./node_modules/.bin/jest --coverage --passWithNoTests'
+        entry: bash -c 'scripts/frontend/require-node-modules.sh --verify-lockfile && cd frontend && ./node_modules/.bin/jest --coverage --passWithNoTests'
         pass_filenames: false
         files: ^frontend/
         exclude: ^frontend/(?:node_modules|dist|build|coverage)/

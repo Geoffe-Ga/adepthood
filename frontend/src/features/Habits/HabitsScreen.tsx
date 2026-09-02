@@ -203,7 +203,7 @@ const HabitModals = (props: HabitModalsProps) => (
   </>
 );
 
-const ErrorBanner = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
+export const ErrorBanner = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
   <View style={styles.energyScaffoldingContainer}>
     <Text style={{ color: '#c00', marginBottom: 8 }}>{error}</Text>
     <TouchableOpacity

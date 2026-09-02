@@ -17,7 +17,6 @@ This guide walks you through deploying Adepthood as a **web application** on
                  │                                              │
  Browser ──────▶│  Frontend Service          Backend Service    │
                  │  (nginx, static files)     (FastAPI, Docker) │
-                 │  https://app.adepthood.com  https://api.adepthood.com
                  │        │                       │             │
                  │        │   fetch /api/*         │             │
                  │        └──────────────────────▶│             │
@@ -37,6 +36,45 @@ API requests, JWT auth, and database access.
 
 **PostgreSQL** — Railway's managed PostgreSQL add-on. Connection string is
 auto-injected as `DATABASE_URL`.
+
+### Production origins
+
+These are the origins the live deployment is actually served from. Every other
+hostname in this guide is a placeholder or an example — this table is the only
+place that states what is real, and the rest of the guide points here.
+
+| Role | Origin | Verified |
+|------|--------|----------|
+| Web app | `https://app.aptitude.guru` | 2026-09-01 |
+| API | `https://backend-production-3ccd.up.railway.app` | 2026-09-01 |
+
+The API origin is Railway-generated rather than a custom domain, so it changes
+if that service is deleted and recreated. Re-verify it, and update the date
+above, whenever the backend service is rebuilt from scratch. It is also public
+by construction: it ships to every browser as `EXPO_PUBLIC_API_BASE_URL` inside
+the web bundle, so recording it here discloses nothing that `view-source` does
+not already.
+
+**Two checks that look like verification and are not.**
+
+*DNS resolution proves nothing here.* Every name under `up.railway.app` answers,
+because the zone is **wildcard** DNS — a hostname nobody has ever registered
+resolves to a Railway edge address exactly like a live service does, and then
+returns 404. A `dig` that comes back with an address is not evidence that a
+service is attached to that name, and one that comes back empty is not evidence
+that it is not.
+
+*A 200 is not a health response.* The frontend's nginx falls back to
+`index.html` for any path it does not recognise, so `GET
+https://app.aptitude.guru/health` answers **200** with `Content-Type:
+text/html` — the web app's HTML, from a service that has no health endpoint at
+all. Only the API origin serves a real probe. Assert on the JSON body, never on
+the status code alone:
+
+```bash
+curl -fsS https://backend-production-3ccd.up.railway.app/health
+# {"status":"healthy","database":"connected","content_version":"<sha>"}
+```
 
 ---
 
@@ -129,7 +167,7 @@ In the backend service's **Variables** tab, add:
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
 | `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
-| `PROD_DOMAIN` | `https://your-frontend-domain.com` | Yes |
+| `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
 | `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
@@ -178,11 +216,18 @@ Railway auto-deploys when you push to `main`. To trigger a manual deploy:
 - Railway dashboard: backend service → **"Deploy"** button
 - Or CLI: `railway up`
 
-**Verify the deploy:**
+**Verify the deploy** against your backend service's own generated URL, copied
+from the Railway dashboard (this deployment's is in
+[Production origins](#production-origins); `your-backend` below is a
+placeholder, and because `up.railway.app` is a wildcard zone, typing a guessed
+name in gets you a 404 from a host that resolves perfectly):
 ```bash
-curl https://your-backend.up.railway.app/health
-# Expected: {"status":"healthy","database":"connected"}
+curl -fsS https://your-backend.up.railway.app/health
+# Expected: {"status":"healthy","database":"connected","content_version":"<sha>"}
 ```
+
+Read the body, not the status line. `-fsS` makes curl exit non-zero on an HTTP
+error so a 404 or 503 cannot read as success in a script.
 
 If you get `{"detail":"Database unavailable"}` (503), the PostgreSQL service
 isn't linked — go back to step 3c.
@@ -257,19 +302,22 @@ healthy, visit the frontend URL in your browser. You should see the app.
 Now that both services are deployed, you need to tell the backend to accept
 requests from the frontend's URL.
 
-1. Copy the frontend service's public URL from Railway (e.g.,
-   `https://adepthood-frontend.up.railway.app`)
+1. Copy the frontend service's **own** public URL out of the Railway dashboard
+   (Settings → Networking). Railway generates it per service, so it is not
+   guessable from the service's name — do not type one in from this guide.
 2. Go to the backend service → **Variables**
-3. Set `PROD_DOMAIN` to the frontend URL:
+3. Set `PROD_DOMAIN` to that frontend URL:
    ```
-   https://adepthood-frontend.up.railway.app
+   https://<your-frontend-service>.up.railway.app
    ```
 4. The backend will redeploy automatically and start accepting requests from
    the frontend
 
-**If you add a custom domain later**, update `PROD_DOMAIN` to include it:
+**If you add a custom domain later**, update `PROD_DOMAIN` to include it. Both
+origins must be listed while both serve traffic — this deployment's live value
+names the custom domain from [Production origins](#production-origins) first:
 ```
-https://app.aptitude.guru,https://adepthood-frontend.up.railway.app
+https://app.aptitude.guru,https://<your-frontend-service>.up.railway.app
 ```
 
 ---
@@ -279,8 +327,9 @@ https://app.aptitude.guru,https://adepthood-frontend.up.railway.app
 For each service in the Railway dashboard:
 
 1. Go to **Settings** → **Networking** → **Custom Domain**
-2. Add your domain (e.g., `api.adepthood.com` for the backend,
-   `app.adepthood.com` for the frontend)
+2. Add your domain (e.g., `api.yourdomain.example` for the backend,
+   `app.yourdomain.example` for the frontend — reserved placeholder names, not
+   live hosts)
 3. Railway shows you the DNS records to add (usually a CNAME)
 4. Add the DNS records in your domain registrar
 5. Railway auto-provisions HTTPS via Let's Encrypt
@@ -494,7 +543,7 @@ costs.
    `pg_restore` exits; it is finished when a journal entry decrypts.
 9. **Point the app at it** and bring the backend service back up. Watch the boot
    log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected"}`.
+   `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 
@@ -684,11 +733,12 @@ journal_encryption_enabled=True
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
-| `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS (e.g., `https://app.adepthood.com`) |
+| `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve). |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes |
+| `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Never list a public range you do not control. |
 | `GOOGLE_OAUTH_CLIENT_IDS` | For Google sign-in | *(empty)* | Comma-separated Google OAuth client IDs the backend will accept ID tokens for (web + iOS + Android). Empty means every Google token is rejected, which is why the buttons appear to do nothing. |
 | `APPLE_OAUTH_CLIENT_IDS` | For Apple sign-in | *(empty)* | Comma-separated audiences accepted on Apple identity tokens — for this app the iOS bundle identifier, since Apple sign-in is offered only on iOS. Empty means every Apple token is rejected. |
@@ -719,7 +769,7 @@ journal_encryption_enabled=True
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `EXPO_PUBLIC_API_BASE_URL` | Yes | Full URL of the backend API (e.g., `https://api.adepthood.com`). Baked in at build time. |
+| `EXPO_PUBLIC_API_BASE_URL` | Yes | Origin of the backend API — scheme and host, no trailing path. This deployment's value is the API origin in [Production origins](#production-origins). Baked in at build time, so it is public in the shipped bundle. |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | No | Gumroad product page opened by the Get Started CTA. Defaults to `https://creekmasons.gumroad.com/l/aptitude`. |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | No | Gumroad help article linked from the signup form's "Where's my key?" link. Defaults to `https://help.gumroad.com/article/76-license-keys`. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |
@@ -994,13 +1044,31 @@ address-rotation bypass this setting exists to close.
 
 ### Health check
 
-Railway pings `GET /health` every 30 seconds. A healthy response:
-```json
-{"status": "healthy", "database": "connected"}
-```
+Three probes are served. Point them at the API origin from
+[Production origins](#production-origins) — the web origin answers every path
+with the SPA's HTML, so a 200 from it means nothing.
 
-A 503 from `GET /health` means the database is unreachable. A 503 from an
-application route does not — see the next section for the other one.
+| Path | Answers | Healthy body |
+|------|---------|--------------|
+| `/health/live` | Is the process responsive? | `{"status": "alive"}` |
+| `/health/ready` | Process **and** database serving? | `{"status": "ready", "database": "connected"}` |
+| `/health` | Both, legacy combined shape | `{"status": "healthy", "database": "connected", "content_version": "<sha>"}` |
+
+Railway pings `GET /health` every 30 seconds. It is kept for the probes already
+configured against it; new checks should use the split pair, so that liveness
+and readiness can be configured independently. `/health/live` has no database
+dependency on purpose — it stays 200 through a database outage, so a failing
+liveness probe means the *process* is wedged and restarting it is the right
+response, while a failing readiness probe means drop this instance from
+rotation and leave it running.
+
+`content_version` is the sha of the vendored content pin the running image was
+built with, so a deploy that silently shipped stale content is visible without
+opening a shell.
+
+A 503 from `GET /health` or `GET /health/ready` means the database is
+unreachable. A 503 from an application route does not — see the next section
+for the other one.
 
 ### When the shared AI balance runs out
 
@@ -1194,7 +1262,7 @@ This runs:
 - [ ] `PROD_DOMAIN` matches your frontend URL(s) exactly, with `https://`
 - [ ] `EXPO_PUBLIC_API_BASE_URL` on the frontend matches your backend URL
 - [ ] PostgreSQL is linked to the backend service
-- [ ] Health check returns `{"status":"healthy","database":"connected"}`
+- [ ] Health check returns `{"status":"healthy","database":"connected",...}`
 - [ ] Alembic migrations are up to date (if configured)
 - [ ] `BOTMASON_PROVIDER` is set (`stub` is fine to start)
 
