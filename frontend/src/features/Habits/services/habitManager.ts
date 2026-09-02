@@ -357,7 +357,12 @@ const syncOnboardingHabits = async (fullHabits: readonly Habit[]): Promise<void>
  * habit's goals and completions irreversibly.
  */
 const releaseOne = async (habit: Habit): Promise<void> => {
-  await cancelForHabit(habit.id);
+  // Fire-and-forget, exactly as ``deleteHabit`` does it: the reminder is device
+  // state, and awaiting it here would let a local scheduling failure be read as
+  // a failed release — putting back a habit the user let go of, or, for a row
+  // with no server id at all, reporting a sync failure for something that was
+  // never going to leave the device.
+  void cancelForHabit(habit.id);
   if (!isServerBackedHabit(habit)) return;
   await habitsApi.delete(habit.id);
 };

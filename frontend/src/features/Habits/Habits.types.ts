@@ -110,10 +110,12 @@ export interface OnboardingHabit {
  *   program: it takes the new ratings and icon but keeps its own start date and
  *   stage, because that date is when the habit began in the user's life rather
  *   than a program date, and the negative lap is where it renders.
- * - `retained` is a row the picks never mentioned. It is left exactly as it is.
- *   Omitting a habit is not asking to lose it: the DELETE cascades goals and
- *   completions server-side and cannot be undone, so an omission must never
- *   reach it.
+ * - `retained` is a row the picks never mentioned. Nothing it holds is
+ *   overwritten; its position can still move, because the picks re-order the
+ *   lap around it and an order that never reaches the server dies at the next
+ *   logout. Omitting a habit is not asking to lose it: the DELETE cascades
+ *   goals and completions server-side and cannot be undone, so an omission
+ *   must never reach it.
  * - `released` is the explicit, confirmed choice to let a habit go, with the
  *   history that goes with it. Nothing derives this kind -- a caller has to
  *   state it.

@@ -281,14 +281,23 @@ const unmentionedRows = (existing: readonly Habit[], named: ReadonlySet<number>)
   existing.filter((habit) => !named.has(habit.id) && isNotDemoSeed(habit));
 
 /**
- * The rows an explicit `released` disposition named. A demo tile or a not-yet-
- * synced row is included so its reminders are still cancelled; the executor is
- * what withholds the DELETE from an id no server row answers to.
+ * The rows an explicit `released` disposition named, each at most once. A demo
+ * tile or a not-yet-synced row is included so its reminders are still
+ * cancelled; the executor is what withholds the DELETE from an id no server row
+ * answers to.
+ *
+ * The de-duplication is not tidiness. A caller-supplied plan naming the same id
+ * twice would issue two DELETEs; the second finds the row already gone and
+ * rejects, and the executor reads that rejection as "this habit did not go" and
+ * puts back a row the first call successfully deleted — store and server left
+ * further apart by the retry than by any failure.
  */
 const releasedRows = (plan: HabitMergePlan, byId: ReadonlyMap<number, Habit>): Habit[] => {
   const rows: Habit[] = [];
+  const seen = new Set<number>();
   for (const disposition of plan) {
-    if (disposition.kind !== 'released') continue;
+    if (disposition.kind !== 'released' || seen.has(disposition.habitId)) continue;
+    seen.add(disposition.habitId);
     const row = byId.get(disposition.habitId);
     if (row !== undefined) rows.push(row);
   }

@@ -2291,10 +2291,16 @@ describe('habitManager', () => {
       });
 
     afterEach(() => {
-      // ``jest.clearAllMocks`` clears calls but keeps implementations, so a
-      // case that reprograms a boundary has to hand it back.
-      (habitsApi.create as jest.Mock).mockImplementation(() => Promise.resolve({}));
-      (habitsApi.delete as jest.Mock).mockImplementation(() => Promise.resolve({}));
+      // ``jest.clearAllMocks`` clears recorded calls but keeps implementations
+      // AND any unconsumed ``...Once`` queue, so a case that reprograms a
+      // boundary has to reset it, not merely re-implement it. A single
+      // ``mockRejectedValueOnce`` that no call reached would otherwise sit in
+      // the queue and reject the first delete of some later, unrelated test.
+      for (const boundary of [habitsApi.create, habitsApi.delete]) {
+        const mock = boundary as jest.Mock;
+        mock.mockReset();
+        mock.mockImplementation(() => Promise.resolve({}));
+      }
       useProgramStore.getState().hydrateProgramStartDate(null);
     });
 
@@ -2531,6 +2537,56 @@ describe('habitManager', () => {
         'Breathe',
         'Stretch',
       ]);
+    });
+
+    it('releases a habit named twice by one plan exactly once', async () => {
+      // Without the de-duplication the second DELETE finds the row already
+      // gone and rejects, the executor reads that as "this habit did not go",
+      // and a habit the first call successfully deleted is put back.
+      (habitsApi.delete as jest.Mock)
+        .mockResolvedValueOnce({} as never)
+        .mockRejectedValueOnce(new Error('habit_not_found') as never);
+      useHabitStore.setState({
+        habits: [keptHabit(), makeServerHabit({ id: 48, name: 'Walk' })],
+      });
+
+      const plan: HabitMergePlan = [
+        { kind: 'released', habitId: KEPT_HABIT_ID },
+        { kind: 'released', habitId: KEPT_HABIT_ID },
+      ];
+      await habitManager.onboardingSave(plan, jest.fn());
+
+      expect(habitsApi.delete).toHaveBeenCalledTimes(1);
+      expect(useHabitStore.getState().habits.map((h) => h.id)).toEqual([48]);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it('moves the program anchor to the dates on the picks even when every pick is a habit the user already had', async () => {
+      // Characterisation, and a hazard worth naming. Saving a scaffolding pass
+      // is an EXPLICIT anchor write -- it records a day the user chose, and it
+      // outranks a stored one on purpose, because re-scaffolding to an EARLIER
+      // date has to be possible. That rule is not this change's to revisit.
+      //
+      // What makes it bite is upstream: the modal seeds its date picker with
+      // today on every open, with no memory of the anchor already stored. So a
+      // returning user who re-rates existing habits and never touches the
+      // picker moves the whole program calendar without being asked. The fix
+      // belongs to the picker's seed, not to this write, and the lane that owns
+      // the modal has been told. This test exists so that when the seed is
+      // fixed, the change here is deliberate rather than a silent drift.
+      useProgramStore.getState().hydrateProgramStartDate(new Date('2025-01-01'));
+      useHabitStore.setState({ habits: [keptHabit()] });
+
+      await habitManager.onboardingSave(
+        [pick({ energy_cost: 4, start_date: new Date('2026-09-01') })],
+        jest.fn(),
+      );
+
+      const anchor = useProgramStore.getState().programStartDate!;
+      expect(anchor.getFullYear()).toBe(2026);
+      expect(anchor.getMonth()).toBe(8);
+      expect(anchor.getDate()).toBe(1);
     });
 
     describe('the cache the trailing reload reads back', () => {
