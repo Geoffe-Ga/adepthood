@@ -139,6 +139,32 @@ async def _resolving_nowhere(_host: str) -> tuple[str, ...]:
     raise socket.gaierror(socket.EAI_NONAME, "stubbed lookup failure")
 
 
+async def _resolving_past_the_budget(_host: str) -> tuple[str, ...]:
+    """Stand in for a lookup whose answer does not arrive inside the resolver's bound.
+
+    The bound raises the builtin ``TimeoutError``, so that is what this stub
+    raises. Raising it here rather than sleeping past a shrunken budget keeps
+    this file's subject the *refusal a caller sees*; whether the bound actually
+    holds in elapsed time is asserted where the bound lives, in
+    ``test_vault_host_resolution.py``.
+    """
+    raise TimeoutError
+
+
+class _CountingResolver:
+    """A stubbed lookup that refuses the same way every time and counts the asking."""
+
+    def __init__(self, failure: BaseException) -> None:
+        """Start with nothing asked, ready to raise ``failure`` at every call."""
+        self.calls = 0
+        self._failure = failure
+
+    async def __call__(self, _host: str) -> tuple[str, ...]:
+        """Record one asking and refuse."""
+        self.calls += 1
+        raise self._failure
+
+
 def _repoint_resolver(
     monkeypatch: pytest.MonkeyPatch, resolver: Callable[[str], Awaitable[tuple[str, ...]]]
 ) -> None:
@@ -358,6 +384,88 @@ async def test_an_ordinary_public_vault_is_still_connectable(
 
 
 @pytest.mark.asyncio
+async def test_a_lookup_that_outlasts_its_budget_is_refused_by_name(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup abandoned on the clock is the same refusal as a lookup that failed.
+
+    Both mean nobody established where this URL points, and this seam refuses an
+    unestablished destination for the reason its neighbour above gives: a name
+    that cannot be checked now can be made to answer ``10.0.0.7`` later, and by
+    then the URL is stored and being dialled with the user's credential attached.
+
+    Pinned as a literal on purpose. The bound raises the builtin
+    ``TimeoutError``, which happens to subclass ``OSError`` and is therefore
+    already carried into this refusal by the degrade set the resolver keeps for
+    ``gaierror``. That inheritance is a fact about the standard library rather
+    than a decision this seam made, and a contract a client renders should not
+    rest on one; asserting the code by name is what makes it a contract instead
+    of a coincidence.
+
+    The body is checked for both values that came in on the request. A refusal is
+    a place a client may log, and this one is answering a request that carried a
+    credential beside a hostname somebody else chose.
+    """
+    headers, user_id = await _signup(async_client, "alpha")
+    _repoint_resolver(monkeypatch, _resolving_past_the_budget)
+
+    resp = await async_client.put(
+        _CONNECTION_PATH,
+        json={"vault_url": _PUBLIC_VAULT_URL, "api_key": _SENTINEL_KEY},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == _UNRESOLVABLE_REFUSAL
+    assert _SENTINEL_KEY not in resp.text
+    assert _ORDINARY_LOOKING_HOST not in resp.text
+    assert await _stored_row(db_session, user_id) is None
+
+
+@pytest.mark.asyncio
+async def test_no_database_connection_is_held_across_the_write_time_lookup(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write path must not hold a pooled connection while it waits on a resolver.
+
+    The authentication dependency SELECTs on this same session, so a ``Session``
+    is autobegun -- and an open transaction is a checked-out pool connection --
+    before this handler's first line runs. The engine is on SQLAlchemy's
+    defaults, five connections plus ten of overflow with a thirty-second checkout
+    timeout, so fifteen concurrent connects against a slow resolver would hold
+    every connection in the pool for the length of a lookup, and the next request
+    to *any* database-backed endpoint would block on checkout and fail.
+
+    Asserted at the endpoint rather than at the resolver because the transaction
+    is opened by a dependency this handler never mentions, which is precisely
+    what makes the defect easy to reintroduce while reading the handler and
+    seeing nothing wrong.
+
+    The ``OK`` is here so the release cannot be bought by breaking the happy
+    path, and the guard above the property is here because a stub that is never
+    called records an empty list, which ``not any([])`` would call a pass.
+    """
+    headers, _user_id = await _signup(async_client, "alpha")
+    in_transaction: list[bool] = []
+
+    async def _watching(_host: str) -> tuple[str, ...]:
+        in_transaction.append(db_session.in_transaction())
+        return (_GLOBAL_ADDRESS,)
+
+    _repoint_resolver(monkeypatch, _watching)
+
+    resp = await async_client.put(
+        _CONNECTION_PATH,
+        json={"vault_url": _PUBLIC_VAULT_URL, "api_key": _SENTINEL_KEY},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert in_transaction, "no lookup was observed"
+    assert not any(in_transaction)
+
+
+@pytest.mark.asyncio
 async def test_userinfo_is_named_before_the_host_it_hides_behind(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -468,6 +576,78 @@ async def test_a_stored_name_that_starts_resolving_privately_degrades_the_dial(
 
     assert isinstance(await _client_for(db_session, user_id), LocalFallbackCreekVaultClient)
     assert await _save_an_entry(async_client, headers) == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_no_database_connection_is_held_across_the_dial_time_lookup(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dial-time re-judgement must not hold a pooled connection either.
+
+    This is the more frequent of the two lookups by a wide margin: it runs inside
+    a per-request dependency, on every journal save made by any account with a
+    stored vault, where the write path runs once per reconnection. The
+    transaction is certainly open by the time it is reached -- the dependency
+    reads the connection row on the line above -- so the connection this request
+    is holding is rented for the length of whatever the resolver decides to do.
+
+    The client's type is asserted alongside, and it is not decoration. Ending the
+    transaction between reading the row and reading its columns is the obvious
+    way to write this, and under a session that expires on commit it would hand
+    back a fallback client for a perfectly good vault -- a silent capability loss
+    that no assertion about transactions could see.
+    """
+    _headers, user_id = await _signup(async_client, "alpha")
+    await _plant_connection(db_session, user_id, _PUBLIC_VAULT_URL)
+    in_transaction: list[bool] = []
+
+    async def _watching(_host: str) -> tuple[str, ...]:
+        in_transaction.append(db_session.in_transaction())
+        return (_GLOBAL_ADDRESS,)
+
+    _repoint_resolver(monkeypatch, _watching)
+
+    resolved = await _client_for(db_session, user_id)
+
+    assert in_transaction, "no lookup was observed"
+    assert not any(in_transaction)
+    assert isinstance(resolved, HttpCreekVaultClient)
+
+
+@pytest.mark.asyncio
+async def test_a_lookup_abandoned_on_the_clock_is_remembered_like_any_other_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out verdict is cached, and the cost of that is chosen rather than inherited.
+
+    The bound frees the coroutine that was waiting; it does not cancel the
+    blocking lookup underneath, which is running in asyncio's default thread pool
+    with no way to interrupt it. So a host that times out has left a thread
+    parked, and there is no single-flight here: without a cached verdict, every
+    request naming that host would pay the full bound again and park another
+    thread. The debounce is what bounds residual thread occupancy to roughly one
+    per host per window.
+
+    The price is paid by a legitimate owner whose resolver had one bad minute:
+    they get the local fallback for the rest of the window rather than for the
+    length of one lookup. That is the trade, stated plainly, and it is asserted
+    here so that reversing it is a decision somebody makes rather than a line
+    somebody moves.
+    """
+    resolver = _CountingResolver(TimeoutError())
+    _repoint_resolver(monkeypatch, resolver)
+
+    first = await creek_vault_url_resolution.classify_resolved_user_vault_url(
+        _ORDINARY_LOOKING_HOST
+    )
+    second = await creek_vault_url_resolution.classify_resolved_user_vault_url(
+        _ORDINARY_LOOKING_HOST
+    )
+
+    assert resolver.calls == 1
+    assert first is not None
+    assert second is not None
+    assert first.defect is second.defect
 
 
 @pytest.mark.asyncio
