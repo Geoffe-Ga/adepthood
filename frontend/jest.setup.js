@@ -68,6 +68,52 @@ jest.mock('react-native-safe-area-context', () => {
 // test bounds that escaping work at its scheduler: anything still pending when
 // a test finishes was, by definition, never awaited, so cancelling it changes
 // no in-test behavior while making the leak structurally impossible.
+// Contain a test-timeout cascade, so one timeout costs exactly one failure.
+//
+// When jest-circus times a test out it abandons the test function wherever it
+// is parked. A `try { ... } finally { jest.useRealTimers(); }` around a
+// fake-timer block therefore never reaches its `finally`, and whatever promise
+// the body was awaiting stays pending forever.
+//
+// That is worse than an untidy teardown. React's `act()` decrements its scope
+// depth only inside that pending promise's continuation (`popActScope`, in
+// react/cjs/react.development.js), and it flushes its queue only when the
+// depth it entered at was zero. So an abandoned `await act(async () => ...)`
+// leaves the depth permanently above zero, and every later `act()` in that
+// file *queues* render work instead of committing it. The following tests then
+// render an empty tree, and React Native Testing Library reports
+// `Can't access .root on unmounted test renderer` against a component that is
+// perfectly fine. One genuine timeout was costing four failures this way, and
+// the three phantom ones name innocent tests -- which is what sends an
+// investigation to the wrong file.
+//
+// Running the pending fake timers lets the abandoned continuation settle,
+// which runs `popActScope` and restores the depth before the next test starts.
+// `runOnlyPendingTimers` and not `runAllTimers` on purpose: a timer that
+// reschedules itself -- a JS-driven `Animated` loop, say -- would spin forever
+// under the latter.
+//
+// The fake-timer check is a property sniff rather than a `try`/`catch` around
+// `runOnlyPendingTimers`, because catching here would also swallow a genuine
+// error thrown by a timer callback and turn a real failure into silence. If a
+// future Jest stops tagging the installed `setTimeout`, this degrades to a
+// no-op rather than to a lie, and `__tests__/timeoutCascade.test.ts` fails.
+// Note what this deliberately does NOT do: switch back to real timers. A
+// suite-scoped fake clock installed in `beforeAll` (see
+// `__tests__/DatePicker.test.tsx`, which pins the system time to 2025) is a
+// legitimate pattern here, and restoring real timers after every test would
+// silently hand the second test onward the real clock — turning a date
+// assertion into a failure that only appears next calendar year. Draining the
+// pending timers is enough to unstick React, and leaves the clock where the
+// suite put it.
+const usingFakeTimers = () => Object.prototype.hasOwnProperty.call(setTimeout, 'clock');
+
+afterEach(() => {
+  if (usingFakeTimers()) {
+    jest.runOnlyPendingTimers();
+  }
+});
+
 const outstandingAnimationFrames = new Set();
 const scheduleAnimationFrame = global.requestAnimationFrame;
 const clearAnimationFrame = global.cancelAnimationFrame;
