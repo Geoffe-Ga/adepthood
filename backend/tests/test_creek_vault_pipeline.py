@@ -26,6 +26,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from jsonschema import Draft202012Validator
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -616,3 +617,131 @@ def test_every_link_stage_has_a_wire_spelling_and_classification_has_none() -> N
     mapping: Mapping[VaultPipelineStage, VaultLinkStage] = pipeline.LINK_STAGE_BY_PIPELINE_STAGE
     assert set(mapping) == set(pipeline.LADDER) - {VaultPipelineStage.CLASSIFY}
     assert set(mapping.values()) == set(VaultLinkStage)
+
+
+@pytest.mark.asyncio
+async def test_no_stage_starts_once_the_run_budget_is_spent(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Don't start what won't finish: a spent budget opens no socket at all.
+
+    The rule that bounds what one document import may cost. With the whole
+    budget already gone, the ladder must decline to begin rather than start a
+    stage it cannot afford and let the request run over.
+    """
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.0)
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+
+    assert recorder.requests == []
+    assert await _rows(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_vault_whose_classification_keeps_failing_never_clusters_unlabelled_text(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+) -> None:
+    """A failed classification inside its own window leaves the link stages unrun.
+
+    The case the ladder's ordering alone does not cover: on the *second* pass the
+    classification window has not reopened, so classification is skipped rather
+    than failed -- and the clustering stages must still stand down, because the
+    APTITUDE labels they read were never written.
+    """
+    refusal = httpx.Response(503, json=_example("pipeline", "unavailable-service"))
+    recorder = _Recorder(classification=refusal)
+    client = await handshaken(recorder, http_clients(recorder))
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+
+    assert recorder.requests == []
+    assert len(await _rows(db_session)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_database_that_will_not_record_the_pass_costs_the_caller_nothing(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass runs after somebody's entry is committed, so it may never raise."""
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+
+    async def _refuse() -> None:
+        raise OperationalError("INSERT", {}, Exception("disk is full"))
+
+    monkeypatch.setattr(db_session, "commit", _refuse)
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_busy_journal_does_not_reopen_the_clustering_window(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+) -> None:
+    """A clustering stage's stamp is found however many cheap attempts came after it.
+
+    The cheap stages run every fifteen minutes on an active account, so they
+    accumulate rows far faster than the clustering stages do. If the scheduler
+    reads "the newest few rows" instead of "the newest row per stage", an hour of
+    ordinary journalling buries the clustering stages' stamps, they read as
+    never-run, and their six-hour interval reopens on an account that did nothing
+    but write.
+    """
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+    recent = datetime.now(UTC) - timedelta(minutes=1)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage=VaultPipelineStage.EDDIES.value,
+            outcome=VaultPipelineOutcome.COMPLETED.value,
+            fragments_seen=1,
+            fragments_touched=1,
+            fragments_lost=0,
+            ran_at=recent,
+        )
+    )
+    for stage in (VaultPipelineStage.CLASSIFY, VaultPipelineStage.TEMPORAL):
+        for _ in range(6):
+            db_session.add(
+                VaultPipelineRun(
+                    user_id=_OWNER,
+                    stage=stage.value,
+                    outcome=VaultPipelineOutcome.COMPLETED.value,
+                    fragments_seen=1,
+                    fragments_touched=1,
+                    fragments_lost=0,
+                    ran_at=datetime.now(UTC) - timedelta(days=1),
+                )
+            )
+    await db_session.commit()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+
+    assert "eddies" not in {body["method"] for body in recorder.pipeline_bodies}

@@ -58,6 +58,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -183,50 +184,60 @@ _LEAST_WORTH_STARTING_SECONDS = 5.0
 
 
 def _stamps_by_stage(rows: list[VaultPipelineRun]) -> dict[str, datetime]:
-    """The newest attempt at each stage, keyed by stage.
+    """The instant each stage was last attempted, keyed by stage."""
+    return {row.stage: ensure_aware(row.ran_at) for row in rows}
 
-    Newest-first input, so the first row seen for a stage is its latest attempt
-    and later ones are ignored rather than compared — one pass over the rows
-    instead of a max per stage.
+
+async def _latest_attempt_per_stage(session: AsyncSession, user_id: int) -> list[VaultPipelineRun]:
+    """The newest attempt at each stage: at most one row per rung.
+
+    A grouped ``max(id)`` rather than "the newest N rows overall", and the
+    difference is the difference between a debounce that holds and one that
+    quietly stops holding. A row-count window looks equivalent and is not: the
+    cheap stages run every fifteen minutes on an active account, so within an
+    hour they fill any small window entirely and push the clustering stages'
+    rows off the end -- and a stage whose last attempt has fallen out of the
+    read is indistinguishable from one that never ran, so its six-hour interval
+    reopens early on an account that merely journals often.
+
+    Asking the database for the maximum per group has no such horizon and needs
+    no bound chosen against an assumed write rate. It answers at most one row
+    per rung, whatever the account's history, and the composite index over
+    ``(user_id, stage, id)`` is the one it walks.
     """
-    stamps: dict[str, datetime] = {}
-    for row in rows:
-        stamps.setdefault(row.stage, ensure_aware(row.ran_at))
-    return stamps
-
-
-async def _recent_attempts(session: AsyncSession, user_id: int) -> list[VaultPipelineRun]:
-    """The account's most recent attempts, newest first.
-
-    Bounded by the ladder's own length rather than by a date, because the answer
-    wanted is "the latest row per stage" and there are four stages: a fixed
-    ceiling of one row per rung, plus enough slack for the rows a single pass
-    writes, is always enough to find every one of them and is a constant-size
-    read whatever the account's history.
-    """
-    result = await session.execute(
-        select(VaultPipelineRun)
+    newest = (
+        select(func.max(col(VaultPipelineRun.id)))
         .where(col(VaultPipelineRun.user_id) == user_id)
-        .order_by(col(VaultPipelineRun.id).desc())
-        .limit(len(LADDER) * 2)
+        .group_by(col(VaultPipelineRun.stage))
+    )
+    result = await session.execute(
+        select(VaultPipelineRun).where(col(VaultPipelineRun.id).in_(newest))
     )
     return list(result.scalars().all())
 
 
-def _classification_landed(rows: list[VaultPipelineRun]) -> bool:
+async def _classification_has_landed(session: AsyncSession, user_id: int) -> bool:
     """Whether any classification pass has ever put labels in this vault.
 
-    The precondition the linker stages have and cannot check for themselves: the
-    thread stage reads the APTITUDE labels a classification pass writes, so
-    linking a vault nobody classified spends the expensive stages producing
-    clusters over unlabelled text. ``INCOMPLETE`` counts, and should: a pass that
-    skipped some fragments still labelled the rest, and the labels it wrote are
-    not provisional.
+    Its own query rather than a read of the rows above, because the two ask
+    different questions across different spans of history. "Is this stage due?"
+    is about the *latest* attempt; "may the clustering stages run at all?" is
+    about whether one ever succeeded -- and an account whose most recent
+    classification failed may still be carrying the labels a pass wrote last
+    week. Reading the second off the first would stand those accounts down for
+    good.
+
+    ``INCOMPLETE`` counts, and should: a pass that skipped some fragments still
+    labelled the rest, and the labels it wrote are not provisional.
     """
-    return any(
-        row.stage == VaultPipelineStage.CLASSIFY and row.outcome != VaultPipelineOutcome.FAILED
-        for row in rows
+    result = await session.execute(
+        select(col(VaultPipelineRun.id))
+        .where(col(VaultPipelineRun.user_id) == user_id)
+        .where(col(VaultPipelineRun.stage) == VaultPipelineStage.CLASSIFY.value)
+        .where(col(VaultPipelineRun.outcome) != VaultPipelineOutcome.FAILED.value)
+        .limit(1)
     )
+    return result.first() is not None
 
 
 def _due(stage: VaultPipelineStage, stamps: Mapping[str, datetime], now: datetime) -> bool:
@@ -383,7 +394,11 @@ def _due_stages(
 
 
 def _stages_to_run(
-    trigger: VaultPipelineTrigger, rows: list[VaultPipelineRun], now: datetime
+    trigger: VaultPipelineTrigger,
+    stamps: Mapping[str, datetime],
+    now: datetime,
+    *,
+    classification_landed: bool,
 ) -> tuple[VaultPipelineStage, ...]:
     """Which rungs this pass may climb, in ladder order.
 
@@ -393,8 +408,8 @@ def _stages_to_run(
     one. Without the third, a vault whose classification window is still closed
     would have its clustering stages run over labels that were never written.
     """
-    due = _due_stages(_STAGES_BY_TRIGGER[trigger], _stamps_by_stage(rows), now)
-    if _classification_landed(rows) or VaultPipelineStage.CLASSIFY in due:
+    due = _due_stages(_STAGES_BY_TRIGGER[trigger], stamps, now)
+    if classification_landed or VaultPipelineStage.CLASSIFY in due:
         return due
     return ()
 
@@ -450,8 +465,9 @@ async def drive_vault_pipeline(
     if not client.supports(CreekCapability.PIPELINE):
         return
     try:
-        rows = await _recent_attempts(session, user_id)
-        stages = _stages_to_run(trigger, rows, datetime.now(UTC))
+        stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
+        landed = await _classification_has_landed(session, user_id)
+        stages = _stages_to_run(trigger, stamps, datetime.now(UTC), classification_landed=landed)
         if not stages:
             return
         deadline = (
