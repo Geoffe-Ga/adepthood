@@ -36,6 +36,45 @@ const PREVIEW_STRIPE_WIDTH = 3;
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
+/**
+ * Bottom inset for the writing surface, reserving BOTH floating affordances:
+ * the resonance button in the lower band and the writing timer stacked a full
+ * touch target above it.
+ *
+ * One inset covering the taller of the two, not a second one added beside it —
+ * the timer sits at ``RESONANCE_BUTTON_CLEARANCE``, so the page has to clear
+ * that plus the timer's own height plus the same breathing gap.
+ */
+/**
+ * The floating writing timer's own box, in dp.
+ *
+ * The pill lays out as a fixed count of fixed-height rows — readout-and-controls,
+ * plus the preset row an idle timer adds beneath it — rather than as one row of
+ * chips left to wrap. That is what makes its height knowable here instead of a
+ * function of how wide the phone is.
+ *
+ * It was not always. A single wrapping row of readout + four presets + Start
+ * measures roughly 452dp in Georgia-Bold at the interactive text size, which is
+ * wider than any phone: it reflowed to two rows on a 393-440dp handset and three
+ * at 375dp, so a clearance that had reserved one 44dp row left the pill
+ * overhanging the page by 40-92dp, painting an opaque, touch-absorbing box over
+ * live marginalia.
+ */
+export const WRITING_TIMER_ROW_HEIGHT = touchTarget.minimum;
+/** Readout-and-controls, plus the preset row the idle timer adds beneath it. */
+export const WRITING_TIMER_MAX_ROWS = 2;
+export const WRITING_TIMER_PILL_PADDING_V = SPACING.xs;
+export const WRITING_TIMER_ROW_GAP = SPACING.xs;
+
+/** The tallest the pill ever gets: every row it can show, at its full height. */
+export const WRITING_TIMER_PILL_MAX_HEIGHT =
+  WRITING_TIMER_PILL_PADDING_V * 2 +
+  WRITING_TIMER_ROW_HEIGHT * WRITING_TIMER_MAX_ROWS +
+  WRITING_TIMER_ROW_GAP * (WRITING_TIMER_MAX_ROWS - 1);
+
+export const WRITING_TIMER_CLEARANCE =
+  RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT + SPACING.md;
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -77,9 +116,13 @@ const styles = StyleSheet.create({
   pageNarrow: {
     flexDirection: 'column',
   },
-  /** Only while something floats over the page: hold the band the button covers. */
+  /**
+   * Only while something floats over the page: hold the band the floating
+   * affordances cover. Sized to the topmost of them (the writing timer), so the
+   * save hint, the Finish link and the stacked margin column clear both.
+   */
   pageWithFloatingAction: {
-    paddingBottom: RESONANCE_BUTTON_CLEARANCE,
+    paddingBottom: WRITING_TIMER_CLEARANCE,
   },
   writingColumn: {
     flex: 1,

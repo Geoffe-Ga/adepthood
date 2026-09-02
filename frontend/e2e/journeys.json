@@ -419,5 +419,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/voice-readiness.e2e.test.ts"
+  },
+  {
+    "id": "journal.timed-writing-session-becomes-a-habit",
+    "description": "A person sets a length on the journal's writing timer, writes until it runs out, and is offered the session as a habit they can keep — accepting it on their own account, so the habit exists on the server afterwards. Uncovered because the timer itself persists nothing: it produces a session result and hands it on, and the seam this journey names is only crossed once the offer that consumes that result is built. The timer half is covered by the Jest specs beside it; the gap is the stitch from a finished session to a saved habit.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2486
   }
 ]

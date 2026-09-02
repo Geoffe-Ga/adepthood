@@ -49,7 +49,12 @@ function getButtonState(visible: boolean, loading: boolean, disabled: boolean) {
   return {
     // Hidden = inert: not pressable and not reachable by the screen reader.
     interactive: visible && !disabled && !loading,
-    pointerEvents: (visible ? 'auto' : 'none') as 'auto' | 'none',
+    // ``box-none``, not ``auto``: the floating wrapper spans the page edge to
+    // edge, so an ``auto`` band takes every touch across its full width — not
+    // only the ones aimed at the button centred in it. The button below claims
+    // its own touches; the band claims none. Hidden stays ``none`` so an
+    // invisible affordance is inert rather than merely transparent.
+    pointerEvents: (visible ? 'box-none' : 'none') as 'box-none' | 'none',
     importantForA11y: (visible ? 'auto' : 'no-hide-descendants') as 'auto' | 'no-hide-descendants',
     label: loading ? 'Listening…' : 'Get Resonance',
     a11yLabel: loading ? 'Listening to your writing' : 'Get resonance',
@@ -112,6 +117,9 @@ function GetResonanceButton({
       accessibilityElementsHidden={!visible}
       importantForAccessibility={view.importantForA11y}
     >
+      {/* The one thing in the band that is meant to be pressed: a touchable is
+          its own touch target, so ``box-none`` above reaches it and nothing
+          else in the band. */}
       <TouchableOpacity
         style={styles.button}
         onPress={view.interactive ? onPress : undefined}
