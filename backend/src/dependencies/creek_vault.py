@@ -230,14 +230,39 @@ async def get_creek_vault_client(
     ``expire_on_commit=False`` and would not, so today the hoist changes nothing;
     it is here so that the correctness of these three lines does not rest on a
     setting configured two modules away.
+
+    **Every exit commits, and the commit is written once, here, at the end.**
+    This resolver has more than one way out, and the release used to live down
+    only one of them: re-judging a stored host ends the transaction on its way
+    past, so a caller with a connection row of their own was let go of the
+    connection, while a caller served the deployment-wide vault returned holding
+    both the revocation SELECT's transaction and this lookup's. Nothing after
+    that released it, so the whole vault round trip on that branch -- a
+    handshake, a wheel read, a document upload -- ran on a checked-out pooled
+    connection. Two exits, one release, and the branch that got it was the
+    branch somebody happened to be fixing.
+
+    Committing here rather than on each branch is what makes that
+    unrepeatable: a third exit added later cannot forget, because there is
+    nowhere for it to return from except through this line. Safe at this point
+    for the same reason the re-judgement's own commit is: this is a per-request
+    dependency, resolved before the handler body runs, so nothing the handler
+    means to write is staged yet -- the only statements behind it are
+    ``get_current_user``'s revocation read and this function's own.
     """
     connection = await load_vault_config(session, current_user)
     if connection is None:
-        return deployment_vault_client(current_user)
-    vault_url, api_key = connection.vault_url, connection.api_key
-    if await _stored_host_is_undialable(session, vault_url):
-        return LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
-    return build_connected_vault_client(vault_url, api_key)
+        client: CreekVaultClient = deployment_vault_client(current_user)
+    else:
+        vault_url, api_key = connection.vault_url, connection.api_key
+        undialable = await _stored_host_is_undialable(session, vault_url)
+        client = (
+            LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
+            if undialable
+            else build_connected_vault_client(vault_url, api_key)
+        )
+    await session.commit()
+    return client
 
 
 async def _stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bool:
