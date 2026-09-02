@@ -422,3 +422,93 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(useProgramStore.getState().programStartDate).toBeNull();
   });
 });
+
+describe('ReorderHabitsModal — the program cadence is laid over program habits only', () => {
+  // The modal restamps every row it is handed by list index. HabitsScreen hands
+  // it the full mixed list, so a carryover habit sitting at index 0 used to
+  // swallow the program's own first date and push every program habit one stage
+  // later. That corrupts two things at once: the carryover row loses the date
+  // the user actually started it, and the program's first habit no longer sits
+  // on the day the user picked.
+  const CARRYOVER_START = new Date(2026, 0, 15);
+  const PICKED = new Date(2026, 5, 1);
+  const FIRST_STAGE_DAYS = 21;
+
+  const carryoverHabit: Habit = {
+    ...makeHabit(10, 'Beige', 'Morning pages'),
+    start_date: CARRYOVER_START,
+    is_carryover: true,
+  };
+  const MIXED: Habit[] = [carryoverHabit, makeHabit(1, 'Beige', 'A'), makeHabit(2, 'Purple', 'B')];
+
+  const dayOf = (habit: Habit): string => new Date(habit.start_date).toISOString().slice(0, 10);
+
+  const openWith = (habits: Habit[]) => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(PICKED));
+    return render(
+      <ReorderHabitsModal visible habits={habits} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+  };
+
+  it('leaves a carryover habit on the date the user actually started it', () => {
+    const result = openWith(MIXED);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const carryover = data.find((h) => h.id === 10)!;
+
+    expect(dayOf(carryover)).toBe('2026-01-15');
+  });
+
+  it('starts the first program habit on the picked date even behind a carryover habit', () => {
+    const result = openWith(MIXED);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const firstProgram = data.find((h) => h.id === 1)!;
+    const secondProgram = data.find((h) => h.id === 2)!;
+
+    expect(dayOf(firstProgram)).toBe('2026-06-01');
+    expect(dayOf(secondProgram)).toBe('2026-06-22');
+  });
+
+  it('indexes the program cadence by program position, not by row position', () => {
+    // Two carryover rows ahead of the program rows would have pushed the first
+    // program habit two stages out. The cadence must not count them at all.
+    const twoCarryover: Habit[] = [
+      carryoverHabit,
+      {
+        ...makeHabit(11, 'Beige', 'Evening walk'),
+        start_date: CARRYOVER_START,
+        is_carryover: true,
+      },
+      makeHabit(1, 'Beige', 'A'),
+      makeHabit(2, 'Purple', 'B'),
+    ];
+
+    const result = openWith(twoCarryover);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const gapDays =
+      (new Date(data.find((h) => h.id === 2)!.start_date).getTime() -
+        new Date(data.find((h) => h.id === 1)!.start_date).getTime()) /
+      (24 * 60 * 60 * 1000);
+
+    expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
+    expect(gapDays).toBe(FIRST_STAGE_DAYS);
+  });
+
+  it('keeps a dragged reorder from restamping carryover rows either', () => {
+    const result = openWith(MIXED);
+
+    act(() => {
+      result
+        .getByTestId('reorder-list')
+        .props.onDragEnd({ data: [MIXED[1], carryoverHabit, MIXED[2]] });
+    });
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+
+    expect(dayOf(data.find((h) => h.id === 10)!)).toBe('2026-01-15');
+    expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
+    expect(dayOf(data.find((h) => h.id === 2)!)).toBe('2026-06-22');
+  });
+});

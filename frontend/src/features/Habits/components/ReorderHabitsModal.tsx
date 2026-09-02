@@ -9,7 +9,7 @@ import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { calculateHabitStartDate, stageAtIndex } from '../HabitUtils';
+import { calculateHabitStartDate, isCarryoverHabit, stageAtIndex } from '../HabitUtils';
 
 import ModalHeader from './ModalHeader';
 
@@ -26,11 +26,27 @@ if (Platform.OS !== 'web') {
 const formatDate = (date: Date): string =>
   date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-const updateStartDates = (habits: Habit[], startDate: Date): Habit[] =>
-  habits.map((habit, index) => ({
-    ...habit,
-    start_date: calculateHabitStartDate(startDate, index),
-  }));
+/**
+ * Lay the program cadence out from ``startDate`` -- over the program habits
+ * only, counted by their own position among program habits.
+ *
+ * The list this receives is mixed: carryover habits, which the user brought
+ * along from before the program, sit in it alongside program habits and can
+ * sort ahead of them. Stamping by raw row index gave the first of them the
+ * date the user picked and pushed the real first program habit a whole stage
+ * later, which both destroyed the date the carryover habit actually began on
+ * and moved the program's own start away from the picked day. A carryover
+ * habit's date is history, not a slot on the cadence, so it is left alone.
+ */
+const updateStartDates = (habits: Habit[], startDate: Date): Habit[] => {
+  let programIndex = 0;
+  return habits.map((habit) => {
+    if (isCarryoverHabit(habit)) return habit;
+    const stamped = { ...habit, start_date: calculateHabitStartDate(startDate, programIndex) };
+    programIndex += 1;
+    return stamped;
+  });
+};
 
 interface ReorderItemProps {
   item: Habit;
@@ -196,7 +212,8 @@ const useReorderState = ({
       setPickerVisible(false);
       setStartDate(selectedDate);
       setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
-      // Master-date write-through: every consumer that derives week/stage updates.
+      // An explicit pick, and therefore authoritative: it outranks anything the
+      // load-time self-heal would derive from the habit rows themselves.
       setProgramStartDate(selectedDate);
     },
     handleCancelDate: () => setPickerVisible(false),

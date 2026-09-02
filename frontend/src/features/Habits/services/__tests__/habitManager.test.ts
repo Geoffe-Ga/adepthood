@@ -2623,6 +2623,9 @@ describe('habitManager', () => {
     const BEIGE = '2026-06-01';
     const BEFORE_BEIGE = '2026-01-15';
     const AFTER_BEIGE = '2026-09-01';
+    // One stage later: where a reorder pass used to push the first program
+    // habit when a carryover row took the picked date ahead of it.
+    const SHIFTED_ONE_STAGE = '2026-06-22';
 
     /** A raw API row in the shape ``mapApiHabits`` consumes. */
     const apiRow = (id: number, name: string, startDate: string, carryover?: boolean) => ({
@@ -2687,12 +2690,32 @@ describe('habitManager', () => {
       expectAnchorOn(BEIGE);
     });
 
-    it('leaves an existing anchor untouched when every real habit is a carryover habit', async () => {
-      useProgramStore.getState().hydrateProgramStartDate(new Date(BEIGE));
+    it('finds no anchor at all in a store of nothing but carryover habits', async () => {
+      // Absent anchor, so the self-heal is free to write: what stops it is the
+      // exclusion emptying the set it derives from. A brought-along habit is
+      // not a program date, so there is no program date here to find.
+      useProgramStore.getState().hydrateProgramStartDate(null);
 
       await loadFromApi([
         apiRow(1, 'Morning pages', BEFORE_BEIGE, true),
         apiRow(2, 'Evening walk', BEFORE_BEIGE, true),
+      ]);
+
+      expect(useProgramStore.getState().programStartDate).toBeNull();
+    });
+
+    it('does not overwrite the date the user picked when the rows disagree with it', async () => {
+      // The reorder-restamp aftermath, and the reason a derived anchor may not
+      // outrank an explicit one. Rows already written by an older reorder pass
+      // put the picked date on a carryover row and pushed the first program
+      // habit a stage later. Excluding the carryover row leaves the derivation
+      // reading one stage late -- so it must not be allowed to overwrite the
+      // pick that is already stored.
+      useProgramStore.getState().hydrateProgramStartDate(new Date(BEIGE));
+
+      await loadFromApi([
+        apiRow(1, 'Morning pages', BEIGE, true),
+        apiRow(2, 'Survive', SHIFTED_ONE_STAGE),
       ]);
 
       expectAnchorOn(BEIGE);

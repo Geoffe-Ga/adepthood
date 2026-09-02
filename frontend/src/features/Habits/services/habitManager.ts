@@ -362,24 +362,30 @@ const deriveProgramAnchor = (
   return earliest === null ? null : new Date(earliest);
 };
 
-/** Same calendar day, ignoring time — the store normalises anchors to local midnight. */
-const sameCalendarDay = (a: Date, b: Date): boolean =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
-
 /**
- * Re-derive the universal program anchor from the live habits' earliest
- * ``start_date``. Map, Practice, Course and Journal all read this anchor to
- * compute the current week/stage; it is written at ``onboardingSave`` but only
- * ``loadHabits`` runs on every session. Without this re-sync a returning user
- * — whose persisted anchor was wiped on logout, or who onboarded before the
- * anchor existed — keeps a calendar-correct Habits screen while every other
- * screen falls back to a divergent server value. Recomputing on load keeps all
- * screens in lockstep and self-heals a missing anchor. Demo FALLBACK seeds and
- * carryover habits are both filtered out inside ``deriveProgramAnchor``, so a
- * store holding only those yields no anchor and this leaves the existing one
- * untouched.
+ * Fill a MISSING universal program anchor by re-deriving it from the live
+ * habits. Map, Practice, Course and Journal all read this anchor to compute the
+ * current week/stage, and only ``loadHabits`` runs on every session, so without
+ * this a returning user — whose persisted anchor was wiped on logout, or who
+ * onboarded before the anchor existed — keeps a calendar-correct Habits screen
+ * while every other screen falls back to a divergent server value.
+ *
+ * Three writers set this anchor, and they are not equal. Two are EXPLICIT and
+ * authoritative, because each records a day the user chose: the scaffolding
+ * date at ``onboardingSave``, and the reorder modal's date picker. This one is
+ * DERIVED and subordinate, and it writes only when no anchor is stored at all.
+ *
+ * The ordering is not a tie-break, it is the direction of the data. Program
+ * habit dates are laid out FROM the anchor by both explicit writers, so the
+ * anchor is the input and those dates are its output. Deriving it back out of
+ * them is a lossy inverse, worth doing only when the input is lost. When a
+ * stored anchor and the rows disagree, it is therefore the ROWS that are wrong
+ * — and a derived value that overwrote the stored one would silently discard a
+ * date the user actually picked, durably, since it persists to disk.
+ *
+ * Demo FALLBACK seeds and carryover habits are filtered out inside
+ * ``deriveProgramAnchor``, so a store holding only those yields no anchor and
+ * nothing is written.
  *
  * This is the client's anchor only. The server keeps its own, stamped when the
  * progress row is created, and the two are not reconciled here: a user who
@@ -387,10 +393,9 @@ const sameCalendarDay = (a: Date, b: Date): boolean =>
  * anchor on the day they first arrived. Reconciling them is a separate change.
  */
 const syncProgramAnchorFromHabits = (): void => {
+  if (useProgramStore.getState().programStartDate !== null) return;
   const anchor = deriveProgramAnchor(getHabits());
   if (anchor === null) return;
-  const current = useProgramStore.getState().programStartDate;
-  if (current !== null && sameCalendarDay(current, anchor)) return;
   useProgramStore.getState().setProgramStartDate(anchor);
 };
 
