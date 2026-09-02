@@ -177,13 +177,14 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(props.minimumDate).toBeUndefined();
   });
 
-  it('accepts a confirmed past date and updates the master program start date', () => {
+  it('accepts a confirmed past date and updates the master program start date on save', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
 
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm-past'));
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2020);
@@ -217,6 +218,8 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     const data = result.getByTestId('reorder-list').props.data as Habit[];
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
     expect(new Date(data[1]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-22');
+
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
@@ -390,7 +393,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     Platform.OS = originalOS;
   });
 
-  it('renders an HTML date input on web that updates the master program anchor', () => {
+  it('renders an HTML date input on web that updates the master program anchor on save', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -402,6 +405,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     act(() => {
       input.props.onChange({ target: { value: '2026-09-01' } });
     });
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
@@ -409,7 +413,15 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(stored.getDate()).toBe(1);
   });
 
-  it('ignores an empty web date-input change without touching the program anchor', () => {
+  it('ignores an empty web date-input change and leaves the anchor where it was', () => {
+    // Clearing the field yields ''. ``parseISODate('')`` is not Invalid Date --
+    // Number('') is 0, so it returns new Date(0, 0, 1), i.e. 1900-01-01, a
+    // perfectly valid date that would restamp every program row and then be
+    // persisted by Save Order. The guard is what stops that, so this drives the
+    // whole commit path and pins the date rather than merely asserting the
+    // anchor is falsy: a null assertion here passes whether or not the guard
+    // exists, because nothing before Save Order writes the anchor at all.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 2, 10)));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -418,7 +430,183 @@ describe('ReorderHabitsModal — date picker on web', () => {
     act(() => {
       input.props.onChange({ target: { value: '' } });
     });
+    fireEvent.press(result.getByText('Save Order'));
 
-    expect(useProgramStore.getState().programStartDate).toBeNull();
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.toISOString().slice(0, 10)).toBe('2026-03-10');
+  });
+});
+
+describe('ReorderHabitsModal — the program cadence is laid over program habits only', () => {
+  // The modal restamps every row it is handed by list index. HabitsScreen hands
+  // it the full mixed list, so a carryover habit sitting at index 0 used to
+  // swallow the program's own first date and push every program habit one stage
+  // later. That corrupts two things at once: the carryover row loses the date
+  // the user actually started it, and the program's first habit no longer sits
+  // on the day the user picked.
+  const CARRYOVER_START = new Date(2026, 0, 15);
+  const PICKED = new Date(2026, 5, 1);
+  const FIRST_STAGE_DAYS = 21;
+
+  const carryoverHabit: Habit = {
+    ...makeHabit(10, 'Beige', 'Morning pages'),
+    start_date: CARRYOVER_START,
+    is_carryover: true,
+  };
+  const MIXED: Habit[] = [carryoverHabit, makeHabit(1, 'Beige', 'A'), makeHabit(2, 'Purple', 'B')];
+
+  const dayOf = (habit: Habit): string => new Date(habit.start_date).toISOString().slice(0, 10);
+
+  const openWith = (habits: Habit[]) => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(PICKED));
+    return render(
+      <ReorderHabitsModal visible habits={habits} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+  };
+
+  it('leaves a carryover habit on the date the user actually started it', () => {
+    const result = openWith(MIXED);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const carryover = data.find((h) => h.id === 10)!;
+
+    expect(dayOf(carryover)).toBe('2026-01-15');
+  });
+
+  it('starts the first program habit on the picked date even behind a carryover habit', () => {
+    const result = openWith(MIXED);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const firstProgram = data.find((h) => h.id === 1)!;
+    const secondProgram = data.find((h) => h.id === 2)!;
+
+    expect(dayOf(firstProgram)).toBe('2026-06-01');
+    expect(dayOf(secondProgram)).toBe('2026-06-22');
+  });
+
+  it('indexes the program cadence by program position, not by row position', () => {
+    // Two carryover rows ahead of the program rows would have pushed the first
+    // program habit two stages out. The cadence must not count them at all.
+    const twoCarryover: Habit[] = [
+      carryoverHabit,
+      {
+        ...makeHabit(11, 'Beige', 'Evening walk'),
+        start_date: CARRYOVER_START,
+        is_carryover: true,
+      },
+      makeHabit(1, 'Beige', 'A'),
+      makeHabit(2, 'Purple', 'B'),
+    ];
+
+    const result = openWith(twoCarryover);
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const gapDays =
+      (new Date(data.find((h) => h.id === 2)!.start_date).getTime() -
+        new Date(data.find((h) => h.id === 1)!.start_date).getTime()) /
+      (24 * 60 * 60 * 1000);
+
+    expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
+    expect(gapDays).toBe(FIRST_STAGE_DAYS);
+  });
+
+  it('keeps a dragged reorder from restamping carryover rows either', () => {
+    const result = openWith(MIXED);
+
+    act(() => {
+      result
+        .getByTestId('reorder-list')
+        .props.onDragEnd({ data: [MIXED[1], carryoverHabit, MIXED[2]] });
+    });
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+
+    expect(dayOf(data.find((h) => h.id === 10)!)).toBe('2026-01-15');
+    expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
+    expect(dayOf(data.find((h) => h.id === 2)!)).toBe('2026-06-22');
+  });
+});
+
+describe('ReorderHabitsModal — the anchor commits when the order commits', () => {
+  // The picker used to write the global anchor the instant it confirmed, while
+  // the restamped rows waited for Save Order. Previewing a date and then
+  // dismissing therefore left every other screen computing from a date the
+  // user had rejected, with no row on disk agreeing with it.
+  const CARRYOVER_START = new Date(2026, 0, 15);
+  const STORED_PICK = new Date(2026, 2, 10);
+
+  const carryoverHabit: Habit = {
+    ...makeHabit(10, 'Beige', 'Morning pages'),
+    start_date: CARRYOVER_START,
+    is_carryover: true,
+  };
+
+  const storedDay = (): string => {
+    const stored = useProgramStore.getState().programStartDate;
+    return stored === null ? 'none' : new Date(stored).toISOString().slice(0, 10);
+  };
+
+  it('leaves the anchor alone when a previewed date is abandoned without saving', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    expect(onSaveOrder).not.toHaveBeenCalled();
+    expect(storedDay()).toBe('2026-03-10');
+  });
+
+  it('previews the abandoned date on the rows even though the anchor is untouched', () => {
+    // The preview is the affordance, and it must keep working -- what changes
+    // is only that nothing leaves the modal until the user commits.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
+    expect(storedDay()).toBe('2026-03-10');
+  });
+
+  it('writes the anchor once the user commits the order', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+    fireEvent.press(result.getByText('Save Order'));
+
+    expect(storedDay()).toBe('2026-06-01');
+  });
+
+  it('labels each row with the stage its own date belongs to', () => {
+    // The date is stamped by position among program habits; the stage label
+    // must be read off the same position, or a row announces a stage that
+    // contradicts the date printed beside it.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 5, 1)));
+    const mixed: Habit[] = [
+      carryoverHabit,
+      makeHabit(1, 'Beige', 'A'),
+      makeHabit(2, 'Purple', 'B'),
+    ];
+    const result = render(
+      <ReorderHabitsModal visible habits={mixed} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    // A holds the picked date, so A is the program's Beige habit.
+    expect(result.getByText(/A \(Beige\)/)).toBeTruthy();
+    expect(result.getByText(/B \(Purple\)/)).toBeTruthy();
+    // The brought-along row takes a mirrored negative slot, as it does everywhere else.
+    expect(result.getByText(/Morning pages \(Clear Light\)/)).toBeTruthy();
   });
 });
