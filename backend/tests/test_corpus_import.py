@@ -384,6 +384,41 @@ class TestCorpusDestination:
         assert classifier.count == 1
 
     @pytest.mark.asyncio
+    async def test_no_pooled_connection_is_held_across_the_classification(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An import must not hold a pooled connection while a provider is thinking.
+
+        The request has read the account's consent by the time it dials, and a
+        Session holds the connection it autobegan on until something ends that
+        transaction. Held across the call, a pool of fifteen would be spent by
+        fifteen concurrent imports and the sixteenth request to any
+        database-backed endpoint would block on checkout.
+
+        Asserted through the real surface rather than at the spine because this
+        is the second caller: it reaches the provider without passing through
+        the journal wrapper at all, so it is the one a release placed in the
+        wrapper would miss.
+        """
+        in_transaction: list[bool] = []
+
+        async def watching(**_kwargs: object) -> object:
+            in_transaction.append(db_session.in_transaction())
+            return _Reply(_CLASSIFIED_REPLY)
+
+        monkeypatch.setattr(fc, "generate_response", watching)
+        headers = await _signup(async_client, "import-corpus-pool")
+        await _grant_consent(async_client, headers)
+
+        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+
+        assert in_transaction, "no classification was observed"
+        assert not any(in_transaction)
+
+    @pytest.mark.asyncio
     async def test_without_consent_nothing_is_stored_and_nobody_is_contacted(
         self,
         async_client: AsyncClient,

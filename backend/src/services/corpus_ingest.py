@@ -15,6 +15,14 @@ withdrawal of the old fragment happens before the new one is attempted, so a
 classification that fails on edited text leaves no fragment rather than a stale
 one the Higher Self would go on quoting.
 
+**No pooled connection is held across the call.** The transaction is ended
+immediately before the classifier is dialled, so the database connection an
+ingest checked out is back in the pool while a language model is thinking. It
+is a fact about capacity rather than about this writing --
+:func:`_classify_and_record` carries the argument -- and it is what makes the
+withdrawal above durable a few statements earlier than the caller's own commit
+already made it.
+
 There is no scheduler in this deployment, so "later" is not an option that
 exists — a deferred pass would be a queue, a worker and a delivery guarantee,
 none of which is here. Doing it inline is the honest spelling of what the
@@ -188,8 +196,38 @@ async def _classify_and_record(
 
     The single provider call :data:`CLASSIFICATION_CALLS_PER_INGEST` names is
     made here and nowhere else, which is what makes that constant assertable
-    rather than aspirational.
+    rather than aspirational. It is also why the commit below it is here rather
+    than at any of the four callers: one statement in front of the one call
+    closes the hold for all of them, and a fifth caller added later cannot
+    forget it.
+
+    **The commit is about the pool, not about durability.** A Session autobegins
+    on its first statement and holds that transaction -- and therefore a
+    checked-out connection -- across every later ``await``. Every caller arrives
+    here with one already open and dirty: the journal router has just refreshed
+    the row it committed, the import router has read the account's consent, and
+    the sweep has flushed the consent event that authorised it. Left in place it
+    would be held for the length of a provider climb, so pool capacity would be
+    governed by a language model's latency rather than by our own query time --
+    with the engine at SQLAlchemy's defaults, five plus ten overflow, fifteen
+    concurrent ingests would spend the pool and the sixteenth request to *any*
+    database-backed endpoint would block on checkout. It is the same invariant
+    :func:`routers.journal._record_vault_outcome` commits before its own network
+    call to protect, and :func:`services.creek_vault_pipeline._run_stage` after
+    it.
+
+    Unconditional, because everything the ingest reads or writes is already
+    behind it and the provider call is directly in front. What lands early is
+    therefore the consent read, and -- on an edit -- the withdrawal of the
+    fragment the entry had before. Both are things this module has always
+    performed before classifying, deliberately: see :func:`ingest_journal_entry`
+    for why the withdrawal leads.
+
+    Nothing needs rolling back if the classifier raises. The commit ended the
+    transaction and no statement has been issued since, so a refusal, an outage
+    or a spent balance leaves the session clean for the caller to carry on with.
     """
+    await session.commit()
     classification = await classify_frequencies(
         request.content, classification=request.tier, timeout_seconds=timeout_seconds
     )
@@ -223,8 +261,11 @@ async def ingest_content(
     entries is not agreement to ontologize imported documents -- ADR 0005
     rejects reading one permission off another in as many words.
 
-    Nothing is committed: a fragment is almost always written alongside the
-    thing it was derived from, and the caller owns that transaction.
+    One commit is made, and it is not a durability decision: the transaction is
+    ended immediately before the provider call so that no pooled connection is
+    held across the network, as :func:`_classify_and_record` sets out. Whatever
+    the caller had open at that point lands there, and the fragment written
+    afterwards is left to the caller as it always was.
 
     Raises for exactly one condition, and it is not a tier rule. The tier
     refusals raised by the classifier and by the store are caught here and
@@ -287,8 +328,16 @@ async def ingest_journal_entry(
     provider call anyway. The authoritative gate is still the one in
     ``ingest_content``, so a third source added later cannot forget it.
 
-    Nothing is committed. The caller owns the transaction, so the withdrawal of
-    the previous fragment and the arrival of its replacement land together.
+    The withdrawal of the previous fragment lands before its replacement is
+    attempted rather than beside it, because the ingest commits on its way to
+    the provider -- see :func:`_classify_and_record` for why. That is the order
+    this module already kept and the one the tier rules need: a re-tier to
+    intimate refuses *inside* the classifier and a soft-deleted row returns
+    before it, so on both of those paths the withdrawal is the only thing that
+    happens, and classifying first would leave the corpus quoting writing the
+    account has since marked unquotable. An edit the classifier cannot place
+    therefore leaves no fragment rather than a stale one, durably; the entry
+    stays a candidate and the next edit or sweep offers it again.
 
     ``timeout_seconds`` bounds the provider call and nothing else; see
     :func:`ingest_content`.

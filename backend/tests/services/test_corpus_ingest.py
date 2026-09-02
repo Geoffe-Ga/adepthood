@@ -34,7 +34,7 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.frequencies import Frequency
 from models.corpus_fragment import CorpusFragment, CorpusSource
@@ -45,6 +45,8 @@ from services.corpus_consent import set_consent
 from services.corpus_ingest import (
     CLASSIFICATION_CALLS_PER_INGEST,
     INGEST_SOURCE,
+    IngestRequest,
+    ingest_content,
     ingest_journal_entry,
     withdraw_journal_entry,
 )
@@ -417,3 +419,127 @@ async def test_an_unsaved_entry_has_nothing_to_be_provenance_for(
 
     assert fragment is None
     assert (await db_session.execute(select(CorpusFragment))).scalars().all() == []
+
+
+# --- the pool is not held across the provider call ----------------------------
+
+
+async def _fragment_bodies(session: AsyncSession) -> list[str]:
+    """Every fragment body in the owner's corpus, oldest row first."""
+    rows = await session.execute(
+        select(CorpusFragment)
+        .where(col(CorpusFragment.user_id) == _OWNER)
+        .order_by(col(CorpusFragment.id))
+    )
+    return [fragment.content for fragment in rows.scalars().all()]
+
+
+@pytest.mark.asyncio
+async def test_no_pooled_connection_is_held_across_a_journal_entrys_classification(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer must not hold a pooled connection while it waits on a provider.
+
+    A Session autobegins on its first statement and stays in that transaction
+    across every later ``await``, and an open transaction is a checked-out
+    connection. Every caller of this path arrives with one already open -- the
+    journal router has just refreshed the row it committed, and the sweep has
+    just flushed the consent event that authorised it -- and the writer then
+    reads consent and withdraws the previous fragment before it dials anybody.
+    Held across the call, a pool of fifteen would be spent by fifteen concurrent
+    writes and the sixteenth request to *any* database-backed endpoint would
+    block on checkout.
+
+    The session is deliberately dirty at the call, because that is the state
+    every real caller is in; a test on a quiescent session would pass on a
+    release that never happened.
+    """
+    in_transaction: list[bool] = []
+
+    async def watching(**_kwargs: object) -> SimpleNamespace:
+        in_transaction.append(db_session.in_transaction())
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", watching)
+    await _consent(db_session)
+    entry = await _entry(db_session)
+    await db_session.refresh(entry)
+
+    await ingest_journal_entry(db_session, entry)
+
+    assert in_transaction, "no classification was observed"
+    assert not any(in_transaction)
+
+
+@pytest.mark.asyncio
+async def test_no_pooled_connection_is_held_across_an_imported_documents_classification(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other source runs the same spine, so it inherits the same discipline.
+
+    Asserted rather than assumed. An import reaches the provider through
+    :func:`services.corpus_ingest.ingest_content` without passing through the
+    journal wrapper at all, so a release placed in the wrapper would leave this
+    caller holding a connection across the network while every journal test
+    stayed green.
+    """
+    in_transaction: list[bool] = []
+
+    async def watching(**_kwargs: object) -> SimpleNamespace:
+        in_transaction.append(db_session.in_transaction())
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", watching)
+    await set_consent(db_session, user_id=_OWNER, source=CorpusSource.UPLOAD, granted=True)
+    await db_session.commit()
+    await db_session.execute(select(CorpusFragment))
+
+    await ingest_content(
+        db_session,
+        user_id=_OWNER,
+        request=IngestRequest(
+            content=_BODY, tier=JournalClassification.PERSONAL, source=CorpusSource.UPLOAD
+        ),
+    )
+
+    assert in_transaction, "no classification was observed"
+    assert not any(in_transaction)
+
+
+@pytest.mark.asyncio
+async def test_an_edit_the_classifier_could_not_place_withdraws_the_old_fragment_for_good(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The withdrawal an edit performs is durable, and the entry stays offerable.
+
+    Withdrawing before classifying is the ratified order, and it is the order
+    the tier rules depend on: re-tiering an entry to intimate refuses inside the
+    classifier, and a soft-deleted row returns before it, so on both of those
+    paths the withdrawal is the *only* thing that happens. Classifying first
+    would leave an entry somebody had just marked intimate still quoted by the
+    corpus, which is the promise this module exists to keep.
+
+    Releasing the connection before the provider call makes that withdrawal
+    durable a few statements earlier than the caller's own commit already made
+    it. What must remain true is asserted here: the edited entry is left with no
+    fragment rather than a stale one, and nothing about it stops the next offer
+    from placing it.
+    """
+    _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
+    await _consent(db_session)
+    entry = await _entry(db_session)
+    await ingest_journal_entry(db_session, entry)
+    await db_session.commit()
+
+    _break_provider(monkeypatch)
+    entry.message = _EDITED_BODY
+    await ingest_journal_entry(db_session, entry)
+    await db_session.rollback()
+
+    assert await _fragment_bodies(db_session) == []
+
+    _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
+    await ingest_journal_entry(db_session, entry)
+    await db_session.commit()
+
+    assert await _fragment_bodies(db_session) == [_EDITED_BODY]

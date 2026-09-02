@@ -212,8 +212,13 @@ async def import_document(
     request even though only one of the two branches reads it -- see
     :func:`dependencies.document_payload.guard_document_payload`.
 
-    Nothing is committed; the caller owns the transaction, as it does for every
-    other corpus write.
+    The fragment is left uncommitted for the caller, as it is for every other
+    corpus write. The corpus branch does commit once on its way past, ending the
+    transaction immediately before the classification so that no pooled
+    connection is held across the call; that is
+    :func:`services.corpus_ingest._classify_and_record`'s doing rather than this
+    module's, and it lands nothing of the document, which has not been written
+    yet. The vault branch commits nothing at all.
     """
     if reaches_a_vault(client):
         return await _to_vault(client, document)

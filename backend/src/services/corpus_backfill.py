@@ -52,8 +52,8 @@ it stops at a count and at two clocks:
   during the one condition it exists for -- ``services.botmason`` retries a
   transient failure twice, with backoff, on top of a per-attempt timeout
   already longer than this whole budget, so a single degraded classification
-  could hold the request, and its uncommitted transaction, for several times
-  the deadline and well past the point the mobile client abandons it.
+  could hold the request for several times the deadline and well past the
+  point the mobile client abandons it.
 
 **Retrying inside the sweep buys nothing.** Which is why the per-entry cap is
 allowed to cut a retry ladder short rather than waiting one out: an entry that
@@ -114,10 +114,13 @@ read for the batch when there is, then per candidate one small UPDATE marking
 it offered plus what one ordinary journal ingest costs -- a consent read, a
 no-op withdrawal of the fragment it does not have, and the single provider call
 ``services.corpus_ingest.CLASSIFICATION_CALLS_PER_INGEST`` names -- up to the
-ceiling. An account with nothing pending pays the one count and stops, which is
-what every grant after a completed sweep costs. The provider call is the whole
-bill in practice; the marking UPDATE is local and is what buys the sweep the
-ability to finish at all.
+ceiling. Two commits per candidate go with that, one made by the ingest on its
+way to the provider and one made here once the entry's outcome is known; both
+are local, and what they buy is that no pooled connection is checked out while
+a language model is thinking. An account with nothing pending pays the one count
+and stops, which is what every grant after a completed sweep costs. The provider
+call is the whole bill in practice; the marking UPDATE is local and is what buys
+the sweep the ability to finish at all.
 """
 
 from __future__ import annotations
@@ -149,8 +152,8 @@ BACKFILL_ENTRY_CEILING: Final[int] = 40
 
 #: How long one grant may spend sweeping, in seconds. Comfortably inside the
 #: 30s the mobile client gives a request (``FETCH_TIMEOUT_MS``), because a
-#: sweep the caller abandons is a transaction that never commits -- the work
-#: would be paid for and thrown away. The loop stops once another entry could
+#: sweep the caller abandons stops wherever it had got to, and the entries it
+#: had not reached wait for the next yes. The loop stops once another entry could
 #: not finish inside it, rather than once it has already been exceeded, which
 #: is what makes this a bound on the sweep instead of a reading taken after the
 #: damage. The first entry is attempted regardless, bounded by
@@ -326,9 +329,11 @@ def _log_sweep(user_id: int, outcome: BackfillOutcome) -> None:
     operator has to be able to say whether a grant reached an account's history
     -- and how much of it is still waiting -- without reading a word of it.
 
-    Written before the caller commits, so a request that rolls back leaves a
-    line describing a sweep no row records. The line is the weaker record of the
-    two and always was; where they disagree, the row is what happened.
+    Written before the sweep's own row is committed, so a request that rolls
+    back at the end leaves a line describing a reach no ``CorpusSweep`` records
+    -- though the fragments it counts are durable by then. The line is the
+    weaker record of the two and always was; where they disagree, the rows are
+    what happened.
     """
     logger.info(
         "corpus_backfill",
@@ -356,16 +361,26 @@ async def _offer_batch(
     invariant general rather than special to one error -- *anything* that stops
     the offer leaves the entry exactly where it was.
 
+    **Each entry's outcome is committed where it is produced.** The writer ends
+    the transaction on its way to the provider so that no pooled connection is
+    held across the network -- see
+    :func:`services.corpus_ingest._classify_and_record` -- so this loop is no
+    longer one transaction the caller closes, and an outcome left for the caller
+    would be durable only as a side effect of the *next* entry releasing the
+    connection. That is emergent rather than stated, and it is false for the last
+    entry and for the refusal below. Committing the fragment and its stamp
+    together, here, is what makes the resumability this module promises true of
+    a sweep the caller abandons as well as of one that returns.
+
     **A provider that refused to bill ends the sweep.** It is the one condition
     the writer raises rather than reports, because it is a fact about the
     deployment: it will refuse the next entry too, and the next forty. Carrying
     on would mark and burn the whole batch against a refusal already given.
     Breaking here rather than raising is what keeps the decision that authorised
-    this sweep -- :func:`services.corpus_consent.set_consent` shares the
-    caller's one transaction with this -- from being rolled back over a bill.
-    Nothing is logged here: the account and the provider were already named by
-    the WARNING :mod:`services.corpus_ingest` wrote on the way past, and a
-    second line from the sweep would say less about more.
+    this sweep from being lost to an exception on its way out. Nothing is logged
+    here: the account and the provider were already named by the WARNING
+    :mod:`services.corpus_ingest` wrote on the way past, and a second line from
+    the sweep would say less about more.
     """
     considered = 0
     added = 0
@@ -378,6 +393,7 @@ async def _offer_batch(
             break
         considered += 1
         await _mark_attempted(session, entry)
+        await session.commit()
         if fragment is not None:
             added += 1
         if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
@@ -491,8 +507,8 @@ def _says_nothing_new(previous: CorpusSweep | None, outcome: BackfillOutcome) ->
     Best-effort, deliberately. Two grants racing each other both read the same
     standing row and both append, which for an append-only log of counts is a
     duplicate rather than a corruption -- and cheaper than the lock that would
-    prevent it, on a path already holding a transaction open across provider
-    calls.
+    prevent it, on a path whose whole shape is a sequence of short transactions
+    around provider calls rather than one long one to lock inside.
     """
     if previous is None:
         return False
@@ -526,9 +542,19 @@ async def backfill_after_consent(
     a request that has already spent up to
     :data:`BACKFILL_ENTRY_CEILING` provider calls.
 
-    Nothing is committed: the caller owns the transaction, so the decision, the
-    fragments it authorised and the record of what its sweep reached all land
-    together or none of them does.
+    The sweep is no longer one transaction, and that is the trade the connection
+    discipline costs. :func:`services.corpus_ingest._classify_and_record` ends
+    the transaction before each provider call so a pooled connection is not held
+    across the network, so the decision that authorised this sweep becomes
+    durable at the first entry rather than at the caller's commit, and each
+    entry's fragment and stamp are committed as they are produced. What is left
+    for the caller is this function's own row. The consequence is worth stating
+    plainly, because it is a change of promise: a sweep interrupted halfway
+    leaves the permission recorded and the entries it reached ontologized, where
+    before it left neither. That is the better answer for the person -- the
+    reach is resumable through a repeated yes, and a grant that vanished because
+    a provider was slow was a permission the account had given and not been
+    granted -- but it is a different one.
     """
     consent_event_id = _authorising_event_id(change, user_id)
     if consent_event_id is None:

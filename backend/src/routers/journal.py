@@ -349,6 +349,13 @@ async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) ->
     and ending it here returns the pooled connection rather than holding it for
     the remainder of the request — and it is outside the suppression so that a
     refusal still returns the connection.
+
+    It is no longer the commit that keeps the connection out of the provider
+    call, which it never could be: it runs after the ingest, so on the path that
+    does classify it was returning a connection the classification had already
+    held. :func:`services.corpus_ingest._classify_and_record` commits before it
+    dials for that reason, and this commit now lands only what happened after —
+    the fragment, or nothing.
     """
     if entry.id is None:
         return
