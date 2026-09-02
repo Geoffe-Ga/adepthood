@@ -76,6 +76,12 @@ Decide, from the evidence gathered in Step 2:
   - `P1` — a core user flow is broken with no workaround.
   - `P2` — degraded behavior, workaround exists, or a well-scoped feature.
   - `P3` — cosmetic, minor, or nice-to-have.
+  - **Backlog inflow moratorium (2026-09-01, `CLAUDE.md` guardrails)**:
+    findings about the development loop itself — `scripts/ralph/**`,
+    `.github/workflows/**`, scan/lint/pre-commit tooling, dependency
+    hygiene — are filed ONLY when they break a required check on `main` or
+    block a merge (then use the tiers above as normal). Otherwise stop:
+    report the finding to the user instead of filing.
 - **Size**: Estimate rough LoC/complexity from what Step 2 found. If it looks
   like it exceeds ~300 LoC or spans more than one clearly separable concern
   (e.g. "backend model + API + two screens"), it needs decomposition — see
@@ -121,11 +127,11 @@ See `references/label-guide.md` for the full set. At minimum apply:
 - Type: `bug` or `feature`
 - Priority: `P0`–`P3`
 - Readiness: `agent-ready` if every template section is filled with real
-  content, otherwise `needs-spec` — this is the label `pick-next.sh`'s
-  default `RALPH_EXCLUDE_LABELS` actually excludes, so it's the one that
-  keeps an incomplete issue out of Ralph's auto-pick. `needs-triage` is not
-  in that default exclude set and will NOT reliably stop the picker on its
-  own — see `references/label-guide.md`.
+  content, otherwise `needs-spec`. `pick-next.sh` REQUIRES `agent-ready` by
+  default, so this is the label that decides whether the fleet ever sees the
+  issue: without it nothing is auto-picked, and an incomplete issue stays out
+  by simply not earning it. `needs-triage` decides nothing either way — see
+  `references/label-guide.md`.
 - `epic:<slug>` on the epic issue and all its sub-issues, if decomposed, PLUS
   the bare `epic` label on the epic issue only (see Step 4b — `epic:<slug>`
   alone does not exclude it from the picker; the bare `epic` token does)
@@ -207,5 +213,5 @@ in-code reference — don't fabricate a file:line.
 ### User's report doesn't reproduce
 State that in Context: what you tried, what you expected, what actually
 happened when you checked. File it as `needs-spec` (not `agent-ready`) rather
-than guessing at a root cause you didn't verify — `needs-spec` is what
-actually keeps the picker from auto-assigning it.
+than guessing at a root cause you didn't verify — withholding `agent-ready` is
+what keeps the picker from auto-assigning it, and `needs-spec` says why.

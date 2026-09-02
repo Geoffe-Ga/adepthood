@@ -61,6 +61,7 @@ from services.creek_vault_telemetry import (
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
 )
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 # The environment variable that binds a configured vault to one adepthood user.
 _OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
@@ -345,7 +346,7 @@ async def test_the_fallback_client_still_counts_as_unconfigured_by_default() -> 
     }
 
 
-class _SharedCorpusVaultClient:
+class _SharedCorpusVaultClient(NoPipelineVaultDouble):
     """One deployment-wide vault: whatever it is given, it may hand back to anyone.
 
     The fake is deliberately a *single instance* shared across both users'

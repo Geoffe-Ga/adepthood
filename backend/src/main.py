@@ -30,6 +30,7 @@ from database import async_session_factory, get_session
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
+    CanonicalHostMiddleware,
     CorrelationIdMiddleware,
     ForwardedProtoMiddleware,
     RequestLoggingMiddleware,
@@ -38,6 +39,7 @@ from middleware import (
 )
 from observability import configure_logging
 from rate_limit import limiter
+from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
@@ -575,6 +577,56 @@ def validate_trusted_proxy_config() -> None:
     )
 
 
+def _unusable_allowed_hosts_message(entries: list[str]) -> str:
+    """Build the refusal for allowlist entries that name no authority."""
+    quoted = ", ".join(repr(entry) for entry in entries)
+    return (
+        f"{ALLOWED_HOSTS_ENV_VAR} contains {len(entries)} value(s) that do not name a "
+        f"host: {quoted}. Each entry must be a bare hostname with an optional port "
+        "-- 'api.example.com' or 'localhost:8000' -- with no scheme, path, userinfo "
+        "or wildcard. A wildcard is refused rather than supported: this variable also "
+        "names the authority a non-matching request is settled onto, and a pattern has "
+        "no single host to substitute. Entries that name no host are dropped at "
+        f"request time, so a value refused here would leave {ALLOWED_HOSTS_ENV_VAR} "
+        "looking set while settling nothing. backend/.env.example and DEPLOYMENT.md "
+        "document the format."
+    )
+
+
+def validate_allowed_hosts_config() -> None:
+    """Refuse an allowlist that names no host, and announce production having none.
+
+    Two findings, two very different remedies, because they fail in opposite
+    directions.  A *malformed* value is refused on every environment: entries
+    that name no authority are dropped at request time, so a typo in the only
+    entry leaves an operator with a variable that reads as set, a control that
+    settles nothing, and no signal anywhere that the two disagree.  That is the
+    silent-disarm shape, and boot is the only place it can be caught.
+
+    An *absent* value only warns, and must never raise.  Unset is the status
+    quo -- every request keeps its own ``Host``, exactly as before this control
+    existed -- so refusing the boot over it would take down every deploy that
+    predates this variable the first time the change ships, to fix a weakness
+    those deploys already had.  Production is told, because there the degraded
+    state is worth naming; outside production it is the ordinary local case and
+    stays silent, mirroring :func:`validate_trusted_proxy_config`.
+    """
+    unusable = unusable_host_entries()
+    if unusable:
+        raise RuntimeError(_unusable_allowed_hosts_message(unusable))
+    if os.getenv("ENV", "development") != "production" or allowed_hosts():
+        return
+    logger.warning(
+        "allowed_hosts_unconfigured: %s is unset, so the Host header a caller "
+        "sends is the authority of every absolute URL this app mints -- most "
+        "visibly the router's trailing-slash 307, which is answered before any "
+        "auth check runs and can therefore be pointed anywhere by anyone. Set it "
+        "to the hostname(s) this deploy answers as, canonical one first -- "
+        "backend/.env.example documents the format",
+        ALLOWED_HOSTS_ENV_VAR,
+    )
+
+
 def validate_ipv6_throttle_prefix_config() -> None:
     """Announce a throttle prefix length the runtime read and could not use.
 
@@ -813,6 +865,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # a state only this warning makes visible.
     validate_trusted_proxy_config()
 
+    # The authority half of the same question, checked immediately after the
+    # scheme half: an entry that names no host is dropped on every request, so a
+    # typo would leave the allowlist looking set while settling nothing.  Unset
+    # is the status quo and only warns; malformed refuses the boot.
+    validate_allowed_hosts_config()
+
     # A prefix length that is not a prefix length is discarded silently on every
     # request, so boot is the only place a typo in it can be said out loud.
     validate_ipv6_throttle_prefix_config()
@@ -876,13 +934,14 @@ install_exception_handlers(app)
 # request flow becomes:
 #
 #   ForwardedProtoMiddleware  (outermost; settles scope["scheme"])
-#   -> RequestLoggingMiddleware  (always emits an access record)
-#      -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
-#         -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
-#            -> CORSMiddleware  (preflight handling + ACAO / ACAC)
-#               -> UnhandledExceptionMiddleware  (500 envelope, below CORS)
-#                  -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
-#                     -> route handler
+#   -> CanonicalHostMiddleware  (settles the Host header's authority)
+#      -> RequestLoggingMiddleware  (always emits an access record)
+#         -> CorrelationIdMiddleware  (mints / honours X-Request-ID)
+#            -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
+#               -> CORSMiddleware  (preflight handling + ACAO / ACAC)
+#                  -> UnhandledExceptionMiddleware  (500 envelope, below CORS)
+#                     -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#                        -> route handler
 #
 # Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
 # rate-limited responses inherit the security-header set; putting trace-id
@@ -902,6 +961,15 @@ install_exception_handlers(app)
 # to be settled before anything routes, and settling it above every other layer
 # means any of them that later reads the scheme sees the client-facing one
 # rather than the ingress hop's.
+#
+# Canonical-host sits immediately inside it, and the pairing is the point: that
+# same ``Location`` is built from ``scope["scheme"]`` *and* the ``Host`` header,
+# so settling one half and leaving the other client-authored is half an
+# invariant.  It goes below rather than above because forwarded-proto's
+# outermost position is a stated invariant with a test pinning it, and nothing
+# here needs to be outside: both settle scope on the way in, neither reads the
+# other's value, so their relative order has no observable consequence.  Both
+# are above the router, which is the only ordering either of them requires.
 origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
@@ -921,6 +989,7 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(CanonicalHostMiddleware)
 app.add_middleware(ForwardedProtoMiddleware)
 
 # Register feature routers

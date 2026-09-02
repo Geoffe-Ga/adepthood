@@ -63,12 +63,9 @@ from services import creek_vault_url_resolution
 from services.creek_vault_client import (
     _CONTRACT_MINOR_COMPONENTS,
     _CONTRACT_VERSION_HEADER,
-    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
     _VAULT_TOTAL_DEADLINE_SECONDS,
-    _WHEEL_FREQUENCY_CODES,
-    _WHEEL_OK_STATUS,
     CONTRACT_MINOR,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
@@ -77,7 +74,6 @@ from services.creek_vault_client import (
     _build_pooled_vault_client,
     _contract_version_compatible,
     _entry_path_segment,
-    _parse_wheel,
     _VaultHttpPool,
     build_connected_vault_client,
     build_creek_vault_client,
@@ -89,9 +85,13 @@ from services.creek_vault_payload import (
     _MAX_REFLECT_NOTES,
     _MAX_RELATED_EDDIES,
     _MAX_RELATED_PRAXIS,
+    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _RELATED_PROSE_MAX,
     _RELATED_TITLE_MAX,
+    _WHEEL_FREQUENCY_CODES,
+    _WHEEL_OK_STATUS,
     _bounded_text,
+    _parse_wheel,
 )
 from services.creek_vault_pinned_transport import PinnedDestinationTransport
 from services.creek_vault_telemetry import (
@@ -102,6 +102,7 @@ from services.creek_vault_telemetry import (
     vault_outcome_counts,
 )
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
+from tests.creek_bundle_facts import CREEK_NOTE_KINDS
 
 _VAULT_URL = "https://vault.example.test"
 
@@ -3470,12 +3471,6 @@ def test_local_fallback_synchronous_reads_record_nothing() -> None:
 # were reached. The rules belong to the shared parser rather than to a transport,
 # so they are driven here through the one adapter that still exists.
 
-# Creek's seven published note kinds, restated here on purpose: this literal is
-# the pin against the vocabulary drifting out from under the mapping table.
-_CREEK_NOTE_KINDS = frozenset(
-    {"reframe", "fear", "longing", "value", "pattern", "tension", "gift"},
-)
-
 # One well-formed margin note's quote and note text, reused so the hygiene matrix
 # below can pair exactly one malformed item against a known-good sibling.
 _MARGIN_QUOTE = "the river kept moving"
@@ -3749,8 +3744,13 @@ def test_marginalia_kind_map_targets_only_anchorable_kinds() -> None:
 
 
 def test_marginalia_kind_map_covers_creeks_published_kinds() -> None:
-    """The mapping's keys are exactly Creek's seven published note kinds."""
-    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == _CREEK_NOTE_KINDS
+    """The mapping's keys are exactly Creek's seven published note kinds.
+
+    Asserted against the shared pin rather than a literal restated here, so this
+    and the conformance suite's bundle check cannot drift apart: that suite
+    holds the pin to the vendored enum, and this holds the mapping to the pin.
+    """
+    assert set(_MARGINALIA_KIND_BY_CREEK_KIND) == CREEK_NOTE_KINDS
 
 
 def _strip_spy_text(value: str) -> tuple[str, list[str | None]]:

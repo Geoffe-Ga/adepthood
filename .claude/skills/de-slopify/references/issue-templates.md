@@ -11,9 +11,12 @@ real work or tries to implement an epic as a single PR.
 
 From `scripts/ralph/pick-next.sh`:
 
-- **Picks** the lowest-numbered open issue with **none** of these labels:
-  `epic wontfix duplicate invalid question blocked needs-spec future-work
-  do-not-auto-merge in-progress`.
+- **Requires** `agent-ready`. An issue without it is never a candidate, whatever
+  else it carries. This is the gate that decides whether the fleet sees your
+  finding at all.
+- **Picks**, among those, the highest-priority-tier open issue (lowest number
+  within a tier) with **none** of these labels: `epic wontfix duplicate invalid
+  question blocked needs-spec future-work do-not-auto-merge in-progress`.
 - An issue already referenced by an open PR's `Closes/Fixes/Resolves #N` is
   treated as in-flight and skipped.
 
@@ -51,8 +54,9 @@ Create any that don't exist (`gh label create <name> --color <hex> --description
 | `blocked` / `needs-spec` | Not ready for autonomous pickup | `#000000` |
 
 Keep labels minimal per issue: one severity + one scope + one category + `de-slop`.
-`wire-in` is **not** in `pick-next.sh`'s exclude list, so Ralph still picks
-these issues up like any other standalone finding.
+`wire-in` is **not** in `pick-next.sh`'s exclude list, so Ralph picks these
+issues up like any other standalone finding — provided they also carry
+`agent-ready`, without which nothing is picked.
 
 ---
 

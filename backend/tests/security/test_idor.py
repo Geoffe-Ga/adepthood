@@ -37,6 +37,7 @@ from sqlmodel import col, select, update
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.journal_entry import JournalEntry
+from models.marginalia import Marginalia, MarginaliaKind
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.stage_content import StageContent
@@ -227,6 +228,39 @@ async def _create_practice_session(
     )
     assert resp.status_code == HTTPStatus.CREATED
     return int(resp.json()["id"])
+
+
+async def _seed_expanded_marginalia(
+    db_session: AsyncSession,
+    *,
+    owner_id: int,
+    column_user_id: int | None = None,
+) -> int:
+    """Persist an entry owned by ``owner_id`` carrying one expanded margin note.
+
+    ``column_user_id`` overrides the denormalized ``Marginalia.user_id`` column
+    so a drifted row — one naming a user who does not own the parent entry —
+    can be probed.
+    """
+    entry = JournalEntry(sender="user", user_id=owner_id, message=_JOURNAL_PROBE_MESSAGE)
+    db_session.add(entry)
+    await db_session.flush()
+    note = Marginalia(
+        journal_entry_id=entry.id,
+        user_id=column_user_id if column_user_id is not None else owner_id,
+        kind=MarginaliaKind.SYMBOL,
+        anchor_start=0,
+        anchor_end=1,
+        anchor_text="A",
+        note="A margin note.",
+        essay="An expanded letter.",
+        essay_generated_at=datetime.now(UTC),
+    )
+    db_session.add(note)
+    await db_session.commit()
+    await db_session.refresh(note)
+    assert note.id is not None
+    return int(note.id)
 
 
 # ── Cross-user matrix: every endpoint must return 403 ─────────────────────
@@ -976,3 +1010,36 @@ async def test_no_user_id_in_owned_resource_responses(
     for label, body in probes:
         assert "user_id" not in body, f"{label} response leaked user_id"
         assert "submitted_by_user_id" not in body, f"{label} response leaked submitted_by_user_id"
+
+
+# ── Token-scoped listings leak no other tenant's rows ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Bob's Voice Drafts shelf holds none of Alice's essays, and no count of them.
+
+    The shelf takes no resource id — it is keyed entirely on the bearer token —
+    so there is no cross-user branch to spell 403 or 404, and marginalia is one
+    of the enumeration-safe resources that deliberately collapses that branch
+    anyway.  The invariant to pin is therefore isolation of the *projection*:
+    neither the rows nor ``total`` may carry another tenant's writing, and the
+    parent entry's owner is authoritative over the denormalized
+    ``Marginalia.user_id`` column.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_drafts")
+    bob_headers, bob_id = await _signup(async_client, "bob_drafts")
+
+    alices_note = await _seed_expanded_marginalia(db_session, owner_id=alice_id)
+    # Drifted denormalized column: it names Bob, but the parent entry is Alice's.
+    await _seed_expanded_marginalia(db_session, owner_id=alice_id, column_user_id=bob_id)
+
+    alice_body = (await async_client.get("/journal/voice-drafts", headers=alice_headers)).json()
+    bob_body = (await async_client.get("/journal/voice-drafts", headers=bob_headers)).json()
+
+    assert [item["marginalia_id"] for item in alice_body["items"]] == [alices_note]
+    assert alice_body["total"] == 1
+    assert bob_body["items"] == []
+    assert bob_body["total"] == 0

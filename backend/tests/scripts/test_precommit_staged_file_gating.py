@@ -59,7 +59,7 @@ _FRONTEND_HOOK_IDS = (
 )
 
 # Hooks scoped to the backend tree by a ``files:`` pattern in the real config.
-_BACKEND_HOOK_IDS = ("ruff", "ruff-format", "mypy", "isort", "bandit")
+_BACKEND_HOOK_IDS = ("ruff", "ruff-format", "mypy", "bandit")
 
 # check-ast carries no ``files:`` at all: it selects on the identified file
 # type, which is a different selection path through pre-commit and so needs its

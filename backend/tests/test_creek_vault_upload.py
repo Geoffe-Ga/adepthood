@@ -65,6 +65,7 @@ from services.creek_vault_upload import (
 )
 from tests.test_creek_vault_http_client import Handler as _VaultHandler
 from tests.test_creek_vault_http_client import _handshake_payload as _vault_capability_payload
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _CREATED_AT = datetime(2026, 8, 8, 9, 30, tzinfo=UTC)
 
@@ -122,7 +123,7 @@ def _empty_reflection() -> VaultReflection:
     )
 
 
-class RecordingUploadClient:
+class RecordingUploadClient(NoPipelineVaultDouble):
     """Fake :class:`CreekVaultClient` recording upload calls and returning scripted results.
 
     Only the upload surface is scripted; every other capability answers the

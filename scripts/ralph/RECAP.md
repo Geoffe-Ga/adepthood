@@ -157,11 +157,16 @@ never confused with the dataset-wide ones. The `————THIS PR————`
 The **backlog count is the metric most worth checking**, and this port already
 adapts it. `count_open_backlog` counts open issues (PRs excluded) minus any
 issue bearing one of the picker's exclude labels — epics, `blocked`,
-`needs-spec`, `do-not-auto-merge`, etc. — so the ETA reflects what
-`scripts/ralph/pick-next.sh` would actually pick up, not every open card. The
-exclude set defaults to the same list as the picker and honors the same
-`RALPH_EXCLUDE_LABELS` env var; set it (space-separated) to override, or to an
-empty string to count every open issue.
+`needs-spec`, `do-not-auto-merge`, etc. The exclude set defaults to the same list
+as the picker and honors the same `RALPH_EXCLUDE_LABELS` env var; set it
+(space-separated) to override, or to an empty string to count every open issue.
+
+The count is a deliberate **superset** of what the picker will dispatch:
+`scripts/ralph/pick-next.sh` additionally requires `agent-ready`, so an open,
+unblocked, unspecced issue is counted here and still not pickable. That gap is
+the point — it is how much work exists versus how much can start right now, and
+collapsing the count onto the picker would hide the backlog waiting to be
+specced.
 
 If the reviewer ever phrases verdicts differently from the `Verdict:` line that
 `claude-code-review.yml` posts, update `normalize_verdict` in `stats.py`.

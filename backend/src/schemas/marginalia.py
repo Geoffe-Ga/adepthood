@@ -35,6 +35,36 @@ class MarginaliaResponse(BaseModel):
     updated_at: datetime
 
 
+class VoiceDraftResponse(BaseModel):
+    """One expanded essay on the Voice Drafts shelf.
+
+    ``essay`` and ``essay_generated_at`` are non-optional here because the
+    listing selects only rows where the essay is set, and the
+    ``ck_marginalia_essay_timestamp_paired`` CHECK keeps the two columns set
+    together — so the type restates the WHERE clause and a leaked unexpanded
+    row fails loudly as a response-validation error rather than silently.
+
+    The note's surrogate key is named ``marginalia_id`` rather than ``id`` so a
+    client holding a draft can address the note it came from.  ``user_id`` is
+    excluded for the reason given on :class:`MarginaliaResponse`.
+    """
+
+    marginalia_id: int
+    journal_entry_id: int
+    kind: MarginaliaKind
+    anchor_text: str
+    essay: str
+    essay_generated_at: datetime
+
+
+class VoiceDraftListResponse(BaseModel):
+    """One page of the Voice Drafts shelf, with its total and a next-page flag."""
+
+    items: list[VoiceDraftResponse]
+    total: int
+    has_more: bool
+
+
 class CareResourceResponse(BaseModel):
     """One non-clinical support pointer in the care surface.
 
