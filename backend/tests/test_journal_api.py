@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.frequencies import Frequency
+from models.corpus_fragment import CorpusSource
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user_practice import UserPractice
+from services import frequency_classification as fc
 from services import journal_encryption
 
 # Anchor date for directly-seeded practice rows; the journal assertions never
@@ -845,3 +850,48 @@ async def test_decryption_failure_returns_distinct_500(
     resp = await async_client.get(f"/journal/{entry_id}", headers=headers)
     assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert resp.json()["error"] == "decryption_failure"
+
+
+# --- the corpus write on the journal path holds no connection -----------------
+
+_CORPUS_CONSENT_PATH = f"/corpus/consent/{CorpusSource.JOURNAL.value}"
+
+# A reply the classifier's parser accepts, naming one position on the ontology.
+_CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9})
+
+
+@pytest.mark.asyncio
+async def test_a_journal_write_holds_no_pooled_connection_across_its_classification(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saving an entry must not hold a pooled connection while a provider is thinking.
+
+    The corpus write is the last thing a journal save does, and it arrives with
+    a transaction already open — the handler refreshed the row it had just
+    committed — and then reads consent and withdraws the previous fragment
+    before it dials anybody. A Session holds the connection it autobegan on
+    across every later ``await``, so held here a pool of fifteen would be spent
+    by fifteen concurrent saves and the sixteenth request to any
+    database-backed endpoint would block on checkout.
+
+    This is the caller the pool defect was never filed against, and it is the
+    one somebody is actually waiting on. Consent is granted before the entry
+    exists so the grant's own backfill sweep finds nothing and the only
+    classification observed is the write's.
+    """
+    in_transaction: list[bool] = []
+
+    async def watching(**_kwargs: object) -> SimpleNamespace:
+        in_transaction.append(db_session.in_transaction())
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", watching)
+    headers = await _signup(async_client, "journal-corpus-pool")
+    granted = await async_client.put(_CORPUS_CONSENT_PATH, json={"granted": True}, headers=headers)
+    assert granted.status_code == HTTPStatus.OK
+
+    saved = await async_client.post("/journal/", json=_message_payload(), headers=headers)
+    assert saved.status_code == HTTPStatus.CREATED
+
+    assert in_transaction, "the journal write made no classification"
+    assert not any(in_transaction)

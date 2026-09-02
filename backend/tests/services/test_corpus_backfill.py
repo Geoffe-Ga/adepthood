@@ -396,8 +396,8 @@ async def test_a_provider_that_never_answers_cannot_hold_the_grant_open(
     per-attempt timeout longer than the sweep's entire deadline -- so a
     deadline sampled only between entries bounds nothing at all during the one
     condition it exists for. The caller abandons the request at its own
-    ``FETCH_TIMEOUT_MS`` and takes the uncommitted transaction with it, so the
-    work is paid for and thrown away.
+    ``FETCH_TIMEOUT_MS``, and a sweep still running then is a request holding
+    the grant's response hostage to a provider nobody is waiting for.
 
     An entry that runs out of time is an ordinary unclassified one: nothing is
     stored, it stays pending, and the next grant offers it again.
@@ -983,3 +983,86 @@ async def test_a_logged_sweep_says_when_it_ran(
     stored = SQLModel.metadata.tables["corpussweep"].c.swept_at
     assert isinstance(stored.type, DateTime)
     assert stored.type.timezone is True
+
+
+# --- the pool is not held for the length of the sweep -------------------------
+
+# What a single observation would prove: nothing about the second entry onwards.
+# A release performed once before the loop would satisfy it and hold the
+# connection for every entry after the first.
+_ONE_CLASSIFICATION = 1
+
+
+@pytest.mark.asyncio
+async def test_no_pooled_connection_is_held_across_a_classification_in_a_sweep(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A grant must not hold a pooled connection for the length of its sweep.
+
+    A Session autobegins on its first statement and stays in that transaction
+    across every later ``await``, and an open transaction is a checked-out
+    connection. The grant that starts a sweep has already flushed its consent
+    event, so the transaction is open and dirty before the first candidate is
+    read, and the sweep's own bounds then allow up to
+    :data:`services.corpus_backfill.BACKFILL_DEADLINE_SECONDS` of provider time
+    behind it. Held throughout, fifteen concurrent grants would spend the whole
+    pool for that long, and the sixteenth request to *any* database-backed
+    endpoint would block on checkout.
+
+    The observation is taken at every call rather than at the first, because the
+    property being asserted is about the loop: a release done once on the way in
+    would pass a one-entry test and hold the connection for all the rest.
+    """
+    in_transaction: list[bool] = []
+
+    async def watching(**_kwargs: object) -> SimpleNamespace:
+        in_transaction.append(db_session.in_transaction())
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", watching)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+    await _entry(db_session, body=_THIRD)
+
+    await _decide(db_session, granted=True)
+
+    assert len(in_transaction) > _ONE_CLASSIFICATION, (
+        "the sweep classified at most one entry, so this says nothing about the rest"
+    )
+    assert not any(in_transaction)
+
+
+@pytest.mark.asyncio
+async def test_what_the_sweep_reached_survives_the_request_being_abandoned(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every entry the sweep reached is durable before the next one is offered.
+
+    This is the other half of releasing the connection, and it is what the
+    release costs: the sweep no longer lands as one transaction, so each entry's
+    fragment and its stamp have to be made durable where they are produced. The
+    mobile client abandons a request at its own ``FETCH_TIMEOUT_MS``, which is
+    barely longer than the sweep's deadline, and an abandoned request takes an
+    uncommitted transaction with it -- so an outcome left for the caller to
+    commit is an outcome paid for at a provider and thrown away.
+
+    Rolling the caller's transaction back is how that is asserted here rather
+    than by opening a second session: the test database is one in-memory SQLite
+    connection, so a second session would see this one's uncommitted writes and
+    prove nothing. The last entry is the one that binds -- every earlier entry's
+    work is committed as a side effect of the *next* one releasing the
+    connection, and there is no next one for the last.
+    """
+    _patch_provider(monkeypatch)
+    first = await _entry(db_session, body=_FIRST)
+    second = await _entry(db_session, body=_SECOND)
+    third = await _entry(db_session, body=_THIRD)
+    change = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
+    )
+
+    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await db_session.rollback()
+
+    assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND, _THIRD])
+    assert None not in [await _offered_at(db_session, i) for i in (first, second, third)]

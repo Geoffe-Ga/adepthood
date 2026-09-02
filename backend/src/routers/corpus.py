@@ -130,12 +130,22 @@ async def put_corpus_consent(
 ) -> CorpusConsentResponse:
     """Record this account's decision about one source and report the result.
 
-    Committed here rather than left to a caller: this is the whole transaction,
-    and a decision is never only the event. On a revocation it is the purge; on
-    a grant it is the sweep back over the writing the account already had,
-    bounded and reported by :mod:`services.corpus_backfill`. Leaving any of it
-    uncommitted would be a permission changed on screen and not in the
-    database.
+    Committed here rather than left to a caller, because a decision is never
+    only the event: on a revocation it is the purge, and on a grant it is the
+    sweep back over the writing the account already had, bounded and reported by
+    :mod:`services.corpus_backfill`. Leaving any of it uncommitted would be a
+    permission changed on screen and not in the database.
+
+    A grant is no longer *one* transaction, and the commit here is the last of
+    several rather than the only one. The sweep ends its transaction before
+    every classification so that no pooled connection is held across a provider
+    call -- see :func:`services.corpus_ingest._classify_and_record` -- which
+    makes the decision itself durable at the first entry. So a grant whose sweep
+    is cut short by a client that stopped waiting leaves the permission recorded
+    and whatever it reached ontologized, and the remainder waits for the next
+    yes. That is a change of promise and the better half of the trade: the
+    alternative was a permission the account had given, paid for at a provider,
+    and thrown away.
 
     Rate-limited more tightly than ``POST /import`` despite carrying the
     smallest body in the API: a grant is the most expensive request here, since
@@ -271,8 +281,13 @@ async def import_corpus_document(
     :mod:`domain.document_text` refuses a document too long for one fragment
     rather than quietly splitting it into a job nobody can watch.
 
-    The commit is here rather than in the service because this is the whole
-    transaction: the fragment, and nothing else, land together or not at all.
+    The commit is here rather than in the service because the fragment is what
+    this route is for and the router is what owns its arrival. The import is not
+    quite one transaction: the ingest ends the one it inherited immediately
+    before the classification, so no pooled connection is held while a language
+    model is thinking. Nothing of the document is written before that point, so
+    what the early commit lands is the account's consent read and nothing else,
+    and the fragment still arrives here or not at all.
 
     The vault ontologization pass is driven from here, after that commit, and
     not from inside :func:`services.corpus_import.import_document` -- which
