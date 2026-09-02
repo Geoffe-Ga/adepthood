@@ -37,6 +37,7 @@ UNUSABLE_ENTRIES = [
     "api.example.com/v1",
     "user@api.example.com",
     "api example.com",
+    "[::1]",
     "[::1]:8000",
     "api.example.com:notaport",
     "-api.example.com",

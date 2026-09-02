@@ -32,6 +32,7 @@ from httpx import ASGITransport, AsyncClient
 from main import app
 from middleware import CanonicalHostMiddleware
 from observability import TRACE_ID_HEADER
+from request_host import _hostname, usable_host
 
 if TYPE_CHECKING:
     from starlette.types import Message, Scope
@@ -67,6 +68,26 @@ _ORIGINAL_HOST_FIELD = "original_host"
 # ``base_url`` decides the socket scheme the transport writes into the scope, so
 # every case starts from plaintext and reads an ``http://`` Location.
 _BASE_URL = "http://test"
+
+# Inbound authorities the port-splitter cannot parse: bracketed IPv6 literals
+# with and without a port, and the bracket fragments a malformed or truncated
+# one degrades to.  None of them is allowlisted in any case below, so each must
+# come back settled -- the parse being wrong may cost a match, never grant one.
+_UNPARSEABLE_INBOUND_HOSTS = [
+    "[::1]",
+    "[::1]:8000",
+    "[2001:db8::1]",
+    "[2001:db8::1]:8443",
+    "[::ffff:127.0.0.1]",
+    "[",
+    "[]",
+    "[]:8000",
+]
+
+# Two literals the splitter cannot tell apart -- both reduce to ``[`` -- and two
+# more that collide on ``[2001``.  Their being refused as entries is what keeps
+# that confusion unreachable.
+_COLLIDING_IPV6_LITERALS = [("[::1]", "[::2]"), ("[2001:db8::1]", "[2001:db8::2]")]
 
 _HTTP_SCOPE_TYPE = "http"
 _HEADERS_SCOPE_KEY = "headers"
@@ -397,3 +418,46 @@ async def test_a_non_http_scope_is_handed_on_unexamined(
 
     assert observed[_HEADERS_SCOPE_KEY] is _SPOOFED_HOST_HEADERS
     assert _ORIGINAL_HOST_SCOPE_KEY not in observed
+
+
+@pytest.mark.parametrize("inbound", _UNPARSEABLE_INBOUND_HOSTS)
+@pytest.mark.asyncio
+async def test_an_authority_the_splitter_misreads_is_settled_never_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    inbound: str,
+) -> None:
+    """A mis-parsed Host may cost its sender a match; it may never win one.
+
+    The port splitter reads ``[::1]:8000`` as the hostname ``[``, and a
+    bracketed literal is refused as an allowlist entry as well, so neither side
+    of the comparison understands the form.  This is the load-bearing half of
+    that: whatever the splitter makes of an authority, an authority the operator
+    did not declare leaves settled onto the canonical one, so the minted
+    Location names the operator's host and never the sender's.
+    """
+    monkeypatch.setenv(_ALLOWED_HOSTS_ENV_VAR, _CANONICAL_HOST)
+
+    status, headers = await _get(_COLLECTION_PATH, inbound)
+
+    assert status == HTTPStatus.TEMPORARY_REDIRECT
+    assert headers[_LOCATION_HEADER] == f"http://{_CANONICAL_HOST}{_REDIRECT_TARGET}"
+    assert inbound not in headers[_LOCATION_HEADER]
+
+
+@pytest.mark.parametrize(("one", "other"), _COLLIDING_IPV6_LITERALS)
+def test_literals_the_splitter_confuses_are_refused_as_entries(one: str, other: str) -> None:
+    """The parse gap and the entry refusal are one decision, and this pins them together.
+
+    Both halves are asserted in the same test because either alone is safe and
+    the pair is not.  The splitter genuinely cannot distinguish these two
+    authorities -- that is the first assertion, stated rather than assumed.  It
+    costs nothing only because neither literal can enter the allowed set, which
+    is the second.  Widening the entry pattern to accept bracketed literals
+    without teaching the splitter about brackets in the same change would leave
+    an allowlist naming one literal matching an inbound naming the other, and
+    that request would be accepted rather than settled.  This test is what makes
+    that edit fail loudly instead of quietly inverting the module's guarantee.
+    """
+    assert _hostname(one) == _hostname(other)
+    assert usable_host(one) is None
+    assert usable_host(other) is None

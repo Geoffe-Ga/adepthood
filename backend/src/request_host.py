@@ -88,7 +88,27 @@ def usable_host(entry: str) -> str | None:
 
 
 def _hostname(authority: str) -> str:
-    """Return the host half of ``authority``, dropping any port."""
+    """Return the host half of ``authority``, dropping any port.
+
+    Bracketed IPv6 literals are not understood, deliberately and on both sides.
+    ``[::1]:8000`` reduces to ``[`` here rather than to ``[::1]`` -- but ``[`` is
+    a key nothing can hold, because :data:`_AUTHORITY_PATTERN` refuses a
+    bracketed literal as an *entry* too, so no key beginning with ``[`` ever
+    reaches the set this is compared against.  A request naming one is therefore
+    settled onto the canonical host.  That is the safe direction and the only
+    direction available: the mis-parse can fail to match, never match something
+    it should not, so no unallowlisted authority is accepted by it.
+
+    The two refusals are one decision and have to move as one.  Widening the
+    pattern to accept bracketed literals *without* making this function
+    bracket-aware in the same change inverts the failure from safe to open:
+    ``[::1]`` and ``[::2]`` both reduce to ``[``, and ``[2001:db8::1]`` and
+    ``[2001:db8::2]`` both to ``[2001``, so an allowlist naming one literal
+    would match an inbound naming a different one and let it through untouched
+    -- an authority nobody declared, accepted rather than settled, which is the
+    single outcome this module exists to prevent.  A test pins the coupling so
+    that widening one half alone cannot pass silently.
+    """
     return authority.partition(_PORT_SEPARATOR)[0]
 
 
