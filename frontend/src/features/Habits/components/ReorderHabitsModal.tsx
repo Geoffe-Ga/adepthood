@@ -9,7 +9,12 @@ import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { calculateHabitStartDate, isCarryoverHabit, stageAtIndex } from '../HabitUtils';
+import {
+  calculateHabitStartDate,
+  carryoverSlot,
+  isCarryoverHabit,
+  stageAtIndex,
+} from '../HabitUtils';
 
 import ModalHeader from './ModalHeader';
 
@@ -27,36 +32,59 @@ const formatDate = (date: Date): string =>
   date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 /**
+ * Each row's display slot: program habits count 0, 1, 2... along the cadence,
+ * while carryover habits take the mirrored negative slots they are given
+ * everywhere else in the app (the first one is -1).
+ *
+ * The list is mixed, and a carryover habit can sort ahead of every program
+ * habit, so a raw row index describes neither partition. Both the date a row is
+ * stamped with and the stage it is labelled with are read off this one function,
+ * which is what stops a row from announcing a stage that contradicts the date
+ * printed beside it.
+ */
+const displaySlots = (habits: Habit[]): number[] => {
+  let programIndex = 0;
+  let carryoverIndex = 0;
+  return habits.map((habit) => {
+    if (isCarryoverHabit(habit)) {
+      const slot = carryoverSlot(carryoverIndex);
+      carryoverIndex += 1;
+      return slot;
+    }
+    const slot = programIndex;
+    programIndex += 1;
+    return slot;
+  });
+};
+
+/**
  * Lay the program cadence out from ``startDate`` -- over the program habits
  * only, counted by their own position among program habits.
  *
- * The list this receives is mixed: carryover habits, which the user brought
- * along from before the program, sit in it alongside program habits and can
- * sort ahead of them. Stamping by raw row index gave the first of them the
- * date the user picked and pushed the real first program habit a whole stage
- * later, which both destroyed the date the carryover habit actually began on
- * and moved the program's own start away from the picked day. A carryover
- * habit's date is history, not a slot on the cadence, so it is left alone.
+ * Stamping by raw row index gave the first carryover habit the date the user
+ * picked and pushed the real first program habit a whole stage later, which
+ * both destroyed the date the carryover habit actually began on and moved the
+ * program's own start away from the picked day. A carryover habit's date is
+ * history, not a slot on the cadence, so it is left alone.
  */
 const updateStartDates = (habits: Habit[], startDate: Date): Habit[] => {
-  let programIndex = 0;
-  return habits.map((habit) => {
-    if (isCarryoverHabit(habit)) return habit;
-    const stamped = { ...habit, start_date: calculateHabitStartDate(startDate, programIndex) };
-    programIndex += 1;
-    return stamped;
+  const slots = displaySlots(habits);
+  return habits.map((habit, index) => {
+    const slot = slots[index] ?? 0;
+    if (slot < 0) return habit;
+    return { ...habit, start_date: calculateHabitStartDate(startDate, slot) };
   });
 };
 
 interface ReorderItemProps {
   item: Habit;
-  index: number;
+  slot: number;
   drag: () => void;
   isActive: boolean;
 }
 
-const ReorderHabitItem = ({ item, index, drag, isActive }: ReorderItemProps) => {
-  const stage = stageAtIndex(index);
+const ReorderHabitItem = ({ item, slot, drag, isActive }: ReorderItemProps) => {
+  const stage = stageAtIndex(slot);
   const color = STAGE_COLORS[stage] ?? colors.neutral;
   return (
     <TouchableOpacity
@@ -137,19 +165,27 @@ interface ReorderListProps {
   onDragEnd: (_data: { data: Habit[] }) => void;
 }
 
-const ReorderList = ({ orderedHabits, onDragEnd }: ReorderListProps) => (
-  <View style={styles.reorderList}>
-    <DraggableFlatList
-      style={{ flex: 1 }}
-      data={orderedHabits}
-      keyExtractor={(item) => (item.id ? item.id.toString() : item.name)}
-      renderItem={({ item, drag, isActive, getIndex }) => (
-        <ReorderHabitItem item={item} index={getIndex() ?? 0} drag={drag} isActive={isActive} />
-      )}
-      onDragEnd={onDragEnd}
-    />
-  </View>
-);
+const ReorderList = ({ orderedHabits, onDragEnd }: ReorderListProps) => {
+  const slots = displaySlots(orderedHabits);
+  return (
+    <View style={styles.reorderList}>
+      <DraggableFlatList
+        style={{ flex: 1 }}
+        data={orderedHabits}
+        keyExtractor={(item) => (item.id ? item.id.toString() : item.name)}
+        renderItem={({ item, drag, isActive, getIndex }) => (
+          <ReorderHabitItem
+            item={item}
+            slot={slots[getIndex() ?? 0] ?? 0}
+            drag={drag}
+            isActive={isActive}
+          />
+        )}
+        onDragEnd={onDragEnd}
+      />
+    </View>
+  );
+};
 
 interface ReorderState {
   orderedHabits: Habit[];
@@ -208,16 +244,21 @@ const useReorderState = ({
     pickerVisible,
     setPickerVisible,
     handleDragEnd: ({ data }) => setOrderedHabits(updateStartDates(data, startDate)),
+    // Preview only. The restamped rows live here until Save Order, so writing
+    // the global anchor now would let a date the user previewed and then
+    // abandoned outlive the modal, with no row on disk agreeing with it.
     handleConfirmDate: (selectedDate) => {
       setPickerVisible(false);
       setStartDate(selectedDate);
       setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
-      // An explicit pick, and therefore authoritative: it outranks anything the
-      // load-time self-heal would derive from the habit rows themselves.
-      setProgramStartDate(selectedDate);
     },
     handleCancelDate: () => setPickerVisible(false),
     handleSave: () => {
+      // The anchor commits with the order it describes: one explicit,
+      // authoritative act, outranking anything the load-time self-heal would
+      // derive from the rows. Splitting the two is what let an abandoned pick
+      // strand every other screen on a date no habit agreed with.
+      setProgramStartDate(startDate);
       onSaveOrder(orderedHabits);
       onClose();
     },

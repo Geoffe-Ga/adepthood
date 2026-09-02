@@ -968,9 +968,9 @@ const loadHabits = async (tz?: string): Promise<void> => {
   }
   setLoading(false);
 
-  // Keep Map/Practice/Course/Journal aligned with the now-current habits by
-  // re-deriving the shared program anchor. Demo tiles are excluded at the
-  // source, so a demo-only store simply yields no anchor.
+  // Give Map/Practice/Course/Journal an anchor to read if none is stored yet,
+  // by deriving one from the habits just loaded. A stored anchor is left alone:
+  // it records a day the user chose, and this derivation does not outrank it.
   syncProgramAnchorFromHabits();
 
   // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay pending

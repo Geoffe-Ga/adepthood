@@ -177,13 +177,14 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(props.minimumDate).toBeUndefined();
   });
 
-  it('accepts a confirmed past date and updates the master program start date', () => {
+  it('accepts a confirmed past date and updates the master program start date on save', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
 
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm-past'));
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2020);
@@ -217,6 +218,8 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     const data = result.getByTestId('reorder-list').props.data as Habit[];
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
     expect(new Date(data[1]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-22');
+
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
@@ -390,7 +393,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     Platform.OS = originalOS;
   });
 
-  it('renders an HTML date input on web that updates the master program anchor', () => {
+  it('renders an HTML date input on web that updates the master program anchor on save', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -402,6 +405,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     act(() => {
       input.props.onChange({ target: { value: '2026-09-01' } });
     });
+    fireEvent.press(result.getByText('Save Order'));
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
@@ -510,5 +514,89 @@ describe('ReorderHabitsModal — the program cadence is laid over program habits
     expect(dayOf(data.find((h) => h.id === 10)!)).toBe('2026-01-15');
     expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
     expect(dayOf(data.find((h) => h.id === 2)!)).toBe('2026-06-22');
+  });
+});
+
+describe('ReorderHabitsModal — the anchor commits when the order commits', () => {
+  // The picker used to write the global anchor the instant it confirmed, while
+  // the restamped rows waited for Save Order. Previewing a date and then
+  // dismissing therefore left every other screen computing from a date the
+  // user had rejected, with no row on disk agreeing with it.
+  const CARRYOVER_START = new Date(2026, 0, 15);
+  const STORED_PICK = new Date(2026, 2, 10);
+
+  const carryoverHabit: Habit = {
+    ...makeHabit(10, 'Beige', 'Morning pages'),
+    start_date: CARRYOVER_START,
+    is_carryover: true,
+  };
+
+  const storedDay = (): string => {
+    const stored = useProgramStore.getState().programStartDate;
+    return stored === null ? 'none' : new Date(stored).toISOString().slice(0, 10);
+  };
+
+  it('leaves the anchor alone when a previewed date is abandoned without saving', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    expect(onSaveOrder).not.toHaveBeenCalled();
+    expect(storedDay()).toBe('2026-03-10');
+  });
+
+  it('previews the abandoned date on the rows even though the anchor is untouched', () => {
+    // The preview is the affordance, and it must keep working -- what changes
+    // is only that nothing leaves the modal until the user commits.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
+    expect(storedDay()).toBe('2026-03-10');
+  });
+
+  it('writes the anchor once the user commits the order', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+    fireEvent.press(result.getByText('Save Order'));
+
+    expect(storedDay()).toBe('2026-06-01');
+  });
+
+  it('labels each row with the stage its own date belongs to', () => {
+    // The date is stamped by position among program habits; the stage label
+    // must be read off the same position, or a row announces a stage that
+    // contradicts the date printed beside it.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 5, 1)));
+    const mixed: Habit[] = [
+      carryoverHabit,
+      makeHabit(1, 'Beige', 'A'),
+      makeHabit(2, 'Purple', 'B'),
+    ];
+    const result = render(
+      <ReorderHabitsModal visible habits={mixed} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    // A holds the picked date, so A is the program's Beige habit.
+    expect(result.getByText(/A \(Beige\)/)).toBeTruthy();
+    expect(result.getByText(/B \(Purple\)/)).toBeTruthy();
+    // The brought-along row takes a mirrored negative slot, as it does everywhere else.
+    expect(result.getByText(/Morning pages \(Clear Light\)/)).toBeTruthy();
   });
 });
