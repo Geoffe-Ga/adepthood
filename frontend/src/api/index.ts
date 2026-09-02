@@ -43,6 +43,7 @@ import {
   transcribePageSchema,
   uiFlagsSchema,
   documentImportSchema,
+  voiceReadinessSchema,
   wheelBalanceSchema,
   type AccountDeletionReceiptT,
   type DataExportArchiveT,
@@ -55,6 +56,7 @@ import {
   type ContractionVariantT,
   type CorpusConsentListT,
   type CorpusConsentT,
+  type VoiceReadinessT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
   type UiFlagsT,
@@ -1701,8 +1703,8 @@ export interface ImportDocumentInput {
 }
 
 /**
- * The corpus client: what an account has agreed may be sorted, and the one way
- * a document gets into whichever corpus that account actually has.
+ * The corpus client: the one way a document gets into whichever corpus an
+ * account actually has, and the one way to ask how far along that corpus is.
  *
  * ``importDocument`` is deliberately the *only* document surface this client
  * offers. ``POST /corpus/import`` resolves the destination per account — the
@@ -1740,6 +1742,27 @@ export const corpus = {
     } catch (err: unknown) {
       throw toDocumentUploadError(err);
     }
+  },
+
+  /**
+   * Whether this account's reflections are drawn from its own corpus yet.
+   *
+   * Validated at the edge so a fourth state, or a drifted field, raises
+   * ``ApiValidationError`` rather than rendering as a band with no
+   * destination. No trailing slash — the router mounts
+   * ``/corpus/voice-readiness`` directly, so a slash would cost a 307.
+   *
+   * The sentence a person reads comes back in ``message`` rather than being
+   * chosen here. Only the server knows which of the ways to be "not ready"
+   * actually happened — an account that has not agreed to be sorted and one
+   * that agreed last week have opposite remedies — and a client picking copy
+   * off a boolean would be guessing at a cause it cannot see.
+   */
+  voiceReadiness(token?: string): Promise<VoiceReadinessT> {
+    return request<VoiceReadinessT>('/corpus/voice-readiness', {
+      token,
+      schema: voiceReadinessSchema as unknown as z.ZodType<VoiceReadinessT>,
+    });
   },
 };
 

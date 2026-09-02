@@ -1899,6 +1899,15 @@
         "title": "GoogleOAuthRequest",
         "type": "object"
       },
+      "GroundingSource": {
+        "description": "Which of the two sources answered.\n\nRecorded alongside the reflection so an operator can tell a corpus-grounded\npass from a fallback one without reading a word of either.",
+        "enum": [
+          "corpus",
+          "recent_entries"
+        ],
+        "title": "GroundingSource",
+        "type": "string"
+      },
       "GumroadSaleSummary": {
         "description": "One Gumroad sale matched to the user by email.\n\n``GumroadSale`` carries no user id, so email is the only link available;\nthe summary reports what matched so a mismatch is visible rather than\nsilently absent.\n\nNo price field: :class:`models.gumroad_sale.GumroadSale` stores none. The\namount lives only inside ``raw_payload``, which is the verbatim webhook\nform and is deliberately not surfaced here — it carries the whole Gumroad\npayload, more than an entitlement question needs.",
         "properties": {
@@ -7028,6 +7037,56 @@
         "title": "VoiceDraftResponse",
         "type": "object"
       },
+      "VoiceReadinessResponse": {
+        "description": "Whether this account's reflections are drawn from its corpus yet.\n\n``ready`` is redundant with ``state`` on purpose: it is the one field every\nclient actually branches on, and deriving it once on the server is what\nkeeps three surfaces from each re-deciding which states count as ready.\n\n``grounding_source`` is *reporting*, not the readiness rule. It says which\nsource a reflection would draw on right now; readiness is decided by the\nfragment count against\n:data:`services.voice_readiness.VOICE_READY_FRAGMENT_THRESHOLD` alone.",
+        "properties": {
+          "classified_fragment_count": {
+            "minimum": 0.0,
+            "title": "Classified Fragment Count",
+            "type": "integer"
+          },
+          "grounding_source": {
+            "$ref": "#/components/schemas/GroundingSource"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/VoiceReadinessState"
+          }
+        },
+        "required": [
+          "ready",
+          "state",
+          "message",
+          "grounding_source",
+          "classified_fragment_count"
+        ],
+        "title": "VoiceReadinessResponse",
+        "type": "object"
+      },
+      "VoiceReadinessState": {
+        "description": "How far along one account's own corpus is, in the three ways it can be.\n\n``READY`` is a real member rather than the absence of the other two, so\nevery consumer branches on one vocabulary and the ``ready`` boolean stays a\nprojection of this rather than a second, independently-drifting source of\ntruth.",
+        "enum": [
+          "not_consented",
+          "gathering",
+          "ready"
+        ],
+        "title": "VoiceReadinessState",
+        "type": "string"
+      },
       "WalletAuditEntry": {
         "description": "One wallet ledger row, newest-first in the summary.",
         "properties": {
@@ -9269,6 +9328,116 @@
           }
         },
         "summary": "Import Corpus Document",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/voice-readiness": {
+      "get": {
+        "description": "Report whether this account's reflections come from its own corpus yet.\n\nNever a 404 and never an error state: every account has an answer to this,\nincluding the one that has decided nothing and stored nothing. That is the\nmost common answer, not a missing resource.\n\nThe account comes from the token, so no request can ask about a corpus that\nis not the caller's own. Two indexed reads, no commit, no provider call,\nand no session held across a remote await -- the pooled connection is\nreleased on the same schedule as every other read on this router.",
+        "operationId": "get_voice_readiness_corpus_voice_readiness_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceReadinessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Voice Readiness",
         "tags": [
           "corpus"
         ]

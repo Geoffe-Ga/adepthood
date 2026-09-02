@@ -1040,6 +1040,31 @@ export const corpusConsentListSchema = z.object({
 export type CorpusConsentT = z.infer<typeof corpusConsentSchema>;
 export type CorpusConsentListT = z.infer<typeof corpusConsentListSchema>;
 
+/**
+ * Whether this account's reflections are drawn from its own sorted corpus yet.
+ *
+ * ``state`` is a ``z.enum`` rather than a ``z.string`` because the client
+ * branches its copy and its call-to-action on it: a value outside the three
+ * the backend declares is a drift the edge should raise on, not a band that
+ * renders a blank destination. ``message`` is nullable because saying nothing
+ * is the honest answer once an account has arrived — silence is a state here,
+ * not a missing field.
+ *
+ * ``classified_fragment_count`` is validated and deliberately never rendered.
+ * It is here so the shape stays honest about what the route returns, but a
+ * count on this band would turn a declinable invitation into a progress meter,
+ * which is exactly the framing NORTH-STAR §5 forbids.
+ */
+export const voiceReadinessSchema = z.object({
+  ready: z.boolean(),
+  state: z.enum(['not_consented', 'gathering', 'ready']),
+  message: z.string().nullable(),
+  grounding_source: z.enum(['corpus', 'recent_entries']),
+  classified_fragment_count: z.number().int().nonnegative(),
+});
+
+export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
+
 // ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
 // ---------------------------------------------------------------------------
