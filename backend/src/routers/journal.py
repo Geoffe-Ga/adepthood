@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
 from fastapi import Depends, Header, HTTPException, Query, Request, Response, status
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, Select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -57,7 +57,7 @@ from models.completion_suggestion import (
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry, JournalTag
-from models.marginalia import Marginalia, MarginaliaStatus
+from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
@@ -85,6 +85,8 @@ from schemas.marginalia import (
     RelatedEddyResponse,
     RelatedPraxisResponse,
     ResonanceResponse,
+    VoiceDraftListResponse,
+    VoiceDraftResponse,
 )
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
@@ -501,6 +503,101 @@ async def list_journal_entries(
         items=[JournalMessageResponse.model_validate(e, from_attributes=True) for e in items],
         total=total,
         has_more=page_has_more(filters.offset, filters.limit, total),
+    )
+
+
+def _expanded_drafts_query(user_id: int) -> Select[tuple[Marginalia]]:
+    """Select ``user_id``'s expanded margin notes whose parent entry is live.
+
+    The single source of truth for what counts as a Voice Draft.  Three
+    predicates carry invariants that are easy to re-derive wrongly:
+
+    * ``JournalEntry.user_id == user_id`` alongside the denormalized
+      ``Marginalia.user_id``.  The model defers enforcement of that
+      denormalized column to the endpoint layer, so the parent entry's owner
+      is the authoritative one and both are asserted (the same defence in
+      depth ``list_marginalia`` already writes).
+    * ``JournalEntry.deleted_at IS NULL`` (BUG-JOURNAL-007).  Soft deletion
+      stamps the entry only — marginalia rows survive it, since just a hard
+      ``DELETE`` cascades — so a listing scoped by ``Marginalia.user_id``
+      alone would republish essays about writing the user deleted.
+    * ``Marginalia.essay IS NOT NULL``.  This is genuine SQL, not an
+      in-memory scan: ``EncryptedString`` binds ``None`` to ``None``, so
+      NULL-ness survives encryption and no decrypt-then-filter detour is
+      needed.
+    """
+    return (
+        select(Marginalia)
+        .join(JournalEntry, col(Marginalia.journal_entry_id) == col(JournalEntry.id))
+        .where(
+            Marginalia.user_id == user_id,
+            JournalEntry.user_id == user_id,
+            col(JournalEntry.deleted_at).is_(None),
+            col(Marginalia.essay).is_not(None),
+        )
+    )
+
+
+def _voice_draft(note: Marginalia) -> VoiceDraftResponse:
+    """Project one expanded margin note onto its Voice Draft shape."""
+    return VoiceDraftResponse(
+        marginalia_id=cast("int", note.id),
+        journal_entry_id=note.journal_entry_id,
+        kind=MarginaliaKind(note.kind),
+        anchor_text=note.anchor_text,
+        essay=cast("str", note.essay),
+        essay_generated_at=cast("datetime", note.essay_generated_at),
+    )
+
+
+@router.get("/voice-drafts", response_model=VoiceDraftListResponse)
+@limiter.limit("30/minute")
+async def list_voice_drafts(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_PAGE_OFFSET)] = 0,
+) -> VoiceDraftListResponse:
+    """List the caller's expanded marginalia essays, newest letter first.
+
+    A read-only shelf.  Nothing is generated on read — no regeneration path,
+    no invitation and no nudge; NORTH-STAR §3 ("you choose your depth") and §6
+    govern invitations, and this is retrieval, not an invitation.
+
+    Soft-deleted parent entries are excluded (BUG-JOURNAL-007), as
+    ``delete_journal_entry`` promises of every read path.
+
+    Drafts whose parent entry is INTIMATE are *included*.  This is retrieval
+    to the owner, not egress: an intimate entry never has an essay generated
+    (the essay path returns before the LLM), so the pair exists only where the
+    entry was reclassified after generation, and ``GET /{entry_id}/marginalia``
+    already returns that same essay to its owner today.  Withholding it here
+    would hide the writer's own letter from the writer while leaving it
+    reachable one route over.  The egress filter belongs to a future vault
+    mirror, never as a flag on this predicate.
+
+    Ordering is ``essay_generated_at DESC`` with ``id DESC`` as the tiebreak,
+    mirroring ``list_journal_entries``.  The paired-nullability CHECK makes
+    ``essay_generated_at`` non-null on every returned row, so the ordering is
+    total with no NULLS-placement hazard.
+
+    This route is declared before ``GET /{entry_id}``: Starlette matches in
+    registration order on the raw path, so a later declaration would be
+    shadowed by the ``RowIdPath`` converter and answer 422.
+    """
+    query = _expanded_drafts_query(current_user)
+    total = await count_query_total(session, query)
+    page = (
+        query.order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    notes = list((await session.execute(page)).scalars().all())
+    return VoiceDraftListResponse(
+        items=[_voice_draft(note) for note in notes],
+        total=total,
+        has_more=page_has_more(offset, limit, total),
     )
 
 
