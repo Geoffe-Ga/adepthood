@@ -51,6 +51,7 @@ const EXPECTED_JOURNEYS = [
   'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
   'prompt-history.e2e.test.ts',
+  'voice-readiness.e2e.test.ts',
 ];
 const ONLY_MODULE_ALIAS = ['^@/(.*)$'];
 

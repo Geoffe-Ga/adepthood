@@ -32,6 +32,22 @@ it to whichever corpus that account actually has: their vault if they have
 connected one, their own ontologized corpus if they have not.
 :mod:`services.corpus_import` owns the routing rule and the reasons for it. The
 endpoint itself only decodes, calls, commits, and picks the sentence.
+
+``GET /voice-readiness`` is the fourth verb and the only read here that is
+about the corpus rather than about permission to have one. It reports whether
+this account's reflections are drawn from its own sorted writing yet, and
+carries the server's own sentence for each way the answer can be "not yet" --
+see :mod:`services.voice_readiness` for why that is three states rather than a
+boolean, and :mod:`schemas.voice_readiness` for why the copy is the server's.
+
+It lives here, on its own route, deliberately. It is **not** computed inside
+``POST /journal/`` or ``PATCH /journal/{id}``: those handlers already commit,
+fan out to the vault and call a classifier, and a signal that only tells
+somebody where their reflections come from has no business lengthening a write.
+Nor is it folded onto ``JournalMessageResponse``, which both of those return.
+It is also unrated and uncommitted -- two indexed reads, no provider call, no
+transaction -- so it needs neither :data:`schemas.corpus.CONSENT_RATE_LIMIT`,
+which exists because a grant fans out, nor the import route's.
 """
 
 from __future__ import annotations
@@ -59,6 +75,7 @@ from schemas.corpus import (
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
+from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
 from services.corpus_import import (
@@ -69,6 +86,7 @@ from services.corpus_import import (
 )
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_upload import UploadedDocument
+from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
     prefix="/corpus",
@@ -134,6 +152,48 @@ async def put_corpus_consent(
     await backfill_after_consent(session, user_id=user_id, change=change)
     await session.commit()
     return _to_response(change.state)
+
+
+def _voice_readiness_response(readiness: VoiceReadiness) -> VoiceReadinessResponse:
+    """Project one readiness onto its response DTO.
+
+    ``ready`` is carried straight through from the derivation rather than
+    recomputed against the state here: the projection lives in exactly one
+    place (:func:`services.voice_readiness.derive_voice_readiness`), so a rule
+    about which states count as ready cannot come to mean two things.
+
+    Nothing about the fragments themselves crosses this boundary -- no
+    content, no ids, no titles. A readiness signal is a fact *about* a corpus,
+    and there is no version of this answer that quotes somebody's writing back
+    at them.
+    """
+    return VoiceReadinessResponse(
+        ready=readiness.ready,
+        state=readiness.state,
+        message=VOICE_READINESS_MESSAGES[readiness.state],
+        grounding_source=readiness.grounding_source,
+        classified_fragment_count=readiness.classified_fragment_count,
+    )
+
+
+@router.get("/voice-readiness", response_model=VoiceReadinessResponse)
+async def get_voice_readiness(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VoiceReadinessResponse:
+    """Report whether this account's reflections come from its own corpus yet.
+
+    Never a 404 and never an error state: every account has an answer to this,
+    including the one that has decided nothing and stored nothing. That is the
+    most common answer, not a missing resource.
+
+    The account comes from the token, so no request can ask about a corpus that
+    is not the caller's own. Two indexed reads, no commit, no provider call,
+    and no session held across a remote await -- the pooled connection is
+    released on the same schedule as every other read on this router.
+    """
+    readiness = await load_voice_readiness(session, user_id=user_id)
+    return _voice_readiness_response(readiness)
 
 
 def _vault_response(result: VaultImportResult) -> DocumentImportResponse:

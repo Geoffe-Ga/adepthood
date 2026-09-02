@@ -3,6 +3,7 @@
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
  * "New entry" action row, the current stage's prompts, a ``ReflectionInvitationBand``, a
+ * ``VoiceReadinessBand``, a
  * ``MorningPagesTip``, and ``SearchBar`` on the warm palette. Below it, entries group by recency (This
  * week / This month / Earlier) as lifted paper tiles with a reading-time +
  * "saved … ago" caption, over an inviting empty state with a call to action.
@@ -29,6 +30,7 @@ import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
 import { usePagedJournal } from './usePagedJournal';
+import VoiceReadinessBand from './VoiceReadinessBand';
 import { countWords } from './wordCount';
 
 import { prompts } from '@/api';
@@ -542,6 +544,7 @@ function ShelfTopMatter({
       </View>
       <StagePromptSection state={stagePrompts} onOpen={onPrompt} />
       <ReflectionInvitationBand />
+      <VoiceReadinessBand />
       <MorningPagesTip onBegin={onNew} />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />

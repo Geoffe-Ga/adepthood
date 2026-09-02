@@ -359,6 +359,38 @@ async def retrieve_fragments(
     return scored[:effective_limit]
 
 
+async def count_retrievable_fragments(session: AsyncSession, *, user_id: int) -> int:
+    """How many fragments this account holds that a retrieval could return.
+
+    A separate statement rather than ``len(await retrieve_fragments(...))``,
+    which cannot answer the question: retrieval clamps to
+    :data:`MAX_RETRIEVAL_LIMIT` over a pool of :data:`CANDIDATE_POOL_SIZE`, so
+    it reports the size of its own bounds long before it reports the size of a
+    corpus. This is what a caller asking "how much of their own writing is
+    there" has to use.
+
+    The tier predicate is the same allowlist ``_candidate_pool`` applies, read
+    off the same :data:`_RETRIEVABLE_TIER_VALUES`, so an intimate row that
+    reached the table past a relaxed CHECK is outside this count exactly as it
+    is outside a retrieval. A hand-written tier list here would be a second
+    derivation of the store's central rule, free to drift from the one the
+    reads use.
+
+    One indexed ``COUNT`` — ``ix_corpusfragment_user_tier_created`` covers the
+    two columns this filters on — and no rows are loaded, so the cost does not
+    grow with the corpus it is measuring.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(CorpusFragment)
+        .where(
+            col(CorpusFragment.user_id) == user_id,
+            col(CorpusFragment.tier).in_(_RETRIEVABLE_TIER_VALUES),
+        )
+    )
+    return int(result.scalar_one())
+
+
 async def _delete_where(
     session: AsyncSession, *, user_id: int, predicate: ColumnElement[bool]
 ) -> int:

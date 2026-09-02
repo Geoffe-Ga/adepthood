@@ -391,5 +391,21 @@
     },
     "status": "uncovered",
     "issue": 2614
+  },
+  {
+    "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
+    "description": "A person whose reflections are still drawn from the last few days of writing is told so, in the sentence that is true for their own account: the consent decision if they have not made it, the import surface if they have. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/VoiceReadinessBand.tsx",
+      "client": ["corpus", "corpusConsent", "auth", "setTokenGetter"],
+      "routes": [
+        "GET /corpus/voice-readiness",
+        "GET /corpus/consent",
+        "PUT /corpus/consent/{source}"
+      ],
+      "tables": ["corpusconsentevent", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/voice-readiness.e2e.test.ts"
   }
 ]

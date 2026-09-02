@@ -127,6 +127,11 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/ResonanceEssayModal.tsx::kind',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
+  // Audited: the eyebrow naming what the band is about, read and never
+  // itself tapped. The band's two tap targets are the CTA, which sits at
+  // editorialType.action, and the ReflectionDismiss control — matching the
+  // two sibling bands above.
+  'features/Journal/VoiceReadinessBand.tsx::label',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
   'features/Practice/configurator/RitualConfiguratorSheet.tsx::aspectText',

@@ -48,6 +48,7 @@ from services.corpus_store import (
     MAX_RETRIEVAL_LIMIT,
     FragmentDraft,
     RetrievalQuery,
+    count_retrievable_fragments,
     delete_fragments_for_entry,
     delete_fragments_for_source,
     record_fragment,
@@ -961,3 +962,63 @@ async def test_a_driver_that_reports_no_row_count_is_reported_as_none_removed(
 
     assert removed == 0
     assert await retrieve_fragments(db_session, user_id=_OWNER) == []
+
+
+# ---------------------------------------------------------------------------
+# Counting what is there, as distinct from retrieving it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_empty_corpus_counts_zero(db_session: AsyncSession) -> None:
+    """Nothing stored is a count, not an absence to be handled."""
+    assert await count_retrievable_fragments(db_session, user_id=_OWNER) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_count_sees_only_this_account(db_session: AsyncSession) -> None:
+    """A stranger's corpus is outside the query, not filtered out of it."""
+    await _store(db_session, "mine", F5=1.0)
+    await _store(db_session, "also mine", F5=1.0)
+    await _store(db_session, "not mine", user_id=_STRANGER, F5=1.0)
+
+    assert await count_retrievable_fragments(db_session, user_id=_OWNER) == 2
+    assert await count_retrievable_fragments(db_session, user_id=_STRANGER) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_count_excludes_a_tier_a_retrieval_would_also_exclude(
+    db_session: AsyncSession,
+) -> None:
+    """The same allowlist, so a count and a retrieval cannot disagree.
+
+    Forced past the CHECK by :func:`_force_intimate_row` for the reason given
+    there: a predicate only ever reached behind an unbreakable barrier is a
+    predicate nothing proves.
+    """
+    await _store(db_session, "ordinary", F5=1.0)
+    await _force_intimate_row(db_session, "the thing I have told nobody")
+
+    assert await count_retrievable_fragments(db_session, user_id=_OWNER) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_count_reports_past_what_a_retrieval_can_return(
+    db_session: AsyncSession,
+) -> None:
+    """The reason this helper exists rather than ``len(retrieve_fragments(...))``.
+
+    Retrieval clamps to :data:`MAX_RETRIEVAL_LIMIT`, so at any corpus larger
+    than that it reports the size of its own ceiling. A caller asking how much
+    of somebody's writing is there has to be able to get an answer past it.
+    """
+    stored = MAX_RETRIEVAL_LIMIT + 3
+    for index in range(stored):
+        await _store(db_session, f"entry {index}", F5=1.0)
+
+    retrieved = await retrieve_fragments(
+        db_session, user_id=_OWNER, query=RetrievalQuery(limit=stored)
+    )
+
+    assert len(retrieved) == MAX_RETRIEVAL_LIMIT
+    assert await count_retrievable_fragments(db_session, user_id=_OWNER) == stored
