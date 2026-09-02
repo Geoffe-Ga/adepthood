@@ -97,7 +97,7 @@
     "tar": "7.5.20",
     "markdown-it": "14.2.0",
     "linkify-it": "5.0.2",
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.7",
     "brace-expansion@1": "1.1.18",
     "brace-expansion@2": "2.1.4",
     "brace-expansion@5": "5.0.9",
