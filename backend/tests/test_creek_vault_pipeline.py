@@ -16,7 +16,9 @@ the whole reason the bundle is vendored.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncGenerator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -127,6 +129,37 @@ class _Recorder:
             for request, body in zip(self.requests, self.bodies, strict=True)
             if request.url.path in {_CLASSIFICATIONS_PATH, _LINKS_PATH}
         ]
+
+
+class _SlowRecorder:
+    """An async handler that answers only after ``delay`` seconds have really passed.
+
+    Composition rather than a subclass of :class:`_Recorder`: the ordinary
+    recorder is a *synchronous* handler, and an async override of the same name
+    is not a compatible signature. Wrapping one keeps both handlers honest.
+    """
+
+    def __init__(self, *, delay: float) -> None:
+        """Bind how long each answer should take, and the recorder behind it."""
+        self._delay = delay
+        self._inner = _Recorder()
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, wait, then answer as the ordinary recorder would.
+
+        Recording happens *before* the delay on purpose: a call this test cuts
+        short is one that reached the wire and never came back, and a recorder
+        that only logged completed exchanges would make "the budget cut a call
+        short" indistinguishable from "no call was ever made".
+        """
+        response = self._inner(request)
+        await asyncio.sleep(self._delay)
+        return response
+
+    @property
+    def requests(self) -> list[httpx.Request]:
+        """Every request that reached the wire, in order."""
+        return self._inner.requests
 
 
 @pytest_asyncio.fixture
@@ -369,7 +402,7 @@ async def test_a_failed_stage_is_not_recorded_as_done_and_is_not_retried_in_the_
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
 ) -> None:
-    """A link stage that failed stops the ladder and is recorded as failed, once."""
+    """A failed link stage is recorded failed, tried once, and does not stop the pass."""
 
     def _fail_eddies(stage: str) -> httpx.Response:
         if stage == VaultLinkStage.EDDIES.value:
@@ -387,22 +420,29 @@ async def test_a_failed_stage_is_not_recorded_as_done_and_is_not_retried_in_the_
         {"method": "rules"},
         {"method": "temporal"},
         {"method": "eddies"},
+        {"method": "threads"},
     ]
     rows = await _rows(db_session)
     assert [(row.stage, row.outcome) for row in rows] == [
         (VaultPipelineStage.CLASSIFY, VaultPipelineOutcome.COMPLETED),
         (VaultPipelineStage.TEMPORAL, VaultPipelineOutcome.COMPLETED),
         (VaultPipelineStage.EDDIES, VaultPipelineOutcome.FAILED),
+        (VaultPipelineStage.THREADS, VaultPipelineOutcome.COMPLETED),
     ]
 
 
 @pytest.mark.asyncio
-async def test_a_stage_that_failed_steps_aside_for_the_one_behind_it(
+async def test_a_stage_that_just_failed_is_not_retried_on_the_next_pass(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
 ) -> None:
-    """A stage's own window is what keeps a persistent failure from starving the next."""
+    """A failed attempt sets the stage's stamp, so the next pass stands it down too.
+
+    The interval covers failures as well as successes, and that is what stops a
+    vault refusing one stage from being asked again by every request that
+    arrives afterwards. The stages whose windows have reopened still run.
+    """
 
     def _fail_eddies(stage: str) -> httpx.Response:
         if stage == VaultLinkStage.EDDIES.value:
@@ -423,7 +463,7 @@ async def test_a_stage_that_failed_steps_aside_for_the_one_behind_it(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
 
-    assert {body["method"] for body in recorder.pipeline_bodies} == {"rules", "temporal", "threads"}
+    assert {body["method"] for body in recorder.pipeline_bodies} == {"rules", "temporal"}
 
 
 async def _age_rows(session: AsyncSession, *, only: set[VaultPipelineStage]) -> None:
@@ -745,3 +785,109 @@ async def test_a_busy_journal_does_not_reopen_the_clustering_window(
     )
 
     assert "eddies" not in {body["method"] for body in recorder.pipeline_bodies}
+
+
+@pytest.mark.asyncio
+async def test_no_database_connection_is_held_across_a_vault_round_trip(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+) -> None:
+    """The pass must not hold a pooled connection while it waits on the network.
+
+    A Session autobegins on its first ``execute`` and stays in that transaction
+    across every later ``await`` -- and an open transaction is a checked-out
+    pool connection. The engine runs on SQLAlchemy's defaults, five plus ten
+    overflow, so fifteen concurrent passes against a slow vault would hold every
+    connection in the pool for the length of a network climb and the next
+    request to *any* database-backed endpoint would block on checkout.
+
+    This is the invariant ``_record_vault_outcome`` already declares and
+    protects by committing before it dials; the pass runs immediately after that
+    mitigation and must not undo it.
+    """
+    in_transaction: list[bool] = []
+
+    class _Watching(_Recorder):
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path in {_CLASSIFICATIONS_PATH, _LINKS_PATH}:
+                in_transaction.append(db_session.in_transaction())
+            return super().__call__(request)
+
+    recorder = _Watching()
+    client = await handshaken(recorder, http_clients(recorder))
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+
+    assert in_transaction, "no pipeline call was observed"
+    assert not any(in_transaction)
+
+
+@pytest.mark.asyncio
+async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write path's cost is bounded in elapsed time, which is the claim that matters.
+
+    httpx's ``read`` budget restarts on every socket read, so it is a floor on
+    how long a call may take rather than a ceiling -- a test that asserts on it
+    would pass unchanged while a trickling vault held somebody's journal save
+    open for minutes. Elapsed wall-clock time is the only assertion that can
+    support "the write path acquires no new latency class".
+    """
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.2)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
+    slow = _SlowRecorder(delay=0.5)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    elapsed = time.monotonic() - started
+    await http.aclose()
+
+    assert elapsed < 0.45
+    # Non-vacuous: the bound cut a call short rather than declining to make one.
+    assert any(request.url.path == _CLASSIFICATIONS_PATH for request in slow.requests)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cheap_rung_does_not_starve_the_clustering_stages(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+) -> None:
+    """A link stage that keeps failing must not block the ones behind it forever.
+
+    The cheap stages carry a fifteen-minute interval and the clustering stages
+    six hours, so a rung that fails on essentially every pass is due again long
+    before the stages behind it are -- and a ladder that stops at the first
+    failure would retry it first, fail again, and stop again, on every pass for
+    good. Classification is the one genuine prerequisite; the three linker
+    stages are independent of each other.
+    """
+
+    def _fail_temporal(stage: str) -> httpx.Response:
+        if stage == VaultLinkStage.TEMPORAL.value:
+            return httpx.Response(503, json=_example("pipeline", "unavailable-service"))
+        return httpx.Response(200, json=_link_body(stage))
+
+    recorder = _Recorder(link=_fail_temporal)
+    client = await handshaken(recorder, http_clients(recorder))
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+
+    assert {body["method"] for body in recorder.pipeline_bodies} == {
+        "rules",
+        "temporal",
+        "eddies",
+        "threads",
+    }

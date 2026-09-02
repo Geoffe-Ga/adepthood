@@ -58,7 +58,7 @@ _INDEX = "ix_vaultpipelinerun_user_id_stage_id"
 _STAGE_WIDTH = 20
 _OUTCOME_WIDTH = 20
 _STAGE_CHECK = "stage IN ('classify', 'temporal', 'eddies', 'threads')"
-_OUTCOME_CHECK = "outcome IN ('completed', 'incomplete', 'failed')"
+_OUTCOME_CHECK = "outcome IN ('attempted', 'completed', 'incomplete', 'failed')"
 
 
 def upgrade() -> None:

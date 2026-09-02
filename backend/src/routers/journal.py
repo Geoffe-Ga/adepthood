@@ -283,9 +283,12 @@ async def _record_vault_outcome(
 
     The pipeline call is last and is a non-event for this request: it degrades
     silently on a vault that never advertised the capability, stands down inside
-    its own per-stage interval, runs only the two cheap stages from here, and
-    never raises. It is reached only on an ``INGESTED`` outcome, because a pass
-    over a corpus that did not just gain a fragment has nothing new to classify.
+    its own per-stage interval, runs only the two cheap stages from here, bounds
+    itself in elapsed time, and never raises. It keeps the connection discipline
+    described below rather than undoing it -- it commits before it dials, so no
+    pooled connection is held across its network calls either. It is reached
+    only on an ``INGESTED`` outcome, because a pass over a corpus that did not
+    just gain a fragment has nothing new to classify.
 
     The commit below the id check is what keeps a pooled connection out of the
     network round trip. Callers reach here having already committed the entry,

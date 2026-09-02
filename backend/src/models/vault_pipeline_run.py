@@ -80,6 +80,14 @@ class VaultPipelineOutcome(enum.StrEnum):
     reworded without a migration.
 
     Attributes:
+        ATTEMPTED: The row was written and committed *before* the vault was
+            dialled, and no answer has replaced it yet. It is what makes the
+            stamp visible to a concurrent request while the call is still in
+            flight -- without it, every request arriving during one pass reads
+            an empty log and dials the vault too. A row left in this state is a
+            process that died mid-call, and it is read as "attempted, outcome
+            unknown": it holds the interval closed, and it does not count as a
+            classification having landed.
         COMPLETED: The vault ran the stage and reported it clean.
         INCOMPLETE: The vault ran the stage and reported that some fragments
             were skipped. Only a classification pass can report this; the linker
@@ -88,6 +96,7 @@ class VaultPipelineOutcome(enum.StrEnum):
             answered in a shape adepthood would not read.
     """
 
+    ATTEMPTED = "attempted"
     COMPLETED = "completed"
     INCOMPLETE = "incomplete"
     FAILED = "failed"

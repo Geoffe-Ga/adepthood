@@ -51,6 +51,7 @@ them either; :func:`drive_vault_pipeline` never raises.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import logging
 import time
@@ -76,6 +77,14 @@ from domain.dates import ensure_aware
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 
 _LOGGER = logging.getLogger(__name__)
+
+#: The outcomes that mean a classification pass actually put labels in the
+#: vault. ``ATTEMPTED`` is absent deliberately -- it records a call that was
+#: made, not one that answered -- and so is ``FAILED``.
+_LABELS_LANDED: tuple[str, ...] = (
+    VaultPipelineOutcome.COMPLETED.value,
+    VaultPipelineOutcome.INCOMPLETE.value,
+)
 
 #: The ladder, in the order Creek documents it. Classification first because the
 #: thread stage reads the labels it writes; then the linker stages cheapest
@@ -182,6 +191,35 @@ _STAGE_INTERVAL: Mapping[VaultPipelineStage, timedelta] = {
 _DEEP_RUN_BUDGET_SECONDS = 60.0
 _LEAST_WORTH_STARTING_SECONDS = 5.0
 
+# The same clock for the write path, and much shorter, because the two occasions
+# are not comparable. A document import is deliberate, rare, and already a file
+# upload; a journal save is the most frequent write in the app and somebody is
+# waiting on it with something they just wrote. Ten seconds is what the two cheap
+# stages need on any healthy vault -- neither loads a model or touches a vector
+# -- and a vault too slow to classify inside it simply converges on the next
+# window, because the pass is resumable and short-circuits on what it stamped.
+#
+# It is a bound on *elapsed time*, not a gate on starting: each stage runs under
+# whatever is left of it. That distinction is the whole point. httpx's ``read``
+# budget restarts on every socket read, so it is a floor on how long a call may
+# take rather than a ceiling, and a trickling vault stays inside it forever --
+# which is exactly how a journal save comes to take minutes while every timeout
+# in the stack looks respected.
+_JOURNAL_RUN_BUDGET_SECONDS = 10.0
+
+
+def _run_budget(trigger: VaultPipelineTrigger) -> float:
+    """How long a whole pass may take, by the occasion that asked for it.
+
+    Both constants are read here, at call time, rather than frozen into a
+    module-level table: a value captured at import is one neither a redeployment
+    nor a test can move, which is the same reason the adapter reads its own
+    deadline per call instead of capturing it.
+    """
+    if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT:
+        return _DEEP_RUN_BUDGET_SECONDS
+    return _JOURNAL_RUN_BUDGET_SECONDS
+
 
 def _stamps_by_stage(rows: list[VaultPipelineRun]) -> dict[str, datetime]:
     """The instant each stage was last attempted, keyed by stage."""
@@ -228,13 +266,15 @@ async def _classification_has_landed(session: AsyncSession, user_id: int) -> boo
     good.
 
     ``INCOMPLETE`` counts, and should: a pass that skipped some fragments still
-    labelled the rest, and the labels it wrote are not provisional.
+    labelled the rest, and the labels it wrote are not provisional. ``ATTEMPTED``
+    does not: it is a call whose answer never arrived, so whether it wrote a
+    single label is precisely what nobody knows.
     """
     result = await session.execute(
         select(col(VaultPipelineRun.id))
         .where(col(VaultPipelineRun.user_id) == user_id)
         .where(col(VaultPipelineRun.stage) == VaultPipelineStage.CLASSIFY.value)
-        .where(col(VaultPipelineRun.outcome) != VaultPipelineOutcome.FAILED.value)
+        .where(col(VaultPipelineRun.outcome).in_(_LABELS_LANDED))
         .limit(1)
     )
     return result.first() is not None
@@ -291,18 +331,18 @@ def _record(
     stage: VaultPipelineStage,
     outcome: VaultPipelineOutcome,
     counts: _StageCounts = _NOTHING_REACHED,
-) -> None:
-    """Stage one attempt's row. The caller owns the commit."""
-    session.add(
-        VaultPipelineRun(
-            user_id=user_id,
-            stage=stage.value,
-            outcome=outcome.value,
-            fragments_seen=counts.seen,
-            fragments_touched=counts.touched,
-            fragments_lost=counts.lost,
-        )
+) -> VaultPipelineRun:
+    """Stage one attempt's row and hand it back. The caller owns the commit."""
+    run = VaultPipelineRun(
+        user_id=user_id,
+        stage=stage.value,
+        outcome=outcome.value,
+        fragments_seen=counts.seen,
+        fragments_touched=counts.touched,
+        fragments_lost=counts.lost,
     )
+    session.add(run)
+    return run
 
 
 def _note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
@@ -324,61 +364,76 @@ def _note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
         )
 
 
-async def _run_classification(
-    session: AsyncSession, client: CreekVaultClient, user_id: int
-) -> VaultPipelineOutcome:
-    """Run the classification rung and record what it did."""
-    result = await client.classify_corpus()
-    outcome = _classification_outcome(result)
-    _record(
-        session,
-        user_id=user_id,
-        stage=VaultPipelineStage.CLASSIFY,
-        outcome=outcome,
-        counts=_StageCounts(seen=result.total, touched=result.classified),
-    )
-    return outcome
+async def _perform(
+    client: CreekVaultClient, stage: VaultPipelineStage
+) -> tuple[VaultPipelineOutcome, _StageCounts]:
+    """Run one rung against the vault and read its answer into the row vocabulary.
 
-
-async def _run_link(
-    session: AsyncSession, client: CreekVaultClient, user_id: int, stage: VaultPipelineStage
-) -> VaultPipelineOutcome:
-    """Run one linker rung and record what it did."""
+    The only place either pipeline call is made. It reports rather than records:
+    persisting is :func:`_run_stage`'s job, because the row has to exist before
+    this runs and be amended after it.
+    """
+    if stage is VaultPipelineStage.CLASSIFY:
+        classification = await client.classify_corpus()
+        return _classification_outcome(classification), _StageCounts(
+            seen=classification.total, touched=classification.classified
+        )
     wire_stage = LINK_STAGE_BY_PIPELINE_STAGE[stage]
-    result = await client.link_corpus(wire_stage)
-    _note_link_loss(wire_stage, result)
-    _record(
-        session,
-        user_id=user_id,
-        stage=stage,
-        outcome=VaultPipelineOutcome.COMPLETED,
-        counts=_StageCounts(
-            seen=result.fragment_count,
-            touched=result.link_count,
-            lost=result.oversized_discarded,
-        ),
+    link = await client.link_corpus(wire_stage)
+    _note_link_loss(wire_stage, link)
+    return VaultPipelineOutcome.COMPLETED, _StageCounts(
+        seen=link.fragment_count, touched=link.link_count, lost=link.oversized_discarded
     )
-    return VaultPipelineOutcome.COMPLETED
 
 
 async def _run_stage(
-    session: AsyncSession, client: CreekVaultClient, user_id: int, stage: VaultPipelineStage
+    session: AsyncSession,
+    client: CreekVaultClient,
+    user_id: int,
+    stage: VaultPipelineStage,
+    budget: float,
 ) -> VaultPipelineOutcome:
-    """Run one rung, recording the attempt whether it landed or not.
+    """Run one rung, committing its stamp before the wire and its outcome after.
 
-    Every vault failure is caught here and turned into a recorded ``FAILED``
-    rather than propagated. Recording it is the point: an attempt that left no
-    stamp would be repeated on the very next request, which is how a vault
-    refusing one stage becomes a request-rate loop against it.
+    **The commit before the call is load-bearing twice over, and neither reason
+    is about durability.**
+
+    It releases the pooled database connection. A Session autobegins on its
+    first ``execute`` and holds that transaction -- and therefore a checked-out
+    connection -- across every subsequent ``await``. Dialling a vault with one
+    open would hold a connection from a pool of fifteen for the length of a
+    network climb, and the sixteenth request to *any* database-backed endpoint
+    would block on checkout and fail. It is the same invariant
+    ``_record_vault_outcome`` commits before its own ingest to protect, and this
+    runs immediately after that mitigation.
+
+    It also throttles arrivals. The interval is read from these rows, so a stamp
+    that stays invisible until the pass ends means every request arriving during
+    a pass reads an empty log, finds the stage due, and dials the vault as well.
+    Committing the attempt first is what makes the debounce hold under
+    concurrency rather than only in a quiet test.
+
+    ``budget`` bounds the call in elapsed time. The adapter's own deadline
+    already bounds the socket, but a phase budget restarts on every read and is
+    therefore a floor rather than a ceiling; this is the ceiling. Cancelling a
+    slow stage costs nothing that matters -- Creek's embedding work lands in its
+    own cache whether or not this process is still waiting for the answer.
     """
+    run = _record(session, user_id=user_id, stage=stage, outcome=VaultPipelineOutcome.ATTEMPTED)
+    await session.commit()
     try:
-        if stage is VaultPipelineStage.CLASSIFY:
-            return await _run_classification(session, client, user_id)
-        return await _run_link(session, client, user_id, stage)
-    except CreekVaultError:
+        async with asyncio.timeout(budget):
+            outcome, counts = await _perform(client, stage)
+    except (CreekVaultError, TimeoutError):
         _LOGGER.info("creek vault pipeline stage did not land", extra={"stage": stage.value})
-        _record(session, user_id=user_id, stage=stage, outcome=VaultPipelineOutcome.FAILED)
-        return VaultPipelineOutcome.FAILED
+        outcome, counts = VaultPipelineOutcome.FAILED, _NOTHING_REACHED
+    run.outcome = outcome.value
+    run.fragments_seen = counts.seen
+    run.fragments_touched = counts.touched
+    run.fragments_lost = counts.lost
+    session.add(run)
+    await session.commit()
+    return outcome
 
 
 def _due_stages(
@@ -419,24 +474,34 @@ async def _climb(
     client: CreekVaultClient,
     user_id: int,
     stages: tuple[VaultPipelineStage, ...],
-    deadline: float | None,
+    deadline: float,
 ) -> None:
-    """Climb the ladder in order, stopping at the first rung that did not land.
+    """Climb the ladder in order, within one wall clock.
 
-    Stopping rather than skipping ahead, because a stage that just failed is
-    usually a vault that is refusing, unreachable or out of time, and the rung
-    below it would only discover the same thing at the same cost. The stages that
-    did not run keep their old stamps, so the next pass reaches them first.
+    **A failed classification stops the pass; a failed linker stage does not.**
+    Classification is the one genuine prerequisite -- the thread stage reads the
+    labels it writes -- while the three linker stages are independent of each
+    other and of each other's failures.
 
-    ``deadline`` is a monotonic instant after which no *new* stage is started. A
-    stage already in flight runs to its own budget: the work it is doing lands in
-    a cache that shortens every later pass, so interrupting it would discard the
-    progress this design converges by.
+    Stopping at any failure looks more conservative and is in fact a trap. The
+    cheap rungs carry a fifteen-minute interval and the clustering rungs six
+    hours, so a linker stage that fails on essentially every pass is due again
+    long before the stages behind it are: a ladder that halted there would retry
+    it first, fail again, and halt again, on every pass, and the clustering
+    stages would never run once. The wall clock is what makes continuing safe --
+    the cost of trying the next rung is bounded whether or not it also fails.
+
+    ``deadline`` is a monotonic instant. Each stage runs under whatever is left
+    of it, so the pass is bounded in elapsed time rather than merely gated at its
+    start, and a stage is not begun at all with less than
+    :data:`_LEAST_WORTH_STARTING_SECONDS` remaining.
     """
     for stage in stages:
-        if deadline is not None and deadline - time.monotonic() < _LEAST_WORTH_STARTING_SECONDS:
+        remaining = deadline - time.monotonic()
+        if remaining < _LEAST_WORTH_STARTING_SECONDS:
             return
-        if await _run_stage(session, client, user_id, stage) is VaultPipelineOutcome.FAILED:
+        outcome = await _run_stage(session, client, user_id, stage, remaining)
+        if outcome is VaultPipelineOutcome.FAILED and stage is VaultPipelineStage.CLASSIFY:
             return
 
 
@@ -468,15 +533,19 @@ async def drive_vault_pipeline(
         stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
         landed = await _classification_has_landed(session, user_id)
         stages = _stages_to_run(trigger, stamps, datetime.now(UTC), classification_landed=landed)
+        # Both reads are done, and a Session holds the connection it autobegan on
+        # the first of them until something ends that transaction. Ending it here
+        # is what keeps the climb below off the pool entirely.
+        await session.commit()
         if not stages:
             return
-        deadline = (
-            time.monotonic() + _DEEP_RUN_BUDGET_SECONDS
-            if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT
-            else None
+        await _climb(
+            session,
+            client,
+            user_id,
+            stages,
+            time.monotonic() + _run_budget(trigger),
         )
-        await _climb(session, client, user_id, stages, deadline)
-        await session.commit()
     except SQLAlchemyError:
         _LOGGER.warning("creek vault pipeline could not record its pass")
         await session.rollback()
