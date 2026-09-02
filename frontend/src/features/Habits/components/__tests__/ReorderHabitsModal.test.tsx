@@ -413,7 +413,15 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(stored.getDate()).toBe(1);
   });
 
-  it('ignores an empty web date-input change without touching the program anchor', () => {
+  it('ignores an empty web date-input change and leaves the anchor where it was', () => {
+    // Clearing the field yields ''. ``parseISODate('')`` is not Invalid Date --
+    // Number('') is 0, so it returns new Date(0, 0, 1), i.e. 1900-01-01, a
+    // perfectly valid date that would restamp every program row and then be
+    // persisted by Save Order. The guard is what stops that, so this drives the
+    // whole commit path and pins the date rather than merely asserting the
+    // anchor is falsy: a null assertion here passes whether or not the guard
+    // exists, because nothing before Save Order writes the anchor at all.
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 2, 10)));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -422,8 +430,10 @@ describe('ReorderHabitsModal — date picker on web', () => {
     act(() => {
       input.props.onChange({ target: { value: '' } });
     });
+    fireEvent.press(result.getByText('Save Order'));
 
-    expect(useProgramStore.getState().programStartDate).toBeNull();
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.toISOString().slice(0, 10)).toBe('2026-03-10');
   });
 });
 
