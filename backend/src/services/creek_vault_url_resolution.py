@@ -32,12 +32,16 @@ import asyncio
 import ipaddress
 import socket
 import time
+from typing import TYPE_CHECKING
 
 from services.creek_vault_url_user import (
     UserVaultUrlDefect,
     UserVaultUrlFinding,
     address_is_blocked,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # How long one host's verdict stands before it is asked again. A minute: long
 # enough that a burst of journal saves costs one lookup, short enough that a
@@ -54,6 +58,27 @@ _RESOLUTION_TTL_SECONDS = 60.0
 # a lookup that was going to be made anyway, and choosing a victim would mean
 # tracking an access order this module has no other reason to keep.
 MAX_CACHED_HOSTS = 1024
+
+# How long one lookup may take before it is abandoned. Five seconds: longer than
+# any healthy resolver needs for a cached record and for most uncached ones, and
+# short enough that a request waiting on it is still recognisably a request.
+#
+# The bound matters because of what is *rented* for the duration rather than
+# because of the wait itself. This runs behind a per-request dependency, so the
+# caller is holding one of the engine's fifteen pooled connections while it
+# waits; without a number chosen here, that hold lasts as long as the operating
+# system's own resolver budget -- ``timeout`` times ``attempts`` times the
+# number of nameservers in ``resolv.conf``, tens of seconds on an ordinary box.
+# That was never infinity. It was a number written in a file this deployment
+# does not own, cannot read from here, and which differs between the container
+# this runs in and the laptop it was written on.
+#
+# Bounded here rather than at either call site so that a caller written later
+# inherits the bound instead of having to remember it. Nesting is safe: an
+# ``asyncio.timeout`` converts a cancellation to ``TimeoutError`` only when its
+# own deadline is the one that expired, so this cannot swallow an outer budget
+# such as the vault pipeline's per-stage one.
+LOOKUP_BUDGET_SECONDS = 5.0
 
 # Where the address lives in one ``getaddrinfo`` answer. The answer is a
 # five-tuple ending in the sockaddr, and the sockaddr's first member is the
@@ -134,9 +159,25 @@ async def resolve_host_addresses(host: str) -> tuple[str, ...]:
     settle it on this platform; the dedup is what makes the property true of the
     function rather than of the machine it runs on. A stream socket is also the
     only kind this answer is ever used to open.
+
+    :data:`LOOKUP_BUDGET_SECONDS` bounds the wait, and the bound lives here so
+    that every caller gets it. Abandoning the wait raises the builtin
+    ``TimeoutError``, which every caller of this function already treats as a
+    lookup that did not answer -- fail-closed in both, since an unestablished
+    destination is an unchecked one.
+
+    Freeing the waiter is not the same as stopping the lookup. ``getaddrinfo``
+    is a blocking call running in asyncio's default thread pool, this process
+    installs neither ``aiodns`` nor an executor of its own, and there is no way
+    to interrupt a thread parked inside the C resolver. So the deadline returns
+    the *coroutine*, and with it the database connection the caller was holding;
+    the thread stays occupied until the platform gives up on its own. That is the
+    half of the exposure a timeout cannot close, and the cached verdict above is
+    what keeps a repeated dead host from parking a thread per request.
     """
     loop = asyncio.get_running_loop()
-    answers = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    async with asyncio.timeout(LOOKUP_BUDGET_SECONDS):
+        answers = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
     return tuple(dict.fromkeys(str(sockaddr[_ADDRESS_INDEX]) for *_, sockaddr in answers))
 
 
@@ -205,6 +246,15 @@ async def _judge(host: str) -> UserVaultUrlFinding | None:
     established where this host points, and an unestablished destination is an
     unchecked one.
 
+    A lookup abandoned on :data:`LOOKUP_BUDGET_SECONDS` lands here too, and by
+    the same reasoning: the builtin ``TimeoutError`` is an ``OSError``, so the
+    set above already carries it. It is not listed separately -- a redundant
+    handler is one the linter would reject and one a reader would have to check
+    -- but it is not left to be discovered either. That a timeout answers as
+    ``unresolvable_host`` is a contract a client renders, so it is pinned by name
+    in ``test_ssrf_vault_url.py`` rather than inherited quietly from the
+    standard library's class hierarchy.
+
     Nothing is bound. A resolver's exception message quotes the name it failed
     on, which came out of a request body, and this seam's records never repeat a
     submitted value.
@@ -242,3 +292,51 @@ async def classify_resolved_user_vault_url(host: str) -> UserVaultUrlFinding | N
     finding = await _judge(host)
     _remember(host, finding)
     return finding
+
+
+async def classify_resolved_user_vault_url_off_the_pool(
+    session: AsyncSession, host: str
+) -> UserVaultUrlFinding | None:
+    """Ask the question above without holding a database connection while it is answered.
+
+    The only spelling of this question available outside this module, and that is
+    the point of it rather than a convenience. Both callers reach the lookup with
+    a transaction already open -- the write path through an authentication
+    dependency it never mentions, the dial path through the row it read on the
+    line above -- and neither author had to do anything wrong to get there.
+
+    **What an open transaction costs.** A ``Session`` autobegins on its first
+    ``execute`` and holds the connection it checked out there across every later
+    ``await``. The engine runs on SQLAlchemy's defaults: five connections plus
+    ten of overflow, with a thirty-second wait for a checkout. So fifteen
+    requests waiting on a slow resolver hold the whole pool for the length of a
+    lookup, and the sixteenth request to *any* database-backed endpoint --
+    somebody else's journal save, somebody else's login -- blocks on checkout and
+    fails. The lookup is bounded now, which makes that hold finite; ending the
+    transaction first is what stops it happening at all.
+
+    **Why commit and not rollback.** Everything above this call on both paths is
+    a read, so there is nothing to make durable and ``rollback`` is arguably the
+    more honest word for what is happening. It is not the safer one. This runs
+    inside a per-request dependency on a session the caller owns, and under the
+    test suite that session is the test's own; a ``rollback`` from here would
+    discard whatever the caller had staged and not yet committed, and a
+    ``commit`` cannot. It is also the word the two sites that already protect
+    this invariant use, and one invariant with two idioms is how the next
+    instance gets written.
+
+    **Committed unconditionally**, including when the classifier turns out to
+    answer from its cache or from the string alone. Deciding first would mean
+    re-asking the two questions the classifier asks anyway, and getting a stale
+    answer to either of them would put the lookup back under an open transaction
+    on exactly the request where the cache had just expired. The statement is
+    also not really spurious: the dependency is finished with the database at
+    this point either way, and releasing early is right regardless of what
+    happens next.
+
+    **What this does not do.** It frees the connection, not the resolver. Nothing
+    here shortens the lookup or protects the thread it runs on; the bound above
+    does the first and nothing in this process can do the second.
+    """
+    await session.commit()
+    return await classify_resolved_user_vault_url(host)

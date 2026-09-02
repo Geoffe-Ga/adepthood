@@ -57,7 +57,9 @@ from schemas.vault_config import (
     credential_is_usable,
 )
 from services.creek_vault_url import classify_vault_url
-from services.creek_vault_url_resolution import classify_resolved_user_vault_url
+from services.creek_vault_url_resolution import (
+    classify_resolved_user_vault_url_off_the_pool,
+)
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
 from services.user_vault_config import clear_vault_config, load_vault_config, store_vault_config
 
@@ -78,7 +80,7 @@ _URL_REFUSED_PREFIX = "vault_url_"
 _KEY_REFUSED = "vault_key_unusable"
 
 
-async def _refuse_a_url_this_endpoint_must_not_store(url: str) -> None:
+async def _refuse_a_url_this_endpoint_must_not_store(session: AsyncSession, url: str) -> None:
     """Raise a 422 naming the first rule ``url`` fails, or return having found none.
 
     The order is load-bearing rather than incidental. The shared classifier runs
@@ -97,6 +99,18 @@ async def _refuse_a_url_this_endpoint_must_not_store(url: str) -> None:
     The classifier's ``detail`` is deliberately not appended to any of these
     codes. A refusal body is a place a client may log, and one of the shared
     wordings quotes a scheme and a host.
+
+    ``session`` is taken only to be given up. The lookup is the one step here
+    that waits on somebody else's machine, and by the time this function runs the
+    authentication dependency has already opened a transaction on this session --
+    so a lookup issued as-is would rent a pooled connection for the length of a
+    DNS round trip. See
+    :func:`~services.creek_vault_url_resolution.classify_resolved_user_vault_url_off_the_pool`,
+    which is the only spelling of the lookup this module can reach.
+
+    Nothing above the lookup pays for that. A URL refused on its shape, or on a
+    literal address, is refused before the seam is reached and the transaction is
+    left exactly as it was found.
     """
     shape = classify_vault_url(url)
     if shape is not None:
@@ -104,7 +118,7 @@ async def _refuse_a_url_this_endpoint_must_not_store(url: str) -> None:
     host = vault_url_host(url)
     destination = classify_user_vault_url_host(host)
     if destination is None:
-        destination = await classify_resolved_user_vault_url(host)
+        destination = await classify_resolved_user_vault_url_off_the_pool(session, host)
     if destination is not None:
         raise unprocessable(f"{_URL_REFUSED_PREFIX}{destination.defect.value}")
 
@@ -159,7 +173,7 @@ async def put_vault_connection(
     the order the two cost: a URL naming private space is an attempt on this
     deployment's network, and a malformed key is a paste that went wrong.
     """
-    await _refuse_a_url_this_endpoint_must_not_store(payload.vault_url)
+    await _refuse_a_url_this_endpoint_must_not_store(session, payload.vault_url)
     if not credential_is_usable(payload.api_key):
         raise unprocessable(_KEY_REFUSED)
     config = await store_vault_config(

@@ -19,10 +19,13 @@ one. Nothing about that is visible from a stubbed resolver.
 
 from __future__ import annotations
 
+import asyncio
 import socket
+import time
 
 import pytest
 
+from services import creek_vault_url_resolution
 from services.creek_vault_url_resolution import resolve_host_addresses
 
 # A name with nothing suspicious about its spelling: every assertion here is
@@ -53,6 +56,23 @@ _DUPLICATED_ANSWERS: tuple[AddrInfoRow, ...] = (
 # every row.
 _SOCKTYPE_ARGUMENT_INDEX = 3
 _NO_SOCKTYPE_ASKED = 0
+
+# A budget short enough that a test can outlast it without waiting. The real
+# constant is a latency budget for production traffic and is far too long to
+# assert against; what is under test is that *a* budget is enforced, so the
+# number is shrunk and the behaviour is what is measured.
+_SHRUNK_BUDGET_SECONDS = 0.05
+
+# How long the stubbed lookup would take if nothing stopped it: long enough that
+# an unbounded resolver cannot finish inside the ceiling below by luck.
+_LOOKUP_LONGER_THAN_ANY_BUDGET_SECONDS = 1.0
+
+# The elapsed time this assertion allows: ten times the budget, and half of what
+# an unbounded lookup would take. Deliberately loose on the near side, because
+# this suite shares a machine with parallel agent work and a tight tolerance
+# would report scheduler latency as a missing bound; still comfortably tight on
+# the far side, which is the only side that distinguishes the two outcomes.
+_GENEROUS_ELAPSED_CEILING_SECONDS = 0.5
 
 
 class _RecordingGetaddrinfo:
@@ -145,3 +165,50 @@ async def test_the_lookup_asks_the_resolver_only_about_the_sockets_it_will_open(
     await resolve_host_addresses(_VAULT_HOST)
 
     assert _socktypes_asked_for(recorder) == [socket.SOCK_STREAM]
+
+
+async def _answering_far_too_late(*_args: object, **_kwargs: object) -> list[AddrInfoRow]:
+    """Stand in for a resolver that will answer eventually, and far too late.
+
+    Pure ``asyncio.sleep`` rather than a blocking one, so cancelling it actually
+    stops it. A stub that slept in a thread would keep sleeping after the test
+    that started it had finished, and the cost would land on whichever test ran
+    next.
+    """
+    await asyncio.sleep(_LOOKUP_LONGER_THAN_ANY_BUDGET_SECONDS)
+    return list(_DUPLICATED_ANSWERS)
+
+
+@pytest.mark.asyncio
+async def test_a_lookup_that_does_not_answer_is_abandoned_within_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait for a name is bounded by a number this deployment chose.
+
+    Before the bound existed the ceiling was not infinity, and saying so is the
+    honest version of the claim: ``getaddrinfo`` is bounded by the operating
+    system resolver's own budget, ``timeout`` multiplied by ``attempts``
+    multiplied by the number of nameservers in ``resolv.conf``, which is tens of
+    seconds on an ordinary box. The defect was never that the wait was unbounded.
+    It was that the bound belonged to a file this deployment does not write, is
+    not visible from here, and differs between the container this runs in and the
+    laptop it was written on -- while the thing being rented for the duration is
+    one of fifteen database connections.
+
+    Asserted on elapsed monotonic time rather than on the stub having been
+    cancelled, because elapsed time is the property a caller experiences and the
+    only one that stays true if the bound is later moved somewhere else.
+
+    Bounded where the lookup is issued rather than at either call site, so that
+    a future caller inherits it instead of having to remember it -- which is the
+    same reasoning, one layer down, as the seam that frees the connection.
+    """
+    monkeypatch.setattr(creek_vault_url_resolution, "LOOKUP_BUDGET_SECONDS", _SHRUNK_BUDGET_SECONDS)
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", _answering_far_too_late)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await resolve_host_addresses(_VAULT_HOST)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < _GENEROUS_ELAPSED_CEILING_SECONDS, f"the lookup ran for {elapsed:.3f}s"
