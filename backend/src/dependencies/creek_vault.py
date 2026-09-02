@@ -87,7 +87,9 @@ from services.creek_vault_client import (
     build_creek_vault_client,
 )
 from services.creek_vault_telemetry import VaultTelemetryOutcome
-from services.creek_vault_url_resolution import classify_resolved_user_vault_url
+from services.creek_vault_url_resolution import (
+    classify_resolved_user_vault_url_off_the_pool,
+)
 from services.creek_vault_url_user import vault_url_host
 from services.user_vault_config import load_vault_config
 
@@ -219,16 +221,26 @@ async def get_creek_vault_client(
     the local fallback rather than refusing the request, for the reason the
     module docstring gives -- a bad vault costs its owner a capability, never
     their writing.
+
+    The row's two columns are read into locals before that re-judgement, and the
+    order is deliberate. Re-judging ends the transaction this read opened -- see
+    :func:`_stored_host_is_undialable` for why -- and a mapped attribute read
+    after a commit is a question the session may decide to answer by going back
+    to the database. This factory's sessions are built with
+    ``expire_on_commit=False`` and would not, so today the hoist changes nothing;
+    it is here so that the correctness of these three lines does not rest on a
+    setting configured two modules away.
     """
     connection = await load_vault_config(session, current_user)
     if connection is None:
         return deployment_vault_client(current_user)
-    if await _stored_host_is_undialable(connection.vault_url):
+    vault_url, api_key = connection.vault_url, connection.api_key
+    if await _stored_host_is_undialable(session, vault_url):
         return LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
-    return build_connected_vault_client(connection.vault_url, connection.api_key)
+    return build_connected_vault_client(vault_url, api_key)
 
 
-async def _stored_host_is_undialable(vault_url: str) -> bool:
+async def _stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bool:
     """Report whether this stored URL's host resolves somewhere this server must not dial.
 
     The resolving half of the request-forgery guard, run here because this is the
@@ -252,8 +264,20 @@ async def _stored_host_is_undialable(vault_url: str) -> bool:
     vault behind it -- and a new member would be one the write path ordinarily
     makes unreachable. What distinguishes this from a user who connected nothing
     is the WARNING, which that path does not emit.
+
+    ``session`` is taken only to be given up before the lookup. This is the more
+    frequent of the two places that ask this question -- once per request for
+    every account with a stored vault, where the write path asks once per
+    reconnection -- and its caller read the connection row on the line above, so
+    the transaction is certainly open and one of fifteen pooled connections is
+    certainly checked out. Waiting on a resolver while holding it is what
+    :func:`~services.creek_vault_url_resolution.classify_resolved_user_vault_url_off_the_pool`
+    exists to prevent, and asking through that seam is the only way this module
+    can reach the verdict at all.
     """
-    finding = await classify_resolved_user_vault_url(vault_url_host(vault_url))
+    finding = await classify_resolved_user_vault_url_off_the_pool(
+        session, vault_url_host(vault_url)
+    )
     if finding is None:
         return False
     logger.warning(
