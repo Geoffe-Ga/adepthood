@@ -32,6 +32,12 @@ module.exports = {
     '<rootDir>/jest.setup.crossBoundary.js',
   ],
   roots: ['<rootDir>/src', '<rootDir>/__tests__'],
+  // `__tests__/fixtures/` holds suites that are *supposed* to fail: they stage a
+  // runner-level condition (a test abandoned by a timeout) that no in-process
+  // assertion can produce. `__tests__/timeoutCascade.test.ts` runs them in a
+  // child Jest and asserts on the result, re-including them with an explicit
+  // `--testPathIgnorePatterns`.
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/__tests__/fixtures/'],
   moduleDirectories: ['node_modules', 'src'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
@@ -71,6 +77,35 @@ module.exports = {
       'uuid' +
       ')/)',
   ],
+  // Bound what a worker may hold before Jest recycles it, so the suite's
+  // footprint stops scaling with how long it runs.
+  //
+  // Nothing bounded worker memory before this. Measured on a 10-core box at
+  // 6258 tests, no coverage, peak summed jest-worker RSS / wall clock:
+  //
+  //   9 workers, unbounded (the default)   6.36 GB   17.4s
+  //   9 workers, 512MB                     4.98 GB   19.2s   -22% for +10%
+  //   9 workers, 256MB                     3.92 GB   24.1s   -38% for +39%
+  //   --maxWorkers=50% (5), unbounded      6.12 GB   24.3s    -4% for +40%
+  //   --maxWorkers=3, unbounded            4.50 GB   37.8s   -29% for +117%
+  //   --maxWorkers=3 + 512MB               2.24 GB   40.9s    -50% vs the line above
+  //
+  // Hence 512MB, and hence no `maxWorkers` here. Capping workers is the weaker
+  // lever twice over: it buys 4% for a 40% slowdown, and per-worker RSS *rises*
+  // as the count falls (706 MB each at 9 workers, 1.50 GB each at 3) because
+  // each surviving worker then holds more suites' transform cache. It moves
+  // memory rather than removing it, and on CI — a 4-core runner, so already
+  // effectively 3 — it would cut an already-small pool to 2.
+  //
+  // The last row is the CI-shaped case, and it is why this is unconditional
+  // rather than environment-aware: at 3 workers the bound costs 8% wall clock
+  // and halves memory.
+  //
+  // Summed RSS over-counts shared copy-on-write pages, so read it as an upper
+  // bound rather than a footprint. The independent OS reading moves the same
+  // way: memory available at peak (vm_stat free + inactive + speculative) rose
+  // from 4.36 GB unbounded to 5.83 GB at 512MB.
+  workerIdleMemoryLimit: '512MB',
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   testMatch: ['**/?(*.)+(spec|test).[tj]s?(x)'],
   // Enforce minimum 90% coverage on all metrics — ported from
