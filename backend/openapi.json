@@ -3215,7 +3215,7 @@
         "type": "object"
       },
       "MettaReturnStateResponse": {
-        "description": "The full Return surface for the caller.\n\n``eligible`` gates whether the arc may be started, ``weeks`` is the whole\nfive-week sequence in order, ``arc`` is the caller's active arc or ``None``\nwhen there is none, ``offer_dismissed`` is whether the caller has waved\naway the offer for the current episode, and ``released_habits`` is the\nactive arc's released habits (empty when there is no active arc).",
+        "description": "The full Return surface for the caller.\n\n``eligible`` gates whether the arc may be started, ``weeks`` is the whole\nfive-week sequence in order, ``arc`` is the caller's active arc or ``None``\nwhen there is none, ``offer_dismissed`` is whether the caller has waved\naway the offer for the current episode, and ``released_habits`` is every\nhabit the caller has released, across all their arcs (empty when they have\nreleased none).\n\n``released_habits`` deliberately outlives the arc that produced it. A\nrelease is a soft pause on a habit rather than a fact about an arc, so a\nhabit released in an arc the caller has since left must stay visible for the\nclient to offer it back — scoping the list to the active arc made those\nhabits unrecoverable through the surface that paused them. Each entry's\n``recommitted`` flag says whether it is still resting.",
         "properties": {
           "arc": {
             "anyOf": [
@@ -15372,7 +15372,7 @@
     },
     "/metta-return/arc/recommit": {
       "post": {
-        "description": "Re-commit a batch of the caller's habits released in their active arc.\n\nRaises 404 when the caller has no active arc. Each named habit that was\nreleased in this arc and not yet re-committed is unlocked (``revealed`` flips\nback to True) and stamped with ``recommitted_at``; an id never released in\nthis arc is ignored, and re-committing an already-recommitted habit is a\nno-op, so the call is idempotent. Works while the arc is time-complete but\nnot yet left. Returns the arc's full released list.",
+        "description": "Re-commit a batch of the caller's habits released in any of their Return arcs.\n\nRaises 404 only when the caller has never opened an arc, since there is then\nnothing that could have been released. Each named habit the caller owns that\nwas released and not yet re-committed is unlocked (``revealed`` flips back to\nTrue) and stamped with ``recommitted_at``; an id the caller never released is\nignored, and re-committing an already-recommitted habit is a no-op, so the\ncall is idempotent. Works while the arc is time-complete, paused, or already\nleft. Returns the caller's full released list.\n\nThe scope is the caller, not one arc. Releasing is a soft pause on a *habit*,\nand resolving the active arc stranded every habit released in an arc the\ncaller subsequently left: ``left_at`` makes that arc unresolvable, so the\nendpoint 404'd and the only way back was an undiscoverable long-press.\nSpanning arcs means the invitation that paused a habit can always undo\nitself. Ownership of every id in the body is decided explicitly by\n:func:`resolve_owned_habits` before any write, so a cross-tenant id is\naudited and dropped rather than silently relied on the query filter.",
         "operationId": "recommit_habits_metta_return_arc_recommit_post",
         "parameters": [
           {

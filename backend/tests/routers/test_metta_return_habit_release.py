@@ -884,3 +884,202 @@ async def test_leave_without_recommit_keeps_habits_paused_and_release_rows(
     rows = await _release_rows_for_arc(db_session, arc_id)
     assert len(rows) == 1
     assert rows[0].recommitted_at is None
+
+
+# ---------------------------------------------------------------------------
+# Recovery after the arc is left: a soft pause must never become a one-way door
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recommit_after_leaving_the_arc_restores_the_habit(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A habit released then abandoned by leaving the arc can still be taken up again."""
+    headers = await _signup(async_client, "mrh_leftrecommit22")
+    user = await _get_user(db_session, "mrh_leftrecommit22@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    arc = await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    assert arc.id is not None
+    habit = await _seed_habit(db_session, user.id)
+    assert habit.id is not None
+    habit_id = habit.id
+    arc_id = arc.id
+
+    assert (
+        await async_client.post(_RELEASE_URL, headers=headers, json={"habit_ids": [habit_id]})
+    ).status_code == HTTPStatus.OK
+    assert (await async_client.post(_LEAVE_URL, headers=headers)).status_code == HTTPStatus.OK
+
+    resp = await async_client.post(
+        _RECOMMIT_URL,
+        headers=headers,
+        json={"habit_ids": [habit_id]},
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == [
+        {"habit_id": habit_id, "name": "Meditate", "icon": "seedling", "recommitted": True},
+    ]
+    db_session.expire_all()
+    refreshed = await db_session.get(Habit, habit_id)
+    assert refreshed is not None
+    assert refreshed.revealed is True
+    rows = await _release_rows_for_arc(db_session, arc_id)
+    assert len(rows) == 1
+    assert rows[0].recommitted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_get_state_reports_habits_still_resting_after_the_arc_is_left(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A released habit stays visible in GET state after leave, so the UI can offer recovery."""
+    headers = await _signup(async_client, "mrh_leftstate23")
+    user = await _get_user(db_session, "mrh_leftstate23@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    habit = await _seed_habit(db_session, user.id, name="Sit", icon="candle")
+    assert habit.id is not None
+    habit_id = habit.id
+
+    await async_client.post(_RELEASE_URL, headers=headers, json={"habit_ids": [habit_id]})
+    await async_client.post(_LEAVE_URL, headers=headers)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["arc"] is None
+    assert body["released_habits"] == [
+        {"habit_id": habit_id, "name": "Sit", "icon": "candle", "recommitted": False},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_state_omits_a_habit_that_was_never_released(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A habit that is merely locked (never released) is not offered for recovery."""
+    headers = await _signup(async_client, "mrh_neverreleased24")
+    user = await _get_user(db_session, "mrh_neverreleased24@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_habit(db_session, user.id, name="Never revealed", revealed=False)
+
+    resp = await async_client.get(_BASE_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["released_habits"] == []
+
+
+@pytest.mark.asyncio
+async def test_recommit_after_leave_with_nothing_outstanding_is_a_noop(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Recommitting after leave with no outstanding release succeeds with an empty list."""
+    headers = await _signup(async_client, "mrh_leftnoop25")
+    user = await _get_user(db_session, "mrh_leftnoop25@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    habit = await _seed_habit(db_session, user.id)
+    assert habit.id is not None
+    habit_id = habit.id
+
+    await async_client.post(_LEAVE_URL, headers=headers)
+
+    resp = await async_client.post(
+        _RECOMMIT_URL,
+        headers=headers,
+        json={"habit_ids": [habit_id]},
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+    db_session.expire_all()
+    refreshed = await db_session.get(Habit, habit_id)
+    assert refreshed is not None
+    assert refreshed.revealed is True
+
+
+@pytest.mark.asyncio
+async def test_recommit_after_leave_of_an_already_recommitted_habit_is_idempotent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A second post-leave recommit of the same habit is a no-op that keeps the stamp."""
+    headers = await _signup(async_client, "mrh_leftidem26")
+    user = await _get_user(db_session, "mrh_leftidem26@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    arc = await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    assert arc.id is not None
+    arc_id = arc.id
+    habit = await _seed_habit(db_session, user.id)
+    assert habit.id is not None
+    habit_id = habit.id
+
+    await async_client.post(_RELEASE_URL, headers=headers, json={"habit_ids": [habit_id]})
+    await async_client.post(_LEAVE_URL, headers=headers)
+    first = await async_client.post(_RECOMMIT_URL, headers=headers, json={"habit_ids": [habit_id]})
+    assert first.status_code == HTTPStatus.OK
+    rows = await _release_rows_for_arc(db_session, arc_id)
+    first_stamp = rows[0].recommitted_at
+
+    second = await async_client.post(_RECOMMIT_URL, headers=headers, json={"habit_ids": [habit_id]})
+
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()[0]["recommitted"] is True
+    rows = await _release_rows_for_arc(db_session, arc_id)
+    assert len(rows) == 1
+    assert rows[0].recommitted_at == first_stamp
+
+
+@pytest.mark.asyncio
+async def test_recommit_recovers_a_habit_released_in_a_previous_arc(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A release stranded by a past arc is recoverable even while a newer arc runs."""
+    headers = await _signup(async_client, "mrh_prevarc27")
+    user = await _get_user(db_session, "mrh_prevarc27@example.com")
+    assert user.id is not None
+    await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
+    first_arc = await _seed_active_arc(db_session, user.id, started_at=datetime.now(UTC))
+    assert first_arc.id is not None
+    first_arc_id = first_arc.id
+    habit = await _seed_habit(db_session, user.id, name="Stranded")
+    assert habit.id is not None
+    habit_id = habit.id
+
+    await async_client.post(_RELEASE_URL, headers=headers, json={"habit_ids": [habit_id]})
+    await async_client.post(_LEAVE_URL, headers=headers)
+    started = await async_client.post(f"{_BASE_URL}/arc", headers=headers)
+    assert started.status_code == HTTPStatus.CREATED
+
+    state = await async_client.get(_BASE_URL, headers=headers)
+    assert state.status_code == HTTPStatus.OK
+    assert [entry["habit_id"] for entry in state.json()["released_habits"]] == [habit_id]
+
+    resp = await async_client.post(
+        _RECOMMIT_URL,
+        headers=headers,
+        json={"habit_ids": [habit_id]},
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()[0]["recommitted"] is True
+    db_session.expire_all()
+    refreshed = await db_session.get(Habit, habit_id)
+    assert refreshed is not None
+    assert refreshed.revealed is True
+    rows = await _release_rows_for_arc(db_session, first_arc_id)
+    assert len(rows) == 1
+    assert rows[0].recommitted_at is not None

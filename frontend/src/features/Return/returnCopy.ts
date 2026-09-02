@@ -98,6 +98,13 @@ export function buildReturnRecommitA11y(name: string): string {
   return `Take it up again: ${name}`;
 }
 
+/** The standalone resting-card heading, for habits set down in a Return already left. */
+export const RETURN_RESTING_HEADING = 'Still resting from a Return';
+
+/** The resting-card body — the pause kept everything, and the way back stays open. */
+export const RETURN_RESTING_BODY =
+  'You set these down during a Return and have not taken them up again. Every goal and every day you logged is still there, waiting. Take up any that feel ready, whenever that is.';
+
 /** Every user-facing Return string, gathered for the balance-not-altitude sweep. */
 export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_HEADING,
@@ -125,4 +132,6 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_RECOMMIT_HEADING,
   RETURN_RECOMMIT_BODY,
   RETURN_RECOMMIT_ACTION,
+  RETURN_RESTING_HEADING,
+  RETURN_RESTING_BODY,
 ];

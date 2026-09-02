@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from dependencies.ownership import resolve_owned_habits
 from domain.metta_return import (
     RETURN_SEQUENCE,
     active_return_week,
@@ -124,38 +125,47 @@ async def _active_arc_for_update(session: AsyncSession, user_id: int) -> MettaRe
     return result.scalars().first()
 
 
-async def _released_habits(session: AsyncSession, arc_id: int) -> list[ReleasedHabitResponse]:
-    """Project an arc's released habits, joined to their habit rows, in a stable order.
+async def _released_habits(session: AsyncSession, user_id: int) -> list[ReleasedHabitResponse]:
+    """Project every habit the caller has released, across all their arcs, in a stable order.
 
-    A single join query (never N+1) fetches every release row for the arc with
-    its habit's name, icon, and live ``revealed`` flag, ordered by ``released_at``
-    then ``habit_id`` so the list is deterministic. ``recommitted`` is derived
-    from *both* the release row and the habit itself — ``recommitted_at`` being
-    stamped OR the habit currently being ``revealed`` — because ``Habit.revealed``
-    is also directly writable through ``PUT /habits/{id}`` (the Habit Settings
-    toggle / bulk-reveal flow), so a habit re-enabled outside the Return must not
-    keep reading as resting. This keeps ``recommitted`` a faithful projection of
-    the single source of truth (``Habit.revealed``) rather than drifting from it.
-    No owner key or surrogate row id is projected.
+    A single join query (never N+1) fetches every release row the caller owns
+    with its habit's name, icon, and live ``revealed`` flag, ordered by
+    ``released_at`` then ``habit_id`` so the list is deterministic. A habit
+    released in more than one arc collapses to its latest release, so no habit is
+    ever offered twice.
+
+    The projection spans arcs rather than one arc, because a release is a soft
+    pause on a *habit*, not a fact about an arc. Scoping it to the active arc
+    made every habit released in an arc the caller then left vanish from the
+    surface that paused it, which turned a soft pause into a one-way door.
+
+    ``recommitted`` is derived from *both* the release row and the habit itself —
+    ``recommitted_at`` being stamped OR the habit currently being ``revealed`` —
+    because ``Habit.revealed`` is also directly writable through
+    ``PUT /habits/{id}`` (the Habit Settings toggle / bulk-reveal flow), so a
+    habit re-enabled outside the Return must not keep reading as resting. This
+    keeps ``recommitted`` a faithful projection of the single source of truth
+    (``Habit.revealed``) rather than drifting from it. No owner key or surrogate
+    row id is projected.
     """
     result = await session.execute(
         select(MettaReturnHabitRelease, Habit)
         .join(Habit, col(Habit.id) == col(MettaReturnHabitRelease.habit_id))
-        .where(col(MettaReturnHabitRelease.arc_id) == arc_id)
+        .where(col(MettaReturnHabitRelease.user_id) == user_id)
         .order_by(
             col(MettaReturnHabitRelease.released_at),
             col(MettaReturnHabitRelease.habit_id),
         ),
     )
-    return [
-        ReleasedHabitResponse(
+    latest: dict[int, ReleasedHabitResponse] = {}
+    for release, habit in result.all():
+        latest[release.habit_id] = ReleasedHabitResponse(
             habit_id=release.habit_id,
             name=habit.name,
             icon=habit.icon,
             recommitted=release.recommitted_at is not None or habit.revealed,
         )
-        for release, habit in result.all()
-    ]
+    return list(latest.values())
 
 
 async def _releasable_habits(
@@ -163,20 +173,16 @@ async def _releasable_habits(
     user_id: int,
     habit_ids: list[int],
 ) -> list[Habit]:
-    """Return the caller's currently-revealed habits among ``habit_ids``.
+    """Return the caller's still-unlocked habits among ``habit_ids``.
 
-    One query selects only habits the caller owns that are still unlocked, so an
-    unowned, unknown, or already-locked id is dropped here and skipped silently —
-    an unowned id is thus indistinguishable from a nonexistent one.
+    Ownership of every id is decided by :func:`resolve_owned_habits`, which
+    audits any id belonging to somebody else and drops it; what survives is
+    filtered to habits that are still unlocked. An unowned, unknown, or
+    already-locked id is therefore skipped silently, and an unowned id stays
+    indistinguishable from a nonexistent one in the response.
     """
-    result = await session.execute(
-        select(Habit).where(
-            col(Habit.id).in_(habit_ids),
-            col(Habit.user_id) == user_id,
-            col(Habit.revealed).is_(True),
-        ),
-    )
-    return list(result.scalars().all())
+    owned = await resolve_owned_habits(session, habit_ids, user_id)
+    return [habit for habit in owned if habit.revealed]
 
 
 async def _existing_releases_by_habit(
@@ -205,25 +211,49 @@ async def _existing_releases_by_habit(
 
 async def _live_releases(
     session: AsyncSession,
-    arc_id: int,
+    user_id: int,
     habit_ids: list[int],
 ) -> list[tuple[MettaReturnHabitRelease, Habit]]:
-    """Return this arc's not-yet-recommitted releases among ``habit_ids``, with habits.
+    """Return the caller's not-yet-recommitted releases among ``habit_ids``, with habits.
 
     One join query pairs each still-live release (``recommitted_at IS NULL``)
-    with its habit, so an id never released in this arc is absent and thus
-    ignored, and no habit is loaded in a second round trip.
+    with its habit, so an id the caller never released is absent and thus
+    ignored, and no habit is loaded in a second round trip. Scoped to the caller
+    rather than to one arc: a release left behind in an arc the caller has since
+    walked away from is still theirs to take back up.
     """
+    if not habit_ids:
+        return []
     result = await session.execute(
         select(MettaReturnHabitRelease, Habit)
         .join(Habit, col(Habit.id) == col(MettaReturnHabitRelease.habit_id))
         .where(
-            col(MettaReturnHabitRelease.arc_id) == arc_id,
+            col(MettaReturnHabitRelease.user_id) == user_id,
             col(MettaReturnHabitRelease.recommitted_at).is_(None),
             col(MettaReturnHabitRelease.habit_id).in_(habit_ids),
         ),
     )
     return [(release, habit) for release, habit in result.all()]
+
+
+async def _caller_has_arc_for_update(session: AsyncSession, user_id: int) -> bool:
+    """Lock every arc the caller owns, oldest first, and report whether any exist.
+
+    Re-committing spans arcs, so it cannot serialize on the single active arc the
+    other lifecycle handlers lock — after a ``leave`` there is no active arc to
+    lock at all. Taking the caller's whole (short) arc list ``FOR UPDATE`` in a
+    deterministic ``id`` order gives re-commit the same mutual exclusion against
+    a concurrent release without opening a lock-ordering cycle between two
+    callers. A caller who has never opened an arc can hold no release, and falls
+    through to the same 404 the other handlers raise.
+    """
+    result = await session.execute(
+        select(MettaReturnArc)
+        .where(col(MettaReturnArc.user_id) == user_id)
+        .order_by(col(MettaReturnArc.id))
+        .with_for_update(),
+    )
+    return result.scalars().first() is not None
 
 
 async def _offer_dismissed(session: AsyncSession, user_id: int, episode: str | None) -> bool:
@@ -284,16 +314,6 @@ def _build_state(
     )
 
 
-async def _released_for_arc(
-    session: AsyncSession,
-    arc: MettaReturnArc | None,
-) -> list[ReleasedHabitResponse]:
-    """Project the arc's released habits, or an empty list when there is no arc."""
-    if arc is None or arc.id is None:
-        return []
-    return await _released_habits(session, arc.id)
-
-
 @router.get("", response_model=MettaReturnStateResponse)
 async def get_state(
     user_id: Annotated[int, Depends(get_current_user)],
@@ -309,7 +329,7 @@ async def get_state(
     progress = await get_user_progress(session, user_id)
     arc = await _active_arc(session, user_id)
     dismissed = await _offer_dismissed(session, user_id, current_offer_episode(progress))
-    released = await _released_for_arc(session, arc)
+    released = await _released_habits(session, user_id)
     now = datetime.now(UTC)
     return _build_state(progress, arc, offer_dismissed=dismissed, released=released, now=now)
 
@@ -496,7 +516,7 @@ async def release_habits(
     habits = await _releasable_habits(session, user_id, request.habit_ids)
     await _record_releases(session, user_id, arc_id, habits)
     await session.commit()
-    return await _released_habits(session, arc_id)
+    return await _released_habits(session, user_id)
 
 
 @router.post("/arc/recommit", response_model=list[ReleasedHabitResponse])
@@ -505,27 +525,37 @@ async def recommit_habits(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[ReleasedHabitResponse]:
-    """Re-commit a batch of the caller's habits released in their active arc.
+    """Re-commit a batch of the caller's habits released in any of their Return arcs.
 
-    Raises 404 when the caller has no active arc. Each named habit that was
-    released in this arc and not yet re-committed is unlocked (``revealed`` flips
-    back to True) and stamped with ``recommitted_at``; an id never released in
-    this arc is ignored, and re-committing an already-recommitted habit is a
-    no-op, so the call is idempotent. Works while the arc is time-complete but
-    not yet left. Returns the arc's full released list.
+    Raises 404 only when the caller has never opened an arc, since there is then
+    nothing that could have been released. Each named habit the caller owns that
+    was released and not yet re-committed is unlocked (``revealed`` flips back to
+    True) and stamped with ``recommitted_at``; an id the caller never released is
+    ignored, and re-committing an already-recommitted habit is a no-op, so the
+    call is idempotent. Works while the arc is time-complete, paused, or already
+    left. Returns the caller's full released list.
+
+    The scope is the caller, not one arc. Releasing is a soft pause on a *habit*,
+    and resolving the active arc stranded every habit released in an arc the
+    caller subsequently left: ``left_at`` makes that arc unresolvable, so the
+    endpoint 404'd and the only way back was an undiscoverable long-press.
+    Spanning arcs means the invitation that paused a habit can always undo
+    itself. Ownership of every id in the body is decided explicitly by
+    :func:`resolve_owned_habits` before any write, so a cross-tenant id is
+    audited and dropped rather than silently relied on the query filter.
     """
-    arc = await _active_arc_for_update(session, user_id)
-    if arc is None or arc.id is None:
+    if not await _caller_has_arc_for_update(session, user_id):
         raise not_found("return_arc")
-    arc_id = arc.id
+    owned = await resolve_owned_habits(session, request.habit_ids, user_id)
+    owned_ids = [habit.id for habit in owned if habit.id is not None]
     now = datetime.now(UTC)
-    for release, habit in await _live_releases(session, arc_id, request.habit_ids):
+    for release, habit in await _live_releases(session, user_id, owned_ids):
         release.recommitted_at = now
         habit.revealed = True
         session.add(release)
         session.add(habit)
     await session.commit()
-    return await _released_habits(session, arc_id)
+    return await _released_habits(session, user_id)
 
 
 @router.post("/offer/dismiss", response_model=MettaReturnStateResponse)
@@ -551,6 +581,6 @@ async def dismiss_offer(
     # so the response projection never touches an expired attribute.
     progress = await get_user_progress(session, user_id)
     arc = await _active_arc(session, user_id)
-    released = await _released_for_arc(session, arc)
+    released = await _released_habits(session, user_id)
     now = datetime.now(UTC)
     return _build_state(progress, arc, offer_dismissed=True, released=released, now=now)

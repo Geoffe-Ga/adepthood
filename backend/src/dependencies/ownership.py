@@ -91,6 +91,45 @@ async def require_owned_habit(
     return habit
 
 
+def _audit_unowned_habits(habits: list[Habit], user_id: int) -> None:
+    """Emit a ``resource_access_denied`` audit row for each habit the caller does not own.
+
+    Split out of :func:`resolve_owned_habits` so that resolving and auditing stay
+    one simple thing each.  A row with no id cannot be named in an audit and is
+    unreachable from a persisted query anyway, so it is skipped.
+    """
+    for habit in habits:
+        if habit.user_id != user_id and habit.id is not None:
+            log_ownership_denied("habit", habit.id, user_id)
+
+
+async def resolve_owned_habits(
+    session: AsyncSession, habit_ids: list[int], user_id: int
+) -> list[Habit]:
+    """Return the caller's habits among ``habit_ids``, auditing every id they do not own.
+
+    The batch counterpart of :func:`require_owned_habit`, for routes that take
+    habit ids in a request *body*.  One query resolves the whole batch, so
+    ownership is decided for every id supplied rather than assumed from an
+    owner-filtered query, and each id that resolves to a row belonging to
+    somebody else emits the ``resource_access_denied`` audit row.
+
+    It deliberately *drops* an unowned id rather than raising, because the batch
+    routes that use it publish an enumeration-safe contract: an unowned id has to
+    stay indistinguishable from a nonexistent one in the response.  Auditing only
+    ids that resolve to a real foreign row keeps the audit from becoming the very
+    oracle that contract denies -- a probe for an id that does not exist records
+    nothing.  Cross-tenant access is refused either way; the caller's batch
+    simply proceeds without the id.
+    """
+    if not habit_ids:
+        return []
+    result = await session.execute(select(Habit).where(col(Habit.id).in_(habit_ids)))
+    habits = list(result.scalars().all())
+    _audit_unowned_habits(habits, user_id)
+    return [habit for habit in habits if habit.user_id == user_id]
+
+
 async def resolve_owned_goal_and_habit(
     session: AsyncSession, goal_id: int, user_id: int
 ) -> tuple[Goal, Habit]:

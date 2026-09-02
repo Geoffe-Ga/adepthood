@@ -17,7 +17,7 @@ let mockMettaReturn: {
   arc: ReturnArc | null;
   offerVisible: boolean;
   letGoVisible?: boolean;
-  releasedHabits?: ReleasedHabit[];
+  releasedHabits: ReleasedHabit[];
 };
 jest.mock('../useMettaReturn', () => ({
   useMettaReturn: () => ({
@@ -52,6 +52,13 @@ const makeArc = (weekNumber: number, complete = false, paused = false): ReturnAr
   complete,
 });
 
+const makeResting = (habitId: number, name: string): ReleasedHabit => ({
+  habit_id: habitId,
+  name,
+  icon: '🕯️',
+  recommitted: false,
+});
+
 beforeEach(() => {
   mockDismissOffer.mockClear();
   mockStart.mockClear();
@@ -83,6 +90,7 @@ describe('ReturnStack', () => {
       weeks: [makeWeek(5)],
       arc: makeArc(5, true),
       offerVisible: false,
+      releasedHabits: [],
     };
     const { getByTestId, queryByTestId } = render(<ReturnStack />);
     expect(getByTestId('return-completion-card')).toBeTruthy();
@@ -97,6 +105,7 @@ describe('ReturnStack', () => {
       weeks: [makeWeek(2)],
       arc: makeArc(2),
       offerVisible: false,
+      releasedHabits: [],
     };
     const { getByTestId, queryByTestId } = render(<ReturnStack />);
     expect(getByTestId('return-arc-card')).toBeTruthy();
@@ -109,6 +118,7 @@ describe('ReturnStack', () => {
       weeks: [makeWeek(2)],
       arc: makeArc(2),
       offerVisible: false,
+      releasedHabits: [],
     };
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-arc-pause'));
@@ -121,6 +131,7 @@ describe('ReturnStack', () => {
       weeks: [makeWeek(2)],
       arc: makeArc(2, false, true),
       offerVisible: false,
+      releasedHabits: [],
     };
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-arc-resume'));
@@ -133,6 +144,7 @@ describe('ReturnStack', () => {
       weeks: [makeWeek(2)],
       arc: makeArc(2),
       offerVisible: false,
+      releasedHabits: [],
     };
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-arc-leave'));
@@ -140,20 +152,38 @@ describe('ReturnStack', () => {
   });
 
   it('shows the offer card when there is no arc and the offer is visible', () => {
-    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: true };
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: true,
+      releasedHabits: [],
+    };
     const { getByTestId } = render(<ReturnStack />);
     expect(getByTestId('return-offer-card')).toBeTruthy();
   });
 
   it('starts the arc when the offer is accepted', () => {
-    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: true };
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: true,
+      releasedHabits: [],
+    };
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-offer-accept'));
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
   it('dismisses the offer when it is declined', () => {
-    mockMettaReturn = { eligible: true, weeks: [makeWeek(1)], arc: null, offerVisible: true };
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: true,
+      releasedHabits: [],
+    };
     const { getByTestId } = render(<ReturnStack />);
     fireEvent.press(getByTestId('return-offer-dismiss'));
     expect(mockDismissOffer).toHaveBeenCalledTimes(1);
@@ -196,5 +226,68 @@ describe('ReturnStack', () => {
     };
     const { queryByTestId } = render(<ReturnStack />);
     expect(queryByTestId('return-letgo-card')).toBeNull();
+  });
+  it('offers a resting habit back when no arc is running', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: false,
+      releasedHabits: [makeResting(7, 'Morning pages')],
+    };
+    const { getByTestId } = render(<ReturnStack />);
+    expect(getByTestId('return-resting-card')).toBeTruthy();
+  });
+
+  it('recommits the habit when its take-it-up-again row is pressed with no arc running', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: false,
+      releasedHabits: [makeResting(7, 'Morning pages')],
+    };
+    const { getByTestId } = render(<ReturnStack />);
+    fireEvent.press(getByTestId('return-recommit-7'));
+    expect(mockRecommit).toHaveBeenCalledWith([7]);
+  });
+
+  it('renders nothing when every released habit has already been taken up again', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: false,
+      releasedHabits: [{ ...makeResting(7, 'Morning pages'), recommitted: true }],
+    };
+    const { toJSON, queryByTestId } = render(<ReturnStack />);
+    expect(queryByTestId('return-resting-card')).toBeNull();
+    expect(toJSON()).toBeNull();
+  });
+
+  it('shows the resting card alongside the offer rather than being displaced by it', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(1)],
+      arc: null,
+      offerVisible: true,
+      releasedHabits: [makeResting(7, 'Morning pages')],
+    };
+    const { getByTestId } = render(<ReturnStack />);
+    expect(getByTestId('return-offer-card')).toBeTruthy();
+    expect(getByTestId('return-resting-card')).toBeTruthy();
+  });
+
+  it('does not show the resting card while an arc is still running', () => {
+    mockMettaReturn = {
+      eligible: true,
+      weeks: [makeWeek(2)],
+      arc: makeArc(2),
+      offerVisible: false,
+      releasedHabits: [makeResting(7, 'Morning pages')],
+    };
+    const { queryByTestId, getByTestId } = render(<ReturnStack />);
+    expect(queryByTestId('return-resting-card')).toBeNull();
+    expect(getByTestId('return-arc-card')).toBeTruthy();
   });
 });

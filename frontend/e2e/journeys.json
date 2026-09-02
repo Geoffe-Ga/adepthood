@@ -374,5 +374,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/prompt-history.e2e.test.ts"
+  },
+  {
+    "id": "return.recover-a-habit-set-down",
+    "description": "A person lets a habit rest during a Metta Return arc, then leaves the arc, and takes the habit up again from the Return surface without long-pressing a locked tile or opening the 3-dot menu. Uncovered because the lane would have to drive a five-week arc's release-then-leave sequence and then assert on a card that only renders when a release is outstanding; the release seam itself is covered by backend integration tests and the Jest specs named below, so the gap is the end-to-end stitch rather than either half.",
+    "crosses": {
+      "screen": "frontend/src/features/Return/ReturnRestingCard.tsx",
+      "client": ["mettaReturn"],
+      "routes": [
+        "GET /metta-return",
+        "POST /metta-return/arc/release",
+        "POST /metta-return/arc/leave",
+        "POST /metta-return/arc/recommit"
+      ],
+      "tables": ["mettareturnarc", "mettareturnhabitrelease", "habit"]
+    },
+    "status": "uncovered",
+    "issue": 2614
   }
 ]
