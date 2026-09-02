@@ -53,6 +53,7 @@ from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from services.invitations import _gather_aggregates, generate_invitation_signals
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
@@ -725,7 +726,7 @@ async def test_practice_gather_excludes_sessions_older_than_the_sustained_window
 # ---------------------------------------------------------------------------
 
 
-class _ThemeVaultClient:
+class _ThemeVaultClient(NoPipelineVaultDouble):
     """A minimal fake CreekVaultClient exposing only the wheel path."""
 
     def __init__(

@@ -53,6 +53,7 @@ from services.creek_vault_reflect import (
     related_surfaces,
     select_reflection_llm,
 )
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _BODY = "the body under reflection"
 
@@ -118,7 +119,7 @@ _EDDY = VaultRelatedEddy(
 )
 
 
-class RecordingVaultClient:
+class RecordingVaultClient(NoPipelineVaultDouble):
     """A scriptable, call-recording fake CreekVaultClient (reflect path only)."""
 
     def __init__(

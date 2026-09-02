@@ -765,6 +765,177 @@ class VaultWheelAspect:
     fullness: float
 
 
+class VaultClassificationMethod(enum.StrEnum):
+    """The classifier a whole-vault classification pass may ask for.
+
+    One member, and the single member is the whole point. Creek's own
+    ``ClassificationMethod`` also has exactly one, and its schema explains why:
+    an ``llm`` pass over a seeded corpus is minutes to hours of work behind a
+    thirty-second server deadline, and -- the part that matters here -- with no
+    ``llm`` value expressible at all, "no byte of the vault leaves the host on
+    this route" is a property of the type rather than of a check somebody has to
+    remember to call.
+
+    Mirroring that enum here rather than sending a bare string is the same
+    argument :class:`WireTierCeiling` makes about ``intimate``: a value adepthood
+    cannot construct is one no future edit can put on the wire by accident, and
+    the alternative -- accept it, then be refused with a ``422`` -- discovers the
+    mistake at a live vault instead of at a type check.
+
+    Attributes:
+        RULES: Keyword classification. No model, no key, no consent, no egress.
+    """
+
+    RULES = "rules"
+
+
+class VaultLinkStage(enum.StrEnum):
+    """The linker stages a link pass may ask for, in the order Creek documents.
+
+    Three of Creek's four. ``embeddings`` is the fourth and is absent for the
+    reason its schema gives -- it is the O(n^2) pairwise-similarity stage,
+    observed being abandoned at 35k fragments -- and it is absent *here* for the
+    reason :class:`VaultClassificationMethod` names: unconstructible beats
+    accepted-then-refused.
+
+    Excluding it does not make the rest cheap, and this enum should not be read
+    as promising that. ``EDDIES`` and ``THREADS`` both need vectors, so on a cold
+    vault both run a local sentence-transformer pass over every uncached
+    fragment -- minutes of work that can outrun an ordinary request deadline.
+    They are safe to ask for anyway because the vector store is a *cache*: the
+    work a timed-out call performed still lands, so the next pass converges
+    rather than starting over. That is what licenses this seam having no retry.
+
+    Values are the wire strings Creek reads out of ``LinkRequest.method``, which
+    is ``required`` and carries no default, so every link request names its stage
+    explicitly.
+
+    Attributes:
+        TEMPORAL: Same-window adjacency. The one genuinely cheap stage, and the
+            one that makes a freshly-seeded corpus navigable at all.
+        EDDIES: Topic clusters. Embeds on a cold cache.
+        THREADS: Narrative currents. Embeds on a cold cache, and reads the
+            APTITUDE labels a classification pass writes -- so it is meaningless
+            before one has landed.
+    """
+
+    TEMPORAL = "temporal"
+    EDDIES = "eddies"
+    THREADS = "threads"
+
+
+class VaultPipelineStage(enum.StrEnum):
+    """One rung of the ontologization ladder adepthood drives a vault through.
+
+    Adepthood's own vocabulary rather than Creek's: the wire has two routes and
+    this has four stages, because classification and each linker stage are
+    separately schedulable, separately debounced and separately recorded. The
+    three that also name a linker stage share :class:`VaultLinkStage`'s wire
+    spellings, and the mapping between the two vocabularies is a table rather
+    than a branch -- so "classification is not a link stage" is expressed by its
+    absence from that table instead of by a condition somebody could invert.
+
+    Values are stored, so they are a persisted vocabulary and must not be
+    reworded without a migration.
+
+    Attributes:
+        CLASSIFY: The whole-vault classification pass. First, always: the two
+            cluster stages read the labels it writes.
+        TEMPORAL: The cheap linker stage.
+        EDDIES: The first of the two embedding stages.
+        THREADS: The second, and the one that most wants classification to have
+            landed already.
+    """
+
+    CLASSIFY = "classify"
+    TEMPORAL = "temporal"
+    EDDIES = "eddies"
+    THREADS = "threads"
+
+
+@dataclass(frozen=True)
+class VaultClassificationPass:
+    """What one whole-vault classification pass did, in counts alone.
+
+    **Nothing here names a fragment**, and that is a property of Creek's response
+    rather than of this projection: the pass reads material above the ceiling
+    adepthood declared, on the host, and reports no id, no path, no title, no
+    excerpt and no error string about any of it. That is exactly what makes it
+    safe for a caller capped at ``personal`` to ask for a pass over everything.
+
+    ``status`` and ``tier_ceiling`` are published required fields and are
+    verified on the way in -- the first as a constant, the second against the
+    widest ceiling adepthood was willing to accept -- and then deliberately not
+    carried: a field kept only to be ignored is a field a later reader will
+    branch on.
+
+    Attributes:
+        total: Fragments visited.
+        classified: Fragments whose frontmatter this run rewrote.
+        preserved_manual: Fragments left alone because an operator stamped them.
+        preserved_llm: Fragments left alone by the resume short-circuit.
+        privacy_tiers_assigned: Fragments whose privacy tier this run derived.
+            **Zero is the expected answer for a network-seeded corpus** and is
+            not a degrade: every fragment adepthood uploads already carries the
+            tier adepthood declared, so the tier pass does not own it.
+        retiered: Of those, how many replaced a recorded tier with a stricter
+            one. Only ever non-zero under a ``retier`` request, which adepthood
+            cannot spell.
+        praxis_marked: Fragments raised to a stronger praxis potential.
+        tags_extracted: Fragments that gained a hashtag entry.
+        complete: Whether every visited fragment was processed without error.
+            ``False`` is not a failure -- the pass is resumable, so it means the
+            honest next step is to call again.
+    """
+
+    total: int
+    classified: int
+    preserved_manual: int
+    preserved_llm: int
+    privacy_tiers_assigned: int
+    retiered: int
+    praxis_marked: int
+    tags_extracted: int
+    complete: bool
+
+
+@dataclass(frozen=True)
+class VaultLinkPass:
+    """What one linker stage did, in counts alone.
+
+    Counts only, for the reason :class:`VaultClassificationPass` carries none:
+    the stage runs over every fragment in the vault, including material far above
+    the caller's ceiling, and a thread title or an eddy name is the corpus
+    talking.
+
+    There is no ``complete`` twin here, and its absence is Creek's design rather
+    than an omission: the linker has no per-fragment error accumulator, so a
+    stage either finishes or raises. :attr:`oversized_discarded` is the honest
+    partial-loss signal instead.
+
+    Attributes:
+        stage: The stage the vault says it ran, carried so the answer can be
+            correlated with the request -- a response echoing another stage is
+            refused rather than recorded under the one that was asked for.
+        fragment_count: Fragments loaded from the vault.
+        link_count: The stage's own count: temporal links, eddies, or threads.
+        largest_cluster_fragments: Members of the biggest cluster emitted.
+        clusters_split: Clusters re-clustered at a tighter parameter.
+        oversized_discarded: Fragments dropped to noise because their cluster
+            stayed oversized after the split budget was spent. **This is data
+            loss** -- those fragments carry no link at all -- and Creek publishes
+            it rather than folding it away, so adepthood records it rather than
+            reading a lossy pass as a clean one.
+    """
+
+    stage: VaultLinkStage
+    fragment_count: int
+    link_count: int
+    largest_cluster_fragments: int
+    clusters_split: int
+    oversized_discarded: int
+
+
 @dataclass(frozen=True)
 class VaultWheelBalance:
     """A vault's Wheel-of-Wholeness read: Aspect fullness in canonical order.
@@ -824,6 +995,43 @@ class CreekVaultClient(Protocol):
 
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Request Frequency/Wavelength-phase tags for ``body``."""
+
+    async def classify_corpus(self) -> VaultClassificationPass:
+        """Run one whole-vault classification pass and report it in counts.
+
+        Deliberately *not* a batched :meth:`classify`, and the two must not be
+        confused. :meth:`classify` is adepthood's own per-entry concept, whose
+        request shape Creek has never ratified and which the HTTP adapter still
+        refuses; this is Creek's published whole-vault pass, which takes no
+        fragment selector and never will. There is no id list to send, because
+        an id list would be an enumeration primitive over a corpus this consumer
+        is not allowed to read -- and because the pass is idempotent and
+        resumable, so "classify everything" converges on repetition anyway.
+
+        Failures normalize into this module's hierarchy exactly as
+        :meth:`wheel`'s do -- an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError` -- and a vault that never advertised
+        :attr:`CreekCapability.PIPELINE` raises
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass:
+        """Run one linker stage over the whole vault and report it in counts.
+
+        One stage per call because Creek serves one per call: the three are not
+        interchangeable -- one writes adjacency into fragment frontmatter, one
+        materialises the eddies, one the threads -- which is why the wire's
+        ``method`` is required and carries no default. ``stage`` is therefore a
+        parameter rather than a loop inside the adapter, so a caller that can
+        only afford the cheap stage can ask for exactly it.
+
+        Fails exactly as :meth:`classify_corpus` does. It is the caller's job,
+        not this seam's, to have run a classification pass first: the thread
+        stage reads the labels one writes, and a seam cannot know whether an
+        earlier pass already landed.
+        """
 
     async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
         """Produce a Higher Self reflection grounded in the user's own corpus.

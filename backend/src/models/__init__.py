@@ -40,6 +40,7 @@ from .user_depth_preferences import UserDepthPreferences
 from .user_practice import UserPractice
 from .user_ui_flags import UserUiFlags
 from .user_vault_config import UserVaultConfig
+from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from .wallet_audit import WalletAudit
 
 __all__ = [
@@ -84,5 +85,7 @@ __all__ = [
     "UserPractice",
     "UserUiFlags",
     "UserVaultConfig",
+    "VaultPipelineOutcome",
+    "VaultPipelineRun",
     "WalletAudit",
 ]

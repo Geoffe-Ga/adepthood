@@ -67,6 +67,7 @@ from services.corpus_import import (
     VaultImportResult,
     import_document,
 )
+from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_upload import UploadedDocument
 
 router = build_router(
@@ -212,6 +213,17 @@ async def import_corpus_document(
 
     The commit is here rather than in the service because this is the whole
     transaction: the fragment, and nothing else, land together or not at all.
+
+    The vault ontologization pass is driven from here, after that commit, and
+    not from inside :func:`services.corpus_import.import_document` -- which
+    states that it commits nothing and that the caller owns the transaction, and
+    would have to break that promise to schedule anything. The router is also the
+    layer that can tell the two destinations apart without asking anything twice:
+    the import's result *type* already says which one it reached, so a document
+    that went to the account's own corpus never consults a vault it does not
+    have. Bounded and synchronous, like everything else on this route: the pass
+    stands down inside its own per-stage intervals, starts no stage it cannot
+    afford, and never raises.
     """
     raw = guard_document_payload(payload.content_base64)
     result = await import_document(
@@ -227,4 +239,11 @@ async def import_corpus_document(
         raw,
     )
     await session.commit()
+    if isinstance(result, VaultImportResult) and result.stored:
+        await drive_vault_pipeline(
+            session,
+            vault_client,
+            user_id=user_id,
+            trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+        )
     return _to_import_response(result)

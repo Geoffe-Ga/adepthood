@@ -40,6 +40,7 @@ from domain.creek_vault import (
 from main import app
 from models.journal_entry import JournalEntry
 from routers.journal import _record_vault_outcome
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -75,7 +76,7 @@ def _empty_reflection() -> VaultReflection:
     )
 
 
-class SequencedVaultClient:
+class SequencedVaultClient(NoPipelineVaultDouble):
     """Fake CreekVaultClient: available, ingests successfully, refs increment per call."""
 
     def __init__(
