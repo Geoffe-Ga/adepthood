@@ -28,3 +28,41 @@ describe('toWritingSessionResult', () => {
     });
   });
 });
+
+describe('toWritingSessionResult — time the writer did not spend writing', () => {
+  /**
+   * The engine derives elapsed from the wall clock and a backgrounded app fires
+   * no tick, so the first tick after the device wakes observes the whole gap.
+   * A session cannot have run longer than the length it was set to, so the
+   * reported duration is bounded by it.
+   */
+  it('bounds a session the device slept through to the length it was set to', () => {
+    expect(
+      toWritingSessionResult({
+        plannedMinutes: DEFAULT_WRITING_MINUTES,
+        elapsedMs: 3 * 60 * MS_PER_MINUTE,
+      }),
+    ).toEqual({
+      plannedMinutes: 20,
+      elapsedMs: 20 * MS_PER_MINUTE,
+      elapsedMinutes: 20,
+      reachedFullDuration: true,
+    });
+  });
+
+  it('still reports reaching the full duration honestly, since the clock did pass it', () => {
+    const slept = toWritingSessionResult({ plannedMinutes: 10, elapsedMs: 47 * MS_PER_MINUTE });
+
+    expect(slept.reachedFullDuration).toBe(true);
+    expect(slept.elapsedMs).toBe(10 * MS_PER_MINUTE);
+  });
+
+  it('floors a negative elapsed at zero rather than reporting time owed', () => {
+    expect(toWritingSessionResult({ plannedMinutes: 20, elapsedMs: -5_000 })).toEqual({
+      plannedMinutes: 20,
+      elapsedMs: 0,
+      elapsedMinutes: 0,
+      reachedFullDuration: false,
+    });
+  });
+});

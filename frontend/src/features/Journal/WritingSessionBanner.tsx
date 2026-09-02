@@ -15,6 +15,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_PILL_MAX_HEIGHT } from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
 import {
   WRITING_SESSION_DISMISS,
@@ -62,10 +63,19 @@ function WritingSessionBanner({
 }
 
 const styles = StyleSheet.create({
-  /** Warm paper tone in the page's own margin rhythm — a note, not an alert. */
+  /**
+   * Warm paper tone in the page's own margin rhythm — a note, not an alert.
+   *
+   * The bottom margin is load-bearing, not rhythm: this is an in-flow box at
+   * the foot of the same column the timer and the resonance button float over,
+   * so without it the opaque resonance button paints across most of the Close
+   * target the writer is meant to use to put the note away — and across
+   * whatever a later lane hangs in the children slot beneath the text.
+   */
   banner: {
     marginHorizontal: journalSheet.deskPaddingH,
     marginTop: spacing(1),
+    marginBottom: RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     backgroundColor: colors.paper.background,

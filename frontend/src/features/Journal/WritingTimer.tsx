@@ -21,7 +21,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE } from './JournalEntry.styles';
+import {
+  RESONANCE_BUTTON_CLEARANCE,
+  WRITING_TIMER_PILL_PADDING_V,
+  WRITING_TIMER_ROW_GAP,
+  WRITING_TIMER_ROW_HEIGHT,
+} from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
 import {
   DEFAULT_WRITING_MINUTES,
@@ -50,6 +55,7 @@ import {
   SPACING,
   colors,
   editorialType,
+  journalSheet,
   shadows,
   touchTarget,
 } from '@/design/tokens';
@@ -83,10 +89,10 @@ function PresetRow({
 }): React.JSX.Element {
   return (
     <View
-      style={styles.presetRow}
+      style={[styles.row, styles.presetRow]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
-      testID="writing-timer-presets"
+      testID="writing-timer-row-presets"
     >
       {WRITING_DURATION_PRESET_MINUTES.map((option) => (
         <TouchableOpacity
@@ -98,7 +104,9 @@ function PresetRow({
           accessibilityState={{ selected: option === minutes }}
           testID={`writing-timer-preset-${option}`}
         >
-          <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
+          <Text style={styles.presetLabel} numberOfLines={1}>
+            {writingTimerPresetLabel(option)}
+          </Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -131,8 +139,14 @@ function TimerControl({
   );
 }
 
-/** Whichever of start / pause / resume / stop the current state offers. */
-function ControlRow({
+/**
+ * Whichever of start / pause / resume / stop the current state offers.
+ *
+ * A fragment, not a row of its own: the controls sit beside the readout on the
+ * pill's first row, which is what keeps the pill's height a count of rows
+ * rather than a consequence of how much fits across a given phone.
+ */
+function TimerControls({
   view,
   controls,
 }: {
@@ -140,7 +154,7 @@ function ControlRow({
   controls: RitualControls;
 }): React.JSX.Element {
   return (
-    <View style={styles.controlRow}>
+    <>
       {view.showStart ? (
         <TimerControl
           label={WRITING_TIMER_START}
@@ -173,7 +187,7 @@ function ControlRow({
           testID="writing-timer-stop"
         />
       ) : null}
-    </View>
+    </>
   );
 }
 
@@ -260,17 +274,20 @@ function WritingTimer({
   }, []);
   return (
     <View style={styles.floatingWrapper} pointerEvents="box-none">
-      <View style={styles.pill} pointerEvents="auto">
-        <Text
-          style={styles.readout}
-          accessibilityRole="text"
-          accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
-          testID="writing-timer-readout"
-        >
-          {view.readout}
-        </Text>
+      <View style={styles.pill} pointerEvents="auto" testID="writing-timer-pill">
+        <View style={styles.row} testID="writing-timer-row-readout">
+          <Text
+            style={styles.readout}
+            numberOfLines={1}
+            accessibilityRole="text"
+            accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
+            testID="writing-timer-readout"
+          >
+            {view.readout}
+          </Text>
+          <TimerControls view={view} controls={controls} />
+        </View>
         {view.showPresets ? <PresetRow minutes={minutes} onChoose={chooseMinutes} /> : null}
-        <ControlRow view={view} controls={controls} />
       </View>
     </View>
   );
@@ -288,39 +305,57 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
-    alignItems: 'center',
   },
+  /**
+   * A column of fixed-height rows, spanning the band rather than sizing itself
+   * to its contents. Deliberately NOT a wrapping row: laid out that way the
+   * readout, four presets and Start come to roughly 452dp in this face at this
+   * size, so every phone reflowed it onto two or three rows and the page
+   * reserved space for one. A column of known rows has a height that does not
+   * depend on the width it is given.
+   */
   pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: SPACING.sm,
+    flexDirection: 'column',
+    gap: WRITING_TIMER_ROW_GAP,
+    marginHorizontal: journalSheet.deskPaddingH,
+    paddingVertical: WRITING_TIMER_PILL_PADDING_V,
     paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.xxl,
+    borderRadius: BORDER_RADIUS.xl,
     backgroundColor: colors.paper.background,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
     ...shadows.small,
   },
+  /** One row of the pill. Fixed height, so the pill's own height is countable. */
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    height: WRITING_TIMER_ROW_HEIGHT,
+  },
   readout: {
     ...editorialType.action,
     color: colors.paper.ink,
-    // Tabular-ish minimum so a changing readout does not jitter the row.
-    minWidth: touchTarget.minimum,
-    textAlign: 'center',
+    // Takes the slack on its row, so the controls sit at the trailing edge and
+    // a changing readout never shifts them.
+    flex: 1,
   },
   presetRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.xs,
+    justifyContent: 'space-between',
   },
+  /**
+   * Presets share their row's width instead of demanding their own. ``flex: 1``
+   * is what lets four of them compress onto a narrow phone rather than pushing
+   * the row wider than the screen; the touch-target minimum is the floor they
+   * compress to.
+   */
   preset: {
+    flex: 1,
     minHeight: touchTarget.minimum,
     minWidth: touchTarget.minimum,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: SPACING.sm,
+    paddingHorizontal: SPACING.xs,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
@@ -337,11 +372,6 @@ const styles = StyleSheet.create({
   presetLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
-  },
-  controlRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
   },
   control: {
     minHeight: touchTarget.minimum,

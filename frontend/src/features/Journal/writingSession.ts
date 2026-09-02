@@ -26,7 +26,10 @@ export const WRITING_DURATION_PRESET_MINUTES = [10, 20, 30, 45] as const;
 export interface WritingSessionResult {
   /** The length the session was set to, in minutes. */
   readonly plannedMinutes: number;
-  /** Time actually spent writing, excluding any paused stretch. */
+  /**
+   * Time spent writing: paused stretches excluded, bounded by the session
+   * length, floored at zero. Never exceeds ``plannedMinutes`` in milliseconds.
+   */
   readonly elapsedMs: number;
   /** ``elapsedMs`` to the nearest minute — what a person would call it. */
   readonly elapsedMinutes: number;
@@ -45,18 +48,35 @@ export interface WritingSessionInput {
  *
  * Minutes round to nearest rather than down, because a writer who stops at
  * 19:59 of twenty spent twenty minutes writing by any account they would give
- * of it, and flooring would report nineteen. ``elapsedMs`` travels alongside
- * untouched, so anything that needs the exact duration has it without
- * re-deriving the rounding.
+ * of it, and flooring would report nineteen.
+ *
+ * The reported duration is BOUNDED by the length the session was set to, and
+ * floored at zero. The engine derives elapsed from the wall clock, and a
+ * backgrounded app fires no tick — so the first tick after the device wakes
+ * observes the entire gap at once, and an unbounded reading hands a
+ * twenty-minute session three hours of "writing" nobody did. A session cannot
+ * have run for longer than it was set to run for, so the bound is the honest
+ * number rather than a cosmetic cap, and it is applied here, in the contract,
+ * so every consumer of a session gets the same answer instead of each
+ * re-deriving its own.
+ *
+ * ``reachedFullDuration`` is deliberately decided BEFORE the bound, from the
+ * raw reading: if the clock really did pass the full duration then it was
+ * reached, and saying otherwise would be a second lie correcting the first.
+ * The bound cannot change that answer either way, since clamping downward to
+ * exactly the planned length preserves ``>=``.
  */
 export function toWritingSessionResult({
   plannedMinutes,
   elapsedMs,
 }: WritingSessionInput): WritingSessionResult {
+  const plannedMs = plannedMinutes * MS_PER_MINUTE;
+  const reachedFullDuration = elapsedMs >= plannedMs;
+  const spentMs = Math.min(Math.max(elapsedMs, 0), plannedMs);
   return {
     plannedMinutes,
-    elapsedMs,
-    elapsedMinutes: Math.round(elapsedMs / MS_PER_MINUTE),
-    reachedFullDuration: elapsedMs >= plannedMinutes * MS_PER_MINUTE,
+    elapsedMs: spentMs,
+    elapsedMinutes: Math.round(spentMs / MS_PER_MINUTE),
+    reachedFullDuration,
   };
 }

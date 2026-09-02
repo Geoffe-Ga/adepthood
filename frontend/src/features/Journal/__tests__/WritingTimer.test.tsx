@@ -223,7 +223,7 @@ describe('WritingTimer — the length is only settable at rest', () => {
 
     fireEvent.press(getByTestId('writing-timer-start'));
 
-    expect(queryByTestId('writing-timer-presets')).toBeNull();
+    expect(queryByTestId('writing-timer-row-presets')).toBeNull();
     expect(queryByTestId('writing-timer-preset-45')).toBeNull();
   });
 });
@@ -267,5 +267,29 @@ describe('WritingTimer — reachable by a screen reader', () => {
     const { getByTestId } = renderTimer(jest.fn(), 10);
 
     expect(getByTestId('writing-timer-readout').props.children).toBe('10:00');
+  });
+});
+
+describe('WritingTimer — a session the device slept through', () => {
+  /**
+   * The engine derives elapsed from the wall clock, and a backgrounded app
+   * fires no interval. The first tick after the writer returns therefore
+   * observes the whole gap at once, so a twenty-minute session can land its
+   * completion holding hours of "elapsed" time that nobody spent writing.
+   */
+  it('never reports more time than the session was set to run for', () => {
+    const onComplete = jest.fn<(result: WritingSessionResult) => void>();
+    const { getByTestId } = renderTimer(onComplete);
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + 3 * 60 * MS_PER_MINUTE);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete.mock.calls[0]![0]).toEqual({
+      plannedMinutes: 20,
+      elapsedMs: 20 * MS_PER_MINUTE,
+      elapsedMinutes: 20,
+      reachedFullDuration: true,
+    });
   });
 });
