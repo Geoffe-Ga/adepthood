@@ -93,6 +93,7 @@ import enum
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
 from typing import NoReturn, cast
@@ -100,7 +101,6 @@ from urllib.parse import quote
 
 import httpx
 
-from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -114,14 +114,16 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultClassificationPass,
     VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultLinkPass,
+    VaultLinkStage,
     VaultReflection,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
-    VaultWheelAspect,
     VaultWheelBalance,
     WireTierCeiling,
     wire_ceiling_for,
@@ -132,15 +134,20 @@ from services.creek_vault_payload import (
     _REFLECT_UNREADABLE_MESSAGE,
     _REQUEST_REJECTED,
     _RESPONSE_UNREADABLE,
-    _bounded_text,
+    _WHEEL_UNREADABLE_MESSAGE,
+    _WHEEL_WIRE_CEILING,
     _capability_message,
-    _ceiling_admissible,
+    _classification_request_body,
     _journal_entry_body,
+    _link_request_body,
+    _parse_classification_pass,
     _parse_http_ingest_result,
     _parse_http_upload_result,
+    _parse_link_pass,
     _parse_reflection_result,
     _reflection_request_body,
     _upload_document_body,
+    _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_telemetry import (
@@ -265,79 +272,6 @@ _HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
     TimeoutError,
     httpx.TimeoutException,
 )
-
-# The privacy ceiling adepthood presents when it asks for a wheel. Only
-# aggregate per-Frequency counts and shares cross this seam -- never fragment
-# content -- so the ceiling governs what the vault *counts*, not what it hands
-# back. ``personal`` is the honest maximum: intimate content never reaches the
-# vault from adepthood at all, and creek independently caps a network consumer
-# below intimate. ``open`` would be worse than useless rather than safer,
-# because creek ranks unclassified content with personal: an open ceiling
-# silently excludes every not-yet-classified fragment, so a young corpus reads
-# back as an all-zero wheel.
-#
-# It is read twice, as the same number for the same reason -- this is the most
-# material adepthood ever authorizes a vault to count over. Outbound it is
-# *declared*, in :data:`_CEILING_HEADER`; inbound it is the widest ceiling
-# adepthood is willing to **accept**, which :func:`_ceiling_admissible` verifies
-# the vault's echo against. Declaring it is not optional: the ``/v1`` request
-# body and query string publish no field for a ceiling, and reading that as "the
-# surface has none" is what left this read taking Creek's ``open`` default and
-# counting a fraction of the corpus while looking computed.
-_WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
-
-# The same ceiling in the vocabulary the header speaks, resolved once at import
-# so a wheel read cannot be the call that discovers the translation refuses.
-_WHEEL_WIRE_CEILING = wire_ceiling_for(_WHEEL_TIER_CEILING)
-
-# The status a ``creek.wheel`` response reports when it actually computed a
-# wheel. Its own constant rather than a reuse of
-# :attr:`~domain.creek_vault.VaultReflectionStatus.OK`: the capabilities merely
-# happen to spell their success the same way today, and coupling them would let
-# one capability's future rename silently change how another is parsed.
-_WHEEL_OK_STATUS = "ok"
-
-# The Frequency keys adepthood will read out of the vault's wheel map, in
-# canonical order -- one per curriculum stage, so ``F1`` is stage 1. A whitelist
-# rather than an iteration of whatever the vault sent, so a code creek adds
-# later is ignored exactly as an unknown capability string already is.
-#
-# That ``F{n}`` -> stage ``n`` correspondence is a **semantic identity**, and
-# this is the definition site where that has to be said. The Frequencies, the
-# Aspects of Wholeness and the Stages are one set of ten developmental
-# positions under four names -- Aspect, Frequency, Stage, Wavelength Mode --
-# per ``NORTH-STAR.md``: "the shared ontology where Adepthood's Aspects equal
-# Creek's Frequencies equal the Wavelength Modes". Modes are these ten,
-# colour-keyed; the six Wavelength *phases* are a different axis entirely,
-# and ``graph/ontology-spine.md`` writes each row as
-# ``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``. F1 *is* stage 1, and
-# creek's ``Agency`` *is* the course Aspect Agency.
-#
-# (An earlier version of this comment argued the opposite -- that the two were
-# unrelated vocabularies and their both having ten members was "a coincidence of
-# cardinality". That was wrong, and it propagated: see ``domain.frequencies``,
-# which now carries the canonical table.)
-#
-# Colour is the primary key, not the name. The two labelings agree on six of the
-# ten positions and diverge on the middle four -- creek's ``Achievism`` against
-# the curriculum's ``Intellectual Understanding / Achievist``, and likewise F6,
-# F7, F8 -- so a join on names would mismatch exactly those four while looking
-# correct. ``backend/tests/services/test_frequency_classification.py`` asserts
-# both the colour join and that specific divergence.
-#
-# The read path still relabels each Frequency into the curriculum's own words
-# before rendering, which remains right for a different reason than the one
-# originally given: the curriculum's wording is what the user has been reading
-# all along, not because the ontology underneath is foreign.
-_WHEEL_FREQUENCY_CODES: tuple[str, ...] = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
-
-# Longest Frequency name adepthood will accept from a wheel entry. A *bound*,
-# not a format -- the vault owns what it calls its own Frequencies -- and a
-# generous one, since the longest name either side actually ships is under
-# thirty characters. It exists because that string is carried into a domain
-# value and can reach a log, and without a ceiling a compromised vault could
-# answer with a string of any size at all.
-_MAX_WHEEL_ASPECT_NAME_LENGTH = 128
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -773,93 +707,6 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     )
 
 
-def _wheel_fullness(raw: object) -> float | None:
-    """Return a Frequency's share as a float, or ``None`` when it is not a number.
-
-    Booleans are rejected *before* the numeric test, because ``isinstance(True,
-    int)`` is ``True`` and a bare numeric check would silently read ``True`` as a
-    completely full Frequency. The ``0.0..1.0`` bound is deliberately not checked
-    here: the read path's own aspect check owns it, and its chained comparison
-    already rejects ``NaN`` and the infinities. That is a division of labor
-    between the two halves of the seam, not a gap in either.
-
-    The conversion itself is guarded because JSON has no integer ceiling: a
-    literal past the float range decodes to an arbitrary-precision ``int``, and
-    ``float()`` then raises ``OverflowError`` -- an ``ArithmeticError`` that is in
-    neither this client's transport degrade set nor the read path's
-    ``CreekVaultError`` catch, so it would escape the seam as a crash on the
-    caller's request path. A share no float can hold is simply unreadable, which
-    is what ``None`` already means here.
-    """
-    if isinstance(raw, bool) or not isinstance(raw, int | float):
-        return None
-    try:
-        return float(raw)
-    except OverflowError:
-        return None
-
-
-def _wheel_aspect(entry: object, stage_number: int) -> VaultWheelAspect | None:
-    """Project one Frequency entry onto a domain aspect, or drop it whole.
-
-    Both halves have to survive on their own terms: a numeric ``share`` and a
-    non-blank, printable ``name`` within :data:`_MAX_WHEEL_ASPECT_NAME_LENGTH`. A
-    partial entry is dropped rather than completed with a default, which would
-    show the user a Frequency reading neither they nor the vault ever produced.
-
-    Printability is required for the same reason :func:`_is_storable_ref` requires
-    it of a fragment id: a Frequency name is short label text, so a control
-    character in one is never legitimate, and a name carrying CR/LF, an ANSI
-    escape, or a bidirectional override is exactly the payload that forges a log
-    line or misrenders a label. The name is relabelled away before this wheel is
-    rendered, but this helper is the boundary, and a value that is inert wherever
-    it lands does not depend on that.
-    """
-    if not isinstance(entry, Mapping):
-        return None
-    fullness = _wheel_fullness(entry.get("share"))
-    name = _bounded_text(entry.get("name"), _MAX_WHEEL_ASPECT_NAME_LENGTH)
-    if fullness is None or name is None or not name.isprintable():
-        return None
-    return VaultWheelAspect(stage_number=stage_number, aspect=name, fullness=fullness)
-
-
-def _wheel_aspects(wheel: Mapping[str, object]) -> tuple[VaultWheelAspect, ...]:
-    """Project the whitelisted Frequency codes onto aspects, dropping the unusable ones.
-
-    Walks :data:`_WHEEL_FREQUENCY_CODES` rather than the mapping's own keys, so
-    the stage number comes from adepthood's canonical order and any code outside
-    the whitelist is ignored. The caller decides what a short result means.
-    """
-    return tuple(
-        aspect
-        for stage_number, code in enumerate(_WHEEL_FREQUENCY_CODES, start=1)
-        if (aspect := _wheel_aspect(wheel.get(code), stage_number)) is not None
-    )
-
-
-def _parse_wheel(payload: Mapping[str, object]) -> VaultWheelBalance | None:
-    """Project a wheel response onto a domain balance, or ``None`` if unusable.
-
-    Answers ``None`` -- never raises -- so the caller owns the degrade. Three
-    conditions: a literal :data:`_WHEEL_OK_STATUS`, which is the strict equality
-    that makes ``refused``, ``empty``, and any status a future creek adds all
-    degrade rather than be mined for numbers; a ``wheel`` that is a mapping; and
-    a usable entry for *every* Frequency code. That last one is all-or-nothing on
-    purpose: one bad Frequency rejects the whole read rather than yielding a ring
-    with a hole in it.
-    """
-    if payload.get("status") != _WHEEL_OK_STATUS:
-        return None
-    wheel = payload.get("wheel")
-    if not isinstance(wheel, Mapping):
-        return None
-    aspects = _wheel_aspects(wheel)
-    if len(aspects) != len(_WHEEL_FREQUENCY_CODES):
-        return None
-    return VaultWheelBalance(aspects=aspects)
-
-
 def _unsupported_message(capability: CreekCapability) -> str:
     """Build the body/key-free message for an unsupported-capability error.
 
@@ -1020,21 +867,16 @@ _REFLECTIONS_PATH = "/v1/reflections"
 # one was published.
 _UPLOADS_PATH = "/v1/uploads"
 
-# The published top-level fields of ``WheelResponse``, in the order Creek's
-# schema declares them ``required``. Presence is checked before anything is
-# projected, so a body missing one is refused rather than completed with a
-# default the vault never sent. ``total_classified`` is deliberately validated
-# and then never branched on: whether an all-zero wheel is worth rendering is
-# decided in exactly one place, ``_carries_signal`` in
-# :mod:`services.creek_vault_wheel`, and a second implementation of one rule is
-# how the two drift.
-_WHEEL_RESPONSE_REQUIRED_FIELDS = (
-    "status",
-    "tier_ceiling",
-    "total_classified",
-    "unclassified",
-    "wheel",
-)
+# Where a whole-vault classification pass and one linker stage are asked for,
+# relative to the configured base URL. Two collections, ``POST``ed to with a body
+# and no identifier of any kind: neither route takes a fragment selector, and
+# neither ever will -- an id list would be an enumeration primitive over a corpus
+# this consumer is not permitted to read. Read off the vendored bundle rather
+# than assembled from a pattern, for the reason :data:`_UPLOADS_PATH` records:
+# an earlier capability here was given a route Creek never served, and the way
+# that is not repeated is that only published routes are spelled.
+_CLASSIFICATIONS_PATH = "/v1/classifications"
+_LINKS_PATH = "/v1/links"
 
 # The percent-encoded form of ``.``, used to neutralize a dot segment in an
 # entry id (see :func:`_entry_path_segment`). Uppercase because RFC 3986 names
@@ -1093,8 +935,108 @@ _UPLOAD_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.UPLOA
 _UPLOAD_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.UPLOAD)
 _UPLOAD_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.UPLOAD)
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
-_WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
+_PIPELINE_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.PIPELINE)
+_PIPELINE_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.PIPELINE)
+
+# The privacy ceiling adepthood presents when it drives the batch pipeline, and
+# the same value in the vocabulary the header speaks. ``personal`` for the reason
+# :data:`_WHEEL_TIER_CEILING` gives at length and one more besides: creek ranks
+# unclassified content with personal, and a pass that ran at ``open`` would
+# silently decline to classify every not-yet-classified fragment -- which is the
+# entire population this pass exists for, so an ``open`` ceiling here would make
+# the call a no-op that looked like work. Nothing above personal is reachable:
+# intimate content never crosses this seam in either direction, and Creek caps a
+# network consumer below it independently.
+#
+# Read twice for one reason, as the wheel's is: outbound it is *declared*, in
+# :data:`_CEILING_HEADER`; inbound it is the widest ceiling adepthood is willing
+# to **accept**, which the parsers verify the vault's echo against.
+_PIPELINE_TIER_CEILING = VaultTierCeiling.PERSONAL
+_PIPELINE_WIRE_CEILING = wire_ceiling_for(_PIPELINE_TIER_CEILING)
+
+# How long one cold embedding stage may hold the wire. Creek's own schema is
+# explicit that ``eddies`` and ``threads`` fill a vector cache on first use -- a
+# local sentence-transformer pass over every uncached fragment, minutes of work
+# on a large vault -- and equally explicit that these are writes its server
+# deadline deliberately does not shed. So the ordinary
+# :data:`_VAULT_TOTAL_DEADLINE_SECONDS` is not merely tight here, it is the wrong
+# question: a call cut off at thirty seconds abandons work the vault is still
+# doing and will still have done.
+#
+# It is nonetheless a bound rather than an absence of one, and a modest one. The
+# vector store is a *cache*, so the work a truncated call performed still lands
+# and the next pass resumes from it: the honest budget is therefore whatever a
+# caller can afford to wait, not whatever a cold vault might need, because the
+# pass converges over repetition either way. What this number must not do is sit
+# below :data:`_VAULT_TIMEOUT_SECONDS`, which is the per-phase read budget the
+# pooled client applies -- a deadline the transport quietly caps is a deadline
+# that does not exist, which is why the override travels as an httpx timeout as
+# well as an asyncio one.
+_COLD_EMBEDDING_DEADLINE_SECONDS = 45.0
+
+# Which stages get that longer budget. A table rather than a condition, so a
+# stage added to the linker vocabulary has to be given a budget rather than
+# inheriting one by falling through an ``else``. ``temporal`` is absent because
+# it genuinely is cheap -- no vectors, no model -- so it runs under the same
+# deadline every other capability does, and a stage that started needing more
+# would be a change worth making visible here.
+_LINK_STAGE_DEADLINE_SECONDS: Mapping[VaultLinkStage, float] = {
+    VaultLinkStage.EDDIES: _COLD_EMBEDDING_DEADLINE_SECONDS,
+    VaultLinkStage.THREADS: _COLD_EMBEDDING_DEADLINE_SECONDS,
+}
+
+
+@dataclass(frozen=True)
+class _CallDepartures:
+    """The two ways one vault call may depart from the standing request defaults.
+
+    A value rather than two more keyword parameters, because the sender already
+    takes a verb, a URL, a body and a ceiling, and a signature that keeps growing
+    a flag per capability is one nobody reads before adding the next. Both fields
+    default to the standing behaviour, so a call that departs from neither says
+    nothing at all -- which is every call but two.
+
+    Attributes:
+        contract_versioned: Whether to carry :data:`_CONTRACT_VERSION_HEADER`.
+            ``True`` by default so a capability added later carries it without
+            anyone remembering; the capability document fetch is the sole opt-out,
+            because the negotiation endpoint must never itself fail to negotiate.
+        deadline: A whole-request budget in place of
+            :data:`_VAULT_TOTAL_DEADLINE_SECONDS`, for the one class of call that
+            genuinely cannot fit inside it. ``None`` is not "no deadline" but
+            "the standing one".
+    """
+
+    contract_versioned: bool = True
+    deadline: float | None = None
+
+
+#: The departures of a call that departs from nothing, and of the one call that
+#: opts out of the contract header. Module constants rather than constructions at
+#: each site, so the common case allocates nothing and reads as the default it is.
+_STANDING_CALL = _CallDepartures()
+_UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
+
+
+def _widened_phase_budgets(deadline: float) -> httpx.Timeout:
+    """The per-phase budgets one over-long call runs under.
+
+    Only ``read`` moves. Connecting, writing the request and acquiring a pooled
+    connection are no slower against a vault that is busy computing than against
+    an idle one, so widening them would buy nothing and would blunt the two
+    budgets that catch a genuinely unreachable host. ``read`` is the phase that
+    has to move, because it is the one a vault spends its embedding pass inside
+    -- and because it is restarted on every socket read, it is a floor on how
+    long the call may take rather than a ceiling, which is why the whole-request
+    deadline is still applied around it.
+    """
+    return httpx.Timeout(
+        connect=_VAULT_TIMEOUT_SECONDS,
+        read=deadline,
+        write=_VAULT_TIMEOUT_SECONDS,
+        pool=_VAULT_TIMEOUT_SECONDS,
+    )
 
 
 def _build_pooled_vault_client(
@@ -1470,33 +1412,6 @@ def _decoded_object(response: httpx.Response) -> Mapping[str, object] | None:
     return decoded if isinstance(decoded, Mapping) else None
 
 
-def _admissible_wheel(response: httpx.Response) -> Mapping[str, object] | None:
-    """Return a 2xx wheel body only when it is readable, complete, and within our ceiling.
-
-    Three refusals, in the order that makes each meaningful: a body that is not a
-    JSON object, a body missing a field Creek's own schema marks required, and a
-    body whose echoed ceiling is wider than the one adepthood was willing to
-    accept (:func:`_ceiling_admissible`).
-    """
-    payload = _decoded_object(response)
-    if payload is None or not all(name in payload for name in _WHEEL_RESPONSE_REQUIRED_FIELDS):
-        return None
-    if not _ceiling_admissible(payload["tier_ceiling"], _WHEEL_TIER_CEILING):
-        return None
-    return payload
-
-
-def _http_wheel_balance(response: httpx.Response) -> VaultWheelBalance | None:
-    """Project an admissible 2xx wheel body onto a domain balance, or ``None``.
-
-    Reuses :func:`_parse_wheel` -- the one canonical Frequency-to-stage
-    projection -- rather than repeating it. A second parser for one wire shape is
-    how two readings of the same wheel come to disagree.
-    """
-    payload = _admissible_wheel(response)
-    return None if payload is None else _parse_wheel(payload)
-
-
 class HttpCreekVaultClient:
     """A :class:`CreekVaultClient` that speaks plain HTTP/JSON to a configured vault.
 
@@ -1623,7 +1538,7 @@ class HttpCreekVaultClient:
         json_body: Mapping[str, object] | None = None,
         *,
         ceiling: WireTierCeiling,
-        contract_versioned: bool = True,
+        departures: _CallDepartures = _STANDING_CALL,
     ) -> httpx.Response:
         """Send one authorized vault request under the whole-request deadline.
 
@@ -1658,19 +1573,43 @@ class HttpCreekVaultClient:
         each caller's existing transport branch. The module constant is read at
         call time rather than captured, so a redeployment (or a test) can move
         the deadline without rebuilding the adapter.
+
+        ``deadline`` overrides that ceiling for the one class of call that
+        genuinely cannot fit inside it -- Creek's cold embedding stages, which
+        are minutes of local model work its own server deadline deliberately
+        does not shed. ``None`` is not "no deadline" but "the standing one", read
+        at call time exactly as before, so journal ingest, the wheel read, the
+        reflection and the upload are byte-identical to what they were.
+
+        **An override must move both clocks or it moves neither.** The pooled
+        client carries :data:`_VAULT_HTTP_TIMEOUT`, whose ``read`` phase is ten
+        seconds, and a phase budget is checked long before a whole-request
+        deadline is reached -- so raising only the ``asyncio.timeout`` would
+        produce a call that still dies at ten seconds while every test of the new
+        parameter passed. The per-request ``timeout`` below is therefore not
+        belt-and-braces; it is the half that does the work. Only the ``read``
+        phase moves: connecting, writing and acquiring a pooled connection are no
+        slower against a busy vault than against an idle one, and widening them
+        would bound nothing.
         """
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             _CEILING_HEADER: ceiling.value,
         }
-        if contract_versioned:
+        if departures.contract_versioned:
             headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
-        async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
-            return await self._active_client().request(
+        client = self._active_client()
+        deadline = departures.deadline
+        if deadline is None:
+            async with asyncio.timeout(_VAULT_TOTAL_DEADLINE_SECONDS):
+                return await client.request(method, url, headers=headers, json=json_body)
+        async with asyncio.timeout(deadline):
+            return await client.request(
                 method,
                 url,
                 headers=headers,
                 json=json_body,
+                timeout=_widened_phase_budgets(deadline),
             )
 
     async def _fetch_capabilities(self) -> Mapping[str, object]:
@@ -1685,7 +1624,7 @@ class HttpCreekVaultClient:
             "GET",
             f"{self._url}{_CAPABILITIES_PATH}",
             ceiling=_CONTENT_FREE_CEILING,
-            contract_versioned=False,
+            departures=_UNVERSIONED_CALL,
         )
         response.raise_for_status()
         payload = response.json()
@@ -2058,6 +1997,124 @@ class HttpCreekVaultClient:
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.REFLECT)
         return reflection
 
+    async def _post_pipeline(
+        self, path: str, body: Mapping[str, object], deadline: float | None
+    ) -> httpx.Response:
+        """Ask for one pipeline pass, normalizing any transport failure.
+
+        One sender for both routes rather than one each: the two differ only in
+        their URL and their body, and the failure normalization below is a
+        property of the seam rather than of either capability, so a second copy
+        would only be a second place for it to drift.
+
+        Every transport failure becomes :class:`CreekVaultUnavailableError` with
+        ``from None``, and a call that ran out of time the
+        :class:`VaultCallTimedOutError` subclass carrying the same static
+        message, for the reasons :meth:`_put_journal_entry` gives. A timed-out
+        embedding stage is the expected shape of a first pass over a cold vault
+        rather than a fault: the work it performed lands in Creek's cache
+        regardless, so the next pass resumes from it.
+        """
+        try:
+            return await self._authorized_request(
+                "POST",
+                f"{self._url}{path}",
+                body,
+                ceiling=_PIPELINE_WIRE_CEILING,
+                departures=_CallDepartures(deadline=deadline),
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_PIPELINE_FAILED_MESSAGE) from None
+
+    def _pipeline_gate(self) -> None:
+        """Refuse locally unless the cached handshake advertised the pipeline."""
+        if not self.supports(CreekCapability.PIPELINE):
+            raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
+
+    async def classify_corpus(self) -> VaultClassificationPass:
+        """Run one whole-vault classification pass, requiring the PIPELINE capability.
+
+        A thin wrapper over :meth:`_classify_corpus` so the attempt is counted
+        exactly once, exactly as :meth:`ingest` is.
+
+        This is not a batched :meth:`classify`, and the two stay apart on
+        purpose. :meth:`classify` is adepthood's own per-entry concept whose
+        request shape Creek never ratified, and it still refuses; nothing here
+        reopens it. What changed is that Creek published a *different* thing --
+        a whole-vault pass that names no fragment -- under its own capability
+        name, so this is a new seam rather than a relaxation of an old refusal.
+        """
+        with _CountingOutcome(CreekCapability.PIPELINE):
+            return await self._classify_corpus()
+
+    async def _classify_corpus(self) -> VaultClassificationPass:
+        """Run the classification pass and report how the exchange ended.
+
+        The same four-way shape :meth:`_wheel` has, for the same reasons, and
+        gated on the cached handshake first so no request leaves this process
+        toward a capability nobody claimed to serve.
+
+        ``privacy_tiers_assigned`` of zero is nowhere branched on, and its
+        absence is deliberate: it is the *expected* answer for a corpus seeded
+        over the network, because every fragment adepthood uploads already
+        carries the tier adepthood declared, so a pass that derived none derived
+        none correctly. Reading it as a degrade would report healthy work as a
+        failure on every vault this app fills.
+        """
+        self._pipeline_gate()
+        response = await self._post_pipeline(
+            _CLASSIFICATIONS_PATH, _classification_request_body(), None
+        )
+        if not response.is_success:
+            raise _read_failure(CreekCapability.PIPELINE, response) from None
+        payload = _decoded_object(response)
+        result = (
+            None if payload is None else _parse_classification_pass(payload, _PIPELINE_TIER_CEILING)
+        )
+        if result is None:
+            raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
+        return result
+
+    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass:
+        """Run one linker stage over the whole vault, requiring the PIPELINE capability.
+
+        A thin wrapper over :meth:`_link_corpus`, counted exactly once the way
+        :meth:`ingest` is. Counted under the same capability name as the
+        classification pass because it is the same advertised capability: Creek
+        publishes one ``pipeline`` name over both routes, and splitting the
+        telemetry would report two capabilities a vault never separately offered.
+        """
+        with _CountingOutcome(CreekCapability.PIPELINE):
+            return await self._link_corpus(stage)
+
+    async def _link_corpus(self, stage: VaultLinkStage) -> VaultLinkPass:
+        """Run one linker stage and report how the exchange ended.
+
+        The deadline is chosen from the stage rather than passed in, because how
+        long a stage needs is a fact about Creek's implementation of it and not
+        about why a caller wants it: ``temporal`` needs no vectors and runs under
+        the standing budget, while the two clustering stages fill a local vector
+        cache on their first pass and are given
+        :data:`_COLD_EMBEDDING_DEADLINE_SECONDS` for it.
+        """
+        self._pipeline_gate()
+        response = await self._post_pipeline(
+            _LINKS_PATH, _link_request_body(stage), _LINK_STAGE_DEADLINE_SECONDS.get(stage)
+        )
+        if not response.is_success:
+            raise _read_failure(CreekCapability.PIPELINE, response) from None
+        payload = _decoded_object(response)
+        result = (
+            None if payload is None else _parse_link_pass(payload, stage, _PIPELINE_TIER_CEILING)
+        )
+        if result is None:
+            raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
+        return result
+
     async def _get_wheel(self) -> httpx.Response:
         """Read the whole-corpus wheel, normalizing any transport failure.
 
@@ -2125,7 +2182,7 @@ class HttpCreekVaultClient:
         response = await self._get_wheel()
         if not response.is_success:
             raise _read_failure(CreekCapability.WHEEL, response) from None
-        balance = _http_wheel_balance(response)
+        balance = _wheel_balance_from(_decoded_object(response))
         if balance is None:
             raise CreekVaultPayloadError(_WHEEL_UNREADABLE_MESSAGE)
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.WHEEL)
@@ -2214,6 +2271,25 @@ class LocalFallbackCreekVaultClient:
         """Raise: a vault wheel read has no local vault to serve it."""
         record_vault_outcome(self._outcome, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
+
+    async def classify_corpus(self) -> VaultClassificationPass:
+        """Raise: there is no vault whose corpus could be classified.
+
+        A raise rather than a no-op result, unlike :meth:`ingest` and
+        :meth:`upload`. Those two report "not stored" because a journal entry and
+        an uploaded document both have somewhere else to be -- Postgres, the
+        account's own corpus -- so an unreplicated copy is a non-event. A pass
+        over a vault that does not exist has no such fallback: adepthood's own
+        corpus is classified by its own pipeline entirely, so answering with a
+        zero-count pass would report work nobody did.
+        """
+        record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
+
+    async def link_corpus(self, _stage: VaultLinkStage, /) -> VaultLinkPass:
+        """Raise: there is no vault whose fragments could be linked."""
+        record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
 
 def build_creek_vault_client() -> CreekVaultClient:

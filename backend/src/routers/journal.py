@@ -100,6 +100,7 @@ from services.checkin import CheckInContext, current_check_in, record_goal_compl
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
+from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
     related_surfaces,
@@ -280,6 +281,12 @@ async def _record_vault_outcome(
     real column change re-commits, so the common no-op paths stay free of a
     redundant write.
 
+    The pipeline call is last and is a non-event for this request: it degrades
+    silently on a vault that never advertised the capability, stands down inside
+    its own per-stage interval, runs only the two cheap stages from here, and
+    never raises. It is reached only on an ``INGESTED`` outcome, because a pass
+    over a corpus that did not just gain a fragment has nothing new to classify.
+
     The commit below the id check is what keeps a pooled connection out of the
     network round trip. Callers reach here having already committed the entry,
     but each then calls ``session.refresh``, which opens a *fresh* transaction
@@ -303,11 +310,17 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
-    if not _apply_vault_outcome(entry, outcome):
-        return
-    session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
+    if _apply_vault_outcome(entry, outcome):
+        session.add(entry)
+        await session.commit()
+        await session.refresh(entry)
+    if outcome.status is VaultWriteStatus.INGESTED:
+        await drive_vault_pipeline(
+            session,
+            vault_client,
+            user_id=entry.user_id,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:

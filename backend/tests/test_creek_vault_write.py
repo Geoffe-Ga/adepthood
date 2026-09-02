@@ -54,6 +54,7 @@ from tests.test_creek_vault_http_client import _handshake_payload as _vault_capa
 from tests.test_creek_vault_http_client import _json_handler as _vault_json_handler
 from tests.test_creek_vault_http_client import _raising_handler as _vault_raising_handler
 from tests.test_creek_vault_http_client import _text_handler as _vault_text_handler
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _CREATED_AT = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _BODY = "A quiet entry about the week's practice."
@@ -88,7 +89,7 @@ def _empty_reflection() -> VaultReflection:
     )
 
 
-class RecordingVaultClient:
+class RecordingVaultClient(NoPipelineVaultDouble):
     """Fake CreekVaultClient that records every call and returns scripted results."""
 
     def __init__(

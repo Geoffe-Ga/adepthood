@@ -63,12 +63,9 @@ from services import creek_vault_url_resolution
 from services.creek_vault_client import (
     _CONTRACT_MINOR_COMPONENTS,
     _CONTRACT_VERSION_HEADER,
-    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _VAULT_HTTP_TIMEOUT,
     _VAULT_TIMEOUT_SECONDS,
     _VAULT_TOTAL_DEADLINE_SECONDS,
-    _WHEEL_FREQUENCY_CODES,
-    _WHEEL_OK_STATUS,
     CONTRACT_MINOR,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
@@ -77,7 +74,6 @@ from services.creek_vault_client import (
     _build_pooled_vault_client,
     _contract_version_compatible,
     _entry_path_segment,
-    _parse_wheel,
     _VaultHttpPool,
     build_connected_vault_client,
     build_creek_vault_client,
@@ -89,9 +85,13 @@ from services.creek_vault_payload import (
     _MAX_REFLECT_NOTES,
     _MAX_RELATED_EDDIES,
     _MAX_RELATED_PRAXIS,
+    _MAX_WHEEL_ASPECT_NAME_LENGTH,
     _RELATED_PROSE_MAX,
     _RELATED_TITLE_MAX,
+    _WHEEL_FREQUENCY_CODES,
+    _WHEEL_OK_STATUS,
     _bounded_text,
+    _parse_wheel,
 )
 from services.creek_vault_pinned_transport import PinnedDestinationTransport
 from services.creek_vault_telemetry import (

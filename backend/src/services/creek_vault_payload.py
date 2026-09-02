@@ -54,13 +54,18 @@ import enum
 from collections.abc import Mapping
 from datetime import date
 
+from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultPayloadError,
+    VaultClassificationMethod,
+    VaultClassificationPass,
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultLinkPass,
+    VaultLinkStage,
     VaultPraxisKind,
     VaultPraxisStatus,
     VaultReflection,
@@ -71,7 +76,10 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultWheelAspect,
+    VaultWheelBalance,
     WireTierCeiling,
+    wire_ceiling_for,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
 
@@ -363,12 +371,18 @@ def _related_praxis(item: object) -> VaultRelatedPraxis | None:
     return VaultRelatedPraxis(title=title, praxis_type=praxis_type, status=status, excerpt=excerpt)
 
 
-def _fragment_count(raw: object) -> int | None:
-    """Return an eddy's tally of clustered fragments when it is one, else ``None``.
+def _published_count(raw: object) -> int | None:
+    """Return a published count when the vault answered one, else ``None``.
+
+    One reading of "this field is a count", used everywhere the wire publishes
+    one -- an eddy's clustered fragments, and every tally the pipeline responses
+    are made of. A second implementation of the same rule is how two readings of
+    the same number come to disagree.
 
     ``bool`` is excluded before anything else because Python's ``bool`` *is* an
     ``int``: without that, a vault answering ``true`` would publish an eddy
-    clustering one fragment. The rest is the published constraint -- an integer,
+    clustering one fragment, or a classification pass that visited one fragment
+    when it visited none. The rest is the published constraint -- an integer,
     never negative, because a tally of nothing is zero and a tally below that
     describes no corpus.
     """
@@ -403,7 +417,7 @@ def _eddy_formation(item: Mapping[str, object]) -> tuple[int, str] | None:
     and a page that cannot say honestly how much it gathers or when it appeared
     is one adepthood will not show at all.
     """
-    fragment_count = _fragment_count(item.get("fragment_count"))
+    fragment_count = _published_count(item.get("fragment_count"))
     formed = _iso_date(item.get("formed"))
     if fragment_count is None or formed is None:
         return None
@@ -842,3 +856,399 @@ def _parse_http_upload_result(payload: object) -> VaultUploadResult:
         if action is not None and fragment_id is not None:
             return VaultUploadResult(stored=True, vault_ref=fragment_id, action=action)
     return _NOT_STORED_UPLOAD
+
+
+# The status every pipeline response reports when it actually ran. Its own
+# constant rather than a reuse of the wheel's or the reflection's: the three
+# capabilities merely happen to spell success the same way today, and coupling
+# them would let one capability's future rename silently change how another is
+# parsed.
+_PIPELINE_OK_STATUS = "ok"
+
+# The published top-level fields of ``ClassificationResponse`` and of
+# ``LinkResponse``, in the order Creek's schemas declare them ``required``.
+# Presence is checked before anything is projected, so a 2xx body missing one is
+# refused rather than completed with a default the vault never sent -- the
+# discipline ``_WHEEL_RESPONSE_REQUIRED_FIELDS`` keeps, applied to the two wider
+# shapes. ``status`` and ``tier_ceiling`` are required here and then verified
+# rather than carried: a constant and a ceiling echo are claims to check, not
+# values a caller has any use for.
+_CLASSIFICATION_RESPONSE_REQUIRED_FIELDS = (
+    "status",
+    "tier_ceiling",
+    "method",
+    "total",
+    "classified",
+    "preserved_manual",
+    "preserved_llm",
+    "privacy_tiers_assigned",
+    "retiered",
+    "praxis_marked",
+    "tags_extracted",
+    "complete",
+)
+_LINK_RESPONSE_REQUIRED_FIELDS = (
+    "status",
+    "tier_ceiling",
+    "method",
+    "fragment_count",
+    "link_count",
+    "largest_cluster_fragments",
+    "clusters_split",
+    "oversized_discarded",
+)
+
+# Which of those fields are counts, and so must survive :func:`_published_count`
+# rather than merely being present. Split out from the required tuples above
+# because the two ask different questions -- one is "did the vault answer this
+# field at all", the other "is what it answered a number a corpus could have
+# produced" -- and a body can pass the first while failing the second.
+_CLASSIFICATION_COUNT_FIELDS = (
+    "total",
+    "classified",
+    "preserved_manual",
+    "preserved_llm",
+    "privacy_tiers_assigned",
+    "retiered",
+    "praxis_marked",
+    "tags_extracted",
+)
+_LINK_COUNT_FIELDS = (
+    "fragment_count",
+    "link_count",
+    "largest_cluster_fragments",
+    "clusters_split",
+    "oversized_discarded",
+)
+
+
+def _classification_request_body() -> Mapping[str, object]:
+    """Build the body of a whole-vault classification request.
+
+    Two fields exist on the published shape and this sends one of them.
+
+    ``method`` is sent explicitly even though Creek defaults it, because an
+    omitted field means "whatever you default to" and a named one means "run the
+    rules classifier" -- and only the second is a statement adepthood can be held
+    to when the served set grows. It is emphatically *not* sent as ``null``: the
+    field is a one-member enum under ``additionalProperties: false``, so an
+    explicit null is a type violation the vault answers with ``422``.
+
+    ``retier`` is omitted, and omission here is the decision rather than a
+    default falling through. Re-deriving a privacy tier the operator or the
+    uploader already settled is not adepthood's call to make -- every fragment
+    adepthood puts in a vault already carries the tier adepthood declared at
+    upload time -- so the request that could ask for it is one this function
+    cannot build.
+    """
+    return {"method": VaultClassificationMethod.RULES.value}
+
+
+def _link_request_body(stage: VaultLinkStage) -> Mapping[str, object]:
+    """Build the body of one linker-stage request.
+
+    ``method`` is unconditional here where it is merely deliberate above:
+    ``LinkRequest.method`` is ``required`` and carries no default, because the
+    three stages are not interchangeable and a default would silently run a pass
+    the caller did not choose while reporting it as the one they asked for.
+    """
+    return {"method": stage.value}
+
+
+def _counts(payload: Mapping[str, object], fields: tuple[str, ...]) -> dict[str, int] | None:
+    """Read every named field as a published count, or answer ``None``.
+
+    All-or-nothing on purpose. A response whose ``total`` is a string and whose
+    other seven tallies are integers is not a pass that partly happened; it is a
+    body adepthood cannot read, and projecting seven of its numbers would file a
+    fiction under a completed stage.
+    """
+    counts: dict[str, int] = {}
+    for name in fields:
+        count = _published_count(payload[name])
+        if count is None:
+            return None
+        counts[name] = count
+    return counts
+
+
+def _admissible_pipeline_body(
+    payload: Mapping[str, object], required: tuple[str, ...], accepted: VaultTierCeiling
+) -> bool:
+    """Whether a 2xx pipeline body is one adepthood may read at all.
+
+    Three questions, in the order that makes each one answerable: every published
+    field present, the success constant actually present in ``status``, and the
+    ceiling the vault says it ran at no wider than the one adepthood was willing
+    to accept. The last is the one that matters most here -- these routes run
+    over the *whole* vault, so a wider echo says the counts were drawn from
+    material this app never authorized a pass over, and a count computed over
+    unauthorized material is refused whole rather than recorded.
+    """
+    if not all(name in payload for name in required):
+        return False
+    if payload["status"] != _PIPELINE_OK_STATUS:
+        return False
+    return _ceiling_admissible(payload["tier_ceiling"], accepted)
+
+
+def _parse_classification_pass(
+    payload: Mapping[str, object], accepted: VaultTierCeiling
+) -> VaultClassificationPass | None:
+    """Project an admissible classification body onto its domain value, or ``None``.
+
+    ``complete`` is type-checked rather than coerced, and it is checked as a
+    ``bool`` specifically: it is the field that says whether the pass finished,
+    so a vault answering ``"false"`` or ``0`` must not read as a clean run, and
+    truthiness is exactly the reading that would let it.
+    """
+    if not _admissible_pipeline_body(payload, _CLASSIFICATION_RESPONSE_REQUIRED_FIELDS, accepted):
+        return None
+    if _wire_value(VaultClassificationMethod, payload["method"]) is None:
+        return None
+    complete = payload["complete"]
+    counts = _counts(payload, _CLASSIFICATION_COUNT_FIELDS)
+    if counts is None or not isinstance(complete, bool):
+        return None
+    return VaultClassificationPass(
+        total=counts["total"],
+        classified=counts["classified"],
+        preserved_manual=counts["preserved_manual"],
+        preserved_llm=counts["preserved_llm"],
+        privacy_tiers_assigned=counts["privacy_tiers_assigned"],
+        retiered=counts["retiered"],
+        praxis_marked=counts["praxis_marked"],
+        tags_extracted=counts["tags_extracted"],
+        complete=complete,
+    )
+
+
+def _parse_link_pass(
+    payload: Mapping[str, object], stage: VaultLinkStage, accepted: VaultTierCeiling
+) -> VaultLinkPass | None:
+    """Project an admissible link body onto its domain value, or ``None``.
+
+    The echoed ``method`` is checked against the stage that was *asked for*
+    rather than merely read back. Creek publishes the echo "for correlation",
+    and a correlation nobody verifies is a label: a body echoing ``threads`` for
+    a ``temporal`` request would otherwise be filed as the temporal stage having
+    run, and the ladder would move on from a rung it never climbed.
+    """
+    if not _admissible_pipeline_body(payload, _LINK_RESPONSE_REQUIRED_FIELDS, accepted):
+        return None
+    if _wire_value(VaultLinkStage, payload["method"]) != stage.value:
+        return None
+    counts = _counts(payload, _LINK_COUNT_FIELDS)
+    if counts is None:
+        return None
+    return VaultLinkPass(
+        stage=stage,
+        fragment_count=counts["fragment_count"],
+        link_count=counts["link_count"],
+        largest_cluster_fragments=counts["largest_cluster_fragments"],
+        clusters_split=counts["clusters_split"],
+        oversized_discarded=counts["oversized_discarded"],
+    )
+
+
+# The privacy ceiling adepthood presents when it asks for a wheel. Only
+# aggregate per-Frequency counts and shares cross this seam -- never fragment
+# content -- so the ceiling governs what the vault *counts*, not what it hands
+# back. ``personal`` is the honest maximum: intimate content never reaches the
+# vault from adepthood at all, and creek independently caps a network consumer
+# below intimate. ``open`` would be worse than useless rather than safer,
+# because creek ranks unclassified content with personal: an open ceiling
+# silently excludes every not-yet-classified fragment, so a young corpus reads
+# back as an all-zero wheel.
+#
+# It is read twice, as the same number for the same reason -- this is the most
+# material adepthood ever authorizes a vault to count over. Outbound it is
+# *declared*, in :data:`_CEILING_HEADER`; inbound it is the widest ceiling
+# adepthood is willing to **accept**, which :func:`_ceiling_admissible` verifies
+# the vault's echo against. Declaring it is not optional: the ``/v1`` request
+# body and query string publish no field for a ceiling, and reading that as "the
+# surface has none" is what left this read taking Creek's ``open`` default and
+# counting a fraction of the corpus while looking computed.
+_WHEEL_TIER_CEILING = VaultTierCeiling.PERSONAL
+
+# The same ceiling in the vocabulary the header speaks, resolved once at import
+# so a wheel read cannot be the call that discovers the translation refuses.
+_WHEEL_WIRE_CEILING = wire_ceiling_for(_WHEEL_TIER_CEILING)
+
+# The status a ``creek.wheel`` response reports when it actually computed a
+# wheel. Its own constant rather than a reuse of
+# :attr:`~domain.creek_vault.VaultReflectionStatus.OK`: the capabilities merely
+# happen to spell their success the same way today, and coupling them would let
+# one capability's future rename silently change how another is parsed.
+_WHEEL_OK_STATUS = "ok"
+
+# The Frequency keys adepthood will read out of the vault's wheel map, in
+# canonical order -- one per curriculum stage, so ``F1`` is stage 1. A whitelist
+# rather than an iteration of whatever the vault sent, so a code creek adds
+# later is ignored exactly as an unknown capability string already is.
+#
+# That ``F{n}`` -> stage ``n`` correspondence is a **semantic identity**, and
+# this is the definition site where that has to be said. The Frequencies, the
+# Aspects of Wholeness and the Stages are one set of ten developmental
+# positions under four names -- Aspect, Frequency, Stage, Wavelength Mode --
+# per ``NORTH-STAR.md``: "the shared ontology where Adepthood's Aspects equal
+# Creek's Frequencies equal the Wavelength Modes". Modes are these ten,
+# colour-keyed; the six Wavelength *phases* are a different axis entirely,
+# and ``graph/ontology-spine.md`` writes each row as
+# ``Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival``. F1 *is* stage 1, and
+# creek's ``Agency`` *is* the course Aspect Agency.
+#
+# (An earlier version of this comment argued the opposite -- that the two were
+# unrelated vocabularies and their both having ten members was "a coincidence of
+# cardinality". That was wrong, and it propagated: see ``domain.frequencies``,
+# which now carries the canonical table.)
+#
+# Colour is the primary key, not the name. The two labelings agree on six of the
+# ten positions and diverge on the middle four -- creek's ``Achievism`` against
+# the curriculum's ``Intellectual Understanding / Achievist``, and likewise F6,
+# F7, F8 -- so a join on names would mismatch exactly those four while looking
+# correct. ``backend/tests/services/test_frequency_classification.py`` asserts
+# both the colour join and that specific divergence.
+#
+# The read path still relabels each Frequency into the curriculum's own words
+# before rendering, which remains right for a different reason than the one
+# originally given: the curriculum's wording is what the user has been reading
+# all along, not because the ontology underneath is foreign.
+_WHEEL_FREQUENCY_CODES: tuple[str, ...] = tuple(f"F{n}" for n in range(1, TOTAL_STAGES + 1))
+
+# Longest Frequency name adepthood will accept from a wheel entry. A *bound*,
+# not a format -- the vault owns what it calls its own Frequencies -- and a
+# generous one, since the longest name either side actually ships is under
+# thirty characters. It exists because that string is carried into a domain
+# value and can reach a log, and without a ceiling a compromised vault could
+# answer with a string of any size at all.
+_MAX_WHEEL_ASPECT_NAME_LENGTH = 128
+
+# The published top-level fields of ``WheelResponse``, in the order Creek's
+# schema declares them ``required``. Presence is checked before anything is
+# projected, so a body missing one is refused rather than completed with a
+# default the vault never sent. ``total_classified`` is deliberately validated
+# and then never branched on: whether an all-zero wheel is worth rendering is
+# decided in exactly one place, ``_carries_signal`` in
+# :mod:`services.creek_vault_wheel`, and a second implementation of one rule is
+# how the two drift.
+_WHEEL_RESPONSE_REQUIRED_FIELDS = (
+    "status",
+    "tier_ceiling",
+    "total_classified",
+    "unclassified",
+    "wheel",
+)
+
+
+def _wheel_fullness(raw: object) -> float | None:
+    """Return a Frequency's share as a float, or ``None`` when it is not a number.
+
+    Booleans are rejected *before* the numeric test, because ``isinstance(True,
+    int)`` is ``True`` and a bare numeric check would silently read ``True`` as a
+    completely full Frequency. The ``0.0..1.0`` bound is deliberately not checked
+    here: the read path's own aspect check owns it, and its chained comparison
+    already rejects ``NaN`` and the infinities. That is a division of labor
+    between the two halves of the seam, not a gap in either.
+
+    The conversion itself is guarded because JSON has no integer ceiling: a
+    literal past the float range decodes to an arbitrary-precision ``int``, and
+    ``float()`` then raises ``OverflowError`` -- an ``ArithmeticError`` that is in
+    neither this client's transport degrade set nor the read path's
+    ``CreekVaultError`` catch, so it would escape the seam as a crash on the
+    caller's request path. A share no float can hold is simply unreadable, which
+    is what ``None`` already means here.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    try:
+        return float(raw)
+    except OverflowError:
+        return None
+
+
+def _wheel_aspect(entry: object, stage_number: int) -> VaultWheelAspect | None:
+    """Project one Frequency entry onto a domain aspect, or drop it whole.
+
+    Both halves have to survive on their own terms: a numeric ``share`` and a
+    non-blank, printable ``name`` within :data:`_MAX_WHEEL_ASPECT_NAME_LENGTH`. A
+    partial entry is dropped rather than completed with a default, which would
+    show the user a Frequency reading neither they nor the vault ever produced.
+
+    Printability is required for the same reason :func:`_is_storable_ref` requires
+    it of a fragment id: a Frequency name is short label text, so a control
+    character in one is never legitimate, and a name carrying CR/LF, an ANSI
+    escape, or a bidirectional override is exactly the payload that forges a log
+    line or misrenders a label. The name is relabelled away before this wheel is
+    rendered, but this helper is the boundary, and a value that is inert wherever
+    it lands does not depend on that.
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    fullness = _wheel_fullness(entry.get("share"))
+    name = _bounded_text(entry.get("name"), _MAX_WHEEL_ASPECT_NAME_LENGTH)
+    if fullness is None or name is None or not name.isprintable():
+        return None
+    return VaultWheelAspect(stage_number=stage_number, aspect=name, fullness=fullness)
+
+
+def _wheel_aspects(wheel: Mapping[str, object]) -> tuple[VaultWheelAspect, ...]:
+    """Project the whitelisted Frequency codes onto aspects, dropping the unusable ones.
+
+    Walks :data:`_WHEEL_FREQUENCY_CODES` rather than the mapping's own keys, so
+    the stage number comes from adepthood's canonical order and any code outside
+    the whitelist is ignored. The caller decides what a short result means.
+    """
+    return tuple(
+        aspect
+        for stage_number, code in enumerate(_WHEEL_FREQUENCY_CODES, start=1)
+        if (aspect := _wheel_aspect(wheel.get(code), stage_number)) is not None
+    )
+
+
+def _parse_wheel(payload: Mapping[str, object]) -> VaultWheelBalance | None:
+    """Project a wheel response onto a domain balance, or ``None`` if unusable.
+
+    Answers ``None`` -- never raises -- so the caller owns the degrade. Three
+    conditions: a literal :data:`_WHEEL_OK_STATUS`, which is the strict equality
+    that makes ``refused``, ``empty``, and any status a future creek adds all
+    degrade rather than be mined for numbers; a ``wheel`` that is a mapping; and
+    a usable entry for *every* Frequency code. That last one is all-or-nothing on
+    purpose: one bad Frequency rejects the whole read rather than yielding a ring
+    with a hole in it.
+    """
+    if payload.get("status") != _WHEEL_OK_STATUS:
+        return None
+    wheel = payload.get("wheel")
+    if not isinstance(wheel, Mapping):
+        return None
+    aspects = _wheel_aspects(wheel)
+    if len(aspects) != len(_WHEEL_FREQUENCY_CODES):
+        return None
+    return VaultWheelBalance(aspects=aspects)
+
+
+def _wheel_balance_from(payload: Mapping[str, object] | None) -> VaultWheelBalance | None:
+    """Project a decoded 2xx wheel body onto a domain balance, or ``None``.
+
+    Four refusals, in the order that makes each meaningful: a body that was not a
+    JSON object at all, a body missing a field Creek's own schema marks required,
+    a body whose echoed ceiling is wider than the one adepthood was willing to
+    accept, and finally a wheel :func:`_parse_wheel` cannot read.
+
+    It takes a decoded mapping rather than a response because there is nothing
+    about a socket in any of those four questions -- which is what lets the whole
+    wheel reading live here, beside the reflection's and the pipeline's, instead
+    of in the adapter that happens to have fetched it.
+    """
+    if payload is None or not all(name in payload for name in _WHEEL_RESPONSE_REQUIRED_FIELDS):
+        return None
+    if not _ceiling_admissible(payload["tier_ceiling"], _WHEEL_TIER_CEILING):
+        return None
+    return _parse_wheel(payload)
+
+
+# What a caller is told when a vault answered a wheel it could not read. Built
+# from the same closed vocabulary every other message here is, so no branch can
+# put a vault-chosen string in front of an operator.
+_WHEEL_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.WHEEL)

@@ -62,6 +62,7 @@ from schemas.journal_upload import (
     UPLOAD_MESSAGES,
     UPLOAD_RATE_LIMIT,
 )
+from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -86,7 +87,7 @@ def _empty_reflection() -> VaultReflection:
     )
 
 
-class ScriptedUploadClient:
+class ScriptedUploadClient(NoPipelineVaultDouble):
     """Fake :class:`CreekVaultClient` whose upload surface is scripted per test."""
 
     def __init__(
