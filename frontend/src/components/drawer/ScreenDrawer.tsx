@@ -17,7 +17,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import { colors, ink, motion, SPACING, surface, surfaceShadow, type } from '@/design/tokens';
+import { ink, motion, SPACING, surface, surfaceShadow, type } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 /** Fraction of the viewport width the drawer occupies before clamping. */
@@ -151,6 +151,6 @@ const styles = StyleSheet.create({
   },
   scrim: {
     flex: 1,
-    backgroundColor: colors.mystical.overlay,
+    backgroundColor: 'transparent',
   },
 });

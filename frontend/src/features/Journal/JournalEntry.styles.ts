@@ -106,6 +106,12 @@ const styles = StyleSheet.create({
   sheetNarrow: {
     maxWidth: '100%',
   },
+  pageScroll: {
+    flex: 1,
+  },
+  pageScrollContent: {
+    flexGrow: 1,
+  },
   /** The two-column page inside the sheet (width cap + centring live on the sheet). */
   page: {
     flex: 1,
@@ -131,6 +137,7 @@ const styles = StyleSheet.create({
   writingColumnContent: {
     flexGrow: 1,
     paddingVertical: spacing(3),
+    paddingRight: SPACING.md,
   },
   marginColumn: {
     width: journalLayout.marginColumnWidth,
@@ -155,6 +162,7 @@ const styles = StyleSheet.create({
     ...editorialType.title,
     color: colors.paper.ink,
     paddingVertical: spacing(1),
+    flexShrink: 1,
   },
   bodyInput: {
     ...editorialType.body,
@@ -177,6 +185,24 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: spacing(2),
+  },
+  saveStatusRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: SPACING.xs,
+  },
+  saveRetry: {
+    minHeight: touchTarget.minimum,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+  },
+  saveRetryLabel: {
+    ...editorialType.action,
+    color: accent.primary,
   },
   /**
    * The page's quiet caption face, shared by every footer line that reports

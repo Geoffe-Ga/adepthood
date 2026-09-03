@@ -7,6 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { RefreshCw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -31,6 +32,7 @@ import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
+import { continueMarkdownLine } from './markdownEditing';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
@@ -57,7 +59,7 @@ import type {
 } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
-import { colors, writingField, writingFieldFocus } from '@/design/tokens';
+import { accent, colors, writingField, writingFieldFocus } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -1036,6 +1038,7 @@ interface WritingColumnProps {
   onChangeBody: (_next: string) => void;
   onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
+  onRetrySave: () => Promise<number | null>;
   onFinish?: () => void;
   /** True while the Finish write is in flight; drives the busy/disabled control. */
   finishing: boolean;
@@ -1118,6 +1121,10 @@ function WritingFields({
 > & {
   bodyPlaceholder: string;
 }) {
+  const changeBody = useCallback(
+    (next: string) => onChangeBody(continueMarkdownLine(body, next)),
+    [body, onChangeBody],
+  );
   return (
     <>
       <TextInput
@@ -1130,12 +1137,14 @@ function WritingFields({
         cursorColor={writingField.caret}
         accessibilityLabel="Entry title"
         testID="journal-title-input"
+        multiline
+        scrollEnabled={false}
       />
       <View style={styles.hairline} />
       <TextInput
         style={[styles.bodyInput, writingFieldFocus]}
         value={body}
-        onChangeText={onChangeBody}
+        onChangeText={changeBody}
         onSelectionChange={onBodySelectionChange}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
@@ -1163,13 +1172,35 @@ function WritingFields({
  * reference, never a prompt. It stays silent at zero (see ``wordCountLabel``),
  * so an untouched page still opens as a blank page rather than a scoreboard.
  */
-function WritingFooter({ body, saveState }: { body: string; saveState: SaveState }) {
+function WritingFooter({
+  body,
+  saveState,
+  onRetry,
+}: {
+  body: string;
+  saveState: SaveState;
+  onRetry: () => Promise<number | null>;
+}) {
   const words = useMemo(() => countWords(body), [body]);
   return (
     <View style={styles.writingFooter}>
-      <Text style={styles.savedHint} testID="journal-save-hint">
-        {savedHintLabel(saveState)}
-      </Text>
+      <View style={styles.saveStatusRow}>
+        <Text style={styles.savedHint} testID="journal-save-hint">
+          {savedHintLabel(saveState)}
+        </Text>
+        {saveState === 'error' ? (
+          <TouchableOpacity
+            style={styles.saveRetry}
+            onPress={() => void onRetry()}
+            accessibilityRole="button"
+            accessibilityLabel="Retry saving this entry"
+            testID="journal-save-retry"
+          >
+            <RefreshCw color={accent.primary} size={18} accessible={false} />
+            <Text style={styles.saveRetryLabel}>Retry</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
       <Text style={styles.savedHint} testID="journal-word-count">
         {wordCountLabel(words)}
       </Text>
@@ -1188,6 +1219,7 @@ function WritingColumn({
   onChangeBody,
   onChangeClassification,
   onChangeChord,
+  onRetrySave,
   onFinish,
   finishing,
   finishError,
@@ -1196,31 +1228,29 @@ function WritingColumn({
   onBodySelectionChange,
 }: WritingColumnProps) {
   return (
-    <ScrollView
-      style={styles.writingColumn}
-      contentContainerStyle={styles.writingColumnContent}
-      keyboardShouldPersistTaps="handled"
-    >
-      <EntryTagControls
-        classification={classification}
-        chord={chord}
-        onChangeClassification={onChangeClassification}
-        onChangeChord={onChangeChord}
-        controlsDisabled={controlsDisabled}
-      />
-      <WritingFields
-        title={title}
-        body={body}
-        onChangeTitle={onChangeTitle}
-        onChangeBody={onChangeBody}
-        onBodySelectionChange={onBodySelectionChange}
-        bodyPlaceholder={bodyPlaceholder}
-      />
-      <WritingFooter body={body} saveState={saveState} />
-      {onFinish ? (
-        <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
-      ) : null}
-    </ScrollView>
+    <View style={styles.writingColumn}>
+      <View style={styles.writingColumnContent}>
+        <EntryTagControls
+          classification={classification}
+          chord={chord}
+          onChangeClassification={onChangeClassification}
+          onChangeChord={onChangeChord}
+          controlsDisabled={controlsDisabled}
+        />
+        <WritingFields
+          title={title}
+          body={body}
+          onChangeTitle={onChangeTitle}
+          onChangeBody={onChangeBody}
+          onBodySelectionChange={onBodySelectionChange}
+          bodyPlaceholder={bodyPlaceholder}
+        />
+        <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
+        {onFinish ? (
+          <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -1527,30 +1557,28 @@ function ReadColumn({
   onEdit: () => void;
 }) {
   return (
-    <ScrollView
-      style={[styles.writingColumn, readingScrollStyle]}
-      contentContainerStyle={styles.writingColumnContent}
-      keyboardShouldPersistTaps="handled"
-    >
-      {title ? <Text style={styles.titleInput}>{title}</Text> : null}
-      <View style={styles.hairline} />
-      {quote.selecting ? (
-        <QuoteSelectionSurface
-          body={body}
-          onSelectionChange={quote.onSelectionChange}
-          onConfirm={quote.confirmSelection}
-          onCancel={quote.cancelSelecting}
-        />
-      ) : (
-        <ReadBodyContent body={body} notes={notes} quote={quote} onOpen={onOpen} />
-      )}
-      <Text style={styles.savedHint} testID="journal-save-hint">
-        {justSaved ? SAVED_HINT : BLANK_HINT}
-      </Text>
-      {quote.selecting ? null : (
-        <ReadModeControls quote={quote} resonance={resonance} onEdit={onEdit} />
-      )}
-    </ScrollView>
+    <View style={[styles.writingColumn, readingScrollStyle]}>
+      <View style={styles.writingColumnContent}>
+        {title ? <Text style={styles.titleInput}>{title}</Text> : null}
+        <View style={styles.hairline} />
+        {quote.selecting ? (
+          <QuoteSelectionSurface
+            body={body}
+            onSelectionChange={quote.onSelectionChange}
+            onConfirm={quote.confirmSelection}
+            onCancel={quote.cancelSelecting}
+          />
+        ) : (
+          <ReadBodyContent body={body} notes={notes} quote={quote} onOpen={onOpen} />
+        )}
+        <Text style={styles.savedHint} testID="journal-save-hint">
+          {justSaved ? SAVED_HINT : BLANK_HINT}
+        </Text>
+        {quote.selecting ? null : (
+          <ReadModeControls quote={quote} resonance={resonance} onEdit={onEdit} />
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -1943,6 +1971,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
       onChangeChord={ctl.autosave.onChangeChord}
+      onRetrySave={ctl.autosave.flush}
       onFinish={canOfferFinish ? markFinished : undefined}
       finishing={finishing}
       finishError={finishError}
@@ -1966,16 +1995,13 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
   );
 }
 
-function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
-  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
-  const settle = useEntrance();
+/** Build the margin's note/suggestion stream without making the page own its branches. */
+function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
   const notes = ctl.resonance.marginalia;
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
-
-  let marginContent: React.ReactNode;
-  if (notes.length > 0 || hasVisibleSuggestions) {
-    marginContent = (
+  const content =
+    notes.length > 0 || hasVisibleSuggestions ? (
       <MarginStream
         notes={notes}
         suggestions={suggestions}
@@ -1984,33 +2010,47 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
         onAccept={ctl.resonance.acceptSuggestion}
         onDismiss={ctl.resonance.dismissSuggestion}
       />
+    ) : (
+      <ResonanceMargin error={ctl.resonance.error} />
     );
-  } else marginContent = <ResonanceMargin error={ctl.resonance.error} />;
+  return (
+    <View
+      style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
+      testID="journal-margin-column"
+    >
+      <NoNotesNotice message={ctl.resonance.noNotesMessage} />
+      {content}
+    </View>
+  );
+}
 
+function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
+  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
+  const settle = useEntrance();
   return (
     <View style={styles.desk}>
       <Animated.View
         style={[styles.sheet, narrow && styles.sheetNarrow, settle]}
         testID="journal-sheet"
       >
-        <View
-          style={[
-            styles.page,
-            narrow && styles.pageNarrow,
-            // Only the writing surface has a button floating over it to clear.
-            ctl.editGate.editMode && styles.pageWithFloatingAction,
-          ]}
-          testID="journal-page"
+        <ScrollView
+          style={styles.pageScroll}
+          contentContainerStyle={styles.pageScrollContent}
+          keyboardShouldPersistTaps="handled"
+          testID="journal-page-scroll"
         >
-          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
           <View
-            style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
-            testID="journal-margin-column"
+            style={[
+              styles.page,
+              narrow && styles.pageNarrow,
+              ctl.editGate.editMode && styles.pageWithFloatingAction,
+            ]}
+            testID="journal-page"
           >
-            <NoNotesNotice message={ctl.resonance.noNotesMessage} />
-            {marginContent}
+            <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+            <JournalMargin ctl={ctl} narrow={narrow} />
           </View>
-        </View>
+        </ScrollView>
       </Animated.View>
     </View>
   );
@@ -2158,7 +2198,7 @@ function CloseEntryLink({
       accessibilityLabel={CLOSE_ENTRY_LABEL}
       testID="journal-close-entry"
     >
-      <Text style={styles.controlLink}>Close</Text>
+      <X color={accent.primary} size={24} accessible={false} />
     </TouchableOpacity>
   );
 }

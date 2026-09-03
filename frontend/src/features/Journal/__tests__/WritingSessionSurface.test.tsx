@@ -76,7 +76,7 @@ describe('WritingSessionSurface', () => {
     expect(queryByTestId('writing-session-banner')).toBeNull();
   });
 
-  it('puts the note away in one tap and leaves the timer ready', () => {
+  it('puts the note away in one tap and leaves the restart timer collapsed', () => {
     const { getByTestId, queryByTestId } = renderSurface();
 
     fireEvent.press(getByTestId('writing-timer-start'));
@@ -85,7 +85,8 @@ describe('WritingSessionSurface', () => {
 
     expect(queryByTestId('writing-session-banner')).toBeNull();
     expect(getByTestId('writing-timer-readout').props.children).toBe('20:00');
-    expect(queryByTestId('writing-timer-start')).not.toBeNull();
+    expect(queryByTestId('writing-timer-start')).toBeNull();
+    expect(queryByTestId('writing-timer-compact')).not.toBeNull();
   });
 
   it('replaces an earlier note rather than stacking a second one', () => {
@@ -96,6 +97,7 @@ describe('WritingSessionSurface', () => {
 
     const secondStart = T0 + 25 * MS_PER_MINUTE;
     jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId('writing-timer-compact'));
     fireEvent.press(getByTestId('writing-timer-start'));
     tickTo(secondStart + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
 
@@ -115,6 +117,7 @@ describe('WritingSessionSurface', () => {
 
     const secondStart = T0 + 25 * MS_PER_MINUTE;
     jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId('writing-timer-compact'));
     fireEvent.press(getByTestId('writing-timer-start'));
     jest.setSystemTime(secondStart + 3 * MS_PER_MINUTE);
     fireEvent.press(getByTestId('writing-timer-stop'));
@@ -132,6 +135,7 @@ describe('WritingSessionSurface', () => {
 
     const secondStart = T0 + 25 * MS_PER_MINUTE;
     jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId('writing-timer-compact'));
     fireEvent.press(getByTestId(`writing-timer-preset-${SHORT_PRESET_MINUTES}`));
     fireEvent.press(getByTestId('writing-timer-start'));
     tickTo(secondStart + SHORT_PRESET_MINUTES * MS_PER_MINUTE);

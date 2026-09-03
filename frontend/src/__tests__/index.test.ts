@@ -12,6 +12,7 @@ jest.mock('expo', () => ({ registerRootComponent: jest.fn() }));
 jest.mock('../App', () => ({ __esModule: true, default: () => null }));
 jest.mock('../observability/sentry', () => ({ initErrorMonitoring: jest.fn() }));
 jest.mock('../utils/webViewport', () => ({ applyWebViewportLock: jest.fn() }));
+jest.mock('../utils/webSelection', () => ({ applyWebSelectionTheme: jest.fn() }));
 
 describe('app entry point', () => {
   it('initialises error monitoring before the root component is registered', () => {

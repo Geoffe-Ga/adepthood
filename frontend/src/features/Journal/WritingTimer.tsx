@@ -18,6 +18,7 @@
  * state and throws the elapsed time away, and a writer who stops early still
  * wrote for however long they wrote.
  */
+import { Pause, Play, Square } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -119,11 +120,15 @@ function TimerControl({
   a11yLabel,
   onPress,
   testID,
+  icon,
+  iconOnly = false,
 }: {
   label: string;
   a11yLabel: string;
   onPress: () => void;
   testID: string;
+  icon?: React.ReactNode;
+  iconOnly?: boolean;
 }): React.JSX.Element {
   return (
     <TouchableOpacity
@@ -134,7 +139,8 @@ function TimerControl({
       accessibilityState={{ disabled: false }}
       testID={testID}
     >
-      <Text style={styles.controlLabel}>{label}</Text>
+      {icon}
+      {iconOnly ? null : <Text style={styles.controlLabel}>{label}</Text>}
     </TouchableOpacity>
   );
 }
@@ -146,29 +152,25 @@ function TimerControl({
  * pill's first row, which is what keeps the pill's height a count of rows
  * rather than a consequence of how much fits across a given phone.
  */
-function TimerControls({
+function LiveTimerControls({
   view,
   controls,
+  compact,
 }: {
   view: TimerView;
   controls: RitualControls;
+  compact: boolean;
 }): React.JSX.Element {
   return (
     <>
-      {view.showStart ? (
-        <TimerControl
-          label={WRITING_TIMER_START}
-          a11yLabel={WRITING_TIMER_START_A11Y}
-          onPress={controls.start}
-          testID="writing-timer-start"
-        />
-      ) : null}
       {view.showPause ? (
         <TimerControl
           label={WRITING_TIMER_PAUSE}
           a11yLabel={WRITING_TIMER_PAUSE_A11Y}
           onPress={controls.pause}
           testID="writing-timer-pause"
+          icon={<Pause color={colors.paper.inkSoft} size={20} accessible={false} />}
+          iconOnly={compact}
         />
       ) : null}
       {view.showResume ? (
@@ -177,6 +179,8 @@ function TimerControls({
           a11yLabel={WRITING_TIMER_RESUME_A11Y}
           onPress={controls.resume}
           testID="writing-timer-resume"
+          icon={<Play color={colors.paper.inkSoft} size={20} accessible={false} />}
+          iconOnly={compact}
         />
       ) : null}
       {view.showStop ? (
@@ -185,10 +189,37 @@ function TimerControls({
           a11yLabel={WRITING_TIMER_STOP_A11Y}
           onPress={controls.complete}
           testID="writing-timer-stop"
+          icon={<Square color={colors.paper.inkSoft} size={18} accessible={false} />}
+          iconOnly={compact}
         />
       ) : null}
     </>
   );
+}
+
+/** The mutually exclusive idle and live controls. */
+function TimerControls({
+  view,
+  controls,
+  onStart,
+  compact,
+}: {
+  view: TimerView;
+  controls: RitualControls;
+  onStart: () => void;
+  compact: boolean;
+}): React.JSX.Element {
+  if (view.showStart) {
+    return (
+      <TimerControl
+        label={WRITING_TIMER_START}
+        a11yLabel={WRITING_TIMER_START_A11Y}
+        onPress={onStart}
+        testID="writing-timer-start"
+      />
+    );
+  }
+  return <LiveTimerControls view={view} controls={controls} compact={compact} />;
 }
 
 interface SessionReport {
@@ -248,12 +279,96 @@ function useWritingConfig(minutes: number): MeditationTimerConfig {
   );
 }
 
+interface TimerPillProps {
+  compact: boolean;
+  idle: boolean;
+  minutes: number;
+  view: TimerView;
+  controls: RitualControls;
+  onStart: () => void;
+  onChooseMinutes: (_minutes: number) => void;
+}
+
+/** The paper pill itself, shared by its expanded and desk-side mounts. */
+function TimerPill({
+  compact,
+  idle,
+  minutes,
+  view,
+  controls,
+  onStart,
+  onChooseMinutes,
+}: TimerPillProps): React.JSX.Element {
+  return (
+    <View
+      style={[styles.pill, compact ? styles.pillCompact : null]}
+      pointerEvents="auto"
+      testID="writing-timer-pill"
+    >
+      <View style={styles.row} testID="writing-timer-row-readout">
+        <Text
+          style={styles.readout}
+          numberOfLines={1}
+          accessibilityRole="text"
+          accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
+          testID="writing-timer-readout"
+        >
+          {view.readout}
+        </Text>
+        {compact && idle ? null : (
+          <TimerControls view={view} controls={controls} onStart={onStart} compact={compact} />
+        )}
+      </View>
+      {!compact && view.showPresets ? (
+        <PresetRow minutes={minutes} onChoose={onChooseMinutes} />
+      ) : null}
+    </View>
+  );
+}
+
+/** Mount the pill full-width at rest or as a trailing-edge compact control. */
+function TimerMount({
+  compact,
+  idle,
+  onExpand,
+  children,
+}: {
+  compact: boolean;
+  idle: boolean;
+  onExpand: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const mountedPill =
+    compact && idle ? (
+      <TouchableOpacity
+        onPress={onExpand}
+        accessibilityRole="button"
+        accessibilityLabel="Open writing timer restart options"
+        testID="writing-timer-compact"
+      >
+        {children}
+      </TouchableOpacity>
+    ) : (
+      <View testID={compact ? 'writing-timer-compact' : undefined}>{children}</View>
+    );
+  return (
+    <View
+      style={[styles.floatingWrapper, compact ? styles.floatingWrapperCompact : null]}
+      pointerEvents="box-none"
+      testID="writing-timer-wrapper"
+    >
+      {mountedPill}
+    </View>
+  );
+}
+
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   onComplete,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
   const [minutes, setMinutes] = useState(initialMinutes);
+  const [compact, setCompact] = useState(false);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
@@ -272,24 +387,25 @@ function WritingTimer({
   const chooseMinutes = useCallback((next: number) => {
     setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
   }, []);
+  const start = useCallback(() => {
+    setCompact(true);
+    controls.start();
+  }, [controls]);
+  const expand = useCallback(() => {
+    if (state.status === 'idle') setCompact(false);
+  }, [state.status]);
   return (
-    <View style={styles.floatingWrapper} pointerEvents="box-none">
-      <View style={styles.pill} pointerEvents="auto" testID="writing-timer-pill">
-        <View style={styles.row} testID="writing-timer-row-readout">
-          <Text
-            style={styles.readout}
-            numberOfLines={1}
-            accessibilityRole="text"
-            accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
-            testID="writing-timer-readout"
-          >
-            {view.readout}
-          </Text>
-          <TimerControls view={view} controls={controls} />
-        </View>
-        {view.showPresets ? <PresetRow minutes={minutes} onChoose={chooseMinutes} /> : null}
-      </View>
-    </View>
+    <TimerMount compact={compact} idle={state.status === 'idle'} onExpand={expand}>
+      <TimerPill
+        compact={compact}
+        idle={state.status === 'idle'}
+        minutes={minutes}
+        view={view}
+        controls={controls}
+        onStart={start}
+        onChooseMinutes={chooseMinutes}
+      />
+    </TimerMount>
   );
 }
 
@@ -305,6 +421,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
+  },
+  floatingWrapperCompact: {
+    left: undefined,
+    alignItems: 'flex-end',
+    paddingRight: journalSheet.deskPaddingH,
   },
   /**
    * A column of fixed-height rows, spanning the band rather than sizing itself
@@ -325,6 +446,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.hairline,
     ...shadows.small,
+  },
+  pillCompact: {
+    minWidth: 180,
+    marginHorizontal: 0,
   },
   /** One row of the pill. Fixed height, so the pill's own height is countable. */
   row: {
@@ -374,6 +499,9 @@ const styles = StyleSheet.create({
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
     paddingHorizontal: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
   },
   controlLabel: {
     ...editorialType.action,
