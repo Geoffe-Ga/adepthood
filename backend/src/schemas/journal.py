@@ -66,6 +66,7 @@ class JournalMessageCreate(BaseModel):
     """
 
     message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
+    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     classification: JournalClassification = JournalClassification.PERSONAL
     practice_session_id: RowIdField | None = None

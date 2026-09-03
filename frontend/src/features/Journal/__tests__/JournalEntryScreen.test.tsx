@@ -337,6 +337,12 @@ describe('JournalEntryScreen', () => {
     const title = getByTestId('journal-title-input');
     expect(title.props.multiline).toBe(true);
     expect(title.props.scrollEnabled).toBe(false);
+
+    fireEvent(title, 'contentSizeChange', {
+      nativeEvent: { contentSize: { width: 600, height: 118 } },
+    });
+
+    expect(StyleSheet.flatten(getByTestId('journal-title-input').props.style).height).toBe(118);
   });
 
   it('moves metadata, writing, and marginalia through one shared scroll surface', () => {
@@ -344,6 +350,27 @@ describe('JournalEntryScreen', () => {
     const scroll = getByTestId('journal-page-scroll');
     expect(within(scroll).getByTestId('journal-title-input')).toBeTruthy();
     expect(within(scroll).getByTestId('journal-margin-column')).toBeTruthy();
+    expect(getByTestId('journal-body-input').props.scrollEnabled).toBe(false);
+  });
+
+  it('starts tall and grows the page-level scroll surface with the writing', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1280, height: 1000, scale: 1, fontScale: 1 });
+    try {
+      const { getByTestId } = renderScreen();
+      const body = getByTestId('journal-body-input');
+      expect(StyleSheet.flatten(body.props.style).minHeight).toBeGreaterThanOrEqual(600);
+
+      fireEvent(body, 'contentSizeChange', {
+        nativeEvent: { contentSize: { width: 600, height: 1400 } },
+      });
+
+      expect(StyleSheet.flatten(getByTestId('journal-body-input').props.style).height).toBe(1400);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('grows the body input to fill available vertical space on a tall desktop viewport', () => {
@@ -355,7 +382,7 @@ describe('JournalEntryScreen', () => {
       const { getByTestId } = renderScreen();
       const body = StyleSheet.flatten(getByTestId('journal-body-input').props.style);
       expect(body.flexGrow).toBeGreaterThan(0);
-      expect(body.minHeight).toBe(240);
+      expect(body.minHeight).toBeGreaterThanOrEqual(540);
     } finally {
       spy.mockRestore();
     }
@@ -468,6 +495,26 @@ describe('JournalEntryScreen', () => {
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'A new thought.' }),
       );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('creates a titled draft atomically instead of reporting failure after a second request', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-title-input'), 'River notes');
+      fireEvent.changeText(getByTestId('journal-body-input'), 'The water kept moving.');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'River notes', message: 'The water kept moving.' }),
+      );
+      expect(mockUpdate).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

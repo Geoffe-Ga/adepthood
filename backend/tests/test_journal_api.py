@@ -142,6 +142,18 @@ async def test_create_journal_entry(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_journal_entry_with_title_is_atomic(async_client: AsyncClient) -> None:
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/journal/",
+        json=_message_payload(title="River notes"),
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["title"] == "River notes"
+
+
+@pytest.mark.asyncio
 async def test_create_journal_entry_with_tag(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     resp = await async_client.post(

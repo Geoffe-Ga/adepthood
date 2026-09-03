@@ -1413,6 +1413,8 @@ export type JournalClassification = 'public' | 'personal' | 'intimate';
 
 export interface JournalMessageCreate {
   message: string;
+  /** Optional page title, persisted atomically with the initial body. */
+  title?: string | null;
   tag?: JournalTag;
   practice_session_id?: number | null;
   user_practice_id?: number | null;
