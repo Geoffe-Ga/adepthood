@@ -11,6 +11,7 @@ import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 
 const TICK_MS = 100;
 const T0 = 1_700_000_000_000;
+const SHORT_PRESET_MINUTES = 10;
 
 function renderSurface() {
   return render(
@@ -99,5 +100,43 @@ describe('WritingSessionSurface', () => {
     tickTo(secondStart + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
 
     expect(getAllByTestId('writing-session-banner')).toHaveLength(1);
+  });
+
+  /**
+   * A standing note is replaced only by a newer note, never merely erased: a
+   * session the writer stopped early has nothing of its own to say, so what it
+   * has to say cannot displace what the last finished session said.
+   */
+  it("leaves a finished session's note standing when the next session is stopped early", () => {
+    const { getAllByTestId, getByTestId, getByText, queryByTestId } = renderSurface();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+
+    const secondStart = T0 + 25 * MS_PER_MINUTE;
+    jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId('writing-timer-start'));
+    jest.setSystemTime(secondStart + 3 * MS_PER_MINUTE);
+    fireEvent.press(getByTestId('writing-timer-stop'));
+
+    expect(queryByTestId('writing-session-banner')).not.toBeNull();
+    expect(getByText('You wrote for 20 minutes.')).toBeTruthy();
+    expect(getAllByTestId('writing-session-banner')).toHaveLength(1);
+  });
+
+  it("swaps in the newer session's own note when the next session runs its length", () => {
+    const { getByTestId, getByText, queryByText } = renderSurface();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+
+    const secondStart = T0 + 25 * MS_PER_MINUTE;
+    jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId(`writing-timer-preset-${SHORT_PRESET_MINUTES}`));
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(secondStart + SHORT_PRESET_MINUTES * MS_PER_MINUTE);
+
+    expect(getByText('You wrote for 10 minutes.')).toBeTruthy();
+    expect(queryByText('You wrote for 20 minutes.')).toBeNull();
   });
 });

@@ -448,5 +448,17 @@
     },
     "status": "uncovered",
     "issue": 2562
+  },
+  {
+    "id": "journal.a-standing-offer-survives-an-abandoned-next-session",
+    "description": "A person finishes a timed writing session, is offered that session as a habit inside the note the page leaves them, then starts a second session and abandons it partway. The offer is still there afterwards, and accepting it still saves the habit on their own account. That is the lifetime the note's children slot promises: an offer goes away only when the writer closes the note, or when a later session runs its full length and replaces the note with one about that newer session -- never because a session was merely started, paused, or stopped early. Uncovered because nothing occupies the slot yet: the surface half of the rule is pinned by the Jest specs beside WritingSessionSurface, and the seam this journey names is crossed only once the offer that lives in the slot writes to the server.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2486
   }
 ]

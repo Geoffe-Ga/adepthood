@@ -89,7 +89,7 @@ function PresetRow({
 }): React.JSX.Element {
   return (
     <View
-      style={[styles.row, styles.presetRow]}
+      style={styles.row}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
@@ -339,9 +339,6 @@ const styles = StyleSheet.create({
     // Takes the slack on its row, so the controls sit at the trailing edge and
     // a changing readout never shifts them.
     flex: 1,
-  },
-  presetRow: {
-    justifyContent: 'space-between',
   },
   /**
    * Presets share their row's width instead of demanding their own. ``flex: 1``

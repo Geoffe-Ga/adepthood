@@ -11,6 +11,23 @@
  * or as a practice) attaches. It exists so those offers land here, on a surface
  * that renders once, rather than inside the pill that repaints ten times a
  * second while a session runs.
+ *
+ * What the slot promises about its own lifetime, because an offer mounted in it
+ * can be halfway through an interaction: it goes away without the writer
+ * touching it in exactly three cases — they close the note; a later session runs
+ * its full length and this note is replaced by one about that session; or they
+ * finish the entry, which drops the screen out of edit mode and unmounts the
+ * writing surfaces entirely. Nothing else removes it. Starting a session,
+ * pausing or resuming one, changing the length, and stopping a session early all
+ * leave a mounted offer standing, so no offer is ever torn down by an event that
+ * reported nothing.
+ *
+ * Two consequences for whatever lands here. Key offer state to the result it is
+ * about rather than to the mount: replacement swaps ``result`` underneath a slot
+ * that stays mounted, and state left over from the previous session would then
+ * be shown beside a newer session's sentence. And treat the offer as one the
+ * writer may never be given again — it is the invitation, not the record, so
+ * commit on the tap rather than staging input inside the slot.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
