@@ -37,15 +37,6 @@ const PREVIEW_STRIPE_WIDTH = 3;
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
 /**
- * Bottom inset for the writing surface, reserving BOTH floating affordances:
- * the resonance button in the lower band and the writing timer stacked a full
- * touch target above it.
- *
- * One inset covering the taller of the two, not a second one added beside it —
- * the timer sits at ``RESONANCE_BUTTON_CLEARANCE``, so the page has to clear
- * that plus the timer's own height plus the same breathing gap.
- */
-/**
  * The floating writing timer's own box, in dp.
  *
  * The pill lays out as a fixed count of fixed-height rows — readout-and-controls,
@@ -72,6 +63,15 @@ export const WRITING_TIMER_PILL_MAX_HEIGHT =
   WRITING_TIMER_ROW_HEIGHT * WRITING_TIMER_MAX_ROWS +
   WRITING_TIMER_ROW_GAP * (WRITING_TIMER_MAX_ROWS - 1);
 
+/**
+ * Bottom inset for the writing surface, reserving BOTH floating affordances:
+ * the resonance button in the lower band and the writing timer stacked a full
+ * touch target above it.
+ *
+ * One inset covering the taller of the two, not a second one added beside it —
+ * the timer sits at ``RESONANCE_BUTTON_CLEARANCE``, so the page has to clear
+ * that plus the timer's own height plus the same breathing gap.
+ */
 export const WRITING_TIMER_CLEARANCE =
   RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT + SPACING.md;
 
