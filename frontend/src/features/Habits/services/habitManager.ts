@@ -411,14 +411,6 @@ const pushHabitUpdates = async (updates: readonly Habit[]): Promise<void> => {
 };
 
 /**
- * The three phases, in the one order that works. Each is awaited to completion
- * before the next begins, because a released name is only free for a create to
- * reuse once its DELETE has landed — the server's unique index on
- * ``lower(trim(name))`` does not know the row is on its way out, and a
- * create-first order turns the reuse back into the swallowed 409 the merge
- * exists to remove.
- */
-/**
  * Accept the modal's picks or a caller's own plan. A pick is a chip the user
  * tapped and carries a string key; a disposition names a `kind`. An empty list
  * is the same pass either way — every existing row is retained — so the
@@ -433,6 +425,14 @@ const asMergePlan = (
   return deriveMergePlan(input as readonly OnboardingHabit[], existing);
 };
 
+/**
+ * The three phases, in the one order that works. Each is awaited to completion
+ * before the next begins, because a released name is only free for a create to
+ * reuse once its DELETE has landed — the server's unique index on
+ * ``lower(trim(name))`` does not know the row is on its way out, and a
+ * create-first order turns the reuse back into the swallowed 409 the merge
+ * exists to remove.
+ */
 const commitHabitMerge = async (ops: HabitMergeOps): Promise<Habit[]> => {
   const stillHere = await releaseHabits(ops.releases);
   await pushHabitUpdates(ops.updates);

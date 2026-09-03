@@ -2316,14 +2316,15 @@ describe('habitManager', () => {
       const beforeReload = useHabitStore.getState().habits[0]!;
       await inFlight;
 
+      // The stage and start date are the two fields a kept habit does not
+      // always take from the pick -- whether it does turns on having already
+      // begun, which the two cases below assert either way.
       expect(habitsApi.update).toHaveBeenCalledWith(
         KEPT_HABIT_ID,
         expect.objectContaining({
           name: MEDITATE,
           energy_cost: 4,
           energy_return: 2,
-          stage: 'Purple',
-          start_date: '2026-01-01',
           sort_order: 0,
           revealed: true,
         }),
@@ -2530,7 +2531,9 @@ describe('habitManager', () => {
       expect(habitsApi.delete).toHaveBeenCalledWith(48);
       expect(habitsApi.create).toHaveBeenCalledTimes(1);
       const updated = (habitsApi.update as jest.Mock).mock.calls.map((c) => c[0] as number);
-      expect(updated.sort((a, b) => a - b)).toEqual([KEPT_HABIT_ID, 49, 50]);
+      // 50 is retained: nothing it holds changed and its position did not
+      // move, so the pass has nothing to say to the server about it.
+      expect(updated.sort((a, b) => a - b)).toEqual([KEPT_HABIT_ID, 49]);
       expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([
         MEDITATE,
         EVENING_READ,
@@ -2589,6 +2592,82 @@ describe('habitManager', () => {
       expect(anchor.getDate()).toBe(1);
     });
 
+    it('a partial re-scaffold does not renumber the habits it never mentioned', async () => {
+      // Entering fewer than ten habits is not an edge case -- the modal offers
+      // "Continue anyway?" for exactly this, and clears its list on every
+      // finish, so a returning user rebuilds from scratch each pass. Habits
+      // they never typed must not have their position rewritten under them.
+      useHabitStore.setState({
+        habits: [
+          makeServerHabit({ id: 1, name: 'Alpha', sort_order: 0 }),
+          makeServerHabit({ id: 2, name: 'Bravo', sort_order: 1 }),
+          makeServerHabit({ id: 3, name: 'Charlie', sort_order: 2 }),
+          makeServerHabit({ id: 4, name: 'Delta', sort_order: 3 }),
+          makeServerHabit({ id: 5, name: 'Echo', sort_order: 4 }),
+        ],
+      });
+
+      await habitManager.onboardingSave(
+        [
+          pick({ name: 'Delta', energy_cost: 4 }),
+          pick({ id: 'b', name: 'Echo', energy_cost: 4 }),
+          pick({ id: 'c', name: 'NewOne' }),
+        ],
+        jest.fn(),
+      );
+
+      const putIds = (habitsApi.update as jest.Mock).mock.calls.map((c) => c[0] as number);
+      expect(putIds.sort((a, b) => a - b)).toEqual([4, 5]);
+      const byId = new Map(useHabitStore.getState().habits.map((h) => [h.id, h]));
+      expect(byId.get(1)!.sort_order).toBe(0);
+      expect(byId.get(2)!.sort_order).toBe(1);
+      expect(byId.get(3)!.sort_order).toBe(2);
+    });
+
+    it('a kept habit that has already begun keeps its beginning, ratings and all', async () => {
+      // Moving a started habit's start_date forward is not a re-rating, it is a
+      // reset -- and a silent one. The server returns a zero streak outright for
+      // a start date in the future, and the modal's later slots are weeks out,
+      // so an abstention habit with a long run and no log entries at all would
+      // read as zero on the next load. The deliberate affordance for moving a
+      // beginning already exists and clears the history that no longer applies.
+      useHabitStore.setState({ habits: [keptHabit()] });
+
+      await habitManager.onboardingSave(
+        [pick({ energy_cost: 4, stage: 'Purple', start_date: new Date('2026-01-01') })],
+        jest.fn(),
+      );
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        KEPT_HABIT_ID,
+        expect.objectContaining({
+          energy_cost: 4,
+          start_date: '2025-01-01',
+          stage: 'Beige',
+        }),
+      );
+    });
+
+    it('a kept habit that never began takes the new stage and staggered start date', async () => {
+      useHabitStore.setState({
+        habits: [keptHabit({ streak: 0, completions: [], stage: 'Beige' })],
+      });
+
+      await habitManager.onboardingSave(
+        [pick({ energy_cost: 4, stage: 'Purple', start_date: new Date('2026-01-01') })],
+        jest.fn(),
+      );
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        KEPT_HABIT_ID,
+        expect.objectContaining({
+          energy_cost: 4,
+          start_date: '2026-01-01',
+          stage: 'Purple',
+        }),
+      );
+    });
+
     describe('the cache the trailing reload reads back', () => {
       /** The on-disk cache, echoed: what the merge persists is what the reload reads. */
       let cache: Habit[] | null = null;
@@ -2622,6 +2701,26 @@ describe('habitManager', () => {
         expect(habitsApi.create).not.toHaveBeenCalled();
         expect(cache).toEqual([]);
         expect(useHabitStore.getState().habits.every((h) => h.isDemoSeed === true)).toBe(true);
+      });
+
+      it('a retried offline first run does not stack a second copy of the same habit', async () => {
+        // The scaffold rows persist now, so the retry sees them. They are the
+        // user's own habits with only their ids provisional, so they are not
+        // dropped as fabricated -- but the server cannot hold two habits under
+        // one name, so neither may the store, or every retry adds a twin.
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        (habitsApi.create as jest.Mock).mockImplementation(() =>
+          Promise.reject(new Error('offline')),
+        );
+
+        await habitManager.onboardingSave([pick()], jest.fn());
+        await habitManager.onboardingSave([pick()], jest.fn());
+
+        expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([MEDITATE]);
+        expect(cache).toHaveLength(1);
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
       });
 
       it('a first run whose creates all failed retries them through the stuck-user recovery', async () => {

@@ -209,32 +209,71 @@ export const deriveMergePlan = (
  * the program, so its start date is not a program date and its stage is not a
  * program stage. It takes the new rating and icon; it keeps its own beginning.
  */
+/**
+ * Whether this habit has a beginning the user has already lived through.
+ *
+ * A logged day proves it. So does a streak with no logged days at all, which is
+ * the normal state of an abstention habit: nothing to record is the success,
+ * and the run is measured from the start date rather than from any row.
+ */
+const hasBegun = (habit: Habit): boolean =>
+  (habit.completions?.length ?? 0) > 0 || (habit.streak ?? 0) > 0;
+
 const carryKept = (original: Habit, pick: OnboardingHabit, keepsItsOwnLap: boolean): Habit => ({
   ...original,
   name: pick.name,
   icon: pick.icon,
   energy_cost: pick.energy_cost,
   energy_return: pick.energy_return,
-  ...(keepsItsOwnLap ? {} : { stage: pick.stage, start_date: pick.start_date }),
+  ...(keepsItsOwnLap || hasBegun(original)
+    ? {}
+    : { stage: pick.stage, start_date: pick.start_date }),
 });
 
+/** The position the server already knows for this row, if it knows one. */
+const heldSlot = (row: Habit): number | null =>
+  typeof row.sort_order === 'number' ? row.sort_order : null;
+
+const assignPartitionSlots = (
+  partition: readonly Habit[],
+  picked: ReadonlySet<number>,
+  into: Map<number, number>,
+): void => {
+  let next = partition.reduce((highest, row) => Math.max(highest, heldSlot(row) ?? -1), -1) + 1;
+  for (const row of partition) {
+    if (!picked.has(row.id) || heldSlot(row) !== null) continue;
+    into.set(row.id, next);
+    next += 1;
+  }
+};
+
 /**
- * Positional order within each partition, as the rest of the screen reads it:
- * carryover and program slots each restart at zero, so `sort_order` is only
- * meaningful after splitting by `is_carryover`.
+ * Give a slot to each row this pass named that does not hold one yet,
+ * numbering above the highest its own partition already holds — carryover and
+ * program slots each restart at zero, so `sort_order` is only meaningful after
+ * splitting by `is_carryover`. Every other row keeps exactly what it had.
+ *
+ * The standing order of the tiles is not this pass's to rewrite. The
+ * scaffolding modal sorts by net energy and expresses that ordering where it
+ * belongs — in each habit's stage and start date — while the order the tiles
+ * sit in is the reorder modal's, dragged by hand and written deliberately.
+ * Renumbering positionally across the merged list would push every habit the
+ * user did not type this time behind the ones they did, and issue a PUT for
+ * each. Entering fewer than ten habits is the ordinary case, not an edge one:
+ * the modal offers to continue with fewer and empties its list on every finish,
+ * so a returning user rebuilds from scratch each pass.
  */
-const stampSortOrder = (rows: readonly Habit[]): Habit[] => {
-  let program = 0;
-  let carryover = 0;
+const stampPickedSlots = (rows: readonly Habit[], picked: ReadonlySet<number>): Habit[] => {
+  const slots = new Map<number, number>();
+  assignPartitionSlots(rows.filter(isNotCarryoverHabit), picked, slots);
+  assignPartitionSlots(
+    rows.filter((row) => !isNotCarryoverHabit(row)),
+    picked,
+    slots,
+  );
   return rows.map((row) => {
-    if (isNotCarryoverHabit(row)) {
-      const stamped = { ...row, sort_order: program };
-      program += 1;
-      return stamped;
-    }
-    const stamped = { ...row, sort_order: carryover };
-    carryover += 1;
-    return stamped;
+    const slot = slots.get(row.id);
+    return slot === undefined ? row : { ...row, sort_order: slot };
   });
 };
 
@@ -272,13 +311,24 @@ const carriedRows = (
 };
 
 /**
- * A row nobody decided about survives the pass untouched — except a demo tile,
- * which is fabricated content that has to go the moment the user has habits of
- * their own. Without this, a plan that simply forgot a row would drop it from
- * the store, which reads to the user as a habit deleting itself.
+ * A row nobody decided about survives the pass untouched — with two exceptions.
+ * A demo tile is fabricated content that has to go the moment the user has
+ * habits of their own. And a row whose name the pass has already used is a
+ * stale twin of a habit being scaffolded again: the server cannot hold two
+ * habits under one normalized name, so neither may the store, or an offline
+ * first run retried twice leaves three copies of every tile in the cache.
+ *
+ * Without this rule a plan that simply forgot a row would drop it from the
+ * store, which reads to the user as a habit deleting itself.
  */
-const unmentionedRows = (existing: readonly Habit[], named: ReadonlySet<number>): Habit[] =>
-  existing.filter((habit) => !named.has(habit.id) && isNotDemoSeed(habit));
+const unmentionedRows = (
+  existing: readonly Habit[],
+  named: ReadonlySet<number>,
+  taken: ReadonlySet<string>,
+): Habit[] =>
+  existing.filter(
+    (habit) => !named.has(habit.id) && isNotDemoSeed(habit) && !taken.has(nameKey(habit.name)),
+  );
 
 /**
  * The rows an explicit `released` disposition named, each at most once. A demo
@@ -343,10 +393,22 @@ export const planHabitMerge = (plan: HabitMergePlan, existing: readonly Habit[])
   );
   const mintedIds = new Set(minted.map((row) => row.id));
 
-  const nextStore = stampSortOrder([
-    ...carriedRows(plan, byId, minted),
-    ...unmentionedRows(existing, namedHabitIds(plan)),
+  const carried = carriedRows(plan, byId, minted);
+  const picked = new Set<number>([
+    ...mintedIds,
+    ...plan.flatMap((d) => ('habit' in d && 'habitId' in d ? [d.habitId] : [])),
   ]);
+  const nextStore = stampPickedSlots(
+    [
+      ...carried,
+      ...unmentionedRows(
+        existing,
+        namedHabitIds(plan),
+        new Set(carried.map((r) => nameKey(r.name))),
+      ),
+    ],
+    picked,
+  );
 
   return {
     nextStore,
