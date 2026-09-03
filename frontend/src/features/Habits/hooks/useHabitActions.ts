@@ -5,7 +5,7 @@ import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { savePendingCheckIn } from '../../../storage/habitStorage';
-import type { HabitsActions, OnboardingHabit } from '../Habits.types';
+import type { HabitMergePlan, HabitsActions, OnboardingHabit } from '../Habits.types';
 import { habitManager, type LogUnitContext, type ShowToast } from '../services/habitManager';
 import { ClientMintedIdError } from '../services/serverIds';
 
@@ -226,8 +226,12 @@ export const useHabitActions = (
     [setEmojiHabitIndex],
   );
 
+  // Passed straight through: the modal states either bare picks (a first run,
+  // which has no row to name) or a plan it derived from the habits it just
+  // showed the user, and the merge already speaks both.
   const onboardingSave = useCallback(
-    (newHabits: OnboardingHabit[]) => habitManager.onboardingSave(newHabits, showToast),
+    (input: readonly OnboardingHabit[] | HabitMergePlan) =>
+      habitManager.onboardingSave(input, showToast),
     [showToast],
   );
 

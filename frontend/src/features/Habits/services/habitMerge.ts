@@ -225,6 +225,17 @@ const carryKept = (original: Habit, pick: OnboardingHabit, keepsItsOwnLap: boole
   icon: pick.icon,
   energy_cost: pick.energy_cost,
   energy_return: pick.energy_return,
+  // `brought-along` is a statement about where the habit belongs, not only
+  // about which dates to leave alone, so it writes the flag that puts it there.
+  // Every plan derived from bare picks reaches this branch only for a row that
+  // is already carryover, where the write is the value the row already held;
+  // what it makes possible is a caller that ASKED -- a user saying a habit is
+  // already part of them has to be able to move it onto the negative laps, or
+  // the choice they were offered does nothing. The reverse is deliberately not
+  // symmetric: re-rating a habit with a lived beginning leaves its lap alone,
+  // because a pre-program start date on a program lap would drag the whole
+  // course calendar back to a day the program had not started.
+  ...(keepsItsOwnLap ? { is_carryover: true } : {}),
   ...(keepsItsOwnLap || hasBegun(original)
     ? {}
     : { stage: pick.stage, start_date: pick.start_date }),

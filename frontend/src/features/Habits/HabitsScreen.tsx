@@ -168,6 +168,7 @@ const HabitWriteModals = ({
       visible={modals.onboarding}
       onClose={() => modals.close('onboarding')}
       onSaveHabits={actions.onboardingSave}
+      existingHabits={habits}
     />
     <AddHabitModal
       visible={modals.addHabit}

@@ -434,7 +434,7 @@
   },
   {
     "id": "habits.re-scaffold-keeps-what-you-already-built",
-    "description": "A user who already has habits reopens the scaffolding modal from the drawer or the energy footer and re-runs it. A habit they enter again keeps its own row: the new energy rating, icon, stage and staggered start date are PUT onto the id the server issued, while the streak, the check-ins, the goal ids and the unlock flag survive untouched. Before this, that pick was POSTed, the server rejected the duplicate name with a 409, the client swallowed it into a console line, and the rating the user had just confirmed was silently discarded while the stale row kept its old one -- only a habit under a genuinely new name ever appeared. A habit carried along from before the program is matched too, and stays on the negative lap with its own beginning rather than being scaffolded onto a program date. A habit the picks do not mention is retained, never released: the delete cascades that habit's goals and completions server-side and cannot be undone, so it follows only an explicit choice. That explicit release is implemented and unit-tested here -- deletes are awaited before any create, so a released name can be re-entered without the create hitting the same unique index -- but no screen can state one yet, because the modal builds its list from scratch and has no confirm to offer. Uncovered because the seam runs through the habit service rather than the API client the lane drives directly: reaching it needs a lane that can open the modal, and the release half additionally needs the confirm the linked issue ships. Pinned meanwhile by the \"onboardingSave merge\" block in src/features/Habits/services/__tests__/habitManager.test.ts, which drives the merge through the same bare picks the screen passes and asserts the exact create/update/delete call counts, the phase ordering, and that no fabricated id reaches the wire.",
+    "description": "A user who already has habits reopens the scaffolding modal from the drawer or the energy footer and re-runs it. A habit they enter again keeps its own row: the new energy rating, icon, stage and staggered start date are PUT onto the id the server issued, while the streak, the check-ins, the goal ids and the unlock flag survive untouched. Before this, that pick was POSTed, the server rejected the duplicate name with a 409, the client swallowed it into a console line, and the rating the user had just confirmed was silently discarded while the stale row kept its old one -- only a habit under a genuinely new name ever appeared. A habit carried along from before the program is matched too, and stays on the negative lap with its own beginning rather than being scaffolded onto a program date. A habit the picks do not mention is retained, never released: the delete cascades that habit's goals and completions server-side and cannot be undone, so it follows only an explicit choice. That explicit release is implemented and unit-tested here -- deletes are awaited before any create, so a released name can be re-entered without the create hitting the same unique index -- and the review step now gives the user a way to state one, behind a confirmation that names the habit and says its check-ins and goals go with it. Uncovered because the seam runs through the habit service rather than the API client the lane drives directly: reaching it needs a lane that can open the modal, and the release half additionally needs the confirm the linked issue ships. Pinned meanwhile by the \"onboardingSave merge\" block in src/features/Habits/services/__tests__/habitManager.test.ts, which drives the merge through the same bare picks the screen passes and asserts the exact create/update/delete call counts, the phase ordering, and that no fabricated id reaches the wire.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
@@ -447,6 +447,23 @@
       "tables": ["habit", "goal", "goalcompletion"]
     },
     "status": "uncovered",
-    "issue": 2562
+    "issue": 2399
+  },
+  {
+    "id": "habits.rescaffold-review-existing-habits",
+    "description": "A user who already has habits opens Energy Scaffolding and is asked about them before anything else. Every habit they own is listed with a tick, ticked; for each ticked one they choose Bring along -- already mastered, tracked on the carryover pages -- or Re-rate, which puts it back in the pool to be rated and slotted into the new energy order with its stored ratings already on the sliders. Unticking one is how a habit is let go of, and it is the only irreversible thing on the step: continuing then names the habits by name and says their check-ins and goals go with them, and cancelling leaves every tick exactly where it was. Brought-along habits never reach the energy, reveal, reorder or template steps and never count against the ten-habit ceiling, so a user with ten habits who brings four along can still add four. Before this the modal opened on a blank page and whatever the user typed was appended beside everything they already had. Uncovered for the same reason as welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, and every step of this journey is inside a modal. Pinned meanwhile by src/features/Habits/components/__tests__/OnboardingModal.reviewStep.test.tsx, which drives the whole flow through the rendered modal to the plan the save receives, and by src/features/Habits/components/__tests__/onboardingReview.test.ts for the decisions themselves.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
+      "client": ["habits"],
+      "routes": [
+        "GET /habits/",
+        "POST /habits/",
+        "PUT /habits/{habit_id}",
+        "DELETE /habits/{habit_id}"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2399
   }
 ]

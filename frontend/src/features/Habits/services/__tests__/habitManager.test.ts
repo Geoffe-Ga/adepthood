@@ -2571,13 +2571,16 @@ describe('habitManager', () => {
       // outranks a stored one on purpose, because re-scaffolding to an EARLIER
       // date has to be possible. That rule is not this change's to revisit.
       //
-      // What makes it bite is upstream: the modal seeds its date picker with
-      // today on every open, with no memory of the anchor already stored. So a
-      // returning user who re-rates existing habits and never touches the
-      // picker moves the whole program calendar without being asked. The fix
-      // belongs to the picker's seed, not to this write, and the lane that owns
-      // the modal has been told. This test exists so that when the seed is
-      // fixed, the change here is deliberate rather than a silent drift.
+      // What used to make it bite was upstream: the modal seeded its date
+      // picker with today on every open, with no memory of the anchor already
+      // stored, so a returning user who re-rated existing habits and never
+      // touched the picker moved the whole program calendar without being
+      // asked. The seed has since been fixed where it belonged -- the picker
+      // now opens on the stored anchor, and today only when there is none --
+      // and this rule was deliberately left standing rather than drifting with
+      // it: a pick still outranks a stored anchor, because re-scaffolding to an
+      // earlier date has to remain possible. The assertion below is what the
+      // service does when a caller genuinely asks for a different date.
       useProgramStore.getState().hydrateProgramStartDate(new Date('2025-01-01'));
       useHabitStore.setState({ habits: [keptHabit()] });
 
