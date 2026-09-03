@@ -34,6 +34,7 @@ instead of watching it.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -365,26 +366,66 @@ def expected_findings() -> frozenset[HeldDial]:
     return frozenset(row.key for row in HELD)
 
 
-def runtime_tests(path: Path = RUNTIME_CENSUS) -> dict[str, bool]:
-    """Map each test in the runtime census to whether it is marked expected-failure.
+# Markers under which a test cannot stand as proof that a site releases.
+# ``xfail`` asserts the opposite outcome. ``skip`` and ``skipif`` assert nothing
+# at all, which is worse: an expected failure at least runs.
+_MARKERS_THAT_PROVE_NOTHING = frozenset({"xfail", "skip", "skipif"})
 
-    Read from the file rather than imported, so asking the question costs no
-    fixtures and cannot be answered by a test module that fails to import.
+
+def runtime_tests(path: Path = RUNTIME_CENSUS) -> dict[str, bool]:
+    """Map each test in the runtime census to whether its result can be relied on.
+
+    ``True`` means the test cannot stand as evidence -- it is expected to fail or
+    it does not run. Read from the file rather than imported, so the question
+    costs no fixtures and can still be answered when the module it describes
+    cannot be collected.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    found: dict[str, bool] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith(
-            "test_"
-        ):
-            found[node.name] = any(_is_xfail(d) for d in node.decorator_list)
-    return found
+    whole_module = _module_scope_markers(tree)
+    return {
+        node.name: whole_module or any(_proves_nothing(d) for d in node.decorator_list)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name.startswith("test_")
+    }
 
 
-def _is_xfail(decorator: ast.expr) -> bool:
-    """Report whether a decorator marks a test as expected to fail."""
-    target = decorator.func if isinstance(decorator, ast.Call) else decorator
-    return isinstance(target, ast.Attribute) and target.attr == "xfail"
+def _module_scope_markers(tree: ast.Module) -> bool:
+    """Report whether ``pytestmark`` disarms every test in the module.
+
+    pytest applies a module-level ``pytestmark`` to each test in the file, so a
+    validator that reads only a function's own decorators can be disarmed
+    wholesale by one line at the top -- and every exemption in this census
+    becomes purchasable with it.
+    """
+    for node in tree.body:
+        for name, value in _assigned(node):
+            if name != "pytestmark":
+                continue
+            marks = value.elts if isinstance(value, ast.List | ast.Tuple) else [value]
+            if any(_proves_nothing(mark) for mark in marks):
+                return True
+    return False
+
+
+def _assigned(node: ast.stmt) -> Iterator[tuple[str, ast.expr]]:
+    """Yield ``(name, value)`` for each module-level assignment to a plain name."""
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and node.value is not None:
+                yield target.id, node.value
+    elif (
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    ):
+        yield node.target.id, node.value
+
+
+def _proves_nothing(marker: ast.expr) -> bool:
+    """Report whether a marker means the test's result cannot be leaned on."""
+    target = marker.func if isinstance(marker, ast.Call) else marker
+    return isinstance(target, ast.Attribute) and target.attr in _MARKERS_THAT_PROVE_NOTHING
 
 
 def evidence_problems(
@@ -402,11 +443,12 @@ def evidence_problems(
     tests = runtime_tests() if known_tests is None else known_tests
     problems: list[str] = []
     for row in rows:
-        problems.extend(_row_problems(row, tests))
+        others = {other.observed_by for other in rows if other is not row}
+        problems.extend(_row_problems(row, tests, others))
     return problems
 
 
-def _row_problems(row: CensusRow, tests: dict[str, bool]) -> list[str]:
+def _row_problems(row: CensusRow, tests: dict[str, bool], others: set[str]) -> list[str]:
     """Return the evidence rules one row breaks."""
     where = f"{row.route} -> {row.holder} -> {row.dial}"
     problems = []
@@ -417,19 +459,37 @@ def _row_problems(row: CensusRow, tests: dict[str, bool]) -> list[str]:
     if row.observed_by and row.observed_by not in tests:
         problems.append(f"{where}: names runtime test {row.observed_by!r}, which does not exist")
     if row.verdict is Verdict.MISMODELLED:
-        problems.extend(_mismodelled_problems(row, tests, where))
+        problems.extend(_mismodelled_problems(row, tests, where, others))
     return problems
 
 
-def _mismodelled_problems(row: CensusRow, tests: dict[str, bool], where: str) -> list[str]:
-    """Return the reasons a claim that the analyser is wrong is not yet backed."""
+def _mismodelled_problems(
+    row: CensusRow, tests: dict[str, bool], where: str, others: set[str]
+) -> list[str]:
+    """Return the reasons a claim that the analyser is wrong is not yet backed.
+
+    The last rule is the weakest of the three and worth naming as such: it stops
+    one green test being copied across rows, which is the cheap way to make the
+    evidence column meaningless. It does not prove the named test is about this
+    row's dial. Nothing cheap does -- the analysis keys on the innermost call and
+    the observer on a registry leaf, and the two do not line up mechanically --
+    so that correspondence stays a thing a reviewer checks, and it is named in
+    the limits section rather than implied to be covered.
+    """
     if not row.observed_by:
         return [f"{where}: called mismodelled with no runtime test proving the release"]
     if tests.get(row.observed_by, False):
         return [
             (
-                f"{where}: called mismodelled, but {row.observed_by!r} is marked "
-                "expected-failure, so it proves the opposite"
+                f"{where}: called mismodelled, but {row.observed_by!r} is expected to fail or "
+                "does not run, so it proves the opposite or nothing"
+            )
+        ]
+    if row.observed_by in others:
+        return [
+            (
+                f"{where}: called mismodelled on {row.observed_by!r}, which is "
+                "already the evidence for another row"
             )
         ]
     return []

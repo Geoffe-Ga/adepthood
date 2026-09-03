@@ -77,6 +77,30 @@ def _backend_source_root() -> Path:
     return Path(__file__).resolve().parents[_STEPS_UP_TO_BACKEND] / "src"
 
 
+def _is_the_guarded_call(node: ast.AST, module: str, tree: SourceTree) -> bool:
+    """Report whether ``node`` calls the unguarded classifier, however it is written.
+
+    The union of two rules, because each catches what the other misses.
+    Resolving the callee through the module's imports catches every renaming --
+    ``import ... as``, a module-qualified attribute, a bare name -- which a match
+    on the written spelling walks past. But resolution answers nothing when the
+    receiver is a parameter or an attribute this walk does not type, and
+    ``dep.classify_resolved_user_vault_url(host)`` is exactly that shape; there
+    the written name is the only evidence there is, and it is enough, because no
+    other function in this tree carries the name.
+
+    Exact equality on the final attribute, so the seam that wraps this
+    classifier -- whose name begins with it -- is not mistaken for the thing it
+    exists to protect callers from.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    if tree.qualify(node.func, module) == _GUARDED_TARGET:
+        return True
+    callee = node.func
+    return isinstance(callee, ast.Attribute) and callee.attr == _GUARDED_CALLEE
+
+
 def _modules_calling_the_guarded_classifier(root: Path) -> tuple[set[str], int]:
     """Return every module under ``root`` that calls the classifier, and how many were read.
 
@@ -94,10 +118,7 @@ def _modules_calling_the_guarded_classifier(root: Path) -> tuple[set[str], int]:
     callers = {
         module
         for module, parsed in tree.modules.items()
-        if any(
-            isinstance(node, ast.Call) and tree.qualify(node.func, module) == _GUARDED_TARGET
-            for node in ast.walk(parsed)
-        )
+        if any(_is_the_guarded_call(node, module, tree) for node in ast.walk(parsed))
     }
     named = {tree.paths[module].relative_to(root).as_posix() for module in callers}
     return named, tree.modules_read
@@ -158,3 +179,50 @@ def test_a_call_reached_through_an_aliased_import_does_not_walk_past_this_guard(
 
     assert modules_read == 1
     assert callers == {"sneaky.py"}
+
+
+def test_an_attribute_call_on_a_receiver_the_walk_cannot_name_is_still_caught(
+    tmp_path: Path,
+) -> None:
+    """Resolving the callee must not lose the spellings a plain name match caught.
+
+    Swapping an exact-name matcher for a resolving one closes ``import ... as``
+    and opens something else: ``await dep.classify_resolved_user_vault_url(h)``
+    resolves to nothing, because the receiver is a parameter whose type this walk
+    does not track. The old matcher caught it by name. So the rule is the union
+    of the two -- resolve the callee, and fall back to the written name when the
+    receiver cannot be resolved -- rather than a trade of one hole for another.
+    """
+    module = tmp_path / "indirect.py"
+    module.write_text(
+        "async def ask(dep: object, host: str) -> object:\n"
+        f"    return await dep.{_GUARDED_CALLEE}(host)\n",
+        encoding="utf-8",
+    )
+
+    callers, modules_read = _modules_calling_the_guarded_classifier(tmp_path)
+
+    assert modules_read == 1
+    assert callers == {"indirect.py"}
+
+
+def test_a_longer_name_that_merely_starts_with_the_guarded_one_is_not_it(
+    tmp_path: Path,
+) -> None:
+    """The seam itself ends in the guarded name's prefix and must not be mistaken for it.
+
+    The fallback matches a written name, so it has to match the whole of it: the
+    wrapper this guard exists to funnel callers *through* is spelled
+    ``classify_resolved_user_vault_url_off_the_pool``, and flagging every module
+    that calls the safe seam would invert the rule.
+    """
+    module = tmp_path / "polite.py"
+    module.write_text(
+        "async def ask(dep: object, host: str) -> object:\n"
+        f"    return await dep.{_GUARDED_CALLEE}_off_the_pool(host)\n",
+        encoding="utf-8",
+    )
+
+    callers, _modules_read = _modules_calling_the_guarded_classifier(tmp_path)
+
+    assert callers == set()

@@ -27,6 +27,10 @@ from tests.architecture.pool_hold_census import (
 # read that finds fewer than this found the wrong file or parsed nothing.
 _FEWEST_RUNTIME_ROWS = 9
 
+# Marker shapes kept as real modules, because the validator's job is to read a
+# file the way pytest would and a string fixture would not exercise that.
+_MARKED_FIXTURES = Path(__file__).resolve().parent / "marked_fixtures"
+
 
 def _write(root: Path, name: str, body: str) -> None:
     """Write one module of a fixture source tree."""
@@ -390,7 +394,7 @@ def test_a_row_backed_only_by_an_expected_failure_is_refused() -> None:
     problems = evidence_problems((row,), {"test_it_releases_first": True})
 
     assert len(problems) == 1
-    assert "marked expected-failure" in problems[0]
+    assert "proves the opposite or nothing" in problems[0]
 
 
 def test_a_row_naming_a_test_that_does_not_exist_is_refused() -> None:
@@ -432,3 +436,459 @@ def test_the_runtime_census_is_read_from_the_file_rather_than_imported() -> None
     assert len(found) >= _FEWEST_RUNTIME_ROWS
     assert found["test_the_essay_llm_is_dialled_off_the_pool"] is True
     assert found["test_the_deployment_wide_vault_wheel_is_dialled_off_the_pool"] is False
+
+
+def test_a_loop_that_breaks_before_its_release_carries_the_transaction_out(tmp_path: Path) -> None:
+    """A ``break`` leaves the loop, not the function, and takes its state with it.
+
+    Folding it as though it ended the function loses the state entirely: the
+    branch that broke contributes nothing, the arm that reached the release
+    contributes everything, and the code after the loop is read as though the
+    iteration that abandoned early had finished. The connection is genuinely
+    still checked out on that path.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, items: list[str]) -> None:
+    for item in items:
+        await session.execute(select(item))
+        if item == "stop":
+            break
+        await session.commit()
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_loop_that_continues_past_its_release_carries_the_transaction_round(
+    tmp_path: Path,
+) -> None:
+    """A ``continue`` skips the rest of the iteration, including the release in it.
+
+    The same loss as ``break`` and one step further out of sight, because the
+    loop does finish: an author reading the body sees a commit on every pass and
+    the analysis agrees with them, when the last pass may have jumped over it.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, items: list[str]) -> None:
+    for item in items:
+        await session.execute(select(item))
+        if item == "skip":
+            continue
+        await session.commit()
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_loop_that_releases_down_every_way_out_is_believed(tmp_path: Path) -> None:
+    """Collecting the escaping states must not invent a hold that is not there.
+
+    Joining more paths can only move a state toward open, so the correction above
+    is exactly the kind that buys false positives if it is written carelessly.
+    A loop that commits before it breaks is clear, and has to read as clear.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, items: list[str]) -> None:
+    for item in items:
+        await session.execute(select(item))
+        if item == "stop":
+            await session.commit()
+            break
+        await session.commit()
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    assert analyse_tree(tmp_path).dials_held_open("handler.handler") == ()
+
+
+def test_a_finally_is_read_even_when_the_try_body_returns_down_every_path(
+    tmp_path: Path,
+) -> None:
+    """``finally`` runs on every way out, so it must be walked on every way out.
+
+    This is not a wrong state but a skipped subtree. When the body and every
+    handler end in a ``return`` or a ``raise``, the state falling out of them is
+    dead -- and a walk that folds the ``finally`` from that state stops at its
+    first line and never visits it. A dial written there, reached with the
+    transaction the body opened and never released, is invisible: the strongest
+    possible form of the silence this whole package exists to break.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession) -> None:
+    try:
+        await session.execute(select(1))
+        return
+    finally:
+        async with httpx.AsyncClient() as client:
+            await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_try_that_releases_down_every_arm_leaves_the_code_after_it_clear(
+    tmp_path: Path,
+) -> None:
+    """Entering the ``finally`` pessimistically must not make the code after it pessimistic.
+
+    An exception can be raised anywhere in a ``try`` body, so the ``finally`` is
+    entered at the join of every state control could arrive in -- but the
+    statement is *left* by whichever arm survived. Conflating the two would
+    report a handler that commits down both arms as still holding, and a gate
+    that flags a correct release is a gate somebody deletes.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession) -> None:
+    await session.execute(select(1))
+    try:
+        await session.commit()
+    except ValueError:
+        await session.rollback()
+    finally:
+        pass
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    assert analyse_tree(tmp_path).dials_held_open("handler.handler") == ()
+
+
+def test_a_name_lookup_on_the_event_loop_is_a_dial(tmp_path: Path) -> None:
+    """DNS is a network round trip, and it is spelled as a method on the loop.
+
+    ``socket.getaddrinfo`` as a qualified name is not how this application asks:
+    it awaits ``loop.getaddrinfo``, on an object no import graph names. Missing
+    it is what made the vault-resolution row unfalsifiable -- the one census row
+    written about a lookup that costs a connection, asserting a release the
+    analysis could not have noticed the absence of.
+    """
+    _write(
+        tmp_path,
+        "resolve.py",
+        """
+import asyncio
+import socket
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, host: str) -> object:
+    await session.execute(select(1))
+    loop = asyncio.get_running_loop()
+    return await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("resolve.handler")
+
+    assert [site.dial for site in held] == ["getaddrinfo"]
+
+
+def test_a_session_reached_through_an_attribute_is_still_a_session(tmp_path: Path) -> None:
+    """A session carried on a context object opens a transaction like any other.
+
+    Requiring the receiver to be a bare parameter name reads ``ctx.session.execute``
+    as a call on something unknown -- neither opener nor releaser -- and this
+    repository already writes that shape.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from dataclasses import dataclass
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass
+class Context:
+    session: AsyncSession
+
+
+async def handler(context: Context) -> None:
+    await context.session.execute(select(1))
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_release_through_an_attribute_chain_is_believed(tmp_path: Path) -> None:
+    """The same shape on the releasing side, which is the false-positive direction.
+
+    A missed opener hides a defect; a missed *release* invents one. Both follow
+    from the same omission, and the second is the one that gets a gate deleted.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from dataclasses import dataclass
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass
+class Context:
+    session: AsyncSession
+
+
+async def handler(context: Context) -> None:
+    await context.session.execute(select(1))
+    await context.session.commit()
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    assert analyse_tree(tmp_path).dials_held_open("handler.handler") == ()
+
+
+def test_a_session_behind_an_annotated_alias_is_still_a_session(tmp_path: Path) -> None:
+    """A dependency alias is a subscript, and a subscript is still a name for a type.
+
+    ``SessionDep = Annotated[AsyncSession, Depends(get_session)]`` is the tidy
+    spelling of the annotation every handler in this application writes out in
+    full. Resolving only bare names would make adopting it silence the whole
+    file, and the resulting green is indistinguishable from a fix.
+    """
+    _write(
+        tmp_path,
+        "deps.py",
+        """
+from typing import Annotated
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def get_session() -> AsyncSession: ...
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+""",
+    )
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+
+from deps import SessionDep
+
+
+async def handler(session: SessionDep) -> None:
+    await session.execute(select(1))
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_match_arms_are_joined_rather_than_folded_one_after_another(tmp_path: Path) -> None:
+    """One arm's release must not pay for another arm's dial.
+
+    A ``match`` is a branch, and folding its cases in sequence lets the commit in
+    the first case set the state the last case is read in -- the same defect as
+    treating a ``break`` as a function exit, in the newer syntax.
+    """
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, kind: str) -> None:
+    await session.execute(select(1))
+    match kind:
+        case "settled":
+            await session.commit()
+        case _:
+            pass
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.handler")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_jwks_fetch_behind_a_thread_is_a_dial(tmp_path: Path) -> None:
+    """Fetching a provider's signing keys is a provider round trip, not a local check.
+
+    ``get_signing_key_from_jwt`` reads like verifying a signature and, on a cache
+    miss, fetches the JWKS document over HTTPS. It is reached here through a
+    thread trampoline, on a receiver injected as a protocol -- so it is a dial
+    the analysis can only know about because the verb is declared to be one.
+    """
+    _write(
+        tmp_path,
+        "verify.py",
+        """
+import asyncio
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def handler(session: AsyncSession, keys: object, token: str) -> object:
+    await session.execute(select(1))
+    return await asyncio.to_thread(keys.get_signing_key_from_jwt, token)
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("verify.handler")
+
+    assert [site.dial for site in held] == ["get_signing_key_from_jwt"]
+
+
+def test_a_dial_behind_a_callable_parameter_is_not_seen(tmp_path: Path) -> None:
+    """The named blind spot, asserted rather than described.
+
+    A callee chosen by the caller and awaited by name inside the callee is not in
+    any import graph, and this is the shape the OAuth routes use to share one
+    refusal between two providers: the identity verifier is passed in, so the
+    JWKS fetch at the end of it is invisible even though the verb is modelled.
+
+    Written as a test so the limit is checked rather than claimed, and so the day
+    it is closed this file says so by failing.
+    """
+    _write(
+        tmp_path,
+        "indirect.py",
+        """
+import asyncio
+from collections.abc import Callable
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def _fetch(keys: object, token: str) -> object:
+    return await asyncio.to_thread(keys.get_signing_key_from_jwt, token)
+
+
+async def handler(session: AsyncSession, verifier: Callable[..., object], token: str) -> object:
+    await session.execute(select(1))
+    return await verifier(token)
+""",
+    )
+
+    assert analyse_tree(tmp_path).dials_held_open("indirect.handler") == ()
+
+
+def test_a_module_scope_marker_is_seen_as_an_expected_failure() -> None:
+    """A mark applied to the whole module marks every test in it.
+
+    Reading only a function's own decorators means one ``pytestmark`` line at the
+    top of the runtime census turns every row's evidence from expected-red into
+    apparently-green, and every exemption in this file becomes purchasable with
+    it. The hatch's entire guarantee is that a marker proves the opposite of the
+    row's claim, so the marker has to be found wherever pytest would find it.
+    """
+    module = _MARKED_FIXTURES / "module_scope_xfail.py"
+
+    assert runtime_tests(module) == {"test_it_releases_first": True}
+
+
+def test_a_disabled_test_cannot_prove_that_a_site_releases() -> None:
+    """A skipped test does not run, so it asserts nothing about anything.
+
+    ``xfail`` at least executes. ``skip`` and ``skipif`` do not, and accepting
+    either as evidence would let a row claim the analysis is wrong on the
+    strength of a test nobody has run since it was written.
+    """
+    module = _MARKED_FIXTURES / "skipped.py"
+
+    assert runtime_tests(module) == {"test_skipped": True, "test_conditionally_skipped": True}
+
+
+def test_a_mismodelled_row_may_not_borrow_another_rows_evidence() -> None:
+    """One green test cannot vouch for a second, different dial.
+
+    Naming any unmarked test in the file would let a row about the invitation
+    handshake be excused by a test about the deployment vault's wheel. Requiring
+    the evidence to be this row's alone does not prove the test is about the
+    right dial -- nothing cheap does -- but it stops the copy-and-paste that
+    makes the field meaningless.
+    """
+    borrowed = "test_the_essay_llm_is_dialled_off_the_pool"
+    rows = (
+        _row(verdict=Verdict.KNOWN, observed_by=borrowed),
+        _row(verdict=Verdict.MISMODELLED, observed_by=borrowed),
+    )
+
+    problems = evidence_problems(rows, {borrowed: False})
+
+    assert len(problems) == 1
+    assert "already the evidence for another row" in problems[0]

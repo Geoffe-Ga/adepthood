@@ -49,10 +49,18 @@ _FEWEST_MODULES_WORTH_TRUSTING = 230
 _FEWEST_FUNCTIONS_WORTH_TRUSTING = 1450
 _FEWEST_ROUTES_WORTH_TRUSTING = 120
 
-# The modules that reach the network on their own account. Frozen so a new one
-# arrives as a question -- is this a transport the analyser must model? -- rather
-# than as silence.
-_MODULES_REACHING_THE_NETWORK = frozenset(
+# Every module that imports a library capable of opening a socket. Named for
+# what it measures rather than for what it is about: importing is checkable and
+# reaching the network is not, and the two are not the same set. ``routers.auth``
+# is here because it imports ``jwt`` to encode and decode tokens locally, and it
+# never fetches anything; the three OIDC modules below are here because they
+# reach a provider through the same library. Overstating the name is how the set
+# came to be asserted complete while three modules that genuinely dial were
+# missing from it.
+#
+# Frozen so a new import arrives as a question -- is this a transport the
+# analysis must model? -- rather than as silence.
+_MODULES_IMPORTING_A_TRANSPORT = frozenset(
     {
         "domain.entitlements",
         "integrations.gumroad",
@@ -61,6 +69,15 @@ _MODULES_REACHING_THE_NETWORK = frozenset(
         "services.creek_vault_pinned_transport",
         "services.creek_vault_url_resolution",
         "services.email",
+        # These three reach a provider through PyJWKClient rather than through an
+        # obvious HTTP client, so they read as local signature checks. They were
+        # missing while this set was asserted to name every module that reaches
+        # the network -- an assertion that was simply false.
+        "services.oauth_apple",
+        "services.oauth_google",
+        "services.oidc",
+        # Encodes and decodes tokens with the same library; never fetches.
+        "routers.auth",
     }
 )
 
@@ -264,6 +281,8 @@ def test_the_module_the_census_calls_dead_is_reached_by_no_route() -> None:
         )
     }
 
+    assert DEAD_MODULES, "the census names no dead module; this check read nothing"
+    assert analysis.route_handlers(), "no routes were examined, so nothing could have reached it"
     assert set(DEAD_MODULES) <= set(analysis.tree.modules), (
         "the census names a dead module that is no longer in the tree; strike the row"
     )
@@ -296,18 +315,24 @@ def test_the_census_divides_as_it_says_it_does() -> None:
     assert sum(tally.values()) == len(HELD)
 
 
-def test_no_module_reaches_the_network_through_a_library_this_analysis_does_not_know() -> None:
+def test_no_module_takes_up_a_transport_without_a_decision_about_it() -> None:
     """A new transport must arrive as a decision, because inference cannot find it.
 
     The dial model is a finite table. A module that imports a socket library the
-    table does not cover reaches the network invisibly, and no amount of call
-    graph fixes that. Freezing the set of modules that touch one turns the
-    invisible case into a red test naming the module and asking what it does.
+    table does not cover can reach the network invisibly, and no amount of call
+    graph fixes that. Freezing the set turns the invisible case into a red test
+    naming the module and asking what it does with it.
+
+    What this proves is narrow and worth stating: that no module has quietly
+    picked up a library able to dial. It does not prove the members dial, nor
+    that a member which dials is modelled -- ``services.oidc`` reaches its
+    provider through a callable this analysis cannot follow, and is in the set
+    all the same.
     """
     touching = _modules_importing_a_transport(_analysis())
 
     assert touching, "no module imports a transport library; this check read nothing"
-    assert touching == _MODULES_REACHING_THE_NETWORK
+    assert touching == _MODULES_IMPORTING_A_TRANSPORT
 
 
 def test_no_verb_is_added_to_a_watched_protocol_without_a_decision_about_it() -> None:

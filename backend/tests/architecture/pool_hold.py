@@ -23,16 +23,46 @@ and a monkeypatched builder, in order to watch a defect the analyser had already
 pointed at. This module answers the complementary question -- *was this site
 examined at all* -- across every route, whether or not a test reaches it.
 
-**What it cannot see, stated plainly rather than papered over.** A dial behind a
-callable parameter (``await runner(client.handshake)``) is invisible: the callee
-is decided at the call site by an argument this analysis does not track. A second
-dynamic-dispatch registry gets a free pass the way ``generate_response`` would,
-were it not declared a leaf by hand. A new protocol verb is simply not a dial
-until somebody adds it to :data:`DIAL_METHODS`, and a new transport library is
-not a transport until somebody adds it to
-:data:`TRANSPORT_LIBRARIES` -- both are guarded by drift tests that fail asking
-for a decision rather than by inference. These are the reasons the analyser is
-one of two instruments and not the only one.
+**What it cannot see, stated plainly rather than papered over.** Each of these is
+a real hole, and each is asserted by a test where a test can assert an absence,
+so the list stays honest as the code moves.
+
+*A dial behind a callable parameter.* The callee is decided at the call site by
+an argument this analysis does not track. This is not hypothetical: the OAuth
+routes share one refusal between two providers by passing the identity verifier
+in, so the JWKS fetch at the end of it is invisible here even though the verb is
+modelled as a dial. Held by
+``test_a_dial_behind_a_callable_parameter_is_not_seen``.
+
+*A second dynamic-dispatch registry.* ``generate_response`` dispatches through
+``globals()[spec.call_name]`` and is caught only because it is declared a leaf by
+hand; a new one built the same way gets a free pass.
+
+*A verb or a library nobody has decided about.* A new protocol method is not a
+dial until it is in :data:`DIAL_METHODS` or :data:`VENDOR_DIAL_METHODS`, and a new
+library is not a transport until it is in :data:`TRANSPORT_LIBRARIES`. Both are
+guarded by drift tests that fail asking for a decision rather than by inference,
+which closes the case for the families already known and closes nothing for a
+fourth.
+
+*Which test an exemption leans on.* A row calling this analysis wrong must name a
+runtime test that exists, runs, is not expected to fail, and is not already some
+other row's evidence -- but nothing checks the test is about *this row's dial*.
+The analysis keys on the innermost call and the observer keys on a registry leaf,
+and the two do not line up mechanically. That correspondence is a thing a
+reviewer confirms, not a thing this file proves.
+
+*A session under an unexpected name.* Session receivers are parameters annotated
+as one, plus attribute names some class in this tree declares as one -- today
+exactly ``session``. A session held under a name no class declares is invisible,
+and an unrelated attribute that happens to be called ``session`` would be
+mistaken for one.
+
+*A row added instead of a fix.* Silencing a new finding costs one census row and
+a bumped count. It cannot be made impossible; it is made visible, and that is a
+weaker thing.
+
+These are the reasons the analyser is one of two instruments and not the only one.
 
 Stdlib ``ast`` only: it never imports the application, never opens a database and
 never runs a handler. It parses text, so its failure mode is a red test naming a
@@ -75,6 +105,11 @@ TRANSPORT_LIBRARIES = frozenset(
         "asyncpg",
         "boto3",
         "httpx",
+        # PyJWKClient fetches an identity provider's signing keys over HTTPS on a
+        # cache miss. It arrives spelled as a signature check, which is why three
+        # modules reached the network through it while a set asserted to be
+        # complete did not name them.
+        "jwt",
         "openai",
         "redis",
         "requests",
@@ -139,6 +174,24 @@ DIAL_METHODS: Mapping[str, str] = {
 # transaction that call had just opened. It is safe to include because a receiver
 # only counts as a session when its annotation resolves to a session type, so
 # ``mapping.get(key)`` is never mistaken for this.
+# Methods that reach the network on a receiver no import graph can name. Held
+# apart from :data:`DIAL_METHODS` because no class in this source tree declares
+# them, so the family-collision guard that keeps that table honest cannot apply
+# here -- their owner is a library, and the reason each is a dial is written
+# beside it instead.
+VENDOR_DIAL_METHODS: Mapping[str, str] = {
+    "getaddrinfo": (
+        "asyncio's event loop resolver: a DNS round trip, and the one this "
+        "application awaits -- it never spells socket.getaddrinfo, so a "
+        "qualified-name match alone would never see a name lookup at all"
+    ),
+    "get_signing_key_from_jwt": (
+        "jwt.PyJWKClient: fetches the identity provider's JWKS document over "
+        "HTTPS on a cache miss, which is a provider round trip inside what "
+        "reads like a local signature check"
+    ),
+}
+
 SESSION_OPENERS = frozenset(
     {
         "add",
@@ -211,6 +264,21 @@ class HeldDial:
     route: str
     holder: str
     dial: str
+
+
+def _always_matches(node: ast.Match) -> bool:
+    """Report whether some arm of a ``match`` is bound to fire.
+
+    An unguarded capture pattern -- ``case _:`` or ``case name:`` -- is
+    irrefutable, so the subject cannot fall past the statement untouched and the
+    state before it is not one of the ways out.
+    """
+    return any(
+        isinstance(case.pattern, ast.MatchAs)
+        and case.pattern.pattern is None
+        and case.guard is None
+        for case in node.cases
+    )
 
 
 def _module_name(path: Path, root: Path) -> str:
@@ -312,6 +380,7 @@ class SourceTree:
         for name, tree in self.modules.items():
             self._index(tree, name, name, is_class=False)
         self.session_types = self._resolve_session_types()
+        self.session_attributes = self._resolve_session_attributes()
 
     @property
     def modules_read(self) -> int:
@@ -372,10 +441,57 @@ class SourceTree:
         added = False
         for name, value in _alias_targets(node):
             qualified = f"{module}.{name}"
-            if qualified not in known and self.qualify(value, module) in known:
+            if qualified in known:
+                continue
+            if self.qualify(value, module) in known or self._annotated_session(
+                value, module, known
+            ):
                 known.add(qualified)
                 added = True
         return added
+
+    def _annotated_session(self, value: ast.expr, module: str, known: set[str]) -> bool:
+        """Report whether ``value`` is ``Annotated[<a session type>, ...]``.
+
+        This is the tidy spelling of the annotation every handler here writes out
+        in full, and it is a subscript rather than a name -- so an alias table
+        that resolves only names would let adopting it silence a whole module,
+        with nothing in the diff that looks like a suppression.
+        """
+        if not isinstance(value, ast.Subscript):
+            return False
+        if (self.qualify(value.value, module) or "").rpartition(".")[2] != "Annotated":
+            return False
+        inner = value.slice
+        if isinstance(inner, ast.Tuple):
+            if not inner.elts:
+                return False
+            inner = inner.elts[0]
+        return self.qualify(inner, module) in known
+
+    def _resolve_session_attributes(self) -> frozenset[str]:
+        """Return every attribute name declared on a class as holding a session.
+
+        Read from the tree rather than guessed, so the set is exactly the names
+        this codebase actually carries a session under and a receiver ending in
+        one is a session receiver.
+        """
+        names: set[str] = set()
+        for module, tree in self.modules.items():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    names |= self._session_fields(node, module)
+        return frozenset(names)
+
+    def _session_fields(self, node: ast.ClassDef, module: str) -> set[str]:
+        """Return the session-annotated field names declared directly on a class."""
+        return {
+            statement.target.id
+            for statement in node.body
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and self.qualify(statement.annotation, module) in self.session_types
+        }
 
     def session_parameters(
         self, func: ast.FunctionDef | ast.AsyncFunctionDef, module: str
@@ -492,6 +608,8 @@ class _FunctionWalk:
         self.owning_class = parent if parent not in self.tree.modules else None
         self.sites: list[DialSite] = []
         self.returns: list[int] = []
+        self.breaks: list[int] = []
+        self.continues: list[int] = []
 
     def _inherited_transports(self) -> set[str]:
         """Return transport names from this body and from every enclosing one.
@@ -529,7 +647,7 @@ class _FunctionWalk:
         """Classify a call written as ``receiver.method(...)``, or return ``None``."""
         root, attrs = _root_and_attrs(callee.value)
         method = callee.attr
-        if root in self.sessions and not attrs:
+        if self._receives_a_session(root, attrs):
             if method in SESSION_RELEASERS:
                 return _Resolution("release", method)
             if method in SESSION_OPENERS:
@@ -540,9 +658,23 @@ class _FunctionWalk:
             own = f"{self.owning_class}.{method}"
             if own in self.tree.functions:
                 return _Resolution("call", own)
-        if method in DIAL_METHODS and root not in self.sessions:
+        if method in DIAL_METHODS or method in VENDOR_DIAL_METHODS:
             return _Resolution("dial", method)
         return None
+
+    def _receives_a_session(self, root: str | None, attrs: list[str]) -> bool:
+        """Report whether a call's receiver is a session, however it was reached.
+
+        Either a parameter annotated as one, or an attribute whose name is
+        declared as a session on some class in this tree -- ``context.session``
+        holds a connection exactly as ``session`` does, and requiring a bare
+        parameter reads it as a call on something unknown. That direction is not
+        merely a missed opener: a missed *release* through the same shape invents
+        a hold that is not there.
+        """
+        if root in self.sessions and not attrs:
+            return True
+        return bool(attrs) and attrs[-1] in self.tree.session_attributes
 
     def _resolve_qualified(self, qualified: str) -> _Resolution:
         """Classify a call by the dotted name its callee resolves to."""
@@ -630,20 +762,70 @@ class _FunctionWalk:
         return max(self.block(node.body, state), self.block(node.orelse, state))
 
     def _loop(self, node: ast.For | ast.AsyncFor | ast.While, state: int) -> int:
-        """Fold a loop, running the body twice so a second iteration sees the first's state."""
+        """Fold a loop, running the body twice so a second iteration sees the first's state.
+
+        ``break`` and ``continue`` leave the *loop*, not the function, so unlike
+        ``return`` they have somewhere to arrive: a ``break`` joins into the state
+        after the loop, and a ``continue`` into the state the next iteration
+        begins with. Collected here rather than discarded, because discarding them
+        reads a loop that abandons a transaction mid-iteration as though it had
+        finished the iteration that would have released it -- and the code after
+        the loop then dials on a connection the analysis believes was returned.
+
+        The accumulators are saved and restored around the body so a nested loop
+        cannot deliver its own escapes to this one.
+        """
+        outer = (self.breaks, self.continues)
+        self.breaks, self.continues = [], []
+        try:
+            return self._fold_loop(node, state)
+        finally:
+            self.breaks, self.continues = outer
+
+    def _fold_loop(self, node: ast.For | ast.AsyncFor | ast.While, state: int) -> int:
+        """Fold a loop body twice and join every way out of it."""
         header = node.iter if isinstance(node, ast.For | ast.AsyncFor) else node.test
         state = self.expr(header, state)
         once = self.block(node.body, state)
-        twice = self.block(node.body, max(state, once))
-        return max(state, once, twice, self.block(node.orelse, max(state, once)))
+        head = max(state, once, *self.continues)
+        twice = self.block(node.body, head)
+        completed = max(head, twice, *self.continues)
+        # ``else`` runs only when the loop was not broken out of, so a ``break``
+        # exits past it rather than through it.
+        return max([self.block(node.orelse, completed), *self.breaks])
 
     def _guarded(self, node: ast.Try, state: int) -> int:
         """Fold a ``try``, over-approximating where a handler may be entered from."""
+        first_return = len(self.returns)
         after_body = self.block(node.body, state)
         entry = max(state, after_body)
         ends = [after_body, self.block(node.orelse, after_body)]
         ends.extend(self.block(handler.body, entry) for handler in node.handlers)
-        return self.block(node.finalbody, max(ends))
+        abandoned = max([state, *self.returns[first_return:]])
+        return self._finally(node, max(ends), abandoned)
+
+    def _finally(self, node: ast.Try, survived: int, abandoned: int) -> int:
+        """Fold a ``finally`` body, which runs on every way out of the statement.
+
+        Folded from the pessimistic join first, and that fold is the load-bearing
+        one: when the body and every handler end in a ``return`` or a ``raise``
+        the surviving state is dead, and a walk that starts there stops at the
+        first line and never enters the block at all. Python enters it every
+        time. A dial written inside, reached because the body returned before its
+        release, is then not mismeasured but unread -- the strongest form of the
+        silence this package exists to break.
+
+        The state the statement is *left* in is taken from a second fold, at the
+        surviving state, because an exception can be raised anywhere in a body
+        while the statement is only exited by the arm that survived. Conflating
+        the two would report a ``try`` that commits down every arm as still
+        holding, and a gate that flags a correct release is a gate somebody
+        deletes.
+        """
+        self.block(node.finalbody, max(survived, abandoned))
+        if survived == DEAD:
+            return DEAD
+        return self.block(node.finalbody, survived)
 
     def _compound(
         self, node: ast.If | ast.For | ast.AsyncFor | ast.While | ast.Try, state: int
@@ -654,6 +836,24 @@ class _FunctionWalk:
         if isinstance(node, ast.Try):
             return self._guarded(node, state)
         return self._loop(node, state)
+
+    def _matched(self, node: ast.Match, state: int) -> int:
+        """Join the arms of a ``match``; they are alternatives, not a sequence.
+
+        Folding the cases one after another lets a release in the first arm pay
+        for a dial in the last -- the same defect as treating a ``break`` as a
+        function exit, in newer syntax. The subject's own state falls through
+        only when no arm is guaranteed to fire, so a ``case _`` without a guard
+        is not charged for a path that cannot happen.
+        """
+        state = self.expr(node.subject, state)
+        arms = []
+        for case in node.cases:
+            entered = self.expr(case.guard, state) if case.guard is not None else state
+            arms.append(self.block(case.body, entered))
+        if _always_matches(node):
+            return max(arms) if arms else state
+        return max([state, *arms])
 
     def _terminator(self, node: ast.stmt, state: int) -> int:
         """Fold a statement that ends the path, evaluating whatever it carries first.
@@ -668,10 +868,16 @@ class _FunctionWalk:
             return DEAD
         for child in ast.iter_child_nodes(node):
             state = self.expr(child, state)
+        if isinstance(node, ast.Break):
+            self.breaks.append(state)
+        elif isinstance(node, ast.Continue):
+            self.continues.append(state)
         return DEAD
 
     def stmt(self, node: ast.stmt, state: int) -> int:
         """Fold one statement into the transaction state."""
+        if isinstance(node, ast.Match):
+            return self._matched(node, state)
         if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While | ast.Try):
             return self._compound(node, state)
         if isinstance(node, ast.Return | ast.Raise | ast.Break | ast.Continue):
