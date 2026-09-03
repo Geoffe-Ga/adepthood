@@ -2,6 +2,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet, Text } from 'react-native';
 
 import { DEFAULT_WRITING_MINUTES } from '../writingSession';
 import type { WritingSessionResult } from '../writingSession';
@@ -136,15 +137,18 @@ describe('WritingTimer — a session that runs its length', () => {
     expect(cue).not.toHaveBeenCalled();
   });
 
-  it('returns to the offer once the session is reported, ready but not started', () => {
+  it('stays collapsed after completion and expands back into a restart offer when pressed', () => {
     const { getByTestId, queryByTestId } = renderTimer(jest.fn());
 
     fireEvent.press(getByTestId('writing-timer-start'));
     tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
 
-    expect(getByTestId('writing-timer-readout').props.children).toBe('20:00');
-    expect(queryByTestId('writing-timer-start')).not.toBeNull();
+    expect(getByTestId('writing-timer-compact')).toBeTruthy();
+    expect(queryByTestId('writing-timer-start')).toBeNull();
     expect(queryByTestId('writing-timer-stop')).toBeNull();
+
+    fireEvent.press(getByTestId('writing-timer-compact'));
+    expect(queryByTestId('writing-timer-start')).not.toBeNull();
   });
 });
 
@@ -196,6 +200,28 @@ describe('WritingTimer — a session the writer stops', () => {
   });
 });
 
+describe('WritingTimer — compact desk-side state', () => {
+  it('collapses to the trailing edge as soon as writing starts', () => {
+    const { getByTestId } = renderTimer(jest.fn());
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+
+    expect(getByTestId('writing-timer-compact')).toBeTruthy();
+    expect(StyleSheet.flatten(getByTestId('writing-timer-wrapper').props.style).alignItems).toBe(
+      'flex-end',
+    );
+  });
+
+  it('uses vector-only controls while compact', () => {
+    const { getByTestId } = renderTimer(jest.fn());
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+
+    expect(getByTestId('writing-timer-pause').findAllByType(Text)).toHaveLength(0);
+    expect(getByTestId('writing-timer-stop').findAllByType(Text)).toHaveLength(0);
+  });
+});
+
 describe('WritingTimer — two sessions in one mount', () => {
   it('reports each on its own terms, with no verdict carried over from the first', () => {
     const onComplete = jest.fn<(result: WritingSessionResult) => void>();
@@ -209,6 +235,7 @@ describe('WritingTimer — two sessions in one mount', () => {
 
     const secondStart = T0 + 5 * MS_PER_MINUTE;
     jest.setSystemTime(secondStart);
+    fireEvent.press(getByTestId('writing-timer-compact'));
     fireEvent.press(getByTestId('writing-timer-start'));
     tickTo(secondStart + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
 

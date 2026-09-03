@@ -79,6 +79,7 @@ describe('ScreenDrawer', () => {
     );
 
     const scrim = getByTestId('screen-drawer-scrim');
+    expect(StyleSheet.flatten(scrim.props.style).backgroundColor).toBe('transparent');
     expect(scrim.props.accessibilityRole).toBe('button');
     expect(scrim.props.accessibilityLabel).toBe('Close Journal menu');
 

@@ -3,7 +3,7 @@
  * ``TabHeaderRight`` pattern in ``BottomTabs`` so it is defined once at module
  * scope rather than being re-created on every render of its host screen.
  */
-import { Menu } from 'lucide-react-native';
+import { PanelLeftOpen } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, TouchableOpacity } from 'react-native';
 
@@ -39,7 +39,7 @@ export default function DrawerToggle({
       accessibilityState={{ expanded }}
       testID={testID ?? 'drawer-toggle'}
     >
-      <Menu color={accent.primary} size={MENU_ICON_SIZE} />
+      <PanelLeftOpen color={accent.primary} size={MENU_ICON_SIZE} accessible={false} />
     </TouchableOpacity>
   );
 }

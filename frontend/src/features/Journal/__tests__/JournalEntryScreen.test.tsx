@@ -332,6 +332,20 @@ describe('JournalEntryScreen', () => {
     expect(queryByText('Send')).toBeNull();
   });
 
+  it('lets a long title wrap instead of clipping it to one line', () => {
+    const { getByTestId } = renderScreen();
+    const title = getByTestId('journal-title-input');
+    expect(title.props.multiline).toBe(true);
+    expect(title.props.scrollEnabled).toBe(false);
+  });
+
+  it('moves metadata, writing, and marginalia through one shared scroll surface', () => {
+    const { getByTestId } = renderScreen();
+    const scroll = getByTestId('journal-page-scroll');
+    expect(within(scroll).getByTestId('journal-title-input')).toBeTruthy();
+    expect(within(scroll).getByTestId('journal-margin-column')).toBeTruthy();
+  });
+
   it('grows the body input to fill available vertical space on a tall desktop viewport', () => {
     const rn = require('react-native');
     const spy = jest
@@ -588,6 +602,7 @@ describe('JournalEntryScreen', () => {
         await jest.advanceTimersByTimeAsync(100);
       });
       expect(getByTestId('journal-save-hint').props.children).toMatch(/save/i);
+      expect(getByTestId('journal-save-retry')).toBeTruthy();
     } finally {
       jest.useRealTimers();
     }
