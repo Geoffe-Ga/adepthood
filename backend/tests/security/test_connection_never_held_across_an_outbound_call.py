@@ -120,7 +120,8 @@ def outbound_boundary(async_client: AsyncClient) -> Iterator[OutboundBoundaryObs
     del async_client
     with observe_outbound_boundaries(app) as observer:
         yield observer
-        # Only on a passing test, so a genuine failure is never masked by this.
+        # At teardown, so a genuine failure is never masked by this: a finalizer
+        # runs on every outcome, and a test that already failed reports both.
         # A leaf the observer could not wrap records nothing, and nothing is what
         # a clean site records too -- so an uninstrumentable leaf must be news.
         assert not observer.uninstrumentable, (
