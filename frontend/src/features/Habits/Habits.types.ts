@@ -202,7 +202,19 @@ export interface MissedDaysModalProps {
 export interface OnboardingModalProps {
   visible: boolean;
   onClose: () => void;
-  onSaveHabits: (_habits: OnboardingHabit[]) => void;
+  /**
+   * Bare picks on a first run, a stated plan once the user has habits to
+   * review. The union is the whole point: a first-run pass has no row to name,
+   * while a review pass knows exactly which row each pick means and which rows
+   * the user chose to let go of, and only a stated plan can carry a release.
+   */
+  onSaveHabits: (_habits: readonly OnboardingHabit[] | HabitMergePlan) => void;
+  /**
+   * The habits the user already has, so the modal can ask about them instead of
+   * starting from nothing. Optional and empty by default: a first run has none,
+   * and the whole five-step flow below is unchanged when the list is empty.
+   */
+  existingHabits?: readonly Habit[];
 }
 
 export interface ReorderHabitsModalProps {
@@ -235,7 +247,8 @@ export interface HabitsActions {
   saveHabitOrder: (_orderedHabits: Habit[]) => void;
   backfillMissedDays: (_habitId: number, _days: Date[]) => void;
   setNewStartDate: (_habitId: number, _newDate: Date) => void;
-  onboardingSave: (_newHabits: OnboardingHabit[]) => Promise<void>;
+  /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
+  onboardingSave: (_input: readonly OnboardingHabit[] | HabitMergePlan) => Promise<void>;
   iconPress: (_index: number) => void;
   emojiSelect: (_emoji: string) => void;
   revealAllHabits: () => void;

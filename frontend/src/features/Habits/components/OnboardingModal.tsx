@@ -22,13 +22,30 @@ import Animated from 'react-native-reanimated';
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
+import { selectProgramStartDate, useProgramStore } from '../../../store/useProgramStore';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
-import type { OnboardingHabit, OnboardingModalProps } from '../Habits.types';
+import type { Habit, HabitMergePlan, OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { calculateHabitStartDate, calculateNetEnergy, stageAtIndex } from '../HabitUtils';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import {
+  ADD_HABITS_STEP,
+  buildMergePlan,
+  buildReviewRows,
+  entryStepFor,
+  originHabitId,
+  releaseRow,
+  releasedRows,
+  REVIEW_STEP,
+  setDestination,
+  syncPool,
+  toggleKeep,
+  type ReviewDestination,
+  type ReviewRow,
+} from './onboardingReview';
+import OnboardingReviewStep from './OnboardingReviewStep';
 import { HABIT_NAME_MAX_LENGTH, validateAndAddHabit } from './onboardingValidation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -218,6 +235,8 @@ interface AddHabitsStepProps {
   ) => void;
   onContinuePress: () => void;
   onRemoveHabit: (_index: number) => void;
+  /** Present only for a returning user, whose review step this step now follows. */
+  onBack?: () => void;
 }
 
 const HabitInputRow = ({
@@ -258,6 +277,37 @@ const HabitInputRow = ({
   </View>
 );
 
+const AddHabitsFooter = ({
+  count,
+  onContinuePress,
+  onBack,
+}: {
+  count: number;
+  onContinuePress: () => void;
+  onBack?: () => void;
+}) => (
+  <View style={styles.bottomContainer}>
+    {onBack !== undefined && (
+      <TouchableOpacity
+        testID="add-habits-back"
+        style={styles.onboardingBackButton}
+        onPress={onBack}
+      >
+        <Text style={styles.onboardingBackButtonText}>Back</Text>
+      </TouchableOpacity>
+    )}
+    <Text style={styles.habitCount} testID="habit-count">{`${count} / ${MAX_HABITS}`}</Text>
+    <TouchableOpacity
+      testID="continue-button"
+      style={[styles.onboardingContinueButton, count === 0 && styles.disabledButton]}
+      onPress={onContinuePress}
+      disabled={count === 0}
+    >
+      <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 const AddHabitsStep = ({
   habits,
   newHabitName,
@@ -268,6 +318,7 @@ const AddHabitsStep = ({
   onKeyPress,
   onContinuePress,
   onRemoveHabit,
+  onBack,
 }: AddHabitsStepProps) => (
   <SafeAreaView style={styles.onboardingStep}>
     <Text style={styles.onboardingTitle}>Create Your Habits</Text>
@@ -290,20 +341,7 @@ const AddHabitsStep = ({
         <HabitChip key={index} habit={item} onRemove={() => onRemoveHabit(index)} />
       ))}
     </ScrollView>
-    <View style={styles.bottomContainer}>
-      <Text
-        style={styles.habitCount}
-        testID="habit-count"
-      >{`${habits.length} / ${MAX_HABITS}`}</Text>
-      <TouchableOpacity
-        testID="continue-button"
-        style={[styles.onboardingContinueButton, habits.length === 0 && styles.disabledButton]}
-        onPress={onContinuePress}
-        disabled={habits.length === 0}
-      >
-        <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-      </TouchableOpacity>
-    </View>
+    <AddHabitsFooter count={habits.length} onContinuePress={onContinuePress} onBack={onBack} />
   </SafeAreaView>
 );
 
@@ -362,6 +400,18 @@ interface ReorderHeaderProps {
   postReveal?: boolean;
 }
 
+/**
+ * The floor the picker offers. Today, ordinarily: a program cannot begin before
+ * the user is standing here. But a returning user's picker opens on the day
+ * their program already began, which is usually in the past, and a floor above
+ * the value on display would refuse to give back the date it was showing a
+ * moment ago.
+ */
+const earliestSelectable = (startDate: Date): Date => {
+  const today = new Date();
+  return startDate < today ? startDate : today;
+};
+
 const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderProps) => (
   <>
     <Text style={styles.onboardingTitle}>
@@ -376,7 +426,7 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderPro
       <Text style={styles.startDateLabel}>Beige begins on:</Text>
       <DatePicker
         value={toISODate(startDate)}
-        minDate={toISODate(new Date())}
+        minDate={toISODate(earliestSelectable(startDate))}
         onChange={onDateChange}
       />
     </View>
@@ -699,8 +749,8 @@ const useHabitInput = (
 };
 
 const useOnboardingNavigation = (
-  habits: OnboardingHabit[],
-  setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>,
+  buildResult: () => readonly OnboardingHabit[] | HabitMergePlan,
+  resetToEntry: () => void,
   setStep: React.Dispatch<React.SetStateAction<number>>,
   setGoalGroupTemplates: React.Dispatch<React.SetStateAction<ApiGoalGroup[]>>,
   onClose: () => void,
@@ -709,8 +759,7 @@ const useOnboardingNavigation = (
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const handleAttemptClose = () => setShowDiscardDialog(true);
   const handleConfirmDiscard = () => {
-    setStep(1);
-    setHabits([]);
+    resetToEntry();
     setShowDiscardDialog(false);
     onClose();
   };
@@ -730,17 +779,18 @@ const useOnboardingNavigation = (
       })
       .catch(() => {
         if (templatesRequestRef.current !== myRequest) return;
-        onSaveHabits(habits);
+        onSaveHabits(buildResult());
         onClose();
       });
   };
   // BUG-FE-HABIT-101: reset onboarding state on finish so reopening the
-  // modal starts at step 1 with an empty habit list, instead of resuming
-  // at step 5 with already-persisted habits.
+  // modal starts at the step the caller's own state calls for -- an empty
+  // add-habits step on a first run, the review step for a user who still has
+  // habits to be asked about -- instead of resuming at step 5 with
+  // already-persisted habits.
   const handleFinish = () => {
-    onSaveHabits(habits);
-    setStep(1);
-    setHabits([]);
+    onSaveHabits(buildResult());
+    resetToEntry();
     onClose();
   };
   return {
@@ -859,13 +909,33 @@ const useRevealIntegration = (
   return { reveal, unsortedHabits, prepareHabitsForReorder };
 };
 
+/**
+ * Where the modal opens, for a user with habits and for one without.
+ *
+ * The start date is seeded from the program anchor the user already chose, not
+ * from today. Saving a scaffolding pass is an explicit anchor write -- it
+ * records a day the user picked -- so a picker that quietly re-answers it with
+ * today moves the whole program calendar for a returning user who never touched
+ * it. Today is right only when there is no answer yet.
+ */
+const entryStateFor = (existingHabits: readonly Habit[], anchor: Date | null) => {
+  const rows = buildReviewRows(existingHabits);
+  return { rows, step: entryStepFor(rows), startDate: anchor ?? new Date() };
+};
+
+type EntryState = ReturnType<typeof entryStateFor>;
+
 const useComposedState = (
   onClose: () => void,
   onSaveHabits: OnboardingModalProps['onSaveHabits'],
+  existingHabits: readonly Habit[],
 ) => {
-  const [step, setStep] = useState(1);
+  const anchor = useProgramStore(selectProgramStartDate);
+  const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, anchor));
+  const [step, setStep] = useState(entry.step);
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
-  const [startDate, setStartDate] = useState(new Date());
+  const [reviewRows, setReviewRows] = useState<readonly ReviewRow[]>(entry.rows);
+  const [startDate, setStartDate] = useState(entry.startDate);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedHabitIndex, setSelectedHabitIndex] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -875,6 +945,9 @@ const useComposedState = (
     setStep,
     habits,
     setHabits,
+    reviewRows,
+    setReviewRows,
+    anchor,
     startDate,
     setStartDate,
     showEmojiPicker,
@@ -889,26 +962,182 @@ const useComposedState = (
   };
 };
 
-const useOnboardingState = (
-  onClose: () => void,
-  onSaveHabits: OnboardingModalProps['onSaveHabits'],
-) => {
-  const cs = useComposedState(onClose, onSaveHabits);
-  const { step, habits, setHabits, setStep, startDate } = cs;
+/** Which habits a pending confirmation would let go of, and what asked for it. */
+interface PendingRelease {
+  readonly habitIds: readonly number[];
+  /**
+   * Set when the ask came from taking a chip off the add-habits step rather
+   * than from leaving the review step, because confirming has to unpick the
+   * chip's row rather than carry the user forward.
+   */
+  readonly fromChip: boolean;
+}
 
-  const { reveal, unsortedHabits, prepareHabitsForReorder } = useRevealIntegration(
-    step,
-    habits,
+interface ReviewStateHandle {
+  reviewRows: readonly ReviewRow[];
+  setReviewRows: React.Dispatch<React.SetStateAction<readonly ReviewRow[]>>;
+  setHabits: React.Dispatch<React.SetStateAction<OnboardingHabit[]>>;
+  setStep: React.Dispatch<React.SetStateAction<number>>;
+  existingHabits: readonly Habit[];
+}
+
+/**
+ * Everything the review step can do, and the one confirmation that guards the
+ * only irreversible thing among them.
+ *
+ * Leaving the step and taking a chip off the add-habits step both mean the same
+ * thing for a habit the user already had, so both route through the same
+ * dialog. Cancelling either leaves the state exactly as it was -- unticked rows
+ * stay unticked, chips stay put, and nothing has been written anywhere.
+ */
+const useReviewActions = (handle: ReviewStateHandle) => {
+  const { reviewRows, setReviewRows, setHabits, setStep, existingHabits } = handle;
+  const [pendingRelease, setPendingRelease] = useState<PendingRelease | null>(null);
+
+  const enterAddHabits = (rows: readonly ReviewRow[]) => {
+    setHabits((prev) => syncPool(prev, rows, existingHabits));
+    setStep(ADD_HABITS_STEP);
+  };
+
+  const handleContinueFromReview = () => {
+    const releasing = releasedRows(reviewRows);
+    if (releasing.length === 0) {
+      enterAddHabits(reviewRows);
+      return;
+    }
+    setPendingRelease({ habitIds: releasing.map((row) => row.habitId), fromChip: false });
+  };
+
+  const handleConfirmRelease = () => {
+    const pending = pendingRelease;
+    setPendingRelease(null);
+    if (pending === null) return;
+    if (!pending.fromChip) {
+      enterAddHabits(reviewRows);
+      return;
+    }
+    let next = reviewRows;
+    for (const habitId of pending.habitIds) next = releaseRow(next, habitId);
+    setReviewRows(next);
+    setHabits((prev) => syncPool(prev, next, existingHabits));
+  };
+
+  return {
+    pendingRelease,
+    releaseNames: (pendingRelease?.habitIds ?? []).flatMap((habitId) =>
+      reviewRows.filter((row) => row.habitId === habitId).map((row) => row.name),
+    ),
+    handleToggleKeep: (habitId: number) => setReviewRows(toggleKeep(reviewRows, habitId)),
+    handleSelectDestination: (habitId: number, destination: ReviewDestination) =>
+      setReviewRows(setDestination(reviewRows, habitId, destination)),
+    handleContinueFromReview,
+    handleBackToReview: () => setStep(REVIEW_STEP),
+    requestChipRelease: (habitId: number) =>
+      setPendingRelease({ habitIds: [habitId], fromChip: true }),
+    handleCancelRelease: () => setPendingRelease(null),
+    handleConfirmRelease,
+  };
+};
+
+/**
+ * Re-seed the whole flow each time the modal opens, and only then.
+ *
+ * The modal stays mounted behind a `visible` flag, so its state outlives every
+ * close -- and the habit list it must ask about is still loading when the screen
+ * first mounts. Seeding once at mount would therefore ask a returning user
+ * nothing at all. The latest values are read through a ref so an unstable
+ * `existingHabits` identity cannot re-seed mid-flow and throw away what the user
+ * has typed.
+ */
+const useEntryReset = (
+  visible: boolean,
+  existingHabits: readonly Habit[],
+  anchor: Date | null,
+  apply: (_entry: EntryState) => void,
+) => {
+  const latest = useRef({ existingHabits, anchor, apply });
+  latest.current = { existingHabits, anchor, apply };
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (!visible) {
+      wasOpen.current = false;
+      return;
+    }
+    if (wasOpen.current) return;
+    wasOpen.current = true;
+    const current = latest.current;
+    current.apply(entryStateFor(current.existingHabits, current.anchor));
+  }, [visible]);
+};
+
+/**
+ * The review half, bound to the composed state: the answers the user gives, the
+ * re-seed that runs on every open, and the result the save is handed. A pass
+ * that had nothing to review hands back bare picks exactly as it always did;
+ * only a pass that asked can state a plan.
+ */
+const useScaffoldReview = (
+  visible: boolean,
+  existingHabits: readonly Habit[],
+  cs: ReturnType<typeof useComposedState>,
+) => {
+  const { setStep, setHabits, setReviewRows, setStartDate, reviewRows, habits, anchor } = cs;
+  const review = useReviewActions({
+    reviewRows,
+    setReviewRows,
     setHabits,
     setStep,
-    startDate,
+    existingHabits,
+  });
+  const applyEntry = useCallback(
+    (entry: EntryState) => {
+      setReviewRows(entry.rows);
+      setStep(entry.step);
+      setStartDate(entry.startDate);
+      setHabits([]);
+    },
+    [setReviewRows, setStep, setStartDate, setHabits],
   );
+  useEntryReset(visible, existingHabits, anchor, applyEntry);
+  return {
+    ...review,
+    resetToEntry: () => applyEntry(entryStateFor(existingHabits, anchor)),
+    buildResult: (): readonly OnboardingHabit[] | HabitMergePlan =>
+      reviewRows.length > 0 ? buildMergePlan(habits, reviewRows, existingHabits) : habits,
+  };
+};
 
-  useOnboardingEffects(step, cs.scrollRef, prepareHabitsForReorder);
+/** The chip "x", read against where the chip came from. */
+const guardedRemoveHabit =
+  (
+    habits: readonly OnboardingHabit[],
+    dropPick: (_index: number) => void,
+    requestChipRelease: (_habitId: number) => void,
+  ) =>
+  (index: number): void => {
+    const origin = originHabitId(habits[index]?.id ?? '');
+    if (origin === null) {
+      dropPick(index);
+      return;
+    }
+    requestChipRelease(origin);
+  };
+
+const useOnboardingPieces = (
+  onClose: () => void,
+  onSaveHabits: OnboardingModalProps['onSaveHabits'],
+  existingHabits: readonly Habit[],
+  visible: boolean,
+) => {
+  const cs = useComposedState(onClose, onSaveHabits, existingHabits);
+  const { step, habits, setHabits, setStep, startDate } = cs;
+  const revealParts = useRevealIntegration(step, habits, setHabits, setStep, startDate);
+  useOnboardingEffects(step, cs.scrollRef, revealParts.prepareHabitsForReorder);
+  const review = useScaffoldReview(visible, existingHabits, cs);
   const input = useHabitInput(habits, setHabits, setStep);
   const nav = useOnboardingNavigation(
-    habits,
-    setHabits,
+    review.buildResult,
+    review.resetToEntry,
     setStep,
     cs.setGoalGroupTemplates,
     onClose,
@@ -923,24 +1152,60 @@ const useOnboardingState = (
     cs.setSelectedHabitIndex,
     cs.setShowEmojiPicker,
   );
-
   return {
-    step,
-    setStep,
-    habits,
-    startDate,
+    cs,
+    revealParts,
+    review,
+    input,
+    nav,
+    act,
+    // A chip the user is taking off the add-habits step may be a habit they
+    // already had, and dropping one of those from the list is a release the
+    // plain filter would perform without ever asking.
+    removeHabit: guardedRemoveHabit(habits, act.removeHabit, review.requestChipRelease),
+  };
+};
+
+const useOnboardingState = (
+  onClose: () => void,
+  onSaveHabits: OnboardingModalProps['onSaveHabits'],
+  existingHabits: readonly Habit[],
+  visible: boolean,
+) => {
+  const { cs, revealParts, review, input, nav, act, removeHabit } = useOnboardingPieces(
+    onClose,
+    onSaveHabits,
+    existingHabits,
+    visible,
+  );
+  return {
+    step: cs.step,
+    setStep: cs.setStep,
+    habits: cs.habits,
+    reviewRows: cs.reviewRows,
+    startDate: cs.startDate,
     showEmojiPicker: cs.showEmojiPicker,
     selectedHabitIndex: cs.selectedHabitIndex,
     scrollRef: cs.scrollRef,
     goalGroupTemplates: cs.goalGroupTemplates,
-    prepareHabitsForReorder,
-    unsortedHabits,
-    reveal,
+    ...revealParts,
     ...nav,
     ...input,
     ...act,
+    ...review,
+    // After the spreads, deliberately: this one overrides `act.removeHabit`.
+    removeHabit,
   };
 };
+
+const OnboardingStepReview = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
+  <OnboardingReviewStep
+    rows={s.reviewRows}
+    onToggleKeep={s.handleToggleKeep}
+    onSelectDestination={s.handleSelectDestination}
+    onContinue={s.handleContinueFromReview}
+  />
+);
 
 const OnboardingStepOne = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
   <AddHabitsStep
@@ -953,6 +1218,7 @@ const OnboardingStepOne = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
     onKeyPress={s.handleKeyPress}
     onContinuePress={s.handleContinuePress}
     onRemoveHabit={s.removeHabit}
+    onBack={s.reviewRows.length > 0 ? s.handleBackToReview : undefined}
   />
 );
 
@@ -988,6 +1254,8 @@ const OnboardingStepRevealOrReorder = ({ s }: { s: ReturnType<typeof useOnboardi
 
 const renderOnboardingStep = (s: ReturnType<typeof useOnboardingState>) => {
   switch (s.step) {
+    case REVIEW_STEP:
+      return <OnboardingStepReview s={s} />;
     case 1:
       return <OnboardingStepOne s={s} />;
     case 2:
@@ -1030,8 +1298,35 @@ const renderOnboardingStep = (s: ReturnType<typeof useOnboardingState>) => {
   }
 };
 
+/** "A", "A and B", "A, B and C" — a list read aloud rather than punctuated. */
+const listNames = (names: readonly string[]): string =>
+  names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+
+/**
+ * The one destructive confirmation this step can reach. It names what goes and
+ * says what goes with it: the release is a delete, it cascades the habit's goals
+ * and check-ins server-side, and nothing archives them. Cancelling changes
+ * nothing at all -- the rows are still unticked and can simply be ticked again.
+ */
+const ReleaseConfirmDialog = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
+  <ConfirmDialog
+    visible={s.pendingRelease !== null}
+    title={s.releaseNames.length > 1 ? 'Let these habits go?' : 'Let this habit go?'}
+    message={`${listNames(s.releaseNames)} will be deleted, and every check-in and goal held there goes too. There is no way to bring it back.`}
+    testID="release-confirm"
+    cancelTestID="release-cancel"
+    confirmTestID="release-let-go"
+    cancelLabel="Cancel"
+    confirmLabel="Let go"
+    destructive
+    onCancel={s.handleCancelRelease}
+    onConfirm={s.handleConfirmRelease}
+  />
+);
+
 const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
   <>
+    <ReleaseConfirmDialog s={s} />
     <ConfirmDialog
       visible={s.showDiscardDialog}
       title="Discard all changes?"
@@ -1063,8 +1358,15 @@ const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
   </>
 );
 
-export const OnboardingModal = ({ visible, onClose, onSaveHabits }: OnboardingModalProps) => {
-  const s = useOnboardingState(onClose, onSaveHabits);
+const NO_EXISTING_HABITS: readonly Habit[] = [];
+
+export const OnboardingModal = ({
+  visible,
+  onClose,
+  onSaveHabits,
+  existingHabits = NO_EXISTING_HABITS,
+}: OnboardingModalProps) => {
+  const s = useOnboardingState(onClose, onSaveHabits, existingHabits, visible);
 
   return (
     <>
