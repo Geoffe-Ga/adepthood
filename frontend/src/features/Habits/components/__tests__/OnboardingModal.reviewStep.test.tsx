@@ -347,6 +347,80 @@ describe('OnboardingModal release confirmation', () => {
   });
 });
 
+describe('OnboardingModal review step, bringing everything along', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  it('lets a user who brings every habit along finish without inventing a new one', () => {
+    // A legitimate combination of the choices this step offers: everything I
+    // have is already part of me, and I am taking nothing new on this lap.
+    // Offering that fork and then refusing to let the user out of it is a dead
+    // end behind an invitation.
+    const { onSaveHabits, ...result } = renderModal([habit(), second]);
+
+    fireEvent.press(result.getByTestId('review-bring-along-7'));
+    fireEvent.press(result.getByTestId('review-bring-along-9'));
+    fireEvent.press(result.getByTestId('review-continue'));
+
+    expect(result.getByTestId('habit-count')).toHaveTextContent('0 / 10');
+    fireEvent.press(result.getByTestId('finish-without-adding'));
+
+    const plan = onSaveHabits.mock.calls[0]?.[0] as HabitMergePlan;
+    expect(plan).toContainEqual(expect.objectContaining({ kind: 'brought-along', habitId: 7 }));
+    expect(plan).toContainEqual(expect.objectContaining({ kind: 'brought-along', habitId: 9 }));
+  });
+
+  it('still refuses to save a first run that has entered nothing at all', () => {
+    // The mirror case, and the reason the affordance is conditional: a first
+    // run with an empty pool has decided nothing, so there is nothing to save.
+    const { queryByTestId, getByTestId } = renderModal([]);
+
+    expect(queryByTestId('finish-without-adding')).toBeNull();
+    expect(getByTestId('continue-button').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('offers the ordinary path again the moment a habit enters the pool', () => {
+    const result = renderModal([habit()]);
+
+    fireEvent.press(result.getByTestId('review-bring-along-7'));
+    fireEvent.press(result.getByTestId('review-continue'));
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+
+    expect(result.queryByTestId('finish-without-adding')).toBeNull();
+    expect(result.getByTestId('continue-button').props.accessibilityState.disabled).toBeFalsy();
+  });
+
+  it('shows a habit the user has already lived the beginning it keeps', () => {
+    // `hasBegun` withholds the staggered start date server-side, so a reorder
+    // row displaying one promises a date the save will discard.
+    useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 5, 1));
+    const result = renderModal([habit({ start_date: new Date(2026, 0, 1), streak: 4 })]);
+
+    fireEvent.press(result.getByTestId('review-continue'));
+    pressContinue(result);
+    fireEvent.press(result.getByTestId('continue-button'));
+    act(() => {
+      fireEvent.press(result.getByTestId('continue-button'));
+    });
+    act(() => {
+      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+    });
+
+    expect(result.getByText('Jan 1')).toBeTruthy();
+    expect(result.queryByText('Jun 1')).toBeNull();
+  });
+});
+
 describe('OnboardingModal review step, what the save is handed', () => {
   beforeEach(() => {
     jest.useFakeTimers();

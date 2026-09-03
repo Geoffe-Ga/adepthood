@@ -75,6 +75,7 @@ import type { DroppedCheckInState } from '../../../../store/useDroppedCheckInSto
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { buildMergePlan, buildReviewRows } from '../../components/onboardingReview';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
 import { buildPagedHabits, carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
@@ -2501,6 +2502,59 @@ describe('habitManager', () => {
       expect(anchor.getFullYear()).toBe(2026);
       expect(anchor.getMonth()).toBe(0);
       expect(anchor.getDate()).toBe(1);
+    });
+
+    describe('the anchor a review pass writes', () => {
+      // Driven through the review-step PRODUCER, not through bare picks. The
+      // test above feeds picks the user typed, so its brought-along disposition
+      // carries the date they just chose and the anchor is safe by accident.
+      // The review step synthesises that pick from the row instead, and the
+      // row's date is from before the program began at all -- which is the one
+      // date the anchor must never be derived from, as the comment above the
+      // derivation says in as many words.
+      const BEFORE_THE_PROGRAM = new Date('2019-03-04');
+      const STORED = new Date('2026-01-05');
+
+      const carryoverStore = (): Habit[] => [
+        makeServerHabit({
+          id: CARRYOVER_ID,
+          name: EVENING_READ,
+          is_carryover: true,
+          start_date: BEFORE_THE_PROGRAM,
+        }),
+      ];
+
+      it('never derives it from the beginning of a habit brought along', async () => {
+        useProgramStore.getState().hydrateProgramStartDate(STORED);
+        const existing = carryoverStore();
+        useHabitStore.setState({ habits: existing });
+
+        const rows = buildReviewRows(existing);
+        expect(rows[0]).toMatchObject({ keep: true, destination: 'bring-along' });
+        const typed = pick({ id: 'new', name: MEDITATE, start_date: new Date('2026-02-09') });
+
+        await habitManager.onboardingSave(buildMergePlan([typed], rows, existing), jest.fn());
+
+        // The typed pick still wins over the stored anchor -- re-scaffolding to
+        // a new date has to stay possible. What may not happen is the 2019 date
+        // winning the min and pinning the program to a day seven years back.
+        expect(useProgramStore.getState().programStartDate).toEqual(new Date('2026-02-09'));
+      });
+
+      it('leaves the stored one alone when every habit is brought along and none is typed', async () => {
+        // The default path, end to end: a carryover row defaults to kept and
+        // brought along, brought-along rows never enter the pool, so nothing in
+        // this pass carries a date the user chose. There is no program date
+        // here to find, and an absent one must not be invented.
+        useProgramStore.getState().hydrateProgramStartDate(STORED);
+        const existing = carryoverStore();
+        useHabitStore.setState({ habits: existing });
+
+        const rows = buildReviewRows(existing);
+        await habitManager.onboardingSave(buildMergePlan([], rows, existing), jest.fn());
+
+        expect(useProgramStore.getState().programStartDate).toEqual(STORED);
+      });
     });
 
     it('walks a mixed pass through delete, update and create with exact call counts', async () => {
