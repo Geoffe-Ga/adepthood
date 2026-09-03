@@ -19,12 +19,7 @@ import {
   goals as goalsApi,
   toLocalHabit,
 } from '../../../api';
-import type {
-  CheckInResult,
-  GoalUnitsPayload,
-  GoalUpdatePayload,
-  HabitCreatePayload,
-} from '../../../api';
+import type { CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { colors } from '../../../design/tokens';
@@ -44,7 +39,7 @@ import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
-import type { AddHabitInput, Goal, Habit, OnboardingHabit } from '../Habits.types';
+import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from '../Habits.types';
 import {
   getGoalTier,
   getGoalTarget,
@@ -57,6 +52,14 @@ import {
 } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
+import type { HabitMergeOps } from './habitMerge';
+import {
+  buildTierGoals,
+  deriveMergePlan,
+  pickedHabits,
+  planHabitMerge,
+  toApiPayload,
+} from './habitMerge';
 import {
   ClientMintedIdError,
   isNotDemoSeed,
@@ -89,6 +92,9 @@ const persistHabits = (habits: Habit[]): Promise<void> =>
 
 const INSTRUCTIONAL_TOAST_DURATION_MS = 5000;
 
+/** The one title every write-failure alert carries; the fallback copy is what varies. */
+const SYNC_FAILURE_TITLE = "Couldn't sync";
+
 /** Milestone icon per goal tier. */
 const MILESTONE_ICONS: Record<string, string> = {
   low: '\u{1F3C5}',
@@ -99,48 +105,9 @@ const MILESTONE_ICONS: Record<string, string> = {
 /** Generic check-mark used for the "logged, no milestone yet" confirmation. */
 const LOG_CONFIRMATION_ICON = '\u{2705}';
 
-const DEFAULT_GOAL_CONFIG = {
-  target_unit: 'units',
-  frequency: 1,
-  frequency_unit: 'per_day',
-  is_additive: true,
-};
-
-const GOAL_TIERS = [
-  { tier: 'low' as const, target: 1, label: 'Low' },
-  { tier: 'clear' as const, target: 2, label: 'Clear' },
-  { tier: 'stretch' as const, target: 3, label: 'Stretch' },
-];
-
 // ---------------------------------------------------------------------------
 // Pure helpers — safe to unit-test without React or the store.
 // ---------------------------------------------------------------------------
-
-const toApiPayload = (h: Habit): HabitCreatePayload => ({
-  name: h.name,
-  icon: h.icon,
-  start_date:
-    h.start_date instanceof Date ? h.start_date.toISOString().slice(0, 10) : String(h.start_date),
-  energy_cost: h.energy_cost,
-  energy_return: h.energy_return,
-  notification_times: h.notificationTimes ?? null,
-  notification_frequency: h.notificationFrequency ?? null,
-  notification_days: h.notificationDays ?? null,
-  milestone_notifications: h.milestoneNotifications ?? false,
-  // ``sort_order`` and ``stage`` are persisted on PUT so reorder + emoji
-  // edits survive a logout/login round-trip — without these, the server
-  // happily replaces the row with the schema defaults (sort_order=null,
-  // stage="") and the next ``GET /habits`` returns the user's tiles in
-  // insertion order with the original onboarding stage label.
-  sort_order: h.sort_order ?? null,
-  stage: h.stage,
-  // ``revealed`` is the persisted unlock flag; default locked when absent so a
-  // client that never set it does not accidentally unlock the row server-side.
-  revealed: h.revealed ?? false,
-  // ``is_carryover`` rides every create AND update payload so edit/delete/
-  // reorder PUTs preserve the negative-lap flag without special-casing.
-  is_carryover: h.is_carryover ?? false,
-});
 
 // Delegate field mapping + tier/notification-frequency sanitizing to the
 // canonical ``toLocalHabit`` boundary; ``sort_order`` is the one Habits-only
@@ -268,33 +235,6 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
   completions: [],
 });
 
-const buildTierGoals = (habitName: string, idFor: (tierIndex: number) => number) =>
-  GOAL_TIERS.map((t, ti) => ({
-    id: idFor(ti),
-    title: `${t.label} goal for ${habitName}`,
-    ...DEFAULT_GOAL_CONFIG,
-    tier: t.tier,
-    target: t.target,
-  }));
-
-/**
- * Scaffold the onboarding picks into store rows so the tiles are interactive
- * immediately, before the POSTs and the trailing reload land. The ids minted
- * here are positive integers inside the server's own range, so nothing about
- * their shape distinguishes them from real ones — `hasClientMintedIds` is the
- * only thing that keeps them off the wire during that window.
- */
-const buildOnboardingHabits = (newHabits: OnboardingHabit[]) =>
-  newHabits.map((habit, index) => ({
-    ...habit,
-    id: index + 1,
-    streak: 0,
-    revealed: false,
-    completions: [] as Habit['completions'],
-    goals: buildTierGoals(habit.name, (ti) => index * 3 + ti + 1),
-    hasClientMintedIds: true,
-  }));
-
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
  * STAGE_ORDER so habits added after the original ten still pick up an
@@ -399,14 +339,105 @@ const syncProgramAnchorFromHabits = (): void => {
   useProgramStore.getState().setProgramStartDate(anchor);
 };
 
-const syncOnboardingHabits = async (fullHabits: ReturnType<typeof buildOnboardingHabits>) => {
+const syncOnboardingHabits = async (fullHabits: readonly Habit[]): Promise<void> => {
   for (const habit of fullHabits) {
     try {
-      await habitsApi.create(toApiPayload(habit as Habit));
+      await habitsApi.create(toApiPayload(habit));
     } catch {
       console.error(`Failed to save habit "${habit.name}" to server`);
     }
   }
+};
+
+/**
+ * Let a habit go, everywhere it lives. The reminder cancellation runs for every
+ * released row — the user asked for the tile to go — while the DELETE is
+ * withheld from a row the server never issued ids for, because a demo tile's
+ * fabricated id collides with a real habit's and the delete cascades that
+ * habit's goals and completions irreversibly.
+ */
+const releaseOne = async (habit: Habit): Promise<void> => {
+  // Fire-and-forget, exactly as ``deleteHabit`` does it: the reminder is device
+  // state, and awaiting it here would let a local scheduling failure be read as
+  // a failed release — putting back a habit the user let go of, or, for a row
+  // with no server id at all, reporting a sync failure for something that was
+  // never going to leave the device.
+  void cancelForHabit(habit.id);
+  if (!isServerBackedHabit(habit)) return;
+  await habitsApi.delete(habit.id);
+};
+
+/**
+ * Run the releases and report which rows are still there. The blanket
+ * ``revertOnFailure`` restore is deliberately not used: by the time a release
+ * can fail, later phases of the same pass may already have committed, and
+ * restoring the whole pre-merge array would throw those away and leave the
+ * store further from the server than the failure did. So the repair is scoped
+ * to the row that did not go, and the trailing reload reconciles the rest.
+ */
+const releaseHabits = async (releases: readonly Habit[]): Promise<Habit[]> => {
+  if (releases.length === 0) return [];
+  const results = await Promise.allSettled(releases.map(releaseOne));
+  const stillHere: Habit[] = [];
+  let firstError: unknown = null;
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    const habit = releases[index];
+    if (habit !== undefined) stillHere.push(habit);
+    firstError ??= result.reason;
+  });
+  if (stillHere.length > 0) {
+    Alert.alert(
+      SYNC_FAILURE_TITLE,
+      formatApiError(firstError, {
+        fallback:
+          "We couldn't let go of every habit on the server. The ones that stayed are back in " +
+          'your list — check your connection and try again.',
+      }),
+    );
+  }
+  return stillHere;
+};
+
+/** Per-row tolerance, matching the create loop: one bad row does not stop the pass. */
+const pushHabitUpdates = async (updates: readonly Habit[]): Promise<void> => {
+  for (const habit of updates) {
+    try {
+      await habitsApi.update(habit.id, toApiPayload(habit));
+    } catch {
+      console.error(`Failed to update habit "${habit.name}" on server`);
+    }
+  }
+};
+
+/**
+ * Accept the modal's picks or a caller's own plan. A pick is a chip the user
+ * tapped and carries a string key; a disposition names a `kind`. An empty list
+ * is the same pass either way — every existing row is retained — so the
+ * ambiguity at zero length has no consequence.
+ */
+const asMergePlan = (
+  input: readonly OnboardingHabit[] | HabitMergePlan,
+  existing: readonly Habit[],
+): HabitMergePlan => {
+  const [first] = input;
+  if (first !== undefined && 'kind' in first) return input as HabitMergePlan;
+  return deriveMergePlan(input as readonly OnboardingHabit[], existing);
+};
+
+/**
+ * The three phases, in the one order that works. Each is awaited to completion
+ * before the next begins, because a released name is only free for a create to
+ * reuse once its DELETE has landed — the server's unique index on
+ * ``lower(trim(name))`` does not know the row is on its way out, and a
+ * create-first order turns the reuse back into the swallowed 409 the merge
+ * exists to remove.
+ */
+const commitHabitMerge = async (ops: HabitMergeOps): Promise<Habit[]> => {
+  const stillHere = await releaseHabits(ops.releases);
+  await pushHabitUpdates(ops.updates);
+  await syncOnboardingHabits(ops.creates);
+  return stillHere;
 };
 
 const applyLogUnit = (
@@ -717,7 +748,7 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
   return (err: unknown) => {
     setHabits(prev);
     void persistHabits(prev);
-    Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
+    Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
   };
 };
 
@@ -729,7 +760,7 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
  */
 const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
   return (err: unknown) => {
-    Alert.alert("Couldn't sync", formatApiError(err, { fallback }));
+    Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
   };
 };
 
@@ -1402,22 +1433,48 @@ export const habitManager = {
       );
   },
 
-  onboardingSave: async (newHabits: OnboardingHabit[], showToast?: ShowToast): Promise<void> => {
-    const fullHabits = buildOnboardingHabits(newHabits);
-    setHabits(fullHabits as Habit[]);
-    // Anchor the universal course calendar to the first habit's start date so
-    // the Map, Practice, Course, Journal and habit-unlock logic all derive the
-    // same stage/week from one source. Without this a freshly-onboarded user
-    // has a null anchor and every screen silently falls back to divergent
-    // server/position values.
-    const anchor = deriveProgramAnchor(newHabits);
+  /**
+   * Save a scaffolding pass over the habits the user already has.
+   *
+   * Takes either the modal's bare picks — the only thing the onboarding modal
+   * can produce today, since it builds its list from scratch and never reads
+   * the store — or a plan a caller derived itself, which is how a modal that
+   * showed the user their current habits and asked would state a release.
+   * Picks are read against the store here so the fix is reachable through the
+   * screen that exists rather than waiting on the one that does not.
+   */
+  onboardingSave: async (
+    input: readonly OnboardingHabit[] | HabitMergePlan,
+    showToast?: ShowToast,
+  ): Promise<void> => {
+    const existing = getHabits();
+    const plan = asMergePlan(input, existing);
+    const ops = planHabitMerge(plan, existing);
+    setHabits(ops.nextStore);
+    // Anchor the universal course calendar to the first picked habit's start
+    // date so the Map, Practice, Course, Journal and habit-unlock logic all
+    // derive the same stage/week from one source. Without this a freshly-
+    // onboarded user has a null anchor and every screen silently falls back to
+    // divergent server/position values.
+    //
+    // Read from the picks, not from the merged store: the picks are the dates
+    // the user just chose, while a kept row carries a date this pass did not
+    // ask about — a carryover's is from before the program began at all.
+    const anchor = deriveProgramAnchor(pickedHabits(plan));
     if (anchor) useProgramStore.getState().setProgramStartDate(anchor);
     showToast?.({
       message: 'Tap a habit tile to edit its goals.',
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    await syncOnboardingHabits(fullHabits);
+    const stillHere = await commitHabitMerge(ops);
+    if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
+    // Persist BEFORE the reload, which is the only order that survives a pass
+    // that released everything: ``loadHabits`` reads this cache back, and its
+    // stuck-user recovery re-POSTs whatever it finds there when the server
+    // returns an empty list — resurrecting, from a cache still holding the
+    // pre-merge list, exactly the habits the user just let go of.
+    await persistHabits(getHabits());
     // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
     // If this GET fails, synthetic ids survive until the next launch — see #282.
     await loadHabits();
