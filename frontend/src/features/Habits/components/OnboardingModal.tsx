@@ -66,12 +66,24 @@ const sortByNetEnergy = (habits: OnboardingHabit[]): OnboardingHabit[] =>
     return b.energy_return - a.energy_return;
   });
 
+/**
+ * Lay the pool out along the program cadence -- except where a habit already
+ * has a beginning behind it. The merge refuses to restamp such a row, on the
+ * grounds that moving a started habit's date is a reset rather than a
+ * re-rating, so a reorder step that showed the staggered date anyway would be
+ * promising a day the save is about to discard. It keeps its own place in the
+ * order; it does not take the order's date.
+ */
 const assignDatesAndStages = (habits: OnboardingHabit[], startDate: Date): OnboardingHabit[] =>
-  habits.map((habit, index) => ({
-    ...habit,
-    start_date: calculateHabitStartDate(startDate, index),
-    stage: stageAtIndex(index),
-  }));
+  habits.map((habit, index) =>
+    habit.keepsOwnBeginning === true
+      ? habit
+      : {
+          ...habit,
+          start_date: calculateHabitStartDate(startDate, index),
+          stage: stageAtIndex(index),
+        },
+  );
 
 interface HabitChipProps {
   habit: OnboardingHabit;
@@ -237,6 +249,8 @@ interface AddHabitsStepProps {
   onRemoveHabit: (_index: number) => void;
   /** Present only for a returning user, whose review step this step now follows. */
   onBack?: () => void;
+  /** Present only when an empty pool is a whole answer -- see ``AddHabitsAction``. */
+  onFinish?: () => void;
 }
 
 const HabitInputRow = ({
@@ -277,14 +291,59 @@ const HabitInputRow = ({
   </View>
 );
 
+/**
+ * The step's forward action, which is not always "continue".
+ *
+ * Bringing every habit along and adding nothing new is a whole answer -- these
+ * are all already mine, and I am taking nothing on this lap -- but it leaves the
+ * pool empty, and the four steps after this one are all about the pool. A
+ * disabled Continue would be a dead end behind a fork the review step invited
+ * the user into, so the pass finishes here instead. A first run has no such
+ * answer to give: an empty pool there has decided nothing, so the button stays
+ * disabled exactly as it always was.
+ */
+const AddHabitsAction = ({
+  count,
+  onContinuePress,
+  onFinish,
+}: {
+  count: number;
+  onContinuePress: () => void;
+  onFinish?: () => void;
+}) => {
+  if (count === 0 && onFinish !== undefined) {
+    return (
+      <TouchableOpacity
+        testID="finish-without-adding"
+        style={styles.onboardingContinueButton}
+        onPress={onFinish}
+      >
+        <Text style={styles.onboardingContinueButtonText}>Done</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <TouchableOpacity
+      testID="continue-button"
+      style={[styles.onboardingContinueButton, count === 0 && styles.disabledButton]}
+      onPress={onContinuePress}
+      disabled={count === 0}
+    >
+      <Text style={styles.onboardingContinueButtonText}>Continue</Text>
+    </TouchableOpacity>
+  );
+};
+
 const AddHabitsFooter = ({
   count,
   onContinuePress,
   onBack,
+  onFinish,
 }: {
   count: number;
   onContinuePress: () => void;
   onBack?: () => void;
+  onFinish?: () => void;
 }) => (
   <View style={styles.bottomContainer}>
     {onBack !== undefined && (
@@ -297,14 +356,7 @@ const AddHabitsFooter = ({
       </TouchableOpacity>
     )}
     <Text style={styles.habitCount} testID="habit-count">{`${count} / ${MAX_HABITS}`}</Text>
-    <TouchableOpacity
-      testID="continue-button"
-      style={[styles.onboardingContinueButton, count === 0 && styles.disabledButton]}
-      onPress={onContinuePress}
-      disabled={count === 0}
-    >
-      <Text style={styles.onboardingContinueButtonText}>Continue</Text>
-    </TouchableOpacity>
+    <AddHabitsAction count={count} onContinuePress={onContinuePress} onFinish={onFinish} />
   </View>
 );
 
@@ -319,6 +371,7 @@ const AddHabitsStep = ({
   onContinuePress,
   onRemoveHabit,
   onBack,
+  onFinish,
 }: AddHabitsStepProps) => (
   <SafeAreaView style={styles.onboardingStep}>
     <Text style={styles.onboardingTitle}>Create Your Habits</Text>
@@ -341,7 +394,12 @@ const AddHabitsStep = ({
         <HabitChip key={index} habit={item} onRemove={() => onRemoveHabit(index)} />
       ))}
     </ScrollView>
-    <AddHabitsFooter count={habits.length} onContinuePress={onContinuePress} onBack={onBack} />
+    <AddHabitsFooter
+      count={habits.length}
+      onContinuePress={onContinuePress}
+      onBack={onBack}
+      onFinish={onFinish}
+    />
   </SafeAreaView>
 );
 
@@ -1219,6 +1277,7 @@ const OnboardingStepOne = ({ s }: { s: ReturnType<typeof useOnboardingState> }) 
     onContinuePress={s.handleContinuePress}
     onRemoveHabit={s.removeHabit}
     onBack={s.reviewRows.length > 0 ? s.handleBackToReview : undefined}
+    onFinish={s.reviewRows.length > 0 ? s.handleFinish : undefined}
   />
 );
 

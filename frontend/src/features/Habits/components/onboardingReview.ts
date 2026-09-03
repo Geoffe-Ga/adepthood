@@ -25,6 +25,7 @@
  */
 
 import type { Habit, HabitDisposition, HabitMergePlan, OnboardingHabit } from '../Habits.types';
+import { hasBegun } from '../services/habitMerge';
 import { isServerBackedHabit } from '../services/serverIds';
 
 /** Where a kept habit goes: onto the carryover pages, or into the new energy order. */
@@ -121,13 +122,7 @@ export const releasedRows = (rows: readonly ReviewRow[]): ReviewRow[] =>
 
 const isReRated = (row: ReviewRow): boolean => row.keep && row.destination === 're-rate';
 
-/**
- * The pick a re-rated habit enters the pool as. It carries the habit's stored
- * ratings, name and icon so the sliders open where the user last left them
- * rather than at the default 5, and its stored stage and start date so nothing
- * about its beginning changes until the reorder step actually moves it.
- */
-const pickFor = (habit: Habit): OnboardingHabit => ({
+const pickFrom = (habit: Habit): OnboardingHabit => ({
   id: poolIdFor(habit.id),
   name: habit.name,
   icon: habit.icon,
@@ -135,6 +130,33 @@ const pickFor = (habit: Habit): OnboardingHabit => ({
   energy_return: habit.energy_return,
   stage: habit.stage,
   start_date: habit.start_date,
+});
+
+/**
+ * The pick a re-rated habit enters the pool as. It carries the habit's stored
+ * ratings, name and icon so the sliders open where the user last left them
+ * rather than at the default 5, and its stored stage and start date so nothing
+ * about its beginning changes before the reorder step restamps the pool.
+ *
+ * A habit whose beginning the user has already lived is marked as keeping it,
+ * because the merge will refuse to restamp such a row and the reorder step must
+ * not display a date the save is about to discard. The mark is computed with
+ * the merge's own predicate so the two cannot drift apart.
+ */
+const programPick = (habit: Habit): OnboardingHabit => ({
+  ...pickFrom(habit),
+  ...(hasBegun(habit) ? { keepsOwnBeginning: true } : {}),
+});
+
+/**
+ * The pick a brought-along habit is named by. It never enters the pool, so its
+ * ratings are only ever read back out again -- but its `start_date` is the day
+ * the user began that habit in their own life, from before the program, and
+ * saying so is what keeps the program's anchor from being derived from it.
+ */
+const carryoverPick = (habit: Habit): OnboardingHabit => ({
+  ...pickFrom(habit),
+  is_carryover: true,
 });
 
 /**
@@ -161,7 +183,7 @@ export const syncPool = (
   const present = new Set(kept.map((pick) => originHabitId(pick.id)));
   const added = existing
     .filter((habit) => wanted.has(habit.id) && !present.has(habit.id))
-    .map(pickFor);
+    .map(programPick);
   return [...added, ...kept];
 };
 
@@ -187,7 +209,7 @@ const dispositionForRow = (
   if (!row.keep) return { kind: 'released', habitId: row.habitId };
   const original = existingById.get(row.habitId);
   if (row.destination === 'bring-along' && original !== undefined) {
-    return { kind: 'brought-along', habitId: row.habitId, habit: pickFor(original) };
+    return { kind: 'brought-along', habitId: row.habitId, habit: carryoverPick(original) };
   }
   // Kept, meant for the new order, and yet carrying no chip: the user took it
   // off the add-habits step without confirming a release. Nothing it holds is

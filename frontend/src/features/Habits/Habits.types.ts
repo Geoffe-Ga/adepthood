@@ -85,6 +85,22 @@ export interface OnboardingHabit {
   stage: string;
   start_date: Date;
   goal_group_id?: number | null;
+  /**
+   * This pick names a habit that lives on the carryover lap, so its
+   * ``start_date`` is when the user began it in their own life rather than a
+   * position on the program cadence -- and nothing may derive the program's
+   * anchor from it. Absent on a pick the user typed, whose date IS the day they
+   * just chose, even when that pick turns out to match a carryover row.
+   */
+  is_carryover?: boolean;
+  /**
+   * This pick names a habit whose beginning the user has already lived, so the
+   * merge will refuse to restamp its ``start_date`` and ``stage``. Carried so
+   * the reorder step shows the date the save will actually keep instead of a
+   * staggered one it is about to discard. Absent on a habit being taken on for
+   * the first time, which has no beginning yet to keep.
+   */
+  keepsOwnBeginning?: boolean;
 }
 
 /**
