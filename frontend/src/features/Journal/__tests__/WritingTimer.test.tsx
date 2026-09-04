@@ -1,6 +1,7 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
+import { Pause, Play, Square } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 
@@ -8,6 +9,7 @@ import { DEFAULT_WRITING_MINUTES } from '../writingSession';
 import type { WritingSessionResult } from '../writingSession';
 import WritingTimer from '../WritingTimer';
 
+import { SPACING, editorialType, journalLayout, touchTarget } from '@/design/tokens';
 import type {
   CueKind,
   EngineDeps,
@@ -89,6 +91,17 @@ describe('WritingTimer — the offer at rest', () => {
     const { getByTestId } = renderTimer(jest.fn());
 
     expect(getByTestId('writing-timer-readout').props.accessibilityLiveRegion).toBeUndefined();
+  });
+
+  it('uses a vector-only Start control with the full touch target', () => {
+    const { getByTestId } = renderTimer(jest.fn());
+    const start = getByTestId('writing-timer-start');
+    const style = StyleSheet.flatten(start.props.style);
+
+    expect(start.findAllByType(Text)).toHaveLength(0);
+    expect(start.findByType(Play)).toBeTruthy();
+    expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 
   it('re-seeds the countdown in place when another length is chosen', () => {
@@ -219,6 +232,82 @@ describe('WritingTimer — compact desk-side state', () => {
 
     expect(getByTestId('writing-timer-pause').findAllByType(Text)).toHaveLength(0);
     expect(getByTestId('writing-timer-stop').findAllByType(Text)).toHaveLength(0);
+    expect(getByTestId('writing-timer-pause').findByType(Pause)).toBeTruthy();
+    expect(getByTestId('writing-timer-stop').findByType(Square)).toBeTruthy();
+  });
+
+  it('docks into a 44dp vertical rail beside the sheet at laptop width', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1024, height: 900, scale: 1, fontScale: 1 });
+    let view: ReturnType<typeof renderTimer> | undefined;
+    try {
+      view = renderTimer(jest.fn());
+      const { getByTestId } = view;
+      fireEvent.press(getByTestId('writing-timer-start'));
+
+      expect(getByTestId('writing-timer-dock-track')).toBeTruthy();
+      expect(StyleSheet.flatten(getByTestId('writing-timer-dock-track').props.style)).toMatchObject(
+        {
+          maxWidth:
+            journalLayout.pageMaxWidth +
+            journalLayout.marginColumnWidth +
+            2 * (SPACING.sm + touchTarget.minimum),
+          alignItems: 'flex-end',
+        },
+      );
+      expect(StyleSheet.flatten(getByTestId('writing-timer-pill').props.style)).toMatchObject({
+        width: touchTarget.minimum,
+        minWidth: touchTarget.minimum,
+      });
+      expect(
+        StyleSheet.flatten(getByTestId('writing-timer-row-readout').props.style),
+      ).toMatchObject({ flexDirection: 'column', height: 'auto' });
+      for (const id of ['writing-timer-readout', 'writing-timer-pause', 'writing-timer-stop']) {
+        const style = StyleSheet.flatten(getByTestId(id).props.style);
+        expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+        expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+      }
+      expect(
+        StyleSheet.flatten(getByTestId('writing-timer-readout').props.style).fontSize,
+      ).toBeGreaterThanOrEqual(editorialType.action.fontSize);
+    } finally {
+      view?.unmount();
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the horizontal compact pill on a phone', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    let view: ReturnType<typeof renderTimer> | undefined;
+    try {
+      view = renderTimer(jest.fn());
+      const { getByTestId, queryByTestId } = view;
+      fireEvent.press(getByTestId('writing-timer-start'));
+
+      expect(queryByTestId('writing-timer-dock-track')).toBeNull();
+      expect(StyleSheet.flatten(getByTestId('writing-timer-pill').props.style).minWidth).toBe(180);
+    } finally {
+      view?.unmount();
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps Resume vector-only and fully tappable while paused', () => {
+    const { getByTestId } = renderTimer(jest.fn());
+    fireEvent.press(getByTestId('writing-timer-start'));
+    fireEvent.press(getByTestId('writing-timer-pause'));
+
+    const resume = getByTestId('writing-timer-resume');
+    const style = StyleSheet.flatten(resume.props.style);
+    expect(resume.findAllByType(Text)).toHaveLength(0);
+    expect(resume.findByType(Play)).toBeTruthy();
+    expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 });
 

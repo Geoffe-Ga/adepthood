@@ -32,7 +32,7 @@ import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import MarginNote from './MarginNote';
-import { continueMarkdownLine } from './markdownEditing';
+import { continueMarkdownEdit, type MarkdownSelection } from './markdownEditing';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
@@ -1152,6 +1152,34 @@ function GrowingTitle({
   );
 }
 
+/** Transform Return at the native caret and briefly control the adjusted selection. */
+function useMarkdownBodyBindings(
+  body: string,
+  onChangeBody: WritingColumnProps['onChangeBody'],
+  onBodySelectionChange: WritingColumnProps['onBodySelectionChange'],
+) {
+  const [selection, setSelection] = useState<MarkdownSelection>();
+  const nativeSelectionRef = useRef<MarkdownSelection>({ start: body.length, end: body.length });
+  const changeBody = useCallback(
+    (next: string) => {
+      const edit = continueMarkdownEdit(body, next, nativeSelectionRef.current);
+      if (edit.selection) nativeSelectionRef.current = edit.selection;
+      setSelection(edit.selection);
+      onChangeBody(edit.text);
+    },
+    [body, onChangeBody],
+  );
+  const changeSelection = useCallback(
+    (event: SelectionChangeEvent) => {
+      nativeSelectionRef.current = event.nativeEvent.selection;
+      setSelection(undefined);
+      onBodySelectionChange?.(event);
+    },
+    [onBodySelectionChange],
+  );
+  return { selection, changeBody, changeSelection };
+}
+
 /** The prose field starts generous and grows into the page-level scroll surface. */
 function GrowingBody({
   body,
@@ -1164,17 +1192,15 @@ function GrowingBody({
   const viewportHeight = useWindowDimensions().height;
   const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
   const growth = useGrowingFieldHeight(minimumBodyHeight);
-  const changeBody = useCallback(
-    (next: string) => onChangeBody(continueMarkdownLine(body, next)),
-    [body, onChangeBody],
-  );
+  const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange);
   return (
     <TextInput
       style={[styles.bodyInput, writingFieldFocus, growth.style]}
       value={body}
-      onChangeText={changeBody}
+      onChangeText={markdown.changeBody}
       onContentSizeChange={growth.onContentSizeChange}
-      onSelectionChange={onBodySelectionChange}
+      selection={markdown.selection}
+      onSelectionChange={markdown.changeSelection}
       placeholder={bodyPlaceholder}
       placeholderTextColor={colors.paper.inkSoft}
       selectionColor={writingField.caret}

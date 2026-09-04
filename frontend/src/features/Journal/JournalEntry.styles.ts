@@ -57,11 +57,19 @@ export const WRITING_TIMER_MAX_ROWS = 2;
 export const WRITING_TIMER_PILL_PADDING_V = SPACING.xs;
 export const WRITING_TIMER_ROW_GAP = SPACING.xs;
 
-/** The tallest the pill ever gets: every row it can show, at its full height. */
-export const WRITING_TIMER_PILL_MAX_HEIGHT =
+/** The expanded horizontal pill's two fixed rows at their full height. */
+const WRITING_TIMER_EXPANDED_MAX_HEIGHT =
   WRITING_TIMER_PILL_PADDING_V * 2 +
   WRITING_TIMER_ROW_HEIGHT * WRITING_TIMER_MAX_ROWS +
   WRITING_TIMER_ROW_GAP * (WRITING_TIMER_MAX_ROWS - 1);
+/** The laptop rail stacks its readout, pause/resume, and stop touch targets. */
+const WRITING_TIMER_DOCKED_MAX_HEIGHT = WRITING_TIMER_ROW_HEIGHT * 3;
+
+/** The tallest timer shape the page or a session banner ever has to clear. */
+export const WRITING_TIMER_PILL_MAX_HEIGHT = Math.max(
+  WRITING_TIMER_EXPANDED_MAX_HEIGHT,
+  WRITING_TIMER_DOCKED_MAX_HEIGHT,
+);
 
 /**
  * Bottom inset for the writing surface, reserving BOTH floating affordances:
