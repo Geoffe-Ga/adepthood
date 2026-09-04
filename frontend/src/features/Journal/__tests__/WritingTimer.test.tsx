@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
-import { Pause, Play, Square } from 'lucide-react-native';
+import { Minus, Pause, Play, Square } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 
@@ -78,7 +78,7 @@ afterEach(() => {
 });
 
 describe('WritingTimer — the offer at rest', () => {
-  it('shows the set duration rather than an empty clock, and offers only Start', () => {
+  it('shows the set duration and idle controls rather than an empty clock', () => {
     const { getByTestId, queryByTestId } = renderTimer(jest.fn());
 
     expect(getByTestId('writing-timer-readout').props.children).toBe('20:00');
@@ -102,6 +102,42 @@ describe('WritingTimer — the offer at rest', () => {
     expect(start.findByType(Play)).toBeTruthy();
     expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
     expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+  });
+
+  it('minimizes the idle setter with a vector control and expands it again', () => {
+    const { getByTestId, queryByTestId } = renderTimer(jest.fn());
+    const minimize = getByTestId('writing-timer-minimize');
+    const style = StyleSheet.flatten(minimize.props.style);
+
+    expect(minimize.findAllByType(Text)).toHaveLength(0);
+    expect(minimize.findByType(Minus)).toBeTruthy();
+    expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+
+    fireEvent.press(minimize);
+    expect(getByTestId('writing-timer-compact').props.accessibilityLabel).toBe(
+      'Open writing timer options',
+    );
+    expect(queryByTestId('writing-timer-row-presets')).toBeNull();
+
+    fireEvent.press(getByTestId('writing-timer-compact'));
+    expect(queryByTestId('writing-timer-row-presets')).not.toBeNull();
+    expect(queryByTestId('writing-timer-minimize')).not.toBeNull();
+  });
+
+  it('caps the expanded setter at the journal reading measure', () => {
+    const { getByTestId } = renderTimer(jest.fn());
+
+    expect(
+      StyleSheet.flatten(getByTestId('writing-timer-expanded-track').props.style),
+    ).toMatchObject({
+      width: '100%',
+      alignItems: 'center',
+    });
+    expect(StyleSheet.flatten(getByTestId('writing-timer-pill').props.style)).toMatchObject({
+      width: '100%',
+      maxWidth: journalLayout.pageMaxWidth,
+    });
   });
 
   it('re-seeds the countdown in place when another length is chosen', () => {

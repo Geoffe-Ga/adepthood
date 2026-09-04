@@ -19,6 +19,8 @@ export const WRITING_TIMER_PRESET_GROUP_LABEL = 'How long to write for';
 
 export const WRITING_TIMER_START = 'Start';
 export const WRITING_TIMER_START_A11Y = 'Start the writing timer';
+export const WRITING_TIMER_MINIMIZE = 'Minimize';
+export const WRITING_TIMER_MINIMIZE_A11Y = 'Minimize the writing timer';
 export const WRITING_TIMER_PAUSE = 'Pause';
 export const WRITING_TIMER_PAUSE_A11Y = 'Pause the writing timer';
 export const WRITING_TIMER_RESUME = 'Resume';
@@ -59,6 +61,8 @@ export const WRITING_TIMER_COPY_ENTRIES: readonly string[] = [
   WRITING_TIMER_PRESET_GROUP_LABEL,
   WRITING_TIMER_START,
   WRITING_TIMER_START_A11Y,
+  WRITING_TIMER_MINIMIZE,
+  WRITING_TIMER_MINIMIZE_A11Y,
   WRITING_TIMER_PAUSE,
   WRITING_TIMER_PAUSE_A11Y,
   WRITING_TIMER_RESUME,

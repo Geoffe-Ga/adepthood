@@ -2,8 +2,11 @@
 import { jest, describe, it, expect } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import EditConfirmDialog from '../EditConfirmDialog';
+
+import { journalLayout } from '@/design/tokens';
 
 function renderDialog(overrides: Record<string, unknown> = {}) {
   const props = {
@@ -47,5 +50,16 @@ describe('EditConfirmDialog', () => {
     const { getByTestId, props } = renderDialog();
     fireEvent.press(getByTestId('edit-confirm-dialog'));
     expect(props.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('caps the dialog at the journal reading measure on wide screens', () => {
+    const { getByTestId } = renderDialog();
+    const style = StyleSheet.flatten(getByTestId('edit-confirm-dialog').props.style);
+
+    expect(style).toMatchObject({
+      width: '100%',
+      maxWidth: journalLayout.pageMaxWidth,
+      alignSelf: 'center',
+    });
   });
 });
