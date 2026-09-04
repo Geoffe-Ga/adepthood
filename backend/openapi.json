@@ -2839,6 +2839,18 @@
             "$ref": "#/components/schemas/JournalTag",
             "default": "freeform"
           },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "user_practice_id": {
             "anyOf": [
               {

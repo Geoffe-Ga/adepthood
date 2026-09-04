@@ -143,6 +143,9 @@ interface SaveContext {
 
 /** HTTP status the backend returns when a reflection already exists for the scope. */
 const REFLECTION_CONFLICT_STATUS = 409;
+/** Give the blank writing page most of the viewport before prose begins to grow it. */
+const BODY_VIEWPORT_FRACTION = 0.6;
+const BODY_MIN_HEIGHT = 320;
 
 /**
  * Warm, declinable hint shown when a folded quote could not be marked included.
@@ -176,10 +179,16 @@ interface WriteEntryRefs {
  * stays lean rather than carrying explicit nulls. ``classification`` always rides
  * along so the entry's privacy tier is set at birth (defaults to personal).
  */
-async function createEntry(refs: WriteEntryRefs, body: string, ctx: SaveContext): Promise<number> {
+async function createEntry(
+  refs: WriteEntryRefs,
+  title: string,
+  body: string,
+  ctx: SaveContext,
+): Promise<number> {
   const { classificationRef, chordRef } = refs;
   const created = await journal.create({
     message: body,
+    title: titleOrNull(title),
     classification: classificationRef.current,
     primary_aspect: chordRef.current.primary,
     secondary_aspect: chordRef.current.secondary,
@@ -196,7 +205,7 @@ function titleOrNull(title: string): string | null {
   return title.trim() ? title : null;
 }
 
-/** Create on first save, then update; title is optional and saved separately. */
+/** Create on first save, then update; a new page's title and body land atomically. */
 async function writeEntry(
   refs: WriteEntryRefs,
   title: string,
@@ -217,10 +226,7 @@ async function writeEntry(
   }
   const trimmedTitle = titleOrNull(title);
   if (entryIdRef.current == null) {
-    entryIdRef.current = await createEntry(refs, body, ctx);
-    if (trimmedTitle != null) {
-      await journal.update(entryIdRef.current, { title: trimmedTitle, status: 'draft' });
-    }
+    entryIdRef.current = await createEntry(refs, title, body, ctx);
   } else {
     await journal.update(entryIdRef.current, { message: body, title: trimmedTitle });
   }
@@ -244,7 +250,7 @@ async function finishWrite(
   const finishTitle = titleOrNull(title);
   const id = refs.entryIdRef.current;
   if (id == null) {
-    const created = await createEntry(refs, body, ctx);
+    const created = await createEntry(refs, title, body, ctx);
     refs.entryIdRef.current = created;
     await journal.update(created, { title: finishTitle, status: 'finished' });
     return created;
@@ -1107,56 +1113,96 @@ function EntryTagControls({
   );
 }
 
-/** The title + growing body inputs (the raw editable text of the entry). */
-function WritingFields({
+interface ContentSizeEvent {
+  nativeEvent: { contentSize: { height: number } };
+}
+
+/** Make a multiline field part of the page flow instead of an inner scroll pane. */
+function useGrowingFieldHeight(minHeight = 0) {
+  const [contentHeight, setContentHeight] = useState(0);
+  const onContentSizeChange = useCallback((event: ContentSizeEvent) => {
+    const nextHeight = Math.ceil(event.nativeEvent.contentSize.height);
+    setContentHeight((current) => (current === nextHeight ? current : nextHeight));
+  }, []);
+  const height = contentHeight > 0 ? Math.max(minHeight, contentHeight) : minHeight || undefined;
+  return { style: { minHeight: minHeight || undefined, height }, onContentSizeChange };
+}
+
+/** The wrapping title grows with its lines so none are hidden in an inner textarea. */
+function GrowingTitle({
   title,
-  body,
   onChangeTitle,
+}: Pick<WritingColumnProps, 'title' | 'onChangeTitle'>) {
+  const growth = useGrowingFieldHeight();
+  return (
+    <TextInput
+      style={[styles.titleInput, writingFieldFocus, growth.style]}
+      value={title}
+      onChangeText={onChangeTitle}
+      onContentSizeChange={growth.onContentSizeChange}
+      placeholder="Title"
+      placeholderTextColor={colors.paper.inkSoft}
+      selectionColor={writingField.caret}
+      cursorColor={writingField.caret}
+      accessibilityLabel="Entry title"
+      testID="journal-title-input"
+      multiline
+      scrollEnabled={false}
+    />
+  );
+}
+
+/** The prose field starts generous and grows into the page-level scroll surface. */
+function GrowingBody({
+  body,
   onChangeBody,
   onBodySelectionChange,
   bodyPlaceholder,
-}: Pick<
-  WritingColumnProps,
-  'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'onBodySelectionChange'
-> & {
+}: Pick<WritingColumnProps, 'body' | 'onChangeBody' | 'onBodySelectionChange'> & {
   bodyPlaceholder: string;
 }) {
+  const viewportHeight = useWindowDimensions().height;
+  const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
+  const growth = useGrowingFieldHeight(minimumBodyHeight);
   const changeBody = useCallback(
     (next: string) => onChangeBody(continueMarkdownLine(body, next)),
     [body, onChangeBody],
   );
   return (
+    <TextInput
+      style={[styles.bodyInput, writingFieldFocus, growth.style]}
+      value={body}
+      onChangeText={changeBody}
+      onContentSizeChange={growth.onContentSizeChange}
+      onSelectionChange={onBodySelectionChange}
+      placeholder={bodyPlaceholder}
+      placeholderTextColor={colors.paper.inkSoft}
+      selectionColor={writingField.caret}
+      cursorColor={writingField.caret}
+      multiline
+      scrollEnabled={false}
+      accessibilityLabel="Entry body"
+      testID="journal-body-input"
+    />
+  );
+}
+
+/** The title + growing body inputs (the raw editable text of the entry). */
+function WritingFields(
+  props: Pick<
+    WritingColumnProps,
+    'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'onBodySelectionChange'
+  > & { bodyPlaceholder: string },
+) {
+  return (
     <>
-      <TextInput
-        style={[styles.titleInput, writingFieldFocus]}
-        value={title}
-        onChangeText={onChangeTitle}
-        placeholder="Title"
-        placeholderTextColor={colors.paper.inkSoft}
-        selectionColor={writingField.caret}
-        cursorColor={writingField.caret}
-        accessibilityLabel="Entry title"
-        testID="journal-title-input"
-        multiline
-        scrollEnabled={false}
-      />
+      <GrowingTitle title={props.title} onChangeTitle={props.onChangeTitle} />
       <View style={styles.hairline} />
-      <TextInput
-        style={[styles.bodyInput, writingFieldFocus]}
-        value={body}
-        onChangeText={changeBody}
-        onSelectionChange={onBodySelectionChange}
-        placeholder={bodyPlaceholder}
-        placeholderTextColor={colors.paper.inkSoft}
-        selectionColor={writingField.caret}
-        cursorColor={writingField.caret}
-        multiline
-        // The outer ScrollView owns scrolling so the field grows freely and long
-        // entries stay reachable (iOS multiline TextInput won't scroll its own
-        // content inside a flex parent).
-        scrollEnabled={false}
-        accessibilityLabel="Entry body"
-        testID="journal-body-input"
+      <GrowingBody
+        body={props.body}
+        onChangeBody={props.onChangeBody}
+        onBodySelectionChange={props.onBodySelectionChange}
+        bodyPlaceholder={props.bodyPlaceholder}
       />
     </>
   );
