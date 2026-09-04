@@ -9,7 +9,14 @@ import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import JournalModalShell from './JournalModalShell';
 
-import { BORDER_RADIUS, colors, editorialType, spacing, touchTarget } from '@/design/tokens';
+import {
+  BORDER_RADIUS,
+  colors,
+  editorialType,
+  journalLayout,
+  spacing,
+  touchTarget,
+} from '@/design/tokens';
 
 export interface EditConfirmDialogProps {
   visible: boolean;
@@ -53,6 +60,7 @@ function EditConfirmDialog({
       scrimTestID="edit-confirm-scrim"
       scrimLabel="Dismiss"
       cardTestID="edit-confirm-dialog"
+      cardStyle={styles.card}
     >
       <Text style={styles.title}>Edit finished entry?</Text>
       <Text style={styles.body}>
@@ -78,6 +86,11 @@ function EditConfirmDialog({
 }
 
 const styles = StyleSheet.create({
+  card: {
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth,
+    alignSelf: 'center',
+  },
   title: {
     ...editorialType.title,
     color: colors.paper.ink,

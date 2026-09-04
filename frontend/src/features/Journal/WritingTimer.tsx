@@ -18,7 +18,7 @@
  * state and throws the elapsed time away, and a writer who stops early still
  * wrote for however long they wrote.
  */
-import { Pause, Play, Square } from 'lucide-react-native';
+import { Minus, Pause, Play, Square } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 
@@ -36,6 +36,8 @@ import {
 } from './writingSession';
 import {
   WRITING_TIMER_A11Y_LABEL,
+  WRITING_TIMER_MINIMIZE,
+  WRITING_TIMER_MINIMIZE_A11Y,
   WRITING_TIMER_PAUSE,
   WRITING_TIMER_PAUSE_A11Y,
   WRITING_TIMER_PRESET_GROUP_LABEL,
@@ -214,26 +216,39 @@ function TimerControls({
   view,
   controls,
   onStart,
+  onMinimize,
   compact,
   docked,
 }: {
   view: TimerView;
   controls: RitualControls;
   onStart: () => void;
+  onMinimize: () => void;
   compact: boolean;
   docked: boolean;
 }): React.JSX.Element {
   if (view.showStart) {
     return (
-      <TimerControl
-        label={WRITING_TIMER_START}
-        a11yLabel={WRITING_TIMER_START_A11Y}
-        onPress={onStart}
-        testID="writing-timer-start"
-        icon={<Play color={colors.paper.inkSoft} size={20} accessible={false} />}
-        iconOnly
-        docked={docked}
-      />
+      <>
+        <TimerControl
+          label={WRITING_TIMER_START}
+          a11yLabel={WRITING_TIMER_START_A11Y}
+          onPress={onStart}
+          testID="writing-timer-start"
+          icon={<Play color={colors.paper.inkSoft} size={20} accessible={false} />}
+          iconOnly
+          docked={docked}
+        />
+        <TimerControl
+          label={WRITING_TIMER_MINIMIZE}
+          a11yLabel={WRITING_TIMER_MINIMIZE_A11Y}
+          onPress={onMinimize}
+          testID="writing-timer-minimize"
+          icon={<Minus color={colors.paper.inkSoft} size={20} accessible={false} />}
+          iconOnly
+          docked={docked}
+        />
+      </>
     );
   }
   return <LiveTimerControls view={view} controls={controls} compact={compact} docked={docked} />;
@@ -304,7 +319,22 @@ interface TimerPillProps {
   view: TimerView;
   controls: RitualControls;
   onStart: () => void;
+  onMinimize: () => void;
   onChooseMinutes: (_minutes: number) => void;
+}
+
+function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): React.JSX.Element {
+  return (
+    <Text
+      style={[styles.readout, docked ? styles.readoutDocked : null]}
+      numberOfLines={1}
+      accessibilityRole="text"
+      accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
+      testID="writing-timer-readout"
+    >
+      {view.readout}
+    </Text>
+  );
 }
 
 /** The paper pill itself, shared by its expanded and desk-side mounts. */
@@ -316,11 +346,16 @@ function TimerPill({
   view,
   controls,
   onStart,
+  onMinimize,
   onChooseMinutes,
 }: TimerPillProps): React.JSX.Element {
   return (
     <View
-      style={[styles.pill, compact ? styles.pillCompact : null, docked ? styles.pillDocked : null]}
+      style={[
+        styles.pill,
+        compact ? styles.pillCompact : styles.pillExpanded,
+        docked ? styles.pillDocked : null,
+      ]}
       pointerEvents="auto"
       testID="writing-timer-pill"
     >
@@ -328,20 +363,13 @@ function TimerPill({
         style={[styles.row, docked ? styles.rowDocked : null]}
         testID="writing-timer-row-readout"
       >
-        <Text
-          style={[styles.readout, docked ? styles.readoutDocked : null]}
-          numberOfLines={1}
-          accessibilityRole="text"
-          accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
-          testID="writing-timer-readout"
-        >
-          {view.readout}
-        </Text>
+        <TimerReadout view={view} docked={docked} />
         {compact && idle ? null : (
           <TimerControls
             view={view}
             controls={controls}
             onStart={onStart}
+            onMinimize={onMinimize}
             compact={compact}
             docked={docked}
           />
@@ -350,6 +378,34 @@ function TimerPill({
       {!compact && view.showPresets ? (
         <PresetRow minutes={minutes} onChoose={onChooseMinutes} />
       ) : null}
+    </View>
+  );
+}
+
+function TimerTrack({
+  compact,
+  docked,
+  children,
+}: {
+  compact: boolean;
+  docked: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  if (docked) {
+    return (
+      <View style={styles.dockTrack} pointerEvents="box-none" testID="writing-timer-dock-track">
+        {children}
+      </View>
+    );
+  }
+  if (compact) return <>{children}</>;
+  return (
+    <View
+      style={styles.expandedTrack}
+      pointerEvents="box-none"
+      testID="writing-timer-expanded-track"
+    >
+      {children}
     </View>
   );
 }
@@ -373,7 +429,7 @@ function TimerMount({
       <TouchableOpacity
         onPress={onExpand}
         accessibilityRole="button"
-        accessibilityLabel="Open writing timer restart options"
+        accessibilityLabel="Open writing timer options"
         testID="writing-timer-compact"
       >
         {children}
@@ -391,13 +447,9 @@ function TimerMount({
       pointerEvents="box-none"
       testID="writing-timer-wrapper"
     >
-      {docked ? (
-        <View style={styles.dockTrack} pointerEvents="box-none" testID="writing-timer-dock-track">
-          {mountedPill}
-        </View>
-      ) : (
-        mountedPill
-      )}
+      <TimerTrack compact={compact} docked={docked}>
+        {mountedPill}
+      </TimerTrack>
     </View>
   );
 }
@@ -446,6 +498,7 @@ function WritingTimer({
         view={view}
         controls={controls}
         onStart={start}
+        onMinimize={() => setCompact(true)}
         onChooseMinutes={chooseMinutes}
       />
     </TimerMount>
@@ -481,6 +534,11 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     alignItems: 'flex-end',
   },
+  expandedTrack: {
+    width: '100%',
+    alignItems: 'center',
+    paddingHorizontal: journalSheet.deskPaddingH,
+  },
   /**
    * A column of fixed-height rows, spanning the band rather than sizing itself
    * to its contents. Deliberately NOT a wrapping row: laid out that way the
@@ -492,7 +550,6 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'column',
     gap: WRITING_TIMER_ROW_GAP,
-    marginHorizontal: journalSheet.deskPaddingH,
     paddingVertical: WRITING_TIMER_PILL_PADDING_V,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xl,
@@ -501,9 +558,12 @@ const styles = StyleSheet.create({
     borderColor: colors.paper.hairline,
     ...shadows.small,
   },
+  pillExpanded: {
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth,
+  },
   pillCompact: {
     minWidth: 180,
-    marginHorizontal: 0,
   },
   pillDocked: {
     width: touchTarget.minimum,
