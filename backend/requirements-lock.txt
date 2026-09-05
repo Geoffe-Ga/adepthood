@@ -25,7 +25,7 @@ attrs==26.1.0
     #   referencing
 bcrypt==5.0.0
     # via -r backend/requirements.txt
-cachetools==7.1.7
+cachetools==7.1.8
     # via -r backend/requirements.txt
 certifi==2026.7.22
     # via
@@ -93,7 +93,7 @@ mako==1.4.1
     # via alembic
 markupsafe==3.0.3
     # via mako
-openai==3.3.1
+openai==3.7.0
     # via -r backend/requirements.txt
 packaging==26.3
     # via
@@ -103,7 +103,7 @@ pluggy==1.6.0
     # via pytest
 pycparser==3.0
     # via cffi
-pydantic==2.13.4
+pydantic==2.13.5
     # via
     #   -r backend/requirements.txt
     #   anthropic
@@ -143,7 +143,7 @@ sqlalchemy==2.0.52
     #   -r backend/requirements.txt
     #   alembic
     #   sqlmodel
-sqlmodel==0.0.39
+sqlmodel==0.0.42
     # via -r backend/requirements.txt
 starlette==1.6.0
     # via fastapi
@@ -175,5 +175,5 @@ urllib3==2.7.0
     # via sentry-sdk
 uvicorn==0.52.4
     # via -r backend/requirements.txt
-wrapt==2.3.0
+wrapt==2.4.0
     # via deprecated
