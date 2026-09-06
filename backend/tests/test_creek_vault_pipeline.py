@@ -336,6 +336,22 @@ async def _wait_for_background_pipeline() -> None:
     await pipeline.wait_for_vault_pipeline_tasks()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _isolate_background_pipeline_tasks() -> AsyncGenerator[None, None]:
+    """Give every test an empty in-process continuation registry.
+
+    The production registry is process-global by design. Pytest reuses that
+    process for many independent databases, so a task still unwinding after a
+    test must not suppress the next test's same-user continuation or touch its
+    successor's schema.
+    """
+    await pipeline.close_vault_pipeline_tasks()
+    try:
+        yield
+    finally:
+        await pipeline.close_vault_pipeline_tasks()
+
+
 def _test_session_factory(session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     """Build independent sessions over the current test's in-memory engine."""
     assert session.bind is not None
@@ -505,10 +521,16 @@ async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
 
 @pytest.mark.asyncio
 async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
-    db_session: AsyncSession,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A perpetually-running job cannot wedge the per-user stage slot forever."""
+    """A perpetually-running job cannot wedge the per-user stage slot forever.
+
+    The continuation deliberately overlaps its caller, so this test uses the
+    repository's file-backed concurrency database.  A second connection to an
+    in-memory SQLite URL has a different, empty database; under a loaded xdist
+    worker that made this assertion test the fixture rather than the pipeline.
+    """
 
     class _NeverTerminal(_DurableJobRecorder):
         def _status(self, job_id: str) -> httpx.Response:
@@ -534,14 +556,16 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     recorder.requests.clear()
     recorder.bodies.clear()
 
-    await drive_vault_pipeline(
-        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
-    )
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
     await _wait_for_background_pipeline()
     await http.aclose()
 
     assert recorder.classification_submissions == 1
-    rows = await _rows(db_session)
+    async with concurrent_session_factory() as session:
+        rows = await _rows(session)
     assert len(rows) == 1
     assert rows[0].outcome == VaultPipelineOutcome.AMBIGUOUS
     assert rows[0].attempt_count == 1
@@ -550,26 +574,44 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
 
 @pytest.mark.asyncio
 async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
-    db_session: AsyncSession,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The save returns on its clock while the same durable job finishes later."""
+    """The save returns on its clock while the same durable job finishes later.
+
+    Hold the terminal status until after the immediate read. This proves the
+    attempted row is observable while work continues without racing a 10ms
+    sleep against CI scheduling.
+    """
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.01)
     recorder = _DurableJobRecorder()
-    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    terminal_release = asyncio.Event()
+
+    async def _hold_terminal_status(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        if (
+            request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}"
+            and response.json().get("state") == "succeeded"
+        ):
+            await terminal_release.wait()
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_terminal_status))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
     recorder.requests.clear()
     recorder.bodies.clear()
 
     started = time.monotonic()
-    await drive_vault_pipeline(
-        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
-    )
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
     foreground_elapsed = time.monotonic() - started
-    immediate = await _rows(db_session)
+    async with concurrent_session_factory() as session:
+        immediate = await _rows(session)
     # Event-loop scheduling under the repository's ten-worker gate can add a
     # few milliseconds after the 5ms deadline. The durable attempted row below
     # is the semantic assertion; this ceiling only catches an accidental wait
@@ -579,11 +621,12 @@ async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
         ("classify", VaultPipelineOutcome.ATTEMPTED)
     ]
 
+    terminal_release.set()
     await _wait_for_background_pipeline()
     await http.aclose()
-    db_session.expire_all()
 
-    landed = await _rows(db_session)
+    async with concurrent_session_factory() as session:
+        landed = await _rows(session)
     assert [(row.stage, row.outcome) for row in landed] == [
         ("classify", VaultPipelineOutcome.COMPLETED),
         ("temporal", VaultPipelineOutcome.COMPLETED),
