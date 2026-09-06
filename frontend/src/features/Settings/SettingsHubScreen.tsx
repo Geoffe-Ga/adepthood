@@ -15,6 +15,7 @@ import {
 import React, { useCallback } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
+import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
 import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
@@ -57,7 +58,7 @@ const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JS
     <SettingsRow
       icon={KeyRound}
       label="API key"
-      description="Bring your own BotMason API key, stored on this device."
+      description={BYOK_HUB_DISCLOSURE}
       onPress={onApiKey}
       testID="settings-row-api-key"
     />

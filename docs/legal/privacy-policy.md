@@ -228,9 +228,11 @@ frequencies, and the text
 of a document you bring in, once, on the same terms, when that document is
 going to your own corpus here rather than to a vault. It never receives an
 Intimate entry, and it is not sent an Intimate document that is being
-sorted here either. If you bring your own key, the call goes
-to your account with that provider; the key is used for that one call and
-is never stored on the server.
+sorted here either. If you bring your own key, the production app sends it
+over HTTPS to Adepthood's server in the `X-LLM-API-Key` header. Adepthood
+forwards it over HTTPS to your account with the selected provider for that
+call. The key is used for that one call and is never persisted, logged or
+returned by Adepthood.
 
 **Your Creek Vault**, only if one is configured. A vault is a corpus of
 your own writing on infrastructure the operator arranges, reached over

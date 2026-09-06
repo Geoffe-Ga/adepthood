@@ -92,10 +92,12 @@ Model calls consume tokens from your balance. A call that fails before the
 model answers does not cost you the tokens; a call the model answers does,
 whether or not you liked the answer.
 
-You may instead supply your **own provider key** in Settings. That key
-stays on your device, is used for the one call it is attached to, and is
-never stored on the server — but the calls it makes are billed to your
-account with that provider, and what they cost is between you and them.
+You may instead supply your **own provider key** in Settings. Between calls
+that key stays on your device. When you use it, the production app sends it
+over HTTPS to Adepthood's server, which forwards it over HTTPS to the
+selected model provider for that call. Adepthood never persists, logs or
+returns the key — but the calls it makes are billed to your account with
+that provider, and what they cost is between you and them.
 
 ## Availability
 

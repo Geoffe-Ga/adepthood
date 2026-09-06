@@ -8,6 +8,7 @@ import ApiKeySettingsScreen, {
   SECURE_STORAGE_WARNING,
   validateUserApiKey,
 } from '../ApiKeySettingsScreen';
+import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 
 import { useApiKey } from '@/context/ApiKeyContext';
@@ -112,6 +113,13 @@ describe('ApiKeySettingsScreen', () => {
     setApiKeyState({});
     const { getByTestId } = render(<ApiKeySettingsScreen />);
     expect(getByTestId('api-key-settings-screen')).toBeTruthy();
+  });
+
+  test('states where the key travels and what Adepthood does not persist', () => {
+    setApiKeyState({});
+    const { getByText } = render(<ApiKeySettingsScreen />);
+
+    expect(getByText(BYOK_DETAIL_DISCLOSURE)).toBeTruthy();
   });
 
   test('shows the loading indicator while the stored key is being read', () => {

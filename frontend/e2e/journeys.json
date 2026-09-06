@@ -283,6 +283,22 @@
     "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
   },
   {
+    "id": "account.byok-key-crosses-two-service-boundaries",
+    "description": "Someone saves their own OpenAI or Anthropic key on the device, then uses a model-powered feature. The production app sends the key over HTTPS to Adepthood in the X-LLM-API-Key header, and Adepthood forwards it over HTTPS to the selected provider for that request without persisting, logging, or returning it. Both Settings surfaces disclose those two service boundaries before the key is used. The copy and wire contract are pinned together by src/features/Settings/__tests__/byokDisclosure.test.ts and the rendered-screen specs beside it. The real-wire lane cannot cover the whole journey because it neither mounts SecureStore-backed Settings screens nor sends a live credential to an external model provider; doing so would turn a test fixture into a production secret and a billable third-party call.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/transcribe-page",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["llmusagelog"]
+    },
+    "status": "uncovered",
+    "issue": 2660
+  },
+  {
     "id": "corpus.decide-what-may-be-sorted",
     "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. A provider that refuses to bill now ends that reach rather than consuming the queue, and never costs the person the permission they just gave -- the switch still answers granted and the entries it did not get to keep their place. The backend pins it at backend/tests/test_corpus_consent_api.py.",
     "crosses": {
