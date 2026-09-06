@@ -85,6 +85,22 @@ export interface OnboardingHabit {
   stage: string;
   start_date: Date;
   goal_group_id?: number | null;
+  /**
+   * This pick names a habit that lives on the carryover lap, so its
+   * ``start_date`` is when the user began it in their own life rather than a
+   * position on the program cadence -- and nothing may derive the program's
+   * anchor from it. Absent on a pick the user typed, whose date IS the day they
+   * just chose, even when that pick turns out to match a carryover row.
+   */
+  is_carryover?: boolean;
+  /**
+   * This pick names a habit whose beginning the user has already lived, so the
+   * merge will refuse to restamp its ``start_date`` and ``stage``. Carried so
+   * the reorder step shows the date the save will actually keep instead of a
+   * staggered one it is about to discard. Absent on a habit being taken on for
+   * the first time, which has no beginning yet to keep.
+   */
+  keepsOwnBeginning?: boolean;
 }
 
 /**
@@ -202,7 +218,19 @@ export interface MissedDaysModalProps {
 export interface OnboardingModalProps {
   visible: boolean;
   onClose: () => void;
-  onSaveHabits: (_habits: OnboardingHabit[]) => void;
+  /**
+   * Bare picks on a first run, a stated plan once the user has habits to
+   * review. The union is the whole point: a first-run pass has no row to name,
+   * while a review pass knows exactly which row each pick means and which rows
+   * the user chose to let go of, and only a stated plan can carry a release.
+   */
+  onSaveHabits: (_habits: readonly OnboardingHabit[] | HabitMergePlan) => void;
+  /**
+   * The habits the user already has, so the modal can ask about them instead of
+   * starting from nothing. Optional and empty by default: a first run has none,
+   * and the whole five-step flow below is unchanged when the list is empty.
+   */
+  existingHabits?: readonly Habit[];
 }
 
 export interface ReorderHabitsModalProps {
@@ -235,7 +263,8 @@ export interface HabitsActions {
   saveHabitOrder: (_orderedHabits: Habit[]) => void;
   backfillMissedDays: (_habitId: number, _days: Date[]) => void;
   setNewStartDate: (_habitId: number, _newDate: Date) => void;
-  onboardingSave: (_newHabits: OnboardingHabit[]) => Promise<void>;
+  /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
+  onboardingSave: (_input: readonly OnboardingHabit[] | HabitMergePlan) => Promise<void>;
   iconPress: (_index: number) => void;
   emojiSelect: (_emoji: string) => void;
   revealAllHabits: () => void;
