@@ -7,6 +7,9 @@
   [#2287](https://github.com/Geoffe-Ga/adepthood/issues/2287)
 - **Supersedes:** nothing. **Amends:** ADR 0002 Decision 1's harm
   analysis — see Decision 1(c). ADR 0002 itself is not edited.
+- **Confidential-upgrade lifecycle:** [ADR 0007](0007-demand-provisioned-confidential-vaults.md)
+  ratifies activation after signup, asynchronous Creek-owned provisioning, and
+  scale-to-zero per-user compute. This record's Day-1 floor remains unchanged.
 
 ## Context
 

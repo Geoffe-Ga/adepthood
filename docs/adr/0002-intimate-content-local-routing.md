@@ -3,6 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-07-01
 - **Issue:** [#898](https://github.com/Geoffe-Ga/adepthood/issues/898) (epic [#893](https://github.com/Geoffe-Ga/adepthood/issues/893); ratified in [#927](https://github.com/Geoffe-Ga/adepthood/issues/927))
+- **Lifecycle clarification:** [ADR 0007](0007-demand-provisioned-confidential-vaults.md)
+  fixes when the per-user environment is created, how it scales to zero, and
+  why signup never waits for it. The custody and routing decisions below stand.
 
 ## Context
 
