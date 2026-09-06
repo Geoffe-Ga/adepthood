@@ -651,19 +651,21 @@ async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
     recorder.requests.clear()
     recorder.bodies.clear()
 
-    started = time.monotonic()
     async with concurrent_session_factory() as session:
-        await drive_vault_pipeline(
-            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        await asyncio.wait_for(
+            drive_vault_pipeline(
+                session,
+                client,
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+            ),
+            timeout=1.0,
         )
-    foreground_elapsed = time.monotonic() - started
     async with concurrent_session_factory() as session:
         immediate = await _rows(session)
-    # Event-loop scheduling under the repository's ten-worker gate can add a
-    # few milliseconds after the 5ms deadline. The durable attempted row below
-    # is the semantic assertion; this ceiling only catches an accidental wait
-    # for the job's terminal result.
-    assert foreground_elapsed < 0.1
+    # The terminal response is still held above. Reaching this assertion proves
+    # the foreground clock released the save without relying on runner speed.
+    assert not terminal_release.is_set()
     assert [(row.stage, row.outcome) for row in immediate] == [
         ("classify", VaultPipelineOutcome.ATTEMPTED)
     ]

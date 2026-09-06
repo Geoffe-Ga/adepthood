@@ -9,35 +9,28 @@ on:
     branches: [main]
     paths:
       - "backend/**"
-      # The backend's own tooling lives outside backend/, so without this a PR
-      # editing only a script here triggers nothing -- including the drift gate
-      # that script IS. Caught in review of #2038: export_openapi.py sits at
-      # scripts/backend/, so a change to render_spec or the --check exit logic
-      # would have run neither openapi-drift nor the pytest job that covers it.
-      - "scripts/backend/**"
-      # The frontend Jest guards that read backend source run from this
-      # workflow (see the cross-boundary-drift job). Their runner lives under
-      # scripts/frontend/, which neither this workflow's backend/** path nor
-      # frontend-ci.yml's frontend/** path covers, so without this line the
-      # gate itself could be edited -- or disarmed -- while nothing ran.
-      - "scripts/frontend/cross-boundary-drift.sh"
+      # Backend tests enforce references across these trees and root documents.
+      # Every guard input must trigger the guard; #2679 proved a docs-only ADR
+      # could otherwise break main and wait for an unrelated backend PR to fail.
+      - "docs/**"
+      - "graph/**"
+      - "scripts/**"
+      - "NORTH-STAR.md"
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
-      # The backend's own tooling lives outside backend/, so without this a PR
-      # editing only a script here triggers nothing -- including the drift gate
-      # that script IS. Caught in review of #2038: export_openapi.py sits at
-      # scripts/backend/, so a change to render_spec or the --check exit logic
-      # would have run neither openapi-drift nor the pytest job that covers it.
-      - "scripts/backend/**"
-      # The frontend Jest guards that read backend source run from this
-      # workflow (see the cross-boundary-drift job). Their runner lives under
-      # scripts/frontend/, which neither this workflow's backend/** path nor
-      # frontend-ci.yml's frontend/** path covers, so without this line the
-      # gate itself could be edited -- or disarmed -- while nothing ran.
-      - "scripts/frontend/cross-boundary-drift.sh"
+      - "docs/**"
+      - "graph/**"
+      - "scripts/**"
+      - "NORTH-STAR.md"
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
 

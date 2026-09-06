@@ -9,7 +9,7 @@
   the confidential vault's lifecycle and cost posture. It does not weaken
   their custody, routing, or privacy boundaries.
 - **Upstream counterpart:** Creek Vault
-  [ADR-0013](https://github.com/Geoffe-Ga/Creek-Vault/blob/main/creek-tools/docs/architecture/ADR/0013-demand-provisioned-vault-lifecycle.md)
+  [Creek-Vault ADR-0013](https://github.com/Geoffe-Ga/Creek-Vault/blob/main/creek-tools/docs/architecture/ADR/0013-demand-provisioned-vault-lifecycle.md)
 
 ## Context
 

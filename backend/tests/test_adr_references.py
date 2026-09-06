@@ -41,6 +41,7 @@ from services.frequency_classification import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADR_DIR = _REPO_ROOT / "docs" / "adr"
 _ONTOLOGIZATION_ADR = _ADR_DIR / "0005-operator-side-ontologization.md"
+_BACKEND_CI = _REPO_ROOT / ".github" / "workflows" / "backend-ci.yml"
 
 # A path citation: a claim that this exact file is on disk to be read.
 _ADR_PATH_CITATION = re.compile(r"docs/adr/(\d{4})-[a-z0-9-]+\.md")
@@ -84,6 +85,7 @@ _CONSENT_ADR = _ADR_DIR / "0006-consent-as-an-auditable-event.md"
 # these documents are hard-wrapped and a citation that happens to straddle a
 # line break is the same claim as one that does not.
 _ADR_NUMBER_CITATION = re.compile(r"\bADR[\s-]+(\d{4})\b")
+_MARKDOWN_LINK_TARGET = re.compile(r"\]\(([^)\s]+)\)")
 
 # One of these has to sit beside a number with no file for the citation to read
 # as "this is not written yet" rather than as an authority a reader could go
@@ -106,6 +108,7 @@ _DISCLAIMER_WINDOW = 240
 # from `docs/adr/` is not a defect.
 _FOREIGN_ADR_REPOS = ("creek-vault",)
 _FOREIGN_QUALIFIER_WINDOW = 32
+_FOREIGN_ADR_URL_PREFIXES = ("https://github.com/geoffe-ga/creek-vault/",)
 
 # Same reasoning as the citation floor above: a scan that quietly stopped
 # visiting files would present as a clean sweep.
@@ -169,10 +172,16 @@ def _adr_files_by_number() -> dict[str, Path]:
     return {path.name[:4]: path for path in _ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md")}
 
 
-def _names_another_repos_record(text: str, start: int) -> bool:
-    """Whether the citation at ``start`` is qualified by another repository."""
+def _names_another_repos_record(text: str, start: int, end: int) -> bool:
+    """Whether prose or the citation link itself names another repository."""
     prefix = text[max(0, start - _FOREIGN_QUALIFIER_WINDOW) : start].lower()
-    return any(repo in prefix for repo in _FOREIGN_ADR_REPOS)
+    if any(repo in prefix for repo in _FOREIGN_ADR_REPOS):
+        return True
+    target_match = _MARKDOWN_LINK_TARGET.match(text[end:])
+    if target_match is None:
+        return False
+    target = target_match.group(1).lower()
+    return any(target.startswith(url) for url in _FOREIGN_ADR_URL_PREFIXES)
 
 
 def _is_marked_unwritten(text: str, start: int, end: int) -> bool:
@@ -187,7 +196,7 @@ def _phantom_citations(text: str, shipped: dict[str, Path]) -> list[str]:
         match.group(0)
         for match in _ADR_NUMBER_CITATION.finditer(text)
         if match.group(1) not in shipped
-        and not _names_another_repos_record(text, match.start())
+        and not _names_another_repos_record(text, match.start(), match.end())
         and not _is_marked_unwritten(text, match.start(), match.end())
     ]
 
@@ -230,6 +239,34 @@ def test_no_document_cites_a_record_number_nobody_wrote() -> None:
         ]
     assert not phantom, "\n".join(phantom)
     assert scanned >= _MINIMUM_FILES_SCANNED, f"only {scanned} files scanned -- scan is broken"
+
+
+def test_a_foreign_adr_markdown_link_is_not_a_missing_local_record() -> None:
+    """The link target can establish repository ownership without nearby prose."""
+    shipped = _adr_files_by_number()
+    foreign_citation = "ADR-" + "0013"
+    foreign = (
+        f"[{foreign_citation}](https://github.com/Geoffe-Ga/Creek-Vault/blob/main/"
+        "creek-tools/docs/architecture/ADR/0013-demand-provisioned-vault-lifecycle.md)"
+    )
+    missing_citation = "ADR-" + "9999"
+
+    assert _phantom_citations(foreign, shipped) == []
+    assert _phantom_citations(missing_citation, shipped) == [missing_citation]
+
+
+def test_backend_ci_runs_when_any_adr_guard_input_changes() -> None:
+    """A document cannot bypass the guard merely by living outside backend/."""
+    workflow = _BACKEND_CI.read_text(encoding="utf-8")
+    guarded_inputs = (
+        "docs/**",
+        "graph/**",
+        "scripts/**",
+        *_SCANNED_ROOT_DOCS,
+    )
+
+    missing = [path for path in guarded_inputs if workflow.count(f'- "{path}"') != 2]
+    assert not missing, f"backend CI does not cover ADR guard inputs: {missing}"
 
 
 def test_consent_adr_carries_every_required_section() -> None:

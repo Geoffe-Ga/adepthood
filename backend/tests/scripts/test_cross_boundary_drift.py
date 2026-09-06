@@ -28,9 +28,8 @@ and that the marker is the population: no frontend test hand-rolls its own
 path into ``backend/``.
 
 **The lane cannot be disarmed.** The workflow must invoke the runner from a
-job whose failure fails the run, and the runner must itself be a trigger path
--- ``backend-ci.yml`` fires on ``backend/**`` and ``scripts/backend/**``, so a
-gate living under ``scripts/frontend/`` would otherwise be editable without
+job whose failure fails the run, and the scripts tree containing the runner
+must itself be a trigger path. Otherwise the gate could be edited without
 running anything at all.
 
 The workflow is parsed as plain text rather than with PyYAML on purpose:
@@ -66,7 +65,7 @@ _MARKER = "@/testing/backendSource"
 
 _JOB_NAME = "cross-boundary-drift"
 _INVOCATION = "scripts/frontend/cross-boundary-drift.sh"
-_TRIGGER_PATH = f'- "{_INVOCATION}"'
+_TRIGGER_PATH = '- "scripts/**"'
 
 # Fragments that would leave the job structurally present but toothless.
 _DISARMING_FRAGMENTS = (
@@ -334,8 +333,8 @@ class TestWiring:
     def test_editing_the_runner_triggers_the_workflow(self) -> None:
         """The gate's own file is a trigger path, on push and pull_request both.
 
-        ``backend-ci.yml`` fires on ``backend/**`` and ``scripts/backend/**``,
-        neither of which covers a runner living under ``scripts/frontend/``.
+        The broad scripts trigger also covers every script inspected by the
+        ADR reference guard, so one path owns both invariants without overlap.
         """
         workflow = self._workflow()
         jobs_at = _JOBS_HEADER.search(workflow)
