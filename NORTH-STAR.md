@@ -60,10 +60,11 @@ Three things fall out of standing the product on a journal floor rather than a c
 ## 10. Design guardrails
 
 - **Sovereignty.** The user sets their depth. Invitations are subtle, resonance-gated, one-tap declinable, and never shaming. Default to quiet.
+- **Gift Economy access.** Payment proves that one place in the course exists; it does not prove that buyer and learner share an identity. A valid licence may be given to another person and binds to one active account at a time. Ordinary gifting is a feature, never treated as abuse or made dependent on matching email addresses.
 - **Anti-guru.** The reflected wisdom is the user's own. The app offers blueprints; the user chooses materials.
 - **Anti-lock-in, pro-renunciation.** Success includes the user outgrowing the app and the Sangha returning them to embodied community. Build nothing that punishes leaving.
 - **Wellbeing and care boundaries.** Practices, reflections, and teachings complement professional mental-health care and never replace it. Adepthood does not advise anyone to reduce or stop psychiatric medication — that decision belongs to a person and their prescriber, and the app's role is to build skill and self-knowledge alongside that care. Any feature touching Dark Nights or acute distress must recognize the limits of software, surface clear pathways to human and professional support, and never leave someone alone in a crisis with only a chatbot.
-- **Privacy.** Intimate-tier content is classified and routed locally, encrypted at rest, and never sent to a cloud LLM. This is surfaced to the user as a feature, not buried.
+- **Privacy.** Intimate-tier content is classified and routed locally, encrypted at rest, and never sent to a cloud LLM. This is surfaced to the user as a feature, not buried. The confidential vault is an explicit, asynchronous activation after signup: privacy setup cannot turn the journal's wide, low door into a provisioning wait or an unsolicited key ceremony.
 
 ## 11. What this means for the build and the in-flight epics
 
