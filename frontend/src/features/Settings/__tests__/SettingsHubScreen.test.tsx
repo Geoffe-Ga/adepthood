@@ -35,6 +35,7 @@ jest.mock('@/config', () => {
   });
 });
 
+import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
@@ -59,6 +60,12 @@ describe('SettingsHubScreen', () => {
     fireEvent.press(getByTestId('settings-row-api-key'));
 
     expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+  });
+
+  test('summarises both transit boundaries before the API-key screen opens', () => {
+    const { getByText } = render(<SettingsHubScreen />);
+
+    expect(getByText(BYOK_HUB_DISCLOSURE)).toBeTruthy();
   });
 
   test('tapping the time zone row navigates to TimezoneSettings', () => {

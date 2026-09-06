@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 
+import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
@@ -29,13 +30,13 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /**
- * BYOK ("Bring Your Own Key") settings for BotMason chat.
+ * BYOK ("Bring Your Own Key") settings for model-powered features.
  *
  * Lets a user paste an OpenAI or Anthropic API key that is stored **only on
- * their device** via SecureStore and is attached per-request to
- * ``/journal/chat`` via the ``X-LLM-API-Key`` header (issue #185). The key is
- * never uploaded to the backend database and is masked by default — reveal
- * toggles only show the value locally in this screen.
+ * their device** via SecureStore and is attached per-request to the supported
+ * LLM routes via the ``X-LLM-API-Key`` header (issue #185). The backend passes
+ * it to the provider without persisting, logging, or echoing it; reveal toggles
+ * only show the masked-by-default value locally in this screen.
  */
 
 const MAX_KEY_LENGTH = 256;
@@ -190,10 +191,7 @@ interface ScreenBodyProps {
 const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => (
   <>
     <Text style={settingsFormStyles.title}>BotMason API Key</Text>
-    <Text style={settingsFormStyles.body}>
-      Bring your own API key from a supported provider. It is stored only on this device and sent
-      with every BotMason request via the X-LLM-API-Key header. We never upload it to our servers.
-    </Text>
+    <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
     {!apiKey && (
       <Text style={styles.hint} testID="no-key-hint">
         No key saved yet. BotMason will use the shared server key if one is configured.

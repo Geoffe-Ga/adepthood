@@ -365,7 +365,7 @@ export function setOnTokenRefreshed(
 
 /**
  * Register a getter for the user-owned LLM API key. When registered and
- * non-null, the key is attached to BotMason chat requests via the
+ * non-null, the key is attached to supported model-powered requests via the
  * ``X-LLM-API-Key`` header. The getter is polled per-request so rotations
  * take effect without reconfiguring the HTTP client.
  */

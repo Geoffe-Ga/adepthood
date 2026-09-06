@@ -15,12 +15,13 @@ import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeySt
  * React context managing the user-owned BYOK LLM API key (issue #185).
  *
  * The key is loaded from SecureStore on mount, exposed read-only via
- * {@link useApiKey}, and registered with the HTTP client so that BotMason
- * chat requests automatically carry the ``X-LLM-API-Key`` header when a key
- * is present.
+ * {@link useApiKey}, and registered with the HTTP client so supported
+ * model-powered requests automatically carry the ``X-LLM-API-Key`` header
+ * when a key is present.
  *
- * The key is **never** uploaded to the server database and **never** returned
- * in any API response — it lives only on the device.
+ * Between calls the key lives in device storage. On supported requests it is
+ * transmitted to Adepthood, then forwarded to the provider; Adepthood never
+ * persists it in the server database or returns it in an API response.
  */
 
 /** Outcome of a {@link ApiKeyContextValue.saveApiKey} call. */
