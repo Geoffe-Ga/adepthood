@@ -343,6 +343,7 @@ async def _submit_writes_while_jobs_continue(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_slow_creek_jobs_converge_journal_and_import_over_live_http(
     concurrent_async_client: httpx.AsyncClient,  # noqa: ARG001 - provisions the live app DB
     concurrent_session_factory: async_sessionmaker[AsyncSession],

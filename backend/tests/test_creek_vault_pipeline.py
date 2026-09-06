@@ -68,6 +68,7 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 # recorded read timeout at or below this number means the per-call deadline
 # never reached httpx and the feature is a no-op.
 _ORDINARY_READ_BUDGET_SECONDS = 10.0
+_CONCURRENT_RACE_SETTLE_SECONDS = 2.0
 
 
 def _example(capability: str, cell: str) -> dict[str, Any]:
@@ -761,6 +762,84 @@ async def test_concurrent_triggers_submit_only_one_pass_per_user_and_stage(
     await http.aclose()
 
     assert inner.paths.count(_CLASSIFICATIONS_PATH) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_stale_schedulers_race_real_inserts_and_only_one_reaches_creek(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The partial index rejects one of two genuinely concurrent active inserts."""
+    schedulers_arrived = 0
+    both_schedulers_are_stale = asyncio.Event()
+    creek_started = asyncio.Event()
+    release_creek = asyncio.Event()
+    recorder = _Recorder()
+
+    async def _same_stale_due_answer(
+        _session: AsyncSession,
+        _user_id: int,
+        _trigger: VaultPipelineTrigger,
+    ) -> tuple[VaultPipelineStage, ...]:
+        nonlocal schedulers_arrived
+        schedulers_arrived += 1
+        if schedulers_arrived == 2:
+            both_schedulers_are_stale.set()
+        await both_schedulers_are_stale.wait()
+        return (VaultPipelineStage.CLASSIFY,)
+
+    async def _hold_the_winner(request: httpx.Request) -> httpx.Response:
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            creek_started.set()
+            await release_creek.wait()
+        return recorder(request)
+
+    monkeypatch.setattr(pipeline, "_pipeline_stages", _same_stale_due_answer)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_the_winner))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with (
+        concurrent_session_factory() as first_session,
+        concurrent_session_factory() as second_session,
+    ):
+        contenders = (
+            asyncio.create_task(
+                drive_vault_pipeline(
+                    first_session,
+                    client,
+                    user_id=_OWNER,
+                    trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+                )
+            ),
+            asyncio.create_task(
+                drive_vault_pipeline(
+                    second_session,
+                    client,
+                    user_id=_OWNER,
+                    trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+                )
+            ),
+        )
+        try:
+            await asyncio.wait_for(creek_started.wait(), _CONCURRENT_RACE_SETTLE_SECONDS)
+            losers, _pending = await asyncio.wait(
+                contenders,
+                timeout=_CONCURRENT_RACE_SETTLE_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            release_creek.set()
+            await asyncio.gather(*contenders)
+    await http.aclose()
+
+    assert len(losers) == 1
+    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 1
+    async with concurrent_session_factory() as reading:
+        rows = await _rows(reading)
+    assert [row.stage for row in rows].count(VaultPipelineStage.CLASSIFY) == 1
 
 
 @pytest.mark.asyncio

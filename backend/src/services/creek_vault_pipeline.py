@@ -1300,5 +1300,8 @@ async def drive_vault_pipeline(
             ),
         )
     except SQLAlchemyError:
+        # This is also the deliberate loser path when two stale schedulers race
+        # real inserts: the partial active-run index accepts one, this boundary
+        # rolls the other session back, and only the winner reaches Creek.
         _LOGGER.warning("creek vault pipeline could not record its pass")
         await session.rollback()
