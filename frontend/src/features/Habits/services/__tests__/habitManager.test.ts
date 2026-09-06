@@ -83,6 +83,7 @@ import type { DroppedCheckInState } from '../../../../store/useDroppedCheckInSto
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { buildMergePlan, buildReviewRows } from '../../components/onboardingReview';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
 import { buildPagedHabits, carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
@@ -2531,6 +2532,59 @@ describe('habitManager', () => {
       expect(anchor.getDate()).toBe(1);
     });
 
+    describe('the anchor a review pass writes', () => {
+      // Driven through the review-step PRODUCER, not through bare picks. The
+      // test above feeds picks the user typed, so its brought-along disposition
+      // carries the date they just chose and the anchor is safe by accident.
+      // The review step synthesises that pick from the row instead, and the
+      // row's date is from before the program began at all -- which is the one
+      // date the anchor must never be derived from, as the comment above the
+      // derivation says in as many words.
+      const BEFORE_THE_PROGRAM = new Date('2019-03-04');
+      const STORED = new Date('2026-01-05');
+
+      const carryoverStore = (): Habit[] => [
+        makeServerHabit({
+          id: CARRYOVER_ID,
+          name: EVENING_READ,
+          is_carryover: true,
+          start_date: BEFORE_THE_PROGRAM,
+        }),
+      ];
+
+      it('never derives it from the beginning of a habit brought along', async () => {
+        useProgramStore.getState().hydrateProgramStartDate(STORED);
+        const existing = carryoverStore();
+        useHabitStore.setState({ habits: existing });
+
+        const rows = buildReviewRows(existing);
+        expect(rows[0]).toMatchObject({ keep: true, destination: 'bring-along' });
+        const typed = pick({ id: 'new', name: MEDITATE, start_date: new Date('2026-02-09') });
+
+        await habitManager.onboardingSave(buildMergePlan([typed], rows, existing), jest.fn());
+
+        // The typed pick still wins over the stored anchor -- re-scaffolding to
+        // a new date has to stay possible. What may not happen is the 2019 date
+        // winning the min and pinning the program to a day seven years back.
+        expect(useProgramStore.getState().programStartDate).toEqual(new Date('2026-02-09'));
+      });
+
+      it('leaves the stored one alone when every habit is brought along and none is typed', async () => {
+        // The default path, end to end: a carryover row defaults to kept and
+        // brought along, brought-along rows never enter the pool, so nothing in
+        // this pass carries a date the user chose. There is no program date
+        // here to find, and an absent one must not be invented.
+        useProgramStore.getState().hydrateProgramStartDate(STORED);
+        const existing = carryoverStore();
+        useHabitStore.setState({ habits: existing });
+
+        const rows = buildReviewRows(existing);
+        await habitManager.onboardingSave(buildMergePlan([], rows, existing), jest.fn());
+
+        expect(useProgramStore.getState().programStartDate).toEqual(STORED);
+      });
+    });
+
     it('walks a mixed pass through delete, update and create with exact call counts', async () => {
       useHabitStore.setState({
         habits: [
@@ -2599,13 +2653,16 @@ describe('habitManager', () => {
       // outranks a stored one on purpose, because re-scaffolding to an EARLIER
       // date has to be possible. That rule is not this change's to revisit.
       //
-      // What makes it bite is upstream: the modal seeds its date picker with
-      // today on every open, with no memory of the anchor already stored. So a
-      // returning user who re-rates existing habits and never touches the
-      // picker moves the whole program calendar without being asked. The fix
-      // belongs to the picker's seed, not to this write, and the lane that owns
-      // the modal has been told. This test exists so that when the seed is
-      // fixed, the change here is deliberate rather than a silent drift.
+      // What used to make it bite was upstream: the modal seeded its date
+      // picker with today on every open, with no memory of the anchor already
+      // stored, so a returning user who re-rated existing habits and never
+      // touched the picker moved the whole program calendar without being
+      // asked. The seed has since been fixed where it belonged -- the picker
+      // now opens on the stored anchor, and today only when there is none --
+      // and this rule was deliberately left standing rather than drifting with
+      // it: a pick still outranks a stored anchor, because re-scaffolding to an
+      // earlier date has to remain possible. The assertion below is what the
+      // service does when a caller genuinely asks for a different date.
       useProgramStore.getState().hydrateProgramStartDate(new Date('2025-01-01'));
       useHabitStore.setState({ habits: [keptHabit()] });
 
