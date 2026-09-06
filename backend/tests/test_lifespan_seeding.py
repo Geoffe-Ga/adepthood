@@ -24,6 +24,7 @@ from sqlmodel import select
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
+from database_schema import DatabaseSchemaMismatchError
 from main import _log_botmason_provider, _log_content_status, _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
 from models.practice import Practice
@@ -105,7 +106,10 @@ async def _isolated_factory_patch() -> AsyncGenerator[None, None]:
     columns swapped to JSON, functional unique indexes installed).
     """
     factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-    with patch("main.async_session_factory", new=factory):
+    with (
+        patch("main.async_session_factory", new=factory),
+        patch("main.require_database_schema_current", new=AsyncMock()),
+    ):
         yield
 
 
@@ -163,6 +167,25 @@ async def test_lifespan_invokes_seed_when_env_flag_absent(
         async with _isolated_factory_patch(), lifespan(app):
             pass
         seed_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_rejects_a_behind_schema_before_seeding_or_serving() -> None:
+    """The migration refusal must happen before the lifespan reaches its yield."""
+    mismatch = DatabaseSchemaMismatchError("database schema is behind; run the remedy")
+    with (
+        patch(
+            "main.require_database_schema_current",
+            new=AsyncMock(side_effect=mismatch),
+        ) as schema_check,
+        patch("main._seed_startup_data", new=AsyncMock()) as seed_mock,
+        pytest.raises(DatabaseSchemaMismatchError, match="behind"),
+    ):
+        async with lifespan(app):
+            pytest.fail("a behind-head database reached the serving lifespan")
+
+    schema_check.assert_awaited_once()
+    seed_mock.assert_not_called()
 
 
 @pytest.mark.asyncio

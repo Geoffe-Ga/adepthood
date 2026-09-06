@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -70,7 +70,10 @@ def _set_keys(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
 async def _isolated_factory_patch() -> AsyncGenerator[None, None]:
     """Point main's session factory at the conftest SQLite engine for lifespan runs."""
     factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-    with patch("main.async_session_factory", new=factory):
+    with (
+        patch("main.async_session_factory", new=factory),
+        patch("main.require_database_schema_current", new=AsyncMock()),
+    ):
         yield
 
 

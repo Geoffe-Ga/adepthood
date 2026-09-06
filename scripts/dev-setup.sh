@@ -15,6 +15,14 @@ echo "⬇️ Installing pre-commit..."
 # Some environments may skip dev dependencies; ensure pre-commit is present.
 pip install pre-commit
 
+echo "🗄️ Upgrading the database schema..."
+# Setup is not complete while the checked-out backend and the database disagree.
+# Keep this explicit because the script intentionally has no global `set -e`.
+if ! (cd backend && alembic upgrade head); then
+  echo "❌ Database migration failed. Start PostgreSQL, check DATABASE_URL, then rerun: cd backend && alembic upgrade head" >&2
+  exit 1
+fi
+
 echo "📦 Installing Node dependencies..."
 if [ -d frontend ]; then
   pushd frontend >/dev/null || exit 1
