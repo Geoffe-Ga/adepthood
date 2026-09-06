@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.14.0"
+CONTRACT_VERSION = "0.15.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -73,7 +73,9 @@ class CreekCapability(enum.StrEnum):
     is adepthood's own per-entry concept with an unratified request shape that
     :meth:`HttpCreekVaultClient.classify` still refuses. Mapping the wire name
     onto it would make ``supports(CLASSIFY)`` answer true for a call that always
-    raises.
+    raises. ``VOICE_DRAFTS`` is different: contract 0.15 publishes the
+    AI-attributed draft resource specifically for this consumer, so adepthood
+    both names and calls it without routing model prose through ``UPLOAD``.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -85,6 +87,7 @@ class CreekCapability(enum.StrEnum):
     WHEEL = "creek.wheel"
     DRIVE_CONNECTOR = "creek.drive_connector"
     PIPELINE = "creek.pipeline"
+    VOICE_DRAFTS = "creek.voice_drafts"
 
 
 class VaultTierCeiling(enum.StrEnum):

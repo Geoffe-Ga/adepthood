@@ -35,12 +35,12 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.10** caller receives, not a document every caller receives, and
-the counts in :mod:`tests.creek_bundle_facts` (seven capabilities, forty-nine
-cells, six unreachable care-escalation sentinels) are the 0.10 shape rather than
-a permanent one. 0.9.0 added ``drive-connector`` and 0.10.0 added ``pipeline``,
-so the axis has grown twice in three weeks; treat every count here as a fact
-about one pinned commit.
+document a **0.15** caller receives, not a document every caller receives, and
+the counts in :mod:`tests.creek_bundle_facts` (eight capabilities, fifty-six
+cells, seven unreachable care-escalation sentinels) are the 0.15 shape rather than
+a permanent one. 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``,
+and 0.15.0 added ``voice-drafts``; treat every count here as a fact about one
+pinned commit.
 
 Naming a capability is not calling it
 -------------------------------------
@@ -689,7 +689,7 @@ def test_capability_translation_table_matches_the_manifest() -> None:
 
 
 def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
-    """What a 0.10 caller is told and what the matrix documents are one list.
+    """What a 0.15 caller is told and what the matrix documents are one list.
 
     The advertised list and the example directory names are generated from the
     same upstream enum, so a bundle where they disagree is a bundle that was
@@ -725,6 +725,7 @@ async def test_no_advertised_capability_is_dropped_at_the_parse_boundary(
     assert len(result.capabilities) == len(advertised)
     assert client.supports(CreekCapability.DRIVE_CONNECTOR) is True
     assert client.supports(CreekCapability.PIPELINE) is True
+    assert client.supports(CreekCapability.VOICE_DRAFTS) is True
 
 
 @pytest.mark.asyncio
@@ -755,20 +756,44 @@ async def test_an_advertised_pipeline_leaves_adepthoods_classify_refusing(
 
 
 def test_the_capabilities_added_since_0_8_are_named_and_carry_a_full_example_column() -> None:
-    """Creek's 0.9 and 0.10 additions are translatable and fully documented.
+    """Creek's 0.9, 0.10 and 0.15 additions are translatable and fully documented.
 
     Named, because an untranslatable capability is dropped in silence; fully
     documented, because a capability that arrived with a partial example column
     would leave the matrix-driven privacy and prose tests below covering less
     than they appear to.
     """
-    added = frozenset({"drive-connector", "pipeline"})
+    added = frozenset({"drive-connector", "pipeline", "voice-drafts"})
 
     assert added <= frozenset(_CAPABILITY_BY_CREEK_NAME)
     assert added <= _CAPABILITIES
     for capability in sorted(added):
         column = frozenset(cell.state for cell in _CELLS if cell.capability == capability)
         assert column == _STATES, capability
+
+
+def test_voice_drafts_is_published_with_the_complete_resource_contract() -> None:
+    """Contract 0.15 publishes the capability and every shape its three verbs need.
+
+    The downstream mirror must not invent a route or infer a payload from Creek's
+    implementation.  It can be built only once the vendored bytes name the
+    capability and carry the upsert, read, and delete documents together.
+    """
+    published_models = {
+        str(entry["model"])
+        for entry in _entries(MANIFEST_NAME)
+        if str(entry["path"]).startswith(_SCHEMA_DIR)
+    }
+
+    assert "voice-drafts" in _CAPABILITIES
+    assert {
+        "VoiceDraftAttribution",
+        "VoiceDraftDeleteResponse",
+        "VoiceDraftReadResponse",
+        "VoiceDraftUpsertRequest",
+        "VoiceDraftUpsertResponse",
+    } <= published_models
+    assert {cell.state for cell in _CELLS if cell.capability == "voice-drafts"} == _STATES
 
 
 def test_every_published_error_code_has_a_status_and_a_retry_disposition() -> None:

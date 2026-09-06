@@ -582,6 +582,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "upload": CreekCapability.UPLOAD,
         "drive-connector": CreekCapability.DRIVE_CONNECTOR,
         "pipeline": CreekCapability.PIPELINE,
+        "voice-drafts": CreekCapability.VOICE_DRAFTS,
     }
 )
 
@@ -1960,7 +1961,7 @@ class HttpCreekVaultClient:
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
-        Creek does publish classification at the pinned contract 0.14.0, as
+        Creek does publish classification at the pinned contract 0.15.0, as
         ``pipeline``: a whole-vault pass whose schema says it carries no
         fragment selector and never will, so it cannot answer one entry's
         question. What is absent is a shape, not a capability. Counted through

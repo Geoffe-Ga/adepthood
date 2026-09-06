@@ -165,18 +165,18 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Nine capability members, seven of which Creek publishes a wire name for."""
+    """Ten capability members, eight of which Creek publishes a wire name for."""
 
-    def test_has_nine_members(self) -> None:
-        """Exactly nine capabilities are defined.
+    def test_has_ten_members(self) -> None:
+        """Exactly ten capabilities are defined.
 
-        Seven of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
+        Eight of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
         are adepthood-side concepts Creek does not advertise. The count is easy
         to misread: this enum held seven members while Creek published five, and
-        Creek now publishes seven, so a stale ``== 7`` here would still look
-        plausible against the current contract.
+        later held nine while Creek published seven. The count is deliberately
+        independent of the published capability count.
         """
-        assert len(CreekCapability) == 9
+        assert len(CreekCapability) == 10
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
@@ -205,6 +205,10 @@ class TestCreekCapability:
     def test_wheel_value_is_wire_name(self) -> None:
         """WHEEL's value is the creek.wheel wire name."""
         assert CreekCapability.WHEEL.value == "creek.wheel"
+
+    def test_voice_drafts_value_is_wire_name(self) -> None:
+        """VOICE_DRAFTS has its own telemetry name, distinct from uploads."""
+        assert CreekCapability.VOICE_DRAFTS.value == "creek.voice_drafts"
 
 
 class TestRatifiedWireVocabularies:
