@@ -1,9 +1,11 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 
+import { SEED_DOCUMENT_READ_TIMEOUT_MS } from '../readSeedDocument';
 import { SEED_CANCELLED_NOTICE, SEED_FAILED_PICK_NOTICE } from '../seedCopy';
 import { useSeedRun } from '../useSeedRun';
 
@@ -14,6 +16,11 @@ global.fetch = mockFetch as unknown as typeof fetch;
 
 const getDocumentAsync = DocumentPicker.getDocumentAsync as unknown as jest.Mock;
 const mocked = FileSystem as unknown as { __fileBase64: jest.Mock; __fileSize: jest.Mock };
+const originalOS = Platform.OS;
+
+function setPlatform(os: typeof Platform.OS): void {
+  Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+}
 
 function asset(name: string) {
   return { name, uri: `file:///cache/${name}`, size: 512, lastModified: 0 };
@@ -95,12 +102,18 @@ function statuses(items: readonly { status: string }[]): string[] {
 }
 
 beforeEach(() => {
+  setPlatform(originalOS);
   mockFetch.mockReset();
   getDocumentAsync.mockReset();
   mocked.__fileBase64.mockReset();
   mocked.__fileSize.mockReset();
   mocked.__fileBase64.mockResolvedValue('c2VlZA==');
   mocked.__fileSize.mockReturnValue(512);
+});
+
+afterEach(() => {
+  setPlatform(originalOS);
+  jest.useRealTimers();
 });
 
 describe('choosing a privacy tier', () => {
@@ -147,6 +160,56 @@ describe('a pick that yields nothing', () => {
 });
 
 describe('a multi-document run', () => {
+  test('takes the File from the web picker through its browser read and into the import route', async () => {
+    setPlatform('web');
+    const browserFile = new File(['seed'], 'one.md', { type: 'text/markdown' });
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ ...asset('one.md'), file: browserFile }],
+    });
+    mockFetch.mockReturnValue(corpusReply('stored'));
+    const { result } = renderHook(() => useSeedRun());
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(statuses(result.current.items)).toEqual(['in_corpus']);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).content_base64).toBe('c2VlZA==');
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
+  });
+
+  test('becomes idle again after a browser read times out', async () => {
+    jest.useFakeTimers();
+    setPlatform('web');
+    const browserFile = {
+      size: 4,
+      arrayBuffer: () => new Promise<ArrayBuffer>(() => undefined),
+    } as unknown as File;
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ ...asset('one.md'), file: browserFile }],
+    });
+    const { result } = renderHook(() => useSeedRun());
+    let choose: Promise<void> = Promise.resolve();
+
+    await act(async () => {
+      choose = result.current.choose();
+      await Promise.resolve();
+    });
+    expect(result.current.isSending).toBe(true);
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(SEED_DOCUMENT_READ_TIMEOUT_MS);
+      await choose;
+    });
+
+    expect(statuses(result.current.items)).toEqual(['unreadable']);
+    expect(result.current.isSending).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   test('uploads one at a time, in pick order', async () => {
     getDocumentAsync.mockResolvedValue({
       canceled: false,

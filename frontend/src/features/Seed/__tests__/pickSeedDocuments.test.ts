@@ -52,7 +52,11 @@ describe('pickSeedDocuments', () => {
     await pickSeedDocuments();
 
     expect(getDocumentAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ multiple: true, copyToCacheDirectory: true }),
+      expect.objectContaining({
+        multiple: true,
+        copyToCacheDirectory: true,
+        base64: false,
+      }),
     );
   });
 
@@ -77,6 +81,22 @@ describe('pickSeedDocuments', () => {
         { name: 'second.pdf', uri: 'file:///cache/second.pdf', size: 1024, seedable: true },
       ],
     });
+  });
+
+  test('keeps the browser File that can still read a blob URI after the picker closes', async () => {
+    const browserFile = new File(['# Field notes'], 'field-notes.md', {
+      type: 'text/markdown',
+    });
+    getDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [asset('field-notes.md', { file: browserFile })],
+    });
+
+    const result = await pickSeedDocuments();
+
+    expect(result.kind).toBe('picked');
+    if (result.kind !== 'picked') return;
+    expect(result.documents[0]?.browserFile).toBe(browserFile);
   });
 
   test('keeps an unreadable-format pick, marked so the run can say why', async () => {
