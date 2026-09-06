@@ -507,15 +507,28 @@ async def _perform_within_budget(
     stage: VaultPipelineStage,
     budget: float,
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
-    """Perform and, when admitted, durably follow one stage under its clock."""
+    """Perform and, when admitted, durably follow one stage under its clock.
+
+    The clock owns network waiting, not the commit that makes an accepted job
+    recoverable.  Creek may accept a job at the last instant of the foreground
+    budget; cancelling ``session.commit`` then would lose its handle and make a
+    continuation submit duplicate work.  Persist the handle outside the
+    timeout, then spend only the genuinely remaining budget polling it.
+    """
+    deadline = time.monotonic() + budget
     async with asyncio.timeout(budget):
         result = await _perform(client, stage)
-        if isinstance(result, VaultPipelineJob):
-            run.job_id = str(result.job_id)
-            session.add(run)
-            await session.commit()
-            return await _await_job(client, result)
+    if not isinstance(result, VaultPipelineJob):
         return result
+
+    run.job_id = str(result.job_id)
+    session.add(run)
+    await session.commit()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    async with asyncio.timeout(remaining):
+        return await _await_job(client, result)
 
 
 async def _run_stage(
