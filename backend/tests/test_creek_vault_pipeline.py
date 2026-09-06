@@ -22,19 +22,21 @@ import time
 from collections.abc import AsyncGenerator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 import pytest
 import pytest_asyncio
 from jsonschema import Draft202012Validator
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from domain.creek_vault import (
+    CreekCapability,
     CreekCapabilityUnsupportedError,
     VaultLinkStage,
+    VaultPipelineJob,
     VaultPipelineStage,
 )
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
@@ -44,6 +46,11 @@ from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
 )
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
+from services.creek_vault_telemetry import (
+    VaultTelemetryOutcome,
+    reset_vault_telemetry_for_tests,
+    vault_outcome_counts,
+)
 
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "test-key"  # pragma: allowlist secret
@@ -53,6 +60,7 @@ _BUNDLE = Path(__file__).parent / "fixtures" / "creek_v1"
 
 _CLASSIFICATIONS_PATH = "/v1/classifications"
 _LINKS_PATH = "/v1/links"
+_JOBS_PREFIX = "/v1/jobs/"
 _CAPABILITIES_PATH = "/v1/capabilities"
 
 # The read budget the adapter applies to every non-pipeline call. The cold
@@ -108,7 +116,9 @@ class _Recorder:
         if request.url.path == _CLASSIFICATIONS_PATH:
             if self._classification is not None:
                 return self._classification
-            return httpx.Response(200, json=_example("pipeline", "success"))
+            result = _example("pipeline", "success")
+            result["method"] = json.loads(request.content)["method"]
+            return httpx.Response(200, json=result)
         if request.url.path == _LINKS_PATH:
             stage = json.loads(request.content)["method"]
             if self._link is not None:
@@ -162,12 +172,135 @@ class _SlowRecorder:
         return self._inner.requests
 
 
+class _DurableJobRecorder:
+    """A contract-0.14 vault whose long pipeline methods finish through jobs."""
+
+    CLASSIFICATION_JOB = "11111111-1111-4111-8111-111111111111"
+    EMBEDDING_JOB = "22222222-2222-4222-8222-222222222222"
+
+    def __init__(
+        self,
+        *,
+        reject_first_classification: bool = False,
+        fail_first_classification_job: bool = False,
+        lose_first_classification_job: bool = False,
+    ) -> None:
+        """Optionally fault the first admission or first admitted job."""
+        self.requests: list[httpx.Request] = []
+        self.bodies: list[Any] = []
+        self.classification_submissions = 0
+        self._reject_first_classification = reject_first_classification
+        self._fail_first_classification_job = fail_first_classification_job
+        self._lose_first_classification_job = lose_first_classification_job
+        self._polls: dict[str, int] = {}
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Serve the published admission, status, and synchronous response shapes."""
+        self.requests.append(request)
+        body = json.loads(request.content) if request.content else None
+        self.bodies.append(body)
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(200, json=_example("capabilities", "success"))
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            return self._classification(body)
+        if request.url.path == _LINKS_PATH:
+            return self._link(body)
+        if request.url.path.startswith(_JOBS_PREFIX):
+            return self._status(request.url.path.removeprefix(_JOBS_PREFIX))
+        return httpx.Response(404, json={"code": "not_found", "message": "no", "request_id": "r"})
+
+    def _classification(self, body: object) -> httpx.Response:
+        """Admit an LLM pass, after the optional one-shot availability fault."""
+        self.classification_submissions += 1
+        if self._reject_first_classification and self.classification_submissions == 1:
+            return httpx.Response(503, json=_example("pipeline", "unavailable-service"))
+        if body != {"method": "llm"}:
+            return httpx.Response(422, json=_example("pipeline", "malformed-input"))
+        return self._accepted(self.CLASSIFICATION_JOB)
+
+    def _link(self, body: object) -> httpx.Response:
+        """Admit embedding preparation and answer the short link methods inline."""
+        if body == {"method": "embeddings"}:
+            return self._accepted(self.EMBEDDING_JOB)
+        assert isinstance(body, dict)
+        return httpx.Response(200, json=_link_body(body["method"]))
+
+    @staticmethod
+    def _accepted(job_id: str) -> httpx.Response:
+        """Return the published durable-admission shape."""
+        return httpx.Response(
+            202,
+            json={"status": "accepted", "job_id": job_id, "state": "queued"},
+        )
+
+    def _status(self, job_id: str) -> httpx.Response:
+        """Report running once, then the job's counts-only landed result."""
+        if (
+            job_id == self.CLASSIFICATION_JOB
+            and self._lose_first_classification_job
+            and self.classification_submissions == 1
+        ):
+            return httpx.Response(
+                404,
+                json={"code": "not_found", "message": "no", "request_id": "r"},
+            )
+        if (
+            job_id == self.CLASSIFICATION_JOB
+            and self._fail_first_classification_job
+            and self.classification_submissions == 1
+        ):
+            return httpx.Response(
+                200,
+                json={"status": "ok", "job_id": job_id, "state": "failed", "result": None},
+            )
+        polls = self._polls.get(job_id, 0)
+        self._polls[job_id] = polls + 1
+        if polls == 0:
+            return httpx.Response(
+                200,
+                json={"status": "ok", "job_id": job_id, "state": "running", "result": None},
+            )
+        if job_id == self.CLASSIFICATION_JOB:
+            result = _example("pipeline", "success")
+            result["method"] = "llm"
+        else:
+            result = _link_body("embeddings")
+        return httpx.Response(
+            200,
+            json={"status": "ok", "job_id": job_id, "state": "succeeded", "result": result},
+        )
+
+    @property
+    def paths(self) -> list[str]:
+        """The path of every request that reached the wire, in order."""
+        return [request.url.path for request in self.requests]
+
+    @property
+    def pipeline_bodies(self) -> list[Any]:
+        """Bodies sent to pipeline admission routes, excluding status polls."""
+        return [
+            body
+            for request, body in zip(self.requests, self.bodies, strict=True)
+            if request.url.path in {_CLASSIFICATIONS_PATH, _LINKS_PATH}
+        ]
+
+
+class _RecorderLike(Protocol):
+    """The recorder surface shared by synchronous mock Creek peers."""
+
+    requests: list[httpx.Request]
+    bodies: list[Any]
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Answer one mock transport request."""
+
+
 @pytest_asyncio.fixture
-async def http_clients() -> AsyncGenerator[Callable[[_Recorder], httpx.AsyncClient], None]:
+async def http_clients() -> AsyncGenerator[Callable[[_RecorderLike], httpx.AsyncClient], None]:
     """Yield a factory for MockTransport-backed clients, closing each afterwards."""
     built: list[httpx.AsyncClient] = []
 
-    def _build(handler: _Recorder) -> httpx.AsyncClient:
+    def _build(handler: _RecorderLike) -> httpx.AsyncClient:
         """Build one in-memory client and register it for teardown."""
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         built.append(client)
@@ -179,10 +312,10 @@ async def http_clients() -> AsyncGenerator[Callable[[_Recorder], httpx.AsyncClie
 
 
 @pytest_asyncio.fixture
-async def handshaken() -> Callable[[_Recorder, httpx.AsyncClient], Any]:
+async def handshaken() -> Callable[[_RecorderLike, httpx.AsyncClient], Any]:
     """Yield a builder for an already-handshaken HTTP client."""
 
-    async def _build(recorder: _Recorder, http: httpx.AsyncClient) -> HttpCreekVaultClient:
+    async def _build(recorder: _RecorderLike, http: httpx.AsyncClient) -> HttpCreekVaultClient:
         client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
         await client.handshake()
         recorder.requests.clear()
@@ -198,13 +331,382 @@ async def _rows(session: AsyncSession) -> list[VaultPipelineRun]:
     return list(result.scalars().all())
 
 
+async def _wait_for_background_pipeline() -> None:
+    """Wait for the deliberately short-backoff continuation used by a test."""
+    await pipeline.wait_for_vault_pipeline_tasks()
+
+
+def _test_session_factory(session: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    """Build independent sessions over the current test's in-memory engine."""
+    assert session.bind is not None
+    return async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.mark.asyncio
+async def test_a_journal_write_converges_through_a_durable_llm_job(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow semantic pass lands its real counts, then temporal linking runs."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001, raising=False)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await http.aclose()
+
+    assert recorder.pipeline_bodies == [{"method": "llm"}, {"method": "temporal"}]
+    assert recorder.paths == [
+        _CLASSIFICATIONS_PATH,
+        f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}",
+        f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}",
+        _LINKS_PATH,
+    ]
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+async def test_a_document_import_prepares_embeddings_and_finishes_the_whole_ladder(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deep trigger waits on both durable jobs before eddies and threads."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001, raising=False)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+    await http.aclose()
+
+    assert recorder.pipeline_bodies == [
+        {"method": "llm"},
+        {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "threads"},
+    ]
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows] == [
+        "classify",
+        "temporal",
+        "embeddings",
+        "eddies",
+        "threads",
+    ]
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
+@pytest.mark.asyncio
+async def test_failed_admission_retries_without_waiting_for_another_write(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient admission failure schedules bounded retry and then continues."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001, raising=False)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001, raising=False)
+    recorder = _DurableJobRecorder(reject_first_classification=True)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_failed_job_is_readmitted_with_bounded_backoff(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A job-level failure retries the logical run instead of falsifying its counts."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder(fail_first_classification_job=True)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert rows[0].attempt_count == 2
+    assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A terminal status refusal consumes one bounded attempt, then converges."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder(lose_first_classification_job=True)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert rows[0].attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The save returns on its clock while the same durable job finishes later."""
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.01)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    foreground_elapsed = time.monotonic() - started
+    immediate = await _rows(db_session)
+    # Event-loop scheduling under the repository's ten-worker gate can add a
+    # few milliseconds after the 5ms deadline. The durable attempted row below
+    # is the semantic assertion; this ceiling only catches an accidental wait
+    # for the job's terminal result.
+    assert foreground_elapsed < 0.1
+    assert [(row.stage, row.outcome) for row in immediate] == [
+        ("classify", VaultPipelineOutcome.ATTEMPTED)
+    ]
+
+    await _wait_for_background_pipeline()
+    await http.aclose()
+    db_session.expire_all()
+
+    landed = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in landed] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_job_resumes_after_the_adepthood_process_restarts(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup polls the persisted handle and finishes the trigger's successors."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage="classify",
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            job_id=recorder.CLASSIFICATION_JOB,
+            attempt_count=1,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert _CLASSIFICATIONS_PATH not in recorder.paths
+    assert recorder.paths[-1] == _LINKS_PATH
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_triggers_submit_only_one_pass_per_user_and_stage(
+    db_session: AsyncSession,
+) -> None:
+    """The committed active row closes the race before a second socket opens."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    inner = _Recorder()
+
+    async def _blocking(request: httpx.Request) -> httpx.Response:
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            started.set()
+            await release.wait()
+        return inner(request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_blocking))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    inner.requests.clear()
+    inner.bodies.clear()
+    factory = _test_session_factory(db_session)
+
+    async with factory() as first_session, factory() as second_session:
+        first = asyncio.create_task(
+            drive_vault_pipeline(
+                first_session,
+                client,
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+            )
+        )
+        await started.wait()
+        await drive_vault_pipeline(
+            second_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+        release.set()
+        await first
+    await http.aclose()
+
+    assert inner.paths.count(_CLASSIFICATIONS_PATH) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_import_joins_a_journal_classification_without_losing_its_deep_stages(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deeper trigger promotes the durable run instead of opening a duplicate."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    status_started = asyncio.Event()
+    release_status = asyncio.Event()
+    recorder = _DurableJobRecorder()
+
+    async def _hold_first_status(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        if (
+            request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}"
+            and response.json().get("state") == "running"
+        ):
+            status_started.set()
+            await release_status.wait()
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_first_status))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+    factory = _test_session_factory(db_session)
+
+    async with factory() as journal_session, factory() as import_session:
+        journal = asyncio.create_task(
+            drive_vault_pipeline(
+                journal_session,
+                client,
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+            )
+        )
+        await status_started.wait()
+        await drive_vault_pipeline(
+            import_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+        )
+        release_status.set()
+        await journal
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    assert recorder.pipeline_bodies == [
+        {"method": "llm"},
+        {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "threads"},
+    ]
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows] == [
+        "classify",
+        "temporal",
+        "embeddings",
+        "eddies",
+        "threads",
+    ]
+    assert {row.trigger for row in rows} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
 @pytest.mark.asyncio
 async def test_an_import_runs_the_published_classify_then_link_ladder_on_its_own_budget(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
 ) -> None:
-    """The deep trigger drives classify then the three link stages, in order."""
+    """The deep trigger classifies, prepares embeddings, then links in order."""
     recorder = _Recorder()
     client = await handshaken(recorder, http_clients(recorder))
 
@@ -220,10 +722,12 @@ async def test_an_import_runs_the_published_classify_then_link_ladder_on_its_own
         _LINKS_PATH,
         _LINKS_PATH,
         _LINKS_PATH,
+        _LINKS_PATH,
     ]
     assert recorder.pipeline_bodies == [
-        {"method": "rules"},
+        {"method": "llm"},
         {"method": "temporal"},
+        {"method": "embeddings"},
         {"method": "eddies"},
         {"method": "threads"},
     ]
@@ -235,17 +739,18 @@ async def test_an_import_runs_the_published_classify_then_link_ladder_on_its_own
         link_schema.validate(body)
 
     for request in recorder.requests:
-        assert request.headers["X-Creek-Contract-Version"] == "0.10"
+        assert request.headers["X-Creek-Contract-Version"] == "0.14"
         assert request.headers["X-Creek-Tier-Ceiling"] == "personal"
 
     budgets = [request.extensions["timeout"]["read"] for request in recorder.requests]
-    assert budgets[2] > _ORDINARY_READ_BUDGET_SECONDS
     assert budgets[3] > _ORDINARY_READ_BUDGET_SECONDS
+    assert budgets[4] > _ORDINARY_READ_BUDGET_SECONDS
 
     rows = await _rows(db_session)
     assert [row.stage for row in rows] == [
         VaultPipelineStage.CLASSIFY,
         VaultPipelineStage.TEMPORAL,
+        VaultPipelineStage.EMBEDDINGS,
         VaultPipelineStage.EDDIES,
         VaultPipelineStage.THREADS,
     ]
@@ -269,7 +774,7 @@ async def test_a_journal_save_never_reaches_an_embedding_stage(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
     )
 
-    assert recorder.pipeline_bodies == [{"method": "rules"}, {"method": "temporal"}]
+    assert recorder.pipeline_bodies == [{"method": "llm"}, {"method": "temporal"}]
     for request in recorder.requests:
         assert request.extensions["timeout"]["read"] <= _ORDINARY_READ_BUDGET_SECONDS
 
@@ -333,6 +838,27 @@ async def test_the_local_fallback_refuses_both_pipeline_calls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_durable_status_read_is_counted_as_its_own_pipeline_attempt(
+    http_clients: Callable[[_RecorderLike], httpx.AsyncClient],
+    handshaken: Callable[[_RecorderLike, httpx.AsyncClient], Any],
+) -> None:
+    """Admission and status are two real calls, so telemetry must see both."""
+    recorder = _DurableJobRecorder()
+    client = await handshaken(recorder, http_clients(recorder))
+    reset_vault_telemetry_for_tests()
+    try:
+        admitted = await client.classify_corpus()
+        assert isinstance(admitted, VaultPipelineJob)
+        await client.pipeline_job(admitted)
+
+        assert vault_outcome_counts() == {
+            (VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE): 2
+        }
+    finally:
+        reset_vault_telemetry_for_tests()
+
+
+@pytest.mark.asyncio
 async def test_a_second_write_inside_the_debounce_window_opens_no_socket(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
@@ -380,8 +906,10 @@ async def test_a_link_stage_never_runs_before_a_classification_landed(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed classification leaves the link stages unrun: threads reads its labels."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
     refusal = httpx.Response(503, json=_example("pipeline", "unavailable-service"))
     recorder = _Recorder(classification=refusal)
     client = await handshaken(recorder, http_clients(recorder))
@@ -389,20 +917,24 @@ async def test_a_link_stage_never_runs_before_a_classification_landed(
     await drive_vault_pipeline(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
+    await _wait_for_background_pipeline()
 
-    assert recorder.paths == [_CLASSIFICATIONS_PATH]
+    assert recorder.paths == [_CLASSIFICATIONS_PATH] * 3
     rows = await _rows(db_session)
     assert [row.stage for row in rows] == [VaultPipelineStage.CLASSIFY]
-    assert rows[0].outcome == VaultPipelineOutcome.FAILED
+    assert rows[0].outcome == VaultPipelineOutcome.AMBIGUOUS
+    assert rows[0].attempt_count == 3
 
 
 @pytest.mark.asyncio
-async def test_a_failed_stage_is_not_recorded_as_done_and_is_not_retried_in_the_request(
+async def test_a_failed_stage_retries_off_request_then_allows_independent_successors(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed link stage is recorded failed, tried once, and does not stop the pass."""
+    """A failed linker exhausts bounded retries without starving later stages."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
 
     def _fail_eddies(stage: str) -> httpx.Response:
         if stage == VaultLinkStage.EDDIES.value:
@@ -415,10 +947,14 @@ async def test_a_failed_stage_is_not_recorded_as_done_and_is_not_retried_in_the_
     await drive_vault_pipeline(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
+    await _wait_for_background_pipeline()
 
     assert recorder.pipeline_bodies == [
-        {"method": "rules"},
+        {"method": "llm"},
         {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "eddies"},
         {"method": "eddies"},
         {"method": "threads"},
     ]
@@ -426,7 +962,8 @@ async def test_a_failed_stage_is_not_recorded_as_done_and_is_not_retried_in_the_
     assert [(row.stage, row.outcome) for row in rows] == [
         (VaultPipelineStage.CLASSIFY, VaultPipelineOutcome.COMPLETED),
         (VaultPipelineStage.TEMPORAL, VaultPipelineOutcome.COMPLETED),
-        (VaultPipelineStage.EDDIES, VaultPipelineOutcome.FAILED),
+        (VaultPipelineStage.EMBEDDINGS, VaultPipelineOutcome.COMPLETED),
+        (VaultPipelineStage.EDDIES, VaultPipelineOutcome.AMBIGUOUS),
         (VaultPipelineStage.THREADS, VaultPipelineOutcome.COMPLETED),
     ]
 
@@ -436,6 +973,7 @@ async def test_a_stage_that_just_failed_is_not_retried_on_the_next_pass(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed attempt sets the stage's stamp, so the next pass stands it down too.
 
@@ -443,6 +981,7 @@ async def test_a_stage_that_just_failed_is_not_retried_on_the_next_pass(
     vault refusing one stage from being asked again by every request that
     arrives afterwards. The stages whose windows have reopened still run.
     """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
 
     def _fail_eddies(stage: str) -> httpx.Response:
         if stage == VaultLinkStage.EDDIES.value:
@@ -455,6 +994,7 @@ async def test_a_stage_that_just_failed_is_not_retried_on_the_next_pass(
     await drive_vault_pipeline(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
+    await _wait_for_background_pipeline()
     await _age_rows(db_session, only={VaultPipelineStage.CLASSIFY, VaultPipelineStage.TEMPORAL})
     recorder.requests.clear()
     recorder.bodies.clear()
@@ -463,7 +1003,7 @@ async def test_a_stage_that_just_failed_is_not_retried_on_the_next_pass(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
 
-    assert {body["method"] for body in recorder.pipeline_bodies} == {"rules", "temporal"}
+    assert {body["method"] for body in recorder.pipeline_bodies} == {"llm", "temporal"}
 
 
 async def _age_rows(session: AsyncSession, *, only: set[VaultPipelineStage]) -> None:
@@ -484,6 +1024,7 @@ async def test_an_incomplete_classification_is_not_a_failure(
     """``complete: false`` means call again, not that the pass failed."""
     body = _example("pipeline", "success")
     body["complete"] = False
+    body["method"] = "llm"
     recorder = _Recorder(classification=httpx.Response(200, json=body))
     client = await handshaken(recorder, http_clients(recorder))
 
@@ -618,7 +1159,7 @@ async def test_a_link_response_echoing_another_stage_is_refused(
 
 
 def test_the_link_stage_vocabulary_is_exactly_creeks() -> None:
-    """``embeddings`` is unconstructible here, not merely unsent."""
+    """Every published linker method, including durable embeddings, is constructible."""
     published = json.loads(
         (_BUNDLE / "schemas" / "LinkRequest.schema.json").read_text(encoding="utf-8")
     )
@@ -643,10 +1184,11 @@ async def test_no_pipeline_request_can_spell_retier(
 
 
 def test_the_stage_ladder_runs_classification_first_and_the_documented_link_order() -> None:
-    """Creek documents classify, then temporal, then eddies, then threads."""
+    """Creek documents classify, temporal, embeddings, eddies, then threads."""
     assert pipeline.LADDER == (
         VaultPipelineStage.CLASSIFY,
         VaultPipelineStage.TEMPORAL,
+        VaultPipelineStage.EMBEDDINGS,
         VaultPipelineStage.EDDIES,
         VaultPipelineStage.THREADS,
     )
@@ -862,6 +1404,7 @@ async def test_a_failing_cheap_rung_does_not_starve_the_clustering_stages(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
     handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A link stage that keeps failing must not block the ones behind it forever.
 
@@ -872,6 +1415,7 @@ async def test_a_failing_cheap_rung_does_not_starve_the_clustering_stages(
     good. Classification is the one genuine prerequisite; the three linker
     stages are independent of each other.
     """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
 
     def _fail_temporal(stage: str) -> httpx.Response:
         if stage == VaultLinkStage.TEMPORAL.value:
@@ -884,10 +1428,12 @@ async def test_a_failing_cheap_rung_does_not_starve_the_clustering_stages(
     await drive_vault_pipeline(
         db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
     )
+    await _wait_for_background_pipeline()
 
     assert {body["method"] for body in recorder.pipeline_bodies} == {
-        "rules",
+        "llm",
         "temporal",
+        "embeddings",
         "eddies",
         "threads",
     }

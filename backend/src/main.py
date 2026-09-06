@@ -27,6 +27,7 @@ from client_ip import (
     unusable_throttle_prefix_config,
 )
 from database import async_session_factory, get_session
+from dependencies.creek_vault import resolve_creek_vault_client
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -87,6 +88,10 @@ from services.creek_vault_client import (
     CREEK_VAULT_URL_ENV_VAR,
     close_creek_vault_http_pool,
     unusable_creek_vault_url,
+)
+from services.creek_vault_pipeline import (
+    close_vault_pipeline_tasks,
+    resume_vault_pipeline_runs,
 )
 
 logger = logging.getLogger(__name__)
@@ -901,7 +906,23 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Issue #402: make the active LLM provider observable at startup.
     _log_botmason_provider()
 
+    try:
+        await resume_vault_pipeline_runs(async_session_factory, resolve_creek_vault_client)
+    except (OSError, RuntimeError, SQLAlchemyError):
+        # Recovery is best-effort. Connection setup errors are not consistently
+        # wrapped by SQLAlchemy (an async driver can surface OSError directly),
+        # and the durable rows remain attempted for the next healthy lifespan.
+        # Refusing all traffic here would therefore make the recovery mechanism
+        # less reliable rather than more. Cancellation remains unsuppressed
+        # because asyncio.CancelledError is a BaseException.
+        logger.warning("creek vault pipeline recovery could not read its run log")
+
     yield
+
+    # A cancelled continuation keeps its durable ``attempted`` row and job id;
+    # the next lifespan resumes it before traffic. Stop those coroutines before
+    # closing the shared HTTP pool they use.
+    await close_vault_pipeline_tasks()
 
     # The pooled Creek Vault connection must not outlive the app: closing it on
     # shutdown releases its sockets deterministically instead of leaving an open

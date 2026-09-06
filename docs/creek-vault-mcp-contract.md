@@ -4,8 +4,8 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.10.0
-- **Date:** 2026-07-31
+- **Contract version:** 0.14.0
+- **Date:** 2026-09-05
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
   originally drafted under [#950](https://github.com/Geoffe-Ga/adepthood/issues/950),
@@ -42,7 +42,7 @@ ADR 0004's Context section documents in detail. Instead:
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
   `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
-  repository: at contract 0.10.0, 27 JSON Schemas, a
+  repository: at contract 0.14.0, 32 JSON Schemas, a
   `retry-policy.json` disposition table, a seven-capability by
   seven-state example matrix, and a `manifest.json` recording a sha256
   per generated file. Those counts move — the matrix was four
@@ -480,8 +480,19 @@ capability is still used for the others it supports:
   corpus really is empty, and falls back to the locally-computed
   balance by the same `_carries_signal` rule above.
 - **CLASSIFY** — has **no call site anywhere in `backend/src`**.
-  Adepthood does not call Creek's classify capability today; every
-  Frequency/Wavelength tag in the app is produced locally.
+  This is the still-unratified per-entry operation, not Creek's
+  whole-corpus pipeline. Adepthood does not improvise a request shape for it.
+- **PIPELINE** — after a journal entry or document is stored, Adepthood drives
+  the connected corpus through semantic classification and linking. Contract
+  0.14 serves `llm` classification and `embeddings` as durable jobs; their
+  opaque ids are persisted and polled through `GET /v1/jobs/{job_id}`. A
+  journal trigger reaches classification and temporal links. A document trigger
+  additionally prepares embeddings and then materialises eddies and threads.
+  Foreground clocks bound only the originating HTTP request: accepted work
+  continues with capped polling/retry backoff, and startup resumes in-flight
+  rows. Counts in `vaultpipelinerun` come from Creek's terminal result. The
+  classification request omits `retier`, so ontology enrichment never rewrites
+  the `public` or `personal` tier submitted on the original write.
 
 ## Intimate-tier content: pointer only
 

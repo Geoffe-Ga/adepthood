@@ -158,6 +158,7 @@ DIAL_METHODS: Mapping[str, str] = {
     "classify": "domain.creek_vault.CreekVaultClient",
     "classify_corpus": "domain.creek_vault.CreekVaultClient",
     "link_corpus": "domain.creek_vault.CreekVaultClient",
+    "pipeline_job": "domain.creek_vault.CreekVaultPipelineClient",
     "reflect": "domain.creek_vault.CreekVaultClient",
     "wheel": "domain.creek_vault.CreekVaultClient",
     "send": "services.email.EmailSender",

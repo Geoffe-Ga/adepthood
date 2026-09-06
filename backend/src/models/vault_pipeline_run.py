@@ -4,7 +4,7 @@ A connected vault files what adepthood sends it as fragments, and a fragment
 nobody classified carries no frequency, no phase and no links: the reflection
 surface, the wheel and the invitation engine all read it as absence rather than
 as writing. Creek's remedy is a batch pass — classify everything, then link it
-three ways — and this table is adepthood's memory of having driven it.
+four ways — and this table is adepthood's memory of having driven it.
 
 **A rung is a row because "how long since" is a question, and a question needs
 rows.** The pass is triggered from two request paths that run on ordinary user
@@ -14,27 +14,22 @@ outlives the request that wrote it. A log line outlives nothing that can be
 compared: it is retained for a window, it cannot be read back by the code that
 has to decide, and no surface can query it.
 
-**The row is content-free.** A stage name, an outcome, three counts and an
-instant. Nothing from any fragment, nothing from any document, and nothing a
-reader could reconstruct one from — which is not a discipline this table imposes
-on itself so much as one it inherits: Creek's two pipeline responses publish
-counts and *nothing else*, no id, no path, no title, no excerpt, not even an
-error string, precisely so that a pass running over the whole vault can be
-reported to a caller admitted to only part of it. The three counts here are the
-widest thing those responses say, and they are still only numbers.
+**The row is content-free.** A stage and trigger, an outcome, attempt count,
+opaque job UUID, three counts and an instant. Nothing from any fragment, nothing
+from any document, and nothing a reader could reconstruct one from. Creek's job
+surface and pipeline responses publish counts and opaque correlation only: no
+fragment id, path, title, excerpt, or error string.
 
-**Every attempt writes a row, including the failures.** That is the opposite of
-the ``corpussweep`` rule one table over, and deliberately so: a sweep that
-reached nothing writes nothing there, because that log answers "how much of my
-writing was reached". This one answers "when was this stage last *attempted*",
-and a failure that left no stamp would be retried on the very next request —
-turning a vault that is refusing one stage into a request-rate loop against it.
-Recording the attempt is what makes standing down possible.
+**Every logical run writes one row before its first attempt.** Retries increment
+that row rather than creating new debounce stamps. The partial unique index on
+an ``attempted`` user/stage pair closes concurrent admission across workers; a
+durable job id lets startup resume the accepted pass instead of submitting a
+duplicate after a process restart.
 
-It is also what keeps a persistently failing stage from starving the ones behind
-it. The ladder is climbed in order, so a stage that fails every time would be
-retried ahead of its successors forever; because its failure sets its own stamp,
-its interval closes and the next attempt skips it and reaches the rung below.
+It also keeps a persistently failing linker from starving the rungs behind it:
+after bounded retries its terminal or ambiguous result closes its interval and
+the background continuation advances. Classification alone remains a hard
+prerequisite because threads consume the labels it writes.
 
 **The instant is declared zoned.** Comparing these rows against a clock is the
 entire use of them, and that comparison is made by different requests in
@@ -48,7 +43,7 @@ from __future__ import annotations
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, text
 from sqlmodel import Field, SQLModel
 
 from domain.creek_vault import VaultPipelineStage
@@ -63,12 +58,15 @@ _MIN_FRAGMENTS = 0
 # has to be migrated the first time a member is renamed.
 _STAGE_WIDTH = 20
 _OUTCOME_WIDTH = 20
+_TRIGGER_WIDTH = 20
+_JOB_ID_WIDTH = 36
+_MIN_ATTEMPTS = 1
 
 
 class VaultPipelineOutcome(enum.StrEnum):
     """How one attempted rung ended.
 
-    Three members, and the middle one is the reason there are not two.
+    Five members, separating incomplete work from both failure and ambiguity.
     ``INCOMPLETE`` is Creek's ``complete: false`` — a classification pass that
     skipped some fragments — and it is neither a success nor a failure: the pass
     is resumable, so it means the honest next step is to call again, while the
@@ -92,14 +90,18 @@ class VaultPipelineOutcome(enum.StrEnum):
         INCOMPLETE: The vault ran the stage and reported that some fragments
             were skipped. Only a classification pass can report this; the linker
             has no per-fragment error accumulator to collapse.
-        FAILED: The stage did not land — refused, unreachable, out of time, or
-            answered in a shape adepthood would not read.
+        FAILED: The stage definitively failed or was refused after its bounded
+            retry path. A timeout or lost answer alone is not sufficient.
+        AMBIGUOUS: Bounded retries were exhausted without a terminal answer.
+            The vault may still have landed an idempotent pass, so this outcome
+            must never be promoted into proof that it failed.
     """
 
     ATTEMPTED = "attempted"
     COMPLETED = "completed"
     INCOMPLETE = "incomplete"
     FAILED = "failed"
+    AMBIGUOUS = "ambiguous"
 
 
 def _quoted(values: tuple[str, ...]) -> str:
@@ -147,8 +149,24 @@ def _fragments_lost_check() -> CheckConstraint:
     )
 
 
+def _trigger_check() -> CheckConstraint:
+    """CHECK the trigger when a new durable run records one."""
+    return CheckConstraint(
+        "trigger IS NULL OR trigger IN ('journal_write', 'document_import')",
+        name="ck_vaultpipelinerun_trigger_valid",
+    )
+
+
+def _attempt_count_check() -> CheckConstraint:
+    """CHECK that every logical run includes at least its first attempt."""
+    return CheckConstraint(
+        f"attempt_count >= {_MIN_ATTEMPTS}",
+        name="ck_vaultpipelinerun_attempt_count_range",
+    )
+
+
 class VaultPipelineRun(SQLModel, table=True):
-    """One attempt at one stage of the vault ontologization ladder.
+    """One logical run of one stage in the vault ontologization ladder.
 
     The three counts are the two pipeline responses read through one vocabulary,
     because the scheduler that writes them does not care which route answered.
@@ -183,8 +201,19 @@ class VaultPipelineRun(SQLModel, table=True):
     # ``alembic check`` sees no drift.
     __table_args__ = (
         Index("ix_vaultpipelinerun_user_id_stage_id", "user_id", "stage", "id"),
+        Index("ix_vaultpipelinerun_outcome_id", "outcome", "id"),
+        Index(
+            "ix_vaultpipelinerun_active_user_stage_unique",
+            "user_id",
+            "stage",
+            unique=True,
+            postgresql_where=text("outcome = 'attempted'"),
+            sqlite_where=text("outcome = 'attempted'"),
+        ),
         _stage_check(),
         _outcome_check(),
+        _trigger_check(),
+        _attempt_count_check(),
         _fragments_seen_check(),
         _fragments_touched_check(),
         _fragments_lost_check(),
@@ -194,6 +223,9 @@ class VaultPipelineRun(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     stage: str = Field(max_length=_STAGE_WIDTH)
     outcome: str = Field(max_length=_OUTCOME_WIDTH)
+    trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
+    job_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
+    attempt_count: int = Field(default=_MIN_ATTEMPTS, nullable=False)
     fragments_seen: int = Field(nullable=False)
     fragments_touched: int = Field(nullable=False)
     fragments_lost: int = Field(nullable=False)

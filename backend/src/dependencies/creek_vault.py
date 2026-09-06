@@ -79,7 +79,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from domain.creek_vault import CreekVaultClient, resolve_vault_owner
+from domain.creek_vault import CreekVaultPipelineClient, resolve_vault_owner
 from routers.auth import get_current_user
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
@@ -159,7 +159,7 @@ def _log_unowned_vault(raw_owner: str | None) -> None:
     logger.warning(event, extra={"env_var": OWNER_ENV_VAR, "binding": binding})
 
 
-def deployment_vault_client(current_user: int) -> CreekVaultClient:
+def deployment_vault_client(current_user: int) -> CreekVaultPipelineClient:
     """Return the deployment-wide vault, for a caller who connected none of their own.
 
     The pre-per-user path, unchanged in behaviour and kept for one release. The
@@ -201,7 +201,15 @@ def deployment_vault_client(current_user: int) -> CreekVaultClient:
 async def get_creek_vault_client(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> CreekVaultClient:
+) -> CreekVaultPipelineClient:
+    """Resolve the request caller's vault through the shared owner-safe seam."""
+    return await resolve_creek_vault_client(session, current_user)
+
+
+async def resolve_creek_vault_client(
+    session: AsyncSession,
+    current_user: int,
+) -> CreekVaultPipelineClient:
     """Return the vault client this caller may hold: their own, or the deployment's, or none.
 
     The caller's own connection is looked for first and wins outright. That
@@ -252,7 +260,7 @@ async def get_creek_vault_client(
     """
     connection = await load_vault_config(session, current_user)
     if connection is None:
-        client: CreekVaultClient = deployment_vault_client(current_user)
+        client: CreekVaultPipelineClient = deployment_vault_client(current_user)
     else:
         vault_url, api_key = connection.vault_url, connection.api_key
         undialable = await _stored_host_is_undialable(session, vault_url)

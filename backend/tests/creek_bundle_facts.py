@@ -31,30 +31,30 @@ PINNED_PATH = "docs/contracts/adepthood-v1"
 #: The upstream commit the vendored copy was fetched at. A sha rather than a
 #: branch: a branch name would let the "pinned" copy move underneath the digests
 #: that are the only thing making it a pin.
-PINNED_COMMIT = "f9354bc289995c87578b944b63883794035011f7"  # pragma: allowlist secret
+PINNED_COMMIT = "5b9cbcd97fdab8537a9090a30898c9f7f37f2d20"  # pragma: allowlist secret
 
 #: The contract version the vendored bundle publishes. Restated rather than read
 #: from ``domain.creek_vault``, so the suites compare two independent claims
 #: instead of agreeing with whatever the pin happens to say.
-PINNED_CONTRACT_VERSION = "0.10.0"
+PINNED_CONTRACT_VERSION = "0.14.0"
 
-#: The ontology the wire vocabulary is drawn from. Unchanged across 0.8 to 0.10.
+#: The ontology the wire vocabulary is drawn from. Unchanged across 0.8 to 0.14.
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 
 #: Files listed inside Creek's own ``manifest.json``. It covers neither itself
 #: nor the hand-written ``README.md``, which is why this is two short of the
 #: vendored total.
-CREEK_MANIFEST_ENTRIES = 77
+CREEK_MANIFEST_ENTRIES = 82
 
 #: Files our ``vendor.json`` sidecar records. The sidecar excludes only itself:
 #: it is the record, not the record's subject.
-VENDORED_FILES = 79
+VENDORED_FILES = 84
 
 #: JSON Schemas the bundle publishes -- one per entry in Creek's own
 #: ``CONTRACT_MODELS``. It grew with the capability axis: 0.7 published 16.
-SCHEMA_FILES = 27
+SCHEMA_FILES = 32
 
-#: Capabilities on the example matrix's first axis, at contract 0.10.0:
+#: Capabilities on the example matrix's first axis, at contract 0.14.0:
 #: ``capabilities``, ``journal-upsert``, ``reflections``, ``wheel``, ``upload``,
 #: ``drive-connector`` and ``pipeline``.
 CAPABILITY_COUNT = 7

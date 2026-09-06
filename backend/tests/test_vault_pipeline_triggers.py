@@ -36,6 +36,7 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultLinkPass,
     VaultLinkStage,
+    VaultPipelineJob,
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
@@ -46,6 +47,7 @@ from domain.creek_vault import (
 from main import app
 from models.journal_entry import JournalEntry
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services.creek_vault_pipeline import close_vault_pipeline_tasks
 from services.creek_vault_telemetry import VaultCallTimedOutError
 
 _SIGNUP_PASSWORD = "correct-horse-battery-staple-42"  # pragma: allowlist secret
@@ -154,6 +156,12 @@ class _PipelineVaultDouble:
             oversized_discarded=0,
         )
 
+    async def pipeline_job(
+        self, _job: VaultPipelineJob, /
+    ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+        """Refuse: this synchronous route double never creates a durable job."""
+        raise AssertionError("no durable job was admitted")
+
 
 @pytest_asyncio.fixture
 async def vault(request: pytest.FixtureRequest) -> AsyncGenerator[_PipelineVaultDouble, None]:
@@ -162,6 +170,7 @@ async def vault(request: pytest.FixtureRequest) -> AsyncGenerator[_PipelineVault
     app.dependency_overrides[get_creek_vault_client] = lambda: double
     yield double
     app.dependency_overrides.pop(get_creek_vault_client, None)
+    await close_vault_pipeline_tasks()
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
@@ -201,6 +210,7 @@ async def test_an_imported_document_alone_schedules_a_run(
     assert vault.classification_calls == 1
     assert vault.link_stages == [
         VaultLinkStage.TEMPORAL,
+        VaultLinkStage.EMBEDDINGS,
         VaultLinkStage.EDDIES,
         VaultLinkStage.THREADS,
     ]
@@ -274,4 +284,4 @@ async def test_a_failed_pipeline_still_returns_the_document_import_result(
     assert response.json()["stored"] is True
     assert vault.classification_calls == 1
     runs = await _runs(db_session)
-    assert [run.outcome for run in runs] == [VaultPipelineOutcome.FAILED]
+    assert [run.outcome for run in runs] == [VaultPipelineOutcome.ATTEMPTED]

@@ -9,11 +9,11 @@ looks empty while being full. Creek's remedy is a pair of batch routes; this
 module is the thing that calls them, and the decisions about *when* are the
 whole content of the file.
 
-**The ladder.** Classification first, then the three linker stages in the order
-Creek documents them: temporal, eddies, threads. The order is not stylistic.
-Classification writes the labels the thread stage reads, and temporal is the one
-stage that needs no vectors, so running it early is what makes a freshly-seeded
-corpus navigable before the expensive stages have converged.
+**The ladder.** Semantic classification first, then temporal links, durable
+embedding preparation, eddies and threads. The order is not stylistic.
+Classification writes the labels the thread stage reads; temporal makes a fresh
+corpus navigable immediately; the explicit embedding job keeps the two cluster
+passes from discovering a cold vector cache inside a synchronous request.
 
 **Why a rung is skipped is a stamp, not a flag.** Every stage carries its own
 minimum interval and its own row in ``vaultpipelinerun``, and a stage runs only
@@ -24,25 +24,22 @@ who journals every ten minutes would keep resetting one window and never reach
 the stages that only a document import asks for.
 
 That same per-stage stamp is what keeps a failing rung from starving the ones
-below it. A failure records an attempt, so the failing stage's window closes
-behind it and the next pass steps over it to the stage it was blocking.
+below it. One logical row follows the stage through bounded retries, and a
+terminal or explicitly ambiguous outcome closes its window before independent
+successor stages continue.
 
-**Nothing here retries, in the request or out of it.** Creek's embedding work
-lands in a local cache even when the call it was doing it for ran out of time,
-and both passes are idempotent and resumable, so the next window converges on
-its own. A retry would spend a second request on work the first one already did,
-and — because there is no scheduler in this deployment and "later" is therefore
-not a thing that can be promised — it would spend it inside somebody's save.
+**Long work has a durable handle.** Contract 0.14 answers LLM classification and
+embedding preparation with a consumer-bound job id. The id is committed before
+polling, status failures retry with capped exponential backoff, and startup
+resumes every still-attempted row. A timeout is therefore ambiguity, never proof
+that Creek failed. New admissions are also retried off-request, at most three
+times; exhausting them records ``ambiguous`` rather than inventing a failure.
 
 **What one request may cost is bounded twice.** A journal save runs the cheap
-half only, under the adapter's standing deadline, so the write path acquires no
-new latency class at all. A document import may run the whole ladder, and is
-bounded by a wall clock in the ``corpus_backfill`` idiom: a stage is not started
-unless enough of the budget is left for it to be worth starting. The honest worst
-case is that budget plus one stage's own deadline, because a stage already in
-flight is not interrupted — the work it is doing is landing in a cache that makes
-the next pass shorter, so cutting it off would throw away exactly the progress
-that makes this design converge.
+half under a short wall clock; when the clock expires its accepted job continues
+in the background instead of holding the save open. A document import may spend
+a longer foreground budget on the whole ladder. Either clock bounds only the
+originating request: durable status polling and bounded retries outlive it.
 
 Every failure is swallowed. This runs after somebody's entry is already
 committed and after their document is already stored, so nothing here may cost
@@ -55,22 +52,30 @@ import asyncio
 import enum
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from domain.creek_vault import (
     CreekCapability,
-    CreekVaultClient,
+    CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
     CreekVaultError,
+    CreekVaultPayloadError,
+    CreekVaultPipelineClient,
+    CreekVaultUnavailableError,
     VaultClassificationPass,
     VaultLinkPass,
     VaultLinkStage,
+    VaultPipelineJob,
+    VaultPipelineJobState,
     VaultPipelineStage,
 )
 from domain.dates import ensure_aware
@@ -93,6 +98,7 @@ _LABELS_LANDED: tuple[str, ...] = (
 LADDER: tuple[VaultPipelineStage, ...] = (
     VaultPipelineStage.CLASSIFY,
     VaultPipelineStage.TEMPORAL,
+    VaultPipelineStage.EMBEDDINGS,
     VaultPipelineStage.EDDIES,
     VaultPipelineStage.THREADS,
 )
@@ -103,6 +109,7 @@ LADDER: tuple[VaultPipelineStage, ...] = (
 #: invert, and a stage added to either vocabulary without the other notices here.
 LINK_STAGE_BY_PIPELINE_STAGE: Mapping[VaultPipelineStage, VaultLinkStage] = {
     VaultPipelineStage.TEMPORAL: VaultLinkStage.TEMPORAL,
+    VaultPipelineStage.EMBEDDINGS: VaultLinkStage.EMBEDDINGS,
     VaultPipelineStage.EDDIES: VaultLinkStage.EDDIES,
     VaultPipelineStage.THREADS: VaultLinkStage.THREADS,
 }
@@ -168,36 +175,53 @@ _CLUSTERING_STAGE_INTERVAL = timedelta(hours=6)
 _STAGE_INTERVAL: Mapping[VaultPipelineStage, timedelta] = {
     VaultPipelineStage.CLASSIFY: _CHEAP_STAGE_INTERVAL,
     VaultPipelineStage.TEMPORAL: _CHEAP_STAGE_INTERVAL,
+    VaultPipelineStage.EMBEDDINGS: _CLUSTERING_STAGE_INTERVAL,
     VaultPipelineStage.EDDIES: _CLUSTERING_STAGE_INTERVAL,
     VaultPipelineStage.THREADS: _CLUSTERING_STAGE_INTERVAL,
 }
 
+# Status reads are cheap and carry no content, but a hot polling loop over a
+# minutes-long local model pass is still load. The delay grows geometrically and
+# stops at a small ceiling: bounded backoff without turning completion into a
+# minute-granularity event.
+_JOB_POLL_INITIAL_SECONDS = 0.25
+_JOB_POLL_MAX_SECONDS = 5.0
+
+# A transient failure gets two independent retries after the originating call.
+# Backoff is exponential but capped, so a sick vault is neither hammered nor
+# allowed to turn a recoverable pass into a request-rate loop.
+_MAX_STAGE_ATTEMPTS = 3
+_RETRY_INITIAL_SECONDS = 1.0
+_RETRY_MAX_SECONDS = 30.0
+_BACKGROUND_STAGE_BUDGET_SECONDS = 60.0
+
+type _TaskKey = tuple[int, VaultPipelineStage]
+_BACKGROUND_TASKS: dict[_TaskKey, asyncio.Task[None]] = {}
+
+type VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultPipelineClient]]
+
 # How long a whole deep pass may go on starting new stages, and the least time
 # worth starting one in. Both are the ``corpus_backfill`` idiom: a wall clock
 # read from a monotonic source, and a "don't start what won't finish" floor, so a
-# pass stops with a remainder rather than overrunning — and the remainder is
-# picked up by the next import, because every rung's progress is persisted.
+# pass stops with a remainder rather than overrunning. An accepted job and the
+# remainder are continued off-request, from the persisted run.
 #
 # Sixty seconds is a judgement rather than a derivation, and it is a judgement
 # about the *import* route rather than about Creek: that route already accepts a
 # file, already answers 202, and is the one place in this app where a person has
 # asked for something to be done with a document rather than merely saved. It is
 # not enough for a cold vault to finish clustering a large corpus in, and it is
-# not meant to be. The vector cache is filled by whatever a truncated stage
-# managed, so successive imports get progressively further, and the alternative —
-# holding a request for the minutes a cold pass can genuinely take — is not
-# something this deployment can offer, because it has no background worker to
-# offer it from.
+# not meant to be. The durable job continues after the HTTP response, and its
+# status is reconciled before eddies or threads begin.
 _DEEP_RUN_BUDGET_SECONDS = 60.0
 _LEAST_WORTH_STARTING_SECONDS = 5.0
 
 # The same clock for the write path, and much shorter, because the two occasions
 # are not comparable. A document import is deliberate, rare, and already a file
 # upload; a journal save is the most frequent write in the app and somebody is
-# waiting on it with something they just wrote. Ten seconds is what the two cheap
-# stages need on any healthy vault -- neither loads a model or touches a vector
-# -- and a vault too slow to classify inside it simply converges on the next
-# window, because the pass is resumable and short-circuits on what it stamped.
+# waiting on it with something they just wrote. Ten seconds bounds waiting for
+# the semantic classification job; it does not bound the job itself, which has a
+# durable id and continues off-request before temporal linking runs.
 #
 # It is a bound on *elapsed time*, not a gate on starting: each stage runs under
 # whatever is left of it. That distinction is the whole point. httpx's ``read``
@@ -324,18 +348,26 @@ class _StageCounts:
 _NOTHING_REACHED = _StageCounts()
 
 
+@dataclass(frozen=True)
+class _StageContext:
+    """The persisted identity shared by every attempt at one logical rung."""
+
+    user_id: int
+    stage: VaultPipelineStage
+    trigger: VaultPipelineTrigger
+
+
 def _record(
     session: AsyncSession,
-    *,
-    user_id: int,
-    stage: VaultPipelineStage,
+    context: _StageContext,
     outcome: VaultPipelineOutcome,
     counts: _StageCounts = _NOTHING_REACHED,
 ) -> VaultPipelineRun:
     """Stage one attempt's row and hand it back. The caller owns the commit."""
     run = VaultPipelineRun(
-        user_id=user_id,
-        stage=stage.value,
+        user_id=context.user_id,
+        stage=context.stage.value,
+        trigger=context.trigger.value,
         outcome=outcome.value,
         fragments_seen=counts.seen,
         fragments_touched=counts.touched,
@@ -364,9 +396,26 @@ def _note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
         )
 
 
-async def _perform(
-    client: CreekVaultClient, stage: VaultPipelineStage
+def _counts_from_result(
+    result: VaultClassificationPass | VaultLinkPass,
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
+    """Read either published counts-only result into the persisted vocabulary."""
+    if isinstance(result, VaultClassificationPass):
+        return _classification_outcome(result), _StageCounts(
+            seen=result.total,
+            touched=result.classified,
+        )
+    _note_link_loss(result.stage, result)
+    return VaultPipelineOutcome.COMPLETED, _StageCounts(
+        seen=result.fragment_count,
+        touched=result.link_count,
+        lost=result.oversized_discarded,
+    )
+
+
+async def _perform(
+    client: CreekVaultPipelineClient, stage: VaultPipelineStage
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob:
     """Run one rung against the vault and read its answer into the row vocabulary.
 
     The only place either pipeline call is made. It reports rather than records:
@@ -374,25 +423,92 @@ async def _perform(
     this runs and be amended after it.
     """
     if stage is VaultPipelineStage.CLASSIFY:
-        classification = await client.classify_corpus()
-        return _classification_outcome(classification), _StageCounts(
-            seen=classification.total, touched=classification.classified
+        classification_result = await client.classify_corpus()
+        return (
+            classification_result
+            if isinstance(classification_result, VaultPipelineJob)
+            else _counts_from_result(classification_result)
         )
     wire_stage = LINK_STAGE_BY_PIPELINE_STAGE[stage]
-    link = await client.link_corpus(wire_stage)
-    _note_link_loss(wire_stage, link)
-    return VaultPipelineOutcome.COMPLETED, _StageCounts(
-        seen=link.fragment_count, touched=link.link_count, lost=link.oversized_discarded
+    link_result = await client.link_corpus(wire_stage)
+    return (
+        link_result
+        if isinstance(link_result, VaultPipelineJob)
+        else _counts_from_result(link_result)
     )
+
+
+async def _await_job(
+    client: CreekVaultPipelineClient,
+    job: VaultPipelineJob,
+) -> tuple[VaultPipelineOutcome, _StageCounts]:
+    """Poll one accepted pass to a terminal result under the caller's clock."""
+    delay = _JOB_POLL_INITIAL_SECONDS
+    current = job
+    while current.state is not VaultPipelineJobState.FAILED:
+        await asyncio.sleep(delay)
+        try:
+            result = await client.pipeline_job(current)
+        except (
+            CreekCapabilityUnsupportedError,
+            CreekVaultAuthError,
+            CreekVaultContractError,
+            CreekVaultPayloadError,
+        ):
+            return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
+        if not isinstance(result, VaultPipelineJob):
+            return _counts_from_result(result)
+        current = result
+        delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
+    return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
+
+
+@dataclass(frozen=True)
+class _RunResult:
+    """The persisted identity and current outcome of one logical stage run."""
+
+    run_id: int
+    outcome: VaultPipelineOutcome
+
+
+def _finish_run(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    outcome: VaultPipelineOutcome,
+    counts: _StageCounts,
+) -> None:
+    """Stage the terminal, counts-only result on an existing logical run."""
+    run.outcome = outcome.value
+    run.fragments_seen = counts.seen
+    run.fragments_touched = counts.touched
+    run.fragments_lost = counts.lost
+    session.add(run)
+
+
+async def _perform_within_budget(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    stage: VaultPipelineStage,
+    budget: float,
+) -> tuple[VaultPipelineOutcome, _StageCounts]:
+    """Perform and, when admitted, durably follow one stage under its clock."""
+    async with asyncio.timeout(budget):
+        result = await _perform(client, stage)
+        if isinstance(result, VaultPipelineJob):
+            run.job_id = str(result.job_id)
+            session.add(run)
+            await session.commit()
+            return await _await_job(client, result)
+        return result
 
 
 async def _run_stage(
     session: AsyncSession,
-    client: CreekVaultClient,
-    user_id: int,
-    stage: VaultPipelineStage,
+    client: CreekVaultPipelineClient,
+    context: _StageContext,
     budget: float,
-) -> VaultPipelineOutcome:
+) -> _RunResult:
     """Run one rung, committing its stamp before the wire and its outcome after.
 
     **The commit before the call is load-bearing twice over, and neither reason
@@ -413,27 +529,249 @@ async def _run_stage(
     Committing the attempt first is what makes the debounce hold under
     concurrency rather than only in a quiet test.
 
-    ``budget`` bounds the call in elapsed time. The adapter's own deadline
-    already bounds the socket, but a phase budget restarts on every read and is
-    therefore a floor rather than a ceiling; this is the ceiling. Cancelling a
-    slow stage costs nothing that matters -- Creek's embedding work lands in its
-    own cache whether or not this process is still waiting for the answer.
+    ``budget`` bounds the foreground wait in elapsed time. Accepted long work is
+    not cancelled with it: the job id is already committed, so a continuation
+    polls the same pass instead of guessing whether it landed or submitting a
+    concurrent duplicate.
     """
-    run = _record(session, user_id=user_id, stage=stage, outcome=VaultPipelineOutcome.ATTEMPTED)
+    run = _record(session, context, VaultPipelineOutcome.ATTEMPTED)
     await session.commit()
+    if run.id is None:
+        raise RuntimeError("persisted vault pipeline run has no id")
     try:
-        async with asyncio.timeout(budget):
-            outcome, counts = await _perform(client, stage)
+        outcome, counts = await _perform_within_budget(session, client, run, context.stage, budget)
+    except (
+        CreekCapabilityUnsupportedError,
+        CreekVaultAuthError,
+        CreekVaultContractError,
+        CreekVaultPayloadError,
+    ):
+        _LOGGER.info(
+            "creek vault pipeline stage was refused",
+            extra={"stage": context.stage.value},
+        )
+        _finish_run(session, run, VaultPipelineOutcome.FAILED, _NOTHING_REACHED)
+        await session.commit()
+        return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.FAILED)
     except (CreekVaultError, TimeoutError):
-        _LOGGER.info("creek vault pipeline stage did not land", extra={"stage": stage.value})
-        outcome, counts = VaultPipelineOutcome.FAILED, _NOTHING_REACHED
-    run.outcome = outcome.value
-    run.fragments_seen = counts.seen
-    run.fragments_touched = counts.touched
-    run.fragments_lost = counts.lost
+        _LOGGER.info(
+            "creek vault pipeline stage did not land",
+            extra={"stage": context.stage.value},
+        )
+        return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
+    if outcome is VaultPipelineOutcome.FAILED:
+        return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
+    _finish_run(session, run, outcome, counts)
+    await session.commit()
+    return _RunResult(run_id=run.id, outcome=outcome)
+
+
+def _job_from_run(run: VaultPipelineRun, stage: VaultPipelineStage) -> VaultPipelineJob | None:
+    """Rebuild a validated opaque handle from one persisted in-flight row."""
+    if run.job_id is None:
+        return None
+    try:
+        job_id = UUID(run.job_id)
+    except ValueError:
+        return None
+    return VaultPipelineJob(
+        job_id=job_id,
+        stage=stage,
+        state=VaultPipelineJobState.QUEUED,
+    )
+
+
+def _failed_job(job: VaultPipelineJob) -> VaultPipelineJob:
+    """Return the content-free terminal handle used for definitive status faults."""
+    return VaultPipelineJob(
+        job_id=job.job_id,
+        stage=job.stage,
+        state=VaultPipelineJobState.FAILED,
+    )
+
+
+async def _poll_job_once(
+    client: CreekVaultPipelineClient,
+    job: VaultPipelineJob,
+) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob | None:
+    """Make one status read; ``None`` means the vault is transiently absent."""
+    try:
+        return await client.pipeline_job(job)
+    except (
+        CreekCapabilityUnsupportedError,
+        CreekVaultAuthError,
+        CreekVaultContractError,
+        CreekVaultPayloadError,
+    ):
+        return _failed_job(job)
+    except CreekVaultUnavailableError:
+        await client.handshake()
+        return None
+
+
+async def _poll_until_terminal(
+    client: CreekVaultPipelineClient,
+    job: VaultPipelineJob,
+) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+    """Poll through transient status failures until counts or terminal failure."""
+    delay = _JOB_POLL_INITIAL_SECONDS
+    current = job
+    while True:
+        result = await _poll_job_once(client, current)
+        if result is None:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
+            continue
+        if not isinstance(result, VaultPipelineJob):
+            return result
+        if result.state is VaultPipelineJobState.FAILED:
+            return result
+        current = result
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
+
+
+async def _retry_once(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    stage: VaultPipelineStage,
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | None:
+    """Back off, persist the attempt number, and try one fresh admission."""
+    delay = min(
+        _RETRY_INITIAL_SECONDS * (2 ** (run.attempt_count - 1)),
+        _RETRY_MAX_SECONDS,
+    )
+    await asyncio.sleep(delay)
+    run.attempt_count += 1
+    run.job_id = None
     session.add(run)
     await session.commit()
+    try:
+        if not client.supports(CreekCapability.PIPELINE):
+            await client.handshake()
+        return await _perform(client, stage)
+    except (CreekVaultUnavailableError, TimeoutError):
+        return None
+
+
+async def _land_result(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    result: VaultClassificationPass | VaultLinkPass | tuple[VaultPipelineOutcome, _StageCounts],
+) -> VaultPipelineOutcome:
+    """Persist a synchronous or job-produced terminal result and its real counts."""
+    outcome, counts = result if isinstance(result, tuple) else _counts_from_result(result)
+    _finish_run(session, run, outcome, counts)
+    await session.commit()
     return outcome
+
+
+@dataclass(frozen=True)
+class _Reconciliation:
+    """The mutable facts carried between bounded reconciliation attempts."""
+
+    job: VaultPipelineJob | None
+    ambiguous: bool
+
+
+async def _clear_job(session: AsyncSession, run: VaultPipelineRun) -> None:
+    """Forget a terminal or lost handle before considering fresh admission."""
+    run.job_id = None
+    session.add(run)
+    await session.commit()
+
+
+async def _finish_exhausted_run(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    *,
+    ambiguous: bool,
+) -> VaultPipelineOutcome:
+    """Close a retry-exhausted row without inventing certainty."""
+    outcome = VaultPipelineOutcome.AMBIGUOUS if ambiguous else VaultPipelineOutcome.FAILED
+    _finish_run(session, run, outcome, _NOTHING_REACHED)
+    await session.commit()
+    return outcome
+
+
+async def _retry_for_reconciliation(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    stage: VaultPipelineStage,
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | VaultPipelineOutcome | None:
+    """Try fresh admission, turning a definitive refusal into a final outcome."""
+    try:
+        return await _retry_once(session, client, run, stage)
+    except (
+        CreekCapabilityUnsupportedError,
+        CreekVaultAuthError,
+        CreekVaultContractError,
+        CreekVaultPayloadError,
+    ):
+        _finish_run(session, run, VaultPipelineOutcome.FAILED, _NOTHING_REACHED)
+        await session.commit()
+        return VaultPipelineOutcome.FAILED
+
+
+async def _continue_after_retry(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    retried: tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | None,
+    state: _Reconciliation,
+) -> VaultPipelineOutcome | _Reconciliation:
+    """Persist a fresh handle or terminal result and advance reconciliation."""
+    if retried is None:
+        return _Reconciliation(job=None, ambiguous=True)
+    if isinstance(retried, VaultPipelineJob):
+        run.job_id = str(retried.job_id)
+        session.add(run)
+        await session.commit()
+        return _Reconciliation(job=retried, ambiguous=state.ambiguous)
+    return await _land_result(session, run, retried)
+
+
+async def _reconciliation_step(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    stage: VaultPipelineStage,
+    state: _Reconciliation,
+) -> VaultPipelineOutcome | _Reconciliation:
+    """Advance one poll-or-admit transition of a logical stage run."""
+    if state.job is not None:
+        polled = await _poll_until_terminal(client, state.job)
+        if not isinstance(polled, VaultPipelineJob):
+            return await _land_result(session, run, polled)
+        await _clear_job(session, run)
+    if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
+        return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
+    retried = await _retry_for_reconciliation(session, client, run, stage)
+    if isinstance(retried, VaultPipelineOutcome):
+        return retried
+    return await _continue_after_retry(session, run, retried, state)
+
+
+async def _reconcile_run(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run_id: int,
+    stage: VaultPipelineStage,
+) -> VaultPipelineOutcome:
+    """Poll or retry one in-flight row until counts land or retries exhaust."""
+    run = await session.get(VaultPipelineRun, run_id)
+    if run is None:
+        return VaultPipelineOutcome.AMBIGUOUS
+    await session.commit()
+    job = _job_from_run(run, stage)
+    state: VaultPipelineOutcome | _Reconciliation = _Reconciliation(
+        job=job,
+        ambiguous=job is None,
+    )
+    while isinstance(state, _Reconciliation):
+        state = await _reconciliation_step(session, client, run, stage, state)
+    return state
 
 
 def _due_stages(
@@ -469,18 +807,332 @@ def _stages_to_run(
     return ()
 
 
+async def _promote_active_classification(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+) -> bool:
+    """Attach a deeper trigger to the classification already in flight.
+
+    A document can arrive while a journal-triggered semantic pass is still
+    running. The active-row uniqueness rule correctly prevents a second pass,
+    but treating that as a plain debounce would lose the import's deeper ladder
+    forever. Persisting the stronger trigger lets whichever request or restart
+    finishes the shared classification continue through every stage the import
+    earned.
+
+    The row is selected again under a write lock instead of reusing the earlier
+    scheduler read. If classification became terminal between those reads, the
+    caller re-evaluates once and schedules the newly eligible successors.
+    """
+    if trigger is not VaultPipelineTrigger.DOCUMENT_IMPORT:
+        return False
+    result = await session.execute(
+        select(VaultPipelineRun)
+        .where(col(VaultPipelineRun.user_id) == user_id)
+        .where(col(VaultPipelineRun.stage) == VaultPipelineStage.CLASSIFY.value)
+        .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
+        .with_for_update()
+    )
+    run = result.scalars().one_or_none()
+    if run is None:
+        await session.commit()
+        return False
+    run.trigger = trigger.value
+    session.add(run)
+    await session.commit()
+    return True
+
+
+async def _scope_after_classification(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    run_id: int,
+    fallback: VaultPipelineTrigger,
+) -> tuple[VaultPipelineTrigger, tuple[VaultPipelineStage, ...]]:
+    """Read the latest trigger and due successors after classification lands.
+
+    The trigger may have been promoted by a concurrent document import while
+    this session waited on Creek, so it must be read from the database rather
+    than from the request-owned context. Re-reading stage stamps at the same
+    boundary also prevents a successor another worker just completed from being
+    run twice.
+    """
+    trigger_result = await session.execute(
+        select(col(VaultPipelineRun.trigger)).where(col(VaultPipelineRun.id) == run_id)
+    )
+    raw_trigger = trigger_result.scalar_one_or_none()
+    trigger = fallback if raw_trigger is None else VaultPipelineTrigger(raw_trigger)
+    stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
+    await session.commit()
+    successors = tuple(
+        stage
+        for stage in _due_stages(_STAGES_BY_TRIGGER[trigger], stamps, datetime.now(UTC))
+        if stage is not VaultPipelineStage.CLASSIFY
+    )
+    return trigger, successors
+
+
+def _session_factory_for(session: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    """Build background sessions against the same engine as the trigger session."""
+    if session.bind is None:
+        raise RuntimeError("vault pipeline session is not bound")
+    return async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+@dataclass(frozen=True)
+class _Continuation:
+    """Everything an off-request continuation needs to finish its ladder."""
+
+    factory: async_sessionmaker[AsyncSession]
+    client: CreekVaultPipelineClient
+    user_id: int
+    trigger: VaultPipelineTrigger
+    pending: _RunResult
+    stage: VaultPipelineStage
+    remaining: tuple[VaultPipelineStage, ...]
+
+
+@dataclass(frozen=True)
+class _ClimbContext:
+    """The request-owned bounds and identity for one foreground climb."""
+
+    user_id: int
+    trigger: VaultPipelineTrigger
+    stages: tuple[VaultPipelineStage, ...]
+    deadline: float
+
+
+def _classification_allows_progress(
+    stage: VaultPipelineStage,
+    outcome: VaultPipelineOutcome,
+) -> bool:
+    """Whether this outcome leaves classification's downstream labels usable."""
+    return stage is not VaultPipelineStage.CLASSIFY or outcome in {
+        VaultPipelineOutcome.COMPLETED,
+        VaultPipelineOutcome.INCOMPLETE,
+    }
+
+
+async def _continuation_scope(
+    session: AsyncSession,
+    continuation: _Continuation,
+) -> tuple[VaultPipelineTrigger, tuple[VaultPipelineStage, ...]]:
+    """Resolve the trigger and successors, including a concurrent promotion."""
+    if continuation.stage is not VaultPipelineStage.CLASSIFY:
+        return continuation.trigger, continuation.remaining
+    return await _scope_after_classification(
+        session,
+        user_id=continuation.user_id,
+        run_id=continuation.pending.run_id,
+        fallback=continuation.trigger,
+    )
+
+
+async def _continue_stage(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    context: _StageContext,
+) -> bool:
+    """Run and reconcile one background rung; report whether to keep climbing."""
+    started = await _run_stage(
+        session,
+        client,
+        context,
+        _BACKGROUND_STAGE_BUDGET_SECONDS,
+    )
+    outcome = started.outcome
+    if outcome is VaultPipelineOutcome.ATTEMPTED:
+        outcome = await _reconcile_run(session, client, started.run_id, context.stage)
+    return _classification_allows_progress(context.stage, outcome)
+
+
+async def _continue_ladder(continuation: _Continuation) -> None:
+    """Finish an in-flight rung and every permitted successor off-request."""
+    async with continuation.factory() as session:
+        outcome = await _reconcile_run(
+            session,
+            continuation.client,
+            continuation.pending.run_id,
+            continuation.stage,
+        )
+        if not _classification_allows_progress(continuation.stage, outcome):
+            return
+        trigger, remaining = await _continuation_scope(session, continuation)
+        for next_stage in remaining:
+            should_continue = await _continue_stage(
+                session,
+                continuation.client,
+                _StageContext(
+                    continuation.user_id,
+                    next_stage,
+                    trigger,
+                ),
+            )
+            if not should_continue:
+                return
+
+
+def _forget_background_task(key: _TaskKey, task: asyncio.Task[None]) -> None:
+    """Drop a finished task and observe its exception without leaking content."""
+    if _BACKGROUND_TASKS.get(key) is task:
+        _BACKGROUND_TASKS.pop(key, None)
+    if task.cancelled():
+        return
+    if task.exception() is not None:
+        _LOGGER.warning(
+            "creek vault pipeline background continuation failed",
+            extra={"stage": key[1].value},
+        )
+
+
+def _schedule_continuation(continuation: _Continuation) -> None:
+    """Schedule at most one continuation per user and active stage in-process."""
+    key = (continuation.user_id, continuation.stage)
+    active = _BACKGROUND_TASKS.get(key)
+    if active is not None and not active.done():
+        return
+    task = asyncio.create_task(_continue_ladder(continuation))
+    _BACKGROUND_TASKS[key] = task
+    task.add_done_callback(lambda completed: _forget_background_task(key, completed))
+
+
+async def _resume_run(
+    factory: async_sessionmaker[AsyncSession],
+    resolve_client: VaultClientResolver,
+    session: AsyncSession,
+    run: VaultPipelineRun,
+) -> None:
+    """Schedule one valid persisted run using its original trigger scope."""
+    if run.id is None or run.trigger is None:
+        return
+    stage = VaultPipelineStage(run.stage)
+    trigger = VaultPipelineTrigger(run.trigger)
+    client = await resolve_client(session, run.user_id)
+    await client.handshake()
+    permitted = _STAGES_BY_TRIGGER[trigger]
+    remaining = tuple(
+        candidate for candidate in LADDER[LADDER.index(stage) + 1 :] if candidate in permitted
+    )
+    _schedule_continuation(
+        _Continuation(
+            factory=factory,
+            client=client,
+            user_id=run.user_id,
+            trigger=trigger,
+            pending=_RunResult(
+                run_id=run.id,
+                outcome=VaultPipelineOutcome.ATTEMPTED,
+            ),
+            stage=stage,
+            remaining=remaining,
+        )
+    )
+
+
+async def resume_vault_pipeline_runs(
+    factory: async_sessionmaker[AsyncSession],
+    resolve_client: VaultClientResolver,
+) -> None:
+    """Resume every persisted in-flight run after an Adepthood restart."""
+    async with factory() as session:
+        result = await session.execute(
+            select(VaultPipelineRun)
+            .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
+            .where(col(VaultPipelineRun.trigger).is_not(None))
+            .order_by(col(VaultPipelineRun.id))
+        )
+        runs = list(result.scalars().all())
+        await session.commit()
+        for run in runs:
+            await _resume_run(factory, resolve_client, session, run)
+
+
+async def close_vault_pipeline_tasks() -> None:
+    """Cancel in-process continuations; their attempted rows remain restartable."""
+    tasks = tuple(_BACKGROUND_TASKS.values())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    _BACKGROUND_TASKS.clear()
+
+
+async def wait_for_vault_pipeline_tasks() -> None:
+    """Wait for current continuations; used by deterministic lifecycle checks."""
+    tasks = tuple(_BACKGROUND_TASKS.values())
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+@dataclass(frozen=True)
+class _ClimbProgress:
+    """The stage list and cursor after each foreground rung."""
+
+    trigger: VaultPipelineTrigger
+    stages: tuple[VaultPipelineStage, ...]
+    index: int = 0
+
+
+async def _climb_once(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    context: _ClimbContext,
+    factory: async_sessionmaker[AsyncSession],
+    progress: _ClimbProgress,
+) -> _ClimbProgress | None:
+    """Run one foreground rung, scheduling durable continuation when needed."""
+    stage = progress.stages[progress.index]
+    remaining_budget = context.deadline - time.monotonic()
+    if remaining_budget < _LEAST_WORTH_STARTING_SECONDS:
+        return None
+    result = await _run_stage(
+        session,
+        client,
+        _StageContext(context.user_id, stage, progress.trigger),
+        remaining_budget,
+    )
+    if result.outcome is VaultPipelineOutcome.ATTEMPTED:
+        _schedule_continuation(
+            _Continuation(
+                factory=factory,
+                client=client,
+                user_id=context.user_id,
+                trigger=progress.trigger,
+                pending=result,
+                stage=stage,
+                remaining=progress.stages[progress.index + 1 :],
+            )
+        )
+        return None
+    if not _classification_allows_progress(stage, result.outcome):
+        return None
+    if stage is not VaultPipelineStage.CLASSIFY:
+        return _ClimbProgress(progress.trigger, progress.stages, progress.index + 1)
+    trigger, successors = await _scope_after_classification(
+        session,
+        user_id=context.user_id,
+        run_id=result.run_id,
+        fallback=progress.trigger,
+    )
+    return _ClimbProgress(
+        trigger,
+        (*progress.stages[: progress.index + 1], *successors),
+        progress.index + 1,
+    )
+
+
 async def _climb(
     session: AsyncSession,
-    client: CreekVaultClient,
-    user_id: int,
-    stages: tuple[VaultPipelineStage, ...],
-    deadline: float,
+    client: CreekVaultPipelineClient,
+    context: _ClimbContext,
 ) -> None:
     """Climb the ladder in order, within one wall clock.
 
     **A failed classification stops the pass; a failed linker stage does not.**
     Classification is the one genuine prerequisite -- the thread stage reads the
-    labels it writes -- while the three linker stages are independent of each
+    labels it writes -- while the four linker stages are independent of each
     other and of each other's failures.
 
     Stopping at any failure looks more conservative and is in fact a trap. The
@@ -496,18 +1148,79 @@ async def _climb(
     start, and a stage is not begun at all with less than
     :data:`_LEAST_WORTH_STARTING_SECONDS` remaining.
     """
-    for stage in stages:
-        remaining = deadline - time.monotonic()
-        if remaining < _LEAST_WORTH_STARTING_SECONDS:
-            return
-        outcome = await _run_stage(session, client, user_id, stage, remaining)
-        if outcome is VaultPipelineOutcome.FAILED and stage is VaultPipelineStage.CLASSIFY:
-            return
+    factory = _session_factory_for(session)
+    progress: _ClimbProgress | None = _ClimbProgress(context.trigger, context.stages)
+    while progress is not None and progress.index < len(progress.stages):
+        progress = await _climb_once(session, client, context, factory, progress)
+
+
+async def _evaluate_pipeline_stages(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+) -> tuple[tuple[VaultPipelineStage, ...], bool]:
+    """Evaluate the independent stage clocks and classification prerequisite."""
+    stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
+    landed = await _classification_has_landed(session, user_id)
+    return (
+        _stages_to_run(
+            trigger,
+            stamps,
+            datetime.now(UTC),
+            classification_landed=landed,
+        ),
+        landed,
+    )
+
+
+async def _settle_pipeline_recheck(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+    stages: tuple[VaultPipelineStage, ...],
+    *,
+    landed: bool,
+) -> tuple[VaultPipelineStage, ...]:
+    """Finish the race recheck, preserving a newly active shared pass's scope."""
+    if stages:
+        await session.commit()
+        return stages
+    if landed:
+        await session.commit()
+    else:
+        await _promote_active_classification(session, user_id, trigger)
+    return ()
+
+
+async def _pipeline_stages(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+) -> tuple[VaultPipelineStage, ...]:
+    """Resolve due stages, promoting a shared classification at most once."""
+    stages, landed = await _evaluate_pipeline_stages(session, user_id, trigger)
+    if stages:
+        await session.commit()
+        return stages
+    if trigger is not VaultPipelineTrigger.DOCUMENT_IMPORT or landed:
+        await session.commit()
+        return ()
+    promoted = await _promote_active_classification(session, user_id, trigger)
+    if promoted:
+        return ()
+    stages, landed = await _evaluate_pipeline_stages(session, user_id, trigger)
+    return await _settle_pipeline_recheck(
+        session,
+        user_id,
+        trigger,
+        stages,
+        landed=landed,
+    )
 
 
 async def drive_vault_pipeline(
     session: AsyncSession,
-    client: CreekVaultClient,
+    client: CreekVaultPipelineClient,
     *,
     user_id: int,
     trigger: VaultPipelineTrigger,
@@ -530,21 +1243,18 @@ async def drive_vault_pipeline(
     if not client.supports(CreekCapability.PIPELINE):
         return
     try:
-        stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
-        landed = await _classification_has_landed(session, user_id)
-        stages = _stages_to_run(trigger, stamps, datetime.now(UTC), classification_landed=landed)
-        # Both reads are done, and a Session holds the connection it autobegan on
-        # the first of them until something ends that transaction. Ending it here
-        # is what keeps the climb below off the pool entirely.
-        await session.commit()
+        stages = await _pipeline_stages(session, user_id, trigger)
         if not stages:
             return
         await _climb(
             session,
             client,
-            user_id,
-            stages,
-            time.monotonic() + _run_budget(trigger),
+            _ClimbContext(
+                user_id=user_id,
+                trigger=trigger,
+                stages=stages,
+                deadline=time.monotonic() + _run_budget(trigger),
+            ),
         )
     except SQLAlchemyError:
         _LOGGER.warning("creek vault pipeline could not record its pass")

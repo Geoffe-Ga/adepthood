@@ -62,7 +62,7 @@ from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
-from domain.creek_vault import CreekVaultClient
+from domain.creek_vault import CreekVaultPipelineClient
 from error_responses import build_router
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
@@ -262,7 +262,7 @@ async def import_corpus_document(
     payload: UploadDocumentRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> DocumentImportResponse:
     """Import one document into whichever corpus this account has.
 

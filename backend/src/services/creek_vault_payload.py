@@ -53,6 +53,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping
 from datetime import date
+from uuid import UUID
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
@@ -66,6 +67,9 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultLinkPass,
     VaultLinkStage,
+    VaultPipelineJob,
+    VaultPipelineJobState,
+    VaultPipelineStage,
     VaultPraxisKind,
     VaultPraxisStatus,
     VaultReflection,
@@ -927,12 +931,11 @@ def _classification_request_body() -> Mapping[str, object]:
 
     Two fields exist on the published shape and this sends one of them.
 
-    ``method`` is sent explicitly even though Creek defaults it, because an
-    omitted field means "whatever you default to" and a named one means "run the
-    rules classifier" -- and only the second is a statement adepthood can be held
-    to when the served set grows. It is emphatically *not* sent as ``null``: the
-    field is a one-member enum under ``additionalProperties: false``, so an
-    explicit null is a type violation the vault answers with ``422``.
+    ``method`` is sent explicitly even though Creek defaults to rules, because
+    rules alone can leave a new fragment ontologically unclassified. Contract
+    0.14 gives ``llm`` a durable job surface, so Adepthood can request semantic
+    classification without binding a journal save to model runtime. It is
+    emphatically *not* sent as ``null``: that remains a type violation.
 
     ``retier`` is omitted, and omission here is the decision rather than a
     default falling through. Re-deriving a privacy tier the operator or the
@@ -941,7 +944,7 @@ def _classification_request_body() -> Mapping[str, object]:
     upload time -- so the request that could ask for it is one this function
     cannot build.
     """
-    return {"method": VaultClassificationMethod.RULES.value}
+    return {"method": VaultClassificationMethod.LLM.value}
 
 
 def _link_request_body(stage: VaultLinkStage) -> Mapping[str, object]:
@@ -949,7 +952,7 @@ def _link_request_body(stage: VaultLinkStage) -> Mapping[str, object]:
 
     ``method`` is unconditional here where it is merely deliberate above:
     ``LinkRequest.method`` is ``required`` and carries no default, because the
-    three stages are not interchangeable and a default would silently run a pass
+    four stages are not interchangeable and a default would silently run a pass
     the caller did not choose while reporting it as the one they asked for.
     """
     return {"method": stage.value}
@@ -993,7 +996,9 @@ def _admissible_pipeline_body(
 
 
 def _parse_classification_pass(
-    payload: Mapping[str, object], accepted: VaultTierCeiling
+    payload: Mapping[str, object],
+    accepted: VaultTierCeiling,
+    expected_method: VaultClassificationMethod,
 ) -> VaultClassificationPass | None:
     """Project an admissible classification body onto its domain value, or ``None``.
 
@@ -1004,7 +1009,7 @@ def _parse_classification_pass(
     """
     if not _admissible_pipeline_body(payload, _CLASSIFICATION_RESPONSE_REQUIRED_FIELDS, accepted):
         return None
-    if _wire_value(VaultClassificationMethod, payload["method"]) is None:
+    if _wire_value(VaultClassificationMethod, payload["method"]) != expected_method.value:
         return None
     complete = payload["complete"]
     counts = _counts(payload, _CLASSIFICATION_COUNT_FIELDS)
@@ -1049,6 +1054,89 @@ def _parse_link_pass(
         clusters_split=counts["clusters_split"],
         oversized_discarded=counts["oversized_discarded"],
     )
+
+
+def _job_id(raw: object) -> UUID | None:
+    """Parse an opaque job id without ever carrying arbitrary text into a URL."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
+def _parse_pipeline_job_accepted(
+    payload: Mapping[str, object], stage: VaultPipelineStage
+) -> VaultPipelineJob | None:
+    """Project Creek's exact durable-admission shape onto an opaque handle."""
+    job_id = _job_id(payload.get("job_id"))
+    if payload.get("status") != "accepted" or payload.get("state") != "queued" or job_id is None:
+        return None
+    return VaultPipelineJob(
+        job_id=job_id,
+        stage=stage,
+        state=VaultPipelineJobState.QUEUED,
+    )
+
+
+_PENDING_PIPELINE_JOB_STATES = frozenset(
+    {
+        VaultPipelineJobState.QUEUED.value,
+        VaultPipelineJobState.RUNNING.value,
+        VaultPipelineJobState.FAILED.value,
+    }
+)
+
+
+def _parse_pending_pipeline_job(
+    payload: Mapping[str, object],
+    job: VaultPipelineJob,
+    raw_state: object,
+) -> VaultPipelineJob | None:
+    """Project a non-success status only when it carries no terminal result."""
+    if payload.get("result") is not None:
+        return None
+    return VaultPipelineJob(
+        job_id=job.job_id,
+        stage=job.stage,
+        state=VaultPipelineJobState(str(raw_state)),
+    )
+
+
+def _parse_succeeded_pipeline_job(
+    payload: Mapping[str, object],
+    job: VaultPipelineJob,
+    accepted: VaultTierCeiling,
+) -> VaultClassificationPass | VaultLinkPass | None:
+    """Project the counts-only result of one successful correlated job."""
+    result = payload.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    if job.stage is VaultPipelineStage.CLASSIFY:
+        return _parse_classification_pass(
+            result,
+            accepted,
+            VaultClassificationMethod.LLM,
+        )
+    return _parse_link_pass(result, VaultLinkStage(job.stage.value), accepted)
+
+
+def _parse_pipeline_job_status(
+    payload: Mapping[str, object],
+    job: VaultPipelineJob,
+    accepted: VaultTierCeiling,
+) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob | None:
+    """Read one consumer-bound status document and its counts-only terminal result."""
+    job_id = _job_id(payload.get("job_id"))
+    if payload.get("status") != "ok" or job_id != job.job_id:
+        return None
+    raw_state = payload.get("state")
+    if raw_state in _PENDING_PIPELINE_JOB_STATES:
+        return _parse_pending_pipeline_job(payload, job, raw_state)
+    if raw_state != "succeeded":
+        return None
+    return _parse_succeeded_pipeline_job(payload, job, accepted)
 
 
 # The privacy ceiling adepthood presents when it asks for a wheel. Only
