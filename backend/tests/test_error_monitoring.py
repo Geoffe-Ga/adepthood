@@ -25,7 +25,7 @@ import json
 import logging
 from collections.abc import Iterator
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import sentry_sdk
@@ -567,6 +567,7 @@ async def test_boot_initialises_and_drains_error_monitoring(
 
     with (
         patch("main.async_session_factory", new=factory),
+        patch("main.require_database_schema_current", new=AsyncMock()),
         patch("main.shutdown_error_monitoring") as drain,
     ):
         async with lifespan(app):

@@ -27,6 +27,8 @@ from client_ip import (
     unusable_throttle_prefix_config,
 )
 from database import async_session_factory, get_session
+from database import engine as database_engine
+from database_schema import require_database_schema_current
 from dependencies.creek_vault import resolve_creek_vault_client
 from error_responses import refusal_responses
 from errors import install_exception_handlers
@@ -884,6 +886,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # fallback in a per-request warning; said once here, it reaches the operator
     # before the first entry rather than at request rate.
     validate_creek_vault_url_config()
+
+    # A model import proves what this process expects, not what its database
+    # actually contains. Refuse before seeding and before the lifespan yields so
+    # a stale checkout fails at boot with the Alembic remedy instead of serving
+    # healthy routes until the first journal write reaches a missing column.
+    await require_database_schema_current(database_engine)
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.

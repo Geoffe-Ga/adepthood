@@ -50,10 +50,26 @@ Run the development setup script to install shared tooling:
 ```bash
 bash scripts/dev-setup.sh
 ```
- **Prerequisites** (Handled by Setup Script)
+
+The setup script also upgrades the configured PostgreSQL database to the
+repository's Alembic head before it declares the environment ready. PostgreSQL
+must be running and `DATABASE_URL` must point at the local database (otherwise
+the backend default is used). If backend startup says the schema is behind—or
+after pulling commits that add migrations—run the same recovery explicitly:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+The API refuses to accept traffic until its `alembic_version` stamp matches the
+checked-out migration graph; rerun the backend after the upgrade succeeds.
+
+**Prerequisites**
+
 - Node.js (v20 — see `frontend/.nvmrc`)
 - Python (3.11+ — CI runs 3.11, 3.12, 3.13)
-- PostgreSQL
+- PostgreSQL, running with the configured development database
 
 ### Frontend
 ```bash

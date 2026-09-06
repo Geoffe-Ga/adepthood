@@ -18,6 +18,7 @@ of a layer in that app's stack is the entire subject.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,7 +84,13 @@ def cors_client() -> Iterator[TestClient]:
     ``raise_server_exceptions=False`` is what a browser sees: the transport
     delivers whatever bytes the app produced.
     """
-    with TestClient(main_app, raise_server_exceptions=False) as client:
+    # This fixture owns a synthetic request failure, not a database. Keep the
+    # production startup guard enabled everywhere except this explicit test
+    # boundary, just as the lifespan-specific suites isolate their test engine.
+    with (
+        patch("main.require_database_schema_current", new=AsyncMock()),
+        TestClient(main_app, raise_server_exceptions=False) as client,
+    ):
         yield client
 
 
