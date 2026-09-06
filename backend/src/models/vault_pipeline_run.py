@@ -24,7 +24,11 @@ fragment id, path, title, excerpt, or error string.
 that row rather than creating new debounce stamps. The partial unique index on
 an ``attempted`` user/stage pair closes concurrent admission across workers; a
 durable job id lets startup resume the accepted pass instead of submitting a
-duplicate after a process restart.
+duplicate after a process restart. Startup itself takes a content-free UUID and
+timestamp lease on the row before it schedules recovery. A live process renews
+that timestamp, another process cannot release an owner it did not claim, and a
+hard-killed process's lease becomes stale so the next healthy boot can recover
+the same durable handle.
 
 It also keeps a persistently failing linker from starving the rungs behind it:
 after bounded retries its terminal or ambiguous result closes its interval and
@@ -165,6 +169,15 @@ def _attempt_count_check() -> CheckConstraint:
     )
 
 
+def _resume_claim_check() -> CheckConstraint:
+    """CHECK that a startup lease always has both its owner and its clock."""
+    return CheckConstraint(
+        "(resume_claim_id IS NULL AND resume_claimed_at IS NULL) OR "
+        "(resume_claim_id IS NOT NULL AND resume_claimed_at IS NOT NULL)",
+        name="ck_vaultpipelinerun_resume_claim_complete",
+    )
+
+
 class VaultPipelineRun(SQLModel, table=True):
     """One logical run of one stage in the vault ontologization ladder.
 
@@ -214,6 +227,7 @@ class VaultPipelineRun(SQLModel, table=True):
         _outcome_check(),
         _trigger_check(),
         _attempt_count_check(),
+        _resume_claim_check(),
         _fragments_seen_check(),
         _fragments_touched_check(),
         _fragments_lost_check(),
@@ -226,6 +240,11 @@ class VaultPipelineRun(SQLModel, table=True):
     trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
     job_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
     attempt_count: int = Field(default=_MIN_ATTEMPTS, nullable=False)
+    resume_claim_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
+    resume_claimed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     fragments_seen: int = Field(nullable=False)
     fragments_touched: int = Field(nullable=False)
     fragments_lost: int = Field(nullable=False)

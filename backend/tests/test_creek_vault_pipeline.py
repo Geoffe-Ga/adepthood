@@ -23,6 +23,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -390,6 +391,7 @@ async def test_a_journal_write_converges_through_a_durable_llm_job(
         ("classify", VaultPipelineOutcome.COMPLETED),
         ("temporal", VaultPipelineOutcome.COMPLETED),
     ]
+    assert all(row.resume_claimed_at is None for row in rows)
     assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
 
 
@@ -717,6 +719,101 @@ async def test_an_accepted_job_resumes_after_the_adepthood_process_restarts(
         ("classify", VaultPipelineOutcome.COMPLETED),
         ("temporal", VaultPipelineOutcome.COMPLETED),
     ]
+    assert all(row.resume_claim_id is None and row.resume_claimed_at is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_two_startups_claim_a_persisted_run_only_once(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two worker processes must not both resume and retry-admit one run."""
+    async with concurrent_session_factory() as session:
+        session.add(
+            VaultPipelineRun(
+                user_id=_OWNER,
+                stage=VaultPipelineStage.CLASSIFY.value,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+                outcome=VaultPipelineOutcome.ATTEMPTED.value,
+                job_id=str(_DurableJobRecorder.CLASSIFICATION_JOB),
+                fragments_seen=0,
+                fragments_touched=0,
+                fragments_lost=0,
+            )
+        )
+        await session.commit()
+
+    first_claimed = asyncio.Event()
+    release_first = asyncio.Event()
+    claimed_ids: list[int] = []
+
+    async def _hold_claim(
+        _factory: async_sessionmaker[AsyncSession],
+        _resolve: object,
+        _session: AsyncSession,
+        run: VaultPipelineRun,
+    ) -> None:
+        assert run.id is not None
+        claimed_ids.append(run.id)
+        first_claimed.set()
+        await release_first.wait()
+
+    monkeypatch.setattr(pipeline, "_resume_run", _hold_claim)
+
+    first = asyncio.create_task(
+        pipeline.resume_vault_pipeline_runs(concurrent_session_factory, AsyncMock())
+    )
+    await asyncio.wait_for(first_claimed.wait(), _CONCURRENT_RACE_SETTLE_SECONDS)
+    second = asyncio.create_task(
+        pipeline.resume_vault_pipeline_runs(concurrent_session_factory, AsyncMock())
+    )
+    await asyncio.sleep(0.05)
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert len(claimed_ids) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stale_startup_claim_is_recoverable(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process crash delays recovery only until the bounded claim lease expires."""
+    stale = datetime(2000, 1, 1, tzinfo=UTC)
+    async with concurrent_session_factory() as session:
+        session.add(
+            VaultPipelineRun(
+                user_id=_OWNER,
+                stage=VaultPipelineStage.CLASSIFY.value,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+                outcome=VaultPipelineOutcome.ATTEMPTED.value,
+                job_id=str(_DurableJobRecorder.CLASSIFICATION_JOB),
+                resume_claim_id="abandoned-process-claim",
+                resume_claimed_at=stale,
+                fragments_seen=0,
+                fragments_touched=0,
+                fragments_lost=0,
+            )
+        )
+        await session.commit()
+
+    resumed: list[int] = []
+
+    async def _record_claim(
+        _factory: async_sessionmaker[AsyncSession],
+        _resolve: object,
+        _session: AsyncSession,
+        run: VaultPipelineRun,
+    ) -> None:
+        assert run.id is not None
+        resumed.append(run.id)
+
+    monkeypatch.setattr(pipeline, "_resume_run", _record_claim)
+
+    await pipeline.resume_vault_pipeline_runs(concurrent_session_factory, AsyncMock())
+
+    assert len(resumed) == 1
 
 
 @pytest.mark.asyncio

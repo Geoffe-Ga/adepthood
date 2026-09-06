@@ -26,7 +26,7 @@ _NEW_OUTCOME_CHECK = "outcome IN ('attempted', 'completed', 'incomplete', 'faile
 
 
 def upgrade() -> None:
-    """Add durable job correlation, bounded retry state, and active-run exclusion."""
+    """Add durable jobs, bounded retries, active exclusion, and resume leases."""
     op.add_column(
         _TABLE,
         sa.Column("trigger", sqlmodel.sql.sqltypes.AutoString(length=20), nullable=True),
@@ -39,6 +39,14 @@ def upgrade() -> None:
         _TABLE,
         sa.Column("attempt_count", sa.Integer(), server_default="1", nullable=False),
     )
+    op.add_column(
+        _TABLE,
+        sa.Column("resume_claimed_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        _TABLE,
+        sa.Column("resume_claim_id", sqlmodel.sql.sqltypes.AutoString(length=36), nullable=True),
+    )
     op.drop_constraint("ck_vaultpipelinerun_stage_valid", _TABLE, type_="check")
     op.drop_constraint("ck_vaultpipelinerun_outcome_valid", _TABLE, type_="check")
     op.create_check_constraint("ck_vaultpipelinerun_stage_valid", _TABLE, _NEW_STAGE_CHECK)
@@ -50,6 +58,12 @@ def upgrade() -> None:
     )
     op.create_check_constraint(
         "ck_vaultpipelinerun_attempt_count_range", _TABLE, "attempt_count >= 1"
+    )
+    op.create_check_constraint(
+        "ck_vaultpipelinerun_resume_claim_complete",
+        _TABLE,
+        "(resume_claim_id IS NULL AND resume_claimed_at IS NULL) OR "
+        "(resume_claim_id IS NOT NULL AND resume_claimed_at IS NOT NULL)",
     )
     op.alter_column(_TABLE, "attempt_count", server_default=None)
     # Pre-0.14 attempted rows have no durable handle and cannot be reconciled.
@@ -77,11 +91,14 @@ def downgrade() -> None:
         sa.text("UPDATE vaultpipelinerun SET outcome = 'failed' WHERE outcome = 'ambiguous'")
     )
     op.drop_constraint("ck_vaultpipelinerun_attempt_count_range", _TABLE, type_="check")
+    op.drop_constraint("ck_vaultpipelinerun_resume_claim_complete", _TABLE, type_="check")
     op.drop_constraint("ck_vaultpipelinerun_trigger_valid", _TABLE, type_="check")
     op.drop_constraint("ck_vaultpipelinerun_outcome_valid", _TABLE, type_="check")
     op.drop_constraint("ck_vaultpipelinerun_stage_valid", _TABLE, type_="check")
     op.create_check_constraint("ck_vaultpipelinerun_stage_valid", _TABLE, _OLD_STAGE_CHECK)
     op.create_check_constraint("ck_vaultpipelinerun_outcome_valid", _TABLE, _OLD_OUTCOME_CHECK)
     op.drop_column(_TABLE, "attempt_count")
+    op.drop_column(_TABLE, "resume_claim_id")
+    op.drop_column(_TABLE, "resume_claimed_at")
     op.drop_column(_TABLE, "job_id")
     op.drop_column(_TABLE, "trigger")

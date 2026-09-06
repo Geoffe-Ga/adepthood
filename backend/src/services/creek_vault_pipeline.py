@@ -31,9 +31,12 @@ successor stages continue.
 **Long work has a durable handle.** Contract 0.14 answers LLM classification and
 embedding preparation with a consumer-bound job id. The id is committed before
 polling, status failures retry with capped exponential backoff, and startup
-resumes every still-attempted row. A timeout is therefore ambiguity, never proof
-that Creek failed. New admissions are also retried off-request, at most three
-times; exhausting them records ``ambiguous`` rather than inventing a failure.
+resumes every still-attempted row. Startup takes an atomic, heartbeated database
+lease first, so two backend workers cannot both retry-admit the same durable job;
+a dead worker's timestamp expires and makes the row recoverable. A timeout is
+therefore ambiguity, never proof that Creek failed. New admissions are also
+retried off-request, at most three times; exhausting them records ``ambiguous``
+rather than inventing a failure.
 
 **What one request may cost is bounded twice.** A journal save runs the cheap
 half under a short wall clock; when the clock expires its accepted job continues
@@ -56,9 +59,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import func
+from sqlalchemy import func, or_, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
@@ -194,6 +197,13 @@ _JOB_POLL_MAX_SECONDS = 5.0
 # continuation slot forever. Thirty minutes accommodates cold local model and
 # embedding passes; reaching it records ambiguity without admitting a duplicate.
 _JOB_RECONCILIATION_BUDGET_SECONDS = 30 * 60
+
+# A startup worker atomically leases each persisted run before it builds a
+# client or touches Creek. The heartbeat keeps long cold-model jobs owned while
+# their process is alive; the short stale horizon lets a hard-killed process's
+# work be reclaimed without waiting for the stage's fifteen-minute debounce.
+_RESUME_CLAIM_STALE_AFTER = timedelta(minutes=2)
+_RESUME_CLAIM_HEARTBEAT_SECONDS = 30.0
 
 # A transient failure gets two independent retries after the originating call.
 # Backoff is exponential but capped, so a sick vault is neither hammered nor
@@ -932,6 +942,7 @@ class _Continuation:
     pending: _RunResult
     stage: VaultPipelineStage
     remaining: tuple[VaultPipelineStage, ...]
+    resume_claim_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -990,28 +1001,51 @@ async def _continue_stage(
 
 async def _continue_ladder(continuation: _Continuation) -> None:
     """Finish an in-flight rung and every permitted successor off-request."""
-    async with continuation.factory() as session:
-        outcome = await _reconcile_run(
-            session,
-            continuation.client,
-            continuation.pending.run_id,
-            continuation.stage,
+    claim_id = continuation.resume_claim_id
+    heartbeat = (
+        asyncio.create_task(
+            _heartbeat_resume_claim(
+                continuation.factory,
+                continuation.pending.run_id,
+                claim_id,
+            )
         )
-        if not _classification_allows_progress(continuation.stage, outcome):
-            return
-        trigger, remaining = await _continuation_scope(session, continuation)
-        for next_stage in remaining:
-            should_continue = await _continue_stage(
+        if claim_id is not None
+        else None
+    )
+    try:
+        async with continuation.factory() as session:
+            outcome = await _reconcile_run(
                 session,
                 continuation.client,
-                _StageContext(
-                    continuation.user_id,
-                    next_stage,
-                    trigger,
-                ),
+                continuation.pending.run_id,
+                continuation.stage,
             )
-            if not should_continue:
+            if not _classification_allows_progress(continuation.stage, outcome):
                 return
+            trigger, remaining = await _continuation_scope(session, continuation)
+            for next_stage in remaining:
+                should_continue = await _continue_stage(
+                    session,
+                    continuation.client,
+                    _StageContext(
+                        continuation.user_id,
+                        next_stage,
+                        trigger,
+                    ),
+                )
+                if not should_continue:
+                    return
+    finally:
+        if heartbeat is not None:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        if claim_id is not None:
+            await _release_resume_claim(
+                continuation.factory,
+                continuation.pending.run_id,
+                claim_id,
+            )
 
 
 def _forget_background_task(key: _TaskKey, task: asyncio.Task[None]) -> None:
@@ -1027,15 +1061,80 @@ def _forget_background_task(key: _TaskKey, task: asyncio.Task[None]) -> None:
         )
 
 
-def _schedule_continuation(continuation: _Continuation) -> None:
+def _schedule_continuation(continuation: _Continuation) -> bool:
     """Schedule at most one continuation per user and active stage in-process."""
     key = (continuation.user_id, continuation.stage)
     active = _BACKGROUND_TASKS.get(key)
     if active is not None and not active.done():
-        return
+        return False
     task = asyncio.create_task(_continue_ladder(continuation))
     _BACKGROUND_TASKS[key] = task
     task.add_done_callback(lambda completed: _forget_background_task(key, completed))
+    return True
+
+
+async def _release_resume_claim(
+    factory: async_sessionmaker[AsyncSession],
+    run_id: int,
+    claim_id: str,
+) -> None:
+    """Best-effort release of one process claim without holding the work session."""
+    try:
+        async with factory() as session:
+            await session.execute(
+                update(VaultPipelineRun)
+                .where(col(VaultPipelineRun.id) == run_id)
+                .where(col(VaultPipelineRun.resume_claim_id) == claim_id)
+                .values(resume_claim_id=None, resume_claimed_at=None)
+            )
+            await session.commit()
+    except SQLAlchemyError:
+        _LOGGER.warning("creek vault pipeline could not release its startup claim")
+
+
+async def _heartbeat_resume_claim(
+    factory: async_sessionmaker[AsyncSession],
+    run_id: int,
+    claim_id: str,
+) -> None:
+    """Keep a live startup claim newer than the crash-recovery horizon."""
+    while True:
+        await asyncio.sleep(_RESUME_CLAIM_HEARTBEAT_SECONDS)
+        try:
+            async with factory() as session:
+                await session.execute(
+                    update(VaultPipelineRun)
+                    .where(col(VaultPipelineRun.id) == run_id)
+                    .where(col(VaultPipelineRun.resume_claim_id) == claim_id)
+                    .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
+                    .values(resume_claimed_at=datetime.now(UTC))
+                )
+                await session.commit()
+        except SQLAlchemyError:
+            _LOGGER.warning("creek vault pipeline could not renew its startup claim")
+
+
+async def _claim_resumable_runs(session: AsyncSession) -> list[VaultPipelineRun]:
+    """Atomically lease every unowned or stale persisted run for this process."""
+    now = datetime.now(UTC)
+    stale_before = now - _RESUME_CLAIM_STALE_AFTER
+    claim_id = str(uuid4())
+    result = await session.execute(
+        update(VaultPipelineRun)
+        .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
+        .where(col(VaultPipelineRun.trigger).is_not(None))
+        .where(
+            or_(
+                col(VaultPipelineRun.resume_claimed_at).is_(None),
+                col(VaultPipelineRun.resume_claimed_at) <= stale_before,
+            )
+        )
+        .values(resume_claim_id=claim_id, resume_claimed_at=now)
+        .returning(VaultPipelineRun)
+    )
+    runs = list(result.scalars().all())
+    await session.commit()
+    return sorted(runs, key=lambda run: run.id or 0)
 
 
 async def _resume_run(
@@ -1047,28 +1146,36 @@ async def _resume_run(
     """Schedule one valid persisted run using its original trigger scope."""
     if run.id is None or run.trigger is None:
         return
-    stage = VaultPipelineStage(run.stage)
-    trigger = VaultPipelineTrigger(run.trigger)
-    client = await resolve_client(session, run.user_id)
-    await client.handshake()
-    permitted = _STAGES_BY_TRIGGER[trigger]
-    remaining = tuple(
-        candidate for candidate in LADDER[LADDER.index(stage) + 1 :] if candidate in permitted
-    )
-    _schedule_continuation(
-        _Continuation(
-            factory=factory,
-            client=client,
-            user_id=run.user_id,
-            trigger=trigger,
-            pending=_RunResult(
-                run_id=run.id,
-                outcome=VaultPipelineOutcome.ATTEMPTED,
-            ),
-            stage=stage,
-            remaining=remaining,
+    try:
+        stage = VaultPipelineStage(run.stage)
+        trigger = VaultPipelineTrigger(run.trigger)
+        client = await resolve_client(session, run.user_id)
+        await session.commit()
+        await client.handshake()
+        permitted = _STAGES_BY_TRIGGER[trigger]
+        remaining = tuple(
+            candidate for candidate in LADDER[LADDER.index(stage) + 1 :] if candidate in permitted
         )
-    )
+        _schedule_continuation(
+            _Continuation(
+                factory=factory,
+                client=client,
+                user_id=run.user_id,
+                trigger=trigger,
+                pending=_RunResult(
+                    run_id=run.id,
+                    outcome=VaultPipelineOutcome.ATTEMPTED,
+                ),
+                stage=stage,
+                remaining=remaining,
+                resume_claim_id=run.resume_claim_id,
+            )
+        )
+    except BaseException:
+        await session.rollback()
+        if run.resume_claim_id is not None:
+            await _release_resume_claim(factory, run.id, run.resume_claim_id)
+        raise
 
 
 async def resume_vault_pipeline_runs(
@@ -1077,16 +1184,19 @@ async def resume_vault_pipeline_runs(
 ) -> None:
     """Resume every persisted in-flight run after an Adepthood restart."""
     async with factory() as session:
-        result = await session.execute(
-            select(VaultPipelineRun)
-            .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
-            .where(col(VaultPipelineRun.trigger).is_not(None))
-            .order_by(col(VaultPipelineRun.id))
-        )
-        runs = list(result.scalars().all())
-        await session.commit()
-        for run in runs:
-            await _resume_run(factory, resolve_client, session, run)
+        runs = await _claim_resumable_runs(session)
+        for index, run in enumerate(runs):
+            try:
+                await _resume_run(factory, resolve_client, session, run)
+            except BaseException:
+                for unstarted in runs[index + 1 :]:
+                    if unstarted.id is not None and unstarted.resume_claim_id is not None:
+                        await _release_resume_claim(
+                            factory,
+                            unstarted.id,
+                            unstarted.resume_claim_id,
+                        )
+                raise
 
 
 async def close_vault_pipeline_tasks() -> None:
