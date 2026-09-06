@@ -606,6 +606,44 @@ class VaultUploadResult:
 
 
 @dataclass(frozen=True)
+class VaultVoiceDraftRequest:
+    """One AI-authored essay addressed by the consumer's stable external id.
+
+    Voice Drafts are deliberately not uploads. ``content`` is model-authored
+    markdown and Creek fixes its attribution to ``ai-as-user`` with zero owner
+    voice weight; routing it through :class:`VaultUploadRequest` would instead
+    describe it as a document the owner supplied. ``tier`` is inherited from
+    the source journal entry and ``tier_ceiling`` is the matching admission
+    ceiling. Both remain domain values until the HTTP adapter proves they have
+    a remote spelling.
+
+    ``content`` is omitted from ``repr()`` so an exception or debug statement
+    cannot print the generated essay merely by rendering this request.
+    """
+
+    external_id: str
+    content: str = field(repr=False)
+    tier: VaultTierCeiling
+    tier_ceiling: VaultTierCeiling
+
+
+@dataclass(frozen=True)
+class VaultVoiceDraftResult:
+    """Outcome of an idempotent Voice Draft upsert."""
+
+    stored: bool
+    vault_ref: str | None
+    action: VaultIngestAction | None = None
+
+
+@dataclass(frozen=True)
+class VaultVoiceDraftDeleteResult:
+    """Outcome of retracting one Voice Draft by its opaque external id."""
+
+    deleted: bool
+
+
+@dataclass(frozen=True)
 class VaultClassification:
     """Frequency/Wavelength-phase tags Creek assigns to a piece of content."""
 
@@ -1086,7 +1124,24 @@ class CreekVaultClient(Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultClient, Protocol):
+class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
+    """The narrow client surface required by optional Voice Draft mirroring.
+
+    Kept separate from :class:`CreekVaultClient` so consumers and test doubles
+    that only ingest or read a vault do not acquire two unrelated methods. The
+    per-request concrete client implements both this and the pipeline surface.
+    """
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        """Create or update one AI-attributed draft at its external id."""
+
+    async def delete_voice_draft(
+        self, external_id: str, tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        """Retract one draft without sending any of its content."""
+
+
+class CreekVaultPipelineClient(CreekVaultVoiceDraftClient, Protocol):
     """The narrower extension required only by durable pipeline orchestration.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
