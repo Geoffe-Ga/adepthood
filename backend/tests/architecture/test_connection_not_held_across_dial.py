@@ -98,6 +98,14 @@ _CLASSES_IMPLEMENTING = {
     "domain.creek_vault.CreekVaultClient": frozenset(
         {
             "domain.creek_vault.CreekVaultClient",
+            "domain.creek_vault.CreekVaultPipelineClient",
+            "services.creek_vault_client.HttpCreekVaultClient",
+            "services.creek_vault_client.LocalFallbackCreekVaultClient",
+        }
+    ),
+    "domain.creek_vault.CreekVaultPipelineClient": frozenset(
+        {
+            "domain.creek_vault.CreekVaultPipelineClient",
             "services.creek_vault_client.HttpCreekVaultClient",
             "services.creek_vault_client.LocalFallbackCreekVaultClient",
         }

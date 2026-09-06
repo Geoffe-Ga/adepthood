@@ -4,12 +4,12 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.10.0 (tracks Creek's published
+- **Pinned contract version:** 0.14.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
-  and moved to 0.10.0 with the 2026-08-30 note, which records the two
-  capabilities Creek added on the way)
+  moved to 0.10.0 with the 2026-08-30 note, and moved to 0.14.0 with
+  the 2026-09-05 note, which adopts durable pipeline jobs)
 
 ## Context
 
@@ -1332,3 +1332,32 @@ speaking it remain separate changes.
 
 Nothing in any decision above changes. This note records a pin move
 and the two capability names that came with it.
+
+## Note, 2026-09-05 — the pin moves to 0.14.0; pipeline jobs close convergence
+
+Creek-Vault #1605 published the durable half of the pipeline contract and
+Adepthood #2662 adopts it. The vendored bundle is re-cut at upstream
+`5b9cbcd9`: 82 manifest entries, 84 vendored files and 32 schemas. The
+capability axis and ontology version are unchanged.
+
+**Long work is now admitted, not held on a synchronous socket.** Adepthood asks
+`POST /v1/classifications` for `llm` and `POST /v1/links` for `embeddings`.
+Each answers `202` with an opaque consumer-bound UUID, and
+`GET /v1/jobs/{job_id}` eventually returns the same counts-only result as the
+short route. Rules, temporal, eddies and threads retain their synchronous 200
+shape.
+
+**The durable handle changes what a timeout means.** `vaultpipelinerun` records
+the job id, trigger and attempt count before polling. A journal save keeps its
+short foreground clock and a document import its longer one, but expiration
+only moves reconciliation off-request; it is never persisted as proof that
+Creek failed. Capped status backoff, bounded fresh-admission retries, a partial
+unique active-run index and lifespan recovery together make progress independent
+of another user write and prevent concurrent duplicate passes.
+
+**Classification is semantic and privacy remains orthogonal.** The ladder is
+now `classify → temporal → embeddings → eddies → threads`. The LLM method is
+what prevents a successfully stored fragment from remaining ontologically
+`unclassified`; Creek's router remains responsible for its intimate-never-cloud
+policy. Adepthood still omits `retier`, so neither semantic classification nor
+any linker can rewrite the `public` or `personal` tier the writer submitted.

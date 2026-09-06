@@ -28,6 +28,7 @@ from domain.contraction import build_contraction_invitation, detect_contraction
 from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
+    CreekVaultPipelineClient,
 )
 from domain.detection import CompletionDetected, detect_completions
 from domain.practice_resolution import effective_config
@@ -388,7 +389,7 @@ async def create_journal_entry(
     payload: JournalMessageCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> JournalEntry:
     """Create a journal message for the authenticated user.
 
@@ -710,7 +711,7 @@ async def update_journal_entry(
     payload: JournalEntryUpdate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> JournalEntry:
     """Patch ``message`` / ``title`` / ``status`` on the caller's own entry.
 

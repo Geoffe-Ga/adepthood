@@ -188,6 +188,28 @@ async def test_lifespan_logs_and_continues_when_seeder_raises(
 
 
 @pytest.mark.asyncio
+async def test_lifespan_logs_and_continues_when_pipeline_recovery_cannot_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Pending durable work must not turn a database outage into a boot refusal."""
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+
+    async def _cannot_connect(*_args: object) -> None:
+        raise OSError("database connection unavailable")
+
+    caplog.set_level(logging.WARNING, logger="main")
+    with patch("main.resume_vault_pipeline_runs", new=_cannot_connect):
+        async with _isolated_factory_patch(), lifespan(app):
+            pass
+
+    recovery_logs = [
+        record for record in caplog.records if "pipeline recovery" in record.getMessage()
+    ]
+    assert recovery_logs, "expected a warning about deferred pipeline recovery"
+
+
+@pytest.mark.asyncio
 async def test_seed_startup_data_continues_after_per_seeder_failure(
     db_session: AsyncSession,
     caplog: pytest.LogCaptureFixture,

@@ -42,11 +42,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
+from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.10.0"
+CONTRACT_VERSION = "0.14.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -768,43 +769,27 @@ class VaultWheelAspect:
 class VaultClassificationMethod(enum.StrEnum):
     """The classifier a whole-vault classification pass may ask for.
 
-    One member, and the single member is the whole point. Creek's own
-    ``ClassificationMethod`` also has exactly one, and its schema explains why:
-    an ``llm`` pass over a seeded corpus is minutes to hours of work behind a
-    thirty-second server deadline, and -- the part that matters here -- with no
-    ``llm`` value expressible at all, "no byte of the vault leaves the host on
-    this route" is a property of the type rather than of a check somebody has to
-    remember to call.
-
-    Mirroring that enum here rather than sending a bare string is the same
-    argument :class:`WireTierCeiling` makes about ``intimate``: a value adepthood
-    cannot construct is one no future edit can put on the wire by accident, and
-    the alternative -- accept it, then be refused with a ``422`` -- discovers the
-    mistake at a live vault instead of at a type check.
+    Contract 0.14 serves both members and gives the long LLM pass a durable job
+    handle. Adepthood deliberately requests that semantic pass: rules alone can
+    leave a newly written fragment at ``unclassified`` even though the request
+    itself completed. Creek's router remains the authority that keeps intimate
+    material local when the configured model policy would otherwise use cloud.
 
     Attributes:
         RULES: Keyword classification. No model, no key, no consent, no egress.
+        LLM: Semantic classification through Creek's durable job surface.
     """
 
     RULES = "rules"
+    LLM = "llm"
 
 
 class VaultLinkStage(enum.StrEnum):
     """The linker stages a link pass may ask for, in the order Creek documents.
 
-    Three of Creek's four. ``embeddings`` is the fourth and is absent for the
-    reason its schema gives -- it is the O(n^2) pairwise-similarity stage,
-    observed being abandoned at 35k fragments -- and it is absent *here* for the
-    reason :class:`VaultClassificationMethod` names: unconstructible beats
-    accepted-then-refused.
-
-    Excluding it does not make the rest cheap, and this enum should not be read
-    as promising that. ``EDDIES`` and ``THREADS`` both need vectors, so on a cold
-    vault both run a local sentence-transformer pass over every uncached
-    fragment -- minutes of work that can outrun an ordinary request deadline.
-    They are safe to ask for anyway because the vector store is a *cache*: the
-    work a timed-out call performed still lands, so the next pass converges
-    rather than starting over. That is what licenses this seam having no retry.
+    All four of Creek's published members. ``EMBEDDINGS`` is the deliberately
+    durable O(n²) pass and precedes the clustering stages so neither eddies nor
+    threads discovers a cold vector cache inside its synchronous response.
 
     Values are the wire strings Creek reads out of ``LinkRequest.method``, which
     is ``required`` and carries no default, so every link request names its stage
@@ -813,6 +798,7 @@ class VaultLinkStage(enum.StrEnum):
     Attributes:
         TEMPORAL: Same-window adjacency. The one genuinely cheap stage, and the
             one that makes a freshly-seeded corpus navigable at all.
+        EMBEDDINGS: Durable local vector preparation and similarity links.
         EDDIES: Topic clusters. Embeds on a cold cache.
         THREADS: Narrative currents. Embeds on a cold cache, and reads the
             APTITUDE labels a classification pass writes -- so it is meaningless
@@ -822,13 +808,14 @@ class VaultLinkStage(enum.StrEnum):
     TEMPORAL = "temporal"
     EDDIES = "eddies"
     THREADS = "threads"
+    EMBEDDINGS = "embeddings"
 
 
 class VaultPipelineStage(enum.StrEnum):
     """One rung of the ontologization ladder adepthood drives a vault through.
 
     Adepthood's own vocabulary rather than Creek's: the wire has two routes and
-    this has four stages, because classification and each linker stage are
+    this has five stages, because classification and each linker stage are
     separately schedulable, separately debounced and separately recorded. The
     three that also name a linker stage share :class:`VaultLinkStage`'s wire
     spellings, and the mapping between the two vocabularies is a table rather
@@ -842,6 +829,7 @@ class VaultPipelineStage(enum.StrEnum):
         CLASSIFY: The whole-vault classification pass. First, always: the two
             cluster stages read the labels it writes.
         TEMPORAL: The cheap linker stage.
+        EMBEDDINGS: Durable vector preparation before either clustering stage.
         EDDIES: The first of the two embedding stages.
         THREADS: The second, and the one that most wants classification to have
             landed already.
@@ -849,8 +837,31 @@ class VaultPipelineStage(enum.StrEnum):
 
     CLASSIFY = "classify"
     TEMPORAL = "temporal"
+    EMBEDDINGS = "embeddings"
     EDDIES = "eddies"
     THREADS = "threads"
+
+
+class VaultPipelineJobState(enum.StrEnum):
+    """A durable Creek pipeline job state that has not produced counts yet."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class VaultPipelineJob:
+    """An opaque, consumer-bound handle for one durable Creek pipeline pass.
+
+    ``stage`` is Adepthood-owned correlation metadata, not a value read from the
+    job-status document. Keeping it beside the opaque UUID ensures a successful
+    result is parsed as exactly the operation that was admitted.
+    """
+
+    job_id: UUID
+    stage: VaultPipelineStage
+    state: VaultPipelineJobState
 
 
 @dataclass(frozen=True)
@@ -996,7 +1007,7 @@ class CreekVaultClient(Protocol):
     async def classify(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Request Frequency/Wavelength-phase tags for ``body``."""
 
-    async def classify_corpus(self) -> VaultClassificationPass:
+    async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Run one whole-vault classification pass and report it in counts.
 
         Deliberately *not* a batched :meth:`classify`, and the two must not be
@@ -1017,10 +1028,10 @@ class CreekVaultClient(Protocol):
         :class:`CreekCapabilityUnsupportedError` before any request is built.
         """
 
-    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass:
+    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass | VaultPipelineJob:
         """Run one linker stage over the whole vault and report it in counts.
 
-        One stage per call because Creek serves one per call: the three are not
+        One stage per call because Creek serves one per call: the four are not
         interchangeable -- one writes adjacency into fragment frontmatter, one
         materialises the eddies, one the threads -- which is why the wire's
         ``method`` is required and carries no default. ``stage`` is therefore a
@@ -1070,3 +1081,17 @@ class CreekVaultClient(Protocol):
         a write, so a caller that cannot obtain it falls back to computing the
         balance locally.
         """
+
+
+class CreekVaultPipelineClient(CreekVaultClient, Protocol):
+    """The narrower extension required only by durable pipeline orchestration.
+
+    Status polling is absent from :class:`CreekVaultClient` deliberately. Most
+    consumers use ingest, upload, reflection, or wheel reads and should not have
+    to implement a pipeline-only operation in their adapters or test doubles.
+    """
+
+    async def pipeline_job(
+        self, job: VaultPipelineJob, /
+    ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+        """Poll a durable pipeline job, returning counts only once they land."""

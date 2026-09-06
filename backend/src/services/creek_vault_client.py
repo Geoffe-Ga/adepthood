@@ -107,19 +107,22 @@ from domain.creek_vault import (
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
     CreekVaultCareEscalationError,
-    CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
+    CreekVaultPipelineClient,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
+    VaultClassificationMethod,
     VaultClassificationPass,
     VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
     VaultLinkPass,
     VaultLinkStage,
+    VaultPipelineJob,
+    VaultPipelineStage,
     VaultReflection,
     VaultTierCeiling,
     VaultUploadRequest,
@@ -144,6 +147,8 @@ from services.creek_vault_payload import (
     _parse_http_ingest_result,
     _parse_http_upload_result,
     _parse_link_pass,
+    _parse_pipeline_job_accepted,
+    _parse_pipeline_job_status,
     _parse_reflection_result,
     _reflection_request_body,
     _upload_document_body,
@@ -877,6 +882,7 @@ _UPLOADS_PATH = "/v1/uploads"
 # that is not repeated is that only published routes are spelled.
 _CLASSIFICATIONS_PATH = "/v1/classifications"
 _LINKS_PATH = "/v1/links"
+_JOBS_PATH = "/v1/jobs"
 
 # The percent-encoded form of ``.``, used to neutralize a dot segment in an
 # entry id (see :func:`_entry_path_segment`). Uppercase because RFC 3986 names
@@ -1412,6 +1418,56 @@ def _decoded_object(response: httpx.Response) -> Mapping[str, object] | None:
     return decoded if isinstance(decoded, Mapping) else None
 
 
+def _pipeline_payload(response: httpx.Response) -> Mapping[str, object]:
+    """Return one successful pipeline document or raise the static schema fault."""
+    payload = _decoded_object(response)
+    if payload is None:
+        raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+    return payload
+
+
+def _accepted_pipeline_job(
+    payload: Mapping[str, object], stage: VaultPipelineStage
+) -> VaultPipelineJob:
+    """Read one 202 admission as the stage-correlated opaque handle it is."""
+    job = _parse_pipeline_job_accepted(payload, stage)
+    if job is None:
+        raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+    return job
+
+
+def _classification_pipeline_result(
+    payload: Mapping[str, object],
+) -> VaultClassificationPass:
+    """Read one synchronous semantic classification result."""
+    result = _parse_classification_pass(
+        payload,
+        _PIPELINE_TIER_CEILING,
+        VaultClassificationMethod.LLM,
+    )
+    if result is None:
+        raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+    return result
+
+
+def _link_pipeline_result(payload: Mapping[str, object], stage: VaultLinkStage) -> VaultLinkPass:
+    """Read one synchronous linker result correlated to ``stage``."""
+    result = _parse_link_pass(payload, stage, _PIPELINE_TIER_CEILING)
+    if result is None:
+        raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+    return result
+
+
+def _durable_pipeline_result(
+    payload: Mapping[str, object], job: VaultPipelineJob
+) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+    """Read one status response correlated to its opaque job and accepted ceiling."""
+    result = _parse_pipeline_job_status(payload, job, _PIPELINE_TIER_CEILING)
+    if result is None:
+        raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+    return result
+
+
 class HttpCreekVaultClient:
     """A :class:`CreekVaultClient` that speaks plain HTTP/JSON to a configured vault.
 
@@ -1904,7 +1960,7 @@ class HttpCreekVaultClient:
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
-        Creek does publish classification at the pinned contract 0.10.0, as
+        Creek does publish classification at the pinned contract 0.14.0, as
         ``pipeline``: a whole-vault pass whose schema says it carries no
         fragment selector and never will, so it cannot answer one entry's
         question. What is absent is a shape, not a capability. Counted through
@@ -2033,7 +2089,7 @@ class HttpCreekVaultClient:
         if not self.supports(CreekCapability.PIPELINE):
             raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
-    async def classify_corpus(self) -> VaultClassificationPass:
+    async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Run one whole-vault classification pass, requiring the PIPELINE capability.
 
         A thin wrapper over :meth:`_classify_corpus` so the attempt is counted
@@ -2049,7 +2105,7 @@ class HttpCreekVaultClient:
         with _CountingOutcome(CreekCapability.PIPELINE):
             return await self._classify_corpus()
 
-    async def _classify_corpus(self) -> VaultClassificationPass:
+    async def _classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Run the classification pass and report how the exchange ended.
 
         The same four-way shape :meth:`_wheel` has, for the same reasons, and
@@ -2062,6 +2118,10 @@ class HttpCreekVaultClient:
         carries the tier adepthood declared, so a pass that derived none derived
         none correctly. Reading it as a degrade would report healthy work as a
         failure on every vault this app fills.
+
+        A semantic pass is always requested. Creek therefore answers ``202``
+        with a durable handle under contract 0.14; the synchronous result branch
+        stays parser-safe for a compatible server that already has the counts.
         """
         self._pipeline_gate()
         response = await self._post_pipeline(
@@ -2069,16 +2129,15 @@ class HttpCreekVaultClient:
         )
         if not response.is_success:
             raise _read_failure(CreekCapability.PIPELINE, response) from None
-        payload = _decoded_object(response)
-        result = (
-            None if payload is None else _parse_classification_pass(payload, _PIPELINE_TIER_CEILING)
-        )
-        if result is None:
-            raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+        payload = _pipeline_payload(response)
+        if response.status_code == HTTPStatus.ACCEPTED:
+            record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
+            return _accepted_pipeline_job(payload, VaultPipelineStage.CLASSIFY)
+        result = _classification_pipeline_result(payload)
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
         return result
 
-    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass:
+    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass | VaultPipelineJob:
         """Run one linker stage over the whole vault, requiring the PIPELINE capability.
 
         A thin wrapper over :meth:`_link_corpus`, counted exactly once the way
@@ -2090,7 +2149,7 @@ class HttpCreekVaultClient:
         with _CountingOutcome(CreekCapability.PIPELINE):
             return await self._link_corpus(stage)
 
-    async def _link_corpus(self, stage: VaultLinkStage) -> VaultLinkPass:
+    async def _link_corpus(self, stage: VaultLinkStage) -> VaultLinkPass | VaultPipelineJob:
         """Run one linker stage and report how the exchange ended.
 
         The deadline is chosen from the stage rather than passed in, because how
@@ -2098,7 +2157,8 @@ class HttpCreekVaultClient:
         about why a caller wants it: ``temporal`` needs no vectors and runs under
         the standing budget, while the two clustering stages fill a local vector
         cache on their first pass and are given
-        :data:`_COLD_EMBEDDING_DEADLINE_SECONDS` for it.
+        :data:`_COLD_EMBEDDING_DEADLINE_SECONDS` for it. The explicit
+        ``embeddings`` member instead answers with a durable job handle.
         """
         self._pipeline_gate()
         response = await self._post_pipeline(
@@ -2106,12 +2166,39 @@ class HttpCreekVaultClient:
         )
         if not response.is_success:
             raise _read_failure(CreekCapability.PIPELINE, response) from None
-        payload = _decoded_object(response)
-        result = (
-            None if payload is None else _parse_link_pass(payload, stage, _PIPELINE_TIER_CEILING)
-        )
-        if result is None:
-            raise CreekVaultPayloadError(_PIPELINE_UNREADABLE_MESSAGE)
+        payload = _pipeline_payload(response)
+        if response.status_code == HTTPStatus.ACCEPTED:
+            record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
+            return _accepted_pipeline_job(payload, VaultPipelineStage(stage.value))
+        result = _link_pipeline_result(payload, stage)
+        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
+        return result
+
+    async def pipeline_job(
+        self, job: VaultPipelineJob, /
+    ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+        """Poll one durable job, counting this status request exactly once."""
+        with _CountingOutcome(CreekCapability.PIPELINE):
+            return await self._pipeline_job(job)
+
+    async def _pipeline_job(
+        self, job: VaultPipelineJob
+    ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+        """Return one correlated status or counts-only result from the wire."""
+        self._pipeline_gate()
+        try:
+            response = await self._authorized_request(
+                "GET",
+                f"{self._url}{_JOBS_PATH}/{job.job_id}",
+                ceiling=_PIPELINE_WIRE_CEILING,
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_PIPELINE_FAILED_MESSAGE) from None
+        if not response.is_success:
+            raise _read_failure(CreekCapability.PIPELINE, response) from None
+        result = _durable_pipeline_result(_pipeline_payload(response), job)
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.PIPELINE)
         return result
 
@@ -2272,7 +2359,7 @@ class LocalFallbackCreekVaultClient:
         record_vault_outcome(self._outcome, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
 
-    async def classify_corpus(self) -> VaultClassificationPass:
+    async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.
 
         A raise rather than a no-op result, unlike :meth:`ingest` and
@@ -2286,13 +2373,20 @@ class LocalFallbackCreekVaultClient:
         record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
-    async def link_corpus(self, _stage: VaultLinkStage, /) -> VaultLinkPass:
+    async def link_corpus(self, _stage: VaultLinkStage, /) -> VaultLinkPass | VaultPipelineJob:
         """Raise: there is no vault whose fragments could be linked."""
         record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
+    async def pipeline_job(
+        self, _job: VaultPipelineJob, /
+    ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
+        """Raise: there is no vault whose durable job could be polled."""
+        record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
-def build_creek_vault_client() -> CreekVaultClient:
+
+def build_creek_vault_client() -> CreekVaultPipelineClient:
     """Return the vault client appropriate for the current configuration.
 
     **Tenancy-unaware by construction, and reached only through
@@ -2399,7 +2493,7 @@ def build_creek_vault_client() -> CreekVaultClient:
     return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""), pin_destination=False)
 
 
-def build_connected_vault_client(url: str, api_key: str) -> CreekVaultClient:
+def build_connected_vault_client(url: str, api_key: str) -> CreekVaultPipelineClient:
     """Return the adapter for a vault one user connected for themselves.
 
     The per-user twin of :func:`build_creek_vault_client`, and the differences
