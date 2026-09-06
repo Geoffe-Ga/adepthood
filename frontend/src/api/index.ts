@@ -76,6 +76,10 @@ import {
   type ReflectionDueT,
   type ReflectionLevelT,
   type ReflectionSourceItemT,
+  type RelatedEddyT,
+  type RelatedPraxisKindT,
+  type RelatedPraxisStatusT,
+  type RelatedPraxisT,
   type StageProgressRecordT,
   type SuggestionStatusT,
   type Tier,
@@ -1527,6 +1531,14 @@ export type CareResponse = CareResponseT;
 export type ContractionVariant = ContractionVariantT;
 /** The contraction reflection surface; see ``ContractionReflectionNote``. */
 export type ContractionReflection = ContractionReflectionT;
+/** One of the Creek vault's compiled praxis categories. */
+export type RelatedPraxisKind = RelatedPraxisKindT;
+/** Lifecycle of a compiled praxis page in the Creek vault. */
+export type RelatedPraxisStatus = RelatedPraxisStatusT;
+/** A compiled praxis page related to the current journal reflection. */
+export type RelatedPraxis = RelatedPraxisT;
+/** A recurring corpus pattern related to the current journal reflection. */
+export type RelatedEddy = RelatedEddyT;
 
 export interface ResonanceResponse {
   marginalia: Marginalia[];
@@ -1561,6 +1573,10 @@ export interface ResonanceResponse {
    * causes and only the server can tell them apart.
    */
   no_notes_message?: string | null;
+  /** Compiled praxis pages this reflection touched; absent on legacy responses. */
+  related_praxis?: RelatedPraxis[];
+  /** Recurring corpus patterns this reflection touched; absent on legacy responses. */
+  related_eddies?: RelatedEddy[];
 }
 
 export interface MarginaliaListResponse {

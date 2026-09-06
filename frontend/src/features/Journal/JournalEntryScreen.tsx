@@ -27,6 +27,7 @@ import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
 import EditConfirmDialog from './EditConfirmDialog';
+import FromYourCreekPanel from './FromYourCreekPanel';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
@@ -2475,6 +2476,13 @@ function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
   );
 }
 
+/** Corpus-level vault pages sit beside the journal page, never in its margin. */
+function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | null {
+  return (
+    <FromYourCreekPanel praxis={ctl.resonance.relatedPraxis} eddies={ctl.resonance.relatedEddies} />
+  );
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -2496,6 +2504,7 @@ function JournalEntryScreen({
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />
+      <EntryCreekSurface ctl={ctl} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
       <EntryExitControls
         returnTo={route.params?.returnTo}

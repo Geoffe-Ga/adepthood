@@ -27,6 +27,9 @@ import type {
   CompletionSuggestion,
   ContractionReflection,
   Marginalia,
+  RelatedEddy,
+  RelatedPraxis,
+  ResonanceResponse,
 } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
@@ -74,6 +77,10 @@ export interface UseResonanceResult {
    * is not a failure and must not be dressed as one.
    */
   noNotesMessage: string | null;
+  /** Compiled praxis pages related by the latest completed resonance pass. */
+  relatedPraxis: RelatedPraxis[];
+  /** Recurring corpus patterns related by the latest completed resonance pass. */
+  relatedEddies: RelatedEddy[];
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -170,21 +177,69 @@ interface GeneratePass {
   requestResonance: () => Promise<void>;
 }
 
+interface LatestPassState {
+  care: CareResponse | null;
+  contraction: ContractionReflection | null;
+  privateMessage: string | null;
+  noNotesMessage: string | null;
+  relatedPraxis: RelatedPraxis[];
+  relatedEddies: RelatedEddy[];
+  clear: () => void;
+  receive: (_result: ResonanceResponse) => void;
+}
+
+/** Own every surface that describes only the latest completed resonance pass. */
+function useLatestPassState(): LatestPassState {
+  const [care, setCare] = useState<CareResponse | null>(null);
+  const [contraction, setContraction] = useState<ContractionReflection | null>(null);
+  const [privateMessage, setPrivateMessage] = useState<string | null>(null);
+  const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
+  const [relatedPraxis, setRelatedPraxis] = useState<RelatedPraxis[]>([]);
+  const [relatedEddies, setRelatedEddies] = useState<RelatedEddy[]>([]);
+
+  const clear = useCallback((): void => {
+    setCare(null);
+    setContraction(null);
+    setPrivateMessage(null);
+    setNoNotesMessage(null);
+    setRelatedPraxis([]);
+    setRelatedEddies([]);
+  }, []);
+
+  const receive = useCallback((result: ResonanceResponse): void => {
+    setCare(result.care ?? null);
+    setContraction(result.contraction ?? null);
+    useContractionSignalStore.getState().observe(result.contraction ?? null);
+    setPrivateMessage(result.private_message ?? null);
+    setNoNotesMessage(result.no_notes_message ?? null);
+    setRelatedPraxis(result.related_praxis ?? []);
+    setRelatedEddies(result.related_eddies ?? []);
+  }, []);
+
+  return {
+    care,
+    contraction,
+    privateMessage,
+    noNotesMessage,
+    relatedPraxis,
+    relatedEddies,
+    clear,
+    receive,
+  };
+}
+
 interface GeneratePassDeps {
   flush: () => Promise<number | null>;
   setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
-  setCare: Dispatch<SetStateAction<CareResponse | null>>;
-  setContraction: Dispatch<SetStateAction<ContractionReflection | null>>;
-  setPrivateMessage: Dispatch<SetStateAction<string | null>>;
-  setNoNotesMessage: Dispatch<SetStateAction<string | null>>;
+  latestPass: Pick<LatestPassState, 'clear' | 'receive'>;
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
-  const { flush, setMarginalia, mergeFromGenerate, setCare, setContraction } = deps;
-  const { setPrivateMessage, setNoNotesMessage, setError } = deps;
+  const { flush, setMarginalia, mergeFromGenerate, latestPass, setError } = deps;
+  const { clear: clearLatestPass, receive: receiveLatestPass } = latestPass;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -193,18 +248,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     inFlightRef.current = true;
     setLoading(true);
     setError(null);
-    // Clear any care from a prior pass up front so a distressed-then-calm
-    // sequence never leaves a stale crisis surface on the page.
-    setCare(null);
-    // Likewise clear any prior contraction so an eased-then-healthy sequence
-    // never leaves a stale "tend your foundation" reflection on the page.
-    setContraction(null);
-    // Likewise clear any withheld-privacy copy up front so an errored or
-    // non-withheld pass never leaves a stale privacy surface on the page.
-    setPrivateMessage(null);
-    // Likewise clear any prior no-notes copy: a pass that is about to succeed
-    // must not run under last time's "nothing came back".
-    setNoNotesMessage(null);
+    // Latest-pass surfaces never survive into a new request. If it errors, stale
+    // care, privacy, no-notes, or Creek context must not describe this attempt.
+    clearLatestPass();
     try {
       const entryId = await flush();
       if (entryId == null) {
@@ -214,48 +260,21 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       const result = await resonance.generate(entryId);
       setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
       mergeFromGenerate(result.suggestions);
-      // ``care`` is nullable/absent on ordinary entries — normalise to null.
-      setCare(result.care ?? null);
-      // ``contraction`` is nullable/absent on healthy entries — normalise to null.
-      setContraction(result.contraction ?? null);
-      // Feed the shared signal only on a completed pass — never on loading/error.
-      useContractionSignalStore.getState().observe(result.contraction ?? null);
-      // ``private_message`` is present only when the pass was withheld.
-      setPrivateMessage(result.private_message ?? null);
-      // Present only when the pass kept nothing — normalise absent to null.
-      setNoNotesMessage(result.no_notes_message ?? null);
+      receiveLatestPass(result);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [
-    flush,
-    setMarginalia,
-    mergeFromGenerate,
-    setCare,
-    setContraction,
-    setPrivateMessage,
-    setNoNotesMessage,
-    setError,
-  ]);
+  }, [flush, setMarginalia, mergeFromGenerate, clearLatestPass, receiveLatestPass, setError]);
 
   return { loading, requestResonance };
 }
 
 export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseResonanceResult {
   const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
-  // Default null (never undefined): the load-on-open path never sets care, so
-  // the surface stays hidden until a generate pass returns one.
-  const [care, setCare] = useState<CareResponse | null>(null);
-  // Default null (never undefined): the load-on-open path never sets it, so the
-  // reflection stays hidden until a generate pass returns one.
-  const [contraction, setContraction] = useState<ContractionReflection | null>(null);
-  // Reason copy from a withheld (intimate) pass; null until one returns it.
-  const [privateMessage, setPrivateMessage] = useState<string | null>(null);
-  // The server's explanation for a zero-note pass; null until one returns it.
-  const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
+  const latestPass = useLatestPassState();
   const [error, setError] = useState<string | null>(null);
 
   useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
@@ -264,10 +283,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     flush,
     setMarginalia,
     mergeFromGenerate: sug.mergeFromGenerate,
-    setCare,
-    setContraction,
-    setPrivateMessage,
-    setNoNotesMessage,
+    latestPass,
     setError,
   });
 
@@ -289,10 +305,12 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     marginalia,
     suggestions: sug.suggestions,
     acceptedCheckIns: sug.acceptedCheckIns,
-    care,
-    contraction,
-    privateMessage,
-    noNotesMessage,
+    care: latestPass.care,
+    contraction: latestPass.contraction,
+    privateMessage: latestPass.privateMessage,
+    noNotesMessage: latestPass.noNotesMessage,
+    relatedPraxis: latestPass.relatedPraxis,
+    relatedEddies: latestPass.relatedEddies,
     loading,
     error,
     requestResonance,
