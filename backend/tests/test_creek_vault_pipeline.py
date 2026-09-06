@@ -393,6 +393,49 @@ async def test_a_journal_write_converges_through_a_durable_llm_job(
 
 
 @pytest.mark.asyncio
+async def test_an_accepted_job_tolerates_a_transient_status_outage(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Foreground polling shares the retry behavior used after the request clock."""
+
+    class _TransientStatusOutage(_DurableJobRecorder):
+        def __init__(self) -> None:
+            """Fail only the first status read for the classification job."""
+            super().__init__()
+            self.status_reads = 0
+
+        def _status(self, job_id: str) -> httpx.Response:
+            """Expose one transient outage before the ordinary durable result."""
+            self.status_reads += 1
+            if self.status_reads == 1:
+                return httpx.Response(503, json=_example("pipeline", "unavailable-service"))
+            return super()._status(job_id)
+
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    scheduled: list[object] = []
+    monkeypatch.setattr(pipeline, "_schedule_continuation", scheduled.append)
+    recorder = _TransientStatusOutage()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await http.aclose()
+
+    rows = await _rows(db_session)
+    assert recorder.status_reads == 3
+    assert scheduled == []
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
 async def test_a_document_import_prepares_embeddings_and_finishes_the_whole_ladder(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

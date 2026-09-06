@@ -450,25 +450,11 @@ async def _await_job(
     client: CreekVaultPipelineClient,
     job: VaultPipelineJob,
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
-    """Poll one accepted pass to a terminal result under the caller's clock."""
-    delay = _JOB_POLL_INITIAL_SECONDS
-    current = job
-    while current.state is not VaultPipelineJobState.FAILED:
-        await asyncio.sleep(delay)
-        try:
-            result = await client.pipeline_job(current)
-        except (
-            CreekCapabilityUnsupportedError,
-            CreekVaultAuthError,
-            CreekVaultContractError,
-            CreekVaultPayloadError,
-        ):
-            return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
-        if not isinstance(result, VaultPipelineJob):
-            return _counts_from_result(result)
-        current = result
-        delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
-    return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
+    """Translate the shared status-polling result under the caller's clock."""
+    result = await _poll_statuses(client, job)
+    if isinstance(result, VaultPipelineJob):
+        return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
+    return _counts_from_result(result)
 
 
 @dataclass(frozen=True)
@@ -485,7 +471,13 @@ def _finish_run(
     outcome: VaultPipelineOutcome,
     counts: _StageCounts,
 ) -> None:
-    """Stage the terminal, counts-only result on an existing logical run."""
+    """Stage terminal fields without overwriting a concurrently-promoted trigger.
+
+    SQLAlchemy flushes only these dirty attributes. That column-scoped update is
+    what lets the promotion transaction change ``trigger`` while a worker that
+    admitted the job earlier lands its terminal counts; neither writer replaces
+    the other's fields.
+    """
     run.outcome = outcome.value
     run.fragments_seen = counts.seen
     run.fragments_touched = counts.touched
@@ -866,8 +858,12 @@ async def _promote_active_classification(
     earned.
 
     The row is selected again under a write lock instead of reusing the earlier
-    scheduler read. If classification became terminal between those reads, the
-    caller re-evaluates once and schedules the newly eligible successors.
+    scheduler read. If classification becomes terminal while PostgreSQL waits
+    for that lock, its READ COMMITTED predicate is rechecked and no active row
+    is returned; the caller re-evaluates once and schedules the newly eligible
+    successors. Terminal and retry writers dirty only their own columns, so a
+    promotion that wins the lock cannot be overwritten by their older ORM
+    snapshots. No network call is made while the row lock is held.
     """
     if trigger is not VaultPipelineTrigger.DOCUMENT_IMPORT:
         return False
