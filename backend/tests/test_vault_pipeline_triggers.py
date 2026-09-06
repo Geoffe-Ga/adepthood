@@ -20,7 +20,7 @@ from http import HTTPStatus
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
@@ -243,21 +243,24 @@ async def test_a_journal_save_schedules_only_the_cheap_half(
 )
 @pytest.mark.asyncio
 async def test_the_entry_persists_across_every_pipeline_failure_mode(
-    async_client: AsyncClient, db_session: AsyncSession, vault: _PipelineVaultDouble
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    vault: _PipelineVaultDouble,
 ) -> None:
     """A pipeline that refuses, or never answers, still costs nobody their writing."""
-    headers = await _signup(async_client, "pipeline-degrader")
+    headers = await _signup(concurrent_async_client, "pipeline-degrader")
 
-    response = await async_client.post(
+    response = await concurrent_async_client.post(
         _JOURNAL_PATH, json={"message": _ENTRY_BODY}, headers=headers
     )
 
     assert response.status_code == HTTPStatus.CREATED
     assert vault.classification_calls == 1
-    stored = await db_session.execute(
-        select(JournalEntry).where(col(JournalEntry.message) == _ENTRY_BODY)
-    )
-    assert stored.scalars().first() is not None
+    async with concurrent_session_factory() as session:
+        stored = await session.execute(
+            select(JournalEntry).where(col(JournalEntry.message) == _ENTRY_BODY)
+        )
+        assert stored.scalars().first() is not None
 
 
 @pytest.mark.parametrize(
@@ -265,12 +268,14 @@ async def test_the_entry_persists_across_every_pipeline_failure_mode(
 )
 @pytest.mark.asyncio
 async def test_a_failed_pipeline_still_returns_the_document_import_result(
-    async_client: AsyncClient, db_session: AsyncSession, vault: _PipelineVaultDouble
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    vault: _PipelineVaultDouble,
 ) -> None:
     """The uploader is told what became of their document, whatever the pass did."""
-    headers = await _signup(async_client, "pipeline-import-degrader")
+    headers = await _signup(concurrent_async_client, "pipeline-import-degrader")
 
-    response = await async_client.post(
+    response = await concurrent_async_client.post(
         _IMPORT_PATH,
         json={
             "filename": _FILENAME,
@@ -283,5 +288,6 @@ async def test_a_failed_pipeline_still_returns_the_document_import_result(
     assert response.status_code == HTTPStatus.ACCEPTED
     assert response.json()["stored"] is True
     assert vault.classification_calls == 1
-    runs = await _runs(db_session)
-    assert [run.outcome for run in runs] == [VaultPipelineOutcome.ATTEMPTED]
+    async with concurrent_session_factory() as session:
+        runs = await _runs(session)
+        assert [run.outcome for run in runs] == [VaultPipelineOutcome.ATTEMPTED]
