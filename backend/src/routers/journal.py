@@ -273,7 +273,7 @@ def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> boo
 
 
 async def _record_vault_outcome(
-    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultPipelineClient
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
 ) -> None:
     """Store a committed entry via the Creek Vault, reconciling its ref columns.
 

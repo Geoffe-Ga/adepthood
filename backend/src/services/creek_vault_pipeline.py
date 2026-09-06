@@ -55,6 +55,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func
@@ -66,6 +67,7 @@ from domain.creek_vault import (
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
+    CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
@@ -1220,7 +1222,7 @@ async def _pipeline_stages(
 
 async def drive_vault_pipeline(
     session: AsyncSession,
-    client: CreekVaultPipelineClient,
+    client: CreekVaultClient,
     *,
     user_id: int,
     trigger: VaultPipelineTrigger,
@@ -1242,13 +1244,14 @@ async def drive_vault_pipeline(
     """
     if not client.supports(CreekCapability.PIPELINE):
         return
+    pipeline_client = cast("CreekVaultPipelineClient", client)
     try:
         stages = await _pipeline_stages(session, user_id, trigger)
         if not stages:
             return
         await _climb(
             session,
-            client,
+            pipeline_client,
             _ClimbContext(
                 user_id=user_id,
                 trigger=trigger,
