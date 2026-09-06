@@ -567,6 +567,56 @@ async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
 
 
 @pytest.mark.asyncio
+async def test_an_accepted_job_is_not_duplicated_when_its_commit_outlives_the_budget(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An accepted handle is made durable even when its commit crosses the clock.
+
+    The delayed commit is the one that records Creek's accepted job id. Holding
+    it past the journal budget reproduces the CI failure deterministically:
+    cancelling that commit loses the handle and makes recovery submit a second
+    classification job instead of polling the first one.
+    """
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with concurrent_session_factory() as session:
+        real_commit = session.commit
+        commit_count = 0
+
+        async def _delay_the_accepted_job_commit() -> None:
+            nonlocal commit_count
+            commit_count += 1
+            if commit_count == 3:
+                await asyncio.sleep(0.02)
+            await real_commit()
+
+        monkeypatch.setattr(session, "commit", _delay_the_accepted_job_commit)
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    async with concurrent_session_factory() as session:
+        rows = await _rows(session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
