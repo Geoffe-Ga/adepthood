@@ -15,10 +15,10 @@ compared: it is retained for a window, it cannot be read back by the code that
 has to decide, and no surface can query it.
 
 **The row is content-free.** A stage and trigger, an outcome, attempt count,
-opaque job UUID, three counts and an instant. Nothing from any fragment, nothing
-from any document, and nothing a reader could reconstruct one from. Creek's job
-surface and pipeline responses publish counts and opaque correlation only: no
-fragment id, path, title, excerpt, or error string.
+opaque job and lease UUIDs, three counts and two instants. Nothing from any
+fragment, nothing from any document, and nothing a reader could reconstruct one
+from. Creek's job surface and pipeline responses publish counts and opaque
+correlation only: no fragment id, path, title, excerpt, or error string.
 
 **Every logical run writes one row before its first attempt.** Retries increment
 that row rather than creating new debounce stamps. The partial unique index on
