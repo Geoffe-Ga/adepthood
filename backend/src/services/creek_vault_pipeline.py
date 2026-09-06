@@ -64,6 +64,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 
 from domain.creek_vault import (
@@ -1113,14 +1114,7 @@ async def _claim_one_resumable_run(session: AsyncSession) -> VaultPipelineRun | 
     claim_id = str(uuid4())
     candidate = (
         select(col(VaultPipelineRun.id))
-        .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
-        .where(col(VaultPipelineRun.trigger).is_not(None))
-        .where(
-            or_(
-                col(VaultPipelineRun.resume_claimed_at).is_(None),
-                col(VaultPipelineRun.resume_claimed_at) <= stale_before,
-            )
-        )
+        .where(*_resumable_run_conditions(stale_before))
         .order_by(col(VaultPipelineRun.id))
         .limit(1)
         .scalar_subquery()
@@ -1128,14 +1122,7 @@ async def _claim_one_resumable_run(session: AsyncSession) -> VaultPipelineRun | 
     result = await session.execute(
         update(VaultPipelineRun)
         .where(col(VaultPipelineRun.id) == candidate)
-        .where(col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value)
-        .where(col(VaultPipelineRun.trigger).is_not(None))
-        .where(
-            or_(
-                col(VaultPipelineRun.resume_claimed_at).is_(None),
-                col(VaultPipelineRun.resume_claimed_at) <= stale_before,
-            )
-        )
+        .where(*_resumable_run_conditions(stale_before))
         .values(resume_claim_id=claim_id, resume_claimed_at=now)
         .returning(VaultPipelineRun)
     )
@@ -1144,12 +1131,39 @@ async def _claim_one_resumable_run(session: AsyncSession) -> VaultPipelineRun | 
     return run
 
 
+def _resumable_run_conditions(stale_before: datetime) -> tuple[ColumnElement[bool], ...]:
+    """Return the eligibility predicate shared by the candidate read and CAS."""
+    return (
+        col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value,
+        col(VaultPipelineRun.trigger).is_not(None),
+        or_(
+            col(VaultPipelineRun.resume_claimed_at).is_(None),
+            col(VaultPipelineRun.resume_claimed_at) <= stale_before,
+        ),
+    )
+
+
+async def _resumable_run_exists(session: AsyncSession) -> bool:
+    """Distinguish an empty queue from losing one compare-and-swap race."""
+    stale_before = datetime.now(UTC) - _RESUME_CLAIM_STALE_AFTER
+    result = await session.execute(
+        select(col(VaultPipelineRun.id)).where(*_resumable_run_conditions(stale_before)).limit(1)
+    )
+    exists = result.scalar_one_or_none() is not None
+    await session.commit()
+    return exists
+
+
 async def _claim_resumable_runs(session: AsyncSession) -> list[VaultPipelineRun]:
     """Claim resumable rows one by one so every recovery chain has one owner."""
     runs: list[VaultPipelineRun] = []
-    while (run := await _claim_one_resumable_run(session)) is not None:
-        runs.append(run)
-    return runs
+    while True:
+        run = await _claim_one_resumable_run(session)
+        if run is not None:
+            runs.append(run)
+            continue
+        if not await _resumable_run_exists(session):
+            return runs
 
 
 async def _build_resume_continuation(

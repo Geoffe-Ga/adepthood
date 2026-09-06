@@ -775,6 +775,58 @@ async def test_two_startups_claim_a_persisted_run_only_once(
 
 
 @pytest.mark.asyncio
+async def test_a_lost_claim_race_continues_to_the_next_resumable_row(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losing the oldest row to a peer is not the same as an empty queue."""
+    async with concurrent_session_factory() as session:
+        for stage in (VaultPipelineStage.CLASSIFY, VaultPipelineStage.TEMPORAL):
+            session.add(
+                VaultPipelineRun(
+                    user_id=_OWNER,
+                    stage=stage.value,
+                    trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+                    outcome=VaultPipelineOutcome.ATTEMPTED.value,
+                    job_id=str(_DurableJobRecorder.CLASSIFICATION_JOB),
+                    fragments_seen=0,
+                    fragments_touched=0,
+                    fragments_lost=0,
+                )
+            )
+        await session.commit()
+
+    original_claim_one = pipeline._claim_one_resumable_run  # noqa: SLF001
+    lose_oldest_once = True
+
+    async def _lose_once(session: AsyncSession) -> VaultPipelineRun | None:
+        nonlocal lose_oldest_once
+        if lose_oldest_once:
+            lose_oldest_once = False
+            return None
+        return await original_claim_one(session)
+
+    resumed: list[int] = []
+
+    async def _record_claim(
+        _factory: async_sessionmaker[AsyncSession],
+        _resolve: object,
+        _session: AsyncSession,
+        run: VaultPipelineRun,
+    ) -> None:
+        assert run.id is not None
+        resumed.append(run.id)
+
+    monkeypatch.setattr(pipeline, "_claim_one_resumable_run", _lose_once)
+    monkeypatch.setattr(pipeline, "_resume_run", _record_claim)
+
+    await pipeline.resume_vault_pipeline_runs(concurrent_session_factory, AsyncMock())
+
+    assert len(resumed) == 2
+    assert len(set(resumed)) == 2
+
+
+@pytest.mark.asyncio
 async def test_a_stale_startup_claim_is_recoverable(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
