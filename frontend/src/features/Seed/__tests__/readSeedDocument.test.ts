@@ -1,24 +1,41 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import type { PickedDocument } from '../pickSeedDocuments';
-import { MAX_SEED_DOCUMENT_BYTES, readSeedDocument } from '../readSeedDocument';
+import {
+  MAX_SEED_DOCUMENT_BYTES,
+  readSeedDocument,
+  SEED_DOCUMENT_READ_TIMEOUT_MS,
+} from '../readSeedDocument';
 
 const mocked = FileSystem as unknown as {
   __fileBase64: jest.Mock;
   __fileSize: jest.Mock;
 };
 
+const originalOS = Platform.OS;
+
+function setPlatform(os: typeof Platform.OS): void {
+  Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+}
+
 function document(overrides: Partial<PickedDocument> = {}): PickedDocument {
   return { name: 'seed.md', uri: 'file:///cache/seed.md', size: 64, seedable: true, ...overrides };
 }
 
 beforeEach(() => {
+  setPlatform(originalOS);
   mocked.__fileBase64.mockReset();
   mocked.__fileSize.mockReset();
   mocked.__fileBase64.mockResolvedValue('c2VlZA==');
   mocked.__fileSize.mockReturnValue(64);
+});
+
+afterEach(() => {
+  setPlatform(originalOS);
+  jest.useRealTimers();
 });
 
 describe('readSeedDocument', () => {
@@ -69,5 +86,52 @@ describe('readSeedDocument', () => {
     mocked.__fileBase64.mockRejectedValue(new Error('file:///cache/seed.md is gone'));
 
     await expect(readSeedDocument(document())).resolves.toEqual({ kind: 'unreadable' });
+  });
+
+  test('leaves the native Expo filesystem path unchanged', async () => {
+    setPlatform('ios');
+    const arrayBuffer = jest.fn(() => Promise.reject(new Error('web path must stay unused')));
+
+    await expect(
+      readSeedDocument(document({ browserFile: { size: 4, arrayBuffer } as unknown as File })),
+    ).resolves.toEqual({
+      kind: 'read',
+      contentBase64: 'c2VlZA==',
+    });
+    expect(mocked.__fileBase64).toHaveBeenCalledWith('file:///cache/seed.md');
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  test('reads the browser File instead of reopening its blob URI through the native filesystem', async () => {
+    setPlatform('web');
+    const browserFile = new File(['seed'], 'seed.md', { type: 'text/markdown' });
+
+    await expect(readSeedDocument(document({ browserFile }))).resolves.toEqual({
+      kind: 'read',
+      contentBase64: 'c2VlZA==',
+    });
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
+  });
+
+  test('settles a browser read that never answers within the bounded read window', async () => {
+    jest.useFakeTimers();
+    setPlatform('web');
+    const browserFile = {
+      size: 4,
+      arrayBuffer: () => new Promise<ArrayBuffer>(() => undefined),
+    } as unknown as File;
+
+    const read = readSeedDocument(document({ browserFile }));
+    await jest.advanceTimersByTimeAsync(SEED_DOCUMENT_READ_TIMEOUT_MS);
+
+    await expect(read).resolves.toEqual({ kind: 'unreadable' });
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
+  });
+
+  test('settles promptly when a web picker result unexpectedly has no browser File', async () => {
+    setPlatform('web');
+
+    await expect(readSeedDocument(document())).resolves.toEqual({ kind: 'unreadable' });
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
   });
 });

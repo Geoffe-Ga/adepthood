@@ -74,8 +74,10 @@ export function isSeedableFilename(name: string): boolean {
 export interface PickedDocument {
   /** The document's own name; its extension selects the vault's ingestor. */
   name: string;
-  /** The on-device file uri the read step opens. */
+  /** The on-device file uri the native read step opens. */
   uri: string;
+  /** The browser's readable File handle; the picker supplies this on web only. */
+  browserFile?: File;
   /** Size in bytes when the picker reported one, else null. */
   size: number | null;
   /** Whether the vault can read this format under a name it accepts. */
@@ -102,6 +104,7 @@ function toPickedDocuments(assets: readonly DocumentPicker.DocumentPickerAsset[]
         uri: asset.uri,
         size: asset.size ?? null,
         seedable: isSeedableFilename(asset.name),
+        ...(asset.file ? { browserFile: asset.file } : {}),
       });
     }
   }
@@ -119,6 +122,9 @@ export async function pickSeedDocuments(): Promise<SeedPickResult> {
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,
     copyToCacheDirectory: true,
+    // Web hands the real File through `asset.file`; encoding here would load
+    // every selected document before the sequential, size-bounded run begins.
+    base64: false,
   });
   if (result.canceled) {
     return { kind: 'cancelled' };

@@ -1,11 +1,12 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import React from 'react';
+import { Platform } from 'react-native';
 
-import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
+import { MAX_SEED_DOCUMENT_LABEL, SEED_DOCUMENT_READ_TIMEOUT_MS } from '../readSeedDocument';
 import {
   SEED_CHOOSE_LABEL,
   SEED_CONSENT_LINK_LABEL,
@@ -36,6 +37,13 @@ global.fetch = mockFetch as unknown as typeof fetch;
 
 const getDocumentAsync = DocumentPicker.getDocumentAsync as unknown as jest.Mock;
 const mocked = FileSystem as unknown as { __fileBase64: jest.Mock; __fileSize: jest.Mock };
+const originalOS = Platform.OS;
+const globalRef = globalThis as { window?: Window & typeof globalThis };
+const originalWindow = globalRef.window;
+
+function setPlatform(os: typeof Platform.OS): void {
+  Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+}
 
 const OVERSIZE_BYTES = 11 * 1024 * 1024;
 
@@ -82,6 +90,7 @@ function corpusReply(status: string) {
 }
 
 beforeEach(() => {
+  setPlatform(originalOS);
   mockNavigate.mockReset();
   mockDispatch.mockReset();
   mockListeners.clear();
@@ -92,6 +101,16 @@ beforeEach(() => {
   mocked.__fileSize.mockReset();
   mocked.__fileBase64.mockResolvedValue('c2VlZA==');
   mocked.__fileSize.mockReturnValue(512);
+});
+
+afterEach(() => {
+  setPlatform(originalOS);
+  if (originalWindow === undefined) {
+    delete globalRef.window;
+  } else {
+    globalRef.window = originalWindow;
+  }
+  jest.useRealTimers();
 });
 
 /** A reply the test holds open, so the screen can be read mid-flight. */
@@ -324,6 +343,40 @@ describe('a pick that yields nothing', () => {
 });
 
 describe('while a run is going over', () => {
+  test('re-enables Choose files and names the failure when a browser read times out', async () => {
+    jest.useFakeTimers();
+    setPlatform('web');
+    globalRef.window = {
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    } as unknown as Window & typeof globalThis;
+    const browserFile = {
+      size: 4,
+      arrayBuffer: () => new Promise<ArrayBuffer>(() => undefined),
+    } as unknown as File;
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ ...asset('one.md'), file: browserFile }],
+    });
+    const { getByTestId } = render(<SeedCorpusScreen />);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('seed-choose-button'));
+      await Promise.resolve();
+    });
+    expect(getByTestId('seed-choose-button').props.accessibilityState.disabled).toBe(true);
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(SEED_DOCUMENT_READ_TIMEOUT_MS);
+    });
+
+    expect(getByTestId('seed-item-status-seed-0').props.children).toBe(
+      SEED_STATUS_LINES.unreadable,
+    );
+    expect(getByTestId('seed-choose-button').props.accessibilityState.disabled).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   test('shows how far along the whole run is, not only a disabled button', async () => {
     getDocumentAsync.mockResolvedValue({
       canceled: false,

@@ -12,7 +12,8 @@
  * in the run's state only for as long as its upload is in flight, and no read
  * failure message carries any of it.
  */
-import { File } from 'expo-file-system';
+import { File as ExpoFile } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import type { PickedDocument } from './pickSeedDocuments';
 
@@ -28,6 +29,12 @@ export const MAX_SEED_DOCUMENT_BYTES = 10 * 1024 * 1024;
 /** How the cap is said out loud, so every surface names the same number. */
 export const MAX_SEED_DOCUMENT_LABEL = '10 MB';
 
+/** A browser read must settle while the screen is still actionable. */
+export const SEED_DOCUMENT_READ_TIMEOUT_MS = 10_000;
+
+/** Keep each `fromCharCode` call comfortably below browser argument limits. */
+const BASE64_CHUNK_BYTES = 32 * 1024;
+
 /**
  * The outcome of reading one document, discriminated on `kind`:
  *
@@ -39,8 +46,53 @@ export type SeedReadResult =
   { kind: 'read'; contentBase64: string } | { kind: 'too_large' } | { kind: 'unreadable' };
 
 /** The document's size in bytes: the picker's figure, or the file's own. */
-function knownByteLength(document: PickedDocument, file: File): number {
+function knownByteLength(document: PickedDocument, file: { size: number }): number {
   return document.size ?? file.size;
+}
+
+/** Encode bytes without relying on Node's Buffer, which does not exist on web. */
+function encodeBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_BYTES) {
+    const chunk = bytes.subarray(offset, offset + BASE64_CHUNK_BYTES);
+    binary += String.fromCharCode(...chunk);
+  }
+  return globalThis.btoa(binary);
+}
+
+/** Bound a browser File read so a broken handle cannot strand the whole run. */
+function withReadTimeout<T>(read: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Browser document read timed out'));
+    }, SEED_DOCUMENT_READ_TIMEOUT_MS);
+    void read.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** Read the real browser File retained from the picker, not its opaque blob URI. */
+async function readBrowserDocument(document: PickedDocument, file: File): Promise<SeedReadResult> {
+  if (knownByteLength(document, file) > MAX_SEED_DOCUMENT_BYTES) {
+    return { kind: 'too_large' };
+  }
+  const buffer = await withReadTimeout(file.arrayBuffer());
+  if (buffer.byteLength === 0) {
+    return { kind: 'unreadable' };
+  }
+  if (buffer.byteLength > MAX_SEED_DOCUMENT_BYTES) {
+    return { kind: 'too_large' };
+  }
+  return { kind: 'read', contentBase64: encodeBase64(buffer) };
 }
 
 /**
@@ -49,8 +101,16 @@ function knownByteLength(document: PickedDocument, file: File): number {
  * selection cannot abandon the rest of the run.
  */
 export async function readSeedDocument(document: PickedDocument): Promise<SeedReadResult> {
-  const file = new File(document.uri);
   try {
+    if (Platform.OS === 'web') {
+      // Expo's web picker creates an opaque blob URI and supplies the File that
+      // owns it. `expo-file-system` is a native path API and cannot reopen that
+      // URI reliably; a missing File is therefore a contained read failure.
+      return document.browserFile
+        ? await readBrowserDocument(document, document.browserFile)
+        : { kind: 'unreadable' };
+    }
+    const file = new ExpoFile(document.uri);
     if (knownByteLength(document, file) > MAX_SEED_DOCUMENT_BYTES) {
       return { kind: 'too_large' };
     }
