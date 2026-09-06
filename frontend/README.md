@@ -20,6 +20,7 @@ shipped bundle.
 | Variable                               | Required          | Dev default                                        | Notes                                                                                                                                |
 | -------------------------------------- | ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `EXPO_PUBLIC_API_BASE_URL`             | Yes in production | `http://localhost:8000`                            | Backend API root. Must be HTTPS in production builds, or the app boots to a visible config-error screen.                             |
+| `EXPO_PUBLIC_HABIT_DEMO_MODE`          | No                | `false`                                            | Exact `true` enables fictional fixtures after an unavailable request with no real cache; successful empty responses stay empty.      |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL`      | No                | `https://creekmasons.gumroad.com/l/aptitude`       | Product page opened by the Get Started CTA.                                                                                          |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL`         | No                | `https://help.gumroad.com/article/76-license-keys` | License-key help article linked from the signup form.                                                                                |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS`     | No                | _(unset)_                                          | Google OAuth client ID used on iOS. Unset hides "Continue with Google" on iOS.                                                       |
@@ -30,6 +31,12 @@ shipped bundle.
 Both Gumroad links are public marketing pages with safe defaults, so a missing
 override is not a misconfiguration — unlike `EXPO_PUBLIC_API_BASE_URL`, they
 never fail the app closed.
+
+Habit demo mode is deliberately off by default. Do not enable it for a normal
+deployment: the fixtures contain fictional streaks and completion history and
+exist only to make a purpose-built, disconnected demo explorable. A signed-in
+person whose healthy API returns zero habits always sees the first-use empty
+state and its **Add a habit** action, even in a demo-configured build.
 
 The three Google client IDs are the sign-in rollout switch, evaluated per
 platform: with no ID for the platform the app is running on (whitespace counts

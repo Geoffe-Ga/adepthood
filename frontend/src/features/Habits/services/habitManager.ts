@@ -22,6 +22,7 @@ import {
 import type { CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
+import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
 import {
   saveHabits as saveHabitsToDisk,
@@ -70,10 +71,10 @@ import {
 
 export type ShowToast = (_config: ToastConfig) => void;
 
-// The offline/demo seed is shown only when the server is unreachable and no
-// cache exists. Unlike server-seeded habits (locked by default), these demo
-// tiles stay revealed so the offline experience is explorable rather than a
-// wall of locked tiles.
+// The demo seed is shown only in an explicitly configured demo build, when the
+// server is unreachable and no real cache exists. Unlike server-seeded habits
+// (locked by default), these tiles stay revealed so that deliberate demo is
+// explorable rather than a wall of locked tiles.
 const FALLBACK_HABITS: Habit[] = HABIT_DEFAULTS.map((habit) => ({
   ...habit,
   revealed: true,
@@ -543,12 +544,16 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
-  hasCachedData: boolean,
 ): Promise<void> => {
-  // Only seed FALLBACK when the user is truly fresh: no cache, no live store, no API.
-  if (apiHabits.length === 0 && !hasCachedData && getHabits().length === 0) {
-    setHabits(FALLBACK_HABITS);
-    return;
+  // A 200 is authoritative even when it is empty. Strip any demo tiles left by
+  // an earlier failed request so recovered connectivity cannot keep presenting
+  // fictional history as though the server returned it. Real optimistic/cache
+  // rows remain for the stuck-user recovery below.
+  const live = getHabits();
+  const liveWithoutDemo = live.filter(isNotDemoSeed);
+  if (liveWithoutDemo.length !== live.length) {
+    setHabits(liveWithoutDemo);
+    await persistHabits(liveWithoutDemo);
   }
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits);
@@ -559,14 +564,21 @@ const handleApiSuccess = async (
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   console.error('Failed to load habits:', err);
-  // Mirrors the live-store guard in ``handleApiSuccess`` for the error path.
-  if (hasCachedData || getHabits().length > 0) return;
+  // A legacy cache or an earlier demo request may still have fixture rows in
+  // memory. Outside explicit demo mode they are not data and cannot suppress
+  // the real error state.
+  const live = getHabits();
+  const liveWithoutDemo = live.filter(isNotDemoSeed);
+  if (!HABIT_DEMO_MODE && liveWithoutDemo.length !== live.length) {
+    setHabits(liveWithoutDemo);
+  }
+  if (hasCachedData || liveWithoutDemo.length > 0) return;
   setError(
     formatApiError(err, {
       fallback: "We couldn't load your habits. Check your connection, then pull down to try again.",
     }),
   );
-  setHabits(FALLBACK_HABITS);
+  if (HABIT_DEMO_MODE) setHabits(FALLBACK_HABITS);
 };
 
 type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
@@ -574,7 +586,7 @@ type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
 const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
   try {
     const apiHabits = await habitsApi.listAll();
-    await handleApiSuccess(apiHabits, hasCachedData);
+    await handleApiSuccess(apiHabits);
     setError(null);
     return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
@@ -932,6 +944,26 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
 };
 
 /**
+ * Hydrate only real user habits and erase fixtures persisted by older clients.
+ *
+ * Demo fixtures are rebuilt in memory after a failed request when the explicit
+ * build flag is on. They never need to survive a launch, and treating them as a
+ * cache would let fictional history outrank both a healthy empty response and
+ * the real error state.
+ */
+const hydrateRealHabitCache = async (cached: Habit[] | null): Promise<Habit[]> => {
+  const real = (cached ?? []).filter(isNotDemoSeed);
+  if (cached !== null && real.length !== cached.length) {
+    await persistHabits(real);
+  }
+  if (real.length > 0) {
+    setHabits(real);
+    setLoading(false);
+  }
+  return real;
+};
+
+/**
  * Build one goal-completion POST per backfilled day, bucketing each day into
  * the user's IANA zone. A day that resolves to "today" omits ``completed_on``
  * so the server stamps real wall-clock time — the same genuine-backfill rule
@@ -977,17 +1009,13 @@ const loadHabits = async (tz?: string): Promise<void> => {
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
-  const hasCachedData = cached !== null && cached.length > 0;
-  if (hasCachedData) {
-    setHabits(cached!);
-    setLoading(false);
-  }
+  const recoverable = await hydrateRealHabitCache(cached);
+  const hasCachedData = recoverable.length > 0;
   const result = await fetchFromApi(hasCachedData);
   // Stuck-user recovery: cache has real habits, server returned an empty list.
   // Push those back, then re-fetch so the store gets the server's ids. Demo
   // tiles left in an older cache are skipped on both legs, so a cache holding
   // nothing else means the user was never stuck.
-  const recoverable = (cached ?? []).filter(isNotDemoSeed);
   if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
     await recoverStuckHabits(recoverable);
     const refetch = await fetchFromApi(true);

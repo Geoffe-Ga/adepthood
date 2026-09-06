@@ -46,6 +46,7 @@ const NO_DEFAULT_VARIABLES: readonly string[] = [
  * the default turned out to name a 404.
  */
 const SAFE_DEFAULT_VARIABLES: readonly string[] = [
+  'EXPO_PUBLIC_HABIT_DEMO_MODE',
   'EXPO_PUBLIC_GUMROAD_PRODUCT_URL',
   'EXPO_PUBLIC_GUMROAD_HELP_URL',
 ];

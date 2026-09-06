@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+let mockHabitDemoMode = false;
+
+jest.mock('../../../../config', () => ({
+  get HABIT_DEMO_MODE() {
+    return mockHabitDemoMode;
+  },
+}));
+
 // Keep the real ``toLocalHabit`` mapper (the load path now delegates to it and
 // these tests assert its tier/notification sanitizing) while stubbing only the
 // network namespaces habitManager calls.
@@ -230,36 +238,53 @@ const resetStore = () => {
 };
 
 beforeEach(() => {
+  mockHabitDemoMode = false;
   resetStore();
   jest.clearAllMocks();
 });
 
 describe('habitManager', () => {
   describe('loadHabits', () => {
-    it('replaces state with fallback habits when API returns empty and no cache', async () => {
+    it('keeps a successful empty API response truthful when there is no cache', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
       (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
 
       await habitManager.loadHabits();
 
       expect(useHabitStore.getState().loading).toBe(false);
-      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(useHabitStore.getState().habits).toEqual([]);
+      expect(useHabitStore.getState().error).toBeNull();
     });
 
-    it('FALLBACK_HABITS (offline demo seed) stay unlocked so the degraded state is interactable', async () => {
-      // The locked-by-default rule targets real onboarding-seeded and
-      // user-created habits. FALLBACK_HABITS is a placeholder demo shown only
-      // when the server is unreachable and no cache exists; locking it would
-      // render every tile behind the padlock during an outage, with no real
-      // data to unlock. It stays revealed so the offline demo remains usable.
+    it('does not install demo history after an API failure outside explicit demo mode', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
 
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits).toEqual([]);
+      expect(useHabitStore.getState().error).toMatch(/couldn't load your habits/i);
+      errorSpy.mockRestore();
+    });
+
+    it('installs unlocked demo fixtures only after a failure in explicit demo mode', async () => {
+      // The locked-by-default rule targets real onboarding-seeded and
+      // user-created habits. Explicit demo mode may show FALLBACK_HABITS after
+      // the server is unreachable and no cache exists; locking them would
+      // render the demo behind a wall of padlocks.
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      mockHabitDemoMode = true;
       await habitManager.loadHabits();
 
       const habits = useHabitStore.getState().habits;
       expect(habits.length).toBeGreaterThan(0);
+      expect(habits.every((h) => h.isDemoSeed === true)).toBe(true);
       expect(habits.every((h) => h.revealed === true)).toBe(true);
+      errorSpy.mockRestore();
     });
 
     it('mapApiHabits reads the revealed flag from the API response instead of hardcoding true', async () => {
@@ -688,45 +713,49 @@ describe('habitManager', () => {
       expect(anchor!.getDate()).toBe(1);
     });
 
-    it('does NOT anchor the program calendar to the demo FALLBACK habits', async () => {
-      // Truly-fresh user: no cache, empty server. ``loadHabits`` seeds the
-      // hard-coded demo tiles (2025 dates) so the screen is not blank — but
-      // those are placeholders, not a real program start, so the master
-      // anchor must stay null and let every screen use its server fallback.
+    it('does NOT anchor an explicitly enabled demo fallback to its fixture dates', async () => {
+      // A demo build with no cache and an unreachable server may seed the
+      // hard-coded demo tiles (2025 dates). Those are placeholders, not a real
+      // program start, so the master anchor must stay null.
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockHabitDemoMode = true;
       useProgramStore.getState().hydrateProgramStartDate(null);
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
 
       await habitManager.loadHabits();
 
       expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
       expect(useProgramStore.getState().programStartDate).toBeNull();
+      errorSpy.mockRestore();
     });
 
-    it('does NOT anchor the program calendar to the demo seed on a repeat load in the same session', async () => {
-      // Second load of the same session: the demo tiles are already in the
-      // store, so nothing re-seeds and the per-call guard opens. The anchor
-      // must still ignore their hard-coded 2025 dates.
+    it('clears a demo fallback when a repeat load gets a successful empty response', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockHabitDemoMode = true;
       useProgramStore.getState().hydrateProgramStartDate(null);
       (loadHabits as jest.Mock)
         .mockResolvedValueOnce(null as never)
         .mockResolvedValueOnce(null as never);
       (habitsApi.listAll as jest.Mock)
-        .mockResolvedValueOnce([] as never)
+        .mockRejectedValueOnce(new Error('offline') as never)
         .mockResolvedValueOnce([] as never);
 
       await habitManager.loadHabits();
       await habitManager.loadHabits();
 
       const anchor = useProgramStore.getState().programStartDate;
-      expect(useHabitStore.getState().habits.length).toBeGreaterThan(0);
+      expect(useHabitStore.getState().habits).toEqual([]);
       expect(anchor).toBeNull();
       expect(programStage(anchor, FIXED_TODAY)).toBeNull();
       expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+      errorSpy.mockRestore();
     });
 
     it('does NOT anchor the program calendar to the demo seed on a repeat load after an API failure', async () => {
       // Same repeat-load hazard down the ``handleApiError`` seeding path.
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockHabitDemoMode = true;
       useProgramStore.getState().hydrateProgramStartDate(null);
       (loadHabits as jest.Mock)
         .mockResolvedValueOnce(null as never)
@@ -743,13 +772,10 @@ describe('habitManager', () => {
       expect(anchor).toBeNull();
       expect(programStage(anchor, FIXED_TODAY)).toBeNull();
       expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
+      errorSpy.mockRestore();
     });
 
-    it('does NOT anchor the program calendar to demo tiles restored from the cache', async () => {
-      // A later launch reads the demo seed back out of AsyncStorage, so the
-      // tiles arrive as cached data rather than a fresh seed. They carry the
-      // demo marker and stay excluded from the anchor. A demo-only cache is
-      // not a stuck user, so recovery never runs and there is no second fetch.
+    it('removes legacy demo tiles restored from cache outside demo mode', async () => {
       useProgramStore.getState().hydrateProgramStartDate(null);
       (loadHabits as jest.Mock).mockResolvedValueOnce(CACHED_DEMO_TILES as never);
       (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
@@ -757,6 +783,8 @@ describe('habitManager', () => {
       await habitManager.loadHabits();
 
       const anchor = useProgramStore.getState().programStartDate;
+      expect(useHabitStore.getState().habits).toEqual([]);
+      expect(saveHabits).toHaveBeenCalledWith([]);
       expect(anchor).toBeNull();
       expect(programStage(anchor, FIXED_TODAY)).toBeNull();
       expect(programWeek(anchor, FIXED_TODAY)).toBeNull();
@@ -2700,7 +2728,7 @@ describe('habitManager', () => {
 
         expect(habitsApi.create).not.toHaveBeenCalled();
         expect(cache).toEqual([]);
-        expect(useHabitStore.getState().habits.every((h) => h.isDemoSeed === true)).toBe(true);
+        expect(useHabitStore.getState().habits).toEqual([]);
       });
 
       it('a retried offline first run does not stack a second copy of the same habit', async () => {
@@ -3324,9 +3352,12 @@ describe('habitManager', () => {
     // back as real data and stuck-user recovery POSTs it, minting fabricated
     // server habits. It must never be written, and never be recovered.
     const seedDemoTiles = async (): Promise<void> => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockHabitDemoMode = true;
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
-      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
       await habitManager.loadHabits();
+      errorSpy.mockRestore();
     };
 
     /** Server row shape returned by the post-recovery re-fetch. */
@@ -3425,17 +3456,12 @@ describe('habitManager', () => {
       // The relaunch: a cold store rehydrating from exactly what was written.
       resetStore();
       (loadHabits as jest.Mock).mockResolvedValueOnce(written as never);
-      (habitsApi.listAll as jest.Mock)
-        .mockResolvedValueOnce([] as never)
-        .mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
 
       await habitManager.loadHabits();
 
       expect(habitsApi.create).not.toHaveBeenCalled();
-      // The offline demo UX survives the guard rather than being deleted.
-      const shown = useHabitStore.getState().habits;
-      expect(shown.length).toBeGreaterThan(0);
-      expect(shown.every((h) => h.isDemoSeed === true)).toBe(true);
+      expect(useHabitStore.getState().habits).toEqual([]);
     });
   });
   describe('non-server ids never reach the wire', () => {
@@ -3492,6 +3518,7 @@ describe('habitManager', () => {
       });
 
       it('cannot delete a real row through a demo tile seeded by an unreachable server', async () => {
+        mockHabitDemoMode = true;
         (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
         (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
 

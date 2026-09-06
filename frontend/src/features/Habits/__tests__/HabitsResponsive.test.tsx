@@ -29,11 +29,15 @@ const openHabitsDrawer = (): void => {
   });
 };
 
-// Mock the API so HabitsScreen loads an empty list, which the loader seeds into
-// the demo fallback defaults that these responsive-grid assertions render against.
+// These responsive-grid assertions deliberately exercise the explicit demo
+// build: the unreachable API and empty cache expose all ten fixture rows.
+jest.mock('../../../config', () => ({
+  ...(jest.requireActual('../../../config') as object),
+  HABIT_DEMO_MODE: true,
+}));
 jest.mock('../../../api', () => ({
   habits: {
-    listAll: (jest.fn() as any).mockResolvedValue([]),
+    listAll: (jest.fn() as any).mockRejectedValue(new Error('offline')),
     create: jest.fn() as any,
     update: jest.fn() as any,
     delete: jest.fn() as any,

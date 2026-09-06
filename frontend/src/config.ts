@@ -35,6 +35,17 @@ function resolveApiBaseUrl(): string {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
+/**
+ * Explicit opt-in for the non-user habit fixtures used by demo builds.
+ *
+ * Fail closed: only the literal ``true`` enables fictional history. A missing,
+ * mistyped, or production-default value must preserve the signed-in person's
+ * truthful empty state.
+ */
+export const HABIT_DEMO_MODE =
+  resolveEnv(process.env.EXPO_PUBLIC_HABIT_DEMO_MODE, 'EXPO_PUBLIC_HABIT_DEMO_MODE', 'false') ===
+  'true';
+
 // Gumroad is where the course is bought and where license-key help lives.
 // Both are public marketing pages with safe defaults, so — unlike
 // ``API_BASE_URL`` — a missing override is not a misconfiguration and must
