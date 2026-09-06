@@ -323,6 +323,7 @@ def _handshake_payload(
         CreekCapability.REFLECT.value: "reflections",
         CreekCapability.WHEEL.value: "wheel",
         CreekCapability.UPLOAD.value: "upload",
+        CreekCapability.VOICE_DRAFTS.value: "voice-drafts",
     }
     minor = _minor_of(contract_version)
     return {

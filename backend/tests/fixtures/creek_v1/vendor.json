@@ -1,6 +1,6 @@
 {
   "bundle": "adepthood-v1",
-  "contract_version": "0.14.0",
+  "contract_version": "0.15.0",
   "files": [
     {
       "path": "README.md",
@@ -12,7 +12,7 @@
     },
     {
       "path": "examples/capabilities/empty.json",
-      "sha256": "38c2346746fe09aaa075bb093465c7830c47a6003c2ec9b38e9b174207253643"
+      "sha256": "9f5724fa068ef2f9f7f351208c2fdf136bd7f058ca44d31c6705c294653b9604"
     },
     {
       "path": "examples/capabilities/incompatible-version.json",
@@ -28,7 +28,7 @@
     },
     {
       "path": "examples/capabilities/success.json",
-      "sha256": "e639aac80605751c9414b8d9158c697949fe4e0a9e8ba79ae19cf788b93c380b"
+      "sha256": "888e1cf5513416260d73c5ffd55fd540a3e8ef0fd77d159628a67708640ad363"
     },
     {
       "path": "examples/capabilities/unavailable-service.json",
@@ -175,6 +175,34 @@
       "sha256": "c557c982eca814d9bfe391009cd5803f61261cfeb163edcc0e0ac4e67bfcd28e"
     },
     {
+      "path": "examples/voice-drafts/care-escalation.json",
+      "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
+    },
+    {
+      "path": "examples/voice-drafts/empty.json",
+      "sha256": "943aae7a88639719652bbc3f33e4f5249666fec84127f023e15bbad0e7935a42"
+    },
+    {
+      "path": "examples/voice-drafts/incompatible-version.json",
+      "sha256": "c01c9f5e41349a80a928b18a628637d58943240a72758da7ce5eedaee970655b"
+    },
+    {
+      "path": "examples/voice-drafts/malformed-input.json",
+      "sha256": "7bf957c6f6c8e8c3a6e8a05a6e3f194c008da73c78d2cef0142c73cadb001f4c"
+    },
+    {
+      "path": "examples/voice-drafts/refusal.json",
+      "sha256": "5062e21432bffc72568f92ff898f812f9cfad0dd1b625df84abfc735c50f29e3"
+    },
+    {
+      "path": "examples/voice-drafts/success.json",
+      "sha256": "65af73dec3562b8d18d7d9504253067945866ed08c7ea7a0c30f3e39fe540391"
+    },
+    {
+      "path": "examples/voice-drafts/unavailable-service.json",
+      "sha256": "0771fe94614e7cca4cdd9cf03c4ce83096b897943589ae246dd0ea8420d49be0"
+    },
+    {
       "path": "examples/wheel/care-escalation.json",
       "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
     },
@@ -204,7 +232,7 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "b17ce9c1ca4bc5c905266a7b689b20d7386cae71e5df9e844cda4450a9541b77"
+      "sha256": "e4052984c267909f23b9f003b2e63b822fe825028830d0e1ff88d660d18c2116"
     },
     {
       "path": "retry-policy.json",
@@ -212,7 +240,7 @@
     },
     {
       "path": "schemas/CapabilitiesResponse.schema.json",
-      "sha256": "730f04f35cc9342817225bce8ef6ce53b3049b2b040569965385e8ce578c44d6"
+      "sha256": "f2a8986459a94dc61cc33114edb738a039a5ea667dcbd275c1bf06a8c8c2807b"
     },
     {
       "path": "schemas/CareEscalationResponse.schema.json",
@@ -327,6 +355,26 @@
       "sha256": "6cd84f27aa18111ab4a9c50da4d192ee2fe58d8d9b371ec5ce7b2c474820c8c9"
     },
     {
+      "path": "schemas/VoiceDraftAttribution.schema.json",
+      "sha256": "af1aa3bafda58f6c4276473ffd4c706b8188b5053ade40e12a3a0c52add317d3"
+    },
+    {
+      "path": "schemas/VoiceDraftDeleteResponse.schema.json",
+      "sha256": "5d84cc9104c948bef408b6be643570cacd72129cc7b72fe3edca2e1e5a5b40c7"
+    },
+    {
+      "path": "schemas/VoiceDraftReadResponse.schema.json",
+      "sha256": "05dd79342ed0f8954241a2f2a7bb6217b048137380f3e38dd80019e420cd18d8"
+    },
+    {
+      "path": "schemas/VoiceDraftUpsertRequest.schema.json",
+      "sha256": "1124ba9228dfb60aa5a0dbdb6a8bb512cbcb4b4090a46c22584de23694a7b2b8"
+    },
+    {
+      "path": "schemas/VoiceDraftUpsertResponse.schema.json",
+      "sha256": "6eb486f27bceb56b513ebe31bfdd23418e39af8f9fd25689d5d519cef3b85ab0"
+    },
+    {
       "path": "schemas/WheelFrequencies.schema.json",
       "sha256": "05262b931e2ecbfcbcf532af32c4ac99c90a8e54b763fa1f8f0dfbf64c1dad98"
     },
@@ -341,7 +389,7 @@
   ],
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "source": {
-    "commit": "5b9cbcd97fdab8537a9090a30898c9f7f37f2d20",
+    "commit": "8c93bcdf4c9585b6157a58ba6e76c526c34efe97",
     "path": "docs/contracts/adepthood-v1",
     "repo": "Geoffe-Ga/creek-vault"
   }

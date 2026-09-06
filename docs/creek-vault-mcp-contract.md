@@ -4,8 +4,8 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.14.0
-- **Date:** 2026-09-05
+- **Contract version:** 0.15.0
+- **Date:** 2026-09-06
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
   originally drafted under [#950](https://github.com/Geoffe-Ga/adepthood/issues/950),
@@ -42,8 +42,8 @@ ADR 0004's Context section documents in detail. Instead:
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
   `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
-  repository: at contract 0.14.0, 32 JSON Schemas, a
-  `retry-policy.json` disposition table, a seven-capability by
+  repository: at contract 0.15.0, 37 JSON Schemas, a
+  `retry-policy.json` disposition table, an eight-capability by
   seven-state example matrix, and a `manifest.json` recording a sha256
   per generated file. Those counts move — the matrix was four
   capabilities wide through 0.7 and five at 0.8.0 — so read the
@@ -399,6 +399,15 @@ capability is still used for the others it supports:
   declining to store at the declared ceiling refuses the write and
   adepthood degrades honestly rather than downgrading the tier to force
   a success.
+- **VOICE_DRAFTS** — AI-authored expanded marginalia use Creek's dedicated
+  `voice-drafts` resource, never `upload`, so model prose is fixed to the
+  `ai-as-user` namespace with zero owner-voice weight. Adepthood addresses each
+  draft by a content-free digest of its owner and marginalia identity, upserts
+  it only after the local encrypted essay is committed, and drops any failed
+  mirror without a queue or retry. A draft at an unrepresentable `intimate`
+  tier is never sent; when a previously mirrored draft's source becomes
+  intimate, Adepthood sends only the digest-bearing `DELETE`, at the widest
+  representable ceiling, so no intimate prose crosses the wire.
 - **REFLECT** — if absent, adepthood falls back to its existing cloud
   LLM reflection path
   (`select_reflection_llm`, `backend/src/services/creek_vault_reflect.py:158-190`).

@@ -127,6 +127,9 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultVoiceDraftDeleteResult,
+    VaultVoiceDraftRequest,
+    VaultVoiceDraftResult,
     VaultWheelBalance,
     WireTierCeiling,
     wire_ceiling_for,
@@ -146,12 +149,15 @@ from services.creek_vault_payload import (
     _parse_classification_pass,
     _parse_http_ingest_result,
     _parse_http_upload_result,
+    _parse_http_voice_draft_delete_result,
+    _parse_http_voice_draft_result,
     _parse_link_pass,
     _parse_pipeline_job_accepted,
     _parse_pipeline_job_status,
     _parse_reflection_result,
     _reflection_request_body,
     _upload_document_body,
+    _voice_draft_body,
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
@@ -582,6 +588,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "upload": CreekCapability.UPLOAD,
         "drive-connector": CreekCapability.DRIVE_CONNECTOR,
         "pipeline": CreekCapability.PIPELINE,
+        "voice-drafts": CreekCapability.VOICE_DRAFTS,
     }
 )
 
@@ -872,6 +879,11 @@ _REFLECTIONS_PATH = "/v1/reflections"
 # one was published.
 _UPLOADS_PATH = "/v1/uploads"
 
+# One AI-authored draft is addressed by the caller-owned external id in its URL.
+# Published at contract 0.15.0; unlike uploads this is a resource-level PUT and
+# DELETE, and the distinction preserves Creek's fixed AI attribution.
+_VOICE_DRAFTS_PATH = "/v1/voice-drafts/"
+
 # Where a whole-vault classification pass and one linker stage are asked for,
 # relative to the configured base URL. Two collections, ``POST``ed to with a body
 # and no identifier of any kind: neither route takes a fragment selector, and
@@ -940,6 +952,11 @@ _CREDENTIAL_REJECTED_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCa
 _UPLOAD_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.UPLOAD)
 _UPLOAD_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.UPLOAD)
 _UPLOAD_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.UPLOAD)
+_VOICE_DRAFT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.VOICE_DRAFTS)
+_VOICE_DRAFT_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.VOICE_DRAFTS)
+_VOICE_DRAFT_CREDENTIAL_MESSAGE = _capability_message(
+    _CREDENTIAL_REJECTED, CreekCapability.VOICE_DRAFTS
+)
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 _PIPELINE_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.PIPELINE)
@@ -1167,6 +1184,17 @@ def _entry_path_segment(entry_id: int) -> str:
     return quote(str(entry_id), safe="").replace(".", _ENCODED_DOT)
 
 
+def _voice_draft_path_segment(external_id: str) -> str:
+    """Encode one external id as an inert path segment.
+
+    Production ids are already lowercase hex behind a fixed prefix. Keeping the
+    adapter safe for any protocol-conforming caller still matters: a slash or
+    dot segment in a directly constructed request must not redirect the essay
+    to another resource.
+    """
+    return quote(external_id, safe="").replace(".", _ENCODED_DOT)
+
+
 def _vault_error_code(response: httpx.Response) -> VaultErrorCode | None:
     """Read the vault's own error code from an error body, parsing only what we know.
 
@@ -1332,6 +1360,16 @@ def _upload_failure(response: httpx.Response) -> CreekVaultError:
         call_failed=_UPLOAD_FAILED_MESSAGE,
         request_rejected=_UPLOAD_REJECTED_MESSAGE,
         credential_rejected=_UPLOAD_CREDENTIAL_MESSAGE,
+    )
+
+
+def _voice_draft_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed Voice Draft PUT or DELETE under its own capability."""
+    return _write_failure(
+        response,
+        call_failed=_VOICE_DRAFT_FAILED_MESSAGE,
+        request_rejected=_VOICE_DRAFT_REJECTED_MESSAGE,
+        credential_rejected=_VOICE_DRAFT_CREDENTIAL_MESSAGE,
     )
 
 
@@ -1957,10 +1995,111 @@ class HttpCreekVaultClient:
         )
         return result
 
+    def _voice_draft_url(self, external_id: str) -> str:
+        """Return the published resource URL for one inert external id."""
+        segment = _voice_draft_path_segment(external_id)
+        return f"{self._url}{_VOICE_DRAFTS_PATH}{segment}"
+
+    async def _request_voice_draft(
+        self,
+        method: str,
+        external_id: str,
+        tier_ceiling: VaultTierCeiling,
+        body: Mapping[str, object] | None = None,
+    ) -> httpx.Response:
+        """Send one Voice Draft request, normalizing transport failures.
+
+        The ceiling is resolved before the request exists, so an intimate value
+        is refused while generated prose remains only inside its frozen domain
+        request. PUT and DELETE share this transport boundary because they share
+        the route, headers, timeout, and failure vocabulary; DELETE passes no
+        body and therefore cannot resend the prose it retracts.
+        """
+        ceiling = wire_ceiling_for(tier_ceiling)
+        try:
+            return await self._authorized_request(
+                method,
+                self._voice_draft_url(external_id),
+                body,
+                ceiling=ceiling,
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_VOICE_DRAFT_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_VOICE_DRAFT_FAILED_MESSAGE) from None
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        """Create or update one AI-attributed Voice Draft.
+
+        The capability gate precedes request construction, and the request body
+        is the dedicated two-field Voice Draft shape -- never an upload. A 2xx
+        is trusted only when its identity, tiers, fragment, action, and fixed
+        zero-weight AI attribution all verify.
+        """
+        with _CountingOutcome(CreekCapability.VOICE_DRAFTS):
+            if not self.supports(CreekCapability.VOICE_DRAFTS):
+                raise CreekCapabilityUnsupportedError(
+                    _unsupported_message(CreekCapability.VOICE_DRAFTS)
+                )
+            tier = wire_ceiling_for(request.tier)
+            response = await self._request_voice_draft(
+                "PUT",
+                request.external_id,
+                request.tier_ceiling,
+                _voice_draft_body(request, tier),
+            )
+            if not response.is_success:
+                raise _voice_draft_failure(response) from None
+            try:
+                payload = response.json()
+            except ValueError:
+                raise CreekVaultUnavailableError(_VOICE_DRAFT_FAILED_MESSAGE) from None
+            result = _parse_http_voice_draft_result(payload, request)
+            record_vault_outcome(
+                VaultTelemetryOutcome.SUCCESS
+                if result.stored
+                else VaultTelemetryOutcome.SCHEMA_FAILURE,
+                CreekCapability.VOICE_DRAFTS,
+            )
+            return result
+
+    async def delete_voice_draft(
+        self, external_id: str, tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        """Delete one Voice Draft by id without putting prose on the request."""
+        with _CountingOutcome(CreekCapability.VOICE_DRAFTS):
+            if not self.supports(CreekCapability.VOICE_DRAFTS):
+                raise CreekCapabilityUnsupportedError(
+                    _unsupported_message(CreekCapability.VOICE_DRAFTS)
+                )
+            response = await self._request_voice_draft(
+                "DELETE",
+                external_id,
+                tier_ceiling,
+            )
+            if not response.is_success:
+                raise _voice_draft_failure(response) from None
+            try:
+                payload = response.json()
+            except ValueError:
+                raise CreekVaultUnavailableError(_VOICE_DRAFT_FAILED_MESSAGE) from None
+            result = _parse_http_voice_draft_delete_result(
+                payload,
+                external_id=external_id,
+                tier_ceiling=tier_ceiling,
+            )
+            record_vault_outcome(
+                VaultTelemetryOutcome.SUCCESS
+                if result.deleted
+                else VaultTelemetryOutcome.SCHEMA_FAILURE,
+                CreekCapability.VOICE_DRAFTS,
+            )
+            return result
+
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
-        Creek does publish classification at the pinned contract 0.14.0, as
+        Creek does publish classification at the pinned contract 0.15.0, as
         ``pipeline``: a whole-vault pass whose schema says it carries no
         fragment selector and never will, so it cannot answer one entry's
         question. What is absent is a shape, not a capability. Counted through
@@ -2343,6 +2482,20 @@ class LocalFallbackCreekVaultClient:
         """
         record_vault_outcome(self._outcome, CreekCapability.UPLOAD)
         return VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
+
+    async def upsert_voice_draft(
+        self, _request: VaultVoiceDraftRequest, /
+    ) -> VaultVoiceDraftResult:
+        """No-op Voice Draft mirror when no vault is configured."""
+        record_vault_outcome(self._outcome, CreekCapability.VOICE_DRAFTS)
+        return VaultVoiceDraftResult(stored=False, vault_ref=None, action=None)
+
+    async def delete_voice_draft(
+        self, _external_id: str, _tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        """No-op Voice Draft retraction when no vault is configured."""
+        record_vault_outcome(self._outcome, CreekCapability.VOICE_DRAFTS)
+        return VaultVoiceDraftDeleteResult(deleted=False)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""

@@ -80,6 +80,9 @@ from domain.creek_vault import (
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
+    VaultVoiceDraftDeleteResult,
+    VaultVoiceDraftRequest,
+    VaultVoiceDraftResult,
     VaultWheelAspect,
     VaultWheelBalance,
     WireTierCeiling,
@@ -693,6 +696,20 @@ _NOT_STORED_RESULT = VaultIngestResult(stored=False, vault_ref=None, action=None
 # the same reason the ref is absent -- nothing was written to have any.
 _NOT_STORED_UPLOAD = VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
 
+# Voice Draft writes are separate from uploads but retain the same conservative
+# result rule: unless every security-relevant response claim can be verified,
+# the adapter reports no durable write or deletion.
+_NOT_STORED_VOICE_DRAFT = VaultVoiceDraftResult(
+    stored=False,
+    vault_ref=None,
+    action=None,
+)
+_NOT_DELETED_VOICE_DRAFT = VaultVoiceDraftDeleteResult(deleted=False)
+
+_VOICE_DRAFT_OK_STATUS = "ok"
+_VOICE_DRAFT_DELETED_ACTION = "deleted"
+_VOICE_DRAFT_ATTRIBUTION_FIELDS = frozenset({"author", "author_slug", "voice_weight"})
+
 
 def _is_storable_ref(fragment_id: str) -> bool:
     """Return whether a vault-issued id is safe to persist as an entry's ``vault_ref``.
@@ -797,6 +814,114 @@ def _upload_document_body(
         "timestamp": request.created_at.isoformat(),
         "tier": tier.value,
     }
+
+
+def _voice_draft_body(
+    request: VaultVoiceDraftRequest, tier: WireTierCeiling
+) -> Mapping[str, object]:
+    """Map an AI-authored draft onto exactly Creek's published request fields.
+
+    ``external_id`` is the addressed resource and therefore travels in the URL;
+    the admission ceiling travels in its header. The body carries only the two
+    required fields. In particular, no title is derived from protected prose,
+    and no upload metadata can misattribute this model-authored text to the
+    owner.
+    """
+    return {"content": request.content, "tier": tier.value}
+
+
+def _zero_voice_weight(raw: object) -> bool:
+    """Accept JSON's numeric zero while rejecting its boolean lookalike."""
+    if isinstance(raw, bool):
+        return False
+    if not isinstance(raw, (int, float)):
+        return False
+    return raw == 0
+
+
+def _fixed_ai_attribution(raw: object) -> bool:
+    """Return whether ``raw`` is Creek's one valid AI-only attribution value."""
+    if not isinstance(raw, Mapping):
+        return False
+    observed = (
+        frozenset(raw),
+        raw.get("author"),
+        raw.get("author_slug"),
+    )
+    expected = (_VOICE_DRAFT_ATTRIBUTION_FIELDS, "ai", "ai-as-user")
+    if observed != expected:
+        return False
+    return _zero_voice_weight(raw.get("voice_weight"))
+
+
+def _voice_draft_response_matches_request(
+    payload: Mapping[str, object], request: VaultVoiceDraftRequest
+) -> bool:
+    """Verify the response's success, identity, privacy, and authorship claims."""
+    observed = (
+        payload.get("status"),
+        payload.get("external_id"),
+        payload.get("tier"),
+        payload.get("tier_ceiling"),
+    )
+    expected = (
+        _VOICE_DRAFT_OK_STATUS,
+        request.external_id,
+        request.tier.value,
+        request.tier_ceiling.value,
+    )
+    return observed == expected and _fixed_ai_attribution(payload.get("attribution"))
+
+
+def _parse_http_voice_draft_result(
+    payload: object,
+    request: VaultVoiceDraftRequest,
+) -> VaultVoiceDraftResult:
+    """Verify every identity, tier, and authorship claim of a draft upsert.
+
+    A 2xx alone is not proof that the intended resource was stored with the
+    intended privacy or attribution. The echoed external id and tier must match
+    the request exactly, the admission ceiling must match the one declared, and
+    the attribution must remain Creek's fixed ``ai-as-user``/zero-weight value.
+    Anything less is not a durable write this app can trust.
+    """
+    if not isinstance(payload, Mapping):
+        return _NOT_STORED_VOICE_DRAFT
+    action = _coerce_ingest_action(payload.get("action"))
+    fragment_id = _usable_fragment_id(payload)
+    if not _voice_draft_response_matches_request(payload, request):
+        return _NOT_STORED_VOICE_DRAFT
+    if action is None:
+        return _NOT_STORED_VOICE_DRAFT
+    if fragment_id is None:
+        return _NOT_STORED_VOICE_DRAFT
+    return VaultVoiceDraftResult(stored=True, vault_ref=fragment_id, action=action)
+
+
+def _parse_http_voice_draft_delete_result(
+    payload: object,
+    *,
+    external_id: str,
+    tier_ceiling: VaultTierCeiling,
+) -> VaultVoiceDraftDeleteResult:
+    """Verify a deletion confirmation belongs to the draft that was addressed."""
+    if not isinstance(payload, Mapping):
+        return _NOT_DELETED_VOICE_DRAFT
+    observed = (
+        payload.get("status"),
+        payload.get("external_id"),
+        payload.get("tier_ceiling"),
+        payload.get("action"),
+    )
+    expected = (
+        _VOICE_DRAFT_OK_STATUS,
+        external_id,
+        tier_ceiling.value,
+        _VOICE_DRAFT_DELETED_ACTION,
+    )
+    if observed == expected:
+        return VaultVoiceDraftDeleteResult(deleted=True)
+    return _NOT_DELETED_VOICE_DRAFT
 
 
 def _coerce_ingest_action(raw: object) -> VaultIngestAction | None:

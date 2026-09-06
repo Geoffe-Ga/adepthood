@@ -110,6 +110,7 @@ from services.creek_vault_reflect import (
     related_surfaces,
     select_reflection_llm,
 )
+from services.creek_vault_voice_drafts import mirror_voice_draft, retract_voice_draft
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -126,6 +127,7 @@ from services.marginalia import (
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
+from services.voice_draft_privacy import voice_draft_privacy
 from services.wallet import (
     SpendResult,
     preflight_deduction,
@@ -720,6 +722,44 @@ async def update_journal_entry(
     re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
     refreshed.
     """
+    if payload.classification == JournalClassification.INTIMATE:
+        async with voice_draft_privacy.hold(session, entry_id):
+            entry, previous_classification = await _persist_entry_update(
+                entry_id,
+                payload,
+                current_user,
+                session,
+            )
+    else:
+        entry, previous_classification = await _persist_entry_update(
+            entry_id,
+            payload,
+            current_user,
+            session,
+        )
+    # Re-ingest only when the body or privacy tier changed; a title/status/chord
+    # PATCH leaves the vault's copy and the corpus fragment untouched (and
+    # issues zero vault calls and zero classifications).
+    if payload.model_fields_set & _REINGEST_FIELDS:
+        await _record_vault_outcome(session, entry, vault_client)
+        await _record_corpus_fragment(session, entry)
+    await _retract_newly_intimate_entry(
+        session,
+        entry,
+        vault_client,
+        became_intimate=_became_intimate(previous_classification, entry.classification),
+    )
+    logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
+    return entry
+
+
+async def _persist_entry_update(
+    entry_id: int,
+    payload: JournalEntryUpdate,
+    current_user: int,
+    session: AsyncSession,
+) -> tuple[JournalEntry, str]:
+    """Load, apply, and commit one owned update inside any caller-held privacy lock."""
     result = await session.execute(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
@@ -731,6 +771,7 @@ async def update_journal_entry(
     entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
+    previous_classification = entry.classification
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
     try:
@@ -743,14 +784,57 @@ async def update_journal_entry(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    # Re-ingest only when the body or privacy tier changed; a title/status/chord
-    # PATCH leaves the vault's copy and the corpus fragment untouched (and
-    # issues zero vault calls and zero classifications).
-    if payload.model_fields_set & _REINGEST_FIELDS:
-        await _record_vault_outcome(session, entry, vault_client)
-        await _record_corpus_fragment(session, entry)
-    logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
-    return entry
+    return entry, previous_classification
+
+
+def _became_intimate(previous: str, current: str) -> bool:
+    """Return whether one PATCH crossed into the intimate privacy tier."""
+    return previous != JournalClassification.INTIMATE and current == JournalClassification.INTIMATE
+
+
+async def _retract_newly_intimate_entry(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+    *,
+    became_intimate: bool,
+) -> None:
+    """Retract existing drafts exactly once when a PATCH crosses the privacy floor."""
+    if became_intimate:
+        await _retract_entry_voice_drafts(session, entry, vault_client)
+
+
+async def _retract_entry_voice_drafts(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+) -> None:
+    """Best-effort retract every expanded essay when its parent becomes intimate.
+
+    The query projects ids only -- never essay text -- and the transaction it
+    opens is committed before the first network call, returning the pooled
+    connection. Each retraction is therefore content-free and cannot roll back
+    the privacy change, which was committed before this helper was reached.
+    A same-value INTIMATE patch never calls this helper, so a failed deletion is
+    not turned into an implicit retry channel.
+    """
+    if entry.id is None:
+        return
+    result = await session.execute(
+        select(Marginalia.id).where(
+            Marginalia.journal_entry_id == entry.id,
+            Marginalia.user_id == entry.user_id,
+            col(Marginalia.essay).is_not(None),
+        )
+    )
+    marginalia_ids = tuple(result.scalars().all())
+    await session.commit()
+    for marginalia_id in marginalia_ids:
+        await retract_voice_draft(
+            vault_client,
+            owner_user_id=entry.user_id,
+            marginalia_id=marginalia_id,
+        )
 
 
 async def _load_user_entry(
@@ -1594,6 +1678,24 @@ async def dismiss_suggestion(
 ESSAY_PRICE_UNITS = 0
 
 
+@dataclass(frozen=True)
+class _EssayClients:
+    """The cloud credential and optional vault used by essay expansion."""
+
+    api_key: str | None = field(repr=False)
+    vault_client: CreekVaultPipelineClient
+
+
+def _essay_clients(
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> _EssayClients:
+    """Bundle both optional essay backends without widening the route signature."""
+    return _EssayClients(api_key=x_llm_api_key, vault_client=vault_client)
+
+
 async def _load_user_marginalia(
     session: AsyncSession, marginalia_id: int, user_id: int
 ) -> Marginalia | None:
@@ -1614,9 +1716,7 @@ async def expand_marginalia_essay(
     marginalia_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[
-        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
-    ] = None,
+    clients: Annotated[_EssayClients, Depends(_essay_clients)],
 ) -> Marginalia:
     """Lazily generate (and cache) a longer essay expanding one margin note.
 
@@ -1637,7 +1737,24 @@ async def expand_marginalia_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     if entry.classification == JournalClassification.INTIMATE:
         return note
-    return await _cache_essay(session, note, entry.message, x_llm_api_key)
+    cached = await _cache_essay(session, note, entry.message, clients.api_key)
+    # Generation may outlive a concurrent privacy PATCH. Serialize the final
+    # tier read and mirror against transitions to INTIMATE: if the PATCH won it
+    # commits first and this skips; if this won, the PATCH waits and retracts
+    # only after the PUT finishes. The request transaction is committed before
+    # Creek I/O; PostgreSQL holds the cross-worker lock on a non-pooled,
+    # dedicated connection rather than consuming the application pool.
+    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+        await session.refresh(entry)
+        await session.commit()
+        await mirror_voice_draft(
+            clients.vault_client,
+            owner_user_id=current_user,
+            marginalia_id=cast("int", cached.id),
+            essay=cast("str", cached.essay),
+            classification=entry.classification,
+        )
+    return cached
 
 
 async def _cache_essay(

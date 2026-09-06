@@ -714,7 +714,7 @@ _CONTRACT_VERSION_HEADER = "X-Creek-Contract-Version"
 # ``0.10`` -- which sorts *below* ``0.8`` as text and is above it as a version.
 # Every comparison in the client splits on the dot and matches components, so
 # nothing here ever orders these as strings.
-_CONTRACT_MINOR = "0.14"
+_CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:2])
 
 
 def _decoded_body(request: httpx.Request) -> dict[str, object]:

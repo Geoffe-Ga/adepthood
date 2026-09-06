@@ -43,6 +43,7 @@ from domain.creek_vault import (
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import (
+    CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
@@ -1150,7 +1151,7 @@ async def test_an_import_runs_the_published_classify_then_link_ladder_on_its_own
         link_schema.validate(body)
 
     for request in recorder.requests:
-        assert request.headers["X-Creek-Contract-Version"] == "0.14"
+        assert request.headers["X-Creek-Contract-Version"] == CONTRACT_MINOR
         assert request.headers["X-Creek-Tier-Ceiling"] == "personal"
 
     budgets = [request.extensions["timeout"]["read"] for request in recorder.requests]

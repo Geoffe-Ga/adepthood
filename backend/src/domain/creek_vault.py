@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.14.0"
+CONTRACT_VERSION = "0.15.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -73,7 +73,9 @@ class CreekCapability(enum.StrEnum):
     is adepthood's own per-entry concept with an unratified request shape that
     :meth:`HttpCreekVaultClient.classify` still refuses. Mapping the wire name
     onto it would make ``supports(CLASSIFY)`` answer true for a call that always
-    raises.
+    raises. ``VOICE_DRAFTS`` is different: contract 0.15 publishes the
+    AI-attributed draft resource specifically for this consumer, so adepthood
+    both names and calls it without routing model prose through ``UPLOAD``.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -85,6 +87,7 @@ class CreekCapability(enum.StrEnum):
     WHEEL = "creek.wheel"
     DRIVE_CONNECTOR = "creek.drive_connector"
     PIPELINE = "creek.pipeline"
+    VOICE_DRAFTS = "creek.voice_drafts"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -603,6 +606,44 @@ class VaultUploadResult:
 
 
 @dataclass(frozen=True)
+class VaultVoiceDraftRequest:
+    """One AI-authored essay addressed by the consumer's stable external id.
+
+    Voice Drafts are deliberately not uploads. ``content`` is model-authored
+    markdown and Creek fixes its attribution to ``ai-as-user`` with zero owner
+    voice weight; routing it through :class:`VaultUploadRequest` would instead
+    describe it as a document the owner supplied. ``tier`` is inherited from
+    the source journal entry and ``tier_ceiling`` is the matching admission
+    ceiling. Both remain domain values until the HTTP adapter proves they have
+    a remote spelling.
+
+    ``content`` is omitted from ``repr()`` so an exception or debug statement
+    cannot print the generated essay merely by rendering this request.
+    """
+
+    external_id: str
+    content: str = field(repr=False)
+    tier: VaultTierCeiling
+    tier_ceiling: VaultTierCeiling
+
+
+@dataclass(frozen=True)
+class VaultVoiceDraftResult:
+    """Outcome of an idempotent Voice Draft upsert."""
+
+    stored: bool
+    vault_ref: str | None
+    action: VaultIngestAction | None = None
+
+
+@dataclass(frozen=True)
+class VaultVoiceDraftDeleteResult:
+    """Outcome of retracting one Voice Draft by its opaque external id."""
+
+    deleted: bool
+
+
+@dataclass(frozen=True)
 class VaultClassification:
     """Frequency/Wavelength-phase tags Creek assigns to a piece of content."""
 
@@ -1083,7 +1124,24 @@ class CreekVaultClient(Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultClient, Protocol):
+class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
+    """The narrow client surface required by optional Voice Draft mirroring.
+
+    Kept separate from :class:`CreekVaultClient` so consumers and test doubles
+    that only ingest or read a vault do not acquire two unrelated methods. The
+    per-request concrete client implements both this and the pipeline surface.
+    """
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        """Create or update one AI-attributed draft at its external id."""
+
+    async def delete_voice_draft(
+        self, external_id: str, tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        """Retract one draft without sending any of its content."""
+
+
+class CreekVaultPipelineClient(CreekVaultVoiceDraftClient, Protocol):
     """The narrower extension required only by durable pipeline orchestration.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
