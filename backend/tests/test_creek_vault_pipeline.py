@@ -504,6 +504,51 @@ async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
 
 
 @pytest.mark.asyncio
+async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A perpetually-running job cannot wedge the per-user stage slot forever."""
+
+    class _NeverTerminal(_DurableJobRecorder):
+        def _status(self, job_id: str) -> httpx.Response:
+            """Keep every admitted job running forever."""
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "job_id": job_id,
+                    "state": "running",
+                    "result": None,
+                },
+            )
+
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_RECONCILIATION_BUDGET_SECONDS", 0.01)
+    recorder = _NeverTerminal()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    rows = await _rows(db_session)
+    assert len(rows) == 1
+    assert rows[0].outcome == VaultPipelineOutcome.AMBIGUOUS
+    assert rows[0].attempt_count == 1
+    assert rows[0].job_id == recorder.CLASSIFICATION_JOB
+
+
+@pytest.mark.asyncio
 async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

@@ -189,6 +189,12 @@ _STAGE_INTERVAL: Mapping[VaultPipelineStage, timedelta] = {
 _JOB_POLL_INITIAL_SECONDS = 0.25
 _JOB_POLL_MAX_SECONDS = 5.0
 
+# A durable job may legitimately outlive either originating HTTP request, but
+# one that reports queued/running forever must not own the user's in-process
+# continuation slot forever. Thirty minutes accommodates cold local model and
+# embedding passes; reaching it records ambiguity without admitting a duplicate.
+_JOB_RECONCILIATION_BUDGET_SECONDS = 30 * 60
+
 # A transient failure gets two independent retries after the originating call.
 # Backoff is exponential but capped, so a sick vault is neither hammered nor
 # allowed to turn a recoverable pass into a request-rate loop.
@@ -611,26 +617,47 @@ async def _poll_job_once(
         return None
 
 
-async def _poll_until_terminal(
+def _pending_job(
+    result: VaultClassificationPass | VaultLinkPass | VaultPipelineJob,
+) -> VaultPipelineJob | None:
+    """Return the next pending handle, or ``None`` for a terminal answer."""
+    if isinstance(result, VaultPipelineJob) and (result.state is not VaultPipelineJobState.FAILED):
+        return result
+    return None
+
+
+async def _poll_statuses(
     client: CreekVaultPipelineClient,
     job: VaultPipelineJob,
 ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob:
-    """Poll through transient status failures until counts or terminal failure."""
+    """Poll status answers; the caller supplies the elapsed-time ceiling."""
     delay = _JOB_POLL_INITIAL_SECONDS
     current = job
     while True:
         result = await _poll_job_once(client, current)
-        if result is None:
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
-            continue
-        if not isinstance(result, VaultPipelineJob):
-            return result
-        if result.state is VaultPipelineJobState.FAILED:
-            return result
-        current = result
+        if result is not None:
+            pending = _pending_job(result)
+            if pending is None:
+                return result
+            current = pending
         await asyncio.sleep(delay)
         delay = min(delay * 2, _JOB_POLL_MAX_SECONDS)
+
+
+async def _poll_until_terminal(
+    client: CreekVaultPipelineClient,
+    job: VaultPipelineJob,
+) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob | None:
+    """Poll until terminal or the reconciliation ceiling; ``None`` means ambiguous."""
+    try:
+        async with asyncio.timeout(_JOB_RECONCILIATION_BUDGET_SECONDS):
+            return await _poll_statuses(client, job)
+    except TimeoutError:
+        _LOGGER.warning(
+            "creek vault pipeline job stayed non-terminal through its polling ceiling",
+            extra={"stage": job.stage.value, "job_id": str(job.job_id)},
+        )
+        return None
 
 
 async def _retry_once(
@@ -734,6 +761,22 @@ async def _continue_after_retry(
     return await _land_result(session, run, retried)
 
 
+async def _reconcile_existing_job(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    job: VaultPipelineJob,
+) -> VaultPipelineOutcome | None:
+    """Land, retire, or bound one persisted job; ``None`` permits readmission."""
+    polled = await _poll_until_terminal(client, job)
+    if polled is None:
+        return await _finish_exhausted_run(session, run, ambiguous=True)
+    if not isinstance(polled, VaultPipelineJob):
+        return await _land_result(session, run, polled)
+    await _clear_job(session, run)
+    return None
+
+
 async def _reconciliation_step(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -743,10 +786,9 @@ async def _reconciliation_step(
 ) -> VaultPipelineOutcome | _Reconciliation:
     """Advance one poll-or-admit transition of a logical stage run."""
     if state.job is not None:
-        polled = await _poll_until_terminal(client, state.job)
-        if not isinstance(polled, VaultPipelineJob):
-            return await _land_result(session, run, polled)
-        await _clear_job(session, run)
+        outcome = await _reconcile_existing_job(session, client, run, state.job)
+        if outcome is not None:
+            return outcome
     if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
         return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
     retried = await _retry_for_reconciliation(session, client, run, stage)
@@ -1244,6 +1286,8 @@ async def drive_vault_pipeline(
     """
     if not client.supports(CreekCapability.PIPELINE):
         return
+    # ``PIPELINE`` is the wire-level discriminator: every production adapter
+    # advertising it implements the narrower polling protocol.
     pipeline_client = cast("CreekVaultPipelineClient", client)
     try:
         stages = await _pipeline_stages(session, user_id, trigger)
