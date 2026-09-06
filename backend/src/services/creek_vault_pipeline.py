@@ -195,10 +195,10 @@ _RETRY_INITIAL_SECONDS = 1.0
 _RETRY_MAX_SECONDS = 30.0
 _BACKGROUND_STAGE_BUDGET_SECONDS = 60.0
 
-type _TaskKey = tuple[int, VaultPipelineStage]
+_TaskKey = tuple[int, VaultPipelineStage]
 _BACKGROUND_TASKS: dict[_TaskKey, asyncio.Task[None]] = {}
 
-type VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultPipelineClient]]
+VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultPipelineClient]]
 
 # How long a whole deep pass may go on starting new stages, and the least time
 # worth starting one in. Both are the ``corpus_backfill`` idiom: a wall clock
