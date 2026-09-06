@@ -1384,3 +1384,14 @@ the encrypted marginalia column remains authoritative. Intimate prose cannot be
 constructed on the wire. If a source is reclassified intimate after a prior
 mirror, Adepthood retracts by external id at the widest representable ceiling,
 sending no prose at all.
+
+The final tier check and the mirror are serialized with transitions into the
+intimate tier for the same journal entry. A per-worker async lock supplies the
+SQLite and single-worker boundary; production PostgreSQL adds a session
+advisory lock on a dedicated `NullPool` connection so separate workers agree on
+the same ordering without consuming the application request pool. The request
+session remains committed across the bounded Creek call. Therefore one of two
+complete orders wins: the intimate PATCH commits first and the mirror observes
+it and skips, or the mirror finishes first and the PATCH then commits and
+retracts it. A delete-before-PUT interleaving cannot leave a late draft resident
+after its source has become intimate.

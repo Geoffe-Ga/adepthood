@@ -158,6 +158,30 @@ class _RecordingDraftVault(LocalFallbackCreekVaultClient):
         return VaultVoiceDraftDeleteResult(deleted=True)
 
 
+class _BlockingDraftVault(_RecordingDraftVault):
+    """Pause a draft PUT so a competing privacy PATCH can reach the race window."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.upsert_started = asyncio.Event()
+        self.finish_upsert = asyncio.Event()
+        self.operations: list[str] = []
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        self.upsert_started.set()
+        await self.finish_upsert.wait()
+        result = await super().upsert_voice_draft(request)
+        self.operations.append("put")
+        return result
+
+    async def delete_voice_draft(
+        self, external_id: str, tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        result = await super().delete_voice_draft(external_id, tier_ceiling)
+        self.operations.append("delete")
+        return result
+
+
 def _wire_vault(vault: _RecordingDraftVault) -> None:
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
 
@@ -168,7 +192,7 @@ async def test_new_essay_is_cached_then_mirrored_once(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The local commit lands before one capability-gated mirror attempt."""
+    """The essay commits before one serialized, capability-gated mirror attempt."""
     headers, user_id = await _signup(async_client, "draft_mirror")
     _entry_id, note_id = await _seed_note(db_session, user_id)
     llm = _EssayLLM()
@@ -385,3 +409,53 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
     assert expanded.status_code == HTTPStatus.OK
     assert expanded.json()["essay"] == _ESSAY
     assert vault.upserts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A privacy PATCH cannot delete-before-PUT and leave a late draft resident."""
+    headers, user_id = await _signup(concurrent_async_client, "draft_reverse_race")
+    async with concurrent_session_factory() as session:
+        entry_id, note_id = await _seed_note(session, user_id)
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _EssayLLM())
+    vault = _BlockingDraftVault()
+    _wire_vault(vault)
+
+    expansion = asyncio.create_task(
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay",
+            headers=headers,
+        )
+    )
+    await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
+    patch = asyncio.create_task(
+        concurrent_async_client.patch(
+            f"/journal/{entry_id}",
+            json={"classification": "intimate"},
+            headers=headers,
+        )
+    )
+
+    patch_was_serialized = False
+    try:
+        await asyncio.wait_for(asyncio.shield(patch), timeout=0.05)
+    except TimeoutError:
+        patch_was_serialized = True
+    finally:
+        vault.finish_upsert.set()
+
+    expanded = await expansion
+    patched = await patch
+
+    assert patch_was_serialized, "the privacy PATCH overtook the in-flight PUT"
+    assert expanded.status_code == HTTPStatus.OK
+    assert patched.status_code == HTTPStatus.OK
+    assert patched.json()["classification"] == "intimate"
+    assert vault.operations == ["put", "delete"]
+    assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]

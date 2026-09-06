@@ -28,6 +28,7 @@ from routers.auth import (
     _acquire_email_lock_pg,
     _advisory_lock_key,
 )
+from services.voice_draft_privacy import VoiceDraftPrivacySerializer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -119,6 +120,20 @@ async def test_sqlite_dialect_short_circuits_without_sql(
     assert advisory_calls == []
 
 
+@pytest.mark.asyncio
+async def test_voice_draft_serializer_uses_only_its_local_lock_on_sqlite(
+    db_session: AsyncSession, sql_recorder: _StatementRecorder
+) -> None:
+    """SQLite needs no advisory SQL and the request session stays transaction-free."""
+    serializer = VoiceDraftPrivacySerializer()
+
+    async with serializer.hold(db_session, 17):
+        assert not db_session.in_transaction()
+
+    advisory_calls = [s for s in sql_recorder.statements if re.search(r"pg_advisory", s)]
+    assert advisory_calls == []
+
+
 # ── Live Postgres serialization (gated on TEST_POSTGRES_URL) ────────────
 
 
@@ -188,3 +203,79 @@ async def test_pg_advisory_lock_distinct_emails_do_not_contend(pg_url: str) -> N
         await s2.close()
         await e1.dispose()
         await e2.dispose()
+
+
+@pytest.mark.asyncio
+async def test_pg_voice_draft_serializers_order_the_same_entry_across_workers(pg_url: str) -> None:
+    """Independent worker-local serializers still contend on one Postgres key."""
+    first = VoiceDraftPrivacySerializer()
+    second = VoiceDraftPrivacySerializer()
+    s1, e1 = await _open_pg_session(pg_url)
+    s2, e2 = await _open_pg_session(pg_url)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def _hold_first() -> None:
+        async with first.hold(s1, 42):
+            assert not s1.in_transaction(), "the lock borrowed the request session"
+            first_entered.set()
+            await release_first.wait()
+            await s1.commit()
+
+    async def _hold_second() -> None:
+        async with second.hold(s2, 42):
+            assert not s2.in_transaction(), "the lock borrowed the request session"
+            second_entered.set()
+            await s2.commit()
+
+    holder = asyncio.create_task(_hold_first())
+    try:
+        await asyncio.wait_for(first_entered.wait(), timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
+        contender = asyncio.create_task(_hold_second())
+        done, _pending = await asyncio.wait({contender}, timeout=_LOCK_HOLD_PROBE_SECONDS)
+        assert not done, "a second worker entered while the first held the entry lock"
+        assert not second_entered.is_set()
+
+        release_first.set()
+        await asyncio.wait_for(holder, timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
+        await asyncio.wait_for(contender, timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
+        assert second_entered.is_set()
+    finally:
+        release_first.set()
+        if not holder.done():
+            await holder
+        await s1.close()
+        await s2.close()
+        await e1.dispose()
+        await e2.dispose()
+
+
+@pytest.mark.asyncio
+async def test_pg_voice_draft_serializers_do_not_contend_across_entries(pg_url: str) -> None:
+    """The serializer scopes contention to one journal entry, not the whole fleet."""
+    first = VoiceDraftPrivacySerializer()
+    second = VoiceDraftPrivacySerializer()
+    s1, e1 = await _open_pg_session(pg_url)
+    s2, e2 = await _open_pg_session(pg_url)
+    try:
+        async with first.hold(s1, 100):
+            await asyncio.wait_for(
+                _enter_voice_draft_lock(second, s2, 101),
+                timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS,
+            )
+    finally:
+        await s1.close()
+        await s2.close()
+        await e1.dispose()
+        await e2.dispose()
+
+
+async def _enter_voice_draft_lock(
+    serializer: VoiceDraftPrivacySerializer,
+    session: AsyncSession,
+    entry_id: int,
+) -> None:
+    """Enter and immediately release one Voice Draft privacy lock."""
+    async with serializer.hold(session, entry_id):
+        await session.commit()

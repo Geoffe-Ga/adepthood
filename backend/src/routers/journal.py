@@ -127,6 +127,7 @@ from services.marginalia import (
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
+from services.voice_draft_privacy import voice_draft_privacy
 from services.wallet import (
     SpendResult,
     preflight_deduction,
@@ -721,6 +722,44 @@ async def update_journal_entry(
     re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
     refreshed.
     """
+    if payload.classification == JournalClassification.INTIMATE:
+        async with voice_draft_privacy.hold(session, entry_id):
+            entry, previous_classification = await _persist_entry_update(
+                entry_id,
+                payload,
+                current_user,
+                session,
+            )
+    else:
+        entry, previous_classification = await _persist_entry_update(
+            entry_id,
+            payload,
+            current_user,
+            session,
+        )
+    # Re-ingest only when the body or privacy tier changed; a title/status/chord
+    # PATCH leaves the vault's copy and the corpus fragment untouched (and
+    # issues zero vault calls and zero classifications).
+    if payload.model_fields_set & _REINGEST_FIELDS:
+        await _record_vault_outcome(session, entry, vault_client)
+        await _record_corpus_fragment(session, entry)
+    await _retract_newly_intimate_entry(
+        session,
+        entry,
+        vault_client,
+        became_intimate=_became_intimate(previous_classification, entry.classification),
+    )
+    logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
+    return entry
+
+
+async def _persist_entry_update(
+    entry_id: int,
+    payload: JournalEntryUpdate,
+    current_user: int,
+    session: AsyncSession,
+) -> tuple[JournalEntry, str]:
+    """Load, apply, and commit one owned update inside any caller-held privacy lock."""
     result = await session.execute(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
@@ -745,20 +784,7 @@ async def update_journal_entry(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    # Re-ingest only when the body or privacy tier changed; a title/status/chord
-    # PATCH leaves the vault's copy and the corpus fragment untouched (and
-    # issues zero vault calls and zero classifications).
-    if payload.model_fields_set & _REINGEST_FIELDS:
-        await _record_vault_outcome(session, entry, vault_client)
-        await _record_corpus_fragment(session, entry)
-    await _retract_newly_intimate_entry(
-        session,
-        entry,
-        vault_client,
-        became_intimate=_became_intimate(previous_classification, entry.classification),
-    )
-    logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
-    return entry
+    return entry, previous_classification
 
 
 def _became_intimate(previous: str, current: str) -> bool:
@@ -1712,20 +1738,22 @@ async def expand_marginalia_essay(
     if entry.classification == JournalClassification.INTIMATE:
         return note
     cached = await _cache_essay(session, note, entry.message, clients.api_key)
-    # Generation may outlive a concurrent privacy PATCH. Re-read the source tier
-    # only after the authoritative essay has committed, so a handler that began
-    # on PERSONAL cannot mirror with that stale tier after the entry became
-    # INTIMATE. Both refreshes open transactions, so close the transaction before
-    # the optional vault call; a slow vault must never hold a pooled connection.
-    await session.refresh(entry)
-    await session.commit()
-    await mirror_voice_draft(
-        clients.vault_client,
-        owner_user_id=current_user,
-        marginalia_id=cast("int", cached.id),
-        essay=cast("str", cached.essay),
-        classification=entry.classification,
-    )
+    # Generation may outlive a concurrent privacy PATCH. Serialize the final
+    # tier read and mirror against transitions to INTIMATE: if the PATCH won it
+    # commits first and this skips; if this won, the PATCH waits and retracts
+    # only after the PUT finishes. The request transaction is committed before
+    # Creek I/O; PostgreSQL holds the cross-worker lock on a non-pooled,
+    # dedicated connection rather than consuming the application pool.
+    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+        await session.refresh(entry)
+        await session.commit()
+        await mirror_voice_draft(
+            clients.vault_client,
+            owner_user_id=current_user,
+            marginalia_id=cast("int", cached.id),
+            essay=cast("str", cached.essay),
+            classification=entry.classification,
+        )
     return cached
 
 
