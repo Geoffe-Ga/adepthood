@@ -95,6 +95,8 @@ export function resonancePayload(overrides: Partial<ResonanceResponse> = {}): Re
     monthly_reset_date: '2026-07-01T00:00:00Z',
     care: null,
     contraction: null,
+    related_praxis: [],
+    related_eddies: [],
     // A pass that kept notes carries no explanation; specs that need the
     // zero-note sentence override it, and one deletes it to prove an omitted
     // field is normalised rather than leaked through as ``undefined``.

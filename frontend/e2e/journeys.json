@@ -171,6 +171,18 @@
     "issue": 2408
   },
   {
+    "id": "journal.see-related-vault-pages",
+    "description": "A writer asks for resonance and, when their connected Creek vault recognises a compiled praxis or a recurring eddy in the entry, finds those related pages offered in a collapsed, display-only band beside the journal page. Expanding it shows the page titles, quiet lifecycle or fragment context, and excerpts without turning a pattern into a task. Empty and pre-vault responses leave no band behind. Uncovered in the real-wire lane for the same provider boundary as journal.ask-for-resonance: the lane has neither a deterministic language-model reflection provider nor a Creek service seeded with compiled pages, so it cannot make POST /journal/{entry_id}/resonance return either related collection. The component, hook, and rendered-screen contracts are pinned by the Jest specs beside JournalEntryScreen while #2408 tracks the missing deterministic provider seam.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["journalentry", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 2408
+  },
+  {
     "id": "practice.log-session",
     "description": "A practitioner logs a practice session and finds it in the week's record.",
     "crosses": {
