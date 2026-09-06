@@ -76,6 +76,37 @@ describe('config', () => {
     });
   });
 
+  describe('habit demo mode', () => {
+    const ORIGINAL_ENV = { ...process.env };
+
+    beforeEach(() => {
+      jest.resetModules();
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.EXPO_PUBLIC_HABIT_DEMO_MODE;
+    });
+
+    afterEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      jest.resetModules();
+    });
+
+    it('is disabled by default so production failures cannot fabricate habit history', () => {
+      expect(loadConfig().HABIT_DEMO_MODE).toBe(false);
+    });
+
+    it('enables demo fixtures only for the explicit true value', () => {
+      process.env.EXPO_PUBLIC_HABIT_DEMO_MODE = 'true';
+
+      expect(loadConfig().HABIT_DEMO_MODE).toBe(true);
+    });
+
+    it.each(['1', 'yes', 'enabled', 'false'])('keeps the ambiguous value %s disabled', (value) => {
+      process.env.EXPO_PUBLIC_HABIT_DEMO_MODE = value;
+
+      expect(loadConfig().HABIT_DEMO_MODE).toBe(false);
+    });
+  });
+
   describe('Gumroad URLs', () => {
     const ORIGINAL_ENV = { ...process.env };
     const CUSTOM_PRODUCT_URL = 'https://store.example.com/l/adepthood';

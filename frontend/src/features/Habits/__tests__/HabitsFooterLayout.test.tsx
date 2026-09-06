@@ -43,13 +43,18 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
-// An empty server list makes the loader seed the demo-fallback defaults, which
-// are ten habits -- enough for a multi-page span, so the in-body pagination bar
-// renders. paginationVisibilityStorage is deliberately NOT mocked so the bar's
+// This layout suite deliberately exercises the explicit demo build. An
+// unreachable server and empty cache expose ten fixture rows -- enough for a
+// multi-page span, so the in-body pagination bar renders.
+// paginationVisibilityStorage is deliberately NOT mocked so the bar's
 // persisted-visible default (true) stands.
+jest.mock('../../../config', () => ({
+  ...(jest.requireActual('../../../config') as object),
+  HABIT_DEMO_MODE: true,
+}));
 jest.mock('../../../api', () => ({
   habits: {
-    listAll: jest.fn(() => Promise.resolve([])),
+    listAll: jest.fn(() => Promise.reject(new Error('offline'))),
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),

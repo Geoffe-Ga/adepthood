@@ -274,6 +274,7 @@ In the frontend service's **Variables** tab, add:
 | Variable | Value | Notes |
 |----------|-------|-------|
 | `EXPO_PUBLIC_API_BASE_URL` | `https://your-backend.up.railway.app` | The backend service URL |
+| `EXPO_PUBLIC_HABIT_DEMO_MODE` | `false` | Optional. Set to exact `true` only for a deliberate disconnected demo; never enable for a normal deployment because its habits and history are fictional |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://creekmasons.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
@@ -770,6 +771,7 @@ journal_encryption_enabled=True
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `EXPO_PUBLIC_API_BASE_URL` | Yes | Origin of the backend API — scheme and host, no trailing path. This deployment's value is the API origin in [Production origins](#production-origins). Baked in at build time, so it is public in the shipped bundle. |
+| `EXPO_PUBLIC_HABIT_DEMO_MODE` | No | Defaults to `false`. The exact value `true` enables fictional habit fixtures only after a failed request with no real cache. Keep disabled outside a purpose-built demo; a successful empty response is always rendered truthfully. |
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | No | Gumroad product page opened by the Get Started CTA. Defaults to `https://creekmasons.gumroad.com/l/aptitude`. |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | No | Gumroad help article linked from the signup form's "Where's my key?" link. Defaults to `https://help.gumroad.com/article/76-license-keys`. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | For Google sign-in on web | Google **Web application** client ID. Baked in at build time and declared as an `ARG` in `frontend/Dockerfile`; unset means "Continue with Google" never renders. |

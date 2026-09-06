@@ -52,6 +52,12 @@ ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
 ARG EXPO_PUBLIC_SANGHA_INVITE_URL
 ENV EXPO_PUBLIC_SANGHA_INVITE_URL=$EXPO_PUBLIC_SANGHA_INVITE_URL
 
+# Fictional habit history is never a network fallback. It is available only to
+# purpose-built demo deployments whose public build configuration says so;
+# omitted (the production default) means disabled.
+ARG EXPO_PUBLIC_HABIT_DEMO_MODE
+ENV EXPO_PUBLIC_HABIT_DEMO_MODE=$EXPO_PUBLIC_HABIT_DEMO_MODE
+
 # The Gumroad URLs were previously left undeclared on the grounds that their
 # defaults were safe. That held only while no storefront existed: the default
 # named an account subdomain nobody owned, so the pre-auth CTA opened a 404 and

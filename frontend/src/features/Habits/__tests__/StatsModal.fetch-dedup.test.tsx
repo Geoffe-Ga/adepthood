@@ -11,6 +11,11 @@ import type * as ApiModule from '../../../api';
 import { useHabitStore } from '../../../store/useHabitStore';
 import HabitsScreen from '../HabitsScreen';
 
+jest.mock('../../../config', () => ({
+  ...(jest.requireActual('../../../config') as object),
+  HABIT_DEMO_MODE: true,
+}));
+
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
   headerLeftStore.listeners.add(onChange);
   return () => headerLeftStore.listeners.delete(onChange);
@@ -199,8 +204,9 @@ describe('Habits stats modal fetch dedup', () => {
 
 describe('Habits stats modal on a demo-seed tile', () => {
   it('renders locally generated stats without asking the server for them', async () => {
-    // No cache and no server rows seeds the ten demo tiles, whose ids are fabricated.
-    mockListAll.mockImplementation(() => Promise.resolve([]));
+    // Explicit demo mode plus no cache and an unreachable server seeds the ten
+    // fixture tiles, whose ids are fabricated.
+    mockListAll.mockImplementation(() => Promise.reject(new Error('offline')));
     const screen = render(<HabitsScreenWithHeader />);
 
     await openStatsOnFirstTile(screen);
