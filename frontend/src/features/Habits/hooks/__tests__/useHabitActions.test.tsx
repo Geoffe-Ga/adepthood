@@ -626,6 +626,30 @@ describe('useHabitActions — referential stability', () => {
     expect(result.current.ui.emojiHabitIndex).toBeNull();
   });
 
+  it('hands a stated plan to the merge instead of flattening it back to picks', async () => {
+    // The modal states a plan once it has shown the user their habits and
+    // asked. If this adapter narrowed that back to bare picks, the release the
+    // user confirmed would be re-derived as "a row the picks never mentioned"
+    // -- retained, not deleted -- and the confirmation would have lied.
+    useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+    const { habits: habitsApi } = jest.requireMock('../../../../api') as {
+      habits: { delete: jest.Mock; create: jest.Mock };
+    };
+    habitsApi.delete.mockClear();
+    habitsApi.create.mockClear();
+    const { result } = renderActionsStable();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await result.current.actions.onboardingSave([{ kind: 'released', habitId: 1 }]);
+    });
+
+    expect(habitsApi.delete).toHaveBeenCalledWith(1);
+    expect(habitsApi.create).not.toHaveBeenCalled();
+  });
+
   it('keeps logUnit and onboardingSave stable across a re-render', async () => {
     const { result, rerender } = renderActionsStable();
     await act(async () => {

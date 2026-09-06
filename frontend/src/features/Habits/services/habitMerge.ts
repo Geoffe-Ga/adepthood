@@ -216,7 +216,7 @@ export const deriveMergePlan = (
  * the normal state of an abstention habit: nothing to record is the success,
  * and the run is measured from the start date rather than from any row.
  */
-const hasBegun = (habit: Habit): boolean =>
+export const hasBegun = (habit: Habit): boolean =>
   (habit.completions?.length ?? 0) > 0 || (habit.streak ?? 0) > 0;
 
 const carryKept = (original: Habit, pick: OnboardingHabit, keepsItsOwnLap: boolean): Habit => ({
@@ -225,6 +225,19 @@ const carryKept = (original: Habit, pick: OnboardingHabit, keepsItsOwnLap: boole
   icon: pick.icon,
   energy_cost: pick.energy_cost,
   energy_return: pick.energy_return,
+  // Which lap the habit belongs on is the thing these two kinds differ ABOUT,
+  // so both of them write it and the fork runs in both directions. Every plan
+  // derived from bare picks writes back the value the row already held, because
+  // the derivation chooses the kind FROM that value; what this makes possible
+  // is a caller that asked. A user saying a habit is already part of them has
+  // to be able to move it onto the negative laps, and a user re-rating one has
+  // to be able to bring it back -- a destination that silently does nothing is
+  // not a destination.
+  //
+  // The lap and the beginning are separate writes on purpose. Only the date can
+  // reset a streak, so the guard below withholds it independently: moving the
+  // lap is what the user asked for, moving the beginning is not.
+  is_carryover: keepsItsOwnLap,
   ...(keepsItsOwnLap || hasBegun(original)
     ? {}
     : { stage: pick.stage, start_date: pick.start_date }),
@@ -276,6 +289,22 @@ const stampPickedSlots = (rows: readonly Habit[], picked: ReadonlySet<number>): 
     return slot === undefined ? row : { ...row, sort_order: slot };
   });
 };
+
+/**
+ * A row that changed lap this pass holds no position in the lap it just
+ * entered. ``sort_order`` restarts at zero inside each partition, so a program
+ * slot carried across onto the carryover lap collides with whatever carryover
+ * row already holds that number -- two habits claiming one place, and the
+ * server's ascending sort breaking the tie however it likes.
+ */
+const clearSlotOnLapChange = (rows: readonly Habit[], byId: ReadonlyMap<number, Habit>): Habit[] =>
+  rows.map((row) => {
+    const original = byId.get(row.id);
+    if (original === undefined || isNotCarryoverHabit(row) === isNotCarryoverHabit(original)) {
+      return row;
+    }
+    return { ...row, sort_order: null };
+  });
 
 /** A disposition that keeps a row the store already holds. */
 type KeptDisposition = Exclude<HabitDisposition, { kind: 'new' } | { kind: 'released' }>;
@@ -399,14 +428,17 @@ export const planHabitMerge = (plan: HabitMergePlan, existing: readonly Habit[])
     ...plan.flatMap((d) => ('habit' in d && 'habitId' in d ? [d.habitId] : [])),
   ]);
   const nextStore = stampPickedSlots(
-    [
-      ...carried,
-      ...unmentionedRows(
-        existing,
-        namedHabitIds(plan),
-        new Set(carried.map((r) => nameKey(r.name))),
-      ),
-    ],
+    clearSlotOnLapChange(
+      [
+        ...carried,
+        ...unmentionedRows(
+          existing,
+          namedHabitIds(plan),
+          new Set(carried.map((r) => nameKey(r.name))),
+        ),
+      ],
+      byId,
+    ),
     picked,
   );
 
