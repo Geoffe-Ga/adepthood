@@ -93,6 +93,11 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
   'features/Journal/CompletionSuggestionNote.tsx::streak',
+  // Audited: the expanded Creek panel's section eyebrow and lifecycle/count
+  // captions are read-only metadata. Its only tap target is the collapsed
+  // header, whose two labels both use editorialType.action.
+  'features/Journal/FromYourCreekPanel.tsx::caption',
+  'features/Journal/FromYourCreekPanel.tsx::sectionHeading',
   'features/Journal/JournalEntry.styles.ts::aspectChordSectionLabel',
   'features/Journal/JournalEntry.styles.ts::loadErrorText',
   'features/Journal/JournalEntry.styles.ts::marginError',
