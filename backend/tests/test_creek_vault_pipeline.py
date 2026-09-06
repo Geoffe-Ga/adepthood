@@ -678,6 +678,58 @@ async def test_concurrent_triggers_submit_only_one_pass_per_user_and_stage(
 
 
 @pytest.mark.asyncio
+async def test_the_partial_unique_index_rejects_a_stale_duplicate_and_rolls_back(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The database backstop catches a race and leaves the session reusable.
+
+    Force the scheduling read to return the stale answer a real race loser saw
+    before its peer committed. The second attempt must reach the actual partial
+    unique index, be swallowed by the best-effort boundary, and roll back; the
+    query below then proves the same session is healthy and only the winner's
+    durable row survived.
+    """
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage=VaultPipelineStage.CLASSIFY.value,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _stale_due_answer(
+        _session: AsyncSession,
+        _user_id: int,
+        _trigger: VaultPipelineTrigger,
+    ) -> tuple[VaultPipelineStage, ...]:
+        return (VaultPipelineStage.CLASSIFY,)
+
+    monkeypatch.setattr(pipeline, "_pipeline_stages", _stale_due_answer)
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+
+    await drive_vault_pipeline(
+        db_session,
+        client,
+        user_id=_OWNER,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+    )
+
+    assert recorder.requests == []
+    rows = await _rows(db_session)
+    assert len(rows) == 1
+    assert rows[0].outcome == VaultPipelineOutcome.ATTEMPTED
+
+
+@pytest.mark.asyncio
 async def test_an_import_joins_a_journal_classification_without_losing_its_deep_stages(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

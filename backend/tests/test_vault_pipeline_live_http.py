@@ -313,13 +313,45 @@ async def _pipeline_rows(
         return list(result.scalars().all())
 
 
+async def _submit_writes_while_jobs_continue(
+    client: httpx.AsyncClient,
+    headers: tuple[dict[str, str], dict[str, str]],
+    peers: tuple[_SlowCreekPeer, _SlowCreekPeer],
+) -> tuple[httpx.Response, httpx.Response]:
+    """Submit both writes and prove their accepted jobs are still in flight."""
+    journal_headers, import_headers = headers
+    started = time.monotonic()
+    responses = await asyncio.gather(
+        client.post(
+            "/journal/",
+            json={"message": _JOURNAL_TEXT, "classification": "public"},
+            headers=journal_headers,
+        ),
+        client.post(
+            "/corpus/import",
+            json={
+                "filename": "community-notes.md",
+                "content_base64": base64.b64encode(_DOCUMENT_TEXT.encode()).decode(),
+                "classification": "personal",
+            },
+            headers=import_headers,
+        ),
+    )
+    assert time.monotonic() - started < _CLASSIFICATION_SECONDS
+    assert all(peer.classification_elapsed is None for peer in peers)
+    return responses
+
+
 @pytest.mark.asyncio
 async def test_slow_creek_jobs_converge_journal_and_import_over_live_http(
     concurrent_async_client: httpx.AsyncClient,  # noqa: ARG001 - provisions the live app DB
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both real HTTP write paths outlive ten seconds, land labels, and finish."""
+    """Both writes answer before their real ten-second jobs land, then converge."""
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.5)
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.5)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
     monkeypatch.setattr(pipeline, "_JOB_POLL_MAX_SECONDS", 1.0)
     journal_peer = _SlowCreekPeer()
     import_peer = _SlowCreekPeer()
@@ -351,22 +383,10 @@ async def test_slow_creek_jobs_converge_journal_and_import_over_live_http(
 
             app.dependency_overrides[get_creek_vault_client] = _vault_for_user
             try:
-                journal_request = client.post(
-                    "/journal/",
-                    json={"message": _JOURNAL_TEXT, "classification": "public"},
-                    headers=journal_headers,
-                )
-                import_request = client.post(
-                    "/corpus/import",
-                    json={
-                        "filename": "community-notes.md",
-                        "content_base64": base64.b64encode(_DOCUMENT_TEXT.encode()).decode(),
-                        "classification": "personal",
-                    },
-                    headers=import_headers,
-                )
-                journal_response, import_response = await asyncio.gather(
-                    journal_request, import_request
+                journal_response, import_response = await _submit_writes_while_jobs_continue(
+                    client,
+                    (journal_headers, import_headers),
+                    (journal_peer, import_peer),
                 )
                 await pipeline.wait_for_vault_pipeline_tasks()
             finally:
