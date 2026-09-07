@@ -36,14 +36,14 @@ it explicitly:
 E2E_PYTHON=/path/to/adepthood/.venv/bin/python npm run test:e2e
 ```
 
-## What is real, and the one thing that is not
+## What is real, and the two external boundaries that are not
 
 Real: the routers, the middleware stack, CORS, session handling, the Pydantic
 schemas, the migrations, the startup seeders, the JWTs, bcrypt password hashing,
 Postgres constraints — and, on the client side, every wrapper, header, query
 string and Zod schema in `src/api/index.ts`.
 
-Stubbed: exactly one function, `routers.auth.verify_aptitude_license`. Signup is
+Stubbed in-process: exactly one function, `routers.auth.verify_aptitude_license`. Signup is
 gated on a live HTTPS call to Gumroad's license API, and an e2e lane that
 depended on a third party's uptime would be a flake generator. `backend/conftest.py`
 stubs the same seam for the same reason. Everything the gate does with the
@@ -55,6 +55,14 @@ per client address and every journey here shares `127.0.0.1`, so leaving it
 armed would make "how many journeys exist" a hidden global constraint: one more
 journey, or one retry, would start failing on a cap rather than on a defect.
 Rate limiting keeps its own tests in the backend suite.
+
+The private-vault activation journey also starts an isolated fake Creek control
+plane on a kernel-selected loopback port. Adepthood still uses its production
+HTTP provisioning client, bearer files, contract-version header, routers,
+Postgres lifecycle, and authenticated one-way handoff endpoint; only Creek's
+external allocator is represented by the fake. The fake rejects a ceremony body
+containing passphrase or recovery-key fields, returns `attested_confidential:
+false`, and is killed with its generated credential directory at teardown.
 
 `frontend/__tests__/e2eLaneGuard.test.ts` enforces both of those boundaries
 mechanically. It runs in the ordinary frontend suite and fails if a journey ever

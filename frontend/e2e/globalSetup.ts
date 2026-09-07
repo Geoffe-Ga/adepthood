@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import globalTeardown from './globalTeardown';
 import {
@@ -24,6 +27,7 @@ const READY_PREFIX = 'E2E_READY port=';
 const BOOT_TIMEOUT_MS = 180_000;
 const SECRET_KEY_BYTES = 32;
 const DATABASE_SUFFIX_BYTES = 6;
+const CREDENTIAL_BYTES = 32;
 
 const POSTGRES_HELP =
   `${POSTGRES_URL_ENV} is unset, so there is no database to build the schema in. ` +
@@ -65,8 +69,68 @@ interface Launch {
   port: number;
 }
 
+interface CreekFixture {
+  pid: number;
+  port: number;
+  credentialDir: string;
+  requesterFile: string;
+  handoffFile: string;
+  callbackFile: string;
+}
+
+function testCredential(): string {
+  return randomBytes(CREDENTIAL_BYTES).toString('base64url');
+}
+
+function createCredentialFiles(): Omit<CreekFixture, 'pid' | 'port'> {
+  const credentialDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-creek-'));
+  const requesterFile = join(credentialDir, 'requester-token');
+  const handoffFile = join(credentialDir, 'handoff-token');
+  const callbackFile = join(credentialDir, 'callback-url');
+  writeFileSync(requesterFile, testCredential(), { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(handoffFile, testCredential(), { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(callbackFile, '', { encoding: 'utf8', mode: 0o600 });
+  return { credentialDir, requesterFile, handoffFile, callbackFile };
+}
+
+function launchFakeCreek(): Promise<CreekFixture> {
+  const files = createCredentialFiles();
+  const child = spawn(process.execPath, [join(__dirname, 'fakeCreekServer.mjs')], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      FAKE_CREEK_REQUESTER_AUTH_FILE: files.requesterFile,
+      FAKE_CREEK_HANDOFF_AUTH_FILE: files.handoffFile,
+      FAKE_CREEK_CALLBACK_FILE: files.callbackFile,
+    },
+  });
+  return new Promise<CreekFixture>((resolvePort, reject) => {
+    let log = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), BOOT_TIMEOUT_MS);
+    const fail = (reason: string): void => {
+      clearTimeout(timer);
+      rmSync(files.credentialDir, { recursive: true, force: true });
+      reject(new Error(`${reason}\n--- fake Creek output ---\n${log}`));
+    };
+    const onChunk = (chunk: Buffer): void => {
+      log += chunk.toString();
+      const match = /FAKE_CREEK_READY port=(\d+)/u.exec(log);
+      if (!match?.[1]) return;
+      clearTimeout(timer);
+      resolvePort({ ...files, pid: child.pid ?? 0, port: Number(match[1]) });
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('exit', (code, signal) =>
+      fail(`fake Creek exited (${String(code)}, ${String(signal)}) before ready`),
+    );
+    child.on('error', (error: Error) => fail(`could not start fake Creek: ${error.message}`));
+  });
+}
+
 /** Spawn the server and resolve once it announces the port it bound. */
-function launchServer(databaseUrl: string, adminUrl: string): Promise<Launch> {
+function launchServer(databaseUrl: string, adminUrl: string, creek: CreekFixture): Promise<Launch> {
   const child = spawn(pythonExecutable(), ['-m', 'tests.e2e.server'], {
     cwd: BACKEND_DIR,
     detached: true,
@@ -77,6 +141,9 @@ function launchServer(databaseUrl: string, adminUrl: string): Promise<Launch> {
       DATABASE_URL: databaseUrl,
       E2E_ADMIN_DATABASE_URL: adminUrl,
       SECRET_KEY: randomBytes(SECRET_KEY_BYTES).toString('base64url'),
+      CREEK_PROVISIONING_URL: `http://127.0.0.1:${creek.port}`,
+      CREEK_PROVISIONING_AUTH_FILE: creek.requesterFile,
+      CREEK_PROVISIONING_HANDOFF_AUTH_FILE: creek.handoffFile,
     },
   });
 
@@ -122,13 +189,31 @@ export default async function globalSetup(): Promise<void> {
     `adepthood_e2e_${randomBytes(DATABASE_SUFFIX_BYTES).toString('hex')}`,
   );
 
-  const { pid, port } = await launchServer(databaseUrl, adminUrl);
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const state: LaneState = { pid, baseUrl, databaseUrl, adminUrl };
-  writeLaneState(state);
+  const creek = await launchFakeCreek();
+  writeLaneState({
+    pid: 0,
+    creekPid: creek.pid,
+    baseUrl: '',
+    databaseUrl,
+    adminUrl,
+    credentialDir: creek.credentialDir,
+  });
 
   try {
+    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    writeFileSync(creek.callbackFile, baseUrl, { encoding: 'utf8', mode: 0o600 });
+    const state: LaneState = {
+      pid,
+      creekPid: creek.pid,
+      baseUrl,
+      databaseUrl,
+      adminUrl,
+      credentialDir: creek.credentialDir,
+    };
+    writeLaneState(state);
     await assertHealthy(baseUrl);
+    process.env.EXPO_PUBLIC_API_BASE_URL = baseUrl;
   } catch (error: unknown) {
     // Jest runs globalTeardown only after a globalSetup that returned, so a
     // server that booted but answers wrong would otherwise outlive the run.
@@ -136,8 +221,6 @@ export default async function globalSetup(): Promise<void> {
     throw error;
   }
 
-  // Read by `src/config.ts` at import time, and inlined into the compiled module
-  // by babel-preset-expo -- which is why the lane disables Jest's transform
-  // cache. Workers are forked after this runs, so they inherit the value.
-  process.env.EXPO_PUBLIC_API_BASE_URL = baseUrl;
+  // The API base is set inside the successful setup block so workers inherit
+  // only a server that passed its real health probe.
 }

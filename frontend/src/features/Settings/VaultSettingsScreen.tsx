@@ -105,6 +105,7 @@ import {
 } from './vaultCopy';
 
 import { ApiError, vault } from '@/api';
+import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import {
@@ -117,6 +118,7 @@ import {
   touchTarget,
   type as typeRamp,
 } from '@/design/tokens';
+import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** The status every refusal on this seam arrives with; other faults are generic. */
 const HTTP_UNPROCESSABLE = 422;
@@ -696,8 +698,34 @@ const VaultConnectionNotice = ({
   );
 };
 
-/** What the read found, plus the form, which is offered in every state. */
-const VaultConnectionSection = (controller: VaultController): React.JSX.Element => {
+interface VaultNavigation {
+  navigate?: (_screen: keyof RootStackParamList) => void;
+}
+
+const ManagedActivationOffer = ({ onOpen }: { onOpen: () => void }): React.JSX.Element => (
+  <View style={styles.activationOffer} testID="managed-vault-offer">
+    <Text style={styles.formHeading}>Let Adepthood create one</Text>
+    <Text style={settingsFormStyles.body}>
+      Start an optional Creek vault with a recovery key that only you receive. Setup happens after
+      signup, and your journal remains available throughout.
+    </Text>
+    <Button
+      label="Create a private vault"
+      onPress={onOpen}
+      testID="open-vault-activation"
+      accessibilityLabel="Create an optional private vault"
+    />
+  </View>
+);
+
+/** What the read found, plus managed activation and the bring-your-own form. */
+const VaultConnectionSection = ({
+  controller,
+  navigation,
+}: {
+  controller: VaultController;
+  navigation?: VaultNavigation;
+}): React.JSX.Element => {
   const { state, form } = controller;
   return (
     <>
@@ -706,6 +734,9 @@ const VaultConnectionSection = (controller: VaultController): React.JSX.Element 
         busy={form.submitting}
         onRequestDisconnect={controller.onRequestDisconnect}
       />
+      {state.kind === 'none' ? (
+        <ManagedActivationOffer onOpen={() => navigation?.navigate?.('VaultActivation')} />
+      ) : null}
       <VaultConnectForm
         heading={connectHeading(state)}
         address={form.draft}
@@ -723,7 +754,11 @@ const VaultConnectionSection = (controller: VaultController): React.JSX.Element 
   );
 };
 
-const VaultSettingsScreen = (): React.JSX.Element => {
+const VaultSettingsScreen = ({
+  navigation,
+}: {
+  navigation?: VaultNavigation;
+}): React.JSX.Element => {
   const controller = useVaultConnection();
   return (
     <ScreenScaffold scroll testID="vault-settings-screen">
@@ -733,7 +768,7 @@ const VaultSettingsScreen = (): React.JSX.Element => {
           <ActivityIndicator size="large" />
         </View>
       ) : (
-        <VaultConnectionSection {...controller} />
+        <VaultConnectionSection controller={controller} navigation={navigation} />
       )}
     </ScreenScaffold>
   );
@@ -765,6 +800,14 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
     marginBottom: SPACING.xl,
     backgroundColor: surface.raised,
+  },
+  activationOffer: {
+    backgroundColor: surface.sunken,
+    borderWidth: 1,
+    borderColor: surface.hairline,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.xl,
   },
   cardLabel: {
     fontSize: 12,

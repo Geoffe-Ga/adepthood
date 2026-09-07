@@ -529,5 +529,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/vault-connection.e2e.test.ts"
+  },
+  {
+    "id": "vault.activate-with-user-held-recovery",
+    "description": "An authenticated user chooses private-vault activation from Settings after signup, sees that it is optional and that INTIMATE processing is still unavailable, and explicitly starts an allocation. The production client crosses the live Adepthood API and Postgres lifecycle into an isolated fake Creek control plane, resumes at the client-held ceremony, submits only a protocol-shaped wrapped artifact after recovery acknowledgement, receives the one-way connection handoff, and renders the capability Creek actually verified rather than one inferred by the client. Unit journeys beside PrivateVaultActivationScreen pin the one-time recovery display, cancel-without-allocation, restart-without-secrets, accessibility, and web/iOS/Android recovery actions; this seam spec pins every route and schema between that screen and the two services.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/PrivateVaultActivationScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vaultActivation"],
+      "routes": [
+        "GET /vault/activation",
+        "POST /vault/activation",
+        "GET /vault/activation/key-ceremony",
+        "PUT /vault/activation/key-ceremony"
+      ],
+      "tables": ["user", "vaultactivation", "uservaultconfig"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-activation.e2e.test.ts"
   }
 ]

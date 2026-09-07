@@ -9,12 +9,16 @@ import { join, resolve } from 'node:path';
 export interface LaneState {
   /** Process group leader of the server, killed as a group at teardown. */
   pid: number;
+  /** Process group leader of the isolated fake Creek control plane. */
+  creekPid: number;
   /** Loopback origin the production client is pointed at. */
   baseUrl: string;
   /** URL of the throwaway database the run owns. */
   databaseUrl: string;
   /** URL of a database that already exists, used only to drop the throwaway one. */
   adminUrl: string;
+  /** Per-run directory containing only generated control-plane test credentials. */
+  credentialDir: string;
 }
 
 /** Repository root, three levels up from `frontend/e2e`. */
