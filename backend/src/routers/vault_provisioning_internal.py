@@ -26,6 +26,13 @@ router = build_router(
     tags=["internal-vault-provisioning"],
     extra_statuses=(status.HTTP_409_CONFLICT,),
 )
+_TERMINAL_HANDOFF_STATES = frozenset(
+    {
+        VaultActivationState.FAILED.value,
+        VaultActivationState.DELETING.value,
+        VaultActivationState.DELETED.value,
+    }
+)
 
 
 def _unauthorized_handoff() -> HTTPException:
@@ -85,6 +92,8 @@ async def _persist_handoff(
     payload: CreekConnectionHandoff,
 ) -> None:
     """Persist one idempotent encrypted handoff and settle its activation."""
+    if activation.state in _TERMINAL_HANDOFF_STATES:
+        raise conflict("invalid_transition")
     existing = await load_vault_config(session, activation.user_id)
     if _connection_conflicts(existing, payload):
         raise conflict("provisioning_handoff_conflict")

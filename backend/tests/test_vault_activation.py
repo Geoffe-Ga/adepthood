@@ -58,6 +58,7 @@ class FakeProvisioningClient:
         self.calls: list[tuple[str, str]] = []
         self.jobs: dict[str, CreekProvisioningJob] = {}
         self.fail_activate = False
+        self.reject_activate = False
         self.fail_delete = False
         self.fail_ceremony_code: str | None = None
         self.last_ceremony_submission: VaultKeyCeremonySubmission | None = None
@@ -73,6 +74,8 @@ class FakeProvisioningClient:
         self.calls.append(("activate", f"{activation_id}:{consumer_identity}"))
         if self.fail_activate:
             raise ProvisioningUnavailableError("provisioning unavailable")
+        if self.reject_activate:
+            raise ProvisioningRejectedError("provisioning rejected")
         existing = self.jobs.get(activation_id)
         if existing is not None:
             return existing
@@ -207,7 +210,11 @@ async def _handoff(
     return response.status_code
 
 
-def _ceremony_payload(activation_id: str) -> dict[str, object]:
+def _ceremony_payload(
+    activation_id: str,
+    *,
+    attested: bool = False,
+) -> dict[str, object]:
     """Return a protocol-valid ciphertext-only completion body."""
     binding = {
         "protocol_version": "1.0.0",
@@ -216,7 +223,7 @@ def _ceremony_payload(activation_id: str) -> dict[str, object]:
         "server_nonce": "A" * 43,
         "client_nonce": "B" * 43,
     }
-    return {
+    payload: dict[str, object] = {
         "protocol_version": "1.0.0",
         "ceremony_id": "ceremony-001",
         "server_nonce": "A" * 43,
@@ -243,6 +250,25 @@ def _ceremony_payload(activation_id: str) -> dict[str, object]:
         "attestation": None,
         "key_release": None,
     }
+    if attested:
+        recipient_public_key = "D" * 43
+        payload["attestation"] = {
+            "format": "creek-ed25519-x25519-v1",
+            "measurement": "measurement-001",
+            "challenge_nonce": "C" * 43,
+            "recipient_public_key": recipient_public_key,
+            "issued_at": "2026-09-07T00:00:00Z",
+            "expires_at": "2026-09-08T00:00:00Z",
+            "signature": "E" * 86,
+        }
+        payload["key_release"] = {
+            "algorithm": "x25519-hkdf-sha256-aes256gcm",
+            "recipient_public_key": recipient_public_key,
+            "ephemeral_public_key": "F" * 43,
+            "nonce": "G" * 16,
+            "ciphertext": "H" * 64,
+        }
+    return payload
 
 
 @pytest.mark.asyncio
@@ -260,7 +286,7 @@ async def test_signup_and_first_journal_save_make_zero_provisioning_calls(
         json={"message": "A first entry remains available.", "classification": "personal"},
     )
 
-    assert journal.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}
+    assert journal.status_code == HTTPStatus.CREATED
     assert creek_client.calls == []
     assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
 
@@ -339,7 +365,27 @@ async def test_provider_outage_is_retryable_and_never_blocks_writing(
     assert failed["state"] == "failed"
     assert failed["retryable"] is True
     assert failed["failure_reason"] == "provider_unavailable"
-    assert journal.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}
+    assert journal.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_provider_rejection_is_not_retryable(
+    async_client: AsyncClient,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """A bounded Creek refusal cannot be retried as though it were an outage."""
+    headers, _, _ = await _signup(async_client, "provider-rejection")
+    creek_client.reject_activate = True
+
+    failed = await _activate(async_client, headers)
+    refused_retry = await async_client.post("/vault/activation/retry", headers=headers)
+
+    assert failed["state"] == "failed"
+    assert failed["retryable"] is False
+    assert failed["failure_reason"] == "provider_rejected"
+    assert refused_retry.status_code == HTTPStatus.CONFLICT
+    assert refused_retry.json() == {"detail": "vault_activation_not_retryable"}
+    assert [call[0] for call in creek_client.calls] == ["activate"]
 
 
 @pytest.mark.asyncio
@@ -432,6 +478,65 @@ async def test_malformed_or_unauthenticated_handoff_echoes_no_secret(
     assert canary not in malformed.text
     assert canary not in caplog.text
     assert _HANDOFF_TOKEN not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_authenticated_handoff_cannot_mix_two_activations(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """A valid service bearer cannot join one job to another consumer identity."""
+    del creek_client
+    first_headers, first_user_id, _ = await _signup(async_client, "handoff-owner-one")
+    second_headers, second_user_id, _ = await _signup(async_client, "handoff-owner-two")
+    await _activate(async_client, first_headers)
+    await _activate(async_client, second_headers)
+    activations = {
+        activation.user_id: activation
+        for activation in (await db_session.execute(select(VaultActivation))).scalars().all()
+    }
+
+    mixed = await async_client.post(
+        "/internal/vault-provisioning/completions",
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={
+            "job_id": activations[first_user_id].creek_job_id,
+            "consumer_identity": activations[second_user_id].consumer_identity,
+            "vault_url": _VAULT_URL,
+            "consumer_credential": _CREDENTIAL,
+        },
+    )
+
+    assert mixed.status_code == HTTPStatus.UNAUTHORIZED
+    assert mixed.json() == {"detail": "invalid_provisioning_handoff"}
+    assert (await db_session.execute(select(UserVaultConfig))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_handoff_after_terminal_failure_is_refused_without_storing_connection(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """A late callback cannot attach a credential to an allocation Creek rejected."""
+    del creek_client
+    headers, _, _ = await _signup(async_client, "late-failed-handoff")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    activation.state = "failed"
+    activation.retryable = False
+    activation.failure_reason = "provider_rejected"
+    db_session.add(activation)
+    await db_session.commit()
+
+    refused = await _handoff(async_client, activation)
+
+    assert refused == HTTPStatus.CONFLICT
+    assert (await db_session.execute(select(UserVaultConfig))).scalars().all() == []
+    await db_session.refresh(activation)
+    assert activation.credential_received_at is None
+    assert activation.state == "failed"
 
 
 @pytest.mark.asyncio
@@ -570,14 +675,18 @@ async def test_key_ceremony_proxy_releases_the_transaction_and_forwards_only_cip
     headers, _, _ = await _signup(async_client, "ceremony-proxy")
     await _activate(async_client, headers)
     activation = (await db_session.execute(select(VaultActivation))).scalar_one()
-    activation.state = "awaiting_key_ceremony"
-    db_session.add(activation)
-    await db_session.commit()
     current = creek_client.jobs[activation.activation_id]
     creek_client.jobs[activation.activation_id] = replace(
         current,
         state="awaiting_key_ceremony",
     )
+
+    transitioned = await async_client.get("/vault/activation", headers=headers)
+
+    assert transitioned.status_code == HTTPStatus.OK
+    assert transitioned.json()["state"] == "awaiting_key_ceremony"
+    await db_session.refresh(activation)
+    assert activation.state == "awaiting_key_ceremony"
 
     def assert_released() -> None:
         assert not db_session.in_transaction()
@@ -611,6 +720,64 @@ async def test_key_ceremony_proxy_releases_the_transaction_and_forwards_only_cip
     assert "passphrase" not in forwarded
     assert "recovery_key" not in forwarded
     assert "recovery_code" not in forwarded
+
+
+@pytest.mark.asyncio
+async def test_key_ceremony_proxy_forwards_paired_attestation_and_key_release(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """The confidential-computing branch relays its paired public evidence exactly."""
+    headers, _, _ = await _signup(async_client, "attested-ceremony")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    current = creek_client.jobs[activation.activation_id]
+    creek_client.jobs[activation.activation_id] = replace(
+        current,
+        state="awaiting_key_ceremony",
+    )
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    assert status_response.json()["state"] == "awaiting_key_ceremony"
+    payload = _ceremony_payload(activation.activation_id, attested=True)
+
+    completed = await async_client.put(
+        "/vault/activation/key-ceremony",
+        headers=headers,
+        json=payload,
+    )
+
+    assert completed.status_code == HTTPStatus.OK
+    assert creek_client.last_ceremony_submission is not None
+    assert creek_client.last_ceremony_submission.model_dump(mode="json") == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["attestation", "key_release"])
+async def test_key_ceremony_refuses_unpaired_confidential_evidence(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    missing: str,
+) -> None:
+    """Attestation and its addressed release envelope are inseparable on the wire."""
+    headers, _, _ = await _signup(async_client, f"unpaired-{missing}")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    activation.state = "awaiting_key_ceremony"
+    db_session.add(activation)
+    await db_session.commit()
+    payload = _ceremony_payload(activation.activation_id, attested=True)
+    payload[missing] = None
+
+    refused = await async_client.put(
+        "/vault/activation/key-ceremony",
+        headers=headers,
+        json=payload,
+    )
+
+    assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert creek_client.last_ceremony_submission is None
 
 
 @pytest.mark.asyncio
